@@ -1128,15 +1128,15 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       vectorConstructor != nullptr &&
       vectorConstructor->declaration == semanticHosted->vectorConstructor &&
       exactOwner(vectorConstructor->owner, vectorType) &&
-      vectorConstructor->typeArguments == vectorType.arguments &&
-      vectorConstructor->valueArguments == vectorType.valueArguments &&
+      vectorConstructor->typeArguments.empty() &&
+      vectorConstructor->valueArguments.empty() &&
       vectorConstructor->parameterTypes.empty();
   const bool exactStringConstructor =
       stringConstructor != nullptr &&
       stringConstructor->declaration == semanticHosted->stringConstructor &&
       exactOwner(stringConstructor->owner, stringType) &&
-      stringConstructor->typeArguments == stringType.arguments &&
-      stringConstructor->valueArguments == stringType.valueArguments &&
+      stringConstructor->typeArguments.empty() &&
+      stringConstructor->valueArguments.empty() &&
       stringConstructor->parameterTypes ==
           std::vector<SemanticType>{SemanticType::StringView};
   if (append == nullptr || vectorConstructor == nullptr ||

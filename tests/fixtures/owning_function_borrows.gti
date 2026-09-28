@@ -1,0 +1,52 @@
+#include <std/functional>
+
+mut int drops = 0;
+
+class Resource {
+  mut int value;
+public:
+  Resource(int value) : value(value) {}
+  ~Resource() { drops++; }
+  int read() { return this.value; }
+  void update(int value) mut { this.value = value; }
+};
+
+struct Read {
+  int operator()(int& value) { return value; }
+};
+
+struct ReadPair {
+  int operator()(int& left, int& right) { return left + right; }
+};
+int forward<Args...>(Args... args) {
+  ReadPair reader{};
+  int first = reader(args...);
+  return first + reader(args...);
+}
+
+int exercise() {
+  Read reader{};
+  std::function<int(int&)> read{std::move(reader)};
+  mut int scalar = 7;
+  if (read(scalar) != 7) { return 1; }
+  scalar = 9;
+  if (read(scalar) != 9) { return 2; }
+  if (forward<int&, int&>(scalar, scalar) != 36) { return 3; }
+  mut Resource value{11};
+  auto callback = [](Resource& resource, int& offset, bool enabled) -> int {
+    return enabled ? resource.read() + offset : 0;
+  };
+  std::function<int(Resource&, int&, bool)> handler{std::move(callback)};
+  auto copy = handler.clone();
+  if (handler(value, scalar, true) != 20 || drops != 0) { return 4; }
+  value.update(13);
+  if (copy(value, scalar, true) != 22 || drops != 0) { return 5; }
+  if (handler(value, scalar, false) != 0 || drops != 0) { return 6; }
+  return 0;
+}
+
+int main() {
+  int result = exercise();
+  if (result != 0) { return result; }
+  return drops - 1;
+}

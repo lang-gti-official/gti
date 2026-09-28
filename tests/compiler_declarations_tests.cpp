@@ -224,16 +224,11 @@ int main() {
          "storage without an expressible dependency graph");
 
   const lang::FrontendResult nestedTextView = lang::Frontend().analyze(
-      standardLibraryRoot() / "std/memory.gti", R"(
+      // Use an existing trusted unit that is not in string's dependency graph;
+      // overriding memory.gti here would create an include cycle.
+      standardLibraryRoot() / "std/cmath.gti", R"(
 #include <std/string>
-
-namespace gti_internal {
-class storage<T> {};
-gti_internal::storage<T> allocate_storage<T>(uint64_t count);
-void storage_construct<T, Args...>(mut gti_internal::storage<T>& storage,
-                                   uint64_t index,
-                                   Args... args);
-}
+#include <std/memory>
 
 int main() {
   mut std::string text = std::string("abc");
@@ -250,6 +245,9 @@ int main() {
                            "cannot be nested in dynamic storage"),
          "a dynamic string_view must not be hidden in compiler-private "
          "storage without a nested dependency representation");
+  if (!hasDiagnosticCode(nestedTextView.diagnostics, "GTI-S2045"))
+    for (const auto &diagnostic : nestedTextView.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
 }
 
 void testMovedLoopLocalRedeclarations() {
@@ -409,7 +407,7 @@ int main() {
 }
 
 void testInferredVoidGenericArguments() {
-  const lang::FrontendResult invalid =
+  const lang::FrontendResult inferredVoid =
       lang::Frontend().analyze("inferred-void-generic.gti", R"(
 T* identity_pointer<T>(T* pointer) { return pointer; }
 
@@ -419,11 +417,9 @@ int main() {
   return copied == nullptr ? 0 : 1;
 }
 )");
-  expect(!invalid.canGenerateCode() &&
-             hasDiagnosticCode(invalid.diagnostics, "GTI-S2023") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "Generic type arguments cannot be void"),
-         "implicit generic inference should reject a bare void type argument");
+  expect(inferredVoid.canGenerateCode(),
+         "implicit generic inference should accept void metadata when the "
+         "actual parameter and result are pointer values");
 
   const lang::FrontendResult valid =
       lang::Frontend().analyze("inferred-void-pointer-generic.gti", R"(
@@ -2335,13 +2331,15 @@ int main() {
   expect(!invalid.canGenerateCode(),
          "unsupported brace forms and constructor mismatches should fail");
   expect(
-      countDiagnosticCode(invalid.diagnostics, "GTI-S2038") == 4 &&
+      countDiagnosticCode(invalid.diagnostics, "GTI-S2038") == 3 &&
+          countDiagnosticCode(invalid.diagnostics, "GTI-S2092") == 1 &&
           countDiagnosticCode(invalid.diagnostics, "GTI-S2028") == 1 &&
           countDiagnosticCode(invalid.diagnostics, "GTI-S2012") == 1 &&
           hasDiagnostic(invalid.diagnostics,
                         "limited to classes and structs") &&
           hasDiagnostic(invalid.diagnostics, "initialize a fixed array") &&
-          hasDiagnostic(invalid.diagnostics, "does not use '= {...}'") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Collection initialization requires") &&
           hasDiagnostic(invalid.diagnostics, "cannot initialize a reference") &&
           hasDiagnostic(invalid.diagnostics, "require explicit construction"),
       "direct initialization should diagnose each unsupported form at the "
@@ -2584,8 +2582,9 @@ int use() {
          "generic parameters should not collide with enclosing declarations");
   expect(hasDiagnostic(invalidSemantic, "requires 1 generic type argument"),
          "generic class applications should enforce arity");
-  expect(hasDiagnostic(invalidSemantic, "cannot be void"),
-         "void should not be accepted as a user generic argument");
+  expect(
+      hasDiagnostic(invalidSemantic, "No constructor of 'Box' exactly matches"),
+      "void metadata must not make an incompatible constructor viable");
   expect(hasDiagnostic(invalidSemantic, "Conflicting types inferred"),
          "repeated generic parameters should infer one exact type");
   expect(
@@ -5353,12 +5352,167 @@ int main() { return 0; }
 }
 
 void testConstructorLocalTypeGenerics() {
+  const auto borrowedFixture = std::filesystem::path(__FILE__).parent_path() /
+                               "fixtures/forward_list_emplacement_borrowed.gti";
+  const auto borrowed = lang::Frontend().analyze(borrowedFixture, std::nullopt,
+                                                 {standardLibraryPrelude()}, {},
+                                                 {standardLibraryRoot()});
+  expect(borrowed.canGenerateCode() &&
+             lang::verifyMirProgram(borrowed.mir).valid(),
+         "forwarding an owned pack element to a read-only constructor "
+         "parameter must retain the selected signature in MIR");
+  std::size_t borrowedPackInputs = 0;
+  for (const auto &constructor : borrowed.mir.constructorInstances()) {
+    for (const auto &block : constructor.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::CallInput ||
+            instruction.callInputKind != lang::HirCallInputKind::ReadBorrow ||
+            instruction.operands.size() != 1)
+          continue;
+        const auto &operand = instruction.operands.front();
+        const auto *place = constructor.body.findPlace(operand.place);
+        if (place == nullptr || place->projections.size() != 1 ||
+            place->projections.front().kind !=
+                lang::MirProjectionKind::PackElement)
+          continue;
+        ++borrowedPackInputs;
+        expect(operand.kind == lang::MirOperandKind::BorrowRead &&
+                   operand.type.kind == lang::SemanticType::Reference &&
+                   operand.type.arguments.size() == 1 &&
+                   operand.type.arguments.front() == place->type &&
+                   instruction.info.type == operand.type &&
+                   !instruction.preparedParameterDrop,
+               "a borrowed pack element must not become an owned parameter");
+        for (const auto &candidateBlock : constructor.body.blocks) {
+          for (const auto &candidate : candidateBlock.instructions) {
+            expect(candidate.kind != lang::MirInstructionKind::Move ||
+                       std::none_of(candidate.operands.begin(),
+                                    candidate.operands.end(),
+                                    [&](const auto &input) {
+                                      return input.place == place->id;
+                                    }),
+                   "read-only pack forwarding must not move its referent");
+          }
+        }
+        for (int mutation = 0; mutation != 2; ++mutation) {
+          auto malformed = borrowed.mir;
+          auto *changed = const_cast<lang::MirConstructorInstance *>(
+              malformed.findConstructorInstance(constructor.id));
+          if (mutation == 0) {
+            for (auto &changedBlock : changed->body.blocks)
+              for (auto &stage : changedBlock.instructions)
+                if (stage.id == instruction.id)
+                  stage.callInputKind = lang::HirCallInputKind::MoveValue;
+          } else {
+            for (auto &changedPlace : changed->body.places)
+              if (changedPlace.id == place->id)
+                changedPlace.projections.front().constantIndex = 999;
+          }
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "pack-reference roles and element bounds must verify "
+                 "independently of lowering");
+        }
+      }
+    }
+  }
+  expect(borrowedPackInputs == 1,
+         "the borrowed emplacement fixture must exercise pack projection");
+  const lang::FrontendResult inPlace = lang::Frontend().analyze(
+      std::filesystem::temp_directory_path() /
+          "gti-constructor-pack-in-place.gti",
+      R"(
+#include <std/memory>
+enum class InPlaceTag { value };
+class Immovable {
+public:
+  int value;
+  Immovable(int initial) : value(initial) {}
+  Immovable(Immovable& other) = delete;
+  Immovable(Immovable&& other) = delete;
+};
+struct Node<T> {
+  T value;
+  Node<Args...>(InPlaceTag tag, Args... args) : value(T(args...)) {}
+};
+int main() {
+  auto node = std::make_unique<Node<Immovable>>(InPlaceTag::value, 42);
+  auto number = std::make_unique<Node<int>>(InPlaceTag::value, 42);
+  auto flag = std::make_unique<Node<bool>>(InPlaceTag::value, true);
+  auto character = std::make_unique<Node<char>>(InPlaceTag::value, 'x');
+  auto zero = std::make_unique<Node<int>>(InPlaceTag::value);
+  return node->value.value - 42;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!inPlace.canGenerateCode()) {
+    for (const auto &diagnostic : inPlace.diagnostics) {
+      std::cerr << diagnostic.message << '\n';
+    }
+    std::cerr << lang::MirPrinter().print(inPlace.mir);
+  }
+  expect(inPlace.canGenerateCode() &&
+             lang::verifyMirProgram(inPlace.mir).valid(),
+         "constructor packs should construct an immovable field in place");
+  std::size_t packBindings = 0;
+  std::size_t emptyPacks = 0;
+  for (const auto &constructor : inPlace.mir.constructorInstances()) {
+    if (constructor.parameterBindings.size() != 2)
+      continue;
+    const auto pack = std::find_if(
+        constructor.body.places.begin(), constructor.body.places.end(),
+        [&](const auto &place) {
+          return place.root == lang::MirPlaceRootKind::Binding &&
+                 place.binding == constructor.parameterBindings.back() &&
+                 place.projections.empty() &&
+                 place.type.kind == lang::SemanticType::TypePack;
+        });
+    if (pack == constructor.body.places.end())
+      continue;
+    ++packBindings;
+    for (int mutation = 0; mutation != 2; ++mutation) {
+      auto malformed = inPlace.mir;
+      auto *changed = const_cast<lang::MirConstructorInstance *>(
+          malformed.findConstructorInstance(constructor.id));
+      if (mutation == 0) {
+        changed->parameterBindings.back() = changed->parameterBindings.front();
+      } else {
+        for (auto &place : changed->body.places) {
+          if (place.id == pack->id)
+            place.type.concretePack = false;
+        }
+      }
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "constructor packs reject duplicate bindings and symbolic packs");
+    }
+    if (pack->type.arguments.empty()) {
+      ++emptyPacks;
+      auto malformed = inPlace.mir;
+      auto *changed = const_cast<lang::MirConstructorInstance *>(
+          malformed.findConstructorInstance(constructor.id));
+      std::swap(changed->parameterBindings.front(),
+                changed->parameterBindings.back());
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "an empty pack cannot precede a fixed constructor binding even "
+             "when flattened parameter types are unchanged");
+    }
+  }
+  expect(packBindings == 5 && emptyPacks == 1,
+         "all concrete node constructor packs need exact binding metadata");
   const std::string source = R"(
 #include <std/string>
+#include <std/memory>
 
 class Capture {
 public:
   Capture<T>(T value) {}
+};
+
+void discard_constructor_pack<Args...>(Args... args) {}
+class PackedCapture {
+public:
+  PackedCapture<Args...>(int fixed, Args... args) {
+    discard_constructor_pack(args...);
+  }
 };
 
 class Tagged<Stored> {
@@ -5372,6 +5526,9 @@ public:
 int main() {
   Capture integer = Capture(1);
   Capture boolean = Capture(true);
+  PackedCapture empty_pack = PackedCapture(0);
+  PackedCapture two_pack = PackedCapture(0, true, 2);
+  auto allocated_pack = std::make_unique<PackedCapture>(0, 'a', false);
   Tagged<int> tagged = Tagged<int>(4, true);
   mut std::string source = std::string("hello");
   mut std::string copy = std::string(source.begin(), source.end());
@@ -5397,6 +5554,54 @@ int main() {
              lang::verifyMirProgram(valid.mir).valid(),
          "constructor-local type arguments should infer exactly, satisfy "
          "declared requirements, and lower through verified MIR");
+  if (!valid.canGenerateCode())
+    return;
+  bool checkedBorrowedPreparation = false;
+  for (const auto &function : valid.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &input : block.instructions) {
+        if (input.kind != lang::MirInstructionKind::CallInput ||
+            input.callInputKind !=
+                lang::HirCallInputKind::MoveBorrowedTemporary)
+          continue;
+        checkedBorrowedPreparation = true;
+        expect(input.preparedParameterDrop && input.lifecycle.size() == 1 &&
+                   input.lifecycle.front().kind ==
+                       lang::MirLifecycleEventKind::Reparent,
+               "borrowed iterator temporaries retain prepared ownership until "
+               "construction");
+        if (!input.preparedParameterDrop)
+          continue;
+        for (int mutation = 0; mutation != 3; ++mutation) {
+          auto malformed = valid.mir;
+          auto *body = lang::findMirBody(
+              malformed, {lang::MirBodyKind::Function, function.id});
+          for (auto &changedBlock : body->blocks) {
+            for (auto &changed : changedBlock.instructions) {
+              if (changed.id == input.id) {
+                if (mutation == 0)
+                  changed.lifecycle.clear();
+                if (mutation == 1)
+                  changed.preparedParameterDrop.reset();
+              }
+              if (mutation == 2 &&
+                  changed.kind == lang::MirInstructionKind::Construct)
+                std::erase_if(changed.lifecycle, [&](const auto &event) {
+                  return event.kind ==
+                             lang::MirLifecycleEventKind::TransferOut &&
+                         event.source == *input.preparedParameterDrop;
+                });
+            }
+          }
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "borrowed preparation rejects lost reparent, obligation or "
+                 "invocation handoff");
+        }
+      }
+    }
+  }
+  expect(checkedBorrowedPreparation,
+         "constructor iterator exercises prepared borrowed temporary");
 
   const lang::ClassDecl *capture = findTopLevelClass(valid.program, "Capture");
   const lang::ConstructorDecl *captureConstructor = nullptr;
@@ -5632,8 +5837,8 @@ int main() { return 0; }
                            "Constructor-local generic parameters cannot "
                            "shadow") &&
              hasDiagnostic(invalidDeclarations.diagnostics,
-                           "Constructor-local generic parameter packs are "
-                           "not supported") &&
+                           "A generic type pack must be bound by a final "
+                           "parameter pack") &&
              hasDiagnostic(invalidDeclarations.diagnostics,
                            "must occur in a constructor parameter type"),
          "constructor-local parameters should retain the bounded shadowing, "
@@ -6349,6 +6554,7 @@ int main() {
 
 void testVariadicGenerics() {
   const std::string source = R"(
+class Packed<T...> {};
 void consume<Args...>(Args... values) {}
 
 void route<Rest...>(int first, Rest... rest) { consume(rest...); }
@@ -6373,6 +6579,7 @@ public:
 };
 
 int main() {
+  Packed<int, bool> metadata{};
   consume();
   relay(1, true, "gti");
   int inferred = first(7, false, "tail");
@@ -6479,8 +6686,6 @@ int main() {
 
   lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-variadic-generics.gti", R"(
-class Packed<T...> {};
-
 void fixed(int value) {}
 void nonfinal_generic<Args..., T>(Args... values, T tail) {}
 void missing_parameter<Args...>() {}
@@ -6496,9 +6701,7 @@ void not_a_pack(int value) { consume(value...); }
          "invalid variadic declarations and expansions should be rejected");
   expect(
       hasDiagnostic(invalid.diagnostics,
-                    "type packs are currently limited to functions") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "generic type pack must be the final") &&
+                    "generic type pack must be the final") &&
           hasDiagnostic(invalid.diagnostics,
                         "must be bound by a final parameter pack") &&
           hasDiagnostic(invalid.diagnostics, "parameter pack type must name") &&
@@ -6881,6 +7084,7 @@ int main() {
   MutableOnly read_only = MutableOnly();
   int invalid_receiver = read_only.inspect();
   function_value;
+  width;
   float mismatch = width(1);
   int ambiguous = choose(1);
   float inexact = only_float(1);
@@ -6917,7 +7121,10 @@ int main() {
          "receiver-qualified overloads should reject mutable-only methods on "
          "read-only objects");
   expect(
-      hasDiagnostic(invalidSemantic, "function values are not supported"),
+      countDiagnosticCode(invalidSemantic, "GTI-S2090") == 1 &&
+          hasDiagnostic(
+              invalidSemantic,
+              "function item is ambiguous without an exact callable context"),
       "function overload sets should not escape unresolved into the backend");
   expect(hasDiagnostic(invalidSemantic, "outside the range of 'uint8_t'") &&
              hasDiagnostic(invalidSemantic,

@@ -1549,6 +1549,7 @@ struct ProjectAnalysisInputs {
   std::vector<lang::PackageSourceRoot> packageSourceRoots;
   lang::SourceManager sources;
   std::vector<lang::Diagnostic> diagnostics;
+  bool requireEntryPoint = false;
 };
 
 ProjectAnalysisInputs resolveProjectAnalysisInputs(
@@ -1591,6 +1592,12 @@ ProjectAnalysisInputs resolveProjectAnalysisInputs(
         result.configuration.configurationFlags());
   }
   result.packageSourceRoots = facts.packageSourceRoots();
+  for (const auto &target : facts.targets()) {
+    if (canonicalPath(target.root) == canonicalPath(entryPath)) {
+      result.requireEntryPoint = true;
+      break;
+    }
+  }
   return result;
 }
 
@@ -2751,6 +2758,7 @@ private:
     result.rootPath = rootPath;
     lang::FrontendOptions frontendOptions;
     frontendOptions.analyzeRecoveredProgram = true;
+    frontendOptions.requireEntryPoint = project.requireEntryPoint;
     // HIR performs the compiler's concrete generic-instance reanalysis. The
     // LSP retains it only so editor diagnostics agree with `gti check`; MIR
     // remains code-generation work and is not built for editor snapshots.

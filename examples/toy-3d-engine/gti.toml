@@ -1,0 +1,33 @@
+manifest-version = 1
+
+[package]
+name = "toy-3d-engine"
+version = "0.1.0"
+
+[dependencies]
+glfw = { path = "../../packages/glfw" }
+glad = { path = "../../packages/glad" }
+assimp = { path = "../../packages/assimp" }
+cimgui = { path = "../../packages/cimgui" }
+
+[targets.toy-3d-engine]
+kind = "executable"
+root = "src/main.gti"
+
+[targets.math-tests]
+kind = "test"
+root = "src/tests/math_test.gti"
+
+[targets.model-tests]
+kind = "test"
+root = "src/tests/model_test.gti"
+
+[profiles.dev]
+optimization = 0
+cpp-standard = "c++23"
+keep-cpp = true
+
+[profiles.release]
+optimization = 3
+cpp-standard = "c++23"
+keep-cpp = false

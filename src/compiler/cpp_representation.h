@@ -9,11 +9,20 @@
 
 namespace lang {
 
+[[nodiscard]] std::string
+cppClassTemplateNameSpelling(const LoweredProgram &program, ClassId id);
+
 // Deterministic C++ representation authorities over the sealed lowered
 // program, per ADR 016. These are backend policy: no C++ spelling is stored in
 // LoweredProgram itself.
 
 inline constexpr std::string_view cppEmittedStandardNamespace = "__gti_std";
+
+// A symbolic result keeps one status-ABI result channel even when a concrete
+// instance returns void. Virtual declarations and overrides share that choice.
+[[nodiscard]] bool
+cppFunctionHasFailureResultChannel(const LoweredProgram &program,
+                                   const LoweredFunctionDeclaration &function);
 
 [[nodiscard]] std::string cppSemanticTypeSpelling(const LoweredProgram &program,
                                                   CppStandard standard,
@@ -58,6 +67,16 @@ cppConcreteFunctionInstanceIsNameable(const LoweredProgram &program,
 // incoherent instances return no spelling.
 [[nodiscard]] std::optional<std::string>
 cppConcreteFreeFunctionSpelling(const LoweredProgram &program,
+                                const LoweredDeclaration &row,
+                                const LoweredFunctionDeclaration &function,
+                                const LoweredFunctionInstance &instance,
+                                const MirFunctionInstance &mirInstance);
+
+// Artifact-local identity for one closure-bearing free-function instance.
+// Native template parameters carry unnameable types only; each exact MIR body
+// keeps its own symbol rather than sharing a source-template implementation.
+[[nodiscard]] std::optional<std::string>
+cppCallableFreeFunctionSpelling(const LoweredProgram &program,
                                 const LoweredDeclaration &row,
                                 const LoweredFunctionDeclaration &function,
                                 const LoweredFunctionInstance &instance,

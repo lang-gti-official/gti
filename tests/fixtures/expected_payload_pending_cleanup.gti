@@ -1,0 +1,34 @@
+#include <std/string>
+#include <std/vector>
+
+class Result {
+  int divisor;
+public:
+  Result(int divisor) : divisor(divisor) { std::println(1); }
+  ~Result() {
+    std::println(3);
+    int value = 1 / this.divisor;
+  }
+};
+
+class Guard {
+  int divisor;
+public:
+  Guard(int divisor) : divisor(divisor) {}
+  ~Guard() {
+    std::println(2);
+    int value = 2 / this.divisor;
+  }
+};
+
+expected<Result, int> make(Guard guard, int payload_divisor) {
+  return Result(payload_divisor);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  int guard_divisor = argc == 1 ? 1 : 0;
+  int payload_divisor = argc < 3 ? 1 : 0;
+  auto result = make(Guard(guard_divisor), payload_divisor);
+  std::println(4);
+  return 0;
+}

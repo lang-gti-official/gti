@@ -18,6 +18,8 @@ domain-specific records remain ordinary higher-level libraries.
 expected<int32_t, std::io_errc> std::getchar();
 expected<std::string, std::io_errc>
     std::read_stdin_some(std::size_t maximum);
+expected<std::string, std::io_errc> std::getline();
+expected<std::string, std::io_errc> std::getline(char delimiter);
 
 expected<std::unique_ptr<std::FILE>, std::io_errc>
     std::fopen(std::string_view path, std::file_mode mode);
@@ -25,6 +27,10 @@ expected<std::unique_ptr<std::FILE>, std::io_errc>
     std::fopen(std::string_view path, std::string_view mode);
 
 expected<int32_t, std::io_errc> std::fgetc(mut std::FILE& stream);
+expected<std::string, std::io_errc>
+    std::getline(mut std::FILE& stream);
+expected<std::string, std::io_errc>
+    std::getline(mut std::FILE& stream, char delimiter);
 expected<std::string, std::io_errc>
     std::fread(mut std::FILE& stream, std::size_t maximum);
 expected<std::size_t, std::io_errc>
@@ -100,6 +106,35 @@ call. The result can be shorter than requested. `maximum == 0` is an empty
 success and performs no host read. A medium-level reader accumulates chunks
 until it receives an empty success; it does not need access to the internal
 fixed buffer.
+
+`getline()` reads standard input one byte at a time through newline and returns
+an owning string without the newline. `getline(stream)` applies the same policy
+to an open `FILE`; the overloads taking a `char` stop at that byte instead.
+An encountered delimiter produces a successful result even when the line is
+empty. EOF before any byte is `end_of_file`, while EOF after one or more bytes
+returns the final unterminated line successfully. Bytes before the delimiter
+are preserved exactly, including carriage returns and zero bytes. A read error
+returns its `io_errc` and does not publish a partial line.
+
+A terminal prompt without a newline must be flushed before waiting for input:
+
+```gti
+auto prompted = std::try_write_stdout("password: ");
+if (!prompted) {
+  return 1;
+}
+auto flushed = std::try_flush_stdout();
+if (!flushed) {
+  return 2;
+}
+auto password = std::getline();
+if (!password) {
+  return 3;
+}
+```
+
+This is ordinary terminal input and does not disable echo. Hidden password
+entry still requires a future terminal-control abstraction over the host APIs.
 
 `write` and `fwrite` submit one complete counted byte sequence. A successful
 result equals the input size; a short count is never reported as success. A
@@ -206,8 +241,8 @@ rounded to nearest with ties to even at the sixth place — not a re-rounded
 approximation — and signed zero retains its minus sign. The text therefore
 matches C's default `printf("%f", (float)value)` result for every finite
 binary32 under the default rounding mode, including magnitudes past the range
-of a 64-bit integer. Binary64 text, float parsing, and float arguments to
-`std::format` are separate later slices.
+of a 64-bit integer. `<std/format>` uses this same binary32 representation;
+binary64 text and float parsing remain later slices.
 
 `<std/format>` adds the first replacement-field layer:
 
@@ -216,53 +251,71 @@ namespace std {
   enum class format_errc {
     invalid_format,
     argument_count_mismatch,
+    unsupported_argument,
   };
 
   expected<string, format_errc> format(string_view pattern);
 
   expected<string, format_errc>
-  format<std::integral First, std::integral Args...>(
-      string_view pattern, First first, Args... args);
+  format<First, Args...>(string_view pattern, First first, Args... args);
 
   expected<void, format_errc> try_print(string_view pattern);
 
   expected<void, format_errc>
-  try_print<std::integral First, std::integral Args...>(
-      string_view pattern, First first, Args... args);
+  try_print<First, Args...>(string_view pattern, First first, Args... args);
 
   expected<void, format_errc> try_println(string_view pattern);
 
   expected<void, format_errc>
-  try_println<std::integral First, std::integral Args...>(
-      string_view pattern, First first, Args... args);
+  try_println<First, Args...>(string_view pattern, First first, Args... args);
 }
 ```
+
+The admitted arguments are `bool`, `char`, every fixed-width integer,
+binary32 `float`, `std::string_view`, and `std::string`. Booleans render as
+`true` or `false`; characters append their one code unit; integers retain
+canonical base-10 text; and floats use `std::to_string(float)`'s exact
+six-fractional-digit contract. String values preserve all counted bytes,
+including embedded zero bytes.
+
+```gti
+mut std::string host = std::string("gitea.example");
+std::string_view method = "api/v1/user";
+mut auto endpoint =
+    std::format("https://{}/{}", host.view(), method);
+```
+
+GTI's current named value packs are by value and reference-pack declarators
+are not yet implemented. Consequently a named move-only `std::string` is not
+copied implicitly: pass `text.view()` to borrow it, or `std::move(text)` to
+transfer it deliberately. A fresh `std::string(...)` can be passed directly.
 
 `{}` consumes the next argument. `{{` and `}}` emit literal braces without
 consuming one. A lone opening or closing brace returns
 `invalid_format`; a valid pattern with too few or too many arguments returns
-`argument_count_mismatch`. Replacement is strictly sequential. Indexes,
+`argument_count_mismatch`. A type outside the admitted set returns
+`unsupported_argument`. Pattern grammar and field count are validated first,
+so those errors take precedence. Replacement is strictly sequential. Indexes,
 names, format specifiers, width, precision, bases other than decimal, locale,
-floating-point values, owning-string arguments, and user formatter
-customization are not part of this bounded surface.
+binary64 values, and user formatter customization are not part of this
+bounded surface.
 
 The overload family separates the zero-argument case from the nonempty
-`First, Args...` case; every supplied argument must independently satisfy
-`std::integral`, so a call may mix fixed-width signed and unsigned types.
-`std::format` returns a newly owned string. `try_print` and `try_println`
-validate the complete grammar and exact argument count, then construct the
-complete owning result before making any stdout write. Invalid input therefore
-produces no partial output, and `try_println` submits its newline only after
-successful formatting and after the formatted text has been submitted to
-stdout.
+`First, Args...` case and permits heterogeneous admitted arguments in one
+call. `std::format` returns a newly owned string. `try_print` and
+`try_println` validate the complete grammar and exact argument count, then
+construct the complete owning result before making any stdout write. Invalid
+or unsupported input therefore produces no partial output, and `try_println`
+submits its newline only after successful formatting and after the formatted
+text has been submitted to stdout.
 
-These operations are ordinary GTI library code. The bounded language pack fold
-only supplies source-order iteration over the integral argument pack; it does
-not recognize a formatting function or interpret a pattern. Literal views use
-their counted runtime write. Dynamic owning strings and individual `char`
-values cross through the scalar `gti_rt_write_stdout_byte(uint8_t)` entry after
-the explicit lossless `uint8_t(char)` code-unit extraction, preserving embedded
-zero bytes.
+These operations are ordinary GTI library code. A source-defined exact adapter
+for each admitted type feeds the bounded, source-order pack fold; the compiler
+does not recognize a formatting function, public string type, or pattern.
+Literal views use their counted runtime write. Dynamic owning strings and
+individual `char` values cross through the scalar
+`gti_rt_write_stdout_byte(uint8_t)` entry after the explicit lossless
+`uint8_t(char)` code-unit extraction, preserving embedded zero bytes.
 
 The `format_errc` result reports pattern and argument errors. The existing
 formatting helpers and infallible `print` family still do not merge a host I/O
@@ -271,7 +324,7 @@ can format to an owning string and pass its view to `try_write_stdout`.
 Allocation failure while constructing an owning result follows the current
 defined-failure allocation policy rather than becoming a `format_errc` value.
 
-Buffered streams, filesystem traversal, encoding conversion, floating-point
-formatting, and formatter customization remain future library layers. A future
-buffer/stream object should build on this byte surface without turning the
-runtime ABI into the public GTI ABI.
+Buffered streams, filesystem traversal, encoding conversion, binary64 and
+specifier-driven formatting, and formatter customization remain future
+library layers. A future buffer/stream object should build on this byte surface
+without turning the runtime ABI into the public GTI ABI.

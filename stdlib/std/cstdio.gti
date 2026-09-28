@@ -301,6 +301,65 @@ expected<int32_t, io_errc> getchar() {
   return unexpected(io_errc::read_failed);
 }
 
+/// Reads standard input through, but not including, `delimiter`.
+///
+/// End of file returns the final unterminated line when at least one byte was
+/// read. End of file before any byte returns `io_errc::end_of_file`.
+expected<string, io_errc> getline(char delimiter) {
+  mut string result = string("");
+  while (true) {
+    int32_t value = gti_internal::runtime::read_stdin_byte();
+    if (value == -1) {
+      if (result.empty()) {
+        return unexpected(io_errc::end_of_file);
+      }
+      return std::move(result);
+    }
+    if (value < 0) {
+      return unexpected(io_errc::read_failed);
+    }
+
+    char byte = char(uint8_t(value));
+    if (byte == delimiter) {
+      return std::move(result);
+    }
+    result.push_back(byte);
+  }
+}
+
+/// Reads one newline-delimited line from standard input.
+expected<string, io_errc> getline() {
+  return getline('\n');
+}
+
+/// Reads `stream` through, but not including, `delimiter`.
+///
+/// End of file returns the final unterminated line when at least one byte was
+/// read. End of file before any byte returns `io_errc::end_of_file`.
+expected<string, io_errc> getline(mut FILE& stream, char delimiter) {
+  mut string result = string("");
+  while (true) {
+    mut auto next = stream.get();
+    if (!next) {
+      if (next.error() == io_errc::end_of_file && !result.empty()) {
+        return std::move(result);
+      }
+      return unexpected(next.error());
+    }
+
+    char byte = char(uint8_t(next.value()));
+    if (byte == delimiter) {
+      return std::move(result);
+    }
+    result.push_back(byte);
+  }
+}
+
+/// Reads one newline-delimited line from `stream`.
+expected<string, io_errc> getline(mut FILE& stream) {
+  return getline(stream, '\n');
+}
+
 /// Reads at most `maximum` bytes from standard input into an owned string.
 ///
 /// The operation is bounded to 4096 bytes per call. An empty successful result

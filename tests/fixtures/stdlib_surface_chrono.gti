@@ -1,0 +1,55 @@
+#include <std/chrono>
+
+int main() {
+  // Wall-clock decomposition is floor-based and normalized before the epoch.
+  std::chrono::system_time_point before_epoch =
+      std::chrono::system_time_point(std::chrono::nanoseconds(int64_t(-1)));
+  if (before_epoch.unix_seconds() != int64_t(-1) ||
+      before_epoch.subsecond_nanoseconds() != int32_t(999999999) ||
+      before_epoch.nanoseconds_since_unix_epoch() != int64_t(-1)) {
+    return 1;
+  }
+
+  // Elapsed subtraction is recoverable at both signed boundaries.
+  std::chrono::steady_time_point minimum = std::chrono::steady_time_point(
+      std::chrono::nanoseconds(int64_t(-9223372036854775807) - int64_t(1)));
+  std::chrono::steady_time_point maximum = std::chrono::steady_time_point(
+      std::chrono::nanoseconds(int64_t(9223372036854775807)));
+  mut auto overflow = maximum.elapsed_since(minimum);
+  if (overflow.has_value()) {
+    return 2;
+  }
+
+  mut auto first_result = std::chrono::steady_clock::now();
+  if (!first_result) {
+    return 3;
+  }
+  mut std::chrono::steady_time_point first =
+      std::move(first_result).value();
+  mut auto second_result = std::chrono::steady_clock::now();
+  if (!second_result) {
+    return 4;
+  }
+  mut std::chrono::steady_time_point second =
+      std::move(second_result).value();
+  if (second.before(first)) {
+    return 5;
+  }
+  mut auto elapsed = second.elapsed_since(first);
+  if (!elapsed || elapsed.value().count() < int64_t(0)) {
+    return 6;
+  }
+
+  mut auto wall_result = std::chrono::system_clock::now();
+  if (!wall_result) {
+    return 7;
+  }
+  mut std::chrono::system_time_point wall =
+      std::move(wall_result).value();
+  if (wall.nanoseconds_since_unix_epoch() <= int64_t(0) ||
+      wall.subsecond_nanoseconds() < int32_t(0) ||
+      wall.subsecond_nanoseconds() >= int32_t(1000000000)) {
+    return 8;
+  }
+  return 0;
+}

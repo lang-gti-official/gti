@@ -74,6 +74,14 @@ def main() -> int:
                 + "\n"
             )
             return 1
+        selectors = [line for line in text.splitlines()
+                     if "mir_lambda_identity_v<Update>" in line]
+        if not selectors or any(re.search(r"\bT\b", line) for line in selectors):
+            sys.stderr.write(
+                "concrete-owner callable selectors leaked an unbound owner "
+                "parameter or were not exercised: " + repr(selectors) + "\n"
+            )
+            return 1
         if not any("std::int32_t" in line for line in specialized) or not any(
             "std::uint8_t" in line for line in specialized
         ):

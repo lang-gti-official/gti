@@ -821,17 +821,17 @@ analysis, HIR, MIR, and the backend.
 
 ### M-FAIL-01: Failure Operations And Cleanup Edges
 
-- **Open toy-engine prerequisite (Gitea #2):** declaration-time field calls
-  returning an owning class value, including `std::make_unique<T>()`, have
-  verified local Call/Invoke/publication/rollback MIR but lack the enclosing
-  constructor-to-initializer failure channel in the C++ representation. The
-  compiler now reports the bounded `GTI-B0003` limitation instead of an ICE.
-  Completion requires propagation to the caller, reverse cleanup of completed
-  sibling fields and caller-owned values, and allocation/constructor failure
-  tests; adding a terminal wrapper around the call is not completion. The
-  toy-engine workflow currently uses null fields plus an explicit initialization
-  method after construction. This remains M-FAIL-01/M-BACK-02 work, not a change
-  to source-language validity.
+- **Toy-engine field initialization (Gitea #2):** concrete source constructors
+  for owners without a generated-default route now select declaration defaults
+  into their own initialization schedule. This supports owning class-value calls
+  including `std::make_unique<T>()`, caller propagation, reverse sibling/parameter
+  cleanup, and explicit override suppression without duplicate execution.
+  **Remaining:** generated/defaulted constructors still have no concrete MIR
+  constructor body and retain their declaration schedule; fallible class-value
+  calls on that route still report `GTI-B0003`. Materialize that route's exact
+  constructor/initializer failure channel before claiming universal support.
+  A terminal wrapper is not completion. This remains M-FAIL-01/M-BACK-02 work,
+  not a change to source-language validity.
 
 - **State/role:** active for broader failure semantics; `D-FAIL-01`,
   `I-CAP-01`, `M-LIFE-01`, and the source-body backend cutover are done. Exact
@@ -2640,6 +2640,65 @@ name recognition.
 
 ### Active Request: Complete The Existing Standard Library
 
+The forward-list emplacement work is in progress and unpublished. The current
+vertical slice adds constructor-local packs and ordinary GTI node construction,
+including immovable elements. It repairs plain-enum initializer publication,
+unpublished return-loan cleanup, and borrowed bare-local receivers across
+conditional scalar arguments. A fallible element is constructed at its final
+field address, with success-only rollback publication, rather than assigned
+from a temporary. Address-stability and exact success/failure cleanup pass
+C++20/C++23 O0/O1/O3 and ASan/UBSan. The final 63-case forward-list runtime
+matrix, 10 compiler/optimizer/MIR/backend gates, and the 259-case source-
+destructor cleanup matrix pass locally.
+
+This does not yet complete emplacement. Forwarding an owned `std::string`
+through the pack to an element constructor taking `std::string&` now retains
+the selected reference type and read-borrow role in MIR, rather than moving
+the element. The declarations test checks the exact pack projection and rejects
+forged move roles and out-of-bounds projections. The retained
+`forward_list_emplacement_borrowed.gti` still fails the C++ constructor-field
+representation gate; it is not in the passing runtime matrix.
+The forwarding audit also repaired a pre-existing ownership defect, reproduced
+with the installed 0.338.0 compiler. An unused owning pack previously lacked
+explicit MIR drop obligations: native parameter destruction skipped the
+caller's cleanup after a destructor failure and could replace an active
+failure instead of reporting the required secondary-failure envelope.
+Concrete pack elements now retain distinct HIR drop identities, entry-active
+canonical MIR lifetime places, and explicit reverse normal/failure cleanup.
+Forwarding moves transfer the exact element obligation into a prepared input;
+copies preserve it and initialize a separate prepared owner. Repeated
+expansions share the entry place without forging expression provenance.
+Read-only folds use that same live slot, not a moved native parameter shell.
+The original `pack_parameter_cleanup_failure.gti` now preserves the caller's
+`9` cleanup on a first failure and reports `GTI-R0014` on a second failure.
+The `pack_parameter_runtime` matrix covers empty/single/mixed owning packs,
+move forwarding, repeated copied allocation arguments, and repeated borrowed
+folds in 56 executions across C++20/C++23 O0/O1/O3 plus ASan/UBSan. Verifier
+mutations cover exact element coverage/order/activation, copy provenance, and
+unowned projection aliases. Initial broader checks found a copy-input verifier
+regression in class allocation; that was repaired, and the compiler,
+optimizer, and class-allocation gates passed again.
+After the fold-place repair, all 14 selected CTest gates pass locally,
+including the 56-case pack, 63-case forward-list, and 259-case destructor-
+cleanup matrices. The 12-way build, focused pack lifetime mutations, formatting
+check, and `git diff --check` also pass. Full corpus, surface/reference/editor,
+and fresh-installed verification remain outstanding for this unpublished
+emplacement slice; these focused results are not release-completion evidence.
+
+`pack_constructor_copies.gti` now passes direct `T(args...)` construction
+with copied elements through the shared prepared-parameter protocol. All eight
+focused C++20/C++23 O0/O1/O3, no-elide, and ASan/UBSan runs produce the expected
+repeated copies. This supersedes its prior `GTI-B0001` report; it is additional
+focused evidence, not a fresh full pack-matrix run. Allocation through
+`std::make_unique<T>(args...)` retains its separate coverage.
+
+The remaining work includes the reference-parameter composition above, the complete constructor-
+pack ownership/constraint and mutation matrix, allocation-failure evidence,
+surface/reference/editor synchronization, and corpus/installed-toolchain
+validation before release. No claim of complete generic forwarding, complete
+standard-library coverage, or another-platform execution follows from the
+passing scalar and immovable-element cases.
+
 The storage-swap slice implements vector, string, and forward-list swap in
 ordinary GTI and makes path swap delegate to string. Receiver-local replacement
 helpers avoid consuming borrowed references. The C++ backend now preserves
@@ -3767,6 +3826,593 @@ consumer, and release refreshes remain outstanding for the full campaign.
   escaping borrowed captures, preserve exact generic calls/effects, and serve
   as ordinary GTI inputs to the first foundational range algorithms.
 
+### L-CALL-02: Source-Defined Owning Function Wrappers
+
+- **State/role:** agreed API implemented, validated, and installed locally.
+  The fresh combined production suite passes all 294 tests. Repository
+  publication includes the other tasks' shared-checkout work with explicit
+  user approval; Gitea owns the release tag and asynchronous packaging.
+  The earlier owning-wrapper deferral in L-CALL-01 is superseded.
+- **Unlocks:** a command schema with an owned handler and an object API such as
+  `set_auth_login_callback(lambda)` that retains and invokes the callback later.
+- **Required surface:** C++-familiar `std::function<R(Args...)>` with copyable
+  owned targets, plus the discussed move-only owning counterpart for move-only
+  captures; construction, replacement/reset, empty-state observation, calls,
+  explicit ownership transfer, and deterministic capture destruction. Complete
+  the read/mut/consuming receiver contract without inheriting backend semantics.
+- **Approved declaration direction (2026-09-27):** retain the caller spelling
+  `std::function<void()>` / `std::function<int(int, int)>`. Define the library
+  class with a headerless generic pattern, for example
+  `namespace std { class function<R(Args...)> { /* ... */ }; }`.
+  Do not introduce a C++ `template <typename ...>` header. This is a patterned
+  generic primary declaration, not a requirement to write a separate primary
+  plus a partial specialization. The pattern must be a reusable language
+  facility, independent of the public class name. Preserve its source shape in
+  the AST; semantics owns binder declaration, exact decomposition, and concrete
+  instance identity. Before admitting execution, define how binder positions
+  differ from existing type references, retain source ranges for tooling, and
+  carry the resolved bindings through HIR/MIR and lowered representation. This
+  approved syntax does not authorize C++-style specialization ranking or
+  backend-only matching. The parser now retains signature-first patterned
+  primary heads separately from flat generic parameter declarations, including
+  component source spans. Semantic binding now preserves one public signature
+  argument while deriving result/pack parameters through resolved projections.
+  Exact matching and concrete reanalysis precede HIR. Lowered declarations retain
+  the shape and projections, including for native template representations; the
+  C++ backend does not define matching or binder identity.
+- **Implementation sequence:** function-signature types; reusable signature
+  matching/decomposition and generic class packs; general exact callable field
+  ownership and invocation; namespace function storage; ordinary source-defined
+  callable models and polymorphic ownership/clone; public wrappers and callback
+  registration/schema consumers. Add missing reusable language operations where
+  a source implementation is blocked. Do not recognize public wrapper names or
+  delegate GTI lifetime/dispatch rules to native `std::function`.
+- **Implemented contract:** ordinary GTI classes in `<std/functional>` provide
+  `function<R(Args...)>` and `move_only_function<R(Args...)>` with read-only,
+  `mut`, and `&&` signature families. They support empty construction and
+  observation, invocation, reset/replacement, and explicit ownership transfer;
+  `function` accepts copy-constructible targets and offers explicit deep
+  `clone()`, while `move_only_function` also accepts move-only captures and has
+  no clone. Wrapper values themselves are move-only. Models use ordinary
+  interfaces and unique ownership, not public-name compiler matching or native
+  `std::function` policy. Consuming invocation retains remaining captures
+  through the caller's full expression. Setter and recursive command-schema
+  consumers, exact value/reference arguments, owned results, allocation and
+  cleanup failures, and malformed-MIR rejection have focused regression
+  coverage. Combined production and installed evidence is recorded below.
+- **Deliberate exclusions:** this delivery does not add implicit/reference
+  capture, borrowed closure results without an origin contract, arbitrary
+  borrowed-pointee consumption, custom copy/move constructor bodies, implicit
+  signature conversions, or C++ API parity such as allocator customization and
+  small-buffer optimization. General typed brace expressions remain a separate
+  language limitation; named brace declarations and parenthesized construction
+  support the approved wrapper surface. These are not unfinished requirements
+  of the agreed callback API. A newly demonstrated valid-source composition
+  failure must still be reduced and fixed rather than hidden by an exclusion.
+- **Historical implementation record:** the following checkpoints describe
+  incremental work and its then-current limitations. Statements that a later
+  implemented wrapper feature was missing are historical, not additional open
+  gates. Their individual test results do not substitute for fresh combined
+  production or installed-consumer evidence.
+  Unqualified signature metadata `R(Args...)` was added
+  across AST, semantic aliases/generic arguments, lowered type representation,
+  compiler queries, and Tree-sitter. Dedicated tests cover invalid object use,
+  MIR runtime-value rejection, formatting, and executable generic tags. This
+  prerequisite does not deliver owning callback storage.
+  Fixed-arity signature deduction now reuses ordinary generic inference,
+  including `void` result arguments/defaults and exact reference components.
+  Concrete class aliases are revalidated after substitution. The pointer-copy
+  failure proof distinguishes opaque `void*` value transport from forbidden
+  pointee operations. Generic classes now retain one final type pack, form
+  `R(Args...)`, and forward the exact list into another class pack, including
+  empty and reference-metadata cases. Concrete identities are flattened before
+  HIR and reference storage remains checked independently. Owner-pack by-value
+  methods now use the receiver's prescribed signature for ordinary/operator()
+  calls and virtual dispatch. HIR signatures are independent of source argument
+  grouping, including empty packs; MIR retains per-element ownership and cleanup.
+  The ordinary exact generic matcher now deduces final signature/nominal tails,
+  including metadata-only function packs, explicit and repeated-pack agreement,
+  constraints, and symbolic forwarding. It shares its diagnostic and candidate
+  paths. Headerless signature-pattern primaries now support aliases, exact
+  repeated/fixed components, empty packs, ordinary and owner-pack methods,
+  and symbolic forwarding with concrete revalidation. This is primary
+  decomposition, not competing class-pattern selection. Constructor owner packs
+  and borrowed signature argument packs remain prerequisites for the full
+  owning wrapper.
+  The retained-field invocation slice now records an exact symbolic field
+  requirement, rechecks its concrete target, and emits ordinary MIR invocation
+  through source-generic owner representations. Focused tests pass for repeated
+  read calls, mutable nominal targets, scalar and owned captures, exact result
+  rejection, and normal exactly-once cleanup across C++20/C++23 O0/O1/O3.
+  Capture-destructor failure now uses an explicit MIR aggregate recipe and a
+  status-returning environment cleanup representation. The original regression
+  passes C++20/C++23 O0/O1/O3, no-elide, and ASan/UBSan: caller cleanup drains
+  after one capture failure, and a second failure preserves both records.
+  The expanded gate passes 120 executions across those eight modes, including
+  direct and stored two-capture closures, reverse destruction, first/second
+  capture failure, body failure, and double cleanup failure. Focused mutations
+  reject forged capture indices, missing/reordered children, missing destructor
+  targets, and erased failure effects. The five existing callable ownership
+  tests also pass.
+  The next minimal client is a source-defined `Model<T> : Invoker` retaining
+  `T callback`, allocated with `make_unique<Model<T>>(std::move(callback))`
+  and upcast to `unique_ptr<Invoker>`. A generic factory returning that owner
+  now reaches its concrete factory body: otherwise ordinary direct by-value
+  generic parameters have an owned-entry contract, independent of return syntax.
+  Multi-statement and branching factories use the existing value/loan/lifecycle
+  rules, with exact entry-state and cleanup mutations covered. The 120-case
+  capture matrix also passes through a multi-statement owning factory. Existing
+  confined contracts and implicit-transfer rejection remain intact.
+  The broader ownership suite exposes the pre-existing
+  `testCompleteRangeConceptsAndAlgorithms` fixed-array-reference rejection
+  (three assertions); disabling owned-value discovery reproduces the same
+  diagnostics. Preserve that failure for the full integration gate rather than
+  treating the focused callable evidence as a green whole-suite result.
+  Final by-value pack forwarding now preserves per-element owned contracts with
+  flattened argument indices, including a fixed prefix and interleaved ordinary
+  values. Copyable closures get fresh prepared lifetimes; move-only closures
+  transfer their entry lifetimes and cannot be forwarded twice. MIR mutations
+  reject forged element indices, traits, entry cleanup, and copyability. The
+  native representation uses exact pack-index type aliases, tuple argument views,
+  explicit transformed-call type arguments, and real prepared closure slots.
+  The extended callback matrix passes 160 executions / 24 native builds across
+  C++20/C++23 O0/O1/O3, no-elide, and ASan/UBSan, including pack cleanup, body
+  failure, first cleanup failure, and primary/secondary failure preservation.
+  Focused stored-callable/signature suites and the six existing callable tests
+  pass; variadic storage/vector, unique allocation, and polymorphic upcast tests
+  also pass. No public wrapper is delivered by these prerequisites.
+  Concrete `unique_ptr<Model<T>>` factories now compile and execute through
+  ordinary source-defined allocation. Exact explicit generic arguments retain
+  body-local overlays, and nested owners/references preserve the unnameable
+  closure type. Both passive and move-only captured models have native evidence;
+  the heap-owned failure fixture checks normal cleanup, body failure, first
+  cleanup failure, and double failure with exact capture/caller order.
+  The expanded 216-execution / 24-build matrix passes C++20/C++23 O0/O1/O3,
+  no-elide, and ASan/UBSan (236 seconds); focused signature and stored-callable
+  suites also pass, including rejection of a forged allocation type argument.
+  At that checkpoint, a factory returning its call directly failed representation when
+  fallible parameter cleanup separates that call from Return; the multi-statement
+  factory with a local result and explicit move worked. The subsequent pending
+  result-lifetime work below addresses that gap. The heap fixture computes its scalar argument
+  before borrowing the receiver: a short-circuit/conditional argument evaluated
+  after an owner-borrow receiver also exposes an incomplete staged-loan CFG path.
+  Nominal generic owning-carrier parameters now receive the ordinary owned
+  entry contract, so `upcast_unique` no longer rejects a closure-containing
+  owner merely because the parameter is not a direct type parameter. MIR
+  follows its exact prepared move and independently verifies the prepared
+  lifetime. Focused mutations reject a copied stage, removed activation,
+  wrong argument index, and erased source ownership event. Bodyless transport
+  still reports `GTI-S2046` at the argument with updated owning-carrier wording.
+  Generic-owner virtual failure-family discovery now uses its template overlay,
+  and unnameable owners no longer also emit placeholder concrete definitions.
+  A native virtual bridge is emitted from the verified status body. It now
+  preserves source result/pack spellings for closure-bearing owners whose
+  represented instances share one concrete signature. Multiple signature
+  variants still require a complete native representation.
+  The standalone passive erased-owner consumer builds and runs at C++23/O0,
+  C++20/O3, and C++23/O1 with ASan/UBSan. Focused stored-callable and signature
+  tests pass, including the active factory's body representation check; the
+  seven selected ownership checks (owned transport, confined parameters and
+  results, callable member and consuming operators, lambdas, and polymorphic
+  unique-owner upcast) also pass. This is not a passing erased-capture cleanup
+  matrix or a complete owning wrapper.
+  A returning factory can now represent multiple definitely moved-from cleanup
+  continuations. The new active-capture erased regression gets past that
+  factory but initially failed direct result publication inside `upcast_unique`:
+  the owner's method empties a field, which does not make the whole parameter's
+  remaining drop statically inactive. Do not silently rewrite the standard
+  library to hide this general result-publication/rollback gap.
+  The expanded invocation fixture additionally combines heap and erased models
+  and moves a callback through nominal carriers. Its allocation-template merge
+  rejection is fixed: closure-bearing free-function instances now keep distinct
+  artifact-local native symbols and exact MIR bodies, including different
+  selected constructor tags. Native templates carry physical types only; they
+  no longer merge the free-function instances by parameter-cleanup shape.
+  Focused tests reject forged instance signatures/identities and check agreement
+  between emitted declarations and call rows. The invocation fixture passes all
+  eight C++20/C++23 O0/O1/O3, no-elide, and ASan/UBSan modes.
+  The pack fixture now mixes empty, single-closure, mixed passive, and
+  active-capture packs of the same free declarations. Its 40 native executions
+  pass the same eight modes with exact cleanup order and failure records.
+  The expanded failure fixture retains seven erased-owner cleanup cases.
+  Direct publication inside `upcast_unique` now
+  compiles: MIR v72/body v62 retain a `ReturnResult` lifetime from completed
+  operand construction through fallible callee cleanup, retiring it only at
+  final publication or on failure. The backend places direct/moved/constructed
+  class results in caller storage and follows the exact rollback schedule;
+  wrapped `expected` values and storage handles also retain correct cleanup.
+  The focused regression passes 136 native executions across C++20/C++23
+  O0/O1/O3, no-elide, and ASan/UBSan. Static mutations, signature tests, and the
+  lifecycle emitter suite pass. No library function was rewritten to avoid the
+  return rule. MIR v73/body v63 now retain dynamic polymorphic owner cleanup.
+  Typed allocation binds the complete object's verified recipe before owner
+  publication, and upcasts preserve it. The expanded runtime gate passes all
+  272 executions across the eight modes, including failing erased captures,
+  remaining caller cleanup and both failure records. Static mutations reject
+  missing dynamic dispatch and missing pointee identity. A separate ordinary
+  polymorphic-object regression passes 48 executions across those eight modes:
+  declared destructors, reverse field cleanup, primary/secondary failures and
+  assignment preserving allocation metadata. Constructed fields now reuse the
+  passive-interface-base proof; active bases remain excluded from hoisting.
+  Lambda invocation now expands concrete by-value argument packs with exact
+  semantic checking, an explicit HIR receiver, and MIR receiver/argument
+  staging. Native emission reads that receiver without copying its environment.
+  Owner-pack constructor overlays preserve the concrete binding identity, and
+  template member bodies project flattened MIR arguments into native packs.
+  Local empty/multi-argument calls and the first generic erased signature model
+  pass 16 executions across all eight native modes; focused static suites pass.
+  This is not yet arbitrary signature composition or the public wrapper API.
+  Exact void expression returns now lower through the ordinary MIR evaluation,
+  failure and cleanup schedule without a result operand; the verifier rejects
+  a forged value/loan on void Return. The new 48-execution runtime matrix passes
+  all eight native modes, including generic callable-parameter forwarding,
+  temporary/parameter/local cleanup and primary/secondary failures. A passive
+  copied closure passed to a generic pack now materializes one native type;
+  the call no longer creates a second incompatible lambda literal.
+  Erased void status calls now preserve the symbolic declaration's unused
+  result slot, with virtual-root/override representation agreement checked.
+  Concrete inherited packs expand before override signature comparison.
+  Member families select verified MIR variants by exact nameable signatures
+  and cleanup shape, rejecting ambiguous or unrepresented variants.
+  The void and mixed-signature reproducers now pass in the expanded
+  32-execution signature matrix across all eight modes. This also exposed and
+  fixed the default polymorphic allocation helper's missing cleanup binding;
+  explicit constructor allocation already carried that binding.
+  The cloning client `tests/fixtures/stored_callable_clone.gti` passes all eight
+  modes in the expanded 40-execution signature matrix: independent cloning, empty cloning, reset,
+  replacement, multiple distinct closure identities, and int/void/mixed-argument
+  signatures. Ordinary closure arguments now use prepared copy/move lifetimes;
+  constructor-local template overlays retain exact substitution, signature and
+  identity checks. Constructor-local failure cleanup and replacement of a
+  completed owning field preserve ordinary MIR rollback. The expanded
+  constructor test passes 70 cases across C++20/C++23 O0/O1/O3 and ASan/UBSan,
+  including local cleanup failure and secondary field cleanup failure.
+  Virtual class results use uninitialized result slots. Materialized closure
+  environments carry private MIR identity selectors so member bodies targeting
+  different concrete helpers are not merged solely by call signature.
+  The 272-case stored-callable matrix and 48-case void-return matrix pass again.
+  Exact-field callable transport now composes with an unpublished return result:
+  failure-only cleanup is not treated as a second successful use, and the
+  transfer proof follows the exact reparenting through final publication.
+  Focused ownership regressions and mutations reject missing reparenting,
+  missing publication and an invalid cleanup phase. The expanded return-result
+  matrix passes 160 executions, including normal and primary/secondary-failure
+  cleanup of a moved captured callback inside a returned owner.
+  Source-defined `std::function` and `std::move_only_function` now have an
+  unqualified, repeatable read-only subset in `<std/functional>`. The public
+  consumer retains a captured callback, deep-clones it, transfers it through a
+  setter, resets/replaces it, calls a void callback and retains a move-only
+  capture. This does not complete receiver-qualified signatures, reference
+  packs, namespace function storage, broader failure coverage or editor and
+  installed-consumer gates. The full library manifest gate also still reports
+  the pre-existing stale `forward_list` fingerprint; do not claim it passes.
+  The public-wrapper eight-mode runtime matrix passes after the immutable
+  template-plan cache change; the focused ownership, stored-callable and
+  signature gates also pass. Concrete parameter packs now accept exact
+  read-only reference elements, with ordinary matching, HIR borrow roles,
+  MIR element projections and no transfer/drop of the referent. Lambda
+  invocation consumes those staged borrows using the ordinary call-site/index
+  and invoke-success-chain checks. Public callbacks now cover scalar and
+  noncopyable object borrows, mixed signatures, repeated expansion and clones;
+  malformed-MIR and LSP tests cover the same boundary. The two-fixture runtime
+  matrix passed 16 executions across eight configurations. Namespace function
+  items now retain their exact nominal identity through locals, generic return,
+  captures, source-defined model fields, clone and replacement. Their value-pack
+  transport uses passive stages, not closure cleanup. Callee-producing effects
+  stay before arguments in MIR, and a field-held namespace function does not
+  acquire a method receiver. The three wrapper fixtures pass 24 native runs
+  across eight configurations. Parenthesized constructors now resume deferred
+  value arguments in source order before inference; the prior unresolved
+  function name no longer reaches MIR as an unknown value. A nested immutable
+  command schema retains and invokes an owned leaf callback. That schema and
+  a generic constructor-order regression pass another 16 native runs, including
+  sanitizers. The six focused semantic/tooling gates pass. Mutable reference packs now
+  preserve per-element entry loans, exact forwarding and non-escape through
+  HIR/MIR and erased interface dispatch. `void(mut int&)` uses ordinary GTI
+  parameter access syntax; mixed references pass the eight-mode native matrix.
+  Invalid aliasing and forged loan access/escape/duplication are rejected.
+  Copied passive lambda arguments use the existing ordered copy-staging storage
+  instead of being deferred to the native argument list.
+  The mutable-reference failure fixture passes 16 success/failure runs across
+  eight native configurations with exact capture/caller cleanup. Stable peer
+  borrow stages also compose with a later scalar conditional argument.
+  Signature syntax now accepts trailing `mut` and
+  `&&`, retaining exact receiver identity through aliases, generic deduction,
+  patterned primaries, serialization, and native metadata types. A source-defined
+  qualified mutable wrapper erases a retained counter behind an interface and
+  preserves state through repeated invocation and movement. Its runtime fixture
+  and a three-qualifier deduction fixture pass 16 executions across all eight
+  native modes, including exactly-once target destruction. A public
+  `move_only_function` temporary-target regression passes another eight runs.
+  Generated default construction no longer rejects a source destructor when
+  the independent initialization and exact active-cleanup transfer proofs hold.
+  Exact receiver-family selection now retains distinct class/member identities
+  through aliases, generic forwarding, and concrete specialization. Public
+  `std::function<R(Args...) mut>` and `std::move_only_function<R(Args...) mut>`
+  use source-defined mutable interface models; clone, replacement, reset,
+  movement, and target destruction are covered by the mutable fixture.
+  Consuming-owner invocation and consuming public wrappers now have focused
+  execution evidence below; final campaign integration remains unfinished.
+  The nominal consuming-receiver slice now retains the Move's Value obligation
+  in the caller until its enclosing full expression ends. The receiver stage
+  no longer transfers that obligation through `preparedParameterDrops`;
+  invocation aliases the materialized slot. MIR mutations reject erased
+  full-expression identity, duplicate executable input use, missing activation,
+  and invocation transfer. The lifetime/failure fixtures passed 88 executions
+  across eight native modes, including argument/body/later-sibling failure,
+  reverse temporary cleanup, and primary/secondary failure preservation.
+  Moved-out generic receiver fields now compile after field aliases and stores
+  adopted the existing consuming-or-mutable receiver capability; their matrix
+  passed another 16 executions across the same eight modes. Read/mut fallback
+  representations have focused checks.
+  Cleanup-owning local lambda receivers now use the same retained Value slot;
+  the lifetime/failure fixtures passed 88 executions across eight native modes,
+  including failing capture destruction and primary/secondary preservation.
+  Verifier mutations reject lost full-expression identity, activation, and
+  invocation transfer; a source negative rejects later reuse of the lambda.
+  Exact generic by-value invocation passed another 24 executions across the
+  same modes, distinguishing its callee-local receiver cleanup from the
+  caller's later argument evaluation. Pack-expanded owning invocations now
+  retain a `MoveValue` receiver stage without transferring cleanup. A separate
+  single-use proof preserves cleanup-free materialized closures through their
+  ordinary value stage. The pack fixture passed another 24 executions; the
+  combined lambda runtime CTest passed all 136 executions. Focused consuming
+  ownership, direct/staged lifetime verifier mutations, and signature LSP
+  checks also pass. Nested generic callable results now receive the exact
+  selected outer parameter context instead of defaulting to void. The argument
+  and its suffix remain deferred until selection and are analyzed once in
+  source order. Constructor, lambda, function-item, and concrete call-operator
+  consumers use the same mechanism; explicit outer generic arguments and
+  overload selection from earlier typed arguments are covered. Ambiguous
+  contexts and wrong concrete callback results remain errors, and deferred
+  results do not infer otherwise-unresolved outer type parameters. Nested
+  callable emission also shares the ordinary prepared-receiver handoff rule
+  and admits proven frozen local closure chains inside generic functions.
+  The two nested fixtures add 48 executions across all eight native modes;
+  the expanded six-fixture runtime CTest passes all 184 executions. The fresh
+  static suite rejects forged receiver call-site and local-closure capture
+  metadata, and signature LSP and backend text checks pass.
+  A delegated pure-GTI CLI consumer exposed two additional reduced blockers:
+  `/private/tmp/gti-vector-duplicate.gti` reproduces duplicate concrete vector
+  constructors when hosted argv and ordinary fields instantiate vector<string>;
+  `/private/tmp/gti-discard-nominal.gti` reproduces GTI-B0001 when discarding a
+  fallible scalar-only nominal result. Hosted constructor enqueueing now keeps
+  owner arguments in the constructed type rather than constructor-local
+  arguments. HIR/MIR verifier mutations and all eight direct native modes pass;
+  the corrected runtime gate now passes all 16 direct runs plus dev/release
+  package runs. The unused cleanup-free result uses a proven no-alias MIR
+  result slot, retired after successful publication; its full eight-mode
+  success/failure matrix passes all 24 runs. The prior load-related timeouts
+  were followed by successful reruns. The full 47-test lifecycle suite passed
+  before the subsequent ordinary-constructor staging change, including
+  active-cleanup and borrowed-state rejection mutations.
+  The CLI package remains at
+  `/private/tmp/gti-cli-native` with its workarounds intact. Further reported
+  cases include borrowed-view results through
+  aggregate storage, constructor-body vector mutation/rollback, and composing
+  unsigned-option registration with signed result retrieval; those
+  still need reductions and verification.
+  The nested fallible nominal-argument reduction now compiles. The shared MIR
+  failure predicate routes cleanup-free class calls even in nested positions;
+  resolved nominal call operators use exact argument/local result slots.
+  Stable bare-local receiver staging also covers conditional arguments around
+  nested read calls with scalar inputs and cleanup-free nominal results. The
+  callback/constructor regression passes 40 native runs and its destructor-owned
+  callback companion passes 24, across eight modes. Failure routing, activation,
+  and capability mutations pass, as does the full 48-test lifecycle suite.
+  Concrete callable adapters now declare friends inside their owners and define
+  their forwarding bodies after type layouts. A separate namespaced fixture
+  returning a class that stores its callable exercises this dependency cycle
+  and named result publication; all eight native modes pass. Read-only, mutable,
+  and receiver-family callback fixtures pass another 24 native runs after the
+  adapter change, and the owning-wrapper static/production-emission suite passes.
+  Retained native primary-template adapters now spell signature types through
+  an owner-dependent exact-type identity while preserving inline ADL friends.
+  Read, mutable, and consuming targets with later concrete class parameters and
+  results pass emitted-text checks and 32 native runs across eight modes.
+  A declared result constructor relying on a default-initialized passive class
+  field now publishes an explicit This-field Initialize even without active
+  cleanup. The verifier requires that stage, and the backend consumes its exact
+  generated-default/field/boundary schedule. The callback fixture observes a
+  scalar declaration default through the result rather than testing only an
+  empty owner; its eight-mode rerun and the copied-field regression pass 16
+  executions. The expanded 49-test lifecycle suite, owning-wrapper type checks,
+  and emitter census pass. Fresh class arguments followed by inline conditional
+  arguments now retain exact constructor failure edges and prepared-result
+  publication. The 40-case callback matrix and refreshed 32-case generic adapter
+  matrix pass in all eight native modes. The same prepared-argument context is
+  retained for fixed arguments preceding a pack expansion; its separate mixed
+  owning/passive regression passes all 32 executions across those modes.
+  Direct owned class returns through virtual erased dispatch and stored lambda
+  invocation now use exact MIR-proved caller placement. Public wrapper resource,
+  unique-owner, and string result fixtures pass 72 executions across all eight
+  modes, including producer and later caller failure. This is not completion of
+  generic/owned callable composition or the remaining consuming-wrapper contract.
+  Gitea #9's two inline owned `expected` payload extractions now retain the first
+  prepared payload through the second extraction's CFG. Exact cleanup and partial
+  move rejection pass 32 native runs plus eight independent MIR/representation
+  mutations. No source-language ownership rule or wrapper-name shortcut changed.
+  Fresh owning closure literals now reparent their exact value lifetime into
+  prepared argument storage, and native emission constructs the closure at its
+  represented creation step. The verifier distinguishes lifetime metadata from
+  executable aliases; mutation tests reject forged ownership transfer. Abstract
+  generic virtual roots now retain their failure-ABI declaration even without a
+  concrete override. The generalized read/mutable fixture passes 16 native cases
+  across eight modes. The full 52-test lifecycle suite and focused owning-wrapper,
+  census, abstract-contract and expected-payload mutation gates pass. The new
+  public-wrapper empty invocation, allocation/clone/replacement failure and
+  successful replacement/reset matrix passes all 64 cases across those eight
+  native modes. No installed or released completion is claimed.
+  The complete existing read/mutable wrapper runtime matrix now passes all
+  104 outcomes across the same eight modes. The fresh owning-lambda/later-
+  argument failure regression adds 16 passing outcomes. Program-plan admission
+  no longer reruns whole-program MIR verification for every initializer probe;
+  operation-scoped counter and stale-input mutations, full preflight/text/
+  lifecycle suites, emitter census, and owning-wrapper type checks pass.
+  Three preflight shape expectations from earlier lowering changes were
+  reconciled while retaining equivalent positive and negative coverage. This
+  improves iteration speed without completing the consuming-wrapper contract.
+  A delegated keyring package at `/private/tmp/gti-keyring` also reports an
+  `expected<void, error>` wrapper emission failure after an extern-C call with
+  string views and an output pointer; that case is recorded but not yet reduced.
+  Public consuming models must preserve erased target ownership
+  and field-state rules; this is not completed by admitting nominal receivers.
+  Virtual, pure, and interface consuming operators now reuse exact override
+  checking and the existing MIR virtual-dispatch/failure ABI. A moved concrete
+  implementation passed 24 executions across eight native modes, plus exact
+  capability and mismatch checks. The independent
+  `consuming_polymorphic_receiver.gti` reproducer still fails at the borrowed
+  pointee move; declarations are no longer its blocker. Do not relax generic
+  `Dereference` ownership or recognize a public wrapper by name to admit it.
+  The semantic place path currently labels overloaded dereferences generically,
+  while `BorrowOriginPlace` retains exact paths only for global/static origins;
+  receiver/argument return origins do not establish owned-pointee provenance.
+  **Consuming-wrapper lifetime decision accepted:** in
+  `combine(std::move(callback)(), later())`, remaining captured state stays alive
+  through the outer full expression, matching ordinary consuming receivers.
+  The user selected this policy on 2026-09-28. Implementation requires reusable
+  owned-receiver projection/dispatch and retained cleanup authority; destroying
+  the target at the inner invocation's return would not meet this contract.
+  It must not move through an ordinary borrow, leave a reusable receiver
+  partially moved, or bypass MIR lifecycle/failure schedules. This decision
+  records intended behavior, not completed consuming-wrapper support.
+  Ordinary nominal `Owner<Callable>::operator()() &&` forwarding through
+  `std::move(this.callable)()` now retains the field in its outer receiver.
+  Semantics authorizes only exact immediate invocation (including grouping),
+  and HIR/MIR distinguish consumed availability from physical transfer.
+  `CallInput(Receiver, RetainedReceiver)` leaves cleanup authority unchanged.
+  The new single/nested/extraction runtime matrix passes all 72 outcomes across
+  eight native modes, including invocation and later-argument failure. Plain
+  extraction still owns a callee-local lifetime. Reference-returning fallback
+  targets are rejected before HIR. Replacement and failure cleanup pass another
+  24 outcomes. The consuming-receiver suite (including 19 new malformed-MIR /
+  native-prologue proof mutations), 52-case lifecycle suite, 24-case preflight
+  suite, emitter census, and 128-outcome consuming runtime matrix pass.
+  Stored lambda fields now carry that checkpoint for fixed arguments and packs;
+  the consuming-receiver suite passes with 12 additional malformed-capability /
+  exact-lambda-identity mutations and repeated-use negatives. A minimal native
+  capture program proves invocation/later-failure cleanup timing. The full
+  fixed/pack, single/nested runtime matrix now passes 96 outcomes across all
+  eight native modes. Generic constructors compare executable representation
+  without no-op publication comments; unnameable generic destructors retain
+  checked primary-template body adapters with distinct instance cleanup recipes.
+  The independent representation suite passes, including 32 forged cleanup-form
+  and owner-overlay cases, an admitted distinct-body grouping rejection, and
+  a source rejection for destructor re-consumption. Lowered-program contract,
+  C++ plan, and representation-snapshot suites pass. The public read/mutable
+  callback matrix timed out after its six standard/optimization modes; both
+  remaining modes passed when resumed independently (104 outcomes across the
+  combined runs). The default eight-mode gate remains unchanged.
+  Uniquely owned erased pointee dispatch is now implemented through an exact
+  receiver-relative owned-pointee summary rooted in the declaration-bound
+  private unique-owner borrow operation. Arbitrary borrows/dereferences acquire
+  no capability. Ordinary receiver-derived references remain insufficient
+  evidence. The accessor-side proof is represented independently as
+  `OwnedPointeeProjection`: semantics identifies a direct receiver field ending
+  in the private unique-owner capability, concrete HIR preserves that identity,
+  and MIR reconstructs the checked borrow/return body. The first slice covers
+  only a nonvirtual, zero-argument, single-return accessor over one direct field;
+  it does not grant general reference consumption. Caller-side retained invocation
+  preserves the accessor's actual temporary CallResult loan for
+  execution, consumes availability of the whole owning wrapper field, and retains
+  that field's physical cleanup. There are no synthesized caller accesses to
+  private wrapper storage or exemptions for other live loans.
+  Accessor proof validation passes four concrete standard/renamed-owner cases
+  and 69 malformed-summary/body/declaration checks, plus all eight ordinary
+  accessor native modes including sanitizers. Existing consuming-receiver and
+  owning-function type suites pass. `consuming_polymorphic_receiver.gti` now
+  executes through the retained capability. Source-defined public
+  `function<R(Args...) &&>` and `move_only_function<R(Args...) &&>` use it,
+  including clone, owned captures, and function items. The expanded 80-outcome
+  native matrix passes all eight modes, with target failure, later-argument
+  failure, empty-owner failure, and primary/secondary destructor failure
+  preserving the accepted full-expression capture lifetime. It includes fresh closure construction,
+  mutable/read-only borrowed arguments, and nominal/unique-owner results.
+  The public allocation-policy matrix passes 96 outcomes with consuming
+  empty invocation, allocation failure, and clone-allocation failure.
+  Editor hover retains consuming signatures and shared diagnostics reject
+  missing moves and repeated invocation, clearing after corrected edits.
+  A fresh cleanup-free closure constructor argument now uses its MIR prepared
+  Initialize schedule, not an invented source-value drop or deferred native
+  argument evaluation. Focused structural checks cover that publication and
+  malformed schedules.
+  Direct destructor re-consumption is rejected by existing receiver tracking;
+  this does not establish a general cross-body rule for destructor reads after
+  physical field extraction, which still needs a separate ownership audit.
+  Ordinary constructors now share the call-input preparation/rollback path
+  with functions and pack-expanded construction, rather than transferring
+  argument ownership before later inputs are evaluated. The original
+  `consuming_receiver_fields_temporaries.gti` now compiles and runs through
+  existing prepared-slot emission, without a new backend shortcut. A new
+  fixture covers first/second argument, later scalar, and constructor-body
+  failure; all 48 runtime executions across the eight native modes pass.
+  The consuming-receiver suite passes, including new mutations for missing
+  preparation, early handoff, and missing invocation transfer. The borrowed
+  temporary construction emitter test now verifies prepared-slot retirement
+  while retaining its activation, cleanup, and access mutations. The fresh
+  full lifecycle suite (47 cases), emitter census, and owning-wrapper static
+  suite pass. Public command-schema and mutable-reference callback failure
+  regressions pass another 24 runs across all eight native modes. Copied
+  constructor-pack reuse passes eight additional runs. The non-failing owning
+  declaration default in `CleanupMutableFallback` now uses its exact
+  Construct/Initialize, Reparent, and field handoff schedule. A focused emitter
+  gate rejects four broken lifecycle schedules; its generated-constructor
+  receiver lifetime fixture passes all eight native modes. Public consuming
+  by-value resource arguments also pass all eight modes with exact cleanup.
+  Retained-owner member-template pack variants now preserve explicit concrete
+  type arguments even when only the owner contains a closure. Selectors guard
+  exact pack arity before forming indexed closure types and compare dimensions
+  within that arity family. The combined empty/scalar/passive-closure/owning-
+  closure/mixed-pack fixture passes all eight native modes, including reverse
+  parameter cleanup. Same-arity cleanup variation was already supported; the
+  fix preserves its canonical-body equality checks. The production integration
+  gate must now validate the combined result-publication, polymorphic,
+  staged-loan, and other callable-boundary cases rather than treating these
+  earlier three reproductions as unresolved. Do not whitelist any wrapper or
+  allocation function or infer a new AST shape.
+  The first combined Release/Ninja production run completed all 275 CTest
+  registrations: 223 passed and 52 failed. This is a failing integration gate,
+  not delivery evidence. Grouped repairs cover prepared callable/borrowed
+  argument lifetimes, concrete-owner selector substitution, generic array
+  parameter preservation, constructor field publication, and stale diagnostic
+  or representation assertions. The managed-task ownership, callback signature,
+  optimizer, generic-owner callback, lambda-pack invocation, and stored-reference
+  constructor regressions have subsequently passed focused checks. Remaining
+  backend/corpus failures, updated full-suite evidence, loopback HTTP validation
+  outside the restricted sandbox, and installed consumer checks still block
+  completion. Do not refresh corpus baselines to conceal rejected examples.
+- **Installed-consumer evidence (2026-09-28):** the fresh Release/Ninja build
+  installs as the `gti_toolchain` component into a clean prefix. A separate
+  Release/Ninja consumer configured against that prefix passes all nine
+  exported-library tests. Outside the repository, with `GTI_STDLIB_PATH`,
+  `GTI_RUNTIME_INCLUDE`, `GTI_RUNTIME_LIBRARY`, and `GTI_VENDOR_INCLUDE` unset,
+  the staged CLI builds and runs the recursive callback schema and owned
+  Expected-result fixture at C++20/O3, and the consuming-capture lifetime
+  fixture at C++23/O0. Exact outputs and exit statuses match their regressions.
+  The staged LSP passes signature tooling and executable-entry diagnostics.
+  These checks are independent of the combined suite and local installation.
+- **Combined completion evidence (2026-09-28):** the full Release/Ninja build
+  uses all 12 detected CPUs. `ctest --test-dir out/neovim-local-build
+  --parallel 4 --output-on-failure` passes 294/294 tests in 1055.98 seconds,
+  including generic/owned transport, allocation and cleanup policy,
+  setter/schema workflows, malformed MIR, C++20/C++23 O0/O1/O3/no-elide/
+  sanitized execution, and editor behavior. The seven failures from the
+  preceding 292-test run were repaired and passed focused reruns before this
+  fresh combined pass. Tree-sitter passes 63 corpus cases, highlight checks,
+  and parsing of 129 shipped sources; clang-format checks all 363 files.
+  `scripts/install_neovim_local.py` succeeds with 12 build jobs, verifies the
+  archive and Neovim integration, and installs GTI 0.346.0 locally.
+  The optional, non-gating full audit passed its contract, generated,
+  composition, malformed-source, and numbered-example checks but could not
+  run the intentionally deleted `examples/gti-vs-cpp/verify.py`; that deletion
+  is preserved and the optional audit is not claimed wholly green.
+- **Publication:** the user approved including the other tasks' work in the
+  combined publication on 2026-09-28. `VERSION` advances to 0.346.0; the
+  canonical Gitea `main` push initiates the stable release workflow. Successful
+  dispatch is the delivery endpoint, not completion of asynchronous packaging
+  or cross-host CI. Implementation, production verification, and local
+  installation are complete.
+
 ### L-RANGE-04: Foundational Range Algorithms
 
 - **State/role:** substantially implemented; `L-RANGE-03` is complete. The
@@ -4009,18 +4655,20 @@ consumer, and release refreshes remain outstanding for the full campaign.
 
 - **State/role:** in progress. Canonical base-10 conversion and direct stdout
   output are implemented for every fixed-width integer. Bounded sequential
-  `{}` replacement for heterogeneous integral packs is also implemented in
-  ordinary GTI through `std::format`, `std::try_print`, and
-  `std::try_println`; malformed patterns and argument-count mismatches return
-  `format_errc` before output. The source-text contract sub-slice is complete.
-  This integral replacement slice is no longer blocked on `L-RANGE-03` or the
-  remaining `L-CALL-01` work: indexed counted text, a bounded call-pack fold,
-  and scalar byte output are sufficient. Dynamic borrowed views, generalized
-  formatter customization, and range-oriented text algorithms still take
-  their applicable range/callable prerequisites rather than being inferred
-  from this fold. All are systems-readiness work. Each implemented float width
-  joins formatting/parsing in its own numeric sub-slice rather than blocking
-  the whole text layer.
+  `{}` replacement is implemented in ordinary GTI for heterogeneous booleans,
+  characters, fixed-width integers, binary32 floats, string views, and
+  explicitly transferred owning strings through `std::format`,
+  `std::try_print`, and `std::try_println`; malformed patterns,
+  argument-count mismatches, and unsupported arguments return `format_errc`
+  before output. The source-text contract sub-slice is complete. This
+  replacement slice is no longer blocked on `L-RANGE-03` or the remaining
+  `L-CALL-01` work: exact source-defined argument adapters, indexed counted
+  text, a bounded call-pack fold, and scalar byte output are sufficient.
+  Generalized formatter customization and range-oriented text algorithms still
+  take their applicable range/callable prerequisites rather than being
+  inferred from this fold. All are systems-readiness work. Each additional
+  float width joins formatting/parsing in its own numeric sub-slice rather than
+  blocking the whole text layer.
 - **Implemented source-text sub-slice:** Source units are strict UTF-8 with one
   optional byte-zero BOM, exact byte identity/offsets, LF or CRLF input, LF
   formatter output, ASCII identifiers/tokens, and Unicode scalar values in
@@ -4030,14 +4678,16 @@ consumer, and release refreshes remain outstanding for the full campaign.
 - **Remaining scope:** State the public runtime byte/UTF-8 policy,
   owning/view conversions, numeric parsing, formatting, and explicit failure.
   Prefer ordinary GTI algorithms and narrow host calls over exposing C buffers.
-  The current formatter recognizes sequential `{}` plus `{{`/`}}`, accepts
-  integral arguments only, and validates before stdout; indexing, names,
-  specifiers, float arguments, and customization remain later breadth.
+  The current formatter recognizes sequential `{}` plus `{{`/`}}` and
+  validates before stdout; indexing, names, specifiers, binary64 arguments,
+  and customization remain later breadth. Named move-only strings use an
+  owner-tied view because GTI does not yet admit `Args&...` reference packs.
   Recoverable counted stderr output is now supplied by `L-HOST-01`.
 - **Implemented binary32 text sub-slice:** `std::to_string(float)` plus the
-  `std::print`/`std::println` binary32 overloads render an optional sign, the
-  integer part, a point, and exactly six fractional digits, with `nan`, `inf`,
-  and `-inf` for non-finite values. The digits are the stored value's *exact*
+  `std::print`/`std::println` binary32 overloads and the matching
+  `std::format` adapter render an optional sign, the integer part, a point, and
+  exactly six fractional digits, with `nan`, `inf`, and `-inf` for non-finite
+  values. The digits are the stored value's *exact*
   decimal expansion, rounded to nearest with ties to even at the sixth place,
   produced by ordinary
   GTI arithmetic with no host call and no wider-float round trip: a magnitude
@@ -4046,13 +4696,12 @@ consumer, and release refreshes remain outstanding for the full campaign.
   binary64, where a binary32 fraction times ten needs at most 28 significant
   bits and is therefore exact. Output is pinned byte-for-byte against C's
   `printf("%f", (float)x)` across O0/O3 and C++20/C++23.
-- **Named next sub-slices:** binary64 text (its own numeric sub-slice, since a
-  binary64 fraction times ten is not exact in binary64), float parsing, and
-  float arguments to `std::format`. The last is blocked on a dispatch
-  mechanism rather than on formatting: `std::format` constrains its pack to
-  one capability. `integral || floating_point` is now expressible, but with no
-  type predicate for `if constexpr` a single generic body still cannot select
-  between the integral and binary32 conversions.
+- **Named next sub-slices:** binary64 text and formatting (its own numeric
+  sub-slice, since a binary64 fraction times ten is not exact in binary64),
+  float parsing, and public formatter customization. Exact package-scope
+  specializations over one private source adapter closed the former
+  heterogeneous dispatch blocker without compiler recognition of
+  `std::format` or any public string type.
 - **Exit gate:** the selected byte/UTF-8 policy is normative; owning/view and
   numeric round trips cover valid, invalid, boundary, and allocation-failure
   cases; APIs expose no native buffer lifetime and behave identically at O0/O3.
@@ -4060,13 +4709,22 @@ consumer, and release refreshes remain outstanding for the full campaign.
 ### L-HOST-01: Remaining Hosted Services
 
 - **State/role:** active. Counted stdin/stdout/stderr, file open/read/write,
-  seek/tell, and standard-stream flush are implemented through ordinary GTI
-  wrappers over a versioned byte ABI. Remaining independent services are
-  monotonic/wall-clock time and environment access.
-- **Scope:** The remaining systems-ready minimum covers monotonic and wall-clock
-  time and process environment access, one service family per prompt.
+  seek/tell, standard-stream flush, and exact synchronous child-process
+  execution are implemented through ordinary GTI wrappers over versioned
+  runtime ABIs. Exact signed-nanosecond monotonic and wall-clock observation is
+  also implemented. The remaining independent minimum service is process
+  environment access.
+- **Scope:** The remaining systems-ready minimum covers process environment
+  access.
   Deterministic PRNG plus nondeterministic seed, process arguments, and the
-  bounded I/O family are implemented.
+  bounded I/O family are implemented. The first public process slice owns exact
+  argv without shell expansion, recoverable create/execute/wait errors, and
+  ordinary-exit versus signal status while inheriting the current environment,
+  working directory, and standard streams. Capture/redirection, overrides, and
+  asynchronous child ownership remain client-driven follow-ons.
+  The first chrono slice provides distinct steady/system points, checked
+  elapsed subtraction, and normalized Unix timestamps; calendar, time-zone,
+  formatting, and generic-duration breadth remain client-driven follow-ons.
   Recoverable failures return `expected`; public APIs expose no backend handles
   or raw C buffers. Broader filesystem traversal/watch, connected networking,
   and traffic buffers are client-driven sub-slices after a demonstrated need or

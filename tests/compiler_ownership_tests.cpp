@@ -64,8 +64,9 @@ int main() {
 )");
   expect(frontend.canGenerateCode(),
          "ownership metadata source should pass the frontend");
-  expect(frontend.semantics.bindingCount() == 6,
-         "the semantic model should retain fields, parameters, and locals");
+  expect(frontend.semantics.bindingCount() == 7,
+         "the semantic model should retain six source bindings and the "
+         "struct's generated designated-construction parameter");
 
   const auto *identity = dynamic_cast<const lang::FunctionDecl *>(
       frontend.program.declarations().at(1).get());
@@ -1076,7 +1077,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v60\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v64\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -3069,7 +3070,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v70 ") &&
+  expect(mirDump.starts_with("mir-v74 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -7559,6 +7560,17 @@ int main() {
 }
 
 void testCompleteRangeConceptsAndAlgorithms() {
+  for (const std::string &rejected :
+       {std::string("void invalid(int[3]& values) {}"),
+        std::string("using Triple = int[3]; void invalid(Triple& values) {}"),
+        std::string("using Callback = void(int[3]&);")}) {
+    const auto invalid =
+        lang::Frontend().analyze("array-reference-boundary.gti", rejected);
+    expect(!invalid.canGenerateCode() &&
+               hasDiagnostic(invalid.diagnostics, "References to fixed arrays"),
+           "generic range substitution does not enable explicit or aliased "
+           "array-reference parameters or callback signature metadata");
+  }
   const lang::FrontendResult valid = lang::Frontend().analyze(
       "complete-range-concepts.gti", R"(
 #include <std/algorithm>
@@ -9347,7 +9359,8 @@ int main() {
          "fail");
   expect(
       hasDiagnostic(invalid.diagnostics,
-                    "Cannot return a value of type 'std::unique_ptr") &&
+                    "Cannot return 'widget' by copy because type "
+                    "'std::unique_ptr") &&
           hasDiagnostic(invalid.diagnostics,
                         "Unique owners can only be local bindings") &&
           hasDiagnostic(invalid.diagnostics, "would copy a unique owner") &&
@@ -10810,7 +10823,8 @@ int main() {
   expect(
       hasDiagnosticCode(invalid.diagnostics, "GTI-S2018") &&
           hasDiagnostic(invalid.diagnostics,
-                        "Cannot return a value of type 'Buffer'") &&
+                        "Cannot return 'value' by copy because type 'Buffer' "
+                        "is move-only") &&
           hasDiagnostic(invalid.diagnostics, "Cannot initialize 'copied'") &&
           hasDiagnostic(invalid.diagnostics, "would copy a unique owner") &&
           hasDiagnostic(invalid.diagnostics, "has already been moved") &&
@@ -12251,7 +12265,7 @@ public:
 class NestedCleanupCallable<T> {
   T value;
 public:
-  NestedCleanupCallable(T initial) : value(initial) {}
+  NestedCleanupCallable(T initial) : value(std::move(initial)) {}
   int operator()() && { return 2; }
 };
 
@@ -12277,28 +12291,15 @@ int main() {
 }
 )",
                                {standardLibraryPrelude()});
-  if (countDiagnosticCode(cleanupReceiver.diagnostics, "GTI-S2022") != 3) {
+  if (!cleanupReceiver.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : cleanupReceiver.diagnostics) {
       std::cerr << "Unexpected cleanup-consuming diagnostic ["
                 << diagnostic.code << "]: " << diagnostic.message << '\n';
     }
   }
-  expect(
-      !cleanupReceiver.canGenerateCode() &&
-          countDiagnosticCode(cleanupReceiver.diagnostics, "GTI-S2022") == 3 &&
-          countDiagnosticCode(cleanupReceiver.diagnostics, "GTI-S2046") == 0 &&
-          countDiagnosticCode(cleanupReceiver.diagnostics, "GTI-B0001") == 0 &&
-          hasDiagnostic(
-              cleanupReceiver.diagnostics,
-              "requires active cleanup and GTI cannot yet guarantee") &&
-          hasRelatedDiagnostic(cleanupReceiver.diagnostics,
-                               "Declared cleanup makes this type require") &&
-          hasRelatedDiagnostic(cleanupReceiver.diagnostics,
-                               "cleanup-owning type") &&
-          hasDiagnosticHint(cleanupReceiver.diagnostics,
-                            "consuming full-expression storage"),
-      "direct, nested, and reusable-fallback consuming calls should reject "
-      "cleanup-owning receivers before HIR/MIR");
+  expect(cleanupReceiver.canGenerateCode(),
+         "direct, nested, and mutable-fallback calls retain moved nominal "
+         "receivers through full-expression cleanup");
 
   const lang::FrontendResult genericCleanupReceiver =
       lang::Frontend().analyze("generic-cleanup-consuming-callable.gti", R"(
@@ -12324,18 +12325,9 @@ int main() {
 }
 )",
                                {standardLibraryPrelude()});
-  expect(
-      !genericCleanupReceiver.canGenerateCode() &&
-          countDiagnosticCode(genericCleanupReceiver.diagnostics,
-                              "GTI-S2046") == 1 &&
-          !hasDiagnosticCode(genericCleanupReceiver.diagnostics, "GTI-B0001") &&
-          hasDiagnostic(
-              genericCleanupReceiver.diagnostics,
-              "requires active cleanup and GTI cannot yet guarantee") &&
-          hasRelatedDiagnostic(genericCleanupReceiver.diagnostics,
-                               "cleanup-owning type"),
-      "a concrete generic once-call selection should reject its "
-      "cleanup-owning receiver before HIR/MIR");
+  expect(genericCleanupReceiver.canGenerateCode(),
+         "concrete generic once-call selection retains its cleanup-owning "
+         "nominal receiver through the full expression");
 
   lang::Lexer lexer;
   lang::Parser invalidParser(lexer.scan(R"(
@@ -13751,7 +13743,9 @@ int main() {
               std::string::npos &&
           artifact.contents.find(".construct(__gti_mir_p_2.get())") !=
               std::string::npos &&
-          artifact.contents.find("return [copied = __gti_mir_capture_arg_") !=
+          artifact.contents.find("return __gti_mir_closure_environment_") !=
+              std::string::npos &&
+          artifact.contents.find("using __gti_mir_lambda_identity = ") !=
               std::string::npos &&
           artifact.contents.find("GTI verified-MIR body: scalar-cfg-failure-v1 "
                                  "lambda-instance 3") != std::string::npos,
@@ -13950,25 +13944,26 @@ int main() {
   expect(!invalid.canGenerateCode(),
          "implicit, duplicate, reference, mutable, and escaping lambdas "
          "should fail");
-  expect(hasDiagnostic(invalid.diagnostics, "not captured") &&
-             hasDiagnostic(invalid.diagnostics, "listed more than once") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "reference captures are not supported") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "captured snapshots cannot be made mutable") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "Cannot assign to immutable lambda capture") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "would escape through the function return value") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "Lambda return types cannot carry borrowed state") &&
-             hasDiagnostic(invalid.diagnostics, "cannot capture 'this'") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "Lambda argument 1 has type 'bool'") &&
-             hasDiagnostic(invalid.diagnostics, "limited to local bindings") &&
-             hasDiagnostic(invalid.diagnostics, "requires an initializer"),
-         "lambda diagnostics should explain each restricted lifetime or "
-         "capture operation");
+  expect(
+      hasDiagnostic(invalid.diagnostics, "not captured") &&
+          hasDiagnostic(invalid.diagnostics, "listed more than once") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "reference captures are not supported") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "captured snapshots cannot be made mutable") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Cannot assign to immutable lambda capture") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "requires an explicit std::move ownership transfer") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Lambda return types cannot carry borrowed state") &&
+          hasDiagnostic(invalid.diagnostics, "cannot capture 'this'") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Lambda argument 1 has type 'bool'") &&
+          hasDiagnostic(invalid.diagnostics, "limited to local bindings") &&
+          hasDiagnostic(invalid.diagnostics, "requires an initializer"),
+      "lambda diagnostics should explain each restricted lifetime or "
+      "capture operation");
   expect(hasRelatedDiagnostic(invalid.diagnostics, "Local binding declared") &&
              hasDiagnosticHint(invalid.diagnostics, "capture list"),
          "missing capture diagnostics should point back to the declaration");
@@ -14655,7 +14650,10 @@ int main() {
                              "function-instance") != std::string::npos &&
           artifact.contents.find("callable_capability::read_call") !=
               std::string::npos &&
-          artifact.contents.find("friend void __gti_invoke(") !=
+          // The generic owner's bridge keeps its exact result while delaying
+          // completeness checks until the owner is instantiated.
+          artifact.contents.find("friend std::conditional_t<true, void, "
+                                 "Replace> __gti_invoke(") !=
               std::string::npos &&
           artifact.contents.find(
               "::__gti_program::Replace<std::int32_t>::__gti_fn_") !=
@@ -14663,7 +14661,21 @@ int main() {
           artifact.contents.find("___gti_operator_call__gti_mir_failure(") !=
               std::string::npos &&
           artifact.contents.find("___gti_operator_call") != std::string::npos &&
-          artifact.contents.find(" operator()(") == std::string::npos,
+          [&] {
+            const auto count = [&](std::string_view spelling) {
+              std::size_t result = 0;
+              for (std::size_t at = 0;
+                   (at = artifact.contents.find(spelling, at)) !=
+                   std::string::npos;
+                   at += spelling.size())
+                ++result;
+              return result;
+            };
+            // Only compiler-generated closure environments expose a native
+            // call operator. Source nominal operators still use exact bridges.
+            return count(" operator()(") ==
+                   count("struct __gti_mir_closure_environment_");
+          }(),
       "C++ lowering should bridge exact GTI call operators without "
       "exposing native overload resolution");
 
@@ -14717,11 +14729,10 @@ int main() {
           hasDiagnostic(invalidBoundary.diagnostics,
                         "Only a direct by-value generic function parameter") &&
           hasDiagnostic(invalidBoundary.diagnostics,
-                        "would escape through the function return value") &&
+                        "requires an explicit std::move ownership transfer") &&
           hasDiagnosticHint(invalidBoundary.diagnostics,
-                            "exact owned generic transport"),
-      "the first callable layer should reject references and escaping "
-      "closure values explicitly");
+                            "Move an exact movable callable"),
+      "callable references and implicit owned transfers remain rejected");
 
   const lang::FrontendResult escapingObject =
       lang::Frontend().analyze("escaping-callable-object.gti", R"(
@@ -14897,12 +14908,13 @@ int main() {
           countDiagnosticCode(unprovenLambdaTransport.diagnostics,
                               "GTI-S2046") == 1 &&
           hasDiagnostic(unprovenLambdaTransport.diagnostics,
-                        "selected target parameter is not proven confined") &&
-          hasRelatedDiagnostic(unprovenLambdaTransport.diagnostics,
-                               "Selected generic parameter declared here") &&
+                        "requires an explicit std::move ownership transfer") &&
+          hasRelatedDiagnostic(
+              unprovenLambdaTransport.diagnostics,
+              "Exact owned callable parameter declared here") &&
           !hasDiagnosticCode(unprovenLambdaTransport.diagnostics, "GTI-B0001"),
-      "a provisional lexical-lambda boundary should be rejected after "
-      "callable contracts reach their fixed point instead of reaching MIR");
+      "an owned local-copy consumer still requires an explicit caller "
+      "transfer");
 
   const lang::FrontendResult genericCapturedCallables =
       lang::Frontend().analyze("generic-captured-callables.gti", R"(
@@ -15191,13 +15203,13 @@ int main() {
   return 0;
 }
 )");
-  expect(!unprovenForwarding.canGenerateCode() &&
-             hasDiagnostic(unprovenForwarding.diagnostics,
-                           "not proven confined") &&
-             hasDiagnosticHint(unprovenForwarding.diagnostics,
-                               "direct by-value generic parameter"),
-         "ordinary generic parameters should not gain callable forwarding "
-         "privileges without a proven target contract");
+  expect(
+      !unprovenForwarding.canGenerateCode() &&
+          hasDiagnostic(unprovenForwarding.diagnostics,
+                        "requires an explicit std::move ownership transfer") &&
+          hasDiagnosticHint(unprovenForwarding.diagnostics,
+                            "Move an exact movable callable"),
+      "ordinary owned forwarding must not silently consume its source");
 }
 
 void testConfinedCallableResults() {
@@ -15694,7 +15706,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v70 ") &&
+             mirDump.starts_with("mir-v74 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -15702,6 +15714,53 @@ int main() {
              mirDump.find("owned-parameter=0") != std::string::npos,
          "HIR, MIR, and deterministic dumps should retain concrete owned "
          "transport and constructor-field proof metadata");
+
+  for (int mutation = 0; mutation < 3; ++mutation) {
+    lang::MirProgram malformed = frontend.mir;
+    bool changed = false;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        malformed.functionInstances());
+    for (auto &function : functions) {
+      const bool exactField = std::any_of(
+          function.callableParameters.begin(),
+          function.callableParameters.end(), [](const auto &parameter) {
+            return parameter.ownedTransport &&
+                   parameter.ownedTransport->kind ==
+                       lang::CallableOwnedTransportKind::ExactField;
+          });
+      if (!exactField)
+        continue;
+      for (auto &block : function.body.blocks) {
+        for (auto &instruction : block.instructions) {
+          for (auto &event : instruction.lifecycle) {
+            const auto *source = function.body.findDropObligation(event.source);
+            const auto *target = function.body.findDropObligation(event.target);
+            if (mutation == 0 && target &&
+                target->kind == lang::MirDropObligationKind::ReturnResult &&
+                event.kind == lang::MirLifecycleEventKind::Reparent) {
+              event.target = 0;
+              changed = true;
+            } else if (source &&
+                       source->kind ==
+                           lang::MirDropObligationKind::ReturnResult) {
+              if (mutation == 1 &&
+                  event.kind == lang::MirLifecycleEventKind::TransferOut) {
+                event.source = 0;
+                changed = true;
+              } else if (mutation == 2 &&
+                         event.kind == lang::MirLifecycleEventKind::Drop) {
+                event.failureCleanup = false;
+                changed = true;
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(changed && !lang::verifyMirProgram(malformed).valid(),
+           "exact-field callable returns reject missing pending ownership, "
+           "missing publication and non-failure rollback");
+  }
 
   const lang::FrontendResult missingMove =
       analyzeTrustedPreludeFixture("owned-callable-missing-move.gti", R"(

@@ -1,0 +1,39 @@
+#include <std/functional>
+#include <std/string>
+#include <std/vector>
+
+int login() { return 7; }
+
+// Each concrete generic body must resolve the same deferred constructor name.
+std::function<int()> make_handler<T>(T tag) {
+  return std::function<int()>(login);
+}
+
+struct Command {
+  std::string name{};
+  std::function<int()> handler{};
+  std::vector<Command> subcommands{};
+};
+
+int walk(Command& command) {
+  if (command.subcommands.empty()) { return command.handler(); }
+  return walk(command.subcommands[std::size_t(0)]);
+}
+
+int main() {
+  Command schema = {
+    .name = std::string("tea"),
+    .subcommands = {
+      {
+        .name = std::string("auth"),
+        .subcommands = {
+          { .name = std::string("login"), .handler = std::function<int()>(login) }
+        }
+      }
+    }
+  };
+  auto first = make_handler(1);
+  auto second = make_handler(true);
+  if (first() != 7 || second() != 7) { return 1; }
+  return walk(schema) - 7;
+}

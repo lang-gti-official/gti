@@ -83,6 +83,7 @@ mirUniqueCleanupType(const MirProgram &program, const SemanticType &type);
 // must be a complete root recipe, not a projected child containing back-edges.
 [[nodiscard]] std::vector<HirDestructorInstanceId>
 mirDropDestructorTargets(const MirDropType &type);
+[[nodiscard]] bool mirDropHasPolymorphicCleanup(const MirDropType &type);
 [[nodiscard]] bool mirDropMayRaiseDefinedFailure(const MirProgram &program,
                                                  const MirDropType &type);
 

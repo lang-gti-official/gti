@@ -3,6 +3,7 @@
 #include "gti/semantic_analyzer.h"
 
 #include "gti/frontend_work.h"
+#include "gti/standard_library.h"
 #include "semantic_diagnostics.h"
 #include "semantic_spelling.h"
 
@@ -246,6 +247,8 @@ public:
   void visitAssignExpr(const Assign &expr) override;
 
   void visitArrayInitializerExpr(const ArrayInitializer &expr) override;
+  void analyzeCollectionInitializer(const ArrayInitializer &expr,
+                                    const SemanticType &target);
 
   void visitBinaryExpr(const Binary &expr) override;
 
@@ -470,6 +473,9 @@ private:
     std::size_t eligibleParameters = 0;
     bool hasMutableCandidate = false;
   };
+
+  [[nodiscard]] std::optional<OwnedPointeeProjection>
+  ownedPointeeReturnProjection(const FunctionInfo &function);
 
   struct AnalyzedCallArgument {
     SemanticType type = SemanticType::Unknown;
@@ -766,14 +772,22 @@ private:
     ClassKind kind = ClassKind::Class;
     std::vector<std::string> namespaceScope;
     ClassId exactSpecializationPrimary = 0;
+    // Disjoint signature receiver definitions share a lookup name, not a
+    // concrete class identity. The first registered definition owns the list.
+    ClassId signatureFamilyPrimary = 0;
+    std::vector<ClassId> signatureFamilyMembers;
     std::vector<SemanticType> exactTypeArguments;
     std::vector<CompileTimeValue> exactValueArguments;
     std::vector<GenericParameterInfo> genericParameters;
+    std::vector<SemanticType> genericArgumentPatterns;
+    bool argumentPatternsResolving = false;
+    bool argumentPatternsResolved = false;
     std::unordered_map<std::string, MemberInfo> members;
     std::unordered_map<std::string, MemberTypeAliasInfo> typeAliases;
     std::vector<FieldInfo> fields;
     std::vector<FieldInfo> staticFields;
     std::vector<ConstructorInfo> constructors;
+    std::optional<ConstructorInfo> designatedConstructor;
     std::optional<ConstructorInfo> copyConstructor;
     std::optional<ConstructorInfo> moveConstructor;
     std::optional<DestructorInfo> destructor;
@@ -1471,6 +1485,10 @@ private:
 
   void analyzeIntrinsicCall(const Call &expr,
                             const CallableCandidate &declaration);
+  void analyzeMoveCall(const Call &expr,
+                       const CallableCandidate *declaration = nullptr,
+                       bool immediateReceiver = false);
+  std::unordered_set<const Call *> designatedMoves;
 
   void
   analyzeIntegerArithmeticIntrinsicCall(const Call &expr,
@@ -1529,11 +1547,6 @@ private:
   explicitMoveSource(const ExprPtr &expression) const;
 
   [[nodiscard]] bool isExplicitMoveReceiver(const ExprPtr &expression) const;
-
-  [[nodiscard]] bool
-  rejectConsumingActiveCleanup(const Token &location,
-                               const SemanticType &receiverType,
-                               std::optional<CallableBoundary> boundary);
 
   [[nodiscard]] const Variable *
   directCallableParameterVariable(const ExprPtr &expression) const;
@@ -1713,6 +1726,7 @@ private:
                            const ExprPtr &expression) const;
 
   void discoverOwnedCallableContracts();
+  void discoverOwnedCallableValueParameters();
 
   [[nodiscard]] bool
   ownedTransportMatchesConcrete(const FunctionInfo &function,
@@ -1830,7 +1844,8 @@ private:
       std::span<const ExprPtr> arguments = {}, bool contextual = false,
       std::optional<CallableBoundary> boundary = std::nullopt,
       std::optional<OperatorReceiverState> receiverState = std::nullopt,
-      bool projection = false, bool preferReadOnlyReceiver = false);
+      bool projection = false, bool preferReadOnlyReceiver = false,
+      ContextualCallArguments *contextualArguments = nullptr);
 
   SemanticType arrowTargetType(const Expr &site, const ExprPtr &receiver,
                                const SemanticType &receiverType,
@@ -1952,6 +1967,9 @@ private:
 
   [[nodiscard]] bool
   isContextualNativeOutPointerArgument(const ExprPtr &expression) const;
+
+  [[nodiscard]] bool
+  isContextualCallableResultArgument(const ExprPtr &expression) const;
 
   [[nodiscard]] ContextualCallArguments
   analyzeContextualCallArguments(const ExprList &arguments);
@@ -2100,17 +2118,21 @@ private:
 
   [[nodiscard]] bool isGtiInternalTextView(const TypeRef &type) const;
 
-  [[nodiscard]] static bool containsReference(const TypeRef &type);
+  [[nodiscard]] bool containsReference(const TypeRef &type) const;
 
   [[nodiscard]] static bool containsRawPointer(const TypeRef &type);
 
   [[nodiscard]] bool isActiveTypePack(const TypeRef &type) const;
 
+  void validateReferencePlacement(
+      const TypeRef &type, bool allowTopLevel, std::string_view context,
+      bool allowRvalueReference = false,
+      bool allowDefaultLibraryStorageReference = false,
+      bool typeMetadata = false, bool genericFunctionParameter = false);
+
   void
-  validateReferencePlacement(const TypeRef &type, bool allowTopLevel,
-                             std::string_view context,
-                             bool allowRvalueReference = false,
-                             bool allowDefaultLibraryStorageReference = false);
+  validateReferenceReferent(const SemanticType &type, const Token &site,
+                            bool allowDefaultLibraryStorageReference = false);
 
   [[nodiscard]] bool containsOwningPayloadEnum(const SemanticType &type) const;
 
@@ -2303,6 +2325,11 @@ private:
   void validateFunctionPacks(
       const FunctionDecl &function,
       const std::vector<GenericParameterInfo> &genericParameters);
+
+  void validateParameterPacks(
+      std::span<const Parameter> parameters,
+      const std::vector<GenericParameterInfo> &genericParameters,
+      const TypeRef *returnType = nullptr);
 
   void validateOperatorDeclaration(const FunctionDecl &function,
                                    bool methodDeclaration);
@@ -2520,11 +2547,22 @@ private:
   void registerClasses(const StmtList &statements,
                        std::vector<std::string> scope);
 
+  [[nodiscard]] std::vector<GenericParameterInfo>
+  makeClassPatternParameters(const ClassDecl &declaration,
+                             const std::vector<std::string> &scope);
+  void resolveClassArgumentPatterns(ClassId id);
+  [[nodiscard]] bool
+  classArgumentPatternsMatch(const ClassInfo &owner,
+                             const std::vector<SemanticType> &arguments) const;
+
   [[nodiscard]] SemanticType
   canonicalExactSpecializationType(SemanticType type) const;
 
   [[nodiscard]] SemanticType
   selectExactClassSpecialization(SemanticType type) const;
+
+  [[nodiscard]] ClassId selectSignatureClassDefinition(
+      ClassId id, const std::vector<SemanticType> &arguments) const;
 
   [[nodiscard]] static bool
   isConcreteExactSpecializationType(const SemanticType &type);
@@ -2741,6 +2779,8 @@ private:
   void resolveFunctionBorrowSummaries();
 
   void recordClassLifecycles();
+  void registerDesignatedConstructors();
+  void analyzeDesignatedInitializer(const DirectInitializer &expr);
 
   void collectMembers(const StmtList &members, ClassInfo &owner,
                       AccessModifier &access,
@@ -3132,6 +3172,10 @@ private:
   bool reportInvisibleDeclaration(const Token &use, std::string name,
                                   const Token &declaration,
                                   SourceUnitId declarationUnit);
+
+  static void addStandardLibraryIncludeFix(Diagnostic &diagnostic,
+                                           const Token &use,
+                                           std::string_view include);
 
   bool reportInvisibleSymbol(const Token &use, std::string name,
                              const Symbol *symbol);
@@ -3747,6 +3791,7 @@ private:
     const Expr *currentDefaultArgumentRoot = nullptr;
     std::unordered_set<std::string> currentDefaultParameterNames;
     bool analyzingCallCallee = false;
+    const Call *immediateCallReceiver = nullptr;
     // Non-null only while analysing the compiler-generated read-only range
     // owner initializer. An exact expected.value() at this identity may
     // publish the bounded receiver-rooted payload borrow.
@@ -3907,6 +3952,7 @@ private:
   std::unordered_set<std::string> &currentDefaultParameterNames =
       requestSession.currentDefaultParameterNames;
   bool &analyzingCallCallee = requestSession.analyzingCallCallee;
+  const Call *&immediateCallReceiver = requestSession.immediateCallReceiver;
   const Expr *&expectedPayloadRangeCandidate =
       requestSession.expectedPayloadRangeCandidate;
   bool &analyzingPackFoldElement = requestSession.analyzingPackFoldElement;

@@ -1,4 +1,7 @@
 #include <std/format>
+#include <std/string>
+
+class unsupported_format_value {};
 
 int main() {
   mut auto empty = std::format("plain {{text}}");
@@ -9,21 +12,77 @@ int main() {
   if (!formatted || formatted.value() != "-4:9") {
     return 2;
   }
+  mut std::string host = std::string("gitea.example");
+  std::string_view method = "api/v1/user";
+  mut auto endpoint =
+      std::format("https://{}/{}", host.view(), method);
+  if (!endpoint ||
+      endpoint.value() != "https://gitea.example/api/v1/user") {
+    return 3;
+  }
+  mut auto widths = std::format("{}|{}|{}|{}|{}|{}|{}|{}", int8_t(-128),
+                                uint8_t(255), int16_t(-32768),
+                                uint16_t(65535), int32_t(-2147483647 - 1),
+                                uint32_t(4294967295),
+                                int64_t(-9223372036854775807 - 1),
+                                uint64_t(18446744073709551615));
+  if (!widths ||
+      widths.value() !=
+          "-128|255|-32768|65535|-2147483648|4294967295|-9223372036854775808|18446744073709551615") {
+    return 11;
+  }
+  mut std::string bytes = std::string();
+  bytes.push_back('A');
+  bytes.push_back('\0');
+  bytes.push_back('B');
+  mut auto counted = std::format("<{}>", bytes.view());
+  if (!counted || counted.value().size() != std::size_t(5) ||
+      counted.value()[std::size_t(0)] != '<' ||
+      counted.value()[std::size_t(1)] != 'A' ||
+      counted.value()[std::size_t(2)] != '\0' ||
+      counted.value()[std::size_t(3)] != 'B' ||
+      counted.value()[std::size_t(4)] != '>') {
+    return 12;
+  }
+  mut std::string owned_argument = std::string("owned");
+  mut auto heterogeneous =
+      std::format("{}|{}|{}|{}|{}|{}", true, false, 'X', int32_t(-7),
+                  1.25, std::move(owned_argument));
+  if (!heterogeneous ||
+      heterogeneous.value() != "true|false|X|-7|1.250000|owned") {
+    return 4;
+  }
+  mut auto unsupported = std::format("{}", unsupported_format_value());
+  if (unsupported ||
+      unsupported.error() != std::format_errc::unsupported_argument) {
+    return 5;
+  }
+  mut auto binary64 = std::format("{}", 1.5d);
+  if (binary64 ||
+      binary64.error() != std::format_errc::unsupported_argument) {
+    return 6;
+  }
+  mut auto unsupported_print =
+      std::try_print("LEAK {}", unsupported_format_value());
+  if (unsupported_print ||
+      unsupported_print.error() != std::format_errc::unsupported_argument) {
+    return 7;
+  }
   auto invalid = std::format("{");
   if (invalid or invalid.error() != std::format_errc::invalid_format) {
-    return 3;
+    return 8;
   }
   auto mismatch = std::format("{} {}", int32_t(1));
   if (mismatch or
       mismatch.error() != std::format_errc::argument_count_mismatch) {
-    return 4;
+    return 9;
   }
-  auto first = std::try_print("value={}", int32_t(7));
-  auto second = std::try_println(" ok={}", uint8_t(1));
+  auto first = std::try_print("value={} host={}", int32_t(7), host.view());
+  auto second = std::try_println(" ok={} enabled={}", uint8_t(1), true);
   auto third = std::try_print("{}");
   auto fourth = std::try_println("done");
   if (!first || !second || third or !fourth) {
-    return 5;
+    return 10;
   }
   return 0;
 }

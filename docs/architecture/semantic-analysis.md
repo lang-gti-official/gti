@@ -53,6 +53,26 @@ This ordering prevents declaration-order dependence. A new declaration kind may
 need registration, source-unit publication, tooling-symbol creation, body
 analysis, and finalization—not only a visitor method.
 
+`FunctionInfo::ownedPointeeProjection` is separate from ordinary return-borrow
+origins. It identifies a bounded transparent accessor whose entire body returns
+the declaration-bound private unique-owner borrow of one direct receiver field.
+The field identity, private owner type, returned pointee type, and read/mutable
+access must agree; static, virtual, effectful, parameterized, inherited-field,
+and ordinary reference-forwarding methods receive no such summary. Concrete
+reanalysis substitutes the field type before publishing this fact. It is not
+inferred from a public wrapper name and does not itself authorize moving through
+a reference. HIR preserves the summary and MIR checks it against the actual
+accessor body before any consumer may rely on it.
+
+Immediate moved invocation inside consuming `this` may use the mutable form
+of this proof. `ResolvedCallInfo::retainedReceiverOwner` identifies the exact
+accessor receiver expression, restricted to a writable field-only This path.
+Availability consumes that owner wrapper, while execution still uses the
+accessor's returned loan. This does not authorize extracting a pointee or
+moving through an ordinary reference, and it does not bypass existing aliases.
+Concrete HIR maps the retained owner to its already-lowered value identity;
+MIR keeps the separate executable referent and lifetime owner.
+
 Class-scoped type aliases use that staged boundary deliberately. Registration
 walks active conditional members while tracking access labels and records the
 owner declaration before alias targets are resolved. Once primary class IDs
@@ -67,6 +87,87 @@ owning class; no HIR or MIR instruction is introduced because an alias has no
 runtime effect.
 
 ## Request Sessions
+
+Function-signature syntax has a distinct `TypeRef` shape and resolves to
+`SemanticType::FunctionSignature`, with the result followed by ordered parameter
+types plus `signatureReceiver` (`ReadOnly`, `Mutable`, or `Consuming`). The AST
+retains the written `mut`/`&&` token and source span. Generic substitution,
+canonical equality, overload-signature comparison, type printing, and alias
+resolution use that structural type. Signature components do not introduce
+stored borrows into an enclosing generic argument. `GTI-S2093` rejects non-value
+components and attempts to use a signature as storage. Native callback types
+retain their separate ABI contract. Signatures have no value lifecycle traits.
+The lowered C++ representation emits the signature as a type, and MIR rejects
+bare signatures in executable values, places, and declared fields.
+Exact function-generic deduction traverses signature components using the
+ordinary structural inference path, including `void` result metadata and
+paired reference layers. It requires exact receiver-qualifier agreement;
+capability satisfaction is not a conversion between signature metadata types.
+Generic arguments and defaults no longer reject
+`void` categorically; concrete object-position validation and constraints own
+those restrictions. Class-instance reanalysis also validates alias targets in
+the concrete owner scope so a dependent signature parameter or array element
+cannot become `void` unnoticed. Exact deduction also matches a final symbolic
+`TypePack` against the ordered tail of a signature or nominal argument list.
+Diagnostic and speculative inference share this matcher. Empty tails are
+concrete empty packs, while symbolic forwarding retains the source pack's
+identity. Repeated and explicitly supplied deductions must agree. A generic
+type pack need not introduce a named value parameter when a formal metadata
+pattern binds it; concrete instances still retain one flat generic argument
+list for reanalysis, constraints, and HIR identity. This does not add class
+pattern selection or overload ranking.
+
+Headerless signature-first patterned-primary syntax is retained separately in
+`ClassDecl::genericArgumentPatterns()`. It is not flattened into AST generic
+parameter declarations and is not an exact specialization. Registration derives
+binders from bare unqualified type leaves; repeated names share an identity.
+Pattern resolution publishes canonical semantic shapes and a type-argument
+projection for each binder. Class identity retains its public argument list:
+`Callback<int(bool)>` has one signature argument, not two flat arguments.
+Semantic admission and concrete reanalysis require exact agreement after
+substitution, including fixed components, repeated names, and empty pack tails.
+HIR and lowered representation consume the resolved projections; they do not
+declare binders or select among patterns. The lowered seal includes both shapes
+and paths, and verification rejects invalid paths and forged projections.
+A single-signature name can group disjoint receiver-qualified definitions in
+the semantic catalog. The first registered ID owns the family inventory; each
+definition retains a distinct ID, generic binders, members, and member aliases.
+Selection uses the exact signature qualifier before pattern admission and
+repeats after substitution. Registration rejects duplicate qualifiers, mixed
+declaration kinds, ordinary-primary overlap, and foreign-package extensions.
+Use-site admission preserves source-unit visibility. Member aliases are indexed
+by their owning declaration rather than a shared family spelling, including
+during alias dependency resolution. Exact concrete specialization keys use the
+selected definition's ID and public arguments. HIR, MIR, backend representation,
+and language queries consume that selection without selecting a family again.
+There is no pattern ranking. See `L-CALL-02` for remaining wrapper gates.
+
+Class type packs reuse the generic parameter identity and `TypePack`
+substitution representation. `TypeRef::packExpansion` distinguishes a type-list
+expansion from a named value pack. Semantic resolution flattens concrete packs
+into canonical class/signature arguments, including an empty list; HIR and
+detached representation substitution preserve the same ordered identity.
+Reference arguments in nominal metadata do not themselves create borrowed
+state: lifecycle traits still derive from actual fields and bases. Concrete
+storage and reference-referent validation remain frontend responsibilities.
+There is no public-library-name recognition or backend-selected expansion rule.
+
+Named method packs can bind the enclosing class's final generic pack by its
+resolved identity. Declaration signatures retain symbolic `TypePack` metadata;
+class substitution preserves that identity through symbolic base forwarding.
+Method selection groups the owner's prescribed concrete list by source argument
+expression and reuses exact argument and ownership checks, including forwarding
+and `operator()`. It does not infer owner arguments from the call. Concrete
+class reanalysis validates member pack object positions even for uncalled
+methods. Empty owner packs still trigger concrete method reanalysis. HIR
+instance signatures flatten concrete packs independently of discovery path,
+while body bindings retain source pack identity for cleanup and forwarding.
+Each mutable-reference pack element has its own semantic entry loan, identified
+by the formal pack binding and constant element index. Whole-pack forwarding
+preserves the exact reference type/access rather than borrowing the grouped
+binding. These elements cannot be named independently or escape through a pack
+expression; the entry capabilities last for the invocation. HIR and MIR retain
+the projected identities and end the loans on normal and failure exits.
 
 One call to either public `SemanticVisitor::check` overload owns one complete
 semantic request session. `SemanticVisitor::Impl::RequestSessionState` owns one
@@ -446,7 +547,16 @@ confined parameter. Each call site records an exact parameter list, result
 type, required receiver access, and selected concrete lambda or `operator()`
 target. A call used as a `void` operation has a `void` result requirement. A
 condition supplies exact `bool`; an explicitly typed initializer, assignment,
-or enclosing return supplies an exact non-reference value type. Raw pointers
+or enclosing return supplies an exact non-reference value type. A direct
+generic-parameter or generic-field invocation used as a call argument can also
+take its result requirement from the uniquely selected outer parameter. The
+contextual-argument pass inspects declaration types without evaluating the
+receiver, defers that argument and its suffix, then analyzes them once in
+source order after selection. Named functions/methods, constructors, lexical
+lambdas, function items, and concrete call operators share this rule. A
+callback's eventual concrete result does not choose between outer overloads;
+an ambiguous outer signature remains ambiguous. Unknown arguments do not
+deduce an outer generic parameter. Raw pointers
 remain non-owning values under their ordinary language rules, and the current
 `std::string_view` denotes static literal storage; the callable boundary does
 not reclassify either as ownership. `auto` cannot infer a result through an
@@ -498,10 +608,36 @@ parameter move. An exact same-type return may instead coexist with a
 forwarding edges, and mutable access only when declared `mut`. A callable
 argument at either transporting boundary must use explicit `std::move`, remain
 exactly typed and movable, and contain no reference, tracked-borrow, or raw-
-pointer stored state. Arbitrary storage, wrappers, inferred closure results,
-and type erasure do not acquire this fact. Local closure environment movement
-and cleanup remain represented independently and supply its concrete lifecycle
-evidence.
+pointer stored state. Local closure environment movement and cleanup remain
+represented independently and supply its concrete lifecycle evidence.
+
+After confined forwarding reaches its fixed point, a source-defined function's
+otherwise ordinary direct by-value type parameter, or nominal generic carrier
+such as `Owner<T>`, receives an `Owned` value entry contract. This contract
+describes the concrete parameter type, not a
+prescribed return/constructor expression. Branches, local owners, normal
+transfers, and cleanup therefore use ordinary concrete semantic analysis and
+MIR lifecycle verification. It neither upgrades an existing confined contract
+nor permits an implicit caller move or borrowed/raw capture state. MIR requires
+the exact initially available parameter place and, for lexical values, its
+initially active cleanup obligation; calls retain their exact consuming input.
+An ordinary `CallInput` may stage a nominal carrier after its explicit move.
+Verification follows the exact single-use stage back to the ownership event;
+the prepared lifetime and its handoff remain independently checked. This does
+not admit a reference parameter, bodyless transport, implicit closure copy, or
+borrowed/raw stored state.
+Final by-value generic packs receive the same contract per concrete closure
+element. Declaration contracts retain the source formal index; instantiated
+contracts and call boundaries use flattened argument indices, so fixed prefixes
+and non-callable elements cannot shift ownership onto a different argument.
+Explicit whole-pack expansion preserves the existing copyable-element copy /
+move-only-element move rule. Each copied element gets a fresh prepared lifetime;
+moving any move-only element consumes the source pack. Ordinary call arguments
+still require explicit closure transfer and reject borrowed/raw capture state.
+Callable-reference parameters, general native template shape composition, and
+fully general allocation and failure cleanup through erased owners remain
+incomplete. This does not claim that
+public owning wrappers are implemented.
 
 Each exact callable signature also retains a `Read`, `Mutable`, or `Once`
 invocation capability. An immutable by-value generic callable parameter
@@ -519,37 +655,44 @@ source. A consuming-only target cannot satisfy a reusable read or mutable
 client. `GTI-S2046` reports capability and confined-forwarding mismatches
 before HIR lowering, while ordinary move diagnostics own repeated use.
 
-After exact target selection, an explicit consuming invocation also queries
-the concrete receiver's recursive active-cleanup property. Cleanup-owning
-direct calls use the ordinary operator boundary; cleanup discovered while
-reanalyzing a concrete confined generic instance remains a confined-callable
-error. Both stop before HIR because the language has no accepted cleanup
-schedule for that moved receiver across the enclosing full expression; this is
-a semantic/lowering restriction, not a backend fallback.
+Explicit consuming invocation retains a full-expression owner even when the
+receiver requires active cleanup. An immediate nominal or stored-lambda field
+invocation in a consuming method additionally records `retainedReceiverProjection` on the exact
+resolved Move and a `ConsumeReceiver` ownership event. It requires a writable
+owned field-only path rooted in `this`, consumes availability, and leaves
+cleanup ownership with that receiver. Only transparent callee grouping is
+ignored: a Move used as an argument, returned value, or member-access base is
+still an actual extraction. The selected field-call target must return a value
+without tracked borrowed state; reference-returning fallback overloads receive
+`GTI-S2022` before HIR. Ordinary reference/pointer dereferences gain no owning
+capability from this rule. Stored lambdas remain read-callable and retain their
+complete resolved closure identity; consumption does not permit capture mutation.
 
-### Contextual Free-Function Items
+### Namespace Function Items
 
-The callable-argument resolver recognizes a bare namespace function name only
-after the selected generic parameter has a complete callable contract. The
-contextual inference helper is deliberately gated to `Confined` contracts and
-`Owned` contracts whose transport kind is exactly `ThreadTask`; it is not a
-general type-inference or value-storage path. Each eligible non-generic,
-body-bearing GTI namespace function is checked against the contract's exact
-result and ordinary argument-binding rules. Semantics accepts one viable
-target, diagnoses zero or multiple targets without conversion ranking, and
-constructs `SemanticType::FunctionItem` from the selected `FunctionId`, result,
-and parameter list.
+A bare namespace function name in a value context selects one eligible
+non-generic, body-bearing GTI declaration. With no required signature, multiple
+eligible declarations are ambiguous. Existing confined callable contracts and
+managed-thread task contracts can instead select one exact matching target.
+Semantics constructs `SemanticType::FunctionItem` from the selected
+`FunctionId`, result, and parameter list; neither HIR nor a backend sees an
+overload set or must infer which declaration the source intended.
 
-The resolved expression records a function occurrence for hover and
-definition, the exact function target, read-callable capability, and the
-existing confined or task boundary. Type traits classify the zero-state item
-as trivial, transfer-capable, and share-capable, but the expression audit
-rejects storage, capture, independent result, general-owned, and native use. A
-confined exact-return contract may relay the same item only to an unbound,
-explicitly discarded result. Ordinary direct calls and the separate named-
-native-callback contextual conversion keep
-their existing resolution paths. This ensures neither HIR nor a backend sees
-an overload set or must infer which declaration the source intended.
+The expression records a function occurrence for hover and definition, the
+exact target, and read-callable capability. Its zero-state type is trivial,
+transfer-capable, and share-capable. Ordinary value rules allow storage,
+copy-capture, generic fields, and exact results without closure cleanup.
+Function-item calls expand concrete value/read-only-reference packs under
+ordinary argument matching. A callee-producing expression still evaluates
+before the arguments even though its selected function identity is static.
+
+Parenthesized construction resumes deferred value arguments in source order
+before constructor inference, just as direct braces analyze value arguments.
+The deferred flags belong to the current analysis, including concrete generic
+reanalysis; an expression entry inherited from another analysis does not prove
+the argument was analyzed here. Contextual array tails retain their selected
+constructor parameter context. Ordinary direct function calls and the separate
+named-native-callback conversion retain their existing resolution paths.
 
 ## Owned Managed-Thread Tasks
 

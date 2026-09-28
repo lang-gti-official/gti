@@ -1,0 +1,96 @@
+#include <cli11/cli11>
+#include <std/string>
+
+int main() {
+  std::string dynamic_count = std::string("42");
+  std::string dynamic_name = std::string("tea");
+  unsafe {
+    cli11::GtiCli11App* app = cli11::gti_cli11_app_create("GTI CLI11 smoke test");
+    if (app == nullptr) { return 1; }
+    cli11::GtiCli11Command* root = cli11::gti_cli11_app_root(app);
+    cli11::GtiCli11Option* verbose =
+        cli11::gti_cli11_command_add_flag(root, "-v,--verbose", "Increase verbosity");
+    cli11::GtiCli11Option* count =
+        cli11::gti_cli11_command_add_i64_option(root, "-c,--count", "Item count", int64_t(0));
+    cli11::GtiCli11Option* name =
+        cli11::gti_cli11_command_add_option(root, "name", "Positional name");
+    cli11::GtiCli11Command* serve =
+        cli11::gti_cli11_command_add_subcommand(root, "serve", "Serve requests");
+    cli11::GtiCli11Option* limit = cli11::gti_cli11_command_add_u64_option(
+        serve, "--limit", "Request limit", uint64_t(1));
+    cli11::GtiCli11Option* ratio = cli11::gti_cli11_command_add_double_option(
+        serve, "--ratio", "Scale ratio", 1.0d);
+    if (verbose == nullptr || count == nullptr || name == nullptr ||
+        serve == nullptr || limit == nullptr || ratio == nullptr) {
+      cli11::gti_cli11_app_destroy(app);
+      return 2;
+    }
+    if (cli11::gti_cli11_option_required(count, 1) == 0 ||
+        cli11::gti_cli11_option_required(name, 1) == 0 ||
+        cli11::gti_cli11_command_require_subcommand(root, 1, 1) == 0) {
+      cli11::gti_cli11_app_destroy(app);
+      return 3;
+    }
+    if (cli11::gti_cli11_app_add_argument(app, "cli11-smoke") == 0 ||
+        cli11::gti_cli11_app_add_argument(app, "-vv") == 0 ||
+        cli11::gti_cli11_app_add_argument(app, "--count") == 0 ||
+        cli11::gti_cli11_app_add_argument(app, dynamic_count.view()) == 0 ||
+        cli11::gti_cli11_app_add_argument(app, dynamic_name.view()) == 0 ||
+        cli11::gti_cli11_app_add_argument(app, "serve") == 0 ||
+        cli11::gti_cli11_app_add_argument(app, "--limit") == 0 ||
+        cli11::gti_cli11_app_add_argument(app, "7") == 0 ||
+        cli11::gti_cli11_app_add_argument(app, "--ratio") == 0 ||
+        cli11::gti_cli11_app_add_argument(app, "1.5") == 0) {
+      cli11::gti_cli11_app_destroy(app);
+      return 4;
+    }
+    if (cli11::gti_cli11_app_parse(app) != 0 ||
+        cli11::gti_cli11_app_should_exit(app) != 0) {
+      cli11::gti_cli11_app_destroy(app);
+      return 5;
+    }
+    mut int64_t parsed_count = 0;
+    mut uint64_t parsed_limit = 0;
+    mut double parsed_ratio = 0.0d;
+    if (cli11::gti_cli11_option_i64_value(count, &parsed_count) == 0 ||
+        parsed_count != 42 || cli11::gti_cli11_option_count(verbose) != 2 ||
+        cli11::gti_cli11_command_parsed(serve) == 0 ||
+        cli11::gti_cli11_option_u64_value(limit, &parsed_limit) == 0 ||
+        parsed_limit != 7 ||
+        cli11::gti_cli11_option_double_value(ratio, &parsed_ratio) == 0 ||
+        parsed_ratio != 1.5d ||
+        cli11::gti_cli11_option_result_count(name) != 1 ||
+        cli11::gti_cli11_option_result_size(name, uint64_t(0)) != 3 ||
+        cli11::gti_cli11_option_result_byte(name, uint64_t(0), uint64_t(0)) != uint8_t(116) ||
+        cli11::gti_cli11_option_result_byte(name, uint64_t(0), uint64_t(1)) != uint8_t(101) ||
+        cli11::gti_cli11_option_result_byte(name, uint64_t(0), uint64_t(2)) != uint8_t(97)) {
+      cli11::gti_cli11_app_destroy(app);
+      return 6;
+    }
+
+    cli11::gti_cli11_app_clear_arguments(app);
+    if (cli11::gti_cli11_app_add_argument(app, "cli11-smoke") == 0 ||
+        cli11::gti_cli11_app_add_argument(app, "--help") == 0 ||
+        cli11::gti_cli11_app_parse(app) != 0 ||
+        cli11::gti_cli11_app_should_exit(app) == 0 ||
+        cli11::gti_cli11_app_output_size(app) == 0) {
+      cli11::gti_cli11_app_destroy(app);
+      return 7;
+    }
+
+    cli11::gti_cli11_app_clear_arguments(app);
+    if (cli11::gti_cli11_app_add_argument(app, "cli11-smoke") == 0 ||
+        cli11::gti_cli11_app_add_argument(app, "--count") == 0 ||
+        cli11::gti_cli11_app_add_argument(app, "not-an-integer") == 0 ||
+        cli11::gti_cli11_app_add_argument(app, "tea") == 0 ||
+        cli11::gti_cli11_app_add_argument(app, "serve") == 0 ||
+        cli11::gti_cli11_app_parse(app) == 0 ||
+        cli11::gti_cli11_app_should_exit(app) == 0 ||
+        cli11::gti_cli11_app_error_size(app) == 0) {
+      cli11::gti_cli11_app_destroy(app);
+      return 8;
+    }
+    cli11::gti_cli11_app_destroy(app);
+  }
+  return 0;
+}

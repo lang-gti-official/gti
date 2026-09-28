@@ -1,0 +1,165 @@
+// <std/process> — exact synchronous child-process execution.
+//
+// This first public process slice deliberately does not invoke a shell. A
+// command owns one executable plus its exact argument vector, inherits the
+// caller's environment, working directory, and standard streams, and waits for
+// the child to terminate. Redirection, captured output, environment overrides,
+// working-directory selection, and asynchronous child ownership remain later
+// extensions of this contract.
+
+#if target.os == "windows"
+#error "std/process is not yet available on Windows."
+#endif
+
+#if target.os == "unknown"
+#error "std/process requires a supported POSIX target."
+#endif
+
+#include <std/string>
+
+namespace gti_internal {
+namespace process_runtime {
+extern "C" {
+uint32_t gti_rt_process_run_v1(
+    gti_internal::text_view arguments, int32_t* termination_kind,
+    int32_t* termination_value, int32_t* native_code);
+}
+}
+}
+
+namespace std {
+namespace process {
+
+/// Recoverable failures before a child termination status is available.
+enum class errc {
+  invalid_argument,
+  unsupported,
+  spawn_failed,
+  execute_failed,
+  wait_failed,
+};
+
+/// The completed termination state of one child process.
+class exit_status {
+  bool exited_value;
+  int32_t value;
+
+public:
+  exit_status(bool exited, int32_t status_value)
+      : exited_value(exited), value(status_value) {}
+
+  /// True when the child returned or called an ordinary exit operation.
+  bool exited() {
+    return this.exited_value;
+  }
+
+  /// True when the host reports termination by a signal.
+  bool signaled() {
+    return !this.exited_value;
+  }
+
+  /// Returns the child exit code, or -1 for signal termination.
+  int32_t exit_code() {
+    return this.exited_value ? this.value : int32_t(-1);
+  }
+
+  /// Returns the terminating signal number, or 0 for ordinary exit.
+  int32_t terminating_signal() {
+    return this.exited_value ? int32_t(0) : this.value;
+  }
+
+  /// True only for ordinary exit with status zero.
+  bool success() {
+    return this.exited_value && this.value == int32_t(0);
+  }
+};
+
+/// One exact argv command. No shell parsing, expansion, or interpolation is
+/// performed. Empty arguments are preserved; the executable must be nonempty,
+/// and no element may contain an embedded zero byte.
+class command {
+  mut std::string encoded;
+  mut bool valid_value;
+  mut std::size_t count_value;
+
+  void append(std::string_view value, bool executable) mut {
+    if ((executable && value.empty()) || !this.valid_value) {
+      this.valid_value = false;
+      return;
+    }
+    for (mut std::size_t index = std::size_t(0); index < value.size();
+         index++) {
+      if (value[index] == '\0') {
+        this.valid_value = false;
+        return;
+      }
+    }
+    this.encoded.append(value);
+    this.encoded.push_back('\0');
+    this.count_value++;
+  }
+
+public:
+  command(std::string_view executable)
+      : encoded(std::string("")), valid_value(true), count_value(0) {
+    this.append(executable, true);
+  }
+
+  command(command& other) = delete;
+  command(command&& other) = default;
+
+  /// Appends one exact argument. Empty arguments are valid and preserved.
+  void arg(std::string_view value) mut {
+    this.append(value, false);
+  }
+
+  bool valid() {
+    return this.valid_value && this.count_value > std::size_t(0);
+  }
+
+  std::size_t argument_count() {
+    return this.count_value;
+  }
+
+  /// Executes and waits for the child while inheriting the caller's current
+  /// environment, working directory, stdin, stdout, and stderr.
+  expected<exit_status, errc> run() {
+    if (!this.valid()) {
+      return unexpected(errc::invalid_argument);
+    }
+
+    mut int32_t termination_kind = int32_t(-1);
+    mut int32_t termination_value = int32_t(-1);
+    mut int32_t native_code = int32_t(0);
+    mut uint32_t result = uint32_t(0);
+    unsafe {
+      result = gti_internal::process_runtime::gti_rt_process_run_v1(
+          this.encoded.view(), &termination_kind, &termination_value,
+          &native_code);
+    }
+
+    switch (result) {
+    case uint32_t(0):
+      if (termination_kind == int32_t(0)) {
+        return exit_status(true, termination_value);
+      }
+      if (termination_kind == int32_t(1)) {
+        return exit_status(false, termination_value);
+      }
+      return unexpected(errc::wait_failed);
+    case uint32_t(1):
+      return unexpected(errc::invalid_argument);
+    case uint32_t(2):
+      return unexpected(errc::unsupported);
+    case uint32_t(3):
+      return unexpected(errc::spawn_failed);
+    case uint32_t(4):
+      return unexpected(errc::execute_failed);
+    default:
+      return unexpected(errc::wait_failed);
+    }
+  }
+};
+
+}
+}

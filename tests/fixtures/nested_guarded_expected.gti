@@ -1,0 +1,56 @@
+#include <std/string>
+#include <std/vector>
+
+class Leaf {
+  std::string text;
+
+public:
+  Leaf(std::string text) : text(std::move(text)) { std::println(1); }
+  ~Leaf() { std::println(7); }
+  std::size_t size() { return this.text.size(); }
+};
+
+class Envelope {
+  Leaf leaf;
+  std::string label;
+
+public:
+  Envelope(Leaf leaf, std::string label)
+      : leaf(std::move(leaf)), label(std::move(label)) { std::println(3); }
+  std::size_t size() { return this.leaf.size(); }
+};
+
+class Producer {
+public:
+  expected<Leaf, int> make() { return Leaf(std::string("token")); }
+};
+
+std::string later(int divisor) {
+  std::println(2);
+  int checked = 12 / divisor;
+  return std::string("label");
+}
+
+expected<Envelope, int> make_envelope(int divisor) {
+  Producer producer{};
+  mut auto result = producer.make();
+  return Envelope(std::move(result).value(), later(divisor));
+}
+
+expected<Leaf, int> forward_member() {
+  Producer producer{};
+  Leaf result = ?producer.make();
+  return std::move(result);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut auto result = make_envelope(argc == 2 ? 0 : 1);
+  Envelope owner = std::move(result).value();
+  std::println(owner.size());
+  {
+    mut auto forwarded = forward_member();
+    Leaf leaf = std::move(forwarded).value();
+    std::println(leaf.size());
+  }
+  return 0;
+}

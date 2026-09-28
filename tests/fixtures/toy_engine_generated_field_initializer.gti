@@ -1,0 +1,12 @@
+#include <std/memory>
+
+class Resource { public: Resource() {} };
+
+class Application {
+  std::unique_ptr<Resource> resource = std::make_unique<Resource>();
+};
+
+int main() {
+  Application application{};
+  return 0;
+}

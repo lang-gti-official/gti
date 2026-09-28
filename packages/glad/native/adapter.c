@@ -61,6 +61,10 @@ void gti_glad_buffer_data(uint32_t target, int64_t bytes, const void *data,
                           uint32_t usage) {
   glBufferData(target, (GLsizeiptr)bytes, data, usage);
 }
+void gti_glad_buffer_data_f32(uint32_t target, int64_t bytes, const float *data,
+                              uint32_t usage) {
+  glBufferData(target, (GLsizeiptr)bytes, data, usage);
+}
 void gti_glad_delete_buffers(int32_t count, const uint32_t *buffers) {
   glDeleteBuffers(count, buffers);
 }

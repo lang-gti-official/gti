@@ -147,7 +147,33 @@ The current implemented foundation includes:
   concepts; consuming `invoke_once`; and source-defined `less<T>`,
   `greater<T>`, `equal_to<T>`, and `not_equal_to<T>` function objects over the
   corresponding exact comparison concepts. `hash<T>` remains a customization
-  scaffold; and
+  scaffold. Source-defined owning callable classes provide
+  `std::function<R(Args...)>` and `std::move_only_function<R(Args...)>` for
+  repeatable read-only targets with value, read-only reference, or mutable
+  reference arguments (for example, `std::function<void(mut int&)>`).
+  The corresponding `R(Args...) mut` forms retain a mutable target and require
+  a mutable wrapper binding for invocation. Read-callable targets can also be
+  retained by a mutable wrapper; the signature itself does not implicitly
+  convert between receiver modes. Cloning a mutable `function` copies its
+  current target state into an independent owner.
+  The `R(Args...) &&` forms require explicit moved invocation and retain their
+  remaining captures through the caller's enclosing full expression, not just
+  until the target returns. A `function` clone made before consumption creates
+  an independently consumable target. These are ordinary GTI source classes
+  using verified unique-owner access and consuming receiver rules.
+  Borrowed arguments retain caller storage, including noncopyable objects.
+  Unambiguous eligible namespace functions can be passed directly or as stored
+  function items, and retain their exact target through cloning and replacement.
+  Both support empty
+  construction, `empty()`, `reset()`, `replace(callback)`, invocation and
+  explicit ownership transfer. `function` requires copy-constructible targets
+  and exposes an explicit deep `clone()`; the wrapper itself is move-only, as
+  with the other owning containers. `move_only_function` also accepts move-only
+  captures and has no clone. Allocation uses `make_unique`, and invoking an
+  empty wrapper follows checked null-owner failure, not C++ exceptions.
+  Borrowed captures/results, inferred fresh-lambda return types, global closure
+  storage, and native callback conversion are outside this wrapper contract.
+  Combined validation and local-delivery evidence is recorded under L-CALL-02; and
 - `<std/numeric>` public `std::accumulates_into<I, T>` and an ordinary
   source-defined default and operation-based `std::accumulate`, homogeneous
   default and operation-based `std::inner_product`, and unary
@@ -178,9 +204,38 @@ The current implemented foundation includes:
 - `<std/cstdio>` counted stdout/stderr, bounded stdin reads, and unbuffered file
   open/read/write/seek/tell/close through recoverable source-defined wrappers
   and a move-only `std::FILE` owner; and
-- `<std/format>` sequential integral replacement through source-defined
-  `std::format`, `std::try_print`, and `std::try_println`. The grammar is
-  limited to `{}`, `{{`, and `}}`; pattern and argument-count errors return
+- `<std/chrono>` exact signed `std::chrono::nanoseconds`, distinct monotonic and
+  Unix-wall-clock time points, recoverable clock reads, checked elapsed
+  subtraction, and normalized pre-epoch Unix second/subsecond decomposition;
+  see [Clocks And Durations](chrono.md); and
+- `<std/process>` reusable exact-argv `std::process::command` values with no
+  shell expansion, synchronous execution inheriting the current environment,
+  working directory, and standard streams, recoverable spawn/execute/wait
+  errors, and structured ordinary-exit versus signal termination status; see
+  [Child Processes](process.md); and
+- `<std/http>` an owned move-only `std::http::url` with fallible absolute
+  HTTP(S) parsing, secure authority construction, component-safe path/query
+  building, explicit cloning, receiver-tied views, and request/client
+  overloads, plus a synchronous reusable HTTP/HTTPS client with owned request
+  headers and bodies, strict TLS verification, redirects disabled by default,
+  bounded buffered responses, duplicate/order-preserving response headers,
+  stable construction and transport outcomes, and 4xx/5xx statuses returned
+  as ordinary responses. A private versioned runtime boundary dynamically
+  loads libcurl without exposing its handles or option surface; see
+  [Buffered HTTP and HTTPS](http.md); and
+- `<std/json>` a strict move-only owned DOM, UTF-8 and duplicate-key validation,
+  exact number-lexeme preservation with checked numeric conversions,
+  deterministic compact/pretty serialization, parser resource limits,
+  structured path/location errors, explicit deep cloning, and exact
+  `std::json::codec<T>` specializations without reflection or implicit field
+  mapping. Its source-defined surface executes through verified MIR and native
+  C++ emission, including move-only owning error alternatives;
+  see [JSON](json.md); and
+- `<std/format>` sequential heterogeneous replacement for booleans,
+  characters, fixed-width integers, binary32 floats, string views, and
+  transferred owning strings through source-defined `std::format`,
+  `std::try_print`, and `std::try_println`. The grammar is limited to `{}`,
+  `{{`, and `}}`; pattern, argument-count, and unsupported-type errors return
   `expected<..., std::format_errc>` before output begins; and
 - `<std/random>` source-defined deterministic `std::random_engine` sequences
   from an explicit `uint64_t` seed, plus fallible `std::random_device` draws
@@ -486,10 +541,11 @@ handle the condition. The current `std::print`/`std::println` implementation
 discards the status from the counted and scalar-byte stdout runtime entries;
 this is an implementation gap owned by the hosted-service work, not a
 permitted hidden stream state.
-`std::format` and the `try_print` family return `format_errc` only for malformed
-replacement syntax or an argument-count mismatch. The `try_` output names do
-not yet make a native stdout failure recoverable; they guarantee that a format
-error is reported before any bytes are written.
+`std::format` and the `try_print` family return `format_errc` for malformed
+replacement syntax, an argument-count mismatch, or an unsupported argument
+type. The `try_` output names do not yet make a native stdout failure
+recoverable; they guarantee that a format error is reported before any bytes
+are written.
 
 Wrong-state `expected.value()` and `expected.error()` access is the checked
 `GTI-R0009` failure. Infallible allocation uses `GTI-R0011`; recoverable
@@ -545,9 +601,9 @@ The following component families remain planned or incomplete:
   invalidation support;
 - the remaining callable, output/random-access complete-range, heterogeneous
   accumulation, and hash generic-capability families;
-- indexed/named/specifier-based and floating-point formatting, formatter
+- indexed/named/specifier-based and binary64 formatting, formatter
   customization, buffered streams, explicit text decoding, and structured I/O;
-- general filesystem operations, time, random distributions and engine
+- general filesystem operations, calendar/time-zone breadth, random distributions and engine
   breadth, connected networking, traffic buffers, atomic wait/notify, pointer
   atomics and fences, condition variables, recursive/read-write mutexes, stop tokens,
   detached/scoped tasks, typed argument packs, and broader threading;

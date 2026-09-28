@@ -2,6 +2,22 @@
   "schema_version": 1,
   "tests": [
     {
+      "name": "testPreparedConstructorReplacement",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testNonFailingOwningDeclarationInitializer",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testCopiedBorrowedArgumentAcrossInvoke",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPackParameterCleanup",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testOwningPayloadEnumRepresentationAdmission",
       "suite": "preflight"
     },
@@ -19,6 +35,10 @@
     },
     {
       "name": "testReadyBodyAndRepresentationFailures",
+      "suite": "preflight"
+    },
+    {
+      "name": "testProgramPlanValidationIsOperationScoped",
       "suite": "preflight"
     },
     {
@@ -178,8 +198,16 @@
       "suite": "text"
     },
     {
+      "name": "testOpaquePointerFailureResults",
+      "suite": "text"
+    },
+    {
       "name": "testInvokePublishesScalarEdgeArguments",
       "suite": "text"
+    },
+    {
+      "name": "testForwardListEmplacementPublication",
+      "suite": "lifecycle"
     },
     {
       "name": "testContainerSwapStorageAndMemberResults",
@@ -198,7 +226,7 @@
       "suite": "lifecycle"
     },
     {
-      "name": "testFallibleFieldInitializerLimitation",
+      "name": "testFallibleFieldInitializerPropagation",
       "suite": "lifecycle"
     },
     {
@@ -355,6 +383,30 @@
     },
     {
       "name": "testCleanupFreeConstructorTemporaryFieldRead",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testDiscardedCleanupFreeClassResult",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testNestedCleanupFreeClassResult",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveConstructorFieldPublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testConstructedCallbackConditionalArgument",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testErasedOwnedResultReturn",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testFreshOwnedCallableArgument",
       "suite": "lifecycle"
     },
     {

@@ -35,7 +35,10 @@ def archive(entries, *, link=False):
 
 class PackagesTest(unittest.TestCase):
     def test_inventory(self):
-        self.assertEqual(set(prepare.PACKAGES), {"glfw", "glad", "sqlite3", "cimgui", "zlib", "libpng", "assimp", "libgit2"})
+        self.assertEqual(
+            set(prepare.PACKAGES),
+            {"glfw", "glad", "sqlite3", "cimgui", "zlib", "libpng", "assimp", "libgit2", "cli11"},
+        )
         lock = json.loads((prepare.ROOT / "upstream-lock.json").read_text())
         self.assertEqual(set(lock), set(prepare.PACKAGES) | {"imgui"})
         for name, entry in lock.items():
@@ -73,6 +76,19 @@ class PackagesTest(unittest.TestCase):
                         ("root/doc/readme.txt", b"docs")])
         self.assertEqual(prepare.archive_files(data, exclude_directories=("test", "doc")),
                          {"code/api.c": b"code"})
+        data = io.BytesIO()
+        with tarfile.open(fileobj=data, mode="w:gz") as result:
+            code = tarfile.TarInfo("root/code/api.c")
+            code.size = 4
+            result.addfile(code, io.BytesIO(b"code"))
+            link = tarfile.TarInfo("root/test/fixture-link")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "fixture-target"
+            result.addfile(link)
+        self.assertEqual(
+            prepare.archive_files(data.getvalue(), exclude_directories=("test",)),
+            {"code/api.c": b"code"},
+        )
         with self.assertRaises(ValueError):
             prepare.archive_files(archive([("root/test/../../outside", b"bad")]),
                                   exclude_directories=("test",))
@@ -124,6 +140,18 @@ class PackagesTest(unittest.TestCase):
                 encoding="utf-8"
             )
             self.assertIn('"/vendor/zlib"', script)
+
+    def test_libgit2_build_is_static_offline_core_with_pinned_zlib(self):
+        script = (prepare.ROOT / "libgit2/build.gti").read_text(encoding="utf-8")
+        for option in ("-DBUILD_SHARED_LIBS=OFF", "-DUSE_SSH=OFF",
+                       "-DUSE_HTTPS=OFF", "-DREGEX_BACKEND=builtin",
+                       "-DUSE_BUNDLED_ZLIB=OFF"):
+            self.assertIn(f'configure.arg("{option}")', script)
+        self.assertIn('joined(context.package_dir(), "/vendor/zlib")', script)
+        self.assertIn('option("-DZLIB_LIBRARY=", zlib_archive)', script)
+        self.assertIn('configure.arg(zlib_library_option.view())', script)
+        self.assertIn('outputs.link_file("cmake/libgit2.a")', script)
+        self.assertFalse(hasattr(prepare, "prepare_libgit2"))
 
     def test_offline_checksum_idempotence_and_modified_sources(self):
         with tempfile.TemporaryDirectory() as directory:

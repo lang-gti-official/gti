@@ -1,0 +1,122 @@
+#include "scene.gti"
+#include "window.gti"
+#include <cimgui/cimgui>
+#include <glad/glad>
+#include <glfw/glfw>
+
+namespace toy3d {
+class DebugUi {
+  mut imgui::ImGuiContext* context = nullptr;
+  mut bool renderer_ready = false;
+
+public:
+  DebugUi() {}
+  DebugUi(DebugUi& other) = delete;
+  DebugUi(DebugUi&& other) = delete;
+
+  ~DebugUi() { this.shutdown(); }
+
+  bool initialize() mut {
+    unsafe {
+      this.context = imgui::gti_imgui_create_context();
+      if (this.context == nullptr) {
+        return false;
+      }
+      imgui::gti_imgui_set_current_context(this.context);
+      if (imgui::gti_imgui_opengl3_init("#version 330 core") == 0) {
+        imgui::gti_imgui_destroy_context(this.context);
+        this.context = nullptr;
+        return false;
+      }
+      this.renderer_ready = true;
+      return true;
+    }
+  }
+
+  void shutdown() mut {
+    unsafe {
+      if (this.context != nullptr) {
+        imgui::gti_imgui_set_current_context(this.context);
+        if (this.renderer_ready) {
+          imgui::gti_imgui_opengl3_shutdown();
+          this.renderer_ready = false;
+        }
+        imgui::gti_imgui_destroy_context(this.context);
+        this.context = nullptr;
+      }
+    }
+  }
+
+  bool build_frame(Window& window, mut Scene& scene, float delta_seconds,
+                   int32_t framebuffer_width, int32_t framebuffer_height) mut {
+    if (!this.renderer_ready || framebuffer_width <= 0 ||
+        framebuffer_height <= 0) {
+      return false;
+    }
+
+    mut int32_t window_width = 0;
+    mut int32_t window_height = 0;
+    window.window_size(window_width, window_height);
+    mut double cursor_x = 0.0;
+    mut double cursor_y = 0.0;
+    window.cursor_position(cursor_x, cursor_y);
+
+    mut float mouse_x = float(cursor_x);
+    mut float mouse_y = float(cursor_y);
+    if (window_width > 0 && window_height > 0) {
+      mouse_x = mouse_x * float(framebuffer_width) / float(window_width);
+      mouse_y = mouse_y * float(framebuffer_height) / float(window_height);
+    }
+
+    unsafe {
+      imgui::gti_imgui_set_current_context(this.context);
+      imgui::gti_imgui_opengl3_new_frame();
+      imgui::gti_imgui_configure_frame(
+          float(framebuffer_width), float(framebuffer_height), delta_seconds);
+      imgui::gti_imgui_mouse_position(mouse_x, mouse_y);
+      imgui::gti_imgui_mouse_button(
+          0, window.mouse_down(GLFW_MOUSE_BUTTON_LEFT) ? 1 : 0);
+      imgui::gti_imgui_mouse_button(
+          1, window.mouse_down(GLFW_MOUSE_BUTTON_RIGHT) ? 1 : 0);
+      imgui::gti_imgui_mouse_button(
+          2, window.mouse_down(GLFW_MOUSE_BUTTON_MIDDLE) ? 1 : 0);
+      imgui::gti_imgui_new_frame();
+
+      if (imgui::gti_imgui_begin("GTI Engine", nullptr, 0) != 0) {
+        imgui::gti_imgui_text("Assimp model: Crystal");
+        imgui::gti_imgui_text("WASD moves the camera");
+        imgui::gti_imgui_separator();
+
+        mut int32_t spinning = scene.spinning() ? 1 : 0;
+        if (imgui::gti_imgui_checkbox("Animate", &spinning) != 0) {
+          scene.set_spinning(spinning != 0);
+        }
+
+        mut float speed = scene.angular_speed();
+        if (imgui::gti_imgui_slider_float(
+                "Rotation speed", &speed, 0.0, 2.5) != 0) {
+          scene.set_angular_speed(speed);
+        }
+
+        if (imgui::gti_imgui_button("Reset scene", 120.0, 28.0) != 0) {
+          scene.reset();
+        }
+      }
+      imgui::gti_imgui_end();
+      imgui::gti_imgui_render();
+      return imgui::gti_imgui_draw_data_valid() != 0;
+    }
+  }
+
+  bool draw() {
+    if (!this.renderer_ready) {
+      return false;
+    }
+    unsafe {
+      imgui::gti_imgui_set_current_context(this.context);
+      imgui::gti_imgui_opengl3_render_draw_data();
+      return gl::gti_glad_get_error() == uint32_t(0);
+    }
+  }
+};
+}

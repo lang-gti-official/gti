@@ -52,6 +52,8 @@ ownedTransportName(CallableOwnedTransportKind kind) {
     return "exact-field";
   case CallableOwnedTransportKind::ThreadTask:
     return "thread-task";
+  case CallableOwnedTransportKind::Value:
+    return "owned-value";
   }
   return "invalid";
 }
@@ -87,6 +89,8 @@ callInputKindName(HirCallInputKind kind) {
     return "copy-value";
   case HirCallInputKind::MoveValue:
     return "move-value";
+  case HirCallInputKind::RetainedReceiver:
+    return "retained-receiver";
   case HirCallInputKind::ReadBorrow:
     return "read-borrow";
   case HirCallInputKind::MutableBorrow:
@@ -259,7 +263,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v70 valid=" << program.valid() << '\n';
+    output << "mir-v74 valid=" << program.valid() << '\n';
     for (const MirNativeCallbackAdapter &adapter :
          program.nativeCallbackAdapters()) {
       output << "native-callback @" << adapter.id
@@ -429,7 +433,8 @@ public:
         output << "{field=" << field.field << ",symbol=" << field.symbol
                << ",type=";
         type(field.type);
-        output << ",drop=" << number(field.dropKind)
+        output << ",access=" << number(field.access)
+               << ",drop=" << number(field.dropKind)
                << ",active-cleanup=" << field.requiresActiveCleanup << '}';
       }
       output << "] lifecycle-fields=[";
@@ -499,6 +504,19 @@ public:
              << instance.returnBorrowParameter << ':'
              << number(instance.returnBorrowAccess) << " return-borrow-place=";
       borrowOriginPlace(instance.returnBorrowPlace);
+      output << " owned-pointee=";
+      if (instance.ownedPointeeProjection) {
+        output << number(instance.ownedPointeeProjection->borrowIntrinsic)
+               << ":[";
+        for (std::size_t index = 0;
+             index < instance.ownedPointeeProjection->fields.size(); ++index) {
+          separator(index);
+          output << instance.ownedPointeeProjection->fields[index];
+        }
+        output << ']';
+      } else {
+        output << "none";
+      }
       output << " linkage="
              << (instance.linkage == LanguageLinkage::C ? "c" : "gti")
              << " symbol=" << instance.externalSymbol << " c-array-count=";
@@ -669,7 +687,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v60\n";
+    output << "mir-body-v64\n";
     body(value, 0);
     return output.str();
   }
@@ -906,6 +924,7 @@ private:
            << ";length-parameter=" << value.arrayLengthParameterId
            << ";access=" << number(value.referenceAccess)
            << ";pointer-access=" << number(value.pointerAccess)
+           << ";signature-receiver=" << number(value.signatureReceiver)
            << ";concrete-pack=" << value.concretePack << ";args=[";
     for (std::size_t index = 0; index < value.arguments.size(); ++index) {
       separator(index);
@@ -1115,9 +1134,12 @@ private:
     }
     output << " unique-pointee=";
     optional(value.dropType.uniquePointeeClass);
-    output << " unique-field=" << value.dropType.uniqueOwnerField
+    output << " polymorphic-cleanup=" << value.dropType.polymorphicCleanup
+           << " unique-field=" << value.dropType.uniqueOwnerField
            << " unique-base=";
     optional(value.dropType.uniqueOwnerBase);
+    output << " capture=";
+    optional(value.dropType.captureIndex);
     output << " recursive=" << value.dropType.recursiveCleanup
            << " aggregate=[";
     for (const auto &step : value.dropType.aggregate)
@@ -1135,8 +1157,11 @@ private:
     optional(step.destructor);
     output << ";pointee=";
     optional(step.uniquePointeeClass);
-    output << ";field=" << step.uniqueOwnerField << ";base=";
+    output << ";polymorphic-cleanup=" << step.polymorphicCleanup
+           << ";field=" << step.uniqueOwnerField << ";base=";
     optional(step.uniqueOwnerBase);
+    output << ";capture=";
+    optional(step.captureIndex);
     output << ";recursive=" << step.recursiveCleanup
            << ";active=" << step.requiresActiveCleanup << ";children=[";
     for (const auto &child : step.aggregate)
@@ -1229,6 +1254,8 @@ private:
            << " default-argument=" << value.defaultArgument
            << " prepared-parameter-drop=";
     optional(value.preparedParameterDrop);
+    output << " retained-owner-place=";
+    optional(value.retainedOwnerPlace);
     output << " success-result-drop=";
     optional(value.successResultDrop);
     output << " success-result-destination=";

@@ -27,6 +27,10 @@ add_custom_target(
 )
 
 find_package(Threads REQUIRED)
+# <std/http> loads the platform libcurl dynamically so the public runtime
+# archive has no libcurl link dependency. Its stable C declarations and option
+# constants still come from the build host's development headers.
+find_package(CURL REQUIRED)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -420,11 +424,13 @@ target_link_libraries("gti_cpp_backend" PUBLIC gti_compiler)
 
 add_library(
   "gti_runtime" STATIC
+  "runtime/src/chrono.cpp"
   "runtime/src/cthread.cpp"
   "runtime/src/cthread_sleep.cpp"
   "runtime/src/cthread_mutex.cpp"
   "runtime/src/cthread_state.cpp"
   "runtime/src/failure.cpp"
+  "runtime/src/http.cpp"
   "runtime/src/io.cpp"
   "runtime/src/math.cpp"
   "runtime/src/process.cpp"
@@ -437,8 +443,9 @@ target_include_directories(
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/runtime/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
+target_include_directories("gti_runtime" SYSTEM PRIVATE ${CURL_INCLUDE_DIRS})
 target_compile_features("gti_runtime" PUBLIC cxx_std_20)
-target_link_libraries("gti_runtime" PRIVATE Threads::Threads)
+target_link_libraries("gti_runtime" PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 if(WIN32)
   # gti_rt_random_bytes calls BCryptGenRandom.
   target_link_libraries("gti_runtime" PRIVATE "bcrypt")

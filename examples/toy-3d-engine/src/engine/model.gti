@@ -1,0 +1,85 @@
+#include <assimp/assimp>
+
+namespace toy3d {
+class Model {
+  mut const assimp::aiScene* scene = nullptr;
+
+public:
+  Model() {}
+  Model(Model& other) = delete;
+  Model(Model&& other) = delete;
+
+  ~Model() { this.shutdown(); }
+
+  bool load_demo() mut {
+    this.shutdown();
+    unsafe {
+      uint32_t flags = uint32_t(
+          assimp::GTI_ASSIMP_JOIN_IDENTICAL_VERTICES |
+          assimp::GTI_ASSIMP_TRIANGULATE |
+          assimp::GTI_ASSIMP_GEN_SMOOTH_NORMALS |
+          assimp::GTI_ASSIMP_VALIDATE_DATA_STRUCTURE);
+      this.scene = assimp::gti_assimp_import_memory(
+          "o Crystal\nv 0 1.5 0\nv -1 0 1\nv 1 0 1\nv 1 0 -1\nv -1 0 -1\nv 0 -1.5 0\nf 1 2 3\nf 1 3 4\nf 1 4 5\nf 1 5 2\nf 6 3 2\nf 6 4 3\nf 6 5 4\nf 6 2 5\n",
+          uint32_t(131), flags, "obj");
+      return this.scene != nullptr &&
+             assimp::gti_assimp_mesh(this.scene, uint32_t(0)) != nullptr;
+    }
+  }
+
+  void shutdown() mut {
+    unsafe {
+      if (this.scene != nullptr) {
+        assimp::gti_assimp_release(this.scene);
+        this.scene = nullptr;
+      }
+    }
+  }
+
+  uint32_t triangle_count() {
+    unsafe {
+      const assimp::aiMesh* mesh =
+          assimp::gti_assimp_mesh(this.scene, uint32_t(0));
+      if (mesh == nullptr) {
+        return uint32_t(0);
+      }
+      return assimp::gti_assimp_face_count(mesh);
+    }
+  }
+
+  bool vertex(uint32_t triangle, uint32_t corner, mut float& x, mut float& y,
+              mut float& z, mut float& normal_x, mut float& normal_y,
+              mut float& normal_z) {
+    unsafe {
+      const assimp::aiMesh* mesh =
+          assimp::gti_assimp_mesh(this.scene, uint32_t(0));
+      if (mesh == nullptr ||
+          assimp::gti_assimp_face_size(mesh, triangle) != uint32_t(3)) {
+        return false;
+      }
+
+      mut uint32_t index = uint32_t(0);
+      if (assimp::gti_assimp_face_index(mesh, triangle, corner, &index) == 0) {
+        return false;
+      }
+
+      mut assimp::GtiAssimpVector3 position =
+          assimp::gti_assimp_zero_vector();
+      mut assimp::GtiAssimpVector3 normal =
+          assimp::gti_assimp_zero_vector();
+      if (assimp::gti_assimp_position(mesh, index, &position) == 0 ||
+          assimp::gti_assimp_normal(mesh, index, &normal) == 0) {
+        return false;
+      }
+
+      x = position.x;
+      y = position.y;
+      z = position.z;
+      normal_x = normal.x;
+      normal_y = normal.y;
+      normal_z = normal.z;
+      return true;
+    }
+  }
+};
+}

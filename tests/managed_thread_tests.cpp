@@ -260,6 +260,61 @@ void testPublicPipelineAndInventory() {
          "HIR should verify exact managed-task transport identities");
   expect(lang::verifyMirProgram(frontend.mir).valid(),
          "MIR should verify managed-thread synchronization and adapters");
+  bool passivePrepared = false;
+  bool owningPrepared = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &input : block.instructions) {
+        if (input.kind != lang::MirInstructionKind::CallInput ||
+            input.callInputKind != lang::HirCallInputKind::MoveValue ||
+            input.info.type.kind != lang::SemanticType::Lambda ||
+            !input.preparedParameterDrop)
+          continue;
+        const auto *drop =
+            function.body.findDropObligation(*input.preparedParameterDrop);
+        if (drop == nullptr)
+          continue;
+        bool &checked = drop->dropType.requiresActiveCleanup ? owningPrepared
+                                                             : passivePrepared;
+        if (checked)
+          continue;
+        checked = true;
+        expect(drop->dropType.lambdaInstance.has_value(),
+               "managed task preparation retains its exact lambda cleanup "
+               "identity");
+        for (int mutation = 0; mutation != 4; ++mutation) {
+          auto forged = frontend.mir;
+          auto *body = lang::findMirBody(
+              forged, {lang::MirBodyKind::Function, function.id});
+          for (auto &changedBlock : body->blocks)
+            for (auto &changed : changedBlock.instructions) {
+              if (changed.id == input.id) {
+                if (mutation == 0)
+                  changed.preparedParameterDrop.reset();
+                else if (mutation == 1)
+                  changed.lifecycle.clear();
+              }
+              if (mutation == 2)
+                std::erase_if(changed.lifecycle, [&](const auto &event) {
+                  return event.kind ==
+                             lang::MirLifecycleEventKind::TransferOut &&
+                         event.source == drop->id;
+                });
+            }
+          if (mutation == 3)
+            body->dropObligations[drop->id - 1].dropType.requiresActiveCleanup =
+                !drop->dropType.requiresActiveCleanup;
+          expect(
+              !lang::verifyMirProgram(forged).valid(),
+              "managed task staging rejects missing preparation, activation, "
+              "transfer, or forged cleanup requirement");
+        }
+      }
+    }
+  }
+  expect(passivePrepared && owningPrepared,
+         "fresh passive and resource-capturing tasks both retain prepared "
+         "lifetimes");
   expect(frontend.hir.threadTaskAdapters().size() == 4 &&
              frontend.mir.threadTaskAdapters().size() == 4,
          "four concrete task types should produce four exact adapters");
@@ -636,12 +691,13 @@ int main() {
 }
 )");
   expect(!borrowedResultType.canGenerateCode() &&
-             hasCode(borrowedResultType, "GTI-S2017") &&
+             hasCode(borrowedResultType, "GTI-S2084") &&
              hasMessage(borrowedResultType,
-                        "References cannot be nested inside another type") &&
+                        "A managed-thread result must be an owned non-void "
+                        "value type") &&
              !hasCode(borrowedResultType, "GTI-B0001"),
-         "a borrowed result should fail at the general nested-reference type "
-         "boundary before managed-thread lowering");
+         "a borrowed result should fail at the owned managed-thread result "
+         "boundary before MIR lowering");
   expectThreadRejection("raw-thread-result.gti", R"(
 #include <std/thread>
 int main() {

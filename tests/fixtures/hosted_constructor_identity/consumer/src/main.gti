@@ -1,0 +1,10 @@
+#include <std/string>
+#include <std/vector>
+#include <storage/texts>
+
+int main(int argc, std::vector<std::string> argv) {
+  mut storage::Texts texts{};
+  texts.fill();
+  texts.show();
+  return argv.size() == std::size_t(argc) ? 0 : 1;
+}

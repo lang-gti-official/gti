@@ -21,7 +21,9 @@ FrontendResult analyze(const CompilationRequest &request,
   // Compilation and `check` consume diagnostics, semantics, and symbols; only
   // editor position queries read the occurrence table, so it is not built on
   // this path.
-  return Frontend({.target = request.target(), .toolingOccurrences = false})
+  return Frontend({.target = request.target(),
+                   .toolingOccurrences = false,
+                   .requireEntryPoint = request.requiresEntryPoint()})
       .analyzeLoaded(request.entry(), std::move(inputs.sourceGraph),
                      std::move(inputs.sources), std::move(inputs.diagnostics),
                      inputs.sourceValid);
@@ -214,6 +216,16 @@ const ConfigurationFlags &CompilationRequest::configurationFlags() const {
 const OptimizationOutputRequest &
 CompilationRequest::optimizationOutputs() const {
   return requestedOptimizationOutputs;
+}
+
+bool CompilationRequest::requiresEntryPoint() const {
+  return entryPointRequired;
+}
+
+CompilationRequest CompilationRequest::forExecutable() const {
+  CompilationRequest result = *this;
+  result.entryPointRequired = true;
+  return result;
 }
 
 CompilationInputs loadCompilationInputs(const CompilationRequest &request) {

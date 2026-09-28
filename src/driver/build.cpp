@@ -888,6 +888,9 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
   }
   identity.add("backend.standard",
                static_cast<std::uint64_t>(request.compilation().cppStandard()));
+  identity.add(
+      "frontend.requires-entry-point",
+      static_cast<std::uint64_t>(request.compilation().requiresEntryPoint()));
   identity.add("optimization", static_cast<std::uint64_t>(
                                    request.compilation().optimization()));
   for (const std::string &flag : request.compilation().configurationFlags()) {
@@ -2280,7 +2283,7 @@ ExecutableBuildRequest::ExecutableBuildRequest(
     std::optional<ManagedOutputPolicy> managedOutput,
     std::optional<std::string> cCompiler, std::optional<BuildCachePolicy> cache,
     std::optional<BuildReportRequest> buildReport)
-    : compilationRequest(std::move(compilation)),
+    : compilationRequest(compilation.forExecutable()),
       toolchainLayout(std::move(toolchain)),
       generatedSourcePath(std::move(generatedSource)),
       outputPath(std::move(output)),

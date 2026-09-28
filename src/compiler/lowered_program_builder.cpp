@@ -215,7 +215,8 @@ lowerGenericParameters(const std::vector<GenericParameterInfo> &parameters) {
          .constraintName = parameter.constraintName
                                ? lowerNamePath(*parameter.constraintName)
                                : std::vector<std::string>{},
-         .constraintConcept = parameter.conceptId});
+         .constraintConcept = parameter.conceptId,
+         .typeArgumentPath = parameter.typeArgumentPath});
   }
   return result;
 }
@@ -452,6 +453,7 @@ private:
       row.source = tokenSpan(declaration->name());
       row.generic = !declaration->genericParameters().empty();
       if (const ClassTypeInfo *info = semantics_.findClassType(*declaration)) {
+        row.generic = !info->genericParameters.empty();
         row.semanticIdentity = info->id;
         row.namespaceScope = info->namespaceScope;
         childNamespace = info->namespaceScope;
@@ -466,6 +468,7 @@ private:
             .exactValueArguments = info->exactValueArguments,
             .genericParameters =
                 lowerGenericParameters(info->genericParameters),
+            .genericArgumentPatterns = info->genericArgumentPatterns,
             .traits = info->traits,
             .transferPolicy = info->transferPolicy,
             .sharePolicy = info->sharePolicy,
@@ -684,6 +687,14 @@ private:
     const LoweredDeclarationId id = result_.back().id;
     if (children != nullptr) {
       collectList(*children, id, childOwner, childNamespace);
+    }
+    if (stmtAs<ClassDecl>(&statement) != nullptr) {
+      for (const auto &constructor : semantics_.designatedConstructors) {
+        const auto *info = semantics_.findConstructor(*constructor);
+        if (info != nullptr && info->owner == childOwner) {
+          collectStatement(*constructor, id, childOwner, childNamespace);
+        }
+      }
     }
   }
 

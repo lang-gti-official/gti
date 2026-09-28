@@ -3238,6 +3238,7 @@ def main():
         formatted_output.write_text(
             "#include <std/format>\n"
             "#include <std/string>\n"
+            "class unsupported_format_value {}; "
             "int main() { "
             "mut std::string bytes = std::string(); "
             "bytes.push_back('A'); bytes.push_back('\\0'); "
@@ -3269,6 +3270,28 @@ def main():
             'if (!moved or moved.value() != "-128|255|-32768|65535|'
             '-2147483648|4294967295|-9223372036854775808|'
             '18446744073709551615") { return 6; } '
+            'mut std::string host = std::string("gitea.example"); '
+            'std::string_view method = "api/v1/user"; '
+            'mut auto endpoint = std::format("https://{}/{}", '
+            'host.view(), method); '
+            'if (!endpoint or endpoint.value() != '
+            '"https://gitea.example/api/v1/user") { return 16; } '
+            'mut std::string owned = std::string("owned"); '
+            'mut auto heterogeneous = std::format("{}|{}|{}|{}|{}", '
+            "true, 'X', int32_t(-7), 1.25, std::move(owned)); "
+            'if (!heterogeneous or heterogeneous.value() != '
+            '"true|X|-7|1.250000|owned") { return 17; } '
+            'mut auto unsupported = std::format("{}", '
+            'unsupported_format_value()); '
+            'if (unsupported or unsupported.error() != '
+            'std::format_errc::unsupported_argument) { return 18; } '
+            'mut auto binary64 = std::format("{}", 1.5d); '
+            'if (binary64 or binary64.error() != '
+            'std::format_errc::unsupported_argument) { return 19; } '
+            'mut auto unsupported_print = std::try_print("LEAK {}", '
+            'unsupported_format_value()); '
+            'if (unsupported_print or unsupported_print.error() != '
+            'std::format_errc::unsupported_argument) { return 20; } '
             'mut auto malformed = std::try_print("LEAK {", int32_t(1)); '
             "if (malformed or malformed.error() != "
             "std::format_errc::invalid_format) { return 7; } "
@@ -3295,8 +3318,9 @@ def main():
             "int64_t(-9223372036854775807 - 1), "
             "uint64_t(18446744073709551615)); "
             "if (!first) { return 14; } "
-            'mut auto second = std::try_println(" mixed={} {}", int8_t(-8), '
-            "uint16_t(65535)); "
+            'mut auto second = std::try_println('
+            '" mixed={} {} host={} enabled={} code={} ratio={}", '
+            "int8_t(-8), uint16_t(65535), host.view(), true, 'X', 1.25); "
             "if (!second) { return 15; } return 0; }\n",
             encoding="utf-8",
         )
@@ -3318,34 +3342,9 @@ def main():
                 )
                 assert run([str(formatted_executable)]).stdout == (
                     "A\x00B|A\x007Bsigned=-9223372036854775808 "
-                    "unsigned=18446744073709551615 braces={} mixed=-8 65535\n"
+                    "unsigned=18446744073709551615 braces={} mixed=-8 65535 "
+                    "host=gitea.example enabled=true code=X ratio=1.250000\n"
                 )
-
-        invalid_formatted_type = root / "invalid-formatted-type.gti"
-        invalid_formatted_type.write_text(
-            "#include <std/format>\n"
-            "int main() { "
-            '[[discard]] std::try_print("{}", 1.5); '
-            '[[discard]] std::try_print("{}", true); '
-            '[[discard]] std::try_print("{}", \'A\'); '
-            "return 0; }\n",
-            encoding="utf-8",
-        )
-        rejected_formatted_type = run(
-            [
-                gti,
-                str(invalid_formatted_type),
-                "-o",
-                str(root / "invalid-formatted-type"),
-            ],
-            65,
-        )
-        assert rejected_formatted_type.stderr.count(
-            "does not satisfy generic constraint 'std::integral'"
-        ) == 3
-        assert "Type 'float'" in rejected_formatted_type.stderr
-        assert "Type 'bool'" in rejected_formatted_type.stderr
-        assert "Type 'char'" in rejected_formatted_type.stderr
 
         invalid_float_print = root / "invalid-float-print.gti"
         invalid_float_print.write_text(

@@ -3738,7 +3738,7 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v60\n") &&
+  expect(dump.starts_with("mir-body-v64\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&
@@ -6285,7 +6285,19 @@ int main() {
         }
       }
     }
-    if (forwardingCall != nullptr && !forwardingCall->operands.empty()) {
+    lang::MirInstruction *forwardingInput = nullptr;
+    if (forwardingCall != nullptr && !forwardingCall->operands.empty() &&
+        forwardingCall->operands.front().kind == lang::MirOperandKind::Value) {
+      for (auto &block : wrongOperandOuter->body.blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.result == forwardingCall->operands.front().value &&
+              instruction.kind == lang::MirInstructionKind::CallInput &&
+              instruction.callInputKind == lang::HirCallInputKind::CopyValue &&
+              instruction.operands.size() == 1 &&
+              instruction.operands.front().kind == lang::MirOperandKind::Copy)
+            forwardingInput = &instruction;
+    }
+    if (forwardingInput != nullptr) {
       const lang::SemanticType type = forwardingCall->operands.front().type;
       const lang::MirPlaceId forgedPlace =
           wrongOperandOuter->body.places.size() + 1;
@@ -6294,16 +6306,20 @@ int main() {
            .root = lang::MirPlaceRootKind::Binding,
            .binding = wrongOperandOuter->parameterBindings.front() + 1000,
            .type = type,
-           .traits = lang::semanticTraits(type),
+           .traits = forwardingInput->info.traits,
+           .sourceValue = forwardingInput->hirValue,
            .initiallyAvailable = true});
-      forwardingCall->operands.front() = {.kind = lang::MirOperandKind::Copy,
-                                          .place = forgedPlace,
-                                          .type = type};
+      forwardingInput->operands.front() = {.kind = lang::MirOperandKind::Copy,
+                                           .place = forgedPlace,
+                                           .type = type};
       (void)lang::rebuildMirValueUses(wrongOperandOuter->body);
     }
-    expect(forwardingCall != nullptr &&
-               lang::verifyMirBody(wrongOperandOuter->body).valid() &&
-               !lang::verifyMirProgram(wrongForwardingOperand).valid(),
+    const auto forgedForwardingBody =
+        lang::verifyMirBody(wrongOperandOuter->body);
+    const auto forgedForwardingProgram =
+        lang::verifyMirProgram(wrongForwardingOperand);
+    expect(forwardingInput != nullptr && forgedForwardingBody.valid() &&
+               !forgedForwardingProgram.valid(),
            "a forwarding summary must prove that the descriptor operand is "
            "the source callable parameter binding");
   }
@@ -6647,6 +6663,16 @@ int main() {
   };
   const auto replaceMoveWithCopy = [](lang::MirBody &body,
                                       lang::MirValueId value) {
+    // A call now consumes an ordered prepared input, not the Move directly.
+    // Preserve that staging and corrupt the actual ownership producer.
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.result == value &&
+            instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.callInputKind == lang::HirCallInputKind::MoveValue &&
+            instruction.operands.size() == 1 &&
+            instruction.operands.front().kind == lang::MirOperandKind::Value)
+          value = instruction.operands.front().value;
     for (lang::MirBlock &block : body.blocks) {
       for (lang::MirInstruction &instruction : block.instructions) {
         if (instruction.result != value ||

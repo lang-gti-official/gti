@@ -94,6 +94,9 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   genericDefaultConstants.clear();
   registerClasses(program.declarations(), {});
   resolveTypeAliases();
+  for (ClassId id = 1; id <= classes.size(); ++id) {
+    resolveClassArgumentPatterns(id);
+  }
   registerClassSpecializations(program.declarations(), {});
   recordClassTypeIdentities();
   resolveEnumPayloads();
@@ -114,6 +117,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   validateInterfaceCapabilities();
   recordClassTypes();
   recordClassLifecycles();
+  registerDesignatedConstructors();
   catalog.seal();
   valueFlow.beginBody(catalog);
   if (workMetrics != nullptr) {
@@ -139,6 +143,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   const auto finalizationStart = std::chrono::steady_clock::now();
   discoverOwnedCallableContracts();
   semanticModel.finalizeCallableForwardings();
+  discoverOwnedCallableValueParameters();
   validateOnceCallableForwardings();
   validateOwnedCallableArguments();
   validateProvisionalCallableArguments();
@@ -341,6 +346,11 @@ auto SemanticVisitor::Impl::analyzeConstructorInstance(
     -> SemanticInstanceAnalysis {
   const ConstructorInfo *constructor = nullptr;
   for (const ClassInfo &owner : classes) {
+    if (owner.designatedConstructor &&
+        owner.designatedConstructor->id == constructorId) {
+      constructor = &*owner.designatedConstructor;
+      break;
+    }
     const auto found =
         std::find_if(owner.constructors.begin(), owner.constructors.end(),
                      [constructorId](const ConstructorInfo &candidate) {
@@ -367,7 +377,16 @@ auto SemanticVisitor::Impl::analyzeConstructorInstance(
   std::size_t typeIndex = 0;
   std::size_t valueIndex = 0;
   for (const GenericParameterInfo &parameter : constructor->genericParameters) {
-    if (parameter.value) {
+    if (parameter.pack) {
+      std::vector<SemanticType> elements(
+          constructorTypeArguments.begin() +
+              static_cast<std::ptrdiff_t>(typeIndex),
+          constructorTypeArguments.end());
+      instanceTypeSubstitution.insert_or_assign(
+          parameter.id,
+          SemanticType::concreteTypePack(parameter.id, std::move(elements)));
+      typeIndex = constructorTypeArguments.size();
+    } else if (parameter.value) {
       if (valueIndex >= constructorValueArguments.size()) {
         finishClassInstanceContext();
         return scope.finish();
@@ -385,6 +404,7 @@ auto SemanticVisitor::Impl::analyzeConstructorInstance(
   }
   constructor->declaration->accept(*this);
   validateDefaultArgumentCycles();
+  semanticModel.finalizeCallableArguments();
   finishClassInstanceContext();
   return scope.finish();
 }
@@ -430,6 +450,29 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
     return scope.finish();
   }
   analyzeConcreteClassStaticAssertions(classType->declaration->members());
+  // Substitution can make aliases and class-owned method packs ill-formed
+  // even when no method is called. Validate their types in the concrete
+  // owner scope rather than deferring object-position errors to C++ emission.
+  const auto validateMemberTypes = [&](const auto &self,
+                                       const StmtList &members) -> void {
+    for (const StmtPtr &member : members) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(member.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          self(self, *branch);
+        }
+      } else if (const auto *alias = stmtAs<TypeAliasDecl>(member.get())) {
+        validateType(alias->target());
+      } else if (const auto *function = stmtAs<FunctionDecl>(member.get());
+                 function != nullptr && !function->parameters().empty() &&
+                 function->parameters().back().pack) {
+        const auto &parameters = genericParametersFor(*function);
+        beginTypeParameterScope(parameters);
+        validateFunctionPacks(*function, parameters);
+        endTypeParameterScope();
+      }
+    }
+  };
+  validateMemberTypes(validateMemberTypes, classType->declaration->members());
   for (const ClassFieldTypeInfo &field : classType->fields) {
     if (field.declaration != nullptr) {
       field.declaration->accept(*this);
@@ -573,7 +616,8 @@ auto SemanticVisitor::Impl::visitClassDecl(const ClassDecl &stmt) -> void {
     validateType(base.type);
     validateReferencePlacement(base.type, false, "base type");
   }
-  if (info.constructors.empty() && !info.cAbiRecord && !info.cOpaqueHandle &&
+  if (info.constructors.empty() && !info.designatedConstructor &&
+      !info.cAbiRecord && !info.cOpaqueHandle &&
       info.kind != ClassKind::Union) {
     for (const FieldInfo &field : info.fields) {
       const auto member = info.members.find(field.declaration->name().lexeme);
@@ -592,6 +636,19 @@ auto SemanticVisitor::Impl::visitClassDecl(const ClassDecl &stmt) -> void {
     scopes.back().emplace(name, member.symbol);
   }
   analyze(stmt.members());
+  if (info.designatedConstructor) {
+    // Reserve declaration identities for the lowered inventory. Analyze the
+    // generated body only when concrete HIR selects it, like an instance.
+    const auto &constructor = *info.designatedConstructor;
+    for (std::size_t i = 0; i < constructor.parameterTypes.size(); ++i) {
+      const Parameter &parameter = constructor.declaration->parameters()[i];
+      const SemanticType &type = constructor.parameterTypes[i];
+      BindingInfo binding = bindingInfo(type, AccessMode::ReadOnly);
+      binding.symbol = recordBindingOccurrence(parameter.name, type, false,
+                                               SemanticBindingKind::Parameter);
+      semanticModel.record(parameter, std::move(binding));
+    }
+  }
   endScope();
   endTypeParameterScope();
   currentNamespace = enclosingNamespace;
@@ -708,18 +765,27 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                     owner.name.lexeme + "::" + stmt.name().lexeme),
       ownerType, false, true, constructorAccess(owner, &stmt));
   attachDeclarationDocumentation(symbol, stmt);
-  semanticModel.recordOccurrence(
-      {.sourceUnit = currentSourceUnit,
-       .span = tokenSpan(stmt.name()),
-       .kind = SemanticOccurrenceKind::Constructor,
-       .symbol = symbol,
-       .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
-       .name = stmt.name().lexeme,
-       .type = ownerType,
-       .constructor = &stmt});
+  if (!stmt.name().generated) {
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(stmt.name()),
+         .kind = SemanticOccurrenceKind::Constructor,
+         .symbol = symbol,
+         .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
+         .name = stmt.name().lexeme,
+         .type = ownerType,
+         .constructor = &stmt});
+  }
   for (const Parameter &parameter : stmt.parameters()) {
+    const bool previousAllowPack = allowPackTypeReference;
+    allowPackTypeReference = true;
     validateType(parameter.type);
-    const SemanticType parameterType = typeOf(parameter);
+    allowPackTypeReference = previousAllowPack;
+    const SemanticType declaredType = typeOf(parameter);
+    const SemanticType parameterType =
+        parameter.pack && declaredType.kind == SemanticType::TypeParameter
+            ? SemanticType::typePack(declaredType.genericParameterId)
+            : declaredType;
     validateOwningPayloadEnumByValueBoundary(
         parameterType, parameter.type.name.last(), "constructor parameter",
         directOwningPayloadTransport);
@@ -812,8 +878,13 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
 
   for (const Parameter &parameter : stmt.parameters()) {
     if (!parameter.name.lexeme.empty()) {
-      recordProgramCleanupEffects(typeOf(parameter), tokenSpan(parameter.name));
-      declare(parameter.name, typeOf(parameter),
+      const SemanticType declaredType = typeOf(parameter);
+      const SemanticType parameterType =
+          parameter.pack && declaredType.kind == SemanticType::TypeParameter
+              ? SemanticType::typePack(declaredType.genericParameterId)
+              : declaredType;
+      recordProgramCleanupEffects(parameterType, tokenSpan(parameter.name));
+      declare(parameter.name, parameterType,
               parameter.mutability == Mutability::Mutable,
               SemanticBindingKind::Parameter, nullptr, &parameter);
       recordParameterEntryLoan(parameter);
@@ -954,11 +1025,28 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                !recursiveLayoutFields.contains(field) &&
                !isOwnershipAssignable(fieldType, valueType,
                                       initializer.arguments.front())) {
-      report(expressionToken(initializer.arguments.front()),
-             "Cannot initialize field '" + target.lexeme + "' of type '" +
-                 typeSpelling(fieldType) + "' with a value of type '" +
-                 typeSpelling(valueType) + "'.",
-             "GTI-S2003");
+      if (fieldType == valueType && isMoveOnlyOwnerType(fieldType)) {
+        const auto *source =
+            exprAs<Variable>(initializer.arguments.front().get());
+        const std::string sourceName =
+            source == nullptr ? "value" : source->name().lexeme;
+        Diagnostic diagnostic =
+            makeDiagnostic("GTI-S2003", DiagnosticPhase::Semantics,
+                           expressionToken(initializer.arguments.front()),
+                           "Cannot initialize field '" + target.lexeme +
+                               "' by copying move-only type '" +
+                               typeSpelling(fieldType) + "'.");
+        diagnostic.hints.emplace_back(
+            "Transfer ownership explicitly with std::move(" + sourceName +
+            "), or initialize the field from a fresh value.");
+        diagnostics.emplace_back(std::move(diagnostic));
+      } else {
+        report(expressionToken(initializer.arguments.front()),
+               "Cannot initialize field '" + target.lexeme + "' of type '" +
+                   typeSpelling(fieldType) + "' with a value of type '" +
+                   typeSpelling(valueType) + "'.",
+               "GTI-S2003");
+      }
     } else if (field != nullptr && initializer.arguments.size() == 1 &&
                fieldType != valueType && isInteger(fieldType) &&
                isInteger(valueType)) {
@@ -1623,7 +1711,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     validateType(parameter.type, stmt.hasCLinkage());
     allowPackTypeReference = enclosingParameterPackTypeReference;
     if (!intrinsicDeclaration) {
-      validateReferencePlacement(parameter.type, true, "function parameter");
+      validateReferencePlacement(parameter.type, true, "function parameter",
+                                 false, false, false, true);
     }
     const SemanticType declaredType = typeOf(parameter);
     const SemanticType parameterType =
@@ -2033,8 +2122,10 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
   }
   if (currentReturnType == SemanticType::Void) {
     if (stmt.value()) {
-      analyze(stmt.value());
-      report(stmt.keyword(), "Void function cannot return a value.");
+      const SemanticType valueType = analyze(stmt.value());
+      if (valueType != SemanticType::Void) {
+        report(stmt.keyword(), "Void function cannot return a value.");
+      }
     }
     requireInitializedReceiver(stmt.keyword());
     return;
@@ -2072,15 +2163,43 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     validateOwnerDependentStringViewReturn(valueType, stmt.value());
   }
   if (!isOwnershipAssignable(currentReturnType, valueType, stmt.value())) {
-    report(expressionToken(stmt.value()),
-           "Cannot return a value of type '" + typeSpelling(valueType) +
-               "' from a function returning '" +
-               typeSpelling(currentReturnType) + "'.",
-           "GTI-S2003");
     if (isMoveOnlyOwnerType(currentReturnType) &&
         currentReturnType == valueType) {
-      diagnostics.back().hints.emplace_back(
-          "Return std::move(owner) to transfer ownership.");
+      const Variable *returned = movedVariable(stmt.value());
+      const Symbol *returnedSymbol =
+          returned == nullptr ? nullptr : resolve(returned->name());
+      const bool namedLocalOwner =
+          returnedSymbol != nullptr &&
+          (returnedSymbol->bindingKind == SemanticBindingKind::LocalVariable ||
+           returnedSymbol->bindingKind == SemanticBindingKind::Parameter);
+      if (namedLocalOwner) {
+        Diagnostic diagnostic =
+            makeDiagnostic("GTI-S2003", DiagnosticPhase::Semantics,
+                           expressionToken(stmt.value()),
+                           "Cannot return '" + returned->name().lexeme +
+                               "' by copy because type '" +
+                               typeSpelling(valueType) + "' is move-only.");
+        diagnostic.hints.emplace_back("Use 'return std::move(" +
+                                      returned->name().lexeme +
+                                      ");' to transfer ownership.");
+        diagnostics.emplace_back(std::move(diagnostic));
+      } else {
+        Diagnostic diagnostic =
+            makeDiagnostic("GTI-S2003", DiagnosticPhase::Semantics,
+                           expressionToken(stmt.value()),
+                           "Returning this value would copy move-only type '" +
+                               typeSpelling(valueType) + "'.");
+        diagnostic.hints.emplace_back(
+            "Return a fresh value or transfer an eligible owner explicitly "
+            "with std::move(...).");
+        diagnostics.emplace_back(std::move(diagnostic));
+      }
+    } else {
+      report(expressionToken(stmt.value()),
+             "Cannot return a value of type '" + typeSpelling(valueType) +
+                 "' from a function returning '" +
+                 typeSpelling(currentReturnType) + "'.",
+             "GTI-S2003");
     }
   }
   requireInitializedReceiver(stmt.keyword());
@@ -3229,22 +3348,125 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
   currentType = targetType;
 }
 
+auto SemanticVisitor::Impl::analyzeCollectionInitializer(
+    const ArrayInitializer &expr, const SemanticType &target) -> void {
+  const ClassInfo *owner = classInfo(target);
+  const auto reject = [&](const Token &site, const std::string &message) {
+    report(site, message, "GTI-S2092");
+  };
+  const auto select =
+      [&](const std::string &name) -> std::optional<CallableCandidate> {
+    if (owner == nullptr) {
+      return std::nullopt;
+    }
+    const auto member = owner->members.find(name);
+    if (member == owner->members.end() ||
+        member->second.access != AccessModifier::Public) {
+      return std::nullopt;
+    }
+    const Symbol symbol = substituteSymbol(member->second.symbol, target);
+    if (symbol.overloads.size() != 1) {
+      return std::nullopt;
+    }
+    const CallableCandidate &candidate = symbol.overloads.front();
+    if (!candidate.staticMember || candidate.compilerPrivate ||
+        candidate.declaration == nullptr ||
+        candidate.declaration->body() == nullptr ||
+        candidate.declaration->hasCLinkage() ||
+        candidate.record().requiresUnsafe ||
+        candidate.record().intrinsic != IntrinsicKind::None ||
+        !candidate.record().genericParameters.empty() ||
+        candidate.record().parameterPack || !candidate.requirements.empty() ||
+        candidate.requiredParameterCount != candidate.parameterTypes.size() ||
+        candidate.returnType != target) {
+      return std::nullopt;
+    }
+    return candidate;
+  };
+  const auto initialize = select("collection_init");
+  const auto insert = select("collection_insert");
+  if (!initialize || !insert ||
+      initialize->parameterTypes !=
+          std::vector<SemanticType>{SemanticType::UInt64} ||
+      insert->parameterTypes.size() != 2 ||
+      insert->parameterTypes.front() != target ||
+      insert->parameterTypes.back().kind == SemanticType::Reference ||
+      insert->parameterTypes.back().kind == SemanticType::Array ||
+      typeTraits(target).containsBorrowedState || !typeTraits(target).movable) {
+    reject(
+        expr.brace(),
+        "Collection initialization requires public, non-overloaded static "
+        "functions 'C collection_init(uint64_t count)' and "
+        "'C collection_insert(C collection, T element)' with owned value "
+        "parameters and no method-local generics, defaults, or constraints.");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  const SemanticType elementType = insert->parameterTypes.back();
+  if (elementType == SemanticType::Void ||
+      elementType.kind == SemanticType::Expected ||
+      elementType.kind == SemanticType::Unexpected ||
+      elementType.kind == SemanticType::Lambda ||
+      elementType.kind == SemanticType::FunctionItem ||
+      typeTraits(elementType).containsBorrowedState) {
+    reject(expr.brace(), "Collection elements require scalar, class, or enum "
+                         "values without stored borrow dependencies; expected "
+                         "values and confined callables are not supported.");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  bool valid = true;
+  for (const ExprPtr &element : expr.elements()) {
+    const SemanticType actual = analyzeInitializer(element, elementType);
+    if (actual == SemanticType::Unknown) {
+      valid = false;
+      continue;
+    }
+    if (actual != elementType ||
+        !isOwnershipAssignable(elementType, actual, element)) {
+      reject(expressionToken(element),
+             "Cannot initialize collection element of type '" +
+                 typeSpelling(elementType) + "' from '" + typeSpelling(actual) +
+                 "'.");
+      diagnostics.back().related.push_back(
+          {tokenSpan(insert->declaration->parameters().back().name),
+           "The collection protocol declares its element type here."});
+      diagnostics.back().hints.emplace_back(
+          actual == elementType && isMoveOnlyOwnerType(actual)
+              ? "Transfer a named move-only element with std::move, or supply "
+                "a fresh value."
+              : "Elements require the exact declared type; convert explicitly "
+                "when necessary.");
+      valid = false;
+    }
+    if (elementType.kind == SemanticType::StringView &&
+        isOwnerDependentStringViewExpression(element)) {
+      reportDynamicStringViewStorage(element, "stored in a collection");
+      valid = false;
+    }
+  }
+  if (valid) {
+    semanticModel.recordCollection(expr, {.type = target,
+                                          .elementType = elementType,
+                                          .initialize = initialize->id,
+                                          .insert = insert->id});
+  }
+  currentType = valid ? target : SemanticType::Unknown;
+}
+
 auto SemanticVisitor::Impl::visitArrayInitializerExpr(
     const ArrayInitializer &expr) -> void {
+  if (contextualInitializerType &&
+      contextualInitializerType->kind == SemanticType::Class) {
+    analyzeCollectionInitializer(
+        expr, selectExactClassSpecialization(*contextualInitializerType));
+    return;
+  }
   if (!contextualInitializerType ||
       contextualInitializerType->kind != SemanticType::Array ||
       contextualInitializerType->arguments.size() != 1) {
     for (const ExprPtr &element : expr.elements()) {
       analyze(element);
-    }
-    if (contextualInitializerType &&
-        contextualInitializerType->kind == SemanticType::Class) {
-      report(expr.brace(),
-             "Class construction does not use '= {...}'; place the braces "
-             "directly after the binding name as 'Type name{arguments};'.",
-             "GTI-S2038");
-      currentType = SemanticType::Unknown;
-      return;
     }
     report(expr.brace(),
            "Array initializer requires a fixed array type from its context.",
@@ -3470,6 +3692,25 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
 }
 
 auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
+  const bool immediateReceiver = immediateCallReceiver == &expr;
+  struct RestoreImmediateReceiver {
+    const Call *&slot;
+    const Call *previous;
+    ~RestoreImmediateReceiver() { slot = previous; }
+  } restoreImmediate{immediateCallReceiver, immediateCallReceiver};
+  immediateCallReceiver = directCall(expr.callee());
+  // In factory(callback)(args), only each call's own callee is a callee-name
+  // context. Its arguments remain values, including exact function items.
+  struct RestoreCalleeContext {
+    bool &flag;
+    bool previous;
+    ~RestoreCalleeContext() { flag = previous; }
+  } restoreCalleeContext{analyzingCallCallee, analyzingCallCallee};
+  analyzingCallCallee = false;
+  if (designatedMoves.contains(&expr)) {
+    analyzeMoveCall(expr, nullptr, immediateReceiver);
+    return;
+  }
   if (const EnumeratorRecord *enumerator =
           payloadEnumeratorForCallee(expr.callee())) {
     analyzePayloadConstruction(expr, *enumerator);
@@ -3477,7 +3718,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   }
   if (const std::optional<CallableCandidate> intrinsic =
           intrinsicCandidate(expr.callee())) {
-    analyzeIntrinsicCall(expr, *intrinsic);
+    if (intrinsic->record().intrinsic == IntrinsicKind::Move) {
+      analyzeMoveCall(expr, &*intrinsic, immediateReceiver);
+    } else {
+      analyzeIntrinsicCall(expr, *intrinsic);
+    }
     return;
   }
   if (const auto *callee = exprAs<Variable>(expr.callee().get())) {
@@ -3565,11 +3810,15 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
 
   if (calleeType.kind == SemanticType::FunctionItem) {
     if (argumentAnalysis.hasDeferred()) {
-      report(expr.paren(),
-             "Function-item calls require ordinary exact arguments.",
-             "GTI-S2090");
-      currentType = SemanticType::Unknown;
-      return;
+      std::vector<SemanticType> parameters(
+          calleeType.functionItemParameterTypes().begin(),
+          calleeType.functionItemParameterTypes().end());
+      if (!finishContextualCallArguments(parameters, expr.arguments(),
+                                         argumentAnalysis, expr.paren(),
+                                         "Function item")) {
+        currentType = SemanticType::Unknown;
+        return;
+      }
     }
     analyzeFunctionItemCall(expr, calleeType, argumentTypes);
     return;
@@ -3595,7 +3844,12 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   }
 
   if (calleeType.kind == SemanticType::Class) {
-    if (argumentAnalysis.hasDeferred()) {
+    if (std::any_of(expr.arguments().begin(), expr.arguments().end(),
+                    [&](const ExprPtr &argument) {
+                      return isContextualArrayArgument(argument) ||
+                             isContextualNativeFunctionArgument(argument) ||
+                             isContextualNativeOutPointerArgument(argument);
+                    })) {
       report(expr.paren(),
              "Contextual brace arguments are not yet available through "
              "operator(); use a named function or constructor with an "
@@ -3618,7 +3872,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         contract == nullptr ? std::nullopt : std::optional{contract->boundary};
     const std::optional<CallableCandidate> selected = resolveOperator(
         expr, OverloadedOperator::Call, expr.callee(), calleeType, expr.paren(),
-        argumentTypes, expr.arguments(), false, boundary);
+        argumentTypes, expr.arguments(), false, boundary, std::nullopt, false,
+        false, &argumentAnalysis);
     const bool valid =
         selected && validateCallableReturn(expr, selected->returnType) &&
         validateCallableCapability(
@@ -3631,6 +3886,18 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   if (calleeType.kind == SemanticType::TypeName) {
     const ResolvedClassArguments genericArguments = resolveClassArguments(
         calleeType.classId, expr.typeArguments(), expr.paren());
+    // Constructor value parameters infer unambiguous function items as direct
+    // braces do. Resume the deferred value tail exactly once, in source order.
+    // Array braces still need the selected constructor's contextual type.
+    bool contextualArrayTail = false;
+    for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
+      contextualArrayTail =
+          contextualArrayTail ||
+          isContextualArrayArgument(expr.arguments()[index]) ||
+          isContextualCallableResultArgument(expr.arguments()[index]);
+      if (!contextualArrayTail && argumentAnalysis.deferred[index])
+        argumentTypes[index] = analyze(expr.arguments()[index]);
+    }
     analyzeConstructorCall(expr, calleeType.classId, genericArguments.types,
                            genericArguments.values, argumentTypes,
                            expr.arguments(), expr.paren());
@@ -3680,9 +3947,6 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     }
     validateType(argument);
     const SemanticType argumentType = typeOf(argument);
-    if (argumentType == SemanticType::Void) {
-      report(argument.name.last(), "Generic type arguments cannot be void.");
-    }
     explicitTypeArguments.emplace_back(argumentType);
   }
   const bool hasExplicitGenericArguments =
@@ -4122,6 +4386,69 @@ auto SemanticVisitor::Impl::analyzeTypeParameterCall(
            "GTI-S2029");
     valid = false;
   }
+  if (!expr.arguments().empty() &&
+      exprAs<PackExpansion>(expr.arguments().back().get()) != nullptr) {
+    const ContextualCallArguments analysis =
+        analyzeContextualCallArguments(expr.arguments());
+    const auto arguments =
+        concreteCallArguments(analysis.types, expr.arguments());
+    // A forwarded pack has no declaration-wide arity or constructor signature.
+    // Only concrete semantic reanalysis may select its executable construction;
+    // no provisional constructor/call target is published for HIR to execute.
+    if (targetType.kind == SemanticType::TypeParameter || !arguments) {
+      currentType = valid ? targetType : SemanticType::Unknown;
+      return;
+    }
+    semanticModel.suppressInheritedCall(expr);
+    if (!valid) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (targetType.kind == SemanticType::Class) {
+      analyzeConstructorCallArguments(
+          expr, targetType.classId, targetType.arguments,
+          targetType.valueArguments, *arguments, expr.paren());
+      return;
+    }
+    if (arguments->empty() && isDefaultInitializable(targetType, true)) {
+      currentType = targetType;
+      semanticModel.record(
+          expr,
+          ResolvedCallInfo{
+              .returnType = targetType,
+              .parameterTypes = analysis.types,
+              .typeArguments = {targetType},
+              .intrinsic = IntrinsicKind::DefaultTypeParameterConstruction});
+      return;
+    }
+    const bool scalar =
+        isNumeric(targetType) || targetType == SemanticType::Bool ||
+        targetType == SemanticType::Char ||
+        targetType == SemanticType::NullPtr ||
+        targetType.kind == SemanticType::RawPointer ||
+        targetType.kind == SemanticType::NativeFunction ||
+        (targetType.kind == SemanticType::Enum && targetType.enumId != 0 &&
+         targetType.enumId <= enums.size() &&
+         !enums[targetType.enumId - 1].payload);
+    if (arguments->size() == 1 && arguments->front().type == targetType &&
+        scalar) {
+      currentType = targetType;
+      semanticModel.record(
+          expr,
+          ResolvedCallInfo{.returnType = targetType,
+                           .parameterTypes = analysis.types,
+                           .typeArguments = {targetType},
+                           .intrinsic =
+                               IntrinsicKind::ExactTypeParameterConstruction});
+      return;
+    }
+    report(expr.paren(),
+           "Forwarded construction requires a class constructor or one exact "
+           "scalar value (or a default-initializable type and an empty pack).",
+           "GTI-S2014");
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (expr.arguments().empty()) {
     if (!satisfiesConstraint(
             targetType,
@@ -4385,12 +4712,159 @@ auto SemanticVisitor::Impl::visitConversionExpr(const Conversion &expr)
   currentType = targetType;
 }
 
+auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
+    const DirectInitializer &expr) -> void {
+  const SemanticType target =
+      contextualInitializerType
+          ? selectExactClassSpecialization(*contextualInitializerType)
+          : SemanticType::Unknown;
+  const ClassInfo *owner =
+      target.kind == SemanticType::Class ? classInfo(target) : nullptr;
+  if (owner == nullptr || owner->kind != ClassKind::Struct ||
+      !owner->designatedConstructor) {
+    report(
+        expr.brace(),
+        "Designated construction requires a struct with public value fields, "
+        "no declared constructors, and no inheritance; reference, fixed-array, "
+        "borrowed-state, and native-layout fields are not supported here.",
+        "GTI-S2091");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  const ConstructorInfo &constructor = *owner->designatedConstructor;
+  std::vector<const Expr *> inputs(owner->fields.size(), nullptr);
+  std::vector<SemanticType> types;
+  std::optional<std::size_t> previous;
+  bool valid = true;
+  for (const FieldInfo &entry : owner->fields) {
+    types.push_back(
+        substituteSymbol(
+            owner->members.at(entry.declaration->name().lexeme).symbol, target)
+            .type);
+  }
+  for (std::size_t i = 0; i < expr.designators().size(); ++i) {
+    const Token &name = expr.designators()[i];
+    auto found =
+        std::find_if(owner->fields.begin(), owner->fields.end(),
+                     [&](const FieldInfo &field) {
+                       return field.declaration->name().lexeme == name.lexeme;
+                     });
+    if (found == owner->fields.end()) {
+      report(name,
+             "Unknown instance field '" + name.lexeme + "' in struct '" +
+                 owner->name.lexeme + "'.",
+             "GTI-S2091");
+      valid = false;
+      continue;
+    }
+    const std::size_t index = std::distance(owner->fields.begin(), found);
+    if (inputs[index] != nullptr || (previous && index < *previous)) {
+      report(name,
+             inputs[index] != nullptr
+                 ? "Duplicate designated initializer for field '" +
+                       name.lexeme + "'."
+                 : "Designated fields must follow struct declaration order.",
+             "GTI-S2091");
+      valid = false;
+    }
+    previous = index;
+    inputs[index] = expr.arguments()[i].get();
+    const SemanticType actual =
+        analyzeInitializer(expr.arguments()[i], types[index]);
+    const bool needsExplicitNumericConversion =
+        actual != types[index] && isNumeric(actual) &&
+        isNumeric(types[index]) &&
+        !isContextualIntegerLiteral(expr.arguments()[i].get());
+    if (actual != SemanticType::Unknown &&
+        (needsExplicitNumericConversion ||
+         !isOwnershipAssignable(types[index], actual, expr.arguments()[i]))) {
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2091", DiagnosticPhase::Semantics, name,
+                         "Cannot initialize designated field '" + name.lexeme +
+                             "' of type '" + typeSpelling(types[index]) +
+                             "' from '" + typeSpelling(actual) + "'.");
+      if (actual == types[index] && isMoveOnlyOwnerType(actual)) {
+        diagnostic.hints.emplace_back(
+            "This field is move-only; transfer a named owner with std::move, "
+            "or supply a fresh value.");
+      }
+      if (needsExplicitNumericConversion) {
+        diagnostic.hints.emplace_back(
+            "Designated construction requires an exact numeric field type; "
+            "convert this value explicitly to '" +
+            typeSpelling(types[index]) + "'.");
+      }
+      diagnostic.related.push_back(
+          {tokenSpan(found->declaration->name()), "Field declared here."});
+      diagnostics.push_back(std::move(diagnostic));
+      valid = false;
+    }
+    if (types[index].kind == SemanticType::StringView &&
+        isOwnerDependentStringViewExpression(expr.arguments()[i])) {
+      reportDynamicStringViewStorage(expr.arguments()[i], "stored in a field");
+      valid = false;
+    }
+    const auto &member = owner->members.at(name.lexeme);
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(name),
+         .kind = SemanticOccurrenceKind::Expression,
+         .symbol = toolingSymbolFor(member.symbol),
+         .roles = OccurrenceRole::Reference | OccurrenceRole::Write,
+         .name = name.lexeme,
+         .type = types[index]});
+  }
+  for (std::size_t index = 0; index < inputs.size(); ++index) {
+    if (inputs[index] == nullptr) {
+      const VariableDecl &field = *owner->fields[index].declaration;
+      inputs[index] = field.initializer().get();
+      if (inputs[index] == nullptr) {
+        report(expr.brace(),
+               "Missing initializer for field '" + field.name().lexeme +
+                   "'; the field has no declaration default.",
+               "GTI-S2091");
+        valid = false;
+      } else {
+        const SemanticType actual = semanticModel.typeOf(*inputs[index]);
+        if (actual != types[index] && isNumeric(actual) &&
+            isNumeric(types[index]) &&
+            !isContextualIntegerLiteral(inputs[index])) {
+          report(expr.brace(),
+                 "Default initializer for designated field '" +
+                     field.name().lexeme +
+                     "' requires an explicit conversion to '" +
+                     typeSpelling(types[index]) + "'.",
+                 "GTI-S2091");
+          valid = false;
+        }
+      }
+    }
+  }
+  if (valid) {
+    semanticModel.record(expr, ResolvedConstructionInfo{
+                                   .constructor = constructor.id,
+                                   .declaration = constructor.declaration,
+                                   .constructedType = target,
+                                   .parameterTypes = std::move(types),
+                                   .designatedArguments = std::move(inputs)});
+  }
+  currentType = valid ? target : SemanticType::Unknown;
+}
+
 auto SemanticVisitor::Impl::visitDirectInitializerExpr(
     const DirectInitializer &expr) -> void {
+  if (!expr.designators().empty()) {
+    analyzeDesignatedInitializer(expr);
+    return;
+  }
   std::vector<SemanticType> argumentTypes;
   argumentTypes.reserve(expr.arguments().size());
+  bool deferredCallableTail = false;
   for (const ExprPtr &argument : expr.arguments()) {
-    argumentTypes.emplace_back(analyze(argument));
+    deferredCallableTail =
+        deferredCallableTail || isContextualCallableResultArgument(argument);
+    argumentTypes.emplace_back(deferredCallableTail ? SemanticType::Unknown
+                                                    : analyze(argument));
   }
 
   if (!contextualInitializerType) {
@@ -4957,6 +5431,12 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   }
   const bool directOwningPayloadTransport = expr.captures().empty();
   const SemanticType returnType = typeOf(expr.returnType());
+  if (returnType.kind == SemanticType::FunctionSignature) {
+    report(expr.returnType().name.last(),
+           "A lambda cannot return a function signature; return an owning "
+           "value instead.",
+           "GTI-S2093");
+  }
   validateOwningPayloadEnumByValueBoundary(
       returnType, expr.returnType().name.last(), "lambda return",
       directOwningPayloadTransport);
@@ -6010,11 +6490,9 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
           expr, *symbol, *contextualInitializerType, expr.name().last());
       return;
     }
-    report(expr.name().last(),
-           "Function names must be called; function values are not "
-           "supported outside an exact callable or named native-function "
-           "context.",
-           "GTI-S2076");
+    currentType = analyzeFunctionItem(expr, *symbol, SemanticType::Unknown,
+                                      expr.name().last());
+    return;
   }
   currentType = symbol->type;
 }
@@ -6602,11 +7080,9 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
           expr, *symbol, *contextualInitializerType, expr.name());
       return;
     }
-    report(expr.name(),
-           "Function names must be called; function values are not "
-           "supported outside an exact callable or named native-function "
-           "context.",
-           "GTI-S2076");
+    currentType =
+        analyzeFunctionItem(expr, *symbol, SemanticType::Unknown, expr.name());
+    return;
   }
   if (symbol->type.kind == SemanticType::TypePack &&
       !analyzingPackFoldElement) {
@@ -9104,18 +9580,6 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
     report(declaration.name(),
            "'auto' requires an initializer with a complete value type.",
            "GTI-S2028");
-    inferredType = SemanticType::Unknown;
-  }
-  if (initializerType.kind == SemanticType::FunctionItem) {
-    Diagnostic diagnostic = makeDiagnostic(
-        "GTI-S2090", DiagnosticPhase::Semantics, declaration.name(),
-        "A function item is a confined callable identity and cannot be "
-        "stored in an ordinary binding.");
-    diagnostic.hints.emplace_back(
-        "Pass the namespace function name directly to an exact confined "
-        "generic callable or managed-thread task parameter; use a named "
-        "native-function type only at a supported C ABI callback boundary.");
-    diagnostics.emplace_back(std::move(diagnostic));
     inferredType = SemanticType::Unknown;
   }
   if (!type.reference && !declaration.isRangeOwner() &&

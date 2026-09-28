@@ -1,0 +1,82 @@
+#include <std/functional>
+#include <std/string>
+#include <std/vector>
+
+extern "C" { void gti_test_fail_scalar_allocation(int32_t enabled); }
+
+class Resource {
+  int identity;
+public:
+  Resource(int identity) : identity(identity) {}
+  ~Resource() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+int identity(int value) { return value; }
+
+int main(int argc, std::vector<std::string> argv) {
+  Resource caller{9};
+  if (argc == 1) {
+    std::function<int(int)> callback{};
+    return callback(1);
+  }
+  if (argc == 2) {
+    mut std::function<int(int) mut> callback{};
+    return callback(1);
+  }
+  if (argc == 3) {
+    std::move_only_function<int(int)> callback{};
+    return callback(1);
+  }
+  if (argc == 4) {
+    mut std::move_only_function<int(int) mut> callback{};
+    return callback(1);
+  }
+  if (argc == 5) {
+    unsafe { gti_test_fail_scalar_allocation(1); }
+    Resource capture{8};
+    std::move_only_function<int()> callback{
+        [capture = std::move(capture)]() -> int { return capture.read(); }};
+    return callback();
+  }
+  if (argc == 6) {
+    std::function<int(int)> callback{identity};
+    unsafe { gti_test_fail_scalar_allocation(1); }
+    auto copy = callback.clone();
+    return copy(1);
+  }
+  if (argc == 9) {
+    std::function<int(int) &&> callback{};
+    return std::move(callback)(1);
+  }
+  if (argc == 10) {
+    std::move_only_function<int(int) &&> callback{};
+    return std::move(callback)(1);
+  }
+  if (argc == 11) {
+    unsafe { gti_test_fail_scalar_allocation(1); }
+    Resource capture{8};
+    std::move_only_function<int() &&> callback{
+        [capture = std::move(capture)]() -> int { return capture.read(); }};
+    return std::move(callback)();
+  }
+  if (argc == 12) {
+    std::function<int(int) &&> callback{identity};
+    unsafe { gti_test_fail_scalar_allocation(1); }
+    auto copy = callback.clone();
+    return std::move(copy)(1);
+  }
+  Resource original{7};
+  mut std::move_only_function<int()> callback{
+      [original = std::move(original)]() -> int { return original.read(); }};
+  Resource replacement{8};
+  if (argc == 7) {
+    unsafe { gti_test_fail_scalar_allocation(1); }
+  }
+  callback.replace([replacement = std::move(replacement)]() -> int {
+    return replacement.read();
+  });
+  std::println(callback());
+  callback.reset();
+  return callback.empty() ? 0 : 1;
+}

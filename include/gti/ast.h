@@ -83,6 +83,19 @@ struct TypeRef {
     return nativeFunctionParameterCount.has_value();
   }
 
+  [[nodiscard]] static TypeRef
+  functionSignature(TypeRef returnType, std::vector<TypeRef> parameters) {
+    TypeRef type(returnType.name);
+    type.functionSignatureParameterCount = parameters.size();
+    type.arguments = std::move(parameters);
+    type.arguments.emplace_back(std::move(returnType));
+    return type;
+  }
+
+  [[nodiscard]] bool isFunctionSignature() const {
+    return functionSignatureParameterCount.has_value();
+  }
+
   NamePath name;
   std::vector<TypeRef> arguments;
   std::optional<Token> pointeeConst;
@@ -90,10 +103,19 @@ struct TypeRef {
   std::optional<Token> outerPointer;
   std::vector<ArrayExtentExprPtr> arrayExtents;
   std::optional<Token> reference;
+  // Explicit access on a function-signature reference parameter component.
+  std::optional<Token> referenceMutability;
   // A native C function type stores its parameter types followed by its
   // return type in `arguments`. It is admitted only as a named `using` target;
   // ordinary function declarations continue to use FunctionDecl.
   std::optional<std::size_t> nativeFunctionParameterCount;
+  // A GTI signature describes a call, not a stored function pointer. Like
+  // native function syntax, arguments hold parameters followed by the result.
+  std::optional<std::size_t> functionSignatureParameterCount;
+  // Written receiver capability of signature metadata: absent, `mut`, or `&&`.
+  std::optional<Token> functionSignatureQualifier;
+  // A type-list expansion, distinct from a named value parameter pack.
+  std::optional<Token> packExpansion;
   GenericArgumentSyntax genericArgumentSyntax = GenericArgumentSyntax::Type;
   ArrayExtentExprPtr genericValueExpression;
 };
@@ -1006,9 +1028,11 @@ private:
 
 class DirectInitializer final : public ExprOfKind<ExprKind::DirectInitializer> {
 public:
-  DirectInitializer(Token brace, ExprList arguments, Token closingBrace)
+  DirectInitializer(Token brace, ExprList arguments, Token closingBrace,
+                    std::vector<Token> designators = {})
       : brace_(std::move(brace)), arguments_(std::move(arguments)),
-        closingBrace_(std::move(closingBrace)) {}
+        closingBrace_(std::move(closingBrace)),
+        designators_(std::move(designators)) {}
   DirectInitializer(DirectInitializer &&) = default;
   DirectInitializer(const DirectInitializer &) = delete;
   DirectInitializer &operator=(DirectInitializer &&) = default;
@@ -1021,12 +1045,16 @@ public:
 
   [[nodiscard]] const Token &brace() const { return brace_; }
   [[nodiscard]] const ExprList &arguments() const { return arguments_; }
+  [[nodiscard]] const std::vector<Token> &designators() const {
+    return designators_;
+  }
   [[nodiscard]] const Token &closingBrace() const { return closingBrace_; }
 
 private:
   Token brace_;
   ExprList arguments_;
   Token closingBrace_;
+  std::vector<Token> designators_;
 };
 
 class PackFold final : public ExprOfKind<ExprKind::PackFold> {
@@ -1665,11 +1693,13 @@ public:
             Token name, std::optional<TypeRef> exactSpecialization,
             std::vector<GenericParameter> genericParameters,
             std::vector<BaseSpecifier> bases, StmtList members,
-            bool forwardDeclaration = false)
+            bool forwardDeclaration = false,
+            std::vector<TypeRef> genericArgumentPatterns = {})
       : attributes_(std::move(attributes)), keyword_(std::move(keyword)),
         kind_(kind), name_(std::move(name)),
         exactSpecialization_(std::move(exactSpecialization)),
         genericParameters_(std::move(genericParameters)),
+        genericArgumentPatterns_(std::move(genericArgumentPatterns)),
         bases_(std::move(bases)), members_(std::move(members)),
         forwardDeclaration_(forwardDeclaration) {}
 
@@ -1692,6 +1722,12 @@ public:
   [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
     return genericParameters_;
   }
+  // A patterned primary declares the shapes of its public arguments, not a
+  // flat list of already-resolved binders. Semantic analysis owns binding the
+  // names inside these types; retain the original type syntax and spans here.
+  [[nodiscard]] const std::vector<TypeRef> &genericArgumentPatterns() const {
+    return genericArgumentPatterns_;
+  }
   [[nodiscard]] const std::vector<BaseSpecifier> &bases() const {
     return bases_;
   }
@@ -1707,6 +1743,7 @@ private:
   Token name_;
   std::optional<TypeRef> exactSpecialization_;
   std::vector<GenericParameter> genericParameters_;
+  std::vector<TypeRef> genericArgumentPatterns_;
   std::vector<BaseSpecifier> bases_;
   StmtList members_;
   bool forwardDeclaration_ = false;

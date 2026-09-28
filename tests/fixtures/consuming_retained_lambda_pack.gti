@@ -1,0 +1,56 @@
+#include <std/string>
+#include <std/vector>
+
+class Token {
+  int identity;
+public:
+  Token(int identity) : identity(identity) {}
+  ~Token() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+class Owner<Callable, Args...> {
+  mut Callable callable;
+public:
+  Owner(Callable callable) : callable(std::move(callable)) {}
+  ~Owner() { std::println(8); }
+  int operator()(Args... args) && {
+    return ((std::move(this.callable)))(args...);
+  }
+};
+
+int later(int divisor) {
+  std::println(2);
+  return 6 / divisor;
+}
+
+int combine(int left, int right) {
+  std::println(3);
+  return left + right;
+}
+
+int invoke<Callable>(Callable callback, int body_divisor, int later_divisor,
+                     bool nested) {
+  Owner<Callable, int> inner{std::move(callback)};
+  if (nested) {
+    Owner<Owner<Callable, int>, int> outer{std::move(inner)};
+    int value = combine(std::move(outer)(body_divisor), later(later_divisor));
+    std::println(5);
+    return value - 18;
+  }
+  int value = combine(std::move(inner)(body_divisor), later(later_divisor));
+  std::println(5);
+  return value - 18;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  int mode = argc - 1;
+  Token caller{99};
+  Token capture{7};
+  auto callback = [capture = std::move(capture)](int divisor) -> int {
+    std::println(1);
+    return (capture.read() + 5) / divisor;
+  };
+  return invoke(std::move(callback), mode == 1 || mode == 4 ? 0 : 1,
+                mode == 2 || mode == 5 ? 0 : 1, mode >= 3);
+}

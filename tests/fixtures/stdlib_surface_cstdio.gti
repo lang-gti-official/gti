@@ -119,9 +119,13 @@ int main() {
     return 19;
   }
 
-  auto input = std::read_stdin_some(std::size_t(8));
+  auto input_byte = std::read_stdin_some(std::size_t(1));
+  auto prompt = std::try_write_stdout("password: ");
+  auto prompt_flush = std::try_flush_stdout();
+  auto input = std::getline();
   auto input_eof = std::getchar();
-  if (!input || input.value() != "Q" || input_eof ||
+  if (!input_byte || input_byte.value() != "Q" || !prompt || !prompt_flush ||
+      !input || input.value() != "secret" || input_eof ||
       input_eof.error() != std::io_errc::end_of_file) {
     return 20;
   }

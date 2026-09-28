@@ -1,0 +1,143 @@
+#include <glad/glad>
+#include <glfw/glfw>
+
+namespace toy3d {
+class Window {
+  mut GLFWwindow* handle = nullptr;
+  mut bool glfw_started = false;
+  mut bool gl_loaded = false;
+
+public:
+  Window() {}
+  Window(Window& other) = delete;
+  Window(Window&& other) = delete;
+
+  ~Window() { this.shutdown(); }
+
+  bool initialize(int32_t width, int32_t height, c_string title) mut {
+    unsafe {
+      if (glfwInit() == GLFW_FALSE) {
+        return false;
+      }
+      this.glfw_started = true;
+
+      glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+      glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+      glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+      glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+
+      this.handle = glfwCreateWindow(width, height, title, nullptr, nullptr);
+      if (this.handle == nullptr) {
+        this.shutdown();
+        return false;
+      }
+
+      glfwMakeContextCurrent(this.handle);
+      glfwSwapInterval(1);
+      if (gl::gti_glad_load() == 0) {
+        this.shutdown();
+        return false;
+      }
+      this.gl_loaded = true;
+      return true;
+    }
+  }
+
+  void shutdown() mut {
+    unsafe {
+      if (this.gl_loaded) {
+        gl::gti_glad_unload();
+        this.gl_loaded = false;
+      }
+      if (this.handle != nullptr) {
+        glfwDestroyWindow(this.handle);
+        this.handle = nullptr;
+      }
+      if (this.glfw_started) {
+        glfwTerminate();
+        this.glfw_started = false;
+      }
+    }
+  }
+
+  bool should_close() {
+    unsafe {
+      if (this.handle == nullptr) {
+        return true;
+      }
+      return glfwWindowShouldClose(this.handle) != GLFW_FALSE;
+    }
+  }
+
+  void request_close() mut {
+    unsafe {
+      if (this.handle != nullptr) {
+        glfwSetWindowShouldClose(this.handle, GLFW_TRUE);
+      }
+    }
+  }
+
+  bool key_down(int32_t key) {
+    unsafe {
+      if (this.handle == nullptr) {
+        return false;
+      }
+      int32_t state = glfwGetKey(this.handle, key);
+      return state == GLFW_PRESS or state == GLFW_REPEAT;
+    }
+  }
+
+  void framebuffer_size(mut int32_t& width, mut int32_t& height) {
+    unsafe {
+      if (this.handle == nullptr) {
+        width = 0;
+        height = 0;
+        return;
+      }
+      glfwGetFramebufferSize(this.handle, &width, &height);
+    }
+  }
+
+  void window_size(mut int32_t& width, mut int32_t& height) {
+    unsafe {
+      if (this.handle == nullptr) {
+        width = 0;
+        height = 0;
+        return;
+      }
+      glfwGetWindowSize(this.handle, &width, &height);
+    }
+  }
+
+  void cursor_position(mut double& x, mut double& y) {
+    unsafe {
+      if (this.handle == nullptr) {
+        x = 0.0;
+        y = 0.0;
+        return;
+      }
+      glfwGetCursorPos(this.handle, &x, &y);
+    }
+  }
+
+  bool mouse_down(int32_t button) {
+    unsafe {
+      return this.handle != nullptr &&
+             glfwGetMouseButton(this.handle, button) == GLFW_PRESS;
+    }
+  }
+
+  double time() {
+    unsafe { return glfwGetTime(); }
+  }
+
+  void finish_frame() {
+    unsafe {
+      if (this.handle != nullptr) {
+        glfwSwapBuffers(this.handle);
+      }
+      glfwPollEvents();
+    }
+  }
+};
+}

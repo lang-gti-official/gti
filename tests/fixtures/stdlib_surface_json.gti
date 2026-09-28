@@ -1,0 +1,225 @@
+#include <std/json>
+#include <std/string>
+
+int main() {
+  mut std::json::value body = std::json::value::object();
+  auto name = body.set("name", "demo");
+  if (!name) {
+    return 1;
+  }
+  auto private_value = body.set("private", true);
+  if (!private_value) {
+    return 2;
+  }
+  auto count = body.set("count", uint64_t(42));
+  if (!count) {
+    return 3;
+  }
+
+  auto read_name = body.get_string("name");
+  auto read_private = body.get_boolean("private");
+  if (!read_name || !read_private) {
+    return 4;
+  }
+  mut std::string name_value = std::move(read_name).value();
+  std::println(name_value);
+  if (!read_private.value()) {
+    return 5;
+  }
+
+  mut std::json::value items = std::json::value::array();
+  auto first = items.push("one");
+  auto second = items.push(uint64_t(2));
+  if (!first || !second || items.size() != 2) {
+    return 6;
+  }
+  auto stored_items = body.set("items", std::move(items));
+  if (!stored_items) {
+    return 7;
+  }
+
+  mut std::string encoded = std::json::stringify(body);
+  if (encoded !=
+      "{\"name\":\"demo\",\"private\":true,\"count\":42,\"items\":[\"one\",2]}") {
+    return 8;
+  }
+  std::println(encoded);
+
+  mut auto parsed = std::json::parse("{\"login\":\"lucas\",\"id\":18446744073709551615,\"minimum\":-9223372036854775808,\"ratio\":1.25e2,\"active\":true,\"none\":null,\"escaped\":\"\\u20ac\"}");
+  if (!parsed) {
+    return 9;
+  }
+  mut std::json::value document = std::move(parsed).value();
+  auto id = document.get_uint64("id");
+  auto minimum = document.get_int64("minimum");
+  auto ratio = document.get_double("ratio");
+  auto active = document.get_boolean("active");
+  auto escaped = document.get_string("escaped");
+  if (!id || id.value() != uint64_t(18446744073709551615) || !minimum ||
+      minimum.value() != int64_t(-9223372036854775807 - 1) || !ratio ||
+      ratio.value() != 125.0d || !active || !active.value() || !escaped ||
+      document.at("none").is_null() == false) {
+    return 10;
+  }
+  mut std::string escaped_value = std::move(escaped).value();
+  if (escaped_value != "€") {
+    return 11;
+  }
+
+  auto missing = document.get_string("missing/key~name");
+  if (missing || missing.error().code() != std::json::errc::missing_key ||
+      missing.error().has_source_location() ||
+      missing.error().path() != "/missing~1key~0name") {
+    return 12;
+  }
+
+  auto wrong_kind = document.get_string("id");
+  if (wrong_kind || wrong_kind.error().code() != std::json::errc::type_mismatch ||
+      wrong_kind.error().path() != "/id") {
+    return 13;
+  }
+
+  auto duplicate = std::json::parse("{\"a\":1,\"a\":2}");
+  if (duplicate ||
+      duplicate.error().code() != std::json::errc::duplicate_key) {
+    return 14;
+  }
+  auto comment = std::json::parse("{/* no comments */\"a\":1}");
+  if (comment || comment.error().code() != std::json::errc::unexpected_token) {
+    return 15;
+  }
+  auto trailing_comma = std::json::parse("[1,]");
+  if (trailing_comma ||
+      trailing_comma.error().code() != std::json::errc::unexpected_token) {
+    return 16;
+  }
+  auto leading_zero = std::json::parse("01");
+  if (leading_zero ||
+      leading_zero.error().code() != std::json::errc::invalid_number) {
+    return 17;
+  }
+  auto bad_surrogate = std::json::parse("\"\\ud800\"");
+  if (bad_surrogate ||
+      bad_surrogate.error().code() != std::json::errc::invalid_unicode) {
+    return 18;
+  }
+
+  mut std::string malformed_utf8 = std::string("\"");
+  malformed_utf8.push_back(char(uint8_t(192)));
+  malformed_utf8.push_back('"');
+  auto bad_utf8 = std::json::parse(malformed_utf8.view());
+  if (bad_utf8 || bad_utf8.error().code() != std::json::errc::invalid_unicode) {
+    return 19;
+  }
+
+  auto located = std::json::parse("{\n\"a\":1,\n}");
+  if (located || !located.error().has_source_location() ||
+      located.error().line() != std::size_t(3) ||
+      located.error().column() != std::size_t(1)) {
+    return 20;
+  }
+
+  mut std::json::parse_options limits = std::json::parse_options();
+  limits.set_max_depth(std::size_t(1));
+  auto too_deep = std::json::parse("[[]]", limits);
+  if (too_deep || too_deep.error().code() != std::json::errc::nesting_limit) {
+    return 21;
+  }
+  mut std::json::parse_options node_limits = std::json::parse_options();
+  node_limits.set_max_nodes(std::size_t(1));
+  auto too_many = std::json::parse("[0]", node_limits);
+  if (too_many || too_many.error().code() != std::json::errc::node_limit) {
+    return 22;
+  }
+
+  auto replaced = body.set("name", "demo");
+  if (!replaced || body.object_size() != std::size_t(4) ||
+      body.key_at(std::size_t(0)) != "name") {
+    return 23;
+  }
+  mut std::string pretty = std::json::stringify_pretty(body, uint8_t(2));
+  if (pretty != "{\n  \"name\": \"demo\",\n  \"private\": true,\n  \"count\": 42,\n  \"items\": [\n    \"one\",\n    2\n  ]\n}") {
+    return 24;
+  }
+
+  mut std::json::value copied = body.clone();
+  auto changed = copied.set("name", "copy");
+  mut auto original_name = body.get_string("name");
+  mut auto copied_name = copied.get_string("name");
+  if (!changed || !original_name || !copied_name) {
+    return 25;
+  }
+  mut std::string original_name_text = std::move(original_name).value();
+  mut std::string copied_name_text = std::move(copied_name).value();
+  if (original_name_text != "demo" || copied_name_text != "copy") {
+    return 26;
+  }
+
+  auto invalid_number = std::json::value::number_text("01");
+  if (invalid_number ||
+      invalid_number.error().code() != std::json::errc::invalid_number) {
+    return 27;
+  }
+  mut auto exact_number = std::json::parse("1.2300e+2");
+  if (!exact_number) {
+    return 28;
+  }
+  mut std::json::value exact_number_value =
+      std::move(exact_number).value();
+  mut std::string exact_number_text =
+      std::json::stringify(exact_number_value);
+  if (exact_number_text != "1.2300e+2") {
+    return 29;
+  }
+
+  mut auto signed_overflow = std::json::parse("9223372036854775808");
+  if (!signed_overflow) {
+    return 30;
+  }
+  mut std::json::value signed_overflow_value =
+      std::move(signed_overflow).value();
+  auto signed_conversion = signed_overflow_value.as_int64();
+  if (signed_conversion || signed_conversion.error().code() !=
+                               std::json::errc::number_out_of_range) {
+    return 31;
+  }
+
+  mut auto floating_overflow = std::json::parse("1e400");
+  if (!floating_overflow) {
+    return 32;
+  }
+  mut std::json::value floating_overflow_value =
+      std::move(floating_overflow).value();
+  auto floating_conversion = floating_overflow_value.as_double();
+  if (floating_conversion || floating_conversion.error().code() !=
+                                 std::json::errc::number_out_of_range) {
+    return 33;
+  }
+
+  mut std::json::parse_options document_limits = std::json::parse_options();
+  document_limits.set_max_document_bytes(std::size_t(3));
+  auto oversized_document = std::json::parse("null", document_limits);
+  if (oversized_document || oversized_document.error().code() !=
+                                std::json::errc::document_too_large) {
+    return 34;
+  }
+  mut std::json::parse_options string_limits = std::json::parse_options();
+  string_limits.set_max_string_bytes(std::size_t(1));
+  auto oversized_string = std::json::parse("\"€\"", string_limits);
+  if (oversized_string || oversized_string.error().code() !=
+                              std::json::errc::string_too_large) {
+    return 35;
+  }
+
+  auto trailing_root = std::json::parse("null false");
+  if (trailing_root || trailing_root.error().code() !=
+                           std::json::errc::trailing_characters) {
+    return 36;
+  }
+  auto incomplete_literal = std::json::parse("tru");
+  if (incomplete_literal || incomplete_literal.error().code() !=
+                                std::json::errc::unexpected_end) {
+    return 37;
+  }
+  return 0;
+}

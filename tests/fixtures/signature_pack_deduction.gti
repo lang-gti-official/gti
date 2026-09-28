@@ -1,0 +1,27 @@
+class Tag<S> {};
+class Types<Args...> {
+public:
+  int value() { return 7; }
+};
+
+int unpack<R, Args...>(Tag<R(Args...)>& tag) {
+  Types<Args...> types{};
+  return types.value();
+}
+int relay<R, Args...>(Tag<R(Args...)>& tag) { return unpack(tag); }
+int repeated<R, Args...>(Tag<R(Args...)>& tag, Tag<void(Args...)>& same) { return 7; }
+Types<Args...> extract<R, Args...>(Tag<R(Args...)>& tag) { return Types<Args...>(); }
+int nominal<Args...>(Types<Args...>& types) { return types.value(); }
+int prefix<R, Args...>(Tag<R(int, Args...)>& tag) { return 7; }
+int with_values<R, Args...>(Tag<R(Args...)>& tag, Args... args) { return 7; }
+
+int main() {
+  Tag<void()> empty{};
+  Tag<int(int, bool)> pair{};
+  Tag<void(int, bool)> action{};
+  Tag<int&(int&)> borrow{};
+  auto types = extract(pair);
+  return unpack(empty) + unpack(pair) + unpack(borrow) + relay(pair) +
+         repeated(pair, action) + unpack<int, int, bool>(pair) + types.value() +
+         nominal(types) + prefix(pair) + with_values(pair, 1, true) - 70;
+}

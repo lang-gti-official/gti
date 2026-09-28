@@ -7,6 +7,8 @@
 
 namespace std {
   namespace detail {
+    enum class forward_list_in_place { value };
+
     struct forward_list_node<T> {
       mut T value;
       mut std::unique_ptr<forward_list_node<T>> next =
@@ -19,6 +21,9 @@ namespace std {
           T initial,
           std::unique_ptr<forward_list_node<T>> following)
           : value(std::move(initial)), next(std::move(following)) {}
+
+      forward_list_node<Args...>(forward_list_in_place tag, Args... args)
+          : value(T(args...)) {}
     };
 
     class forward_list_sentinel<T> {};
@@ -111,7 +116,15 @@ namespace std {
       this.head = std::move(removed->next);
     }
 
-    mut T& emplace_front<Args...>(Args... args) mut;
+    mut T& emplace_front<Args...>(Args... args) mut {
+      // Keep the old chain intact until allocation and value construction have
+      // both succeeded. Linking moves node owners, never the stored T.
+      mut auto node = std::make_unique<detail::forward_list_node<T>>(
+          detail::forward_list_in_place::value, args...);
+      node->next = std::move(this.head);
+      this.head = std::move(node);
+      return this.head->value;
+    }
 
     void resize(size_t requested) mut
       requires std::default_initializable<T> {

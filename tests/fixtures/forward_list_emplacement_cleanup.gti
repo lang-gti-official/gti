@@ -1,0 +1,29 @@
+#include <std/forward_list>
+#include <std/string>
+#include <std/vector>
+
+class Element {
+public:
+  int value;
+  mut const int* original_address = nullptr;
+  Element(int initial, int divisor) : value(initial / divisor) {
+    unsafe { this.original_address = &this.value; }
+  }
+  Element(Element& other) = delete;
+  Element(Element&& other) = delete;
+  ~Element() { std::println(this.value); }
+  bool stable_address() {
+    unsafe { return this.original_address == &this.value; }
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut std::forward_list<Element> values = std::forward_list<Element>();
+  [[discard]] values.emplace_front(1, 1);
+  if (!values.front().stable_address()) { return 1; }
+  [[discard]] values.emplace_front(2, argc == 1 ? 1 : 0);
+  if (!values.front().stable_address()) { return 2; }
+  values.pop_front();
+  if (!values.front().stable_address()) { return 3; }
+  return 0;
+}

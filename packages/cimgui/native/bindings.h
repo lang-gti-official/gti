@@ -14,6 +14,11 @@ void gti_imgui_new_frame(void);
 void gti_imgui_render(void);
 ImDrawData *gti_imgui_draw_data(void);
 int32_t gti_imgui_draw_data_valid(void);
+// Renderer backend for an already-current desktop OpenGL context.
+int32_t gti_imgui_opengl3_init(const char *glsl_version);
+void gti_imgui_opengl3_new_frame(void);
+void gti_imgui_opengl3_render_draw_data(void);
+void gti_imgui_opengl3_shutdown(void);
 int32_t gti_imgui_begin(const char *title, int32_t *open, int32_t flags);
 void gti_imgui_end(void);
 void gti_imgui_text(const char *text);

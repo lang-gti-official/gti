@@ -25,6 +25,12 @@ or:
 int main(int argc, std::vector<std::string> argv)
 ```
 
+Here top-level means the global namespace: `tea::main` is an ordinary
+function, not an entry point. An executable requires a global definition in
+its entry source unit; a global `main` may forward to a namespaced function.
+Missing entry definitions are diagnosed as `GTI-S2094` before backend/native
+compilation. Library analysis and emit-only requests do not require an entry.
+
 The parameter names are not significant, and either by-value binding may use
 ordinary `mut`. Aliases that resolve to the exact signature types are valid.
 Other arities and parameter types are ill-formed; in particular, GTI does not

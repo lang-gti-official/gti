@@ -1,0 +1,15 @@
+int apply<Args...>(Args... args) {
+  auto callback = [](int value, bool enabled) -> int {
+    return enabled ? value : 0;
+  };
+  return callback(args...);
+}
+
+int empty<Args...>(Args... args) {
+  auto callback = []() -> int { return 7; };
+  return callback(args...);
+}
+
+int main() {
+  return apply(7, true) + apply(10, false) + empty() - 14;
+}

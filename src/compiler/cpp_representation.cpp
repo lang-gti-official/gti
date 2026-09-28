@@ -343,6 +343,14 @@ concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
     }
     appendIdentityText(output, "native-function");
     return appendArguments();
+  case SemanticType::FunctionSignature:
+    if (type.arguments.empty()) {
+      return false;
+    }
+    appendIdentityText(output, "function-signature");
+    appendIdentityText(
+        output, std::to_string(static_cast<int>(type.signatureReceiver)));
+    return appendArguments();
   case SemanticType::FunctionItem: {
     const LoweredFunctionDeclaration *declaration =
         program.findFunctionDeclaration(type.functionId);
@@ -388,6 +396,50 @@ identityDigestHex(const std::vector<std::uint8_t> &identity) {
 }
 
 } // namespace
+
+bool cppFunctionHasFailureResultChannel(
+    const LoweredProgram &program, const LoweredFunctionDeclaration &function) {
+  if (function.returnType != SemanticType::Void)
+    return true;
+  if (!function.virtualMethod)
+    return false;
+  // Multiple inherited contracts can share one override. Use the connected
+  // declaration family, not just one selected root, so all native status
+  // signatures keep the same result arity after substitution.
+  std::vector<FunctionId> connected{function.id};
+  const auto append = [&](FunctionId id) {
+    if (id != 0 &&
+        std::find(connected.begin(), connected.end(), id) == connected.end())
+      connected.push_back(id);
+  };
+  for (std::size_t index = 0; index < connected.size(); ++index) {
+    const FunctionId id = connected[index];
+    if (const auto *declaration = program.findFunctionDeclaration(id)) {
+      if (declaration->returnType != SemanticType::Void)
+        return true;
+      for (const FunctionId root : declaration->virtualRoots)
+        append(root);
+    }
+    for (const auto &row : program.declarations()) {
+      const auto *candidate =
+          std::get_if<LoweredFunctionDeclaration>(&row.payload);
+      if (candidate != nullptr &&
+          std::find(candidate->virtualRoots.begin(),
+                    candidate->virtualRoots.end(),
+                    id) != candidate->virtualRoots.end())
+        append(candidate->id);
+    }
+  }
+  return false;
+}
+
+std::string cppClassTemplateNameSpelling(const LoweredProgram &program,
+                                         ClassId id) {
+  const LoweredClassDeclaration *info = program.findClassDeclaration(id);
+  return info == nullptr ? std::string{}
+                         : cppLoweredQualifiedName(info->qualifiedName,
+                                                   info->cOpaqueHandle);
+}
 
 std::string cppSemanticTypeSpelling(const LoweredProgram &program,
                                     CppStandard standard,
@@ -439,22 +491,36 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
     result += '*';
     return result;
   }
+  case SemanticType::FunctionSignature:
   case SemanticType::NativeFunction: {
-    if (!type.hasNativeFunctionShape()) {
+    if (type.arguments.empty()) {
       return "void";
     }
-    std::string result = "std::add_pointer_t<";
-    result += spell(*type.nativeFunctionReturnType());
+    const bool native = type.kind == SemanticType::NativeFunction;
+    std::string result = native ? "std::add_pointer_t<" : "";
+    result += spell(type.arguments.front());
     result += '(';
     bool separator = false;
-    for (const SemanticType &parameter : type.nativeFunctionParameterTypes()) {
+    for (const SemanticType &parameter :
+         std::span<const SemanticType>(type.arguments).subspan(1)) {
       if (separator) {
         result += ", ";
       }
       result += spell(parameter);
+      if (parameter.kind == SemanticType::TypePack && !parameter.concretePack) {
+        result += "...";
+      }
       separator = true;
     }
-    result += ")>";
+    result += native ? ")>" : ")";
+    if (!native) {
+      // Qualifiers distinguish metadata types only. Invocation access is
+      // selected by GTI semantics and carried by MIR, never native overloads.
+      if (type.signatureReceiver == ReceiverMutability::Mutable)
+        result += " &";
+      else if (type.signatureReceiver == ReceiverMutability::Consuming)
+        result += " &&";
+    }
     return result;
   }
   case SemanticType::FunctionItem:
@@ -530,7 +596,8 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
         classInfo->exactSpecializationPrimary == 0
             ? type.valueArguments
             : classInfo->exactValueArguments;
-    if (!typeArguments.empty() || !valueArguments.empty()) {
+    if (!typeArguments.empty() || !valueArguments.empty() ||
+        !classInfo->genericParameters.empty()) {
       result += '<';
       bool separator = false;
       for (const SemanticType &argument : typeArguments) {
@@ -538,6 +605,9 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
           result += ", ";
         }
         result += spell(argument);
+        if (argument.kind == SemanticType::TypePack && !argument.concretePack) {
+          result += "...";
+        }
         separator = true;
       }
       for (const CompileTimeValue &argument : valueArguments) {
@@ -617,6 +687,15 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
       result += ", ";
       result += spell(type.arguments[1]);
     }
+    result += '>';
+    return result;
+  }
+  case SemanticType::Unexpected: {
+    std::string result = standard == CppStandard::Cpp23
+                             ? "std::unexpected<"
+                             : "::nonstd::unexpected_type<";
+    if (type.arguments.size() == 1)
+      result += spell(type.arguments.front());
     result += '>';
     return result;
   }
@@ -775,6 +854,14 @@ bool cppConcreteFunctionInstanceIsNameable(
     return false;
   }
   std::vector<std::uint8_t> identity;
+  if (instance.owner) {
+    const MirClassInstance *owner =
+        program.mir().findClassInstance(*instance.owner);
+    if (owner == nullptr ||
+        !appendConcreteTypeIdentity(identity, program, owner->type)) {
+      return false;
+    }
+  }
   for (const SemanticType &argument : instance.typeArguments) {
     if (!appendConcreteTypeIdentity(identity, program, argument)) {
       return false;
@@ -851,6 +938,53 @@ cppConcreteFreeFunctionSpelling(const LoweredProgram &program,
     }
   }
   return "__gti_inst_" + identityDigestHex(identity) + "_" + row.name;
+}
+
+std::optional<std::string>
+cppCallableFreeFunctionSpelling(const LoweredProgram &program,
+                                const LoweredDeclaration &row,
+                                const LoweredFunctionDeclaration &function,
+                                const LoweredFunctionInstance &instance,
+                                const MirFunctionInstance &mirInstance) {
+  const auto *rowFunction =
+      std::get_if<LoweredFunctionDeclaration>(&row.payload);
+  const auto *selected = program.findFunctionInstance(instance.id);
+  const auto *selectedMir = program.mir().findFunctionInstance(mirInstance.id);
+  if (rowFunction == nullptr || rowFunction->id != function.id ||
+      function.id == 0 || function.ownerClass != 0 ||
+      function.genericParameters.empty() ||
+      function.definitionKind != MirDefinitionKind::Source ||
+      function.linkage != LanguageLinkage::Gti ||
+      function.intrinsic != IntrinsicKind::None || instance.owner ||
+      mirInstance.owner || instance.id == 0 || instance.id != mirInstance.id ||
+      instance.declaration != function.id ||
+      mirInstance.declaration != function.id ||
+      instance.typeArguments != mirInstance.typeArguments ||
+      instance.valueArguments != mirInstance.valueArguments ||
+      selected == nullptr || selectedMir == nullptr ||
+      (selected != &instance && *selected != instance) ||
+      (selectedMir != &mirInstance && *selectedMir != mirInstance) ||
+      cppConcreteFunctionInstanceIsNameable(program, instance, mirInstance))
+    return std::nullopt;
+  const auto containsClosure = [](const auto &self,
+                                  const SemanticType &type) -> bool {
+    return type.kind == SemanticType::Lambda ||
+           std::any_of(
+               type.arguments.begin(), type.arguments.end(),
+               [&](const auto &argument) { return self(self, argument); });
+  };
+  if (!containsClosure(containsClosure, mirInstance.returnType) &&
+      std::none_of(mirInstance.parameterTypes.begin(),
+                   mirInstance.parameterTypes.end(),
+                   [&](const auto &type) {
+                     return containsClosure(containsClosure, type);
+                   }) &&
+      std::none_of(instance.typeArguments.begin(), instance.typeArguments.end(),
+                   [&](const auto &type) {
+                     return containsClosure(containsClosure, type);
+                   }))
+    return std::nullopt;
+  return "__gti_callable_inst_" + std::to_string(instance.id) + "_" + row.name;
 }
 
 std::optional<std::string>

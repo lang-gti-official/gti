@@ -8,6 +8,13 @@ executable typed values. It sits after semantic analysis and before body-local
 control-flow lowering. It is not a pretty AST and it is not an independent
 type system.
 
+Concrete function instances preserve the semantic owned-pointee accessor
+summary (exact receiver-field identity and private borrow operation), refreshed
+from concrete instance analysis. It is proof metadata, not a synthetic field
+access: the accessor call and its returned loan still describe execution. In
+particular, lowering must not replace a source accessor with a caller-side
+access to that accessor's private storage.
+
 ## Inputs And Outputs
 
 `HirLowerer` in `include/gti/hir.h` consumes the checked `Program`, target, and
@@ -35,6 +42,58 @@ obligations, not HIR declarations or executable values.
   and cross-phase verification.
 
 IDs are stable only inside one `HirProgram`; zero means no identity.
+
+When an owner has no generated-default construction route, each concrete source
+constructor selects its omitted declaration field defaults into its own HIR
+body. Explicit initializers override defaults; the combined schedule remains
+base-first and field-declaration-ordered. Each selected initializer has a distinct
+full-expression before constructor body statements. The declaration initializer
+catalog remains available, but is not a second execution site for these owners.
+Owners with generated default construction retain the existing declaration
+schedule until generated constructors have explicit body-local execution and
+failure propagation; they are not silently given source-constructor semantics.
+
+Struct designated construction is resolved in semantics to a compiler-owned,
+full-field construction declaration that is not a source-callable overload.
+Its transfers use the same ownership analysis as explicit moves, by retained
+compiler-generated expression identity rather than a public spelling match.
+HIR receives declaration-ordered, exactly typed inputs; omitted generic field
+defaults are concretely reanalyzed in their declaring class context. MIR uses
+the existing prepared-argument and `Construct` schedule, including rollback
+if evaluation of a later input fails. The C++ backend consumes those MIR slots
+and does not interpret designator names or AST field lists.
+
+Contextual collection lists retain a `ResolvedCollectionInfo`: the exact
+collection/element types and the selected `collection_init` and
+`collection_insert` declaration identities. Semantics validates this public
+owned-value protocol without recognizing any standard-library class by name.
+HIR builds a chain of ordinary static calls with ordered ownership inputs,
+starting with the written count and then transferring the accumulated owner
+and each next element. These values share the original list's source anchor
+and full-expression lifetime. Existing MIR call staging, effects, failure
+edges, transfer, and cleanup own execution; the backend never interprets raw
+collection braces. Program-initialization effect analysis also records the
+selected protocol calls and conservatively rejects unclosed generic effects.
+Even cleanup-free intermediate collections get concrete temporary lifetimes
+so a protocol call must publish successfully before the next element starts.
+
+A concrete by-value parameter pack retains one binding but a distinct
+`HirDropObligation` for each lexical-drop element. Each obligation records the
+binding, concrete pack index, exact element drop type, and source-order
+construction ordinal; it begins active at body entry. Trivial elements have
+no drop row. MIR consumes these element identities rather than relying on
+native parameter destruction for unused or partially forwarded packs.
+Read-only reference pack elements retain their exact reference type and a
+`ReadBorrow` expansion role. They have no element ownership or drop obligation;
+MIR projects their existing parameter carrier and stages that borrow at the
+selected call. A reference element cannot acquire a copy/move role from the
+referent's traits.
+Concrete function-instance signatures flatten pack elements in order, including
+zero elements, whether discovered through a scalar call, forwarded pack, or
+virtual declaration. This does not flatten the body's source bindings: a named
+pack still owns one grouped binding and its per-element cleanup rows. Thus a
+virtual root and override share the same concrete signature without depending
+on which call first caused either instance to be discovered.
 
 Each closed payload enum carries a pointer-free lifecycle table in HIR: exact
 ordered variants, exact field types, a per-field active-cleanup bit, folded
@@ -89,8 +148,13 @@ binding metadata, initializer provenance, and constant-substitution facts.
 For an owned-argument entry, `HirHostedProgramEntryPlan` maps the exact semantic
 entry, append function, vector constructor, and string constructor to concrete
 HIR instance identities. It also copies the `main` anchor and exactly two
-adapter-local failure operations: native negative-count validation and checked
-GTI count conversion. Allocation failure remains owned and sited by the exact
+adapter-local failure operations. Owner generic arguments remain in the
+constructed type/class instance, not in constructor-local argument lists.
+Hosted construction and an ordinary source call of the same constructor thus
+share one concrete identity. HIR and MIR plan verification reject spurious
+constructor-local arguments on the selected hosted constructors.
+The two adapter-local failure operations are native negative-count validation
+and checked GTI count conversion. Allocation failure remains owned and sited by the exact
 constructor or append callee; `allocation_failure/hosted_arguments` is reserved
 and currently unproduced. This plan is immutable data only. A later M-FAIL-01 /
 M-EXEC-01 cutover must generate the executable hosted-startup HIR/MIR schedule,
@@ -119,6 +183,12 @@ whether an argument was written, inferred, or filled from a default. HIR does
 not store default syntax, evaluate dependent arithmetic, or ask a native
 template to complete an instance.
 
+A signature-pattern primary retains its public signature arguments in class
+instance identity. Semantics publishes the resolved path from each extracted
+type/pack parameter to that argument; HIR uses these projections for ordinary
+field, constructor, and method substitutions. It does not repeat pattern
+matching or flatten the public signature into a different class identity.
+
 `HirInstanceIndex` (`include/gti/hir_instance_index.h`, compiled in
 `src/compiler/hir.cpp`) answers "has this instance already been discovered?"
 in constant time. It is a lookup structure only: the ordered instance vectors
@@ -141,7 +211,12 @@ shape would merge distinct generic bodies. Capture records retain the source
 and environment-binding symbols, copy/move mode, type, traits, and initializer.
 Each closure-producing `HirValue` carries its initializer operands in written
 left-to-right order; an owned capture is an ordinary HIR `Move` with the same
-place/ownership event used elsewhere. Callable parameters and call values
+place/ownership event used elsewhere. Ordinary by-value closure arguments use
+the same ordered prepared-parameter schedule as class arguments: copying a
+copyable local or field creates a fresh owned stage, while moving retains the
+exact source ownership event. This applies to ordinary calls as well as packs;
+the stage, rather than an untracked backend copy, owns argument cleanup.
+Callable parameters and call values
 use an explicit boundary enum rather than a generic "non-escaping" boolean. The
 `Confined` boundary retains invocation/forwarding requirements. A confined
 parameter may additionally retain one exact same-type return transport when
@@ -185,7 +260,7 @@ linkage, parameters, result, and every value-to-adapter reference. This makes
 callback reachability a concrete-instance edge rather than a backend lookup by
 function spelling.
 
-A contextual GTI-only namespace function becomes
+A selected GTI-only namespace function becomes
 `HirValueKind::FunctionItem`. Its `SemanticType::FunctionItem` contains the
 nominal declaration ID and exact signature, while `functionTarget` names the
 one concrete `HirFunctionInstanceId`. It has no operands, capture environment,
@@ -194,6 +269,11 @@ to be the same body-bearing, GTI-linkage, owner-free namespace function and
 exact-compares result and parameter types. This preserves declaration-order-
 independent semantic selection without making an overload set available to
 later phases.
+Unambiguous names use the same record outside contextual calls. Their zero-state
+values can be ordinary bindings, captures, fields and value-pack elements.
+Calling a function-valued field does not make the containing object a method
+receiver: the callee operand retains evaluation while the selected namespace
+target remains receiver-free.
 
 An exact trusted thread-spawn call creates one `HirThreadTaskAdapter`. Its
 identity retains the concrete task type, the exact spawning `HirValueId`, and
@@ -264,6 +344,18 @@ and unsupported construction remain outside the slice. A concretely selected
 generic source call still has a deferred-callable base record. Its receiver is
 a read or mutable borrow for a place, a value for a reusable value receiver, or
 a `MoveValue` for an explicitly moved receiver or exact trailing-`&&` target.
+An exact immediate nominal or stored-lambda field invocation authorized by
+semantics inside consuming `this` instead uses `RetainedReceiver`. Its Move-shaped HIR value
+records `retainedReceiverProjection` and creates no new drop obligation;
+transparent grouping preserves that fact. MIR stages the exact field place
+without physically moving it or transferring the enclosing receiver's cleanup.
+Stored-lambda calls with fixed arguments retain an ordered call plan; concrete
+pack calls stage the same retained receiver before expanding their arguments.
+For the proved transparent unique-owner accessor form, `retainedReceiverOwner`
+names the already-lowered accessor receiver separately from the returned loan.
+Lowering does not re-evaluate the owner expression. MIR turns this identity
+into the retained owner anchor while keeping the accessor result as the actual
+call receiver.
 An admitted direct class-value temporary instead uses
 `ReadTemporaryBorrow` or `MutableTemporaryBorrow`; the input names the
 unwrapped producer value and copies semantic access rather than rediscovering

@@ -306,8 +306,19 @@ class-declaration      = [ class-attributes ]
 
 ordinary-class-declaration
                        = class-key IDENTIFIER
-                         [ generic-parameter-clause ] [ base-clause ]
+                         [ generic-parameter-clause
+                         | generic-signature-pattern-clause ] [ base-clause ]
                          ( "{" { class-member } "}" ";" | ";" ) ;
+
+(* A headerless patterned primary, not an exact specialization. Bare
+   unqualified type leaves declare binders; builtins and qualified type names
+   refer to existing types. At least one binder and at most one type pack are
+   required. Concrete arguments match exactly after binder substitution.
+   Complete single-signature definitions may share a name only for disjoint
+   receiver qualifiers, subject to same-kind/package/visibility rules. *)
+generic-signature-pattern-clause
+                       = "<" function-signature
+                         { "," type } ">" ;
 
 exact-class-specialization
                        = class-key qualified-specialization-name
@@ -749,7 +760,25 @@ direct-initializer     = "{" [ assignment-expression
                          { "," assignment-expression } [ "," ] ] "}" ;
 
 type                   = ( raw-pointer-base | base-type )
-                         { array-extent } [ "&" ] ;
+                         { array-extent } [ "&" ]
+                         [ "(" [ signature-parameter
+                         { "," signature-parameter } ] ")"
+                         [ signature-receiver ] ] ;
+
+signature-parameter    = [ "mut" ] type [ "..." ] ;
+(* A signature parameter's explicit mut prefix requires a reference type. *)
+
+function-signature     = ( raw-pointer-base | base-type )
+                         { array-extent } [ "&" ]
+                         "(" [ signature-parameter
+                         { "," signature-parameter } ] ")"
+                         [ signature-receiver ] ;
+
+signature-receiver     = "mut" | "&&" ;
+
+(* The final parenthesized suffix forms a GTI function-signature type. It is
+   type metadata usable in aliases/generic arguments, not an object or a native
+   callback pointer. It has no implicit function/array parameter decay. *)
 
 raw-pointer-base       = [ "const" ] base-type "*" [ "*" ] ;
 
@@ -977,10 +1006,10 @@ unsigned-integer-type  = "uint" | "uint8_t" | "uint16_t" | "uint32_t"
 user-type              = qualified-name [ generic-argument-clause ] ;
 
 generic-argument-clause
-                       = "<" generic-argument
-                         { "," generic-argument } ">" ;
+                       = "<" [ generic-argument
+                         { "," generic-argument } ] ">" ;
 
-generic-argument       = type | generic-value-expression ;
+generic-argument       = type [ "..." ] | generic-value-expression ;
 
 qualified-name         = IDENTIFIER { "::" IDENTIFIER } ;
 
@@ -1268,7 +1297,7 @@ pack-expansion         = IDENTIFIER "..." ;
    A class or struct may follow its type parameters with immutable `uint64_t`
    value parameters, such as `class array<T, uint64_t N>`. Type and value
    parameters may have a trailing declaration-owned default suffix. A type
-   default is a visible exact non-void type and may use earlier parameters. A
+   default is a visible exact type (including void metadata) and may use earlier parameters. A
    value default and written value argument are closed `uint64_t` expressions
    over integer literals, earlier visible namespace `constexpr uint64_t`
    bindings with closed arithmetic initializers, and earlier or enclosing value
@@ -1300,14 +1329,39 @@ pack-expansion         = IDENTIFIER "..." ;
 
    A function or method
    may declare one final type pack with `Args...`, bound by one final named,
-   immutable, by-value parameter pack such as `Args... args`. The pack may be
+   immutable parameter pack such as `Args... args`. Concrete elements can be
+   owned values or exact read-only/mutable references. The pack may be
    empty. `args...` is permitted only as the final argument of a call to another
    variadic function or method. This makes forwarding explicit without adding
-   arbitrary expansion contexts, indexing, multiple packs, class packs,
-   reference packs, or C++ forwarding-reference deduction. Source-defined
+   arbitrary expansion contexts, indexing, multiple packs,
+   reference-pack declarators or C++
+   forwarding-reference deduction. Concrete expansions also feed exact lambda
+   and nominal call-operator signatures. Source-defined
    `std::vector::emplace_back` uses this bounded form: it constructs an element
    in place but does not promise C++ perfect forwarding, so copyable arguments
    may be copied on entry to the by-value pack.
+
+   A function or method type pack may alternatively be bound by an explicit
+   type-list expansion in a formal parameter type: Tag<R(Args...)>& deduces
+   the exact signature tail, and Types<Args...>& deduces a nominal type list.
+   Repeated patterns and explicitly supplied pack elements must agree. If a
+   named value pack is also present, its deduced list must agree as well.
+   Metadata-only packs add no runtime arguments. This does not add reference
+   value packs, class-pattern selection, or overload ranking.
+
+   Classes and structs may separately own one final type pack, without value
+   parameters or defaults. A bare type-list expansion `Args...` may be the
+   final signature parameter or the final argument feeding another class's
+   final type pack. It cannot occupy a fixed slot, be decorated, or be used
+   as storage. Empty all-pack applications admit `Types<>` and `Types<>()`.
+   Methods, including operator() and interface/virtual methods, may bind the
+   owner's pack with a final immutable by-value Args... args parameter. Call
+   arguments must match the owner's prescribed list rather than deducing a
+   new class signature. Method-local fixed generic parameters may coexist.
+   Value-pack elements must be non-void object types or references, not bare
+   signatures. Signature-first patterned primaries additionally decompose
+   their public arguments as described above. Constructor owner packs and
+   more general reference forwarding remain incomplete work.
 
    One additional expression may iterate that same named pack:
    `(function_call(fixed, args), ...)`. The pattern is exactly one ordinary
@@ -1337,8 +1391,9 @@ pack-expansion         = IDENTIFIER "..." ;
    therefore valid when the body transfers rather than copies them. A concrete
    parameter pack containing any move-only element is one owned unit: its first
    whole-pack expansion consumes it, and a later expansion is a use-after-move
-   error. Copyable packs may be expanded more than once. User generic type
-   arguments cannot be void. Pack indexing, partial pack movement, general
+   error. Copyable packs may be expanded more than once. Generic type arguments
+   may be void metadata, but concrete object types and value-pack elements
+   cannot be void. Pack indexing, partial pack movement, general
    iteration beyond the bounded call fold, and `auto`-driven generic deduction
    are not implemented.
 

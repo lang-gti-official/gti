@@ -19,6 +19,10 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
+def default_jobs():
+    return max(1, os.cpu_count() or 1)
+
+
 def run(command, *, env=None, cwd=None, capture=False):
     print("+ " + shlex.join(str(part) for part in command), flush=True)
     return subprocess.run([str(part) for part in command], check=True,
@@ -119,7 +123,8 @@ def main():
                         help="Lazy spec file (default: Neovim's lua/plugins/gti.lua)")
     parser.add_argument("--replace-config", action="store_true",
                         help="back up and replace an existing different Lazy spec")
-    parser.add_argument("--jobs", type=int, default=1)
+    parser.add_argument("--jobs", type=int, default=default_jobs(),
+                        help="parallel build jobs (default: all detected CPUs)")
     parser.add_argument("--dry-run", action="store_true",
                         help="inspect prerequisites and destinations without writing")
     args = parser.parse_args()
@@ -127,7 +132,7 @@ def main():
         parser.error("this installer is for macOS")
     if args.jobs < 1:
         parser.error("--jobs must be a positive integer")
-    for executable in ("cmake", "nvim", "tar", "c++", "nice"):
+    for executable in ("cmake", "nvim", "tar", "c++"):
         if not shutil.which(executable):
             parser.error(f"{executable} is required; see README's local Neovim setup")
     nvim = ["nvim", "--headless", "-u", "NONE", "-i", "NONE", "-n"]
@@ -161,12 +166,13 @@ def main():
     if configure and not shutil.which("ninja"):
         parser.error("Ninja is required for a fresh build")
     print(f"Build: {build}\nToolchain: {ROOT / 'toolchain'}\nLazy config: {configuration}")
+    print(f"Parallel build jobs: {args.jobs}")
     print("This is a local system-LLVM install, not a portable published release.")
     if args.dry_run:
         return
     if configure:
-        run(["nice", "-n", "10", *configure])
-    run(["nice", "-n", "10", "cmake", "--build", build, "--parallel", str(args.jobs),
+        run(configure)
+    run(["cmake", "--build", build, "--parallel", str(args.jobs),
          "--target", "gti", "gti_lsp", "gti_tree_sitter"])
     version = (ROOT / "VERSION").read_text().strip()
     if not re.fullmatch(r"\d+\.\d+\.\d+", version):
@@ -184,7 +190,7 @@ def main():
         stage = scratch / "stage"
         run(["cmake", "--install", build, "--prefix", stage, "--component", "gti_toolchain"])
         archive = scratch / f"gti-v{version}-{native_platform}.tar.gz"
-        run(["nice", "-n", "10", "cmake", "-E", "tar", "czf", archive, "."], cwd=stage)
+        run(["cmake", "-E", "tar", "czf", archive, "."], cwd=stage)
         checksum = pathlib.Path(str(archive) + ".sha256")
         with archive.open("rb") as source:
             hasher = hashlib.sha256()
@@ -198,7 +204,7 @@ def main():
             environment.pop(key, None)
         environment.update(GTI_TEST_REPOSITORY=str(ROOT), GTI_TEST_ARCHIVE=str(archive),
                            GTI_TEST_CHECKSUM=str(checksum), GTI_TEST_PLATFORM=native_platform)
-        run(["nice", "-n", "10", *nvim, "-l", ROOT / "tests/nvim_plugin_smoke_test.lua"],
+        run([*nvim, "-l", ROOT / "tests/nvim_plugin_smoke_test.lua"],
             env=environment)
         run(nvim + ["-l", ROOT / "scripts/install_neovim_local.lua"], env=environment)
     backup = write_config(configuration, content, args.replace_config)

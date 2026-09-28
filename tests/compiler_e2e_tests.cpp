@@ -913,7 +913,7 @@ int main() {
          "values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v60\n") &&
+  expect(dump.starts_with("mir-body-v64\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos &&
              dump.find("prepared-parameter-drop=") != std::string::npos,
@@ -1087,12 +1087,41 @@ int main() {
       inputs[index] = definitionFor(construct->operands[index]);
     }
   }
-  const auto exactTransfer = [&](const lang::MirInstruction *input) {
-    return input != nullptr && input->operands.size() == 1 &&
-           input->operands.front().kind == lang::MirOperandKind::Value &&
-           input->lifecycle.size() == 1 &&
-           input->lifecycle.front().kind ==
-               lang::MirLifecycleEventKind::TransferOut;
+  const auto exactPreparedOwner = [&](const lang::MirInstruction *input,
+                                      bool copied) {
+    if (input == nullptr || !input->preparedParameterDrop ||
+        !input->destination || input->operands.size() != 1 ||
+        input->lifecycle.size() != 1) {
+      return false;
+    }
+    const auto *drop =
+        mirMain->body.findDropObligation(*input->preparedParameterDrop);
+    const auto *place = mirMain->body.findPlace(*input->destination);
+    const auto &event = input->lifecycle.front();
+    if (drop == nullptr || place == nullptr ||
+        drop->kind != lang::MirDropObligationKind::PreparedParameter ||
+        drop->initiallyActive || drop->place != place->id ||
+        drop->dropType.type != input->info.type ||
+        place->root != lang::MirPlaceRootKind::Temporary ||
+        place->type != input->info.type || place->initiallyAvailable ||
+        !place->projections.empty() || event.target != drop->id ||
+        event.conditional || event.failureCleanup) {
+      return false;
+    }
+    if (copied) {
+      return input->operands.front().kind == lang::MirOperandKind::Copy &&
+             event.kind == lang::MirLifecycleEventKind::Initialize &&
+             event.source == 0;
+    }
+    const auto *source = mirMain->body.findDropObligation(event.source);
+    const auto *sourcePlace =
+        source == nullptr ? nullptr : mirMain->body.findPlace(source->place);
+    return input->operands.front().kind == lang::MirOperandKind::Value &&
+           event.kind == lang::MirLifecycleEventKind::Reparent &&
+           source != nullptr && source->dropType == drop->dropType &&
+           sourcePlace != nullptr &&
+           sourcePlace->root == lang::MirPlaceRootKind::Value &&
+           sourcePlace->value == input->operands.front().value;
   };
   bool exactMirPlan =
       construct != nullptr && productConstruction != nullptr &&
@@ -1109,18 +1138,27 @@ int main() {
                    input->callInputIndex == index &&
                    input->callInputKind == expectedKinds[index] &&
                    input->info.type == construct->parameterTypes[index] &&
-                   input->operands.size() == 1 &&
+                   input->operands.size() == 1 && input->result &&
                    mirMain->body.usesOf(*input->result).size() == 1 &&
                    (previous == nullptr || previous->id < input->id);
     previous = input;
   }
-  const bool constructTransfers =
-      construct != nullptr &&
-      std::any_of(construct->lifecycle.begin(), construct->lifecycle.end(),
-                  [](const lang::MirLifecycleEvent &event) {
-                    return event.kind ==
-                           lang::MirLifecycleEventKind::TransferOut;
-                  });
+  bool exactInvocationTransfers =
+      construct != nullptr && construct->lifecycle.size() == 3;
+  for (std::size_t index = 3; exactInvocationTransfers && index < inputs.size();
+       ++index) {
+    const auto *input = inputs[index];
+    const auto &event = construct->lifecycle[index - 3];
+    exactInvocationTransfers =
+        input != nullptr && input->preparedParameterDrop &&
+        event.kind == lang::MirLifecycleEventKind::TransferOut &&
+        event.source == *input->preparedParameterDrop && event.target == 0 &&
+        !event.conditional && !event.failureCleanup;
+    for (std::size_t earlier = 3; exactInvocationTransfers && earlier < index;
+         ++earlier)
+      exactInvocationTransfers = inputs[earlier]->preparedParameterDrop !=
+                                 input->preparedParameterDrop;
+  }
   expect(exactMirPlan && previous != nullptr && previous->id < construct->id &&
              inputs[0]->operands.front().kind == lang::MirOperandKind::Value &&
              inputs[1]->operands.front().kind ==
@@ -1128,10 +1166,12 @@ int main() {
              inputs[2]->operands.front().kind ==
                  lang::MirOperandKind::BorrowWrite &&
              inputs[3]->operands.front().kind == lang::MirOperandKind::Copy &&
-             exactTransfer(inputs[4]) && exactTransfer(inputs[5]) &&
-             !constructTransfers,
-         "MIR should prepare constructor arguments left to right and transfer "
-         "owned temporaries at their parameter checkpoints");
+             exactPreparedOwner(inputs[3], true) &&
+             exactPreparedOwner(inputs[4], false) &&
+             exactPreparedOwner(inputs[5], false) && exactInvocationTransfers,
+         "MIR should prepare constructor arguments left to right, retain "
+         "distinct caller-owned copy/move stages, and transfer them only when "
+         "the constructor begins");
 
   const auto mutableMain = [&](lang::MirProgram &program) {
     auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
@@ -1164,6 +1204,34 @@ int main() {
   };
 
   lang::MirProgram forgedEmptySchedule = frontend.mir;
+  for (int mutation = 0; mutation != 2; ++mutation) {
+    auto malformed = frontend.mir;
+    auto *changedMain = mutableMain(malformed);
+    auto *changedConstruct = changedMain == nullptr
+                                 ? nullptr
+                                 : mutableProductConstruction(*changedMain);
+    bool changed =
+        changedConstruct != nullptr && changedConstruct->lifecycle.size() == 3;
+    if (changed) {
+      const auto transfer = changedConstruct->lifecycle.back();
+      changedConstruct->lifecycle.pop_back();
+      if (mutation == 1) {
+        changed = false;
+        for (auto &block : changedMain->body.blocks)
+          for (auto &instruction : block.instructions)
+            if (instruction.preparedParameterDrop == transfer.source) {
+              instruction.lifecycle.push_back(transfer);
+              changed = true;
+            }
+      }
+    }
+    expect(changed && !lang::verifyMirProgram(malformed).valid(),
+           mutation == 0
+               ? "MIR verification should reject missing constructor "
+                 "invocation ownership transfer"
+               : "MIR verification should reject an early argument-stage "
+                 "transfer before constructor invocation");
+  }
   lang::MirFunctionInstance *forgedEmptyMain = mutableMain(forgedEmptySchedule);
   lang::MirInstruction *forgedEmptyConstruct = nullptr;
   if (forgedEmptyMain != nullptr && emptyTarget != nullptr) {
@@ -3651,12 +3719,16 @@ int main() {
              !invalid.hirValid,
          "invalid ownership in a concrete generic instance should fail in "
          "HIR lowering");
-  expect(hasDiagnostic(invalid.diagnostics, "Cannot return a value") &&
-             hasDiagnostic(invalid.diagnostics, "Cannot initialize field") &&
-             hasRelatedDiagnostic(invalid.diagnostics,
-                                  "Concrete generic instance requested here"),
-         "HIR diagnostics should report the generic body and instantiation "
-         "site");
+  expect(
+      hasDiagnosticCode(invalid.diagnostics, "GTI-S2003") &&
+          hasDiagnostic(invalid.diagnostics, "Cannot return 'value' by copy") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Cannot initialize field 'value' by copying "
+                        "move-only type") &&
+          hasRelatedDiagnostic(invalid.diagnostics,
+                               "Concrete generic instance requested here"),
+      "HIR diagnostics should report the generic body and instantiation "
+      "site");
 }
 
 void testCompletePipeline() {

@@ -140,6 +140,7 @@ enum class OwnershipEventKind {
   Move,
   Reinitialize,
   DropBoundary,
+  ConsumeReceiver,
 };
 
 struct OwnershipEvent {
@@ -180,6 +181,10 @@ struct GenericParameterInfo {
   ConceptId conceptId = 0;
   std::shared_ptr<const SemanticType> defaultType;
   std::shared_ptr<const GenericValueExpression> defaultValue;
+  // Semantics-resolved projection from the public class argument list.
+  // Empty denotes an ordinary positional parameter. For a pack, the final
+  // component selects the start of a tail, including an empty tail.
+  std::vector<std::size_t> typeArgumentPath;
 };
 
 struct CompileTimeValue {
@@ -294,6 +299,7 @@ struct SemanticType {
     Expected,
     Unexpected,
     PrefixStorage,
+    FunctionSignature,
   };
 
   SemanticType(Kind kind = Unknown) : kind(kind) {}
@@ -315,6 +321,15 @@ struct SemanticType {
     return type;
   }
 
+  [[nodiscard]] static SemanticType functionSignature(
+      SemanticType result, std::vector<SemanticType> parameters,
+      ReceiverMutability receiver = ReceiverMutability::ReadOnly) {
+    parameters.insert(parameters.begin(), std::move(result));
+    SemanticType type(FunctionSignature, std::move(parameters));
+    type.signatureReceiver = receiver;
+    return type;
+  }
+
   [[nodiscard]] static SemanticType enumType(EnumId id) {
     SemanticType type(Enum);
     type.enumId = id;
@@ -333,6 +348,19 @@ struct SemanticType {
     type.genericParameterId = id;
     type.concretePack = true;
     return type;
+  }
+
+  // Canonical argument lists contain expanded concrete elements, retaining
+  // only symbolic packs until their declaration parameters are substituted.
+  static void appendExpandedArgument(std::vector<SemanticType> &arguments,
+                                     SemanticType argument) {
+    if (argument.kind == TypePack && argument.concretePack) {
+      for (SemanticType &element : argument.arguments) {
+        appendExpandedArgument(arguments, std::move(element));
+      }
+    } else {
+      arguments.emplace_back(std::move(argument));
+    }
   }
 
   [[nodiscard]] static SemanticType typeName(ClassId id) {
@@ -548,6 +576,7 @@ struct SemanticType {
   GenericParameterId arrayLengthParameterId = 0;
   AccessMode referenceAccess = AccessMode::ReadOnly;
   AccessMode pointerAccess = AccessMode::Mutable;
+  ReceiverMutability signatureReceiver = ReceiverMutability::ReadOnly;
   bool concretePack = false;
 };
 
@@ -566,6 +595,38 @@ constantIntegerDomain(const SemanticType &type);
 semanticFloatFormat(const SemanticType &type);
 
 [[nodiscard]] SemanticType semanticIntegerType(CheckedIntegerDomain domain);
+
+// Apply a resolved binder projection; this does not perform name lookup,
+// pattern matching, or overload selection in downstream consumers.
+[[nodiscard]] inline std::optional<SemanticType>
+projectGenericTypeArgument(std::span<const SemanticType> arguments,
+                           std::span<const std::size_t> path,
+                           GenericParameterId id, bool pack) {
+  if (path.empty() || id == 0) {
+    return std::nullopt;
+  }
+  for (std::size_t depth = 0; depth + 1 < path.size(); ++depth) {
+    if (path[depth] >= arguments.size()) {
+      return std::nullopt;
+    }
+    arguments = arguments[path[depth]].arguments;
+  }
+  const std::size_t index = path.back();
+  if (!pack) {
+    return index < arguments.size() ? std::optional{arguments[index]}
+                                    : std::nullopt;
+  }
+  if (index > arguments.size()) {
+    return std::nullopt;
+  }
+  const auto tail = arguments.subspan(index);
+  if (tail.size() == 1 && tail.front().kind == SemanticType::TypePack &&
+      !tail.front().concretePack) {
+    return tail.front();
+  }
+  return SemanticType::concreteTypePack(
+      id, std::vector<SemanticType>(tail.begin(), tail.end()));
+}
 
 struct SemanticTypeTraits {
   OwnershipKind ownership = OwnershipKind::Value;

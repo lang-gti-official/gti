@@ -1,0 +1,20 @@
+manifest-version = 1
+
+[package]
+name = "hosted-constructor-consumer"
+version = "0.1.0"
+
+[dependencies]
+storage = { path = "../library" }
+
+[targets.app]
+kind = "executable"
+root = "src/main.gti"
+
+[profiles.dev]
+optimization = 0
+cpp-standard = "c++20"
+
+[profiles.release]
+optimization = 3
+cpp-standard = "c++23"

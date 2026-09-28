@@ -255,7 +255,7 @@ int main() {
 
   const std::string snapshot = lang::MirPrinter().print(frontend.mir);
   const bool validSnapshot =
-      snapshot.starts_with("mir-v70 ") &&
+      snapshot.starts_with("mir-v74 ") &&
       snapshot.find("failure-metadata artifact=" +
                     metadata.artifactIdentity().hex()) != std::string::npos &&
       snapshot.find("failure-site @1 source=8:main.gti") != std::string::npos &&
@@ -2431,9 +2431,28 @@ int main() { auto owner = std::make_unique<Quiet>(); return 0; }
                 leaf->uniquePointeeClass.reset();
               else
                 leaf->classInstance.reset();
-            } else if (mutation == 1)
-              leaf->destructor.reset();
-            else if (mutation == 2)
+            } else if (mutation == 1) {
+              // The first leaf can be passive allocation bookkeeping. Remove
+              // an actual source destructor, not an already-empty optional.
+              const auto removeDestructor =
+                  [&](const auto &self, lang::MirDropType &step) -> bool {
+                if (step.destructor) {
+                  step.destructor.reset();
+                  return true;
+                }
+                if (step.polymorphicCleanup) {
+                  step.polymorphicCleanup = false;
+                  return true;
+                }
+                for (auto &child : step.aggregate)
+                  if (self(self, child))
+                    return true;
+                return false;
+              };
+              expect(
+                  removeDestructor(removeDestructor, type),
+                  "fallible cleanup mutation must remove an actual destructor");
+            } else if (mutation == 2)
               leaf->uniquePointeeClass =
                   frontend.mir.classInstances().size() + 1;
             else if (mutation == 3)
@@ -2451,7 +2470,10 @@ int main() { auto owner = std::make_unique<Quiet>(); return 0; }
                                      : targets.front();
             }
             expect(!lang::verifyMirProgram(forged).valid(),
-                   "forged unique-pointee cleanup identity must be rejected");
+                   "forged unique-pointee cleanup identity must be rejected: " +
+                       std::string(fixture) + " drop " +
+                       std::to_string(drop->id) + " mutation " +
+                       std::to_string(mutation));
           }
           const auto mutateSchedules =
               [&](const auto &self, const std::vector<std::size_t> &path,

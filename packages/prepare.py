@@ -21,8 +21,10 @@ import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parent
-PACKAGES = ("glfw", "glad", "sqlite3", "cimgui", "zlib", "libpng", "assimp",
-            "libgit2")
+PACKAGES = (
+    "glfw", "glad", "sqlite3", "cimgui", "zlib", "libpng", "assimp", "libgit2",
+    "cli11"
+)
 GENERATOR_REQUIREMENTS = ("Jinja2==3.1.6", "MarkupSafe==3.0.3")
 
 
@@ -52,7 +54,7 @@ def contained(root, relative):
 
 
 def archive_files(data, zipped=False, exclude_directories=()):
-    """Validate the complete archive before creating any source files."""
+    """Validate archive paths and extractable entries before creating files."""
     entries = []
     def excluded(name):
         # Validate even excluded names before choosing not to read their data.
@@ -63,18 +65,24 @@ def archive_files(data, zipped=False, exclude_directories=()):
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             for item in archive.infolist():
                 if excluded(item.filename):
+                    entries.append((item.filename, None))
                     continue
                 if stat.S_ISLNK(item.external_attr >> 16):
                     raise ValueError(f"archive symlink: {item.filename}")
-                entries.append((item.filename, None if item.is_dir() else archive.read(item)))
+                entries.append(
+                    (item.filename, None if item.is_dir() else archive.read(item))
+                )
     else:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
             for item in archive.getmembers():
                 if excluded(item.name):
+                    entries.append((item.name, None))
                     continue
                 if not (item.isdir() or item.isfile()):
                     raise ValueError(f"archive special entry: {item.name}")
-                entries.append((item.name, None if item.isdir() else archive.extractfile(item).read()))
+                entries.append(
+                    (item.name, None if item.isdir() else archive.extractfile(item).read())
+                )
     roots = set()
     files = {}
     folded = set()
@@ -232,7 +240,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("packages", nargs="*", choices=PACKAGES)
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
-                        help="native library build workers (default: logical CPU count)")
+                        help="accepted for compatibility; consumer builds use gti build --jobs")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--gti", default="gti", help="GTI compiler used to generate public bindings")
     args = parser.parse_args()
@@ -246,7 +254,7 @@ def main():
     if any(name in selected for name in ("libpng", "assimp", "libgit2")) and "zlib" not in selected:
         selected.append("zlib")
     gti = shutil.which(args.gti)
-    if any(name != "glfw" for name in selected) and not gti:
+    if any(name not in ("glfw", "cli11") for name in selected) and not gti:
         parser.error("GTI compiler not found; pass --gti /path/to/gti")
     cache = contained(ROOT, ".cache")
     cache.mkdir(exist_ok=True)
@@ -274,7 +282,7 @@ def main():
     if "libgit2" in selected:
         prepare_consumer_zlib("libgit2")
     for name in selected:
-        if name != "glfw":
+        if name not in ("glfw", "cli11"):
             generate_bindings(name, gti)
     print("Ready. See packages/README.md for consumer and smoke-test commands.")
 

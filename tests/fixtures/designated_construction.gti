@@ -1,0 +1,53 @@
+#include <std/string>
+#include <std/vector>
+
+struct Command {
+  mut {
+    std::string name{};
+    std::vector<Command> subcommands{};
+  }
+};
+
+struct Box<std::default_initializable T> {
+  T value = T();
+  int count = 2;
+};
+
+int mark(int value) {
+  std::println(value);
+  return value;
+}
+
+class Token {
+public:
+  int value;
+  Token(int initial) : value(initial) {}
+  ~Token() { std::println(this.value); }
+};
+
+struct Values {
+  int first = 1;
+  int second = 2;
+};
+
+struct Owned {
+  Token first;
+  Token second;
+  int result;
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Box<std::string> empty = {.count = 3};
+  std::println(empty.value.size());
+  Command leaf = {.name = std::string("login")};
+  mut std::vector<Command> children{};
+  children.push_back(std::move(leaf));
+  Command root = {.name = std::string("tea"), .subcommands = std::move(children)};
+  std::println(root.name);
+  std::println(root.subcommands[std::size_t(0)].name);
+  Values values = {.second = mark(3)};
+  std::println(values.first + values.second);
+  Owned owned = {.first = Token(7), .second = Token(8), .result = 9 / (argc == 1 ? 1 : 0)};
+  std::println(owned.result);
+  return 0;
+}

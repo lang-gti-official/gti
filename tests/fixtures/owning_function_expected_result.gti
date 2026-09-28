@@ -1,0 +1,46 @@
+#include <std/functional>
+#include <std/string>
+#include <std/vector>
+
+class Result {
+  int identity;
+public:
+  Result(int identity) : identity(identity) {}
+  ~Result() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+expected<Result, int> produce(int divisor) {
+  int checked = 12 / divisor;
+  return Result(6);
+}
+
+struct MutableProducer {
+  expected<Result, int> operator()(int divisor) mut { return produce(divisor); }
+};
+
+struct ConsumingProducer {
+  expected<Result, int> operator()(int divisor) && { return produce(divisor); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Result caller{9};
+  int divisor = argc == 2 ? 0 : 2;
+  {
+    std::function<expected<Result, int>(int)> callback{produce};
+    auto result = callback(divisor);
+    std::println(result.value().read());
+  }
+  {
+    mut std::function<expected<Result, int>(int) mut> callback{MutableProducer()};
+    auto result = callback(2);
+    std::println(result.value().read());
+  }
+  {
+    std::move_only_function<expected<Result, int>(int) &&> callback{ConsumingProducer()};
+    auto result = std::move(callback)(2);
+    std::println(result.value().read());
+  }
+  int later = 6 / (argc == 3 ? 0 : 1);
+  return later - 6;
+}

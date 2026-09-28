@@ -40,6 +40,8 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "UnsignedResult",
       "Value",
       "__gti_invoke",
+      "__gti_mir_lambda_identity",
+      "mir_lambda_identity_v",
       "add",
       "add_assign",
       "allocate",
@@ -380,6 +382,14 @@ struct gti_failure_record_v1;
 
 namespace gti_internal::backend {
 
+template <typename T>
+inline constexpr std::uint64_t mir_lambda_identity_v = [] {
+  if constexpr (requires { typename T::__gti_mir_lambda_identity; })
+    return T::__gti_mir_lambda_identity::value;
+  else
+    return std::uint64_t{0};
+}();
+
 // Defined with the failure-ABI helpers below. Capability representations may
 // accept it by reference here so a transformed constructor can create an
 // observation-free native empty state before publishing the MIR result.
@@ -532,6 +542,42 @@ template <std::size_t Instance, typename T>
   return success;
 }
 
+// Allocation binds the verified complete-object cleanup before publishing
+// the owner. Upcasting retains that binding; the base type cannot replace it.
+// This is representation metadata attached to an object's address, not a GTI
+// field: constructing another object starts unbound, and value assignment
+// preserves the destination allocation's existing selection.
+class mir_polymorphic_cleanup_binding_v1 {
+public:
+  using function_type = bool (*)(void *, ::gti_failure_record_v1 *, bool);
+  mir_polymorphic_cleanup_binding_v1() = default;
+  mir_polymorphic_cleanup_binding_v1(const mir_polymorphic_cleanup_binding_v1 &) noexcept {}
+  mir_polymorphic_cleanup_binding_v1(mir_polymorphic_cleanup_binding_v1 &&) noexcept {}
+  mir_polymorphic_cleanup_binding_v1 &operator=(const mir_polymorphic_cleanup_binding_v1 &) noexcept { return *this; }
+  mir_polymorphic_cleanup_binding_v1 &operator=(mir_polymorphic_cleanup_binding_v1 &&) noexcept { return *this; }
+  void bind(function_type selected) noexcept {
+    if (selected == nullptr || (function_ != nullptr && function_ != selected)) std::abort();
+    function_ = selected;
+  }
+  bool run(void *object, ::gti_failure_record_v1 *record, bool unwinding) const {
+    if (function_ == nullptr) std::abort();
+    return function_(object, record, unwinding);
+  }
+private:
+  function_type function_ = nullptr;
+};
+
+template <typename T>
+[[nodiscard]] bool mir_polymorphic_owner_drop_with_failure_v1(
+    std::unique_ptr<T> &owner, ::gti_failure_record_v1 *record, bool unwinding) {
+  if (!owner) return true;
+  const bool success =
+      owner->__gti_mir_polymorphic_cleanup_failure(record, unwinding);
+  if (!success && unwinding) return false;
+  owner.reset();
+  return success;
+}
+
 // A verified MIR body owns the lifetime of values stored here. Unlike a
 // normal C++ local or std::optional, this guard deliberately refuses to clean
 // up an engaged value from its destructor: every successful construction must
@@ -574,6 +620,15 @@ public:
     ::new (static_cast<void *>(slot()))
         T(std::forward<Factory>(factory)());
     engaged_ = true;
+  }
+
+  // A verified TransferOut hands an already prepared argument to its native
+  // by-value parameter. Retire the disarmed representation immediately; the
+  // parameter now owns the semantic cleanup, even if construction fails.
+  [[nodiscard]] T take() {
+    T value(std::move(get()));
+    destroy();
+    return value;
   }
 
   [[nodiscard]] T *construction_address() {

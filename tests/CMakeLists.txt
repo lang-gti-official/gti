@@ -74,11 +74,25 @@ target_link_libraries(gti_runtime_cthread_once_tests PRIVATE gti_runtime)
 add_test(NAME cthread_once_boundary COMMAND gti_runtime_cthread_once_tests)
 set_tests_properties(cthread_once_boundary PROPERTIES TIMEOUT 60)
 
+add_executable("gti_runtime_chrono_tests"
+               "${PROJECT_SOURCE_DIR}/tests/runtime_chrono_tests.cpp")
+target_include_directories(gti_runtime_chrono_tests
+                           PRIVATE "${PROJECT_SOURCE_DIR}/runtime/src")
+target_compile_features(gti_runtime_chrono_tests PRIVATE cxx_std_20)
+target_link_libraries(gti_runtime_chrono_tests PRIVATE gti_runtime)
+add_test(NAME chrono_runtime_boundary COMMAND gti_runtime_chrono_tests)
+
 add_executable("gti_runtime_io_tests"
                "${PROJECT_SOURCE_DIR}/tests/runtime_io_tests.cpp")
 target_compile_features("gti_runtime_io_tests" PRIVATE cxx_std_23)
 target_link_libraries("gti_runtime_io_tests" PRIVATE gti_runtime)
 add_test(NAME runtime_io_boundary COMMAND gti_runtime_io_tests)
+
+add_executable("gti_runtime_process_tests"
+               "${PROJECT_SOURCE_DIR}/tests/runtime_process_tests.cpp")
+target_compile_features("gti_runtime_process_tests" PRIVATE cxx_std_20)
+target_link_libraries("gti_runtime_process_tests" PRIVATE gti_runtime)
+add_test(NAME runtime_process_boundary COMMAND gti_runtime_process_tests)
 
 add_executable("gti_runtime_failure_header_smoke"
                "${PROJECT_SOURCE_DIR}/tests/runtime_failure_header_smoke.cpp")
@@ -125,9 +139,30 @@ add_executable("gti_driver_tests" "${PROJECT_SOURCE_DIR}/tests/driver_tests.cpp"
 target_link_libraries("gti_driver_tests" PRIVATE gti_driver)
 add_test(NAME driver_pipeline COMMAND gti_driver_tests)
 
+add_executable(gti_executable_entry_tests
+               "${PROJECT_SOURCE_DIR}/tests/executable_entry_tests.cpp")
+target_link_libraries(gti_executable_entry_tests PRIVATE gti_driver)
+add_test(NAME executable_entry_semantics COMMAND gti_executable_entry_tests)
+
 add_executable("gti_project_tests" "${PROJECT_SOURCE_DIR}/tests/project_tests.cpp")
 target_link_libraries("gti_project_tests" PRIVATE gti_driver)
 add_test(NAME project_model COMMAND gti_project_tests)
+
+add_executable(gti_designated_construction_tests designated_construction_tests.cpp)
+target_link_libraries(gti_designated_construction_tests PRIVATE gti_cpp_backend)
+add_test(NAME designated_construction_pipeline COMMAND gti_designated_construction_tests)
+add_test(NAME designated_construction_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/designated_construction_runtime_test.py" $<TARGET_FILE:gti>)
+add_test(NAME designated_construction_lsp
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/designated_construction_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+
+add_executable(gti_collection_initialization_tests collection_initialization_tests.cpp)
+target_link_libraries(gti_collection_initialization_tests PRIVATE gti_cpp_backend)
+add_test(NAME collection_initialization_pipeline COMMAND gti_collection_initialization_tests)
+add_test(NAME collection_initialization_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/collection_initialization_runtime_test.py" $<TARGET_FILE:gti>)
+add_test(NAME collection_initialization_lsp
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/collection_initialization_lsp_test.py" $<TARGET_FILE:gti_lsp>)
 
 set(GTI_COMPILER_TEST_SUITES
     frontend
@@ -322,6 +357,21 @@ add_executable("gti_function_item_tests"
 target_link_libraries("gti_function_item_tests" PRIVATE gti_cpp_backend)
 add_test(NAME function_item_semantic_ir COMMAND gti_function_item_tests)
 
+add_executable(gti_function_signature_tests
+               "${PROJECT_SOURCE_DIR}/tests/function_signature_tests.cpp")
+target_link_libraries(gti_function_signature_tests PRIVATE gti_cpp_backend)
+add_test(NAME function_signature_types COMMAND gti_function_signature_tests)
+add_executable(gti_stored_callable_tests stored_callable_tests.cpp)
+target_link_libraries(gti_stored_callable_tests PRIVATE gti_cpp_backend)
+add_test(NAME stored_callable_types COMMAND gti_stored_callable_tests)
+add_executable(gti_owning_function_tests owning_function_tests.cpp)
+target_link_libraries(gti_owning_function_tests PRIVATE gti_cpp_backend)
+add_test(NAME owning_function_types COMMAND gti_owning_function_tests)
+
+add_executable(gti_consuming_receiver_tests consuming_receiver_tests.cpp)
+target_link_libraries(gti_consuming_receiver_tests PRIVATE gti_cpp_backend)
+add_test(NAME consuming_receiver_types COMMAND gti_consuming_receiver_tests)
+
 add_executable("gti_atomic_tests"
                "${PROJECT_SOURCE_DIR}/tests/atomic_tests.cpp")
 target_link_libraries("gti_atomic_tests" PRIVATE gti_cpp_backend)
@@ -403,8 +453,55 @@ add_test(NAME cpp_mir_body_emitter_preflight
          COMMAND gti_cpp_mir_body_emitter_preflight_tests)
 add_test(NAME cpp_mir_body_emitter_text
          COMMAND gti_cpp_mir_body_emitter_text_tests)
+add_test(NAME native_opaque_pointer_results
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/native_opaque_pointer_results_test.py" $<TARGET_FILE:gti>)
+add_test(NAME declaration_field_failure
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/declaration_field_failure_test.py" $<TARGET_FILE:gti>)
 add_test(NAME cpp_mir_body_emitter_lifecycle
          COMMAND gti_cpp_mir_body_emitter_lifecycle_tests)
+add_executable(gti_expected_payload_pair_emitter_tests expected_payload_pair_emitter_tests.cpp)
+target_link_libraries(gti_expected_payload_pair_emitter_tests PRIVATE gti_cpp_backend)
+add_test(NAME expected_payload_pair_emitter COMMAND gti_expected_payload_pair_emitter_tests)
+add_executable(gti_abstract_generic_failure_contract_tests abstract_generic_failure_contract_tests.cpp)
+target_link_libraries(gti_abstract_generic_failure_contract_tests PRIVATE gti_cpp_backend)
+add_test(NAME abstract_generic_failure_contract COMMAND gti_abstract_generic_failure_contract_tests)
+add_executable(gti_retained_generic_lifecycle_tests retained_generic_lifecycle_tests.cpp)
+target_link_libraries(gti_retained_generic_lifecycle_tests PRIVATE gti_cpp_backend)
+add_test(NAME retained_generic_lifecycle COMMAND gti_retained_generic_lifecycle_tests)
+
+add_executable(gti_owned_pointee_projection_tests owned_pointee_projection_tests.cpp)
+target_link_libraries(gti_owned_pointee_projection_tests PRIVATE gti_cpp_backend)
+add_test(NAME owned_pointee_projection COMMAND gti_owned_pointee_projection_tests)
+
+add_executable(gti_consuming_owned_pointee_tests consuming_owned_pointee_tests.cpp)
+target_link_libraries(gti_consuming_owned_pointee_tests PRIVATE gti_cpp_backend)
+add_test(NAME consuming_owned_pointee COMMAND gti_consuming_owned_pointee_tests)
+add_executable(gti_optional_empty_prefix_tests optional_empty_prefix_tests.cpp)
+target_link_libraries(gti_optional_empty_prefix_tests PRIVATE gti_cpp_backend)
+add_test(NAME optional_empty_prefix COMMAND gti_optional_empty_prefix_tests)
+add_executable(gti_field_array_empty_state_tests field_array_empty_state_tests.cpp)
+target_link_libraries(gti_field_array_empty_state_tests PRIVATE gti_cpp_backend)
+add_test(NAME field_array_empty_state COMMAND gti_field_array_empty_state_tests)
+add_executable(gti_expected_payload_pending_cleanup_tests
+               expected_payload_pending_cleanup_tests.cpp)
+target_link_libraries(gti_expected_payload_pending_cleanup_tests PRIVATE gti_cpp_backend)
+add_test(NAME expected_payload_pending_cleanup
+         COMMAND gti_expected_payload_pending_cleanup_tests)
+add_executable(gti_temporary_owner_borrow_tests temporary_owner_borrow_tests.cpp)
+target_link_libraries(gti_temporary_owner_borrow_tests PRIVATE gti_cpp_backend)
+add_test(NAME temporary_owner_borrow COMMAND gti_temporary_owner_borrow_tests)
+add_executable(gti_owned_expected_error_tests owned_expected_error_tests.cpp)
+target_link_libraries(gti_owned_expected_error_tests PRIVATE gti_cpp_backend)
+add_test(NAME owned_expected_error COMMAND gti_owned_expected_error_tests)
+add_executable(gti_owned_unexpected_pending_cleanup_tests owned_unexpected_pending_cleanup_tests.cpp)
+target_link_libraries(gti_owned_unexpected_pending_cleanup_tests PRIVATE gti_cpp_backend)
+add_test(NAME owned_unexpected_pending_cleanup COMMAND gti_owned_unexpected_pending_cleanup_tests)
+add_executable(gti_private_constructor_placement_tests private_constructor_placement_tests.cpp)
+target_link_libraries(gti_private_constructor_placement_tests PRIVATE gti_cpp_backend)
+add_test(NAME private_constructor_placement COMMAND gti_private_constructor_placement_tests)
+add_executable(gti_nested_guarded_expected_tests nested_guarded_expected_tests.cpp)
+target_link_libraries(gti_nested_guarded_expected_tests PRIVATE gti_cpp_backend)
+add_test(NAME nested_guarded_expected COMMAND gti_nested_guarded_expected_tests)
 if(Python3_Interpreter_FOUND)
   add_test(
     NAME cpp_mir_body_emitter_census
@@ -600,6 +697,29 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(cmath_runtime PROPERTIES TIMEOUT 600)
   add_test(
+    NAME http_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/http_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(http_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME process_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/process_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "$<TARGET_FILE:gti_runtime>"
+  )
+  set_tests_properties(process_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME json_stdlib
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/json_stdlib_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures"
+  )
+  set_tests_properties(json_stdlib PROPERTIES TIMEOUT 2400)
+  add_test(
     NAME cthread_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/cthread_runtime_test.py"
@@ -650,6 +770,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(forward_list_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME pack_parameter_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/pack_parameter_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(pack_parameter_runtime PROPERTIES TIMEOUT 300)
   add_test(
     NAME unique_owner_access_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -1312,6 +1439,271 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/function_items.gti"
   )
   set_tests_properties(function_item_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME function_signature_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/function_signatures.gti"
+            --include-o1
+  )
+  set_tests_properties(function_signature_runtime PROPERTIES TIMEOUT 180)
+  add_test(
+    NAME signature_pack_deduction_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/signature_pack_deduction.gti"
+            --include-o1
+  )
+  set_tests_properties(signature_pack_deduction_runtime PROPERTIES TIMEOUT 180)
+  add_test(
+    NAME class_signature_pattern_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/class_signature_pattern.gti"
+            --include-o1
+  )
+  set_tests_properties(class_signature_pattern_runtime PROPERTIES TIMEOUT 180)
+  add_test(
+    NAME stored_callable_invocation_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/stored_callable_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(stored_callable_invocation_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME return_result_cleanup_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/return_result_cleanup_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(return_result_cleanup_runtime PROPERTIES TIMEOUT 180)
+  add_test(
+    NAME polymorphic_owner_cleanup_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/polymorphic_owner_cleanup_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(polymorphic_owner_cleanup_runtime PROPERTIES TIMEOUT 180)
+  add_test(
+    NAME lambda_pack_invocation_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/lambda_pack_invocation_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(lambda_pack_invocation_runtime PROPERTIES TIMEOUT 1200)
+  add_test(
+    NAME owning_function_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/owning_function_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(owning_function_runtime PROPERTIES TIMEOUT 900)
+  add_test(
+    NAME consuming_receiver_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/consuming_receiver_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(consuming_receiver_runtime PROPERTIES TIMEOUT 480)
+  add_test(
+    NAME consuming_lambda_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/consuming_lambda_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(consuming_lambda_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME owned_pointee_projection_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/owned_pointee_projection_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(owned_pointee_projection_runtime PROPERTIES TIMEOUT 240)
+  add_test(
+    NAME consuming_owned_pointee_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/consuming_owned_pointee_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(consuming_owned_pointee_runtime PROPERTIES TIMEOUT 480)
+  add_test(
+    NAME retained_owner_member_pack_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/retained_owner_member_pack_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(retained_owner_member_pack_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME hosted_constructor_identity_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/hosted_constructor_identity_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(hosted_constructor_identity_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME discarded_nominal_result_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/discarded_nominal_result_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(discarded_nominal_result_runtime PROPERTIES TIMEOUT 240)
+  add_test(
+    NAME nested_nominal_result_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/nested_nominal_result_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(nested_nominal_result_runtime PROPERTIES TIMEOUT 480)
+  add_test(
+    NAME generic_callable_adapter_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/generic_callable_adapter_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(generic_callable_adapter_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME constructed_callback_argument_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constructed_callback_argument_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(constructed_callback_argument_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME pack_prefix_constructor_failure_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/pack_prefix_constructor_failure_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(pack_prefix_constructor_failure_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME fresh_callable_later_argument_failure_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/fresh_callable_later_argument_failure_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(fresh_callable_later_argument_failure_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME consuming_retained_field_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/consuming_retained_field_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(consuming_retained_field_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME consuming_retained_field_replace_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/consuming_retained_field_replace_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(consuming_retained_field_replace_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME consuming_retained_lambda_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/consuming_retained_lambda_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(consuming_retained_lambda_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME expected_payload_pair_arguments_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/expected_payload_pair_arguments_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(expected_payload_pair_arguments_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME expected_payload_pending_cleanup_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/expected_payload_pending_cleanup_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(expected_payload_pending_cleanup_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME temporary_owner_borrow_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/temporary_owner_borrow_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(temporary_owner_borrow_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME owned_expected_error_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/owned_expected_error_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(owned_expected_error_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME owned_unexpected_pending_cleanup_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/owned_unexpected_pending_cleanup_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(owned_unexpected_pending_cleanup_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME private_constructor_placement_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/private_constructor_placement_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(private_constructor_placement_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME nested_guarded_expected_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/nested_guarded_expected_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(nested_guarded_expected_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME owning_function_policy_failure_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/owning_function_policy_failure_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(owning_function_policy_failure_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME abstract_generic_failure_contract_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/abstract_generic_failure_contract_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(abstract_generic_failure_contract_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME owning_function_resource_result_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/owning_function_resource_result_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(owning_function_resource_result_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME constructor_argument_staging_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constructor_argument_staging_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(constructor_argument_staging_runtime PROPERTIES TIMEOUT 480)
+  add_test(
+    NAME void_return_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/void_return_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(void_return_runtime PROPERTIES TIMEOUT 180)
+  add_test(
+    NAME function_signature_lsp
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/function_signature_lsp_test.py"
+            "$<TARGET_FILE:gti_lsp>"
+  )
+  set_tests_properties(function_signature_lsp PROPERTIES TIMEOUT 60)
+  add_test(
+    NAME executable_entry_cli_lsp
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/executable_entry_test.py"
+            "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_lsp>"
+  )
+  set_tests_properties(executable_entry_cli_lsp PROPERTIES TIMEOUT 180)
     add_test(
       NAME owner_tied_by_value_argument_runtime
       COMMAND "${Python3_EXECUTABLE}"

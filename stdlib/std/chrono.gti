@@ -1,0 +1,183 @@
+// <std/chrono> -- exact nanosecond clock readings and elapsed-time measurement.
+//
+// This first surface deliberately keeps monotonic and wall-clock points as
+// distinct nominal types. It does not yet provide sleeps, calendar fields,
+// civil-time formatting, time zones, or generic ratio-based durations.
+
+#include <std/numeric>
+
+namespace gti_internal {
+namespace chrono_runtime {
+extern "C" {
+int32_t gti_rt_chrono_steady_now_v1(int64_t* output_nanoseconds);
+int32_t gti_rt_chrono_system_now_v1(int64_t* output_nanoseconds);
+}
+}
+}
+
+namespace std {
+namespace chrono {
+
+/// Recoverable clock-read and duration-arithmetic outcomes.
+enum class clock_errc {
+  unavailable,
+  out_of_range,
+};
+
+/// An exact signed nanosecond duration.
+class nanoseconds {
+  int64_t value;
+
+public:
+  nanoseconds() : value(int64_t(0)) {}
+  nanoseconds(int64_t count) : value(count) {}
+
+  /// Returns the signed duration count.
+  int64_t count() {
+    return this.value;
+  }
+};
+
+/// One reading from the process-local monotonic clock.
+///
+/// Its epoch has no portable meaning. Use only `elapsed_since`, ordering, or
+/// another point from the same process; use `system_time_point` for timestamps.
+class steady_time_point {
+  nanoseconds since_origin;
+
+public:
+  steady_time_point(nanoseconds value) : since_origin(value) {}
+
+  /// Returns this implementation's opaque monotonic reading.
+  nanoseconds time_since_origin() {
+    return nanoseconds(this.since_origin.count());
+  }
+
+  /// Computes `this - earlier`, reporting signed-range overflow explicitly.
+  expected<nanoseconds, clock_errc>
+  elapsed_since(steady_time_point& earlier) {
+    expected<int64_t, std::arithmetic_errc> difference =
+        std::checked_sub(this.since_origin.count(),
+                         earlier.since_origin.count());
+    if (!difference) {
+      return unexpected(clock_errc::out_of_range);
+    }
+    return nanoseconds(difference.value());
+  }
+
+  bool before(steady_time_point& other) {
+    return this.since_origin.count() < other.since_origin.count();
+  }
+
+  bool after(steady_time_point& other) {
+    return this.since_origin.count() > other.since_origin.count();
+  }
+
+  bool equals(steady_time_point& other) {
+    return this.since_origin.count() == other.since_origin.count();
+  }
+};
+
+/// One wall-clock reading measured against the Unix epoch.
+///
+/// Leap seconds are excluded. The signed nanosecond representation covers
+/// 1677-09-21 through 2262-04-11.
+class system_time_point {
+  nanoseconds since_epoch;
+
+public:
+  system_time_point(nanoseconds value) : since_epoch(value) {}
+
+  /// Returns the exact signed count since 1970-01-01T00:00:00Z.
+  int64_t nanoseconds_since_unix_epoch() {
+    return this.since_epoch.count();
+  }
+
+  /// Returns floor-based Unix seconds, including for pre-epoch values.
+  int64_t unix_seconds() {
+    int64_t value = this.since_epoch.count();
+    mut int64_t result = value / int64_t(1000000000);
+    if (value < int64_t(0) && value % int64_t(1000000000) != int64_t(0)) {
+      result--;
+    }
+    return result;
+  }
+
+  /// Returns the normalized fractional second in [0, 1,000,000,000).
+  int32_t subsecond_nanoseconds() {
+    mut int64_t value =
+        this.since_epoch.count() % int64_t(1000000000);
+    if (value < int64_t(0)) {
+      value += int64_t(1000000000);
+    }
+    return int32_t(value);
+  }
+
+  /// Computes `this - earlier`, reporting signed-range overflow explicitly.
+  expected<nanoseconds, clock_errc>
+  elapsed_since(system_time_point& earlier) {
+    expected<int64_t, std::arithmetic_errc> difference =
+        std::checked_sub(this.since_epoch.count(), earlier.since_epoch.count());
+    if (!difference) {
+      return unexpected(clock_errc::out_of_range);
+    }
+    return nanoseconds(difference.value());
+  }
+
+  bool before(system_time_point& other) {
+    return this.since_epoch.count() < other.since_epoch.count();
+  }
+
+  bool after(system_time_point& other) {
+    return this.since_epoch.count() > other.since_epoch.count();
+  }
+
+  bool equals(system_time_point& other) {
+    return this.since_epoch.count() == other.since_epoch.count();
+  }
+};
+
+/// Process-local monotonic clock for elapsed-time measurement.
+class steady_clock {
+public:
+  /// Reads a nondecreasing clock unaffected by wall-clock adjustment.
+  static expected<steady_time_point, clock_errc> now() {
+    mut int64_t value = int64_t(0);
+    mut int32_t status = int32_t(0);
+    unsafe {
+      status = gti_internal::chrono_runtime::gti_rt_chrono_steady_now_v1(
+          &value);
+    }
+    if (status == int32_t(1)) {
+      return unexpected(clock_errc::unavailable);
+    }
+    if (status != int32_t(0)) {
+      return unexpected(clock_errc::out_of_range);
+    }
+    return steady_time_point(nanoseconds(value));
+  }
+};
+
+/// Adjustable UTC wall clock for Unix timestamps.
+class system_clock {
+public:
+  /// Reads signed Unix time, excluding leap seconds.
+  static expected<system_time_point, clock_errc> now() {
+    mut int64_t value = int64_t(0);
+    mut int32_t status = int32_t(0);
+    unsafe {
+      status = gti_internal::chrono_runtime::gti_rt_chrono_system_now_v1(
+          &value);
+    }
+    if (status == int32_t(1)) {
+      return unexpected(clock_errc::unavailable);
+    }
+    if (status != int32_t(0)) {
+      return unexpected(clock_errc::out_of_range);
+    }
+    return system_time_point(nanoseconds(value));
+  }
+};
+
+}
+}

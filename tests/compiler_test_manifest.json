@@ -490,6 +490,10 @@
       "suite": "diagnostics"
     },
     {
+      "name": "testOwnershipAndMissingIncludeDiagnostics",
+      "suite": "diagnostics"
+    },
+    {
       "name": "testDiagnosticFoundation",
       "suite": "diagnostics"
     },

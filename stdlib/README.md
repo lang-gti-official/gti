@@ -75,12 +75,56 @@ through the public wrapper; the `gti_internal` declarations remain
 compiler-private implementation details. See
 [`docs/language/tcp.md`](../docs/language/tcp.md) for the exact contract.
 
+`<std/http>` provides an owned move-only URL abstraction and a synchronous
+reusable HTTP/HTTPS client. URLs parse absolute HTTP(S) text, build encoded
+path segments and query parameters from raw components, expose receiver-tied
+views or owned copies, and can be cloned before per-request mutation. Requests
+copy either URL objects or URL text and own their headers, body, timeouts,
+response-size bound, and optional CA bundle path. Responses own their
+already-buffered status, duplicate/order-preserving headers, and body; HTTP
+error statuses remain response values. Redirects are disabled and TLS peer
+and hostname verification cannot be turned off. Portable URL, request, and
+error policy are GTI source over a private versioned runtime ABI that
+dynamically loads libcurl without exposing its types. See
+[`docs/language/http.md`](../docs/language/http.md) for the exact contract.
+
+`<std/json>` is entirely source-defined. It provides a strict owned move-only
+DOM, UTF-8-aware parsing with configurable limits, exact decimal number
+lexemes and checked conversions, deterministic compact and pretty output,
+structured path/location errors, explicit deep cloning, and exact
+`std::json::codec<T>` specializations for application models. It rejects
+comments, trailing commas, duplicate keys, invalid Unicode, and implicit
+object insertion. The source-defined operations execute through verified MIR
+and the native C++ backend, including errors that own their JSON Pointer. See
+[`docs/language/json.md`](../docs/language/json.md) for the exact contract.
+
 `<std/random>` provides a deterministic source-defined `std::random_engine`
 initialized from an explicit `uint64_t` seed and a fallible
 `std::random_device` for nondeterministic host entropy. The engine owns and
 advances its four-word state in GTI; only `random_device` crosses the bounded
 `gti_rt_random_bytes` C boundary to refill its private fixed buffer. Its call
 returns `expected<uint32_t, int>` so an entropy-source failure is explicit.
+
+`<std/chrono>` provides exact signed nanoseconds and nominally distinct steady
+and system time points. `steady_clock::now()` supports nondecreasing elapsed
+measurement without giving its epoch portable meaning; `system_clock::now()`
+returns signed Unix nanoseconds and normalizes negative timestamps with
+floor-based seconds. Clock reads and elapsed subtraction are recoverable, and
+the runtime boundary consists only of two versioned scalar-output entries.
+Generic units, sleep, calendars, formatting, and time zones remain outside the
+first slice; see
+[`docs/language/chrono.md`](../docs/language/chrono.md).
+
+`<std/process>` provides a reusable exact-argv `std::process::command`. It does
+not invoke or emulate a shell. `run()` waits synchronously, inherits the current
+environment, working directory, and standard streams, and returns either a
+structured `exit_status` or a stable `process::errc`. Ordinary exit and signal
+termination remain distinct, including the difference between an exec failure
+and a program that starts and exits with code 127. The source wrapper owns
+validation and policy over the versioned `gti_rt_process_run_v1` scalar/counting
+ABI. Capture, redirection, environment/directory overrides, asynchronous child
+ownership, and Windows support remain later slices; see
+[`docs/language/process.md`](../docs/language/process.md).
 
 `<std/thread>` provides the first public managed-thread slice as an ordinary
 source-defined `std::thread`. `std::thread::start(task)` consumes one exact
@@ -190,8 +234,8 @@ owning representation for every fixed-width integer, including signed minima.
 render an optional sign, the integer part, a point, and exactly six fractional
 digits taken from the stored value's exact decimal expansion and rounded to
 nearest with ties to even. Signed zero is preserved; `nan`, `inf`, and `-inf`
-cover non-finite values. Binary64 text and float arguments to `std::format`
-are separate sub-slices.
+cover non-finite values. `std::format` reuses this binary32 representation;
+binary64 text remains a separate sub-slice.
 Read-only `begin()`/`end()` iteration uses the language's
 structural range protocol and a source-defined iterator that retains a checked
 borrow of the backing storage. A read cursor can be copy-constructed into an
@@ -200,11 +244,14 @@ remain non-assignable. This avoids hidden allocation on an ordinary string
 copy and prevents mutation or movement while an iterator remains live. Dynamic
 `view()` conversion to `std::string_view` retains an owner-tied lifetime;
 the source cannot be invalidated while that view remains live.
-`<std/format>` implements sequential `{}`
-replacement for heterogeneous fixed-width integral packs, escaped `{{`/`}}`,
-and exact field counts. It builds an owning `std::string`; malformed patterns
-and count mismatches are returned through `std::format_errc` before output.
-Floating-point conversion and formatter customization remain later
+`<std/format>` implements sequential `{}` replacement for heterogeneous
+booleans, characters, fixed-width integers, binary32 floats, string views, and
+explicitly transferred owning strings, plus escaped `{{`/`}}` and exact field
+counts. It builds an owning `std::string`; malformed patterns, count
+mismatches, and unsupported argument types are returned through
+`std::format_errc` before output. Named strings use `.view()` for non-consuming
+formatting because current value packs have no reference-pack declarator.
+Binary64/specifier formatting and formatter customization remain later
 standard-library layers and must not make the compiler recognize the public
 `std::string` name.
 Front/back, mutable `at`, resize, shrink-to-fit, pop-back, and constant-time
@@ -443,7 +490,7 @@ is recognized by the backend.
 | --- | --- |
 | `<std/algorithm>` | Implemented `min`, `max`, `clamp`, iterator/sentinel `all_of`, `any_of`, `none_of`, `find`, `find_if`, `find_if_not`, `count`, `count_if`, and `for_each`, forward-iterator `binary_search`, writable-output `copy`, structural complete-range predicate/operation overloads plus generic `fill`, and vector-bounded `transform`, `reverse`, ordered `sort`, and comparator `sort`; iterator-pair in-place forms remain |
 | `<std/forward_list>` | Implemented front operations, iterative cleanup, resize, reverse, stable merge/sort, remove, unique, and swap; iteration and emplacement remain declarations |
-| `<std/functional>` | Implemented public exact callable/predicate/operation/comparator concepts, consuming `invoke_once`, `less`, `greater`, and equality function objects; declaration-only `hash` |
+| `<std/functional>` | Public exact callable/predicate/operation/comparator concepts, consuming `invoke_once`, comparison function objects, and source-defined read-only, mutable, and consuming `function` / `move_only_function`; declaration-only `hash` |
 | `<std/iterator>` | Structural input-iterator/sentinel/exact-dereference concepts, source-composed `forward_iterator`, and implemented forward-only `advance`, `distance`, and `next`, plus a deliberately unconstrained `prev` placeholder |
 | `<std/list>` | Move-only owner shape, capability-gated value algorithms, and a move-only read-only iterator/sentinel pair; node storage and bodies remain absent |
 | `<std/memory>` | Implemented `unique_ptr`, `make_unique`, `upcast_unique`, typed `allocator`, `storage<T>`, `alignment`, `alloc_errc`, fixed-capacity `arena<T>`/`pool<T>`, and recoverable factories; declaration-only `shared_ptr`, `weak_ptr`, and `make_shared` |
@@ -464,10 +511,23 @@ Some familiar C++ facilities are deliberately not scaffolded yet:
 - `std::expected` cannot be declared while `expected` and `unexpected` are
   reserved language forms. That naming decision should be resolved before a
   standard-library wrapper is promised.
-- `std::function<R(Args...)>` needs generic class packs, function-signature
-  types, escaping callable storage, and ownership rules that GTI does not yet
-  have. `<std/functional>` therefore contains only the function objects GTI can
-  represent honestly.
+- Owning callbacks have source-defined read-only, mutable, and consuming forms in
+  `<std/functional>`: `std::function<R(Args...)>` requires a copy-constructible
+  target and supports explicit deep `clone()`, while `std::move_only_function`
+  also accepts move-only captures. The wrappers are themselves move-only and
+  support construction, empty observation, reset, replacement and invocation.
+  Value, read-only reference, and mutable reference arguments are supported, including borrows of
+  noncopyable objects. Eligible unambiguous namespace functions are retained as
+  exact zero-state items, including through captures, cloning and replacement.
+  `R(Args...) mut` wrappers require mutable access for invocation; their clones
+  retain independent copies of the target's current state.
+  `R(Args...) &&` requires moved invocation; remaining captures live until the
+  caller's enclosing full expression ends, including later-argument failure.
+  Allocation and empty invocation use the existing checked unique-owner failure
+  contract. Borrowed captures/results, inferred fresh-lambda return types,
+  global closure storage, and native callback conversion are not supplied by
+  these wrappers. L-CALL-02 tracks final combined validation and release, not
+  unimplemented consuming signatures or mutable argument packs.
 - buffered streams still require an owner/view buffer model and a decision on
   `<<` and `>>` customization; type traits require constant evaluation and
   substantially more compile-time reflection. The unbuffered byte-oriented

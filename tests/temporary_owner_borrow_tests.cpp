@@ -1,0 +1,153 @@
+#include "compiler_test_fixture.h"
+
+namespace {
+bool hasMirIssue(const lang::MirVerificationResult &result,
+                 std::string_view fragment) {
+  return std::any_of(result.errors.begin(), result.errors.end(),
+                     [&](const auto &error) {
+                       return error.message.find(fragment) != std::string::npos;
+                     });
+}
+
+void checkTemporaryOwnerBorrow() {
+  const auto passive = lang::Frontend().analyze("passive-owner-borrow.gti", R"(
+class Owner { int value = 3; public: int& get() { return this.value; } };
+Owner produce() { return Owner(); }
+int read(int& value) { return value; }
+int main() { return read(produce().get()) + read(Owner().get()) - 6; }
+)");
+  expect(passive.canGenerateCode() &&
+             lang::verifyMirProgram(passive.mir).valid(),
+         "returned and constructed passive owners supply exact temporary "
+         "receiver borrows");
+  if (!passive.canGenerateCode()) {
+    for (const auto &diagnostic : passive.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  if (passive.canGenerateCode()) {
+    auto malformed = passive.mir;
+    expect(malformed.classInstances().size() == 1,
+           "passive fixture isolates exactly one generated owner");
+    if (malformed.classInstances().size() == 1) {
+      auto &owner = const_cast<lang::MirClassInstance &>(
+          malformed.classInstances().front());
+      owner.defaultConstructor = lang::SpecialMemberStatus::Deleted;
+      expect(hasMirIssue(lang::verifyMirProgram(malformed),
+                         "temporary receiver input does not match"),
+             "targetless temporary construction must name an available "
+             "generated default");
+    }
+  }
+
+  const auto owned =
+      analyzeTrustedPreludeFixture("temporary-string-view.gti", R"(
+#include <std/string>
+std::string produce() { return std::string("hello"); }
+int read(std::string_view value, int divisor) { return int(value.size()) / divisor; }
+int later(int divisor) { return 1 / divisor; }
+int main() {
+  int first = read(produce().view(), later(1));
+  return first + read(std::string("hello").view(), 1) - 10;
+}
+)");
+  expect(owned.canGenerateCode() && lang::verifyMirProgram(owned.mir).valid(),
+         "temporary string views retain exact receiver identity and failure "
+         "cleanup");
+  if (!owned.canGenerateCode()) {
+    for (const auto &diagnostic : owned.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  std::size_t receiverStages = 0;
+  std::size_t cleanupMutations = 0;
+  for (const auto &function : owned.mir.functionInstances()) {
+    const auto *hir = owned.hir.findFunctionInstance(function.id);
+    if (!hir || !hir->source || hir->source->name().lexeme != "main")
+      continue;
+    expect(
+        function.body.loans.size() == 2 &&
+            function.body.loans.front().source !=
+                function.body.loans.back().source,
+        "two independent temporary views retain distinct exact owner places");
+    if (function.body.loans.size() == 2) {
+      auto malformed = owned.mir;
+      auto *changed = const_cast<lang::MirFunctionInstance *>(
+          malformed.findFunctionInstance(function.id));
+      changed->body.loans.back().source = changed->body.loans.front().source;
+      expect(hasMirIssue(lang::verifyMirProgram(malformed),
+                         "call-result loan does not preserve the selected"),
+             "same-typed temporary owners cannot substitute their borrow "
+             "identities");
+    }
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.callInputRole == lang::MirCallInputRole::Receiver &&
+            instruction.callInputKind ==
+                lang::HirCallInputKind::ReadTemporaryBorrow) {
+          ++receiverStages;
+          auto malformed = owned.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          for (auto &candidateBlock : changed->body.blocks)
+            for (auto &candidate : candidateBlock.instructions)
+              if (candidate.id == instruction.id)
+                candidate.operands.front().kind = lang::MirOperandKind::Value;
+          expect(
+              !lang::verifyMirProgram(malformed).valid(),
+              "temporary borrowed result cannot lose its exact receiver place");
+        }
+        if (block.activeFailure == 0 ||
+            instruction.kind != lang::MirInstructionKind::EndBorrow ||
+            !instruction.loan)
+          continue;
+        const auto *loan = function.body.findLoan(*instruction.loan);
+        const auto *source =
+            loan ? function.body.findPlace(loan->source) : nullptr;
+        if (!loan ||
+            (loan->kind != lang::MirLoanKind::CallResult &&
+             loan->kind != lang::MirLoanKind::Stored) ||
+            !source || source->root != lang::MirPlaceRootKind::Value)
+          continue;
+        auto malformed = owned.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        for (auto &candidateBlock : changed->body.blocks)
+          if (candidateBlock.id == block.id)
+            std::erase_if(candidateBlock.instructions,
+                          [&](const auto &candidate) {
+                            return candidate.id == instruction.id;
+                          });
+        expect(hasMirIssue(lang::verifyMirProgram(malformed),
+                           "conflicts with active read-only loan"),
+               "failure cleanup cannot destroy a temporary with its view loan "
+               "still active");
+        ++cleanupMutations;
+      }
+    }
+  }
+  expect(receiverStages == 2 && cleanupMutations >= 2,
+         "regression exercises both exact receiver staging and later-call "
+         "failure retirement");
+
+  for (const std::string &source :
+       {"#include <std/string>\nstd::string produce() { return "
+        "std::string(\"hello\"); }\nint main() { auto view = produce().view(); "
+        "return int(view.size()); }",
+        "class Owner { int value = 3; public: int& get() { return this.value; "
+        "} }; int& escape() { return Owner().get(); } int main() { return 0; }",
+        "class Owner { mut int value = 3; public: mut int& get() mut { return "
+        "this.value; } }; int main() { [[discard]] Owner().get(); return 0; "
+        "}"}) {
+    const auto invalid =
+        analyzeTrustedPreludeFixture("escaping-temporary-borrow.gti", source);
+    expect(invalid.syntaxValid && !invalid.semanticValid,
+           "escaping or mutable temporary-owner views remain source errors");
+  }
+}
+} // namespace
+
+int main() {
+  checkTemporaryOwnerBorrow();
+  return failures == 0 ? 0 : 1;
+}

@@ -1,7 +1,9 @@
 #pragma once
 
 #include "gti/c_abi.h"
+#include "gti/chrono.h"
 #include "gti/cthread.h"
+#include "gti/http.h"
 #include "gti/math.h"
 #include "gti/random.h"
 #include "gti/runtime_failure.h"
@@ -54,6 +56,32 @@ int32_t gti_rt_close_file(int64_t descriptor);
 // directory, environment, and standard streams. Windows support is deferred
 // with the rest of package build-script execution.
 int32_t gti_rt_run_process_v1(gti_c_string_view arguments);
+
+// Public <std/process> transport. The result is one GTI_PROCESS_* error. On
+// success, termination_kind is GTI_PROCESS_TERMINATION_EXITED with an ordinary
+// exit code or GTI_PROCESS_TERMINATION_SIGNALED with a signal number. The
+// native code is zero on success and carries errno-style detail on a host
+// failure; it is intentionally not part of the public GTI error vocabulary.
+typedef uint32_t gti_process_error_v1;
+enum {
+  GTI_PROCESS_OK_V1 = 0,
+  GTI_PROCESS_INVALID_ARGUMENT_V1 = 1,
+  GTI_PROCESS_UNSUPPORTED_V1 = 2,
+  GTI_PROCESS_SPAWN_FAILED_V1 = 3,
+  GTI_PROCESS_EXECUTE_FAILED_V1 = 4,
+  GTI_PROCESS_WAIT_FAILED_V1 = 5,
+};
+
+typedef uint32_t gti_process_termination_kind_v1;
+enum {
+  GTI_PROCESS_TERMINATION_EXITED_V1 = 0,
+  GTI_PROCESS_TERMINATION_SIGNALED_V1 = 1,
+};
+
+gti_process_error_v1 gti_rt_process_run_v1(gti_c_string_view arguments,
+                                           int32_t *termination_kind,
+                                           int32_t *termination_value,
+                                           int32_t *native_code);
 
 #ifdef __cplusplus
 }

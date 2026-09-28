@@ -1,0 +1,25 @@
+#include <std/string>
+
+class Token {
+  int identity;
+public:
+  Token(int identity) : identity(identity) {}
+  ~Token() { std::println(this.identity); }
+};
+
+class Extract<T> {
+  mut T first;
+  T second;
+public:
+  Extract(T first, T second)
+      : first(std::move(first)), second(std::move(second)) {}
+  int operator()() && {
+    T extracted = std::move(this.first);
+    return 0;
+  }
+};
+
+int main() {
+  Extract<Token> callback{Token(1), Token(2)};
+  return std::move(callback)();
+}

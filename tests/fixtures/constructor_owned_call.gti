@@ -14,6 +14,10 @@ public:
     if (this.identity == 2 && (failure_phase == 4 || failure_phase == 5)) {
       int32_t secondary = 11 / zero;
     }
+    if ((this.identity == 5 && failure_phase == 8) ||
+        (this.identity == 4 && failure_phase == 9)) {
+      int32_t replacement_cleanup_failure = 19 / zero;
+    }
   }
 };
 
@@ -35,9 +39,25 @@ public:
   }
 };
 
+class ReplacingCaller {
+  mut std::unique_ptr<Resource> completed = nullptr;
+public:
+  ReplacingCaller() {
+    Resource local{4};
+    this.completed = std::make_unique<Resource>(5);
+    if (failure_phase == 7 || failure_phase == 8) {
+      int32_t replacement_constructor_failure = 23 / zero;
+    }
+  }
+};
+
 int main(int argc, std::vector<std::string> argv) {
   failure_phase = argc - 1;
   Resource outer = Resource(9);
-  auto caller = std::make_unique<Caller>();
+  if (failure_phase >= 6) {
+    auto caller = std::make_unique<ReplacingCaller>();
+  } else {
+    auto caller = std::make_unique<Caller>();
+  }
   return 0;
 }

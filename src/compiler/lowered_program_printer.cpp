@@ -210,6 +210,7 @@ private:
            << ";length-parameter=" << value.arrayLengthParameterId
            << ";access=" << number(value.referenceAccess)
            << ";pointer-access=" << number(value.pointerAccess)
+           << ";signature-receiver=" << number(value.signatureReceiver)
            << ";concrete-pack=" << value.concretePack << ";args=[";
     for (std::size_t index = 0; index < value.arguments.size(); ++index) {
       separator(index);
@@ -365,7 +366,17 @@ private:
            << ";pack=" << value.pack << ";value=" << value.value
            << ";constraints=" << value.constraints << ";constraint=";
     strings(value.constraintName);
-    output << ";constraint-concept=" << value.constraintConcept << ')';
+    output << ";constraint-concept=" << value.constraintConcept;
+    if (!value.typeArgumentPath.empty()) {
+      output << ";type-argument-path=[";
+      for (std::size_t index = 0; index < value.typeArgumentPath.size();
+           ++index) {
+        separator(index);
+        output << value.typeArgumentPath[index];
+      }
+      output << ']';
+    }
+    output << ')';
   }
 
   void genericParameters(const std::vector<LoweredGenericParameter> &values) {
@@ -468,6 +479,15 @@ private:
     }
     output << "];generics=";
     genericParameters(value.genericParameters);
+    if (!value.genericArgumentPatterns.empty()) {
+      output << ";argument-patterns=[";
+      for (std::size_t index = 0; index < value.genericArgumentPatterns.size();
+           ++index) {
+        separator(index);
+        type(value.genericArgumentPatterns[index]);
+      }
+      output << ']';
+    }
     output << ";bases=[";
     for (std::size_t index = 0; index < value.bases.size(); ++index) {
       separator(index);
@@ -755,7 +775,7 @@ private:
 
 std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   std::ostringstream output;
-  output << "lowered-program-v8\n";
+  output << "lowered-program-v9\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="

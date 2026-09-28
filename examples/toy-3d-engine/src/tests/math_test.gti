@@ -1,0 +1,67 @@
+#include "../engine/math.gti"
+#include "../engine/scene.gti"
+
+int main() {
+  mut toy3d::Camera camera = toy3d::Camera();
+  camera.move(1.0, -2.0, 0.5);
+  camera.move_forward(1.0);
+  camera.move_backward(0.5);
+  if (!toy3d::near(camera.x(), 1.0, 0.0001)) {
+    return 1;
+  }
+  if (!toy3d::near(camera.y(), -2.0, 0.0001)) {
+    return 2;
+  }
+  if (!toy3d::near(camera.z(), 5.0, 0.0001)) {
+    return 3;
+  }
+
+  mut toy3d::Transform transform =
+      toy3d::Transform(0.0, 0.0, 0.0, 0.0, 2.0);
+  transform.rotate_y(toy3d::full_turn + 0.5);
+  if (!toy3d::near(transform.rotation_y(), 0.5, 0.0001)) {
+    return 4;
+  }
+  if (!toy3d::near(transform.scale(), 2.0, 0.0001)) {
+    return 5;
+  }
+
+  mut toy3d::Scene scene = toy3d::Scene();
+  scene.update(2.0);
+  if (!toy3d::near(scene.cube_rotation_y(), 1.5, 0.0001)) {
+    return 6;
+  }
+  scene.set_spinning(false);
+  scene.update(1.0);
+  if (!toy3d::near(scene.cube_rotation_y(), 1.5, 0.0001)) {
+    return 7;
+  }
+  scene.set_angular_speed(0.5);
+  scene.set_spinning(true);
+  scene.update(1.0);
+  if (!toy3d::near(scene.cube_rotation_y(), 2.0, 0.0001)) {
+    return 8;
+  }
+  scene.reset();
+  if (!toy3d::near(scene.cube_rotation_y(), 0.0, 0.0001) ||
+      !toy3d::near(scene.angular_speed(), 0.75, 0.0001) || !scene.spinning()) {
+    return 9;
+  }
+
+  float projected_x =
+      toy3d::project_horizontal(1.0, 2.0, toy3d::pi / 2.0, 1.0);
+  float projected_y =
+      toy3d::project_vertical(1.0, 2.0, toy3d::pi / 2.0);
+  if (!toy3d::near(projected_x, 0.5, 0.0001)) {
+    return 10;
+  }
+  if (!toy3d::near(projected_y, 0.5, 0.0001)) {
+    return 11;
+  }
+  if (!toy3d::near(toy3d::project_depth(0.1, 0.1, 100.0), -1.0,
+                   0.0001)) {
+    return 12;
+  }
+
+  return 0;
+}

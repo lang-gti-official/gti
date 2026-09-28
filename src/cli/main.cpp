@@ -2129,11 +2129,12 @@ int runProject(const ProjectOptions &options, const char *driver) {
   }
 
   if (options.command == ProjectCommand::Check) {
-    const lang::driver::CheckResult result =
-        lang::driver::checkCompilation(lang::driver::CompilationRequest(
+    const lang::driver::CheckResult result = lang::driver::checkCompilation(
+        lang::driver::CompilationRequest(
             plan.entry(), toolchain.standardLibrary, plan.target(),
             plan.optimization(), plan.cppStandard(), plan.packageSources(),
-            plan.configurationFlags()));
+            plan.configurationFlags())
+            .forExecutable());
     if (!result.succeeded()) {
       reportDiagnostics(result.diagnostics, result.sources);
       return exitCode(ExitStatus::Compilation);

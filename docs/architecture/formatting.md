@@ -118,6 +118,17 @@ indentation beneath the containing structure, and remains idempotent.
 Formatting does not consult emitted C++ or delegate GTI syntax decisions to a
 native C++ tool.
 
+Designated initializers use one field per line. Collections containing those
+initializers expand with them, retaining a separate brace level for each
+element. Initializer lists already containing source line breaks are kept
+multiline, while short single-line scalar lists, empty braces, and constructor
+arguments such as `std::string{"tea"}` stay compact. Nested call, generic, and
+capture-list commas do not start a new collection element. Trailing commas and
+comments are preserved. This is the default structural layout, not a separate
+configuration option; `IndentWidth` and `UseTab` apply, while
+`BreakBeforeBraces` continues to control statement blocks. Formatting never
+adds missing element braces or statement semicolons to incomplete input.
+
 The formatter shares the compiler's source-text boundary. It validates strict
 UTF-8 and LF/CRLF spelling before structural scanning, preserves an optional
 leading BOM, preserves Unicode bytes inside comments and string or character

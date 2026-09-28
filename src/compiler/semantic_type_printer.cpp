@@ -86,6 +86,22 @@ public:
       return "type";
     case SemanticType::Function:
       return "function";
+    case SemanticType::FunctionSignature: {
+      if (type.arguments.empty()) {
+        return "function signature";
+      }
+      std::string result = print(type.arguments.front()) + "(";
+      for (std::size_t index = 1; index < type.arguments.size(); ++index) {
+        if (index > 1) {
+          result += ", ";
+        }
+        result += print(type.arguments[index]);
+      }
+      return result + ")" +
+             (type.signatureReceiver == ReceiverMutability::Mutable     ? " mut"
+              : type.signatureReceiver == ReceiverMutability::Consuming ? " &&"
+                                                                        : "");
+    }
     case SemanticType::FunctionItem: {
       if (!type.hasFunctionItemShape()) {
         return "function item";

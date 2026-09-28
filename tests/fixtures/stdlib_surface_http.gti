@@ -1,0 +1,110 @@
+#include <std/http>
+#include <std/string>
+
+bool rejects_url(std::string_view source, std::http::url_errc expected_error) {
+  mut auto result = std::http::url::parse(source);
+  if (result) {
+    return false;
+  }
+  return result.error() == expected_error;
+}
+
+int main() {
+  mut auto parsed = std::http::url::parse(
+      "HTTPS://Example.COM:0443/a%20b?x=1&na%6De=old&name=older");
+  if (!parsed) {
+    return 1;
+  }
+  mut std::http::url target = std::move(parsed).value();
+  if (target.scheme() != "https" || target.host() != "Example.COM" ||
+      !target.has_explicit_port() || target.port() != uint16_t(443) ||
+      target.view() !=
+          "https://Example.COM:0443/a%20b?x=1&na%6De=old&name=older") {
+    return 2;
+  }
+
+  mut std::string target_text = target.string();
+  if (target_text != target.view()) {
+    return 3;
+  }
+
+  mut std::http::url changed = target.clone();
+  changed.push_path_segment("two /%");
+  changed.set_query_parameter("name", "new value+");
+  changed.add_query_parameter("raw key", "a&b");
+  if (changed.view() !=
+      "https://Example.COM:0443/a%20b/two%20%2F%25?x=1&name=new%20value%2B&raw%20key=a%26b") {
+    return 4;
+  }
+  if (target.view() !=
+      "https://Example.COM:0443/a%20b?x=1&na%6De=old&name=older") {
+    return 5;
+  }
+
+  changed.clear_query();
+  if (changed.view() !=
+      "https://Example.COM:0443/a%20b/two%20%2F%25") {
+    return 6;
+  }
+
+  mut auto secure_result = std::http::url::https("[::1]:8443");
+  if (!secure_result) {
+    return 7;
+  }
+  mut std::http::url secure = std::move(secure_result).value();
+  if (secure.scheme() != "https" || secure.host() != "[::1]" ||
+      !secure.has_explicit_port() || secure.port() != uint16_t(8443) ||
+      secure.view() != "https://[::1]:8443") {
+    return 8;
+  }
+
+  mut auto default_port_result = std::http::url::parse("http://example.com");
+  if (!default_port_result) {
+    return 9;
+  }
+  mut std::http::url default_port =
+      std::move(default_port_result).value();
+  if (default_port.has_explicit_port() ||
+      default_port.port() != uint16_t(80)) {
+    return 10;
+  }
+
+  if (!rejects_url("ftp://example.com",
+                   std::http::url_errc::invalid_scheme) ||
+      !rejects_url("https://", std::http::url_errc::missing_host) ||
+      !rejects_url("https://bad host", std::http::url_errc::invalid_host) ||
+      !rejects_url("https://example.com:65536",
+                   std::http::url_errc::invalid_port) ||
+      !rejects_url("https://example.com/%GG",
+                   std::http::url_errc::invalid_percent_encoding) ||
+      !rejects_url("https://user@example.com",
+                   std::http::url_errc::credentials_not_allowed) ||
+      !rejects_url("https://example.com/#fragment",
+                   std::http::url_errc::fragment_not_allowed)) {
+    return 11;
+  }
+
+  mut std::http::request request =
+      std::http::request(std::http::method::post, target);
+  if (request.url() != target.view()) {
+    return 12;
+  }
+  request.set_url(changed);
+  if (request.url() != changed.view()) {
+    return 13;
+  }
+  mut auto header_result = request.set_header("Content-Type", "text/plain");
+  if (!header_result) {
+    return 14;
+  }
+  request.set_body("hello");
+  request.set_connect_timeout_ms(uint64_t(1000));
+  request.set_timeout_ms(uint64_t(2000));
+  request.set_max_response_bytes(uint64_t(4096));
+
+  mut auto client_result = std::http::client::create();
+  if (!client_result) {
+    return 15;
+  }
+  return 0;
+}

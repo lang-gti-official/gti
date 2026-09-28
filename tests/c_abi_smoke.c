@@ -155,6 +155,26 @@ _Static_assert(GTI_FILE_OPEN_READ_V1 == 0 && GTI_FILE_OPEN_READ_APPEND_V1 == 5,
                "the v1 file-open mode ordinals must remain stable");
 _Static_assert(GTI_FILE_SEEK_BEGIN_V1 == 0 && GTI_FILE_SEEK_END_V1 == 2,
                "the v1 file-seek origin ordinals must remain stable");
+_Static_assert(
+    _Generic(&gti_rt_chrono_steady_now_v1,
+            gti_chrono_status_v1 (*)(int64_t *): 1,
+            default: 0) &&
+        _Generic(&gti_rt_chrono_system_now_v1,
+            gti_chrono_status_v1 (*)(int64_t *): 1,
+            default: 0),
+    "the v1 clock entries must retain their scalar output prototypes");
+_Static_assert(GTI_CHRONO_OK_V1 == 0 && GTI_CHRONO_OUT_OF_RANGE_V1 == 2,
+               "the v1 clock status ordinals must remain stable");
+_Static_assert(
+    _Generic(&gti_rt_process_run_v1,
+        gti_process_error_v1 (*)(gti_c_string_view, int32_t *, int32_t *,
+                                 int32_t *): 1,
+        default: 0),
+    "the v1 process entry must retain counted argv and scalar outputs");
+_Static_assert(GTI_PROCESS_OK_V1 == 0 && GTI_PROCESS_WAIT_FAILED_V1 == 5 &&
+                   GTI_PROCESS_TERMINATION_EXITED_V1 == 0 &&
+                   GTI_PROCESS_TERMINATION_SIGNALED_V1 == 1,
+               "the v1 process status ordinals must remain stable");
 _Static_assert(_Generic(&gti_rt_write_stdout_bytes_v1,
                    int64_t (*)(gti_c_string_view): 1,
                    default: 0),

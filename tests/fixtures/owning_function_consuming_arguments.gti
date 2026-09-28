@@ -1,0 +1,50 @@
+#include <std/functional>
+#include <std/memory>
+
+mut int drops = 0;
+
+class Resource {
+  int value;
+public:
+  Resource(int value) : value(value) {}
+  ~Resource() { drops++; }
+  int read() { return this.value; }
+};
+
+void adjust(mut int& value, Resource& resource, int& offset) {
+  value += resource.read() + offset;
+}
+
+std::unique_ptr<Resource> produce(int value) {
+  return std::make_unique<Resource>(value);
+}
+
+Resource produce_value(int value) { return Resource(value); }
+int consume(Resource resource) { return resource.read(); }
+
+int exercise() {
+  Resource resource{7};
+  mut int value = 1;
+  int offset = 2;
+  std::function<void(mut int&, Resource&, int&) &&> borrowed{adjust};
+  auto copy = borrowed.clone();
+  std::move(borrowed)(value, resource, offset);
+  std::move(copy)(value, resource, offset);
+  if (value != 19 || drops != 0) { return 1; }
+
+  std::move_only_function<std::unique_ptr<Resource>(int) &&> owned{produce};
+  auto result = std::move(owned)(11);
+  if (result->read() != 11 || drops != 0) { return 2; }
+  std::function<Resource(int) &&> nominal{produce_value};
+  auto object = std::move(nominal)(13);
+  if (object.read() != 13 || drops != 0) { return 3; }
+  std::function<int(Resource) &&> by_value{consume};
+  if (std::move(by_value)(Resource(17)) != 17 || drops != 1) { return 4; }
+  return 0;
+}
+
+int main() {
+  int result = exercise();
+  if (result != 0) { return result; }
+  return drops - 4;
+}
