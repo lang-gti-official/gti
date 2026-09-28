@@ -1,0 +1,125 @@
+#include <std/cmath>
+
+namespace toy3d {
+constexpr float pi = 3.14159265358979323846;
+constexpr float full_turn = pi * 2.0;
+
+class Vec3 {
+  mut float x_value = 0.0;
+  mut float y_value = 0.0;
+  mut float z_value = 0.0;
+
+public:
+  Vec3() {}
+  Vec3(float x, float y, float z)
+      : x_value(x), y_value(y), z_value(z) {}
+
+  void translate(float x, float y, float z) mut {
+    this.x_value += x;
+    this.y_value += y;
+    this.z_value += z;
+  }
+
+  float x() { return this.x_value; }
+  float y() { return this.y_value; }
+  float z() { return this.z_value; }
+};
+
+class Transform {
+  mut float x_value;
+  mut float y_value;
+  mut float z_value;
+  mut float rotation_y_value;
+  float scale_value;
+
+public:
+  Transform()
+      : x_value(0.0), y_value(0.0), z_value(0.0), rotation_y_value(0.0),
+        scale_value(1.0) {}
+  Transform(float x, float y, float z, float rotation_y, float scale)
+      : x_value(x), y_value(y), z_value(z), rotation_y_value(rotation_y),
+        scale_value(scale) {}
+
+  void rotate_y(float radians) mut {
+    this.rotation_y_value += radians;
+    while (this.rotation_y_value >= full_turn) {
+      this.rotation_y_value -= full_turn;
+    }
+    while (this.rotation_y_value < 0.0) {
+      this.rotation_y_value += full_turn;
+    }
+  }
+
+  float x() { return this.x_value; }
+  float y() { return this.y_value; }
+  float z() { return this.z_value; }
+  float rotation_y() { return this.rotation_y_value; }
+  float scale() { return this.scale_value; }
+};
+
+class Camera {
+  mut float x_value;
+  mut float y_value;
+  mut float z_value;
+  float vertical_fov_value;
+  float near_plane_value;
+  float far_plane_value;
+
+public:
+  Camera()
+      : x_value(0.0), y_value(0.0), z_value(5.0),
+        vertical_fov_value(pi / 3.0), near_plane_value(0.1),
+        far_plane_value(100.0) {}
+
+  void move(float x, float y, float z) mut {
+    this.x_value += x;
+    this.y_value += y;
+    this.z_value += z;
+  }
+
+  void move_forward(float distance) mut {
+    if (this.z_value - distance >= 2.5) {
+      this.z_value -= distance;
+    }
+  }
+
+  void move_backward(float distance) mut {
+    if (this.z_value + distance <= 12.0) {
+      this.z_value += distance;
+    }
+  }
+
+  float x() { return this.x_value; }
+  float y() { return this.y_value; }
+  float z() { return this.z_value; }
+  float vertical_fov() { return this.vertical_fov_value; }
+  float near_plane() { return this.near_plane_value; }
+  float far_plane() { return this.far_plane_value; }
+};
+
+float perspective_scale(float vertical_fov) {
+  return 1.0 / std::tan(vertical_fov * 0.5);
+}
+
+float project_horizontal(float view_x, float depth, float vertical_fov,
+                         float aspect_ratio) {
+  return (view_x * perspective_scale(vertical_fov)) /
+         (depth * aspect_ratio);
+}
+
+float project_vertical(float view_y, float depth, float vertical_fov) {
+  return (view_y * perspective_scale(vertical_fov)) / depth;
+}
+
+float project_depth(float depth, float near_plane, float far_plane) {
+  return ((depth - near_plane) / (far_plane - near_plane)) * 2.0 - 1.0;
+}
+
+float absolute(float value) {
+  return value < 0.0 ? -value : value;
+}
+
+bool near(float left, float right, float tolerance) {
+  return absolute(left - right) <= tolerance;
+}
+}

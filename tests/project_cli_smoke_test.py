@@ -1258,7 +1258,7 @@ def main():
 
         engine_source = (
             pathlib.Path(__file__).resolve().parent.parent
-            / "examples/game-engine/gti"
+            / "tests/fixtures/project_cli_layer_stack"
         )
         engine_project = root / "psych-core-example"
         shutil.copytree(

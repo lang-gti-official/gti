@@ -63,7 +63,8 @@ int main() {
   immutable-by-default bindings, plus explicit wrapping, saturating, and
   checked-result add/subtract/multiply operations, direct base-10
   `std::print`/`std::println`, owning `std::to_string` conversion, and
-  recoverable sequential integral formatting through `<std/format>`.
+  recoverable sequential heterogeneous formatting for booleans, characters,
+  integers, binary32 floats, and owned or borrowed text through `<std/format>`.
 - Exact IEEE-754 binary32 `float` and binary64 `double`, with width-selecting
   literals, deterministic promotion and conversion, frontend constant
   evaluation, and bit-exact native emission.
@@ -403,7 +404,8 @@ python3 scripts/install_neovim_local.py --replace-config
 Requires Python 3.10+, Neovim 0.11+, CMake, Ninja, a supported installed LLVM
 (including libclang), and the Xcode command-line tools. It discovers Homebrew
 LLVM or accepts `--llvm-dir /path/to/lib/cmake/llvm`; it installs no prerequisites
-automatically. Builds use one low-priority job by default (`--jobs N` to change).
+automatically. Builds use all detected CPUs at normal priority by default
+(`--jobs N` to limit parallelism).
 
 The script builds compiler/LSP/parser, stages the complete `gti_toolchain`
 component, verifies a checksummed local archive with the Neovim plugin smoke
@@ -443,7 +445,7 @@ inputs, not promises that a feature has shipped.
 
 ## Repository map
 
-Optional native bindings for GLFW, GLAD, SQLite3, cimgui, zlib, libpng and Assimp live
+Optional native bindings for GLFW, GLAD, SQLite3, cimgui, zlib, libpng, Assimp and libgit2 live
 under [`packages/`](packages/README.md). Prepare the pinned sources with
 `python3 packages/prepare.py`, then use them as GTI path dependencies. They are
 separate from the standard library and require no compiler-specific handling.

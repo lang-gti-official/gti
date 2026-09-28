@@ -6,26 +6,30 @@
     "stdlib/std/array.gti": "eff214cb420565f2fe12e02cdee5e2a3cce6407d41f766633c04bbee3d0f69c2",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
+    "stdlib/std/chrono.gti": "49cbaca555eed6f825680a28366c3528f39cfdfc9a39f4c60e5b154b9cb88309",
     "stdlib/std/cmath.gti": "b8dcd896a4e7f3708d88c1f1ac5d8dc1f69aba3145c9fc1c5f9000e6a8097369",
-    "stdlib/std/cstdio.gti": "3bc53122406a8e5f22fec798ab82f8701898f36b1229974120dd020bf3e024b3",
+    "stdlib/std/cstdio.gti": "4fdc4c99e067c1870d6dadd7b3dc14f8ae8ad817abdd082d2e54c583754ea13d",
     "stdlib/std/cthread.gti": "4b583b04dd052f5f05d0af2444718360eb12c2da546d4c6f1eddc05a39e8858f",
     "stdlib/std/filesystem.gti": "114f4b841c6878ddaebfdcdab4e25b478bced44f3eb6f0e5be3c5cc7359c9874",
-    "stdlib/std/format.gti": "89b3fa9adafbfb95d2e0f0a8dea450df177c5a676833e967eaa516168cb21f0e",
-    "stdlib/std/forward_list.gti": "44dc855f1aa147a54edff63e3614f17d8ee4f54cf40b114f78c70980f9a2fbae",
-    "stdlib/std/functional.gti": "1fb8339bb43551750c4199280f8680a56ccde35646f5ad55a27d8d0eb3fb3faf",
+    "stdlib/std/format.gti": "0a6d4cb63ad0e661bf47f8fa8782317dc3c298b87903c497bcf982e36b0ce28b",
+    "stdlib/std/forward_list.gti": "2152aab44209cfa14a3b1709f6250c3ef85db78e1e665d5bc8299f3cb353a4bf",
+    "stdlib/std/functional.gti": "8c7f6f50ec568bc995d25115b3a96630bacd3210b8069ac747a1d6cd062db69f",
+    "stdlib/std/http.gti": "0e819904ed7735887138f79656732a5159f238443ef415df5e6cad11a70367b6",
     "stdlib/std/iterator.gti": "2c67bfceaaaa2c79ce474434d5e9962ce15bd08127ce175c97efe8b05ebcd1f1",
+    "stdlib/std/json.gti": "af20c36d5e68711505441b7bb14c72ae16ae373077c693d8354a4e55ecf02a83",
     "stdlib/std/list.gti": "b90968de7e8f71110d7e6d897ff7a1bca3da55e210ae85d48de316b6ea252648",
     "stdlib/std/memory.gti": "4d900f169374e1979a93db2f0c0ee9d7296883e6cd6f0fda46b1cf4c9364a29c",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "43b2aa059b32e75e94fbe672840c0cbff11e1f9e71bae235082c34bb048ef804",
     "stdlib/std/optional.gti": "9b038467204b82f5675326e67254bee896b2d6a5648f47bb22f325bbb202b8d8",
+    "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
     "stdlib/std/string.gti": "7345ea74b019d75c8d1ceae2ed2d1e7ae655754504126daf0de725165a4b9380",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
     "stdlib/std/utility.gti": "4a5ecc9a549629f1f25c7c0f1f802d9450ada2260747018bb063d500d65ca2a7",
-    "stdlib/std/vector.gti": "dd7fac0b57677bb8f247948039bfee960981cc658769b6f1514c32e6f7273b66"
+    "stdlib/std/vector.gti": "e2b034609bc1135425c99846888d8926f3f90c4a784925e958604ba4b076dbd1"
   },
   "cases": [
     {
@@ -89,6 +93,13 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "chrono",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_chrono.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "cmath",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_cmath.gti",
@@ -108,11 +119,11 @@
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_cstdio.gti",
       "optimizations": ["O0", "O3"],
-      "stdin": "Q",
+      "stdin": "Qsecret\n",
       "files": {
         "bytes.bin": {"encoding": "hex", "contents": "41005a"}
       },
-      "expected": {"exit_code": 0, "stdout": "io-out\n", "stderr": "io-err\n"}
+      "expected": {"exit_code": 0, "stdout": "password: io-out\n", "stderr": "io-err\n"}
     },
     {
       "id": "cthread",
@@ -239,7 +250,7 @@
       "optimizations": ["O0", "O3"],
       "expected": {
         "exit_code": 0,
-        "stdout": "value=7 ok=1\ndone\n",
+        "stdout": "value=7 host=gitea.example ok=1 enabled=true\ndone\n",
         "stderr": ""
       }
     },
@@ -272,9 +283,37 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "http",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_http.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "iterator",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_iterator.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "json",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_json.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "demo\n{\"name\":\"demo\",\"private\":true,\"count\":42,\"items\":[\"one\",2]}\n", "stderr": ""}
+    },
+    {
+      "id": "json-codec",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_json_codec.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "json-owning-error-backend",
+      "mode": "run",
+      "source": "tests/fixtures/json_expected_value_backend_bug.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -325,6 +364,62 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "owning-function",
+      "mode": "run",
+      "source": "tests/fixtures/owning_function.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "owning-function-borrows",
+      "mode": "run",
+      "source": "tests/fixtures/owning_function_borrows.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "owning-function-items",
+      "mode": "run",
+      "source": "tests/fixtures/owning_function_items.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "owning-function-mutable",
+      "mode": "run",
+      "source": "tests/fixtures/owning_function_mutable.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "owning-function-mutable-arguments",
+      "mode": "run",
+      "source": "tests/fixtures/owning_function_mutable_arguments.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "owning-function-mutable-arguments-cleanup",
+      "mode": "run",
+      "source": "tests/fixtures/owning_function_mutable_arguments_failure.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "7\n1\n9\n", "stderr": ""}
+    },
+    {
+      "id": "owning-function-schema",
+      "mode": "run",
+      "source": "tests/fixtures/owning_function_schema.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "owning-function-temporary-target",
+      "mode": "run",
+      "source": "tests/fixtures/owning_function_temporary_target.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "prelude-output",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_prelude_output.gti",
@@ -334,6 +429,13 @@
         "stdout": "prelude o42\n!\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "process",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_process.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
       "id": "random",
@@ -540,6 +642,45 @@
       "evidence": ["tests/fixtures/stdlib_surface_build.gti", "tests/project_cli_smoke_test.py", "stdlib/std/build.gti", "runtime/src/process.cpp"]
     },
     {
+      "id": "chrono.executable",
+      "source": "stdlib/std/chrono.gti",
+      "status": "executable",
+      "operations": [
+        "std::chrono::clock_errc",
+        "std::chrono::nanoseconds::count",
+        "std::chrono::nanoseconds::nanoseconds",
+        "std::chrono::steady_clock::now",
+        "std::chrono::steady_time_point::after",
+        "std::chrono::steady_time_point::before",
+        "std::chrono::steady_time_point::elapsed_since",
+        "std::chrono::steady_time_point::equals",
+        "std::chrono::steady_time_point::steady_time_point",
+        "std::chrono::steady_time_point::time_since_origin",
+        "std::chrono::system_clock::now",
+        "std::chrono::system_time_point::after",
+        "std::chrono::system_time_point::before",
+        "std::chrono::system_time_point::elapsed_since",
+        "std::chrono::system_time_point::equals",
+        "std::chrono::system_time_point::nanoseconds_since_unix_epoch",
+        "std::chrono::system_time_point::subsecond_nanoseconds",
+        "std::chrono::system_time_point::system_time_point",
+        "std::chrono::system_time_point::unix_seconds"
+      ],
+      "case_ids": ["chrono"],
+      "required_instantiations": [
+        "int64 minimum/maximum elapsed subtraction",
+        "negative Unix nanosecond decomposition",
+        "steady and system host clock reads"
+      ],
+      "evidence": [
+        "docs/language/chrono.md",
+        "runtime/src/chrono.cpp",
+        "stdlib/std/chrono.gti",
+        "tests/fixtures/stdlib_surface_chrono.gti",
+        "tests/runtime_chrono_tests.cpp"
+      ]
+    },
+    {
       "id": "cmath.executable",
       "source": "stdlib/std/cmath.gti",
       "status": "executable",
@@ -591,6 +732,7 @@
         "std::ftell",
         "std::fwrite",
         "std::getchar",
+        "std::getline",
         "std::read_stdin_some",
         "std::try_flush_stderr",
         "std::try_flush_stdout",
@@ -670,7 +812,7 @@
       "status": "executable",
       "operations": ["std::format", "std::try_print", "std::try_println"],
       "case_ids": ["format"],
-      "required_instantiations": ["zero arguments", "int32_t,uint64_t integral pack"],
+      "required_instantiations": ["zero arguments", "all fixed-width integer types", "mixed bool,char,int32_t,float,string_view,string pack", "counted string view with embedded zero", "unsupported nominal and binary64 arguments"],
       "evidence": ["tests/fixtures/stdlib_surface_format.gti", "stdlib/std/format.gti"]
     },
     {
@@ -743,12 +885,87 @@
       "evidence": ["tests/fixtures/stdlib_surface_functional.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_callable_concepts_runtime_test.py", "tests/generic_algorithm_cluster_test.py", "stdlib/std/functional.gti"]
     },
     {
+      "id": "functional.owning",
+      "source": "stdlib/std/functional.gti",
+      "status": "executable",
+      "operations": ["std::function::clone", "std::function::empty", "std::function::function", "std::function::operator()", "std::function::replace", "std::function::reset", "std::move_only_function::empty", "std::move_only_function::move_only_function", "std::move_only_function::operator()", "std::move_only_function::replace", "std::move_only_function::reset"],
+      "case_ids": ["owning-function", "owning-function-borrows", "owning-function-items", "owning-function-schema", "owning-function-temporary-target", "owning-function-mutable", "owning-function-mutable-arguments", "owning-function-mutable-arguments-cleanup"],
+      "required_instantiations": ["int(int) copyable captured lambda, explicit clone and setter transfer", "void() read-callable lambda", "int(int) move-only unique-owner capture", "mixed read-only reference/value arguments with noncopyable referents", "stored and returned namespace function items, capture, replacement, clone and callee evaluation order", "nested immutable command schema with vector children and an owned leaf handler", "int(int) mut stateful targets, independent clone state, replacement, reset and exactly-once destruction"],
+      "evidence": ["tests/fixtures/owning_function.gti", "tests/fixtures/owning_function_borrows.gti", "tests/fixtures/owning_function_items.gti", "tests/fixtures/owning_function_schema.gti", "tests/fixtures/owning_function_mutable.gti", "tests/fixtures/owning_function_mutable_arguments.gti", "tests/owning_function_tests.cpp", "tests/owning_function_runtime_test.py", "stdlib/std/functional.gti"]
+    },
+    {
       "id": "functional.scaffold",
       "source": "stdlib/std/functional.gti",
       "status": "scaffold",
       "operations": ["std::hash<T>::operator()"],
       "reason": "The generic customization primary is declaration-only and the canonical language document does not promise primitive hash implementations.",
       "evidence": ["stdlib/std/functional.gti", "docs/language/standard-library.md"]
+    },
+    {
+      "id": "http.executable",
+      "source": "stdlib/std/http.gti",
+      "status": "executable",
+      "operations": [
+        "std::http::client::create",
+        "std::http::client::delete_",
+        "std::http::client::get",
+        "std::http::client::head",
+        "std::http::client::last_error_message",
+        "std::http::client::last_native_code",
+        "std::http::client::patch",
+        "std::http::client::post",
+        "std::http::client::put",
+        "std::http::client::send",
+        "std::http::header::header",
+        "std::http::header::name",
+        "std::http::header::replace_value",
+        "std::http::header::value",
+        "std::http::request::add_header",
+        "std::http::request::body",
+        "std::http::request::ca_bundle",
+        "std::http::request::connect_timeout_ms",
+        "std::http::request::headers",
+        "std::http::request::max_response_bytes",
+        "std::http::request::request",
+        "std::http::request::set_body",
+        "std::http::request::set_ca_bundle",
+        "std::http::request::set_connect_timeout_ms",
+        "std::http::request::set_header",
+        "std::http::request::set_max_response_bytes",
+        "std::http::request::set_timeout_ms",
+        "std::http::request::set_url",
+        "std::http::request::timeout_ms",
+        "std::http::request::url",
+        "std::http::request::verb",
+        "std::http::response::body",
+        "std::http::response::headers",
+        "std::http::response::response",
+        "std::http::response::status",
+        "std::http::url::add_query_parameter",
+        "std::http::url::clear_query",
+        "std::http::url::clone",
+        "std::http::url::has_explicit_port",
+        "std::http::url::host",
+        "std::http::url::https",
+        "std::http::url::parse",
+        "std::http::url::port",
+        "std::http::url::push_path_segment",
+        "std::http::url::scheme",
+        "std::http::url::set_query_parameter",
+        "std::http::url::string",
+        "std::http::url::view"
+      ],
+      "case_ids": ["http"],
+      "required_instantiations": [
+        "absolute HTTP/HTTPS URL parse, validation, cloning, rendering, path and query construction",
+        "string_view and owned-url request/client overloads"
+      ],
+      "evidence": [
+        "docs/language/http.md",
+        "stdlib/std/http.gti",
+        "tests/fixtures/stdlib_surface_http.gti",
+        "tests/http_runtime_test.py"
+      ]
     },
     {
       "id": "iterator.executable",
@@ -766,6 +983,22 @@
       "operations": ["std::advance(Iterator&,ptrdiff_t)", "std::next(Iterator,ptrdiff_t)", "std::prev"],
       "reason": "Signed movement and prev are bodyless until GTI has a bidirectional iterator contract.",
       "evidence": ["stdlib/std/iterator.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+    },
+    {
+      "id": "json.executable",
+      "source": "stdlib/std/json.gti",
+      "status": "executable",
+      "operations": ["std::json public surface"],
+      "case_ids": ["json", "json-codec", "json-owning-error-backend"],
+      "required_instantiations": [],
+      "evidence": [
+        "docs/language/json.md",
+        "stdlib/std/json.gti",
+        "tests/fixtures/json_expected_value_backend_bug.gti",
+        "tests/fixtures/stdlib_json_codec.gti",
+        "tests/fixtures/stdlib_surface_json.gti",
+        "tests/json_stdlib_test.py"
+      ]
     },
     {
       "id": "list.scaffold",
@@ -955,6 +1188,39 @@
       "evidence": ["tests/fixtures/stdlib_surface_prelude_output.gti", "stdlib/prelude.gti"]
     },
     {
+      "id": "process.executable",
+      "source": "stdlib/std/process.gti",
+      "status": "executable",
+      "operations": [
+        "std::process::command::arg",
+        "std::process::command::argument_count",
+        "std::process::command::command",
+        "std::process::command::run",
+        "std::process::command::valid",
+        "std::process::errc",
+        "std::process::exit_status::exit_code",
+        "std::process::exit_status::exit_status",
+        "std::process::exit_status::exited",
+        "std::process::exit_status::signaled",
+        "std::process::exit_status::success",
+        "std::process::exit_status::terminating_signal"
+      ],
+      "case_ids": ["process"],
+      "required_instantiations": [
+        "empty, embedded-zero, empty-argument, and spaced-argument argv",
+        "execute failure distinct from exit 127",
+        "ordinary success/nonzero exit and signal termination"
+      ],
+      "evidence": [
+        "docs/language/process.md",
+        "runtime/src/process.cpp",
+        "stdlib/std/process.gti",
+        "tests/fixtures/stdlib_surface_process.gti",
+        "tests/process_runtime_test.py",
+        "tests/runtime_process_tests.cpp"
+      ]
+    },
+    {
       "id": "random.executable",
       "source": "stdlib/std/random.gti",
       "status": "executable",
@@ -1077,6 +1343,8 @@
         "std::vector::capacity",
         "std::vector::clear",
         "std::vector::clone",
+        "std::vector::collection_init",
+        "std::vector::collection_insert",
         "std::vector::emplace_back",
         "std::vector::empty",
         "std::vector::end",

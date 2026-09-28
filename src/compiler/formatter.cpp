@@ -53,12 +53,18 @@ public:
     }
 
     const std::vector<Lexeme> lexemes = scan(normalizedSource);
+    const std::vector<bool> multilineBraces =
+        multilineInitializerBraces(lexemes);
     const std::unordered_set<std::string> declaredTypes =
         collectDeclaredTypes(lexemes);
     State state(options);
 
     for (std::size_t index = 0; index < lexemes.size(); ++index) {
       const Lexeme &lexeme = lexemes[index];
+      if (state.initializerLineBreakPending && !isComment(lexeme.kind)) {
+        state.newline();
+        state.initializerLineBreakPending = false;
+      }
       if (lexeme.kind == Kind::Newline) {
         ++state.sourceNewlines;
         if ((state.directiveLine || state.includeLine) &&
@@ -147,7 +153,7 @@ public:
         const bool doBody = previous != nullptr &&
                             previous->kind == Kind::Word &&
                             previous->text == "do";
-        if (state.initializerBraceDepth > 0 ||
+        if (!state.initializers.empty() ||
             (previous != nullptr && previous->kind == Kind::Operator &&
              previous->text == "=") ||
             (previous != nullptr && previous->kind == Kind::LeftParen) ||
@@ -157,9 +163,20 @@ public:
             directInitializer) {
           if (directInitializer) {
             state.trimSpaces();
+          } else if (previous != nullptr &&
+                     previous->kind == Kind::RightParen) {
+            // A lambda body can occur inside a collection element.
+            state.space();
           }
           state.append("{");
-          ++state.initializerBraceDepth;
+          const bool multiline = multilineBraces[index];
+          state.initializers.push_back({multiline, state.parenthesisDepth,
+                                        state.bracketDepth,
+                                        state.templateDepth});
+          if (multiline) {
+            ++state.indentLevel;
+            state.initializerLineBreakPending = true;
+          }
           break;
         }
         if (next != nullptr && next->kind == Kind::RightBrace) {
@@ -195,10 +212,14 @@ public:
         break;
       }
       case Kind::RightBrace: {
-        if (state.initializerBraceDepth > 0) {
+        if (!state.initializers.empty()) {
+          if (state.initializers.back().multiline) {
+            state.newline();
+            --state.indentLevel;
+          }
           state.trimSpaces();
           state.append("}");
-          --state.initializerBraceDepth;
+          state.initializers.pop_back();
           break;
         }
         const bool doBody = state.currentBlockIsDoBody();
@@ -246,15 +267,23 @@ public:
           state.trimSpaces();
         }
         state.append("[");
+        ++state.bracketDepth;
         break;
       case Kind::RightBracket:
         state.trimSpaces();
         state.append("]");
+        if (state.bracketDepth > 0) {
+          --state.bracketDepth;
+        }
         break;
       case Kind::Comma:
         state.trimSpaces();
         state.append(",");
-        if (state.enumBodyDepth > 0 && state.parenthesisDepth == 0) {
+        if (state.atMultilineInitializerElement()) {
+          // Preserve a trailing comment beside its element; break before the
+          // next token or source newline, rather than moving that comment.
+          state.initializerLineBreakPending = true;
+        } else if (state.enumBodyDepth > 0 && state.parenthesisDepth == 0) {
           state.newline();
         } else {
           state.space();
@@ -469,6 +498,12 @@ private:
   };
 
   struct State {
+    struct Initializer {
+      bool multiline;
+      std::size_t parenthesisDepth;
+      std::size_t bracketDepth;
+      std::size_t templateDepth;
+    };
     struct Block {
       bool switchBody = false;
       bool doBody = false;
@@ -476,6 +511,17 @@ private:
     };
 
     explicit State(const FormatOptions &options) : options(options) {}
+
+    [[nodiscard]] bool atMultilineInitializerElement() const {
+      if (initializers.empty()) {
+        return false;
+      }
+      const Initializer &initializer = initializers.back();
+      return initializer.multiline &&
+             parenthesisDepth == initializer.parenthesisDepth &&
+             bracketDepth == initializer.bracketDepth &&
+             templateDepth == initializer.templateDepth;
+    }
 
     void writeIndentColumns(std::size_t columns) {
       if (options.insertSpaces) {
@@ -740,7 +786,9 @@ private:
     std::string output;
     std::size_t indentLevel = 0;
     std::size_t parenthesisDepth = 0;
-    std::size_t initializerBraceDepth = 0;
+    std::size_t bracketDepth = 0;
+    std::vector<Initializer> initializers;
+    bool initializerLineBreakPending = false;
     std::size_t enumBodyDepth = 0;
     std::size_t templateDepth = 0;
     std::size_t sourceNewlines = 0;
@@ -752,6 +800,55 @@ private:
     bool requiresClauseOpen = false;
     bool lexicalSeparatorRequired = false;
   };
+
+  // Determine layout once, including on incomplete editor input. A designated
+  // list is structural, not a packed argument list. Its enclosing collections
+  // expand too, while single-line scalar lists and constructor arguments stay
+  // compact. Never synthesize braces, commas, or semicolons here.
+  static std::vector<bool>
+  multilineInitializerBraces(const std::vector<Lexeme> &lexemes) {
+    std::vector<bool> multiline(lexemes.size(), false);
+    std::vector<std::size_t> openings;
+    std::vector<bool> hasContent(lexemes.size(), false);
+    const auto close = [&] {
+      const std::size_t opening = openings.back();
+      openings.pop_back();
+      multiline[opening] = multiline[opening] && hasContent[opening];
+      if (!openings.empty() && multiline[opening]) {
+        multiline[openings.back()] = true;
+      }
+    };
+    for (std::size_t index = 0; index < lexemes.size(); ++index) {
+      const Lexeme &lexeme = lexemes[index];
+      if (lexeme.kind == Kind::RightBrace) {
+        if (!openings.empty()) {
+          close();
+        }
+        continue;
+      }
+      if (!openings.empty()) {
+        if (lexeme.kind == Kind::Newline || lexeme.kind == Kind::Semicolon ||
+            lexeme.kind == Kind::LineComment ||
+            (lexeme.kind == Kind::BlockComment &&
+             lexeme.text.find('\n') != std::string::npos)) {
+          multiline[openings.back()] = true;
+        }
+        if (lexeme.kind != Kind::Newline) {
+          hasContent[openings.back()] = true;
+        }
+      }
+      if (lexeme.kind == Kind::LeftBrace) {
+        openings.push_back(index);
+        const Lexeme *first = nextSignificant(lexemes, index);
+        multiline[index] =
+            first != nullptr && first->kind == Kind::Dot && first->text == ".";
+      }
+    }
+    while (!openings.empty()) {
+      close();
+    }
+    return multiline;
+  }
 
   static bool isIdentifierStart(char value) {
     const unsigned char character = static_cast<unsigned char>(value);

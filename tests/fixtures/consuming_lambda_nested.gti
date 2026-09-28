@@ -1,0 +1,31 @@
+#include <std/string>
+#include <std/vector>
+
+class Token {
+  int identity;
+public:
+  Token(int identity) : identity(identity) {}
+  ~Token() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+int later(int divisor) { std::println(3); return 6 / divisor; }
+int combine(int left, int right) { std::println(4); return left + right; }
+
+int invoke<Callable>(Callable callback, int body_divisor, int later_divisor) {
+  return combine(std::move(callback)(body_divisor), later(later_divisor));
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Token caller{9};
+  Token captured{1};
+  auto callback = [captured = std::move(captured)](int divisor) -> int {
+    std::println(2);
+    return captured.read() * 12 / divisor;
+  };
+  int body_divisor = argc == 2 ? 0 : 1;
+  int later_divisor = argc == 3 ? 0 : 1;
+  int value = invoke(std::move(callback), body_divisor, later_divisor);
+  std::println(5);
+  return value - 18;
+}

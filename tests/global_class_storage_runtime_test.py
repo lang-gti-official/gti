@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -65,16 +66,19 @@ def main() -> int:
                 if emission.returncode != 0:
                     return fail(emission)
                 generated = emitted.read_text(encoding="utf8")
+                # This cleanup-free, statically initialized object has native
+                # storage. Both functions must address that same object; no
+                # runtime lifetime slot or per-function copy is necessary.
                 if (
-                    "mir_lifetime_slot<::__gti_program::thing, true> g"
-                    not in generated
-                    or "auto &__gti_mir_p_" not in generated
-                    or "= ::__gti_program::g;" not in generated
-                    or generated.count("::__gti_program::g.get().value") < 2
+                    generated.count("::__gti_program::thing g = ::__gti_program::thing();") != 1
+                    or "extern ::__gti_program::thing g;" not in generated
+                    or re.search(r"__gti_mir_v_\d+ = ::__gti_program::g\.value;", generated) is None
+                    or re.search(r"::__gti_program::g\.value = __gti_mir_v_\d+;", generated) is None
+                    or "::__gti_program::g.get()" in generated
                 ):
                     sys.stderr.write(
                         f"{mode} lost the shared global class-storage "
-                        "lifetime-slot representation\n"
+                        "direct passive representation\n"
                     )
                     return 1
 

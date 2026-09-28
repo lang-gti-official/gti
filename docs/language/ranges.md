@@ -215,6 +215,11 @@ analysis replaces them with the selected source declarations or fixed-array
 strategy before HIR; HIR/MIR never carry an unresolved public associated type
 or delegate range selection to C++.
 
+The fixed-array case applies to a written reference parameter whose bare
+generic type is substituted with the array, such as `Range&` or `mut Range&`.
+It does not enable explicitly spelled or aliased array-reference parameters,
+array-reference storage or returns, or array-reference callback signatures.
+
 `<std/functional>` similarly provides `std::range_predicate<Predicate, Range>`
 and `std::range_operation<Operation, Range, Result>`. They derive the exact
 read-only element from the complete range and require one repeatable exact

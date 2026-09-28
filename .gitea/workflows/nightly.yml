@@ -78,7 +78,7 @@ jobs:
           fi
           "${apt[@]}" update
           "${apt[@]}" install -y --no-install-recommends \
-            build-essential clang cmake ninja-build
+            build-essential clang cmake ninja-build libcurl4-openssl-dev
 
       - name: Install CMake and Ninja
         if: runner.os == 'macOS'

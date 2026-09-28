@@ -4,12 +4,144 @@ namespace std {
 enum class format_errc {
   invalid_format,
   argument_count_mismatch,
+  unsupported_argument,
 };
 
 namespace detail {
-void count_format_argument<std::integral T>(mut size_t& count, T& value) {
+void count_format_argument<T>(mut size_t& count, T& value) {
   count++;
 }
+
+/// Closed built-in argument adapter used by the heterogeneous pack walker.
+/// The primary reports an unsupported argument without publishing the partly
+/// formatted string. Exact standard-library specializations below own the
+/// admitted representations; the compiler does not recognize this class.
+class format_argument_writer<T> {
+public:
+  bool append(mut string& output, T& value) {
+    return false;
+  }
+};
+
+void append_integral<std::integral T>(mut string& output, T& value) {
+  mut string replacement = to_string(value);
+  output.append(replacement.view());
+}
+
+}
+}
+
+class std::detail::format_argument_writer<int8_t> {
+public:
+  bool append(mut std::string& output, int8_t& value) {
+    std::detail::append_integral(output, value);
+    return true;
+  }
+};
+
+class std::detail::format_argument_writer<uint8_t> {
+public:
+  bool append(mut std::string& output, uint8_t& value) {
+    std::detail::append_integral(output, value);
+    return true;
+  }
+};
+
+class std::detail::format_argument_writer<int16_t> {
+public:
+  bool append(mut std::string& output, int16_t& value) {
+    std::detail::append_integral(output, value);
+    return true;
+  }
+};
+
+class std::detail::format_argument_writer<uint16_t> {
+public:
+  bool append(mut std::string& output, uint16_t& value) {
+    std::detail::append_integral(output, value);
+    return true;
+  }
+};
+
+class std::detail::format_argument_writer<int32_t> {
+public:
+  bool append(mut std::string& output, int32_t& value) {
+    std::detail::append_integral(output, value);
+    return true;
+  }
+};
+
+class std::detail::format_argument_writer<uint32_t> {
+public:
+  bool append(mut std::string& output, uint32_t& value) {
+    std::detail::append_integral(output, value);
+    return true;
+  }
+};
+
+class std::detail::format_argument_writer<int64_t> {
+public:
+  bool append(mut std::string& output, int64_t& value) {
+    std::detail::append_integral(output, value);
+    return true;
+  }
+};
+
+class std::detail::format_argument_writer<uint64_t> {
+public:
+  bool append(mut std::string& output, uint64_t& value) {
+    std::detail::append_integral(output, value);
+    return true;
+  }
+};
+
+class std::detail::format_argument_writer<bool> {
+public:
+  bool append(mut std::string& output, bool& value) {
+    if (value) {
+      output.append("true");
+    } else {
+      output.append("false");
+    }
+    return true;
+  }
+};
+
+class std::detail::format_argument_writer<char> {
+public:
+  bool append(mut std::string& output, char& value) {
+    output.push_back(value);
+    return true;
+  }
+};
+
+class std::detail::format_argument_writer<float> {
+public:
+  bool append(mut std::string& output, float& value) {
+    mut std::string replacement = std::to_string(value);
+    output.append(replacement.view());
+    return true;
+  }
+};
+
+class std::detail::format_argument_writer<std::string_view> {
+public:
+  bool append(mut std::string& output, std::string_view& value) {
+    output.append(value);
+    return true;
+  }
+};
+
+class std::detail::format_argument_writer<std::string> {
+public:
+  bool append(mut std::string& output, std::string& value) {
+    output.append(value.view());
+    return true;
+  }
+};
+
+namespace std {
+namespace detail {
 
 expected<void, format_errc> validate_format_pattern(string_view pattern,
                                                      size_t argument_count) {
@@ -49,9 +181,12 @@ expected<void, format_errc> validate_format_pattern(string_view pattern,
   return;
 }
 
-void append_format_argument<std::integral T>(mut string& output,
-                                              string_view pattern,
-                                              mut size_t& cursor, T& value) {
+void append_format_argument<T>(mut string& output, string_view pattern,
+                               mut size_t& cursor, mut bool& supported,
+                               T& value) {
+  if (!supported) {
+    return;
+  }
   while (cursor < pattern.size()) {
     char current = pattern[cursor];
     if (current == '{') {
@@ -63,10 +198,8 @@ void append_format_argument<std::integral T>(mut string& output,
       }
 
       cursor += 2;
-      mut string replacement = to_string(value);
-      for (mut size_t index = 0; index < replacement.size(); index++) {
-        output.push_back(replacement[index]);
-      }
+      format_argument_writer<T> writer{};
+      supported = writer.append(output, value);
       return;
     }
     if (current == '}') {
@@ -113,9 +246,7 @@ expected<string, format_errc> format(string_view pattern) {
 }
 
 expected<string, format_errc>
-format<std::integral First, std::integral Args...>(string_view pattern,
-                                                   First first,
-                                                   Args... args) {
+format<First, Args...>(string_view pattern, First first, Args... args) {
   mut size_t argument_count = 1;
   (detail::count_format_argument(argument_count, args), ...);
 
@@ -127,8 +258,13 @@ format<std::integral First, std::integral Args...>(string_view pattern,
 
   mut string output = string();
   mut size_t cursor = 0;
-  detail::append_format_argument(output, pattern, cursor, first);
-  (detail::append_format_argument(output, pattern, cursor, args), ...);
+  mut bool supported = true;
+  detail::append_format_argument(output, pattern, cursor, supported, first);
+  (detail::append_format_argument(output, pattern, cursor, supported, args),
+   ...);
+  if (!supported) {
+    return unexpected(format_errc::unsupported_argument);
+  }
   detail::append_format_tail(output, pattern, cursor);
   return std::move(output);
 }
@@ -144,11 +280,9 @@ try_print(string_view pattern) {
 }
 
 expected<void, format_errc>
-try_print<std::integral First, std::integral Args...>(string_view pattern,
-                                                      First first,
-                                                      Args... args) {
+try_print<First, Args...>(string_view pattern, First first, Args... args) {
   mut expected<string, format_errc> formatted =
-      format(pattern, first, args...);
+      format(pattern, std::move(first), args...);
   if (!formatted) {
     return unexpected(formatted.error());
   }
@@ -168,11 +302,9 @@ try_println(string_view pattern) {
 }
 
 expected<void, format_errc>
-try_println<std::integral First, std::integral Args...>(string_view pattern,
-                                                        First first,
-                                                        Args... args) {
+try_println<First, Args...>(string_view pattern, First first, Args... args) {
   mut expected<string, format_errc> formatted =
-      format(pattern, first, args...);
+      format(pattern, std::move(first), args...);
   if (!formatted) {
     return unexpected(formatted.error());
   }

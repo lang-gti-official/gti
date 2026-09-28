@@ -154,9 +154,10 @@ def main() -> int:
                     r"(?<![\w.])" + re.escape(slot) + r"\.construct\(", body
                 )
                 placements = re.findall(
-                    r"std::construct_at\("
+                    r"::new \(static_cast<void \*>\("
                     + re.escape(slot)
-                    + r"\.construction_address\(\),",
+                    + r"\.construction_address\(\)\)\) [\w:]+\("
+                    r"::gti_internal::backend::mir_failure_constructor_tag_v1<",
                     body,
                 )
                 if len(constructions) + len(placements) != 1:

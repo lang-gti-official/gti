@@ -8,6 +8,284 @@ assertions.
 
 ## Primary Targets
 
+The owning-callback completion run on 2026-09-28 passes all 294 registered
+CTest gates after a full Release/Ninja build. Clean installed-library consumers
+pass 9/9 tests; staged callback schema, owned Expected results, consuming
+capture lifetime, signature LSP, and executable-entry diagnostics pass outside
+the checkout without resource overrides. The 12-job local installer verifies
+the archive and Neovim integration and installs GTI 0.346.0. These are local
+macOS results, not Linux/Windows or publication claims. Earlier focused
+checkpoints below describe their individual scope, not outstanding failures
+in that combined run.
+
+`executable_entry_semantics` checks explicit executable intent, exact
+`GTI-S2094` classification/source spans/related candidates, no unsafe fix-it,
+inactive-entry exclusion, completion recovery, and library opt-out.
+`executable_entry_cli_lsp` covers direct and project rejection before native
+linking, valid global forwarding, include boundaries, emit-only requests,
+declared executable/test roots versus ordinary library/standalone documents,
+and versioned editor publication, clearing, and close/reopen behavior.
+The entry rule adds no syntax, runtime behavior, or backend operation.
+
+`testProgramPlanValidationIsOperationScoped` in the emitter preflight suite uses
+caller-owned verification metrics rather than wall-clock assertions. Several
+field schedules and a native base-constructor probe must share one program-plan
+verification. Standalone schedule/analysis requests validate afresh; invalid
+MIR or representation rows after a successful call must reject a new plan on
+the same emitter, without any Ready child plans. The optimization has no
+cross-operation validation cache. A local Tea measurement after this change
+took 12.87 seconds for `gti build tea --locked -v` and 13.55 seconds for
+`gti run tea --locked -v -- --version`, compared with the preceding audit's
+38.2/40.0 seconds. Those timings are observational, not test thresholds, and
+the named-framework cache bypass was still active.
+The broad preflight rerun also reconciles earlier lowering changes: constructor
+payload arguments now use prepared storage and transfer at invocation, copied
+passive fields retain explicit MIR Initialize instructions, and an empty class
+constructor may use a passive global initializer. Tests preserve passive-global
+coverage, use a genuinely fallible constructor for runtime-slot coverage, and
+independently reject early argument transfer and missing invocation transfer.
+
+`hosted_constructor_identity_runtime` combines owned-argument entry with two
+ordinary vector-of-string fields, in direct mode and a source-only dependency
+package. Its native matrix covers C++20/C++23 O0/O1/O3, no-elide, and ASan/UBSan;
+the package checks dev/release profiles. `mir_hosted_startup` checks shared
+constructor identity and rejects forged constructor-local generic arguments
+in both HIR and MIR hosted plans.
+
+`discarded_nominal_result_runtime` covers discarded cleanup-free class results
+from member and free calls, loop-slot reuse, and failure with exact caller
+cleanup across the same eight native modes. The lifecycle emitter suite checks
+output placement and retirement and rejects using that no-drop representation
+for classes with active cleanup or borrowed state. These focused gates do not
+establish completion of the callable campaign.
+
+`constructor_argument_staging_runtime` covers two fresh owning arguments to a
+generic constructor followed by consuming field extraction. First-argument,
+second-argument, later-scalar, and constructor-body failures verify that only
+completed objects are destroyed, in reverse order, with caller cleanup. Its
+eight-mode matrix also retains the original non-failing fresh-argument
+reproducer. `consuming_receiver_types` checks both prepared obligations and
+failure cleanup and rejects missing preparation, early handoff, and missing
+invocation transfer. Lifecycle emitter tests also cover this staging when the
+outer object becomes a temporary read receiver, mutable receiver, or borrowed
+argument. After this lowering change, the command-schema and mutable-reference
+callback failure fixtures also pass 24 focused native runs across the same
+eight modes. The complete read/mutable public-wrapper runtime suite now passes
+all 104 outcomes across those modes, including the fresh rerun after the
+operation-scoped verification optimization. This covers schemas/setters,
+function items, mutable targets/arguments, borrowing, and temporary targets;
+consuming wrappers and final installed/release checks remain separate gates.
+
+`testNonFailingOwningDeclarationInitializer` covers the straight-line owning
+declaration default used by a generated constructor. The Construct activates
+the value obligation directly; the field Initialize reparents it and the
+field schedule hands it off exactly once. Four mutations reject missing
+activation, reparent, handoff, and conditional activation. The
+`consuming_generated_field_default` runtime fixture passes all eight modes and
+observes that generated-field cleanup still follows later sibling evaluation.
+
+`consuming_retained_field_runtime` passes 72 outcomes across those eight modes:
+single and nested nominal field forwarding retain cleanup through the outer
+full expression, while explicit extraction keeps callee-local ownership.
+Invocation and later-argument failures preserve exact destructor order and
+diagnostics. `consuming_retained_field_replace_runtime` adds 24 passing
+outcomes: replacing an unavailable but physically retained field destroys its
+old capture exactly once, including failed old cleanup and later caller
+failure. These gates establish nominal field forwarding, not stored-lambda
+forwarding or consuming invocation through an erased unique owner.
+
+Stored-lambda retained-field structural checks cover fixed arguments, concrete
+packs, transparent grouping, repeated-use rejection, and twelve mutated
+capabilities/target identities. `consuming_retained_lambda_runtime` passes 96
+outcomes across all eight native modes: fixed/pack calls, single/nested owners,
+invocation failure, and later-argument failure retain captures until the outer
+full-expression boundary. This is not yet evidence for public consuming wrappers.
+`retained_generic_lifecycle` passes source cleanup-body/failure-form checks,
+32 independent malformed cleanup-form/owner-overlay checks, distinct valid
+MIR-body grouping rejection, and a destructor re-consumption negative. Concrete
+capture and nested-owner cleanup branches are asserted separately. The affected
+lowered-program contract, C++ program-plan, and representation-snapshot suites
+also pass.
+
+`owned_pointee_projection` passes the accessor-side prerequisite for retained
+unique-owner invocation: four concrete read/mutable accessors (including a
+differently named source owner), exact HIR/MIR summary preservation, and 69
+independent forged-summary/body/declaration checks. Ordinary reference,
+extra-statement, and parameterized accessors remain outside the bounded proof.
+`owned_pointee_projection_runtime` passes eight C++20/C++23, O0/O1/O3,
+no-elide, and ASan/UBSan executions of ordinary checked read/mutable accessors.
+The caller-side `consuming_owned_pointee` gate now checks exact retained owner
+anchors and executable temporary loans, eighteen malformed capability/alias
+cases, and source rejections for live aliases, extraction, second invocation,
+ordinary references, local owners, and raw pointers. Grouped invocation and a
+differently named transparent source accessor also retain the proved capability.
+Three fresh passive closure constructor arguments use exact prepared Initialize
+publication, with nine malformed publication cases and production C++ emission.
+`owning_function_types` adds public consuming-wrapper positives and nine
+source-level rejections, including exact target/argument/result types. Deferred
+generic target errors must be semantic diagnostics from concrete reanalysis,
+not MIR/backend failures.
+
+The expanded consuming callback runtime gate passes 80 outcomes across all
+eight native modes: interface dispatch, clones, function items, owned captures,
+fresh void closures, mutable/read-only arguments, and nominal/unique-owner
+results. Target failure, later-argument failure, and empty-owner failure retain
+full-expression capture lifetime. Destructor-failure cases exercise
+primary and secondary cleanup reporting. The public allocation-policy matrix
+passes 96 outcomes, including consuming empty invocation, allocation failure,
+and clone-allocation failure. These gates do not establish final delivery of
+the complete owning-callback campaign.
+
+Integration regression coverage also includes eight native modes for named
+owner-tied iterator copies passed by value across later argument Invoke edges.
+The backend lifecycle suite checks exact Copy source identity, passive cleanup,
+and scalar/class field publication ordering with malformed-MIR mutations.
+These focused repairs do not replace the still-failing combined production
+integration gate recorded under L-CALL-02.
+
+`testPreparedConstructorReplacement` independently rejects missing, mismatched,
+duplicate and conditional prepared-argument transfers on a replacement
+constructor. The recursive-cleanup native matrix passes with exact destructor
+order retained. Empty interface-implementing field constructors are covered by
+the reference/range runtime gate and a non-returning-target mutation in the
+declaration-initializer structural test.
+
+The mutex semantic suite independently rejects four malformed stored-reference
+prefixes before an owned field and five malformed prepared native-payload
+handoffs. The native mutex matrix covers both scalar and cleanup-free move-only
+payloads. Class-array field coverage additionally rejects fifteen malformed
+publication schedules; an owning aggregate cannot fall back to scalar SSA
+emission when its field-publication proof fails.
+
+Tea integration regressions are covered by `temporary_owner_borrow` and its
+24-outcome native matrix: a returned owner may supply a nonescaping read-only
+view through its full expression, including later-argument and callee failure.
+`owned_expected_error` checks exact Expected/Unexpected publication and
+malformed activation/transfer records; its 48-outcome matrix covers passive,
+void, and owning success values, owning errors, forwarding, consuming observers,
+and wrong-state cleanup. `owned_unexpected_pending_cleanup` independently
+checks unpublished return rollback and active-alternative recipes, with 40
+native outcomes including primary and secondary destructor failures.
+
+`private_constructor_placement` requires private source construction to remain
+in its legal lexical context and retains the external access rejection; its
+24 native outcomes exercise direct-return and named-slot placement.
+`nested_guarded_expected` checks recursive generated relocation and rejects
+forged guard/move metadata. Its 16 native outcomes include consuming an
+Expected payload into a constructor, later-argument failure, and `?` on a member
+call result. These focused matrices cover C++20/C++23, O0/O1/O3, disabled
+elision, and ASan/UBSan.
+
+`json_stdlib` additionally compiles and executes the full DOM and codec
+fixtures, plus a returned temporary `response.body().view()` input, at the
+C++23/O0 and C++20/O3 endpoints. JSON's surface ledger records executable
+cases rather than expecting the former backend ICE. These focused gates do
+not replace the owning-callback campaign's final production suite.
+
+`expected_payload_pending_cleanup` checks the class payload of an Expected
+return through fallible cleanup, with five independent malformed-schedule
+rejections. Its runtime matrix passes 24 outcomes across eight modes, including
+rollback of the unpublished local payload and secondary cleanup failure. The
+managed-thread runtime suite also passes this shared return path for task
+cleanup and join handoff.
+
+The callback integration's clean staged-toolchain check passes all nine
+installed-library consumer tests with the production LLVM dependency. Running
+the staged CLI outside the repository, with build-tree resource overrides
+unset, also builds and executes the command-schema and consuming-capture
+lifetime fixtures. The staged LSP passes the signature protocol suite.
+These installation checks are separate from the combined working-tree CTest
+result and do not conceal unrelated in-progress module failures.
+
+`retained_owner_member_pack_runtime` passes eight native modes with empty,
+one/two-scalar, passive-closure, owning-closure, and mixed three-argument packs
+on one closure-containing generic owner. It checks invocation and exact reverse
+cleanup. Structural production-output checks require explicit concrete method
+arguments and arity-discarded indexed closure predicates. The same-arity
+cleanup/body grouping proof remains unchanged.
+
+`nested_nominal_result_runtime` covers member, free, and erased callback class
+results passed directly to another call or constructor, conditional arguments,
+an omitted default, and a named result binding. It observes producer and later
+argument failure before outer invocation, caller cleanup, and exactly-once
+destruction of an owning erased target. A namespaced result storing its callable
+by value checks adapter declaration order without inventing a layout cycle.
+The lifecycle suite rejects missing/reversed failure edges, premature prepared
+slot activation, and forged receiver capability. The owning-wrapper suite
+checks production adapter declarations and definitions relative to layouts.
+The matrix also checks a callback result whose constructor selects a passive
+class field's declaration default. The field's value is observed after return;
+MIR mutations reject missing publication identity and forged initializer/field
+identities without inventing active cleanup. The 80-execution runtime matrix
+uses C++20/C++23 O0/O1/O3, no-elide, and
+ASan/UBSan. The focused read-only, mutable, and receiver-family callback matrix
+adds 24 regression executions after adapter-definition scheduling changes.
+After cleanup-free field publication changed, the full 49-test lifecycle suite,
+owning-wrapper type checks, and emitter census pass. A focused native rerun of
+the strengthened default-field fixture and repeated copied-constructor fields
+adds 16 successful executions across all eight modes.
+
+`generic_callable_adapter_runtime` checks retained native primary templates
+whose callable signatures mention a later concrete class by value in both
+parameters and results. Emitted-text assertions preserve the dependency and
+read/mutable/consuming capability distinctions; 32 native executions cover
+success, exact division-failure records, and caller cleanup across the same
+eight modes. The fixture now uses inline conditional arguments after fresh
+class construction; its refreshed 32 executions pass without the former named
+divisor workaround.
+
+`constructed_callback_argument_runtime` passes 40 executions across the same
+eight modes. It checks fresh passive constructor arguments to read and mutable
+callbacks, constructor failure before publication, callback failure, and later
+argument failure with exact caller cleanup. Lifecycle mutations reject absent
+or reversed Invoke edges and prematurely active prepared slots.
+`pack_prefix_constructor_failure_runtime` covers fresh fixed arguments before
+mixed pack expansions, both first and after an owning prepared argument; all
+32 executions pass across the eight modes.
+
+`expected_payload_pair_arguments_runtime` covers Gitea #9: two whole-expected
+owned payload extractions used directly as `make_pair` arguments. All 32 runs
+pass across the eight modes, including first/later extraction failure with
+destructor-bearing payloads and exact cleanup. The partial-projection move
+negative retains `GTI-S2018`. `expected_payload_pair_emitter` passes eight
+mutations of argument identity, cleanup flags/presence, and failure routing.
+
+`owning_function_resource_result_runtime` passes 72 executions across those
+eight modes. Source-defined public wrappers return destructor-bearing classes,
+unique owners, and strings from stored function items or an owning lambda.
+Producer and later caller failure preserve exactly-once result, capture, and
+caller cleanup. The lifecycle gate rejects forged dispatch/closure identity,
+missing result obligations, and incorrect failure propagation. These checks do
+not complete consuming-wrapper support or the final public-wrapper gates.
+
+`owning_function_policy_failure_runtime` checks empty read-only and mutable
+invocation for both public wrappers, failed construction and cloning, failed
+replacement with exact new/old capture cleanup, and successful replacement/reset.
+All 64 outcomes pass across C++20/C++23 O0/O1/O3, no-elide, and ASan/UBSan.
+Replacement receives a fresh capturing lambda directly, exercising real prepared
+storage without a named-source workaround. `testFreshOwnedCallableArgument`
+rejects forged reparenting, duplicate initialization, and copying move-only state.
+`abstract_generic_failure_contract` checks abstract read/mutable status-ABI
+declarations in C++20/C++23 without any concrete override, plus six root-integrity
+mutations. Its independent runtime gate uses ordinary generic interfaces rather
+than public wrapper names and passes all 16 empty-owner outcomes across the eight
+native modes. After these changes the expanded 52-test lifecycle suite passes,
+as do owning-wrapper type checks, emitter census, and the standalone abstract
+contract and expected-payload mutation gates. The census required matching its
+new entry order, and the abstract fixture's unsupported C++ destructor spelling
+was corrected before their successful focused rerun.
+
+`fresh_callable_later_argument_failure_runtime` passes 16 outcomes across the
+same eight modes. A fresh owning lambda is supplied directly to an ordinary
+generic function before a checked argument; both success and failure destroy
+the capture and caller resource exactly once. This exercises the confined
+callable boundary, not unrestricted escaping callable transport.
+The owning-wrapper static suite also rejects a custom copy-constructor body
+with `GTI-S2020`, matching GTI's existing copy-policy restriction; cloning does
+not introduce a separate custom-copy mechanism. Its first test assertion used
+the wrong diagnostic wording and was corrected to the compiler's actual
+message before the successful focused rerun.
+
 `container_swap_runtime` checks vector, string, forward-list, and path swaps
 with unequal sizes/capacities, empty owners, embedded zeros, repeated swaps,
 post-swap mutation/views/movement, and move-only elements. Native allocation
@@ -23,25 +301,235 @@ extrema, subnormals, signed zeros, infinities, and NaNs. Its C++20/C++23
 O0/O1/O3 and ASan/UBSan matrix also verifies 14 unrepresentable-result failures
 with exact caller cleanup, constexpr gcd, and invalid generic arguments.
 
-`toy_engine_initializers` covers Gitea #1 and the 0.337 null-owner regression:
+`forward_list_runtime` additionally exercises the in-progress emplacement
+slice with scalar, plain-enum, and immovable elements. A fallible element
+records its address in its constructor and checks it after insertion and
+removing a different node; failure must destroy only the previously live
+element. C++20/C++23 O0/O1/O3 plus ASan/UBSan cover these cases. Backend tests
+require direct final-field construction and reject missing rollback publication
+or unpublished-return loan retirement. These cases do not establish complete
+generic argument forwarding; the remaining reference-parameter composition is
+tracked in the active standard-library campaign.
+`compiler_pipeline` additionally checks the borrowed-element fixture's MIR
+parameter role, referent identity, and absence of a move, and rejects forged
+move roles and invalid pack indices. That frontend/MIR gate does not claim
+the borrowed fixture compiles to C++; its backend path remains incomplete.
+`pack_parameter_runtime` covers the original owning-pack cleanup failure,
+empty/single/mixed packs, forwarding moves, repeated copied expansions through
+allocation, and repeated read-only folds. Its 56 executions across
+C++20/C++23 O0/O1/O3 and ASan/UBSan compare exact output, status, and primary or
+secondary failure sites. Lifecycle tests require entry-active element slots,
+non-consuming copy stages, canonical fold borrow places, and rejection of
+forged entry state, duplicate elements, order, expression provenance, and
+unowned projection aliases. `pack_constructor_copies.gti` additionally passes
+eight focused C++20/C++23 O0/O1/O3, no-elide, and sanitizer runs after ordinary
+construction adopted the shared prepared-parameter path. This adds direct
+`T(args...)` copy-staging evidence, not a fresh run of the full pack matrix.
+
+The suite additionally registers `owner_parameter_pack_cleanup.gti` for
+class-owned packs crossing interface dispatch. It checks exact reverse cleanup
+for normal execution, body failure, cleanup failure, and failure during cleanup.
+The current development slice has run these four cases with C++23 O1 plus
+ASan/UBSan; the registered full pack matrix remains a feature-completion gate.
+
+The active L-CALL-02 stored-callable runtime gate now passes 272 executions
+across C++20/C++23 O0/O1/O3, no-elide, and ASan/UBSan. The invocation fixture
+composes nominal carrier forwarding with concrete and erased heap models.
+The failure fixture checks 28 cases, including seven erased-owner cases with
+capture failures, reverse cleanup, remaining caller cleanup, and exact primary
+and secondary records. The pack fixture combines empty, single-closure, mixed
+passive, and active-capture packs of the same generic declarations. Separate
+native symbols preserve closure-bearing free-function instance bodies and
+constructor tags. Static tests reject forged instance identities and missing
+polymorphic cleanup selections. This is prerequisite evidence, not delivery of
+the public wrappers or unrestricted callable composition.
+
+The emitter text gate checks distinct closure-bearing free-function declarations,
+definitions, call sites, and exact MIR instance banners, including mixed cleanup
+shapes without native destructibility-based body selection. Its pack-layout
+regression checks grouped source bindings against flattened parameter suffixes,
+including fixed prefixes, and rejects an out-of-range element projection in MIR.
+
+`return_result_cleanup_runtime` separately checks direct-call, moved,
+constructed, `expected`-wrapped, storage-handle, infallible-object, and
+owned-callable field-carrier returns across callee cleanup. Its 160 executions
+across C++20/C++23 O0/O1/O3,
+no-elide, and ASan/UBSan
+pass with exact output and status: normal cleanup, failure before publication
+with remaining caller cleanup, and a second cleanup failure preserving both
+records. `stored_callable_types` rejects mutations of the pending-result
+lifetime and publication schedule. The lifecycle emitter suite also passes
+after fixing storage-return admission and wrapped-payload identity. These
+results do not establish polymorphic captured-value cleanup or public-wrapper
+completion.
+The existing source-destructor runtime matrix also passes (259 executions).
+`polymorphic_owner_cleanup_runtime` passes 48 executions across C++20/C++23
+O0/O1/O3, no-elide, and ASan/UBSan. It checks a declared derived destructor,
+reverse field destruction, empty interface bases, first and secondary failures,
+caller cleanup, and assignment retaining the allocation's cleanup binding.
+The static gate rejects hoisting field construction across an active base.
+`lambda_pack_invocation_runtime` passes 40 executions across eight configurations
+(C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan): local lambdas with empty and
+multi-argument packs, and a captured lambda erased behind a generic `R(Args...)`
+interface, erased `void()` and `void(int)` callbacks, and four mixed signature
+shapes sharing one generic model. The void fixture also covers implicit/default
+polymorphic allocation and concrete overrides of inherited packs.
+The cloning fixture adds independent clones, empty clones, reset/replacement,
+constructor-local lambda arguments and multiple closure identities with the
+same signature. `owning_function_types` exercises the public wrappers and
+rejects noncopyable clone targets, signature mismatches and implicit wrapper
+copies. `owning_function_runtime` is the corresponding eight-mode native gate
+for setter transfer, void callbacks and move-only captures. Its expanded
+consumer also checks nominal function objects and exactly-once capture cleanup
+on reset. The borrowed-argument fixture additionally covers repeated exact
+reference-pack forwarding, aliasing read-only arguments, noncopyable referents,
+mixed value/reference signatures, independent wrapper cloning and caller
+mutation between calls. Static mutations reject moved borrows and wrong
+argument/element indices. LSP tests share acceptance and rejection with the
+compiler. The mutable-argument fixture additionally passes eight configurations
+for `void(mut int&)` and mixed mutable/read-only/value signatures, repeated
+forwarding, and copied lambda targets. Static tests reject immutable/rvalue
+inputs, overlapping read/write and write/write arguments, mismatched target
+signatures, and forged entry access, escape, or duplicate capabilities.
+LSP checks cover hover, prefix diagnostics, recovery and formatting.
+The mutable-reference failure fixture passes 16 runs across the same eight
+configurations, including a later conditional argument and exact capture/caller
+destruction on success and callback-body failure. Stable peer borrows may cross
+that scalar argument diamond; no intervening user call, lifetime change, or
+mutation of the borrowed storage is admitted by that representation proof.
+These read/mutable gates are complemented by the consuming-wrapper evidence
+above; they do not alone complete L-CALL-02.
+`consuming_receiver_types` separately checks nominal receiver storage and rejects
+erased full-expression identity, duplicate executable input use, missing
+activation, and transfer at invocation. `consuming_receiver_runtime` covers
+caller-owned receiver temporaries, reverse cleanup of two receivers, argument,
+body and later-sibling failures, primary/secondary destructor failures, and
+moving a generic receiver field while retaining the other field. Its 104
+executions pass across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan. The separate
+`consuming_receiver_fields_temporaries.gti` reproducer retains an unresolved
+multiple-fresh-constructor-argument representation gap and is not counted as a
+runtime success. `consuming_lambda_runtime` separately covers local moved
+environments and exact generic by-value invocation. The local lifetime/failure
+fixtures pass 88 executions across the same eight modes, including argument,
+body, later-sibling and capture-destructor failures. The generic fixture adds
+24 executions, checking the callee's full-expression cleanup before the caller
+evaluates a later sibling. The pack fixture adds another 24 executions and
+also checks a cleanup-free moved closure. The combined CTest passes all 136
+executions in its original four-fixture matrix. The nested generic-argument
+and nested local-lambda/call-operator fixtures add 48 executions; the expanded
+six-fixture `consuming_lambda_runtime` passes all 184 executions across the
+same eight native configurations. These assert capture cleanup after the
+complete nested expression, failure before the outer call, and preservation
+of an enclosing prepared receiver through a failing callback argument.
+`consuming_receiver_types` covers contextual function, constructor, lambda,
+function-item and call-operator consumers, explicit outer generic arguments,
+earlier-argument overload selection, and stored callable fields. It rejects
+wrong concrete results, ambiguous contexts, use after consuming invocation,
+forged prepared-receiver call-site identity, and malformed local-closure
+capture metadata. `function_signature_lsp` checks the valid nested expression,
+its hover, an unsaved use-after-move edit, and diagnostic clearing. The focused
+backend text suite also passes after the shared staging/frozen-closure repairs.
+`consuming_receiver_types`
+also rejects erased lambda lifetime identity, missing activation, transfer at
+invocation, and source reuse after the move. These checks do not prove public
+erased consuming wrappers or unrestricted generic callable composition.
+The virtual consuming fixture adds 24 executions across the same eight modes:
+an interface's exact `&&` override is invoked from a moved concrete owner,
+including body and later-sibling failures. The static suite verifies virtual
+target/capability metadata, rejects a forged reusable invocation capability,
+rejects read/mutable overrides and borrowed-reference consumption, and the LSP
+checks consuming hover plus an unsaved bad-override/fixed-override cycle. This
+does not yet enable consuming an erased pointee through `unique_ptr`.
+The read-only wrapper and borrowed-argument fixtures passed 16 executions over
+eight configurations after stored function items were added; the item fixture
+passed another eight. It covers namespace functions retained through locals, generic returns, capture and
+erased model fields; clone/replacement preserve distinct same-signature targets.
+It also checks callee-producing effects before argument effects. Function-item
+semantic tests preserve contextual overload selection, managed tasks, ineligible
+target rejection and ambiguity spans. LSP tests cover unsaved overload edits,
+hover/definition identity, related candidates and diagnostic clearing.
+The schema and constructor fixtures additionally passed 16 executions over
+the same eight configurations. The former builds a nested immutable command
+tree with vector children and an owned leaf handler, then walks and invokes it.
+The latter checks left-to-right, once-only argument evaluation around a deferred
+function name in parenthesized construction, including two concrete instances
+of one generic factory. Static tests reject ambiguous constructor names before
+MIR. These regressions cover the previously unresolved constructor argument
+that reached MIR as an unknown value. The focused signature, owning-function,
+function-item, native-callback, unsafe-function and signature-LSP gates pass.
+Static checks reject wrong element types, a missing receiver,
+a forged target signature and a mismatched owner-pack constructor projection.
+The complete owning-wrapper contract remains incomplete.
+Qualified-signature coverage adds `R(Args...) mut` and `R(Args...) &&` metadata,
+exact alias/deduction/pattern identity, an immutable receiver rejection, and a
+lowered-seal mutation erasing the qualifier. The mutable callback and qualified
+metadata fixtures pass 16 executions across the eight native modes. The former
+retains a stateful counter behind a source-defined interface and preserves its
+state after moving the owner, with exactly-once source destruction. The latter selects three exact generic overloads
+without native matching. Signature-LSP tests cover qualifier hover, unsaved
+pattern mismatch, malformed suffix recovery and formatting; Tree-sitter corpus
+and highlight tests pass. The receiver-family fixture additionally covers
+declaration-order-independent exact selection, per-definition member aliases,
+generic forwarding/deduction, and exact concrete specialization. Static checks
+reject overlapping qualifiers and forged specialization arity; editor checks
+resolve the selected definition across unsaved qualifier changes. The public
+mutable-wrapper fixture checks repeatable state, independent clone state,
+replacement by a read-callable function item, reset, moved ownership, and exact
+target destruction. These two fixtures pass all eight native modes, including
+ASan/UBSan and no-elide execution. Consuming-owner evidence is recorded above.
+The public temporary-target regression passes another eight native executions.
+It covers a generated default constructor with a declared destructor passed
+directly into an owning wrapper. Construction admission uses the existing
+failure-free field-body proof independently of later destruction, while MIR
+still proves the fresh source obligation and its single transfer. A mutation
+removing that transfer is rejected; no source workaround names or pre-moves the
+temporary to bypass the constructor path.
+`void_return_runtime` checks exact void expression returns through ordinary
+functions, a lambda, and a generic callable-parameter pack. Its 48 executions
+across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan pass with exact call,
+parameter, local and caller cleanup order, including primary and secondary
+failures. Static tests retain the non-void-expression diagnostic and reject
+forged MIR void-return result operands. The generic forwarding case uses a
+symbolic `R` instantiated as `void`; the separate signature matrix exercises
+that result through erased dispatch. Static representation mutations reject
+inconsistent void result-channel slots between virtual roots and overrides.
+The container-swap CTest initially timed out after 300 seconds while running
+concurrently. Its isolated direct retry passed C++20/C++23 O0/O1/O3 and
+ASan/UBSan, including the mutation/loan rejection cases. The original timeout
+is not counted as a pass; the successful retry establishes the return-cleanup
+change's container evidence.
+
+`toy_engine_initializers` covers Gitea #1/#2 and the 0.337 null-owner regression:
 temporary class construction in a member initializer, float/double field
-publication, empty and populated owners with fallible pointee cleanup, and
-exact destruction totals at O0/O1/O3 under C++20/C++23. It also checks Gitea #2's
-remaining fallible field-call limitation reports `GTI-B0003` without publishing
-an artifact. Focused emitter tests reject removed floating publication stages
-and forged cleanup/call targets; the limitation test does not claim allocation
-in declaration-time field initializers is implemented.
+publication, direct/grouped plain-enum publication, empty and populated owners
+with fallible pointee cleanup, and
+exact destruction totals at O0/O1/O3 under C++20/C++23. It executes Gitea #2's
+original source-constructor inline allocation and checks that the remaining
+generated-constructor case reports `GTI-B0003` without publishing an artifact.
+`declaration_field_failure` adds first/later allocation failure, allocated
+pointee constructor failure, enclosing constructor body failure, exact reverse
+field/parameter/caller cleanup, enclosing destructor suppression before success,
+explicit override suppression and initialization order, and concrete generic
+defaults. It runs C++20/C++23 O0/O1/O3, no-elide, and ASan/UBSan modes. Focused
+emitter tests reject missing/duplicate constructor initializer coverage, removed
+floating and enum publication stages, and forged cleanup/call targets. Generated
+constructor propagation remains a tracked limitation, not a tested success.
 
 The `native_packages` CTest runs offline preparation-safety and inventory
 checks without acquiring upstream code. After explicitly preparing the optional
 packages, `gti test` in `packages/examples/smoke` exercises real native bindings:
 GLFW version, GLAD loader state, SQLite prepared statements, a headless cimgui
 frame, zlib compression, and libpng encode/decode plus invalid input/capacity
-handling. The separate `packages/examples/assimp` project tests model import,
+handling. The CLI11 target checks flags, typed and positional options, a
+subcommand, copied dynamic arguments, repeated parsing, help capture and
+malformed-value diagnostics under both supported C++ language standards. The
+separate `packages/examples/assimp` project tests model import,
 mesh and node access, local transforms, malformed input, null handles and
 out-of-range output preservation through bindgen-generated declarations. The
-`packages/examples/libgit2` project opens a repository and validates repository
-and error handles. GLFW, Assimp, and libgit2 compile their pinned vendored
+`packages/examples/libgit2` project tests library lifecycle, bare-repository
+initialization and reopening, repository properties, unborn HEAD handling and
+error reporting through bindgen-generated declarations.
+GLFW, Assimp, and libgit2 compile their pinned vendored
 sources through consumer-approved package build scripts; a second build proves
 content-cache reuse. These integration gates need the pinned native sources and
 do not run network acquisition implicitly during the compiler test suite. The
@@ -52,6 +540,12 @@ upstream code.
 
 | CTest target | Owns |
 | --- | --- |
+| `function_signature_types` | `R(Args...)` aliases and generic identity/substitution; metadata-only signature/nominal pack deduction, constraints, repeated/explicit agreement and ambiguity; class type-list and by-value method packs, exact calls and virtual dispatch; invalid components/storage and repeated move diagnostics; formatting and compiler queries; canonical concrete signatures and MIR body/interface-pack mutation rejection |
+| `function_signature_runtime` | concrete signature tags, class packs, ordinary/operator()/interface calls, empty forwarding, and exactly-once move-only argument cleanup under C++20/C++23 at O0/O1/O3; does not establish owning callback storage |
+| `signature_pack_deduction_runtime` | exact empty, multi-argument, reference, explicit, repeated, prefixed and value-pack deductions; symbolic forwarding and returned nominal metadata under C++20/C++23 at O0/O1/O3; separated from the ownership/dispatch fixture to keep focused native matrices bounded |
+| `class_signature_pattern_runtime` | headerless signature-pattern primaries, result/pack extraction, aliases, repeated/fixed components, empty and reference metadata, ordinary/pack methods and generic forwarding under C++20/C++23 at O0/O1/O3; compiler tests reject mismatches and forged lowered binding projections |
+| `stored_callable_types` / `stored_callable_invocation_runtime` | retained-field callable invocation, concrete heap-owned models and owned value-pack forwarding: exact symbolic result and concrete capability checks, body-scoped representation overlays, forged allocation-type/MIR receiver/capture-recipe/pack-index/cleanup/copyability rejection, repeated calls and owned capture cleanup; 272 executions across C++20/C++23 O0/O1/O3, no-elide and sanitizer modes. Failure cases assert reverse capture and pack-element order, remaining caller cleanup, and exact primary/secondary records, including heap-owned captures. This is prerequisite evidence for L-CALL-02, not public-wrapper completion |
+| `function_signature_lsp` | unsaved signatures and class packs; concrete deduced function/method hover; exact component/call/pack-conflict spans and related declaration publication/clearing; incomplete-source recovery and formatting round-trip |
 | `compiler_pipeline` | manifest-backed aggregate of 141 tests across independently buildable frontend, declarations/types/generics, ownership/lifecycle/ranges/callables, constexpr/configuration/numerics/static-initialization, diagnostics/formatting/queries, and bounded end-to-end executables; the aggregate rejects missing or duplicate registrations before running every suite once |
 | `semantic_header_boundary` | fail-closed include direction for semantic core, model/query, and analyzer/provider headers; exact direct analyzer-consumer allowlist; and frontend/HIR contracts that cannot regain the analyzer umbrella |
 | `semantic_header_self_containment` | independent translation units include and instantiate the semantic core, model, and analyzer contracts without relying on transitive include order |
@@ -76,6 +570,9 @@ upstream code.
 | `failure_metadata` | deterministic artifact sites; independently derived checked-scalar operation/domain outcome sets; bounded scalar/cleanup-owning-call `Invoke`; exact local-detector and static direct-call argument edges after prepared owners; fixed-record failure parameters; success-edge result initialization; reverse cleanup; and record-preserving propagation |
 | `runtime_failure_boundary` | C++ ABI shape, allocation-free partial/`EINTR` writer, per-site outcome rejection, runtime-sentinel rules, and every boundary of the generated Unicode 15.1 allowlist |
 | `runtime_io_boundary` | version-one file mode/seek behavior, create/truncate/append/read reopening, embedded-zero preservation, bounded reads, empty-buffer rules, exact offsets, invalid descriptors/origins, embedded-NUL path rejection, deterministic cleanup, and file/stdout broken-pipe failure without `SIGPIPE` escape |
+| `runtime_process_boundary` | exact NUL-separated argument transport, including empty and space-containing arguments; ordinary exit versus signal termination; execution failure distinguished from exit 127; malformed input and null-output rejection; and compatibility behavior of the legacy build-process ABI |
+| `process_runtime` | public `std::process::command` construction, exact argument forwarding, reusable commands, nonzero exit and signal status, invalid command rejection, and verified-MIR/runtime-call evidence at O0/O3 under C++20/C++23 |
+| `chrono_runtime_boundary` | version-one scalar clock ABI, output preservation on failure, signed-range composition seams, nondecreasing steady-clock observations, and system-clock values readable as Unix nanoseconds |
 | `cmath_runtime` | every declared binary32 math operation at O0/O1/O3 under C++20/C++23; independent known results, rounding directions and ties, domains, poles, signed zero, infinities, NaN, overflow and gradual underflow; scalar ABI and verified-MIR witnesses; plus generated-boundary ASan/UBSan execution |
 | `cthread_runtime` | real C-style yield; stable initial/managed/manual identities, exact create-handle equality and non-joinable observed identities; total source-defined equality; both profiles, atomic/join composition, exact yield native-call retention, and verified-MIR witnesses at O0/O1/O3 under C++20/C++23 plus ASan/UBSan and TSAN; no timing or fairness oracle |
 | `cthread_runtime_boundary` / `cthread_runtime_firewall` | source-private create/join and identity: non-reused identities across initial/manual and 128 concurrently/sequentially observed foreign threads, stable identity before entry and after leave/shutdown, no identity-derived join or callback permission, exact integer-result and ordinary-write publication, repeated/nested/self/competing joins, injected recoverable failures, exact once-only callback attachment, foreign-thread rejection, initial-thread-owned in-flight shutdown, and exact native-exception/incomplete-entry terminal outcomes |
@@ -156,7 +653,7 @@ upstream code.
 | `source_destructor_cleanup_failure_runtime` | source body before reverse owning-field cleanup; first and secondary failures, inactive/moved guards, nested direct/unique owners, vector/storage removal, partial-construction rollback, and the original temporary-constructor receiver regression; exact trace and diagnostic sites in 259 cases across C++20/C++23 O0/O1/O3 plus ASan/UBSan |
 | `recursive_cleanup_failure_runtime` | finite self/mutual ownership recipes; list clear/pop/move/scope cleanup, source-destructor node chains, direct and collection-owned nodes, reset and replacement; empty/live destinations, fresh/named moved values, direct objects, checked owner-field replacement, repeated successful assignment, staged-RHS secondary failure, and nested checked-arrow access/reset/assignment; 294 trace/failure executions plus the original projection reproducer in seven modes at C++20/C++23 O0/O1/O3 plus ASan/UBSan |
 | `checked_owner_replacement_runtime` | fresh and moved unique-owner/direct-class fixed-array replacement; exact old/staged/remaining cleanup, invalid positive and negative indices, first/secondary destructor failure, bounds-only preparation, and both dimensions of a chained destination; 133 executions at C++20/C++23 O0/O1/O3 plus ASan/UBSan |
-| `constructor_owned_call_runtime` | ordinary owning calls inside a status constructor; success, later-argument failure, callee failure, later constructor failure, and secondary destructor failure, with exact cleanup order and source sites across C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` checks constructor and field-initializer admission and rejects missing, duplicate, misidentified, and cross-call parameter transfers |
+| `constructor_owned_call_runtime` | ordinary owning calls inside a status constructor; success, later-argument failure, callee failure, later constructor failure, owning-field replacement, local cleanup failure, and secondary destructor failure, with exact cleanup order and source sites in 70 cases across C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` checks constructor and field-initializer admission and rejects missing, duplicate, misidentified, and cross-call parameter transfers |
 | `collection_cleanup_failure_runtime` | owning and direct class elements, sparse live slots, nested vectors, moved/empty collections, mixed string/resource aggregate elements, inherited-base rollback, explicit pop/slot destruction/clear/erase, and unchanged invalid-slot/index reporting; first/middle/last erase, reusable successful prefixes, reverse suffix draining, inherited element relocation, immediate second-failure termination with distinct source sites, and exact diagnostic records/order across 308 runs at C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` mutates drop and removal recipe presence, count, type, projection, active-cleanup identity, intrinsic ownership, destructor propagation, and generated-relocation/guard facts |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `unsafe_function_contract` / `unsafe_function_runtime` / `unsafe_function_lsp` | namespace-scope caller obligations, exact diagnostics and related spans, generic/overload retention, safe callable-erasure rejection, HIR/MIR/lowered mutations, ordinary MIR call and failure cleanup at O0/O1/O3 under C++20/C++23, and editor publication/clearing/hover without unsafe fix-its |
@@ -331,6 +828,15 @@ cached object reuse does not replace that source or alter the installed static
 archives.
 
 ## Cross-Phase Feature Coverage
+
+`collection_initialization_pipeline`, `collection_initialization_runtime`, and
+`collection_initialization_lsp` cover the public owned collection protocol:
+custom containers, nested designated command schemas, empty/nested vectors,
+exact types, explicit moves, ordered insertion, argument/body failure cleanup,
+malformed MIR insertion types and missing failure edges, formatter round trips,
+and editor diagnostics and nested field identities. Runtime coverage uses
+C++20/C++23 at O0/O1/O3.
+The existing brace syntax needs no new token or parser production.
 
 `cthread_once_boundary` and `cthread_once_runtime` cover registered synchronous
 initializers and the ordinary source atomic state machine. The eight-mode
@@ -881,6 +1387,16 @@ supported C++ standards without retaining eight duplicate full-corpus jobs.
 Focused runtime matrices continue to exercise intermediate optimization levels
 where a feature's risk warrants them.
 
+The owning-callback integration refresh was reviewed against the previous
+standard-library snapshot. Including `functional` now brings in `memory`: the
+two field bodies each for `alignment` and `allocator`, plus `alignment::bytes`,
+explain the five-body increase in affected examples. The formatted-output
+example additionally includes the source-defined format writer specializations.
+Declaration-only changes include generated designated constructors and the
+vector collection protocol; callable/structural adapters follow the added
+source classes. All 82 examples pass both native endpoints against the candidate
+inventory before that inventory is promoted to the checked-in baselines.
+
 Generated C++ is not a stable public text contract. Marker identities are a
 test-only ownership witness; behavior comparison remains on process status and
 output. A baseline update is valid only after the changed inventory is
@@ -892,6 +1408,69 @@ an unobserved cleanup error. Structural C++ backend tests, MIR verifier mutation
 tests, focused compile/run fixtures, and sanitizer/platform coverage remain
 necessary. Fixtures outside `examples/` deliberately supplement the corpus
 without changing its census.
+
+## Development And Completion Cadence
+
+Use the existing CMake targets and test filters to keep the development loop
+proportional to the edit. A broad verification plan describes the evidence
+needed to deliver the feature; it is not a command list to repeat after each
+edit. This also applies to the candidate commands from
+`.codex/skills/verify-change/scripts/plan_checks.py`, which inspect the whole
+selected diff and can include other in-progress work.
+
+During implementation, build only the executable needed by the owning test.
+CMake rebuilds its changed dependencies automatically. For example, with
+`GTI_BUILD_JOBS` set to the available host compile capacity:
+
+```sh
+cmake --build build --target gti_function_signature_tests --parallel "$GTI_BUILD_JOBS"
+ctest --test-dir build --output-on-failure -R '^function_signature_types$'
+```
+
+The partitioned compiler suites also support `--list` and `--test NAME`, so a
+callable ownership edit can be checked without running unrelated compiler
+cases:
+
+```sh
+cmake --build build --target gti_compiler_ownership_tests --parallel "$GTI_BUILD_JOBS"
+build/gti_compiler_ownership_tests --test testOwnedCallableTransport
+```
+
+Runtime scripts using the shared callable matrix accept repeatable `--mode`
+filters. Defaults and CTest registrations still run all eight modes. After a
+partial or interrupted run, rerun only the missing modes during development:
+
+```sh
+python3 tests/owning_function_runtime_test.py build/gti --mode no-elide --mode sanitized
+```
+
+Choose the owning regression from the changed behavior; these examples are
+not a fixed minimum suite. Build `gti` or `gti_lsp` when running a runtime or
+protocol test that uses that executable. Do not run an old executable as
+evidence for changed source. Batch related header edits before building where
+practical: public headers and the shared semantic/test precompiled headers can
+invalidate many translation units even for a small textual change.
+
+After a coherent slice works, run its affected cross-phase gates, including
+negative cases and relevant native execution, cleanup, formatting, and LSP
+coverage. Keep unrelated native optimization/standard matrices and corpus
+sweeps for completion. Changes to shared lowering, ownership, failure, or
+representation contracts can affect many features, so broaden the slice's
+checks when those dependencies make them relevant.
+
+Before declaring the complete feature delivered, build all targets and run the
+full CTest suite in the production configuration, together with applicable
+sanitizer, Tree-sitter, installed-consumer, and packaging checks. Preserve the
+existing CI/release matrices. If a broad check exposes a defect, reduce it to
+an owning regression, return to focused iteration, then rerun the affected
+gates and full completion suite on the resulting source. A fast focused pass
+is development feedback, not evidence that the whole feature is complete.
+
+Reuse the configured build tree during iteration. For a fresh production
+build, use Ninja and `CMAKE_BUILD_TYPE=Release`; do not replace or reconfigure
+an active development tree merely to change generators. Compile parallelism
+may use the available host capacity; choose CTest parallelism separately
+because runtime tests can themselves launch native compilers or workers.
 
 ## Repository Build Generator
 
@@ -959,7 +1538,8 @@ either path must receive a minimal deterministic regression in the normal
 owning suite. Snapshots should assert stable codes and narrow semantic/runtime
 markers, not entire generated files or incidental paths.
 
-For a substantial compiler change, the broad local sequence is:
+At feature completion, the broad local sequence for a substantial compiler
+change is (using the chosen production build directory and resource budgets):
 
 ```sh
 cmake --build build -j4

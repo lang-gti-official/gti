@@ -310,9 +310,9 @@ that loads an external graph, runs Dijkstra's shortest-path algorithm, validates
 the result, and prints a report. It demonstrates the language and `gti`
 project workflow working together beyond isolated syntax examples.
 
-[`game-engine/gti/`](game-engine/gti/README.md) ports the core/application
-architecture of the adjacent C++ Psych engine into a headless GTI project. It
-demonstrates state-bearing application inheritance, interface-based layers,
-ordered layer/overlay dispatch, explicit lifecycle management, and a small CLI
-game loop while deliberately excluding vendor-backed windowing, rendering,
-editor, logging, and native bindings.
+[`toy-3d-engine/`](toy-3d-engine/README.md) is a real-time GTI project using the
+repository's GLFW, GLAD, Assimp, and cimgui packages. It demonstrates exclusive
+resource owners, deterministic OpenGL cleanup, keyboard-driven camera movement,
+scene updates, CPU-side perspective projection, Assimp model import, shader
+compilation, interleaved vertex streaming, and an interactive ImGui debug panel,
+with headless math/model tests alongside the graphical executable.

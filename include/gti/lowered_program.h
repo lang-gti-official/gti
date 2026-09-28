@@ -108,6 +108,7 @@ struct LoweredGenericParameter {
   GenericConstraintSet constraints = 0;
   std::vector<std::string> constraintName;
   ConceptId constraintConcept = 0;
+  std::vector<std::size_t> typeArgumentPath;
 
   friend bool operator==(const LoweredGenericParameter &,
                          const LoweredGenericParameter &) = default;
@@ -198,6 +199,7 @@ struct LoweredClassDeclaration {
   std::vector<SemanticType> exactTypeArguments;
   std::vector<CompileTimeValue> exactValueArguments;
   std::vector<LoweredGenericParameter> genericParameters;
+  std::vector<SemanticType> genericArgumentPatterns;
   std::vector<LoweredClassBase> bases;
   SemanticTypeTraits traits;
   ConcurrencyCapabilityPolicy transferPolicy =
@@ -539,6 +541,7 @@ struct LoweredCallableAdapterItem {
 enum class LoweredLifecycleCleanupForm {
   OrdinaryClass,
   ConcreteSpecialization,
+  RetainedPrimary,
   Count,
 };
 

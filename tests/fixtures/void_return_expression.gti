@@ -1,0 +1,41 @@
+#include <std/string>
+#include <std/vector>
+
+class Trace {
+  int identity;
+  int divisor;
+public:
+  Trace(int identity, int divisor) : identity(identity), divisor(divisor) {}
+  ~Trace() {
+    std::println(this.identity);
+    int cleanup_failure = 1 / this.divisor;
+  }
+};
+
+void sink(Trace parameter, int divisor) {
+  std::println(4);
+  int call_failure = 1 / divisor;
+}
+
+void forward(int divisor, int temporary_divisor, int local_divisor) {
+  Trace local{2, local_divisor};
+  return sink(Trace(3, temporary_divisor), divisor);
+}
+
+class Result<R> {};
+
+R invoke<R, T, Args...>(T callback, Result<R>& result, Args... args) {
+  return callback(args...);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Trace caller{9, 1};
+  auto callback = [](int divisor, int temporary_divisor, int local_divisor) -> void {
+    return forward(divisor, temporary_divisor, local_divisor);
+  };
+  Result<void> result{};
+  invoke(callback, result, argc == 2 || argc == 5 ? 0 : 1,
+         argc == 3 || argc == 6 ? 0 : 1,
+         argc == 4 || argc == 5 || argc == 6 ? 0 : 1);
+  return 0;
+}

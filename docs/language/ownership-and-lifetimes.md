@@ -324,8 +324,15 @@ production, ends that borrow after invocation, and retains ownership of the
 value until the enclosing full-expression cleanup. This ephemeral capability
 does not authorize a stored reference, address, field-assignment target, or
 mutable-reference argument. It is unavailable to a temporary containing
-tracked borrowed state, an explicit move from named storage, a virtual method,
-or a method whose result may carry receiver-tied borrowed state.
+tracked borrowed state, an explicit move from named storage, or a virtual
+method. A read-only ordinary method may return a read-only reference or
+`std::string_view` tied to that temporary receiver for immediate nonescaping
+use, such as `read(make_owner().get())` or `parse(make_text().view())`.
+The returned loan ends before the temporary is destroyed, including when a
+later argument or the consuming call fails. Binding that result beyond the
+full expression or returning it remains rejected; no temporary lifetime is
+extended. Mutable borrowed results and stored borrowed-state carriers are
+outside this temporary-receiver capability.
 
 A direct ordinary constructor or by-value GTI call may also produce a fresh,
 self-contained class or struct value for one exact read-only `T&` argument of
@@ -750,12 +757,61 @@ that is no longer available. It cannot return a reference or tracked
 borrowed-state carrier. Mutually exclusive control-flow paths may each consume
 the callable, but any path permitting a second invocation or later use is
 rejected by the same availability analysis as an ordinary explicit move.
-The receiver must currently be free of structural active-cleanup state. A
-native rvalue-qualified call does not transfer that state into a distinct
-full-expression-owned value, and materializing an ordinary helper parameter
-would clean up at the wrong boundary relative to sibling operands. GTI
-therefore rejects direct and concretely selected generic consuming calls for
-cleanup-owning receivers until that representation exists.
+Consuming call operators may be virtual, pure, or interface requirements.
+An override must preserve the exact consuming receiver capability along with
+its parameter and result types; a read-only or mutable operator is not an
+override of an `&&` requirement. A concrete owned receiver may invoke the
+selected virtual operator after an explicit move. This does not grant ownership
+to an interface reference or to a borrowed pointer dereference.
+An explicitly moved nominal receiver with active cleanup is materialized as a
+caller-owned temporary. Invocation aliases that value; it does not transfer it
+into a callee parameter. The temporary remains alive through later sibling
+evaluation until the enclosing full expression ends. Failure before or during
+invocation, or during a later sibling, drains the same active obligations in
+reverse construction order. A consuming operator may move from a `mut` field;
+the extracted value owns its cleanup and the receiver retains only its remaining
+fields. Read-only and mutable fallback overloads selected for an explicit move
+operate on this same materialized value.
+
+Inside a consuming `operator() &&`, immediate invocation of an owned nominal
+or stored-lambda field, `std::move(this.field)(arguments)`, instead operates in
+place. Its
+remaining resources stay in the outer receiver through that receiver's full
+expression, including later arguments and failure cleanup. Grouping the moved
+callee does not change this rule. The field becomes unavailable for subsequent
+use; retaining its storage does not permit another invocation. The selected
+call must return an owned value or void, not a reference or tracked borrow.
+This rule covers writable, ordinary field-only paths rooted in consuming
+`this`, not reference fields. It also permits immediate invocation through a
+transparent mutable unique-owner accessor, as in
+`std::move(*this.target)(arguments)`. The compiler must prove that the exact
+nonvirtual, zero-argument accessor returns the checked private unique-owner
+borrow of one direct field. The owner wrapper must itself be a writable field
+of consuming `this`. Its availability is consumed while its physical cleanup
+stays with the outer receiver. Only the accessor's temporary result loan is
+used for invocation; an unrelated live alias still conflicts. Ordinary
+references, raw-pointer dereferences, local owners, and extraction of the
+pointee do not gain an ownership-transfer capability from this rule.
+Stored lambdas keep their exact closure identity and read-invocation policy;
+fixed arguments and expanded argument packs use the same retained checkpoint.
+Explicit extraction into a local remains an actual ownership transfer and
+retains that local's ordinary cleanup scope.
+
+An explicitly moved lambda with owned captures uses the same full-expression
+lifetime. Its environment is moved before argument evaluation, read invocation
+aliases that environment, and capture cleanup runs exactly once at the normal
+or failure boundary. This also applies to an exact lambda moved into a generic
+by-value parameter and invoked there: that callee's full expression owns the
+receiver lifetime, not the caller's surrounding expression. Capture fields
+remain immutable; consuming the environment does not make its fields mutable.
+
+Source-defined `std::function<R(Args...) &&>` and
+`std::move_only_function<R(Args...) &&>` use this rule for erased invocation.
+The wrapper is invoked through an explicit move, and its remaining captures
+survive until the caller's enclosing full expression ends, including later
+sibling evaluation and failure cleanup. This does not permit consuming through
+an arbitrary borrow. Final combined validation and release remain tracked by
+L-CALL-02.
 
 Fixed-array ownership state is tracked per constant element. Moving element
 `i` leaves a different constant element `j` available, but makes the containing
@@ -811,9 +867,14 @@ unavailable and the final owner cleans the environment exactly once.
 
 This is not lambda-result inference or type erasure. A transported lambda must
 be movable and its capture state cannot contain a reference, tracked borrow, or
-raw pointer. Fresh-lambda inferred returns, nested or arbitrary wrappers,
-implicit copies, namespace/static storage, owner extraction, callable
-references, and erased callable containers remain unsupported.
+raw pointer. The examples above describe the original exact-transport minimum,
+not a restriction to one-field owners: ordinary direct by-value generic
+parameters, concrete field storage, final value packs, and explicit interface
+erasure also support source-defined owning callback wrappers. Each concrete
+body must retain its exact callable identity, ownership, and cleanup schedule.
+Fresh-lambda inferred returns, implicit ownership copies, namespace/static
+closure storage, borrowed captures, and callable-reference erasure remain
+outside this contract.
 
 The semantic model records which immutable bindings are explicitly moved. The
 C++ backend must not equate those bindings with physical C++ `const`, while HIR
@@ -831,26 +892,24 @@ pack elements. A pack containing any move-only element is consumed as one unit
 by its first `values...` expansion, so forwarding it again is a use-after-move
 error. Copyable packs may still be forwarded repeatedly; individual pack
 elements cannot yet be named or moved separately.
+Mutable-reference elements likewise permit repeated exact forwarding: each
+element retains an exclusive entry capability over its caller-owned referent,
+not ownership of that referent. Ordinary call-site exclusivity rules reject
+overlapping mutable/mutable and mutable/read-only inputs before the pack is
+formed. Forwarding does not make the immutable grouped binding reseatable.
 
 ### Stateless Namespace Function Items
 
-A contextually selected namespace free-function item owns no capture
+A selected namespace free-function item owns no capture
 environment, storage address, or native resource. Its nominal identity and
 exact signature are compile-time state, so it is trivially copyable, movable,
-destructible, transfer-capable, and share-capable. The current language does
-not expose any of those lifecycle operations as general value transport:
-formation is admitted only as the immediate argument of an existing confined
-generic-callable or managed-thread task contract.
-
-This bounded rule is intentional. It lets an algorithm invoke a named
-function and lets a managed worker receive the same exact zero-state task
-without introducing storage lifetime, pointer provenance, ABI-address, or
-erasure rules. A function item cannot be captured, retained in a local or
-field, independently returned, or relayed through the general owned callable
-transport above. A confined client's existing exact same-type return may carry
-the item only to an unbound temporary that the caller explicitly discards. The
-managed-thread boundary consumes the immediate item under its existing once-
-task contract; no user-visible moved-from function-item value remains.
+destructible, transfer-capable, and share-capable. An unambiguous eligible name
+can initialize a local, pass through generic values and fields, be copy-captured,
+and be returned with its exact type. Copies are independent zero-state values;
+explicit moves still obey the ordinary moved-binding rules. Signature reference
+types describe invocation arguments, not stored borrowed state. The existing
+managed-thread boundary retains its once-task contract. None of this exposes a
+native address or allows an unsafe function to become a safe callable.
 
 The planned `std::shared_ptr<T>` surface will be copyable and movable. Copying
 will add an owner; moving will transfer one handle. Shared ownership does not

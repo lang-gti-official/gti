@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -63,16 +64,27 @@ def main() -> int:
         if emission.returncode != 0:
             return fail(emission)
         generated = emitted.read_text(encoding="utf8")
-        required = (
-            "std::int32_t grouped = static_cast<std::int32_t>(7);",
-            "std::int32_t converted = "
-            "static_cast<std::int32_t>(static_cast<std::int32_t>(7));",
-            "::gti_internal::backend::numeric_cast<std::int8_t>(",
-            "payload_t empty = ",
-            "payload_t valued = ",
-            "__gti_variant_",
-        )
-        if any(fragment not in generated for fragment in required):
+        # Declaration defaults are now explicit constructor MIR, not flattened
+        # native in-class expressions. Bind each source field to its exact
+        # publication place and retain the staged grouped/conversion operations.
+        schedules = []
+        for field, converted in (("grouped", False), ("converted", True)):
+            place = re.search(r"auto &(__gti_mir_p_\d+) = \(\*this\)\." + field + r";", generated)
+            if place is None:
+                return 1
+            rhs = r"static_cast<std::int32_t>\((?P=literal)\)" if converted else r"(?P=literal)"
+            schedules.append(
+                r"(?P<literal>__gti_mir_v_\d+) = static_cast<std::int32_t>\(7\);\s*"
+                r"(?P<value>__gti_mir_v_\d+) = " + rhs + r";\s*"
+                + re.escape(place.group(1)) + r" = (?P=value);\s*"
+                r"// GTI MIR full-expression boundary \d+"
+            )
+        schedules.extend((
+            r"mir_checked_convert_v1<std::int8_t>\(__gti_mir_v_\d+, &__gti_mir_v_\d+\)",
+            r"(?P<value>__gti_mir_v_\d+) = ::__gti_program::payload_t\{::__gti_program::payload_t::__gti_variant_\d+\{\}\};\s*\(\*this\)\.empty = std::move\((?P=value)\);",
+            r"(?P<value>__gti_mir_v_\d+) = ::__gti_program::payload_t\{::__gti_program::payload_t::__gti_variant_\d+\{__gti_mir_v_\d+\}\};\s*\(\*this\)\.valued = std::move\((?P=value)\);",
+        ))
+        if any(re.search(pattern, generated) is None for pattern in schedules):
             sys.stderr.write(
                 "generated C++ did not retain the verified field initializer "
                 "schedule\n"

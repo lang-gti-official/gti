@@ -734,8 +734,8 @@ int main() { return 0; }
                               .consumer = consumer->id};
             if (producer->kind == lang::MirInstructionKind::Move) {
               if (consumer->kind == lang::MirInstructionKind::Construct &&
-                  !instruction.destination &&
-                  !instruction.preparedParameterDrop) {
+                  instruction.destination &&
+                  instruction.preparedParameterDrop) {
                 directConstructorShape = shape;
               } else {
                 namedShape = shape;
@@ -782,7 +782,7 @@ int main() { return 0; }
   }
   expect(namedShape && freshShape && directConstructorShape && directShape &&
              directFreshShape && directFreshReturnShape,
-         "the transport fixture should retain prepared and direct named, "
+         "the transport fixture should retain prepared named and constructor, "
          "staged-fresh, both direct-lambda, and direct fresh-return owning "
          "payload-enum schedules");
   if (!namedShape || !freshShape || !directConstructorShape || !directShape ||
@@ -1075,17 +1075,54 @@ int main() { return 0; }
         lang::MirInstruction *stage =
             findMutableInstruction(body, directConstructorShape.stage);
         expect(stage != nullptr && stage->lifecycle.size() == 1 &&
-                   !stage->destination && !stage->preparedParameterDrop,
-               "the direct constructor argument should retain its direct "
-               "CallInput transfer");
+                   stage->destination && stage->preparedParameterDrop &&
+                   stage->lifecycle.front().kind ==
+                       lang::MirLifecycleEventKind::Reparent &&
+                   stage->lifecycle.front().target ==
+                       *stage->preparedParameterDrop,
+               "the constructor argument should reparent into its exact "
+               "prepared CallInput slot before invocation");
         if (stage != nullptr && stage->lifecycle.size() == 1) {
-          stage->lifecycle.front().kind = lang::MirLifecycleEventKind::Reparent;
+          stage->lifecycle.front().kind =
+              lang::MirLifecycleEventKind::TransferOut;
+          stage->lifecycle.front().target = 0;
         }
       });
   expectRejected(
       wrongDirectConstructorTransfer, directConstructorShape.function,
-      "a direct constructor argument without its exact CallInput TransferOut "
-      "must fail admission");
+      "a constructor argument transferred away before its prepared CallInput "
+      "slot owns it must fail admission");
+
+  const lang::MirProgram wrongConstructorInvocationTransfer =
+      forge(directConstructorShape.function, [&](lang::MirBody &body) {
+        const lang::MirInstruction *stage =
+            findMutableInstruction(body, directConstructorShape.stage);
+        lang::MirInstruction *consumer =
+            findMutableInstruction(body, directConstructorShape.consumer);
+        expect(
+            stage != nullptr && stage->preparedParameterDrop &&
+                consumer != nullptr,
+            "constructor transport should retain preparation and invocation");
+        if (stage == nullptr || !stage->preparedParameterDrop ||
+            consumer == nullptr) {
+          return;
+        }
+        const auto transfer = std::find_if(
+            consumer->lifecycle.begin(), consumer->lifecycle.end(),
+            [&](const lang::MirLifecycleEvent &event) {
+              return event.kind == lang::MirLifecycleEventKind::TransferOut &&
+                     event.source == *stage->preparedParameterDrop;
+            });
+        expect(transfer != consumer->lifecycle.end(),
+               "constructor invocation should consume the prepared slot");
+        if (transfer != consumer->lifecycle.end()) {
+          transfer->kind = lang::MirLifecycleEventKind::Initialize;
+        }
+      });
+  expectRejected(wrongConstructorInvocationTransfer,
+                 directConstructorShape.function,
+                 "a constructor invocation without its prepared-argument "
+                 "TransferOut must fail admission");
 
   lang::MirProgram wrongConstructorOwner = frontend.mir;
   {
@@ -1354,6 +1391,131 @@ int main() { return 0; }
   expectRejected(wrongFreshReturnUse, directFreshReturnShape.function,
                  "a direct fresh payload construction returned through a "
                  "different value must fail admission");
+}
+
+void testProgramPlanValidationIsOperationScoped() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-operation-scoped-validation.gti", R"(
+class Base {
+  int32_t value = 3;
+public:
+  Base() {}
+};
+class Derived : public Base {
+  bool enabled = true;
+public:
+  Derived() : Base() {}
+};
+struct Other { int32_t value = 7; };
+int32_t identity(int32_t value) { return value; }
+int main() {
+  Derived derived{};
+  Other other{};
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "operation-scoped validation should have a valid multi-owner fixture");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  lang::MirProgram program = frontend.mir;
+  const lang::CppMirBodyEmissionMapRows rows = buildRows(frontend, program);
+  lang::CppMirBodyEmissionMap map(rows);
+  lang::CppMirBodyEmissionMetrics metrics;
+  const lang::CppMirBodyEmitter emitter(program, map, &metrics);
+  std::vector<lang::MirBodyAddress> fields;
+  for (const lang::MirClassInstance &owner : program.classInstances()) {
+    if (!owner.declaredFields.empty()) {
+      fields.push_back(
+          {.kind = lang::MirBodyKind::FieldInitializers, .owner = owner.id});
+    }
+  }
+  expect(fields.size() >= 3,
+         "the regression should exercise several independent field schedules");
+  if (fields.size() < 3) {
+    return;
+  }
+  bool nativeBase = false;
+  for (const lang::MirConstructorInstance &constructor :
+       program.constructorInstances()) {
+    const lang::MirClassInstance *owner =
+        program.findClassInstance(constructor.owner);
+    if (owner != nullptr && !owner->bases.empty()) {
+      nativeBase |=
+          emitter.supportsNativeContainedBaseConstruction(constructor.id);
+    }
+  }
+  expect(nativeBase,
+         "the fixture should exercise the nested native-base vocabulary proof");
+
+  metrics.programVerifications = 0;
+  const lang::CppMirProgramEmissionPlan plan = emitter.buildProgramPlan();
+  expect(plan.ready() && metrics.programVerifications == 1,
+         "one complete program plan should verify MIR exactly once, including "
+         "all initializer schedules and nested base vocabulary probes");
+  for (const lang::MirBodyAddress address : fields) {
+    const lang::CppMirBodyEmissionPlan *body = plan.find(address);
+    expect(body != nullptr && body->ready(),
+           "every field schedule should have an admitted child plan");
+    const std::size_t before = metrics.programVerifications;
+    expect(emitter.initializerSchedule(address).supported &&
+               metrics.programVerifications == before + 1,
+           "each standalone initializer request should validate MIR afresh");
+    expect(emitter.analyze(address).ready() &&
+               metrics.programVerifications == before + 2,
+           "each standalone analysis should validate MIR afresh");
+  }
+
+  const auto expectRejected = [&](std::string_view detail) {
+    const std::size_t before = metrics.programVerifications;
+    const lang::CppMirProgramEmissionPlan rejected = emitter.buildProgramPlan();
+    expect(!rejected.ready() &&
+               std::none_of(rejected.bodies().begin(), rejected.bodies().end(),
+                            [](const lang::CppMirBodyEmissionPlan &body) {
+                              return body.ready();
+                            }) &&
+               metrics.programVerifications == before + 1,
+           detail);
+    expect(!emitter.initializerSchedule(fields.front()).supported &&
+               metrics.programVerifications == before + 2,
+           "a standalone initializer cannot reuse prior successful validation");
+    expect(!emitter.analyze(fields.front()).ready() &&
+               metrics.programVerifications == before + 3,
+           "standalone analysis cannot reuse prior successful validation");
+  };
+
+  const lang::MirFunctionInstance *function = firstSourceFunction(program);
+  expect(function != nullptr, "the fixture should retain a source function");
+  if (function == nullptr) {
+    return;
+  }
+  lang::MirBody *body = lang::findMirBody(
+      program, {.kind = lang::MirBodyKind::Function, .owner = function->id});
+  expect(body != nullptr && !body->blocks.empty(),
+         "the unrelated function should provide an independent MIR mutation");
+  if (body == nullptr || body->blocks.empty()) {
+    return;
+  }
+  body->blocks.front().terminator.kind = lang::MirTerminatorKind::None;
+  expectRejected("invalid global MIR after successful admission must reject "
+                 "the whole plan without any independently Ready child");
+
+  program = frontend.mir;
+  const std::size_t beforeRestore = metrics.programVerifications;
+  expect(emitter.buildProgramPlan().ready() &&
+             metrics.programVerifications == beforeRestore + 1,
+         "restoring MIR should permit fresh admission on the same emitter");
+  lang::CppMirBodyEmissionMapRows duplicate = rows;
+  expect(!duplicate.types.empty(),
+         "the fixture should supply a type representation to duplicate");
+  if (duplicate.types.empty()) {
+    return;
+  }
+  duplicate.types.push_back(duplicate.types.front());
+  map = lang::CppMirBodyEmissionMap(std::move(duplicate));
+  expectRejected("a changed incoherent representation map must not reuse "
+                 "successful admission or leave any Ready child plan");
 }
 
 void testImmutableBodyPlanOutlivesAdmissionInputs() {
@@ -1929,15 +2091,47 @@ int32_t read_state() { return state; }
 }
 
 void testGlobalClassStorageMemberProjection() {
-  const lang::FrontendResult frontend =
-      analyze("cpp-mir-body-global-class-storage.gti", R"(
+  const auto passive = analyze("cpp-mir-body-passive-class-storage.gti", R"(
 class thing {
 public:
   thing() {}
   mut int32_t value = 0;
 };
-
 mut thing g = thing();
+int main() { g.value = 37; return g.value - 37; }
+)");
+  expect(passive.canGenerateCode(), "the passive class global remains valid");
+  if (passive.canGenerateCode()) {
+    const auto passiveRows = buildRows(passive, passive.mir);
+    const lang::CppMirBodyEmissionMap passiveMap(passiveRows);
+    const lang::CppMirBodyEmitter passiveEmitter(passive.mir, passiveMap);
+    expect(std::any_of(
+               passiveRows.symbols.begin(), passiveRows.symbols.end(),
+               [](const auto &row) {
+                 return row.kind ==
+                            lang::CppMirSymbolRepresentationKind::Storage &&
+                        row.type.kind == lang::SemanticType::Class &&
+                        !row.runtimeLifetimeSlot;
+               }) &&
+               passiveEmitter
+                   .initializerSchedule(
+                       {.kind = lang::MirBodyKind::Module, .owner = 0})
+                   .supported &&
+               !gti_test::emitCppText(passive).empty(),
+           "a passive class global should use its complete initializer "
+           "schedule without an invented runtime slot");
+  }
+  // Keep this initializer genuinely fallible: an empty constructor can now
+  // use the passive schedule and correctly needs no runtime lifetime slot.
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-body-global-class-storage.gti", R"(
+class thing {
+public:
+  thing(int32_t divisor) : value(int32_t(0) / divisor) {}
+  mut int32_t value = 0;
+};
+
+mut thing g = thing(int32_t(1));
 
 int32_t read_global() { return g.value; }
 void write_global(int32_t value) { g.value = value; }
@@ -3061,9 +3255,9 @@ int main() {
 
 void testCopyParameterFieldPublicationAdmission() {
   // A constructor member initializer may copy a passive generated-copy class
-  // directly from its exact by-value parameter. This MIR shape carries the
-  // parameter Load and full-expression boundary but no field Initialize; the
-  // member-initializer metadata is the publication authority.
+  // directly from its exact by-value parameter. MIR retains both the parameter
+  // Load and the explicit field Initialize; native member-list emission must
+  // prove and consume that exact publication rather than inventing it.
   lang::FrontendResult copyForm =
       analyzeWithStandardLibrary("cpp-mir-copy-parameter-field.gti", R"(
 class Payload {
@@ -3120,9 +3314,9 @@ int main() {
     const auto bindings =
         lang::cppMirCopyParameterFieldBindings(copyForm.mir, *copyConstructor);
     expect(bindings && bindings->size() == 1 &&
-               bindings->front().initializeInstruction == 0,
+               bindings->front().initializeInstruction != 0,
            "the copy-parameter field publication should prove the exact "
-           "metadata-only passive class shape");
+           "explicit passive class Initialize");
     expect(emitter.supportsBodyText(address),
            "the exact passive class copy must enter the ordinary constructor "
            "form");
@@ -3170,8 +3364,8 @@ int main() {
 
   // A scalar parameter published through a normal MIR Initialize remains a
   // body-local place when the constructor reads it again after the member
-  // initializer. Only the metadata-only passive class copy above may elide
-  // that carrier in favor of the native parameter.
+  // initializer. Only the exact single-use class copy above may elide that
+  // carrier in favor of the native parameter.
   lang::FrontendResult scalarReuse =
       analyzeWithStandardLibrary("cpp-mir-scalar-parameter-reuse.gti", R"(
 class ScalarReuse {
@@ -3357,6 +3551,8 @@ constexpr NamedTest kTests[] = {
     {"testExhaustiveEnumClassification", testExhaustiveEnumClassification},
     {"testReadyBodyAndRepresentationFailures",
      testReadyBodyAndRepresentationFailures},
+    {"testProgramPlanValidationIsOperationScoped",
+     testProgramPlanValidationIsOperationScoped},
     {"testImmutableBodyPlanOutlivesAdmissionInputs",
      testImmutableBodyPlanOutlivesAdmissionInputs},
     {"testHostedStartupOwnsRemainingAuthorityGap",

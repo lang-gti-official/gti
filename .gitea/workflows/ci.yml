@@ -165,7 +165,7 @@ jobs:
           fi
           "${apt[@]}" update
           "${apt[@]}" install -y --no-install-recommends \
-            build-essential clang cmake ninja-build llvm-18-dev libclang-18-dev
+            build-essential clang cmake ninja-build libcurl4-openssl-dev llvm-18-dev libclang-18-dev
           echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITEA_ENV}"
 
       - name: Install Ninja and LLVM 22
@@ -238,7 +238,7 @@ jobs:
           fi
           "${apt[@]}" update
           "${apt[@]}" install -y --no-install-recommends \
-            build-essential clang cmake ninja-build libclang-rt-18-dev llvm-18-dev libclang-18-dev
+            build-essential clang cmake ninja-build libcurl4-openssl-dev libclang-rt-18-dev llvm-18-dev libclang-18-dev
           echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITEA_ENV}"
 
       - name: Install Ninja and LLVM 22

@@ -2,6 +2,7 @@
 // clang-format off
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <backends/imgui_impl_opengl3.h>
 #include <cimgui.h>
 // clang-format on
 extern "C" {
@@ -36,6 +37,14 @@ int32_t gti_imgui_draw_data_valid(void) {
   const ImDrawData *data = igGetDrawData();
   return data != nullptr && data->Valid;
 }
+int32_t gti_imgui_opengl3_init(const char *glsl_version) {
+  return ImGui_ImplOpenGL3_Init(glsl_version) ? 1 : 0;
+}
+void gti_imgui_opengl3_new_frame(void) { ImGui_ImplOpenGL3_NewFrame(); }
+void gti_imgui_opengl3_render_draw_data(void) {
+  ImGui_ImplOpenGL3_RenderDrawData(igGetDrawData());
+}
+void gti_imgui_opengl3_shutdown(void) { ImGui_ImplOpenGL3_Shutdown(); }
 int32_t gti_imgui_begin(const char *title, int32_t *open, int32_t flags) {
   bool native_open = open == nullptr || *open != 0;
   const bool visible =

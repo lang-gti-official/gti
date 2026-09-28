@@ -96,7 +96,8 @@ std::vector<std::string> SignaturePrinter::parameterLabels(
       label += "mut ";
     }
     label += types.print(parameterTypes[index]);
-    if (preservePackSyntax && parameter != nullptr && parameter->pack) {
+    if (preservePackSyntax && parameter != nullptr && parameter->pack &&
+        parameterTypes[index].kind != SemanticType::TypePack) {
       label += "...";
     }
     if (parameter != nullptr && !parameter->name.lexeme.empty()) {
@@ -275,7 +276,11 @@ SignaturePrinter::classType(const ClassTypeInfo &info) const {
   }
   if (info.exactSpecializationPrimary == 0 && !info.genericParameters.empty()) {
     result += '<';
-    appendGenericParameters(result, info.genericParameters);
+    if (info.genericArgumentPatterns.empty()) {
+      appendGenericParameters(result, info.genericParameters);
+    } else {
+      appendTypes(result, info.genericArgumentPatterns);
+    }
     result += '>';
   }
   if (info.cOpaqueHandle) {
@@ -505,7 +510,8 @@ void SignaturePrinter::appendParameters(
       result += "mut ";
     }
     result += types.print(parameterTypes[index]);
-    if (preservePackSyntax && parameter != nullptr && parameter->pack) {
+    if (preservePackSyntax && parameter != nullptr && parameter->pack &&
+        parameterTypes[index].kind != SemanticType::TypePack) {
       result += "...";
     }
     if (parameter != nullptr && !parameter->name.lexeme.empty()) {

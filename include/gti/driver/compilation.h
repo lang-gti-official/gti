@@ -71,6 +71,8 @@ public:
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
   [[nodiscard]] const OptimizationOutputRequest &optimizationOutputs() const;
+  [[nodiscard]] bool requiresEntryPoint() const;
+  [[nodiscard]] CompilationRequest forExecutable() const;
 
 private:
   std::filesystem::path entryPath;
@@ -81,6 +83,7 @@ private:
   std::vector<PackageSourceRoot> packageSourceRootSet;
   ConfigurationFlags configuredFlags;
   OptimizationOutputRequest requestedOptimizationOutputs;
+  bool entryPointRequired = false;
 };
 
 enum class CompilationStatus {

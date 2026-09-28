@@ -1,0 +1,81 @@
+#include <std/functional>
+#include <std/memory>
+
+mut int destructions = 0;
+
+class Resource {
+  int value;
+public:
+  Resource(int value) : value(value) {}
+  ~Resource() { destructions++; }
+  int read() { return this.value; }
+};
+
+struct Add {
+  int offset = 3;
+  int operator()(int value) { return value + this.offset; }
+};
+
+class Authentication {
+  mut std::function<int(int)> login_callback{};
+public:
+  void set_login_callback(std::function<int(int)> callback) mut {
+    this.login_callback = std::move(callback);
+  }
+  void set_auth_login_callback<Callback>(Callback callback) mut
+    requires std::copy_constructible<Callback> {
+    this.login_callback.replace(std::move(callback));
+  }
+  int login(int value) { return this.login_callback(value); }
+};
+
+void configure(mut Authentication& auth) {
+  int offset = 7;
+  auth.set_auth_login_callback([offset](int value) -> int {
+    return offset + value;
+  });
+}
+
+int main() {
+  int offset = 7;
+  auto callback = [offset](int value) -> int { return value + offset; };
+  mut std::function<int(int)> handler{std::move(callback)};
+  auto copy = handler.clone();
+  handler.reset();
+  if (!handler.empty() || copy(5) != 12) { return 1; }
+  mut Authentication auth{};
+  auth.set_login_callback(std::move(copy));
+  if (auth.login(2) != 9) { return 2; }
+  auto replacement = [](int value) -> int { return value * 2; };
+  handler.replace(std::move(replacement));
+  if (handler(5) != 10) { return 3; }
+  auto action = []() -> void {};
+  std::function<void()> void_handler{std::move(action)};
+  void_handler();
+  auto void_copy = void_handler.clone();
+  void_copy();
+  Add addition{};
+  handler.replace(std::move(addition));
+  if (handler(5) != 8) { return 4; }
+  auto owned = std::make_unique<int>(11);
+  auto owning_callback = [owned = std::move(owned)](int value) -> int {
+    return *owned + value;
+  };
+  mut std::move_only_function<int(int)> move_handler{std::move(owning_callback)};
+  if (move_handler(2) != 13) { return 5; }
+  mut auto moved_handler = std::move(move_handler);
+  if (moved_handler(3) != 14) { return 6; }
+  Resource resource{17};
+  auto cleanup_callback = [resource = std::move(resource)](int value) -> int {
+    return resource.read() + value;
+  };
+  moved_handler.replace(std::move(cleanup_callback));
+  if (moved_handler.empty() || moved_handler(2) != 19 || destructions != 0) { return 7; }
+  moved_handler.reset();
+  if (!moved_handler.empty() || destructions != 1) { return 8; }
+  moved_handler.reset();
+  if (destructions != 1) { return 9; }
+  configure(auth);
+  if (auth.login(5) != 12) { return 10; }
+  return 0;
+}

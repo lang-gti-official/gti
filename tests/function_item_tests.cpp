@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -469,14 +470,51 @@ void testContextualDiagnosticsAndBoundaries() {
 void work() {}
 int main() {
   auto stored = work;
-  auto captured = [selected = work]() -> void {};
+  auto captured = [stored]() -> void { stored(); };
+  stored();
+  captured();
   return 0;
 }
 )");
-  expect(!noContext.canGenerateCode() && hasCode(noContext, "GTI-S2076") &&
-             hasMessage(noContext, "outside an exact callable"),
-         "a bare function name should remain invalid without an exact "
-         "callable or native-function context, including capture storage");
+  if (!noContext.canGenerateCode())
+    printDiagnostics(noContext);
+  expect(noContext.canGenerateCode(),
+         "an unambiguous namespace function can be stored and captured with "
+         "its exact callable identity");
+
+  const std::string ambiguousStorageSource =
+      "void work(int value) {}\nvoid work(bool value) {}\n"
+      "int main() { auto item = work; return 0; }\n";
+  const auto ambiguousStorage =
+      analyze("ambiguous-storage.gti", ambiguousStorageSource);
+  expect(!ambiguousStorage.canGenerateCode() &&
+             hasCode(ambiguousStorage, "GTI-S2090") &&
+             hasHint(ambiguousStorage, "explicitly typed lambda"),
+         "an overload set cannot become a stored value without exact context");
+  bool exactAmbiguity = false;
+  for (const auto &diagnostic : ambiguousStorage.diagnostics) {
+    if (diagnostic.code != "GTI-S2090")
+      continue;
+    exactAmbiguity =
+        diagnostic.phase == lang::DiagnosticPhase::Semantics &&
+        diagnostic.primary.source.ends_with("ambiguous-storage.gti") &&
+        diagnostic.primary.start == ambiguousStorageSource.rfind("work") &&
+        diagnostic.primary.end == diagnostic.primary.start + 4 &&
+        diagnostic.related.size() == 2 && diagnostic.fixes.empty();
+  }
+  expect(exactAmbiguity, "function-item ambiguity preserves its source span, "
+                         "both candidates and no speculative fix-it");
+  for (const std::string declaration :
+       {"[[unsafe]] void work() {}", "void work<T>(T value) {}",
+        "extern \"C\" { void work(); }"}) {
+    const auto invalid =
+        analyze("ineligible-stored-item.gti",
+                declaration + "\nint main() { auto item = work; return 0; }\n");
+    expect(!invalid.canGenerateCode() && hasCode(invalid, "GTI-S2090") &&
+               !hasCode(invalid, "GTI-B0001"),
+           "stored items cannot erase unsafe contracts, infer generic targets "
+           "without context, or acquire a C ABI address");
+  }
 
   const lang::FrontendResult mismatch =
       analyze("function-item-mismatch.gti", R"(
@@ -517,12 +555,14 @@ Function relay<Function>(Function function) {
 void task() {}
 int main() {
   auto escaped = relay(task);
+  escaped();
   return 0;
 }
 )");
-  expect(!escape.canGenerateCode() && hasCode(escape, "GTI-S2090") &&
-             hasMessage(escape, "requires an exact confined callable"),
-         "a function item should not enter general owned generic transport");
+  if (!escape.canGenerateCode())
+    printDiagnostics(escape);
+  expect(escape.canGenerateCode(),
+         "a stateless function item can enter exact owned generic transport");
 
   const lang::FrontendResult storedResult = analyze("function-item-storage.gti",
                                                     R"(
@@ -532,15 +572,16 @@ void observe(int32_t& value) {}
 int main() {
   mut std::vector<int32_t> values = std::vector<int32_t>({1});
   auto retained = std::for_each(values, observe);
+  int value = 7;
+  retained(value);
   return 0;
 }
 )");
-  expect(!storedResult.canGenerateCode() &&
-             hasCode(storedResult, "GTI-S2090") &&
-             hasMessage(storedResult, "cannot be stored in an ordinary") &&
-             hasHint(storedResult, "Pass the namespace function name"),
-         "a function item returned by a confined algorithm should not become "
-         "an ordinary stored value");
+  if (!storedResult.canGenerateCode())
+    printDiagnostics(storedResult);
+  expect(storedResult.canGenerateCode(),
+         "a function item returned by a confined algorithm can be retained "
+         "and invoked with its original exact signature");
 
   const lang::FrontendResult native = analyze("function-item-native.gti", R"(
 using Callback = () -> void;
@@ -579,10 +620,39 @@ int main() { return choose(1) - 2; }
          "ordinary exact overloaded direct calls should remain unchanged");
 }
 
+void testConstructorValueArguments() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/function_item_construction.gti";
+  std::ifstream input(path);
+  expect(input.good(), "constructor function-item fixture exists");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto valid = analyze("function-item-construction.gti", source);
+  if (!valid.canGenerateCode())
+    printDiagnostics(valid);
+  expect(valid.canGenerateCode(),
+         "parenthesized constructors analyze a deferred function item and "
+         "its following values in every concrete generic body");
+
+  const auto ambiguous = analyze("ambiguous-constructor-item.gti", R"(
+class Box {
+public:
+  Box<Callable>(Callable callable) {}
+};
+void work(int value) {}
+void work(bool value) {}
+int main() { auto value = Box(work); return 0; }
+)");
+  expect(!ambiguous.canGenerateCode() && hasCode(ambiguous, "GTI-S2090") &&
+             !hasCode(ambiguous, "GTI-B0001"),
+         "an ambiguous constructor function argument fails in semantics, "
+         "not as an unresolved MIR value");
+}
+
 } // namespace
 
 int main() {
   testGenericAndManagedPipeline();
   testContextualDiagnosticsAndBoundaries();
+  testConstructorValueArguments();
   return failures == 0 ? 0 : 1;
 }

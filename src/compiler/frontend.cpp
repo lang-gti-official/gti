@@ -42,6 +42,7 @@ std::string cacheContext(const FrontendOptions &options) {
     result += flag;
   }
   result += '\n';
+  result += options.requireEntryPoint ? "entry:required\n" : "entry:optional\n";
   result += options.target.dataLayout.supported() ? "layout:supported"
                                                   : "layout:unsupported";
   for (std::size_t index = 0; index < targetScalarKindCount; ++index) {
@@ -351,6 +352,17 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
             .count());
   }
   append(result.diagnostics, semantic.errors());
+  if (options.requireEntryPoint && result.sourceValid && result.syntaxValid &&
+      result.semanticValid && !options.completionOffset) {
+    const SourceUnit *entry =
+        result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
+    if (auto diagnostic = semantic.model().executableEntryDiagnostic(
+            result.sourceGraph.entryUnit(),
+            entry == nullptr ? entryPath.string() : entry->path.string())) {
+      result.diagnostics.push_back(std::move(*diagnostic));
+      result.semanticValid = false;
+    }
+  }
   if (!result.semanticValid || options.completionOffset ||
       options.stopAfter == FrontendPhase::Semantics) {
     result.semantics = semantic.takeModel();

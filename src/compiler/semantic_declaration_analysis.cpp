@@ -2,6 +2,22 @@
 
 namespace lang {
 
+namespace {
+std::optional<ReceiverMutability>
+signatureClassReceiver(const ClassDecl &owner) {
+  const auto &patterns = owner.genericArgumentPatterns();
+  if (patterns.size() != 1 || !patterns.front().isFunctionSignature() ||
+      owner.isForwardDeclaration() ||
+      (owner.kind() != ClassKind::Class && owner.kind() != ClassKind::Struct)) {
+    return std::nullopt;
+  }
+  const auto &qualifier = patterns.front().functionSignatureQualifier;
+  return !qualifier                   ? ReceiverMutability::ReadOnly
+         : qualifier->lexeme == "mut" ? ReceiverMutability::Mutable
+                                      : ReceiverMutability::Consuming;
+}
+} // namespace
+
 auto SemanticVisitor::Impl::collectRootNativeStorageSymbols(
     const StmtList &statements) -> void {
   for (const StmtPtr &statement : statements) {
@@ -576,16 +592,20 @@ auto SemanticVisitor::Impl::registerTypeAlias(
     AccessModifier access) -> void {
   currentSourceUnit = sourceUnitFor(alias.name());
   const std::string qualified = qualifiedName(lookupScope, alias.name().lexeme);
+  const auto duplicate =
+      std::find_if(typeAliases.begin(), typeAliases.end(),
+                   [&](const RegisteredTypeAlias &other) {
+                     return other.qualifiedName == qualified &&
+                            other.ownerDeclaration == owner;
+                   });
   if (namespaces.contains(qualified) || namespaceAliases.contains(qualified) ||
-      typeAliasIds.contains(qualified)) {
+      duplicate != typeAliases.end()) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2006", DiagnosticPhase::Semantics, alias.name(),
         "Duplicate declaration of '" + alias.name().lexeme + "'.");
-    if (const auto existing = typeAliasIds.find(qualified);
-        existing != typeAliasIds.end()) {
-      diagnostic.related.push_back(
-          {tokenSpan(typeAliases[existing->second - 1].declaration->name()),
-           "Previous declaration is here."});
+    if (duplicate != typeAliases.end()) {
+      diagnostic.related.push_back({tokenSpan(duplicate->declaration->name()),
+                                    "Previous declaration is here."});
     }
     diagnostics.emplace_back(std::move(diagnostic));
     return;
@@ -602,7 +622,9 @@ auto SemanticVisitor::Impl::registerTypeAlias(
   }
 
   const TypeAliasId id = typeAliases.size() + 1;
-  typeAliasIds.emplace(qualified, id);
+  if (owner == nullptr) {
+    typeAliasIds.emplace(qualified, id);
+  }
   typeAliases.push_back({.sourceUnit = currentSourceUnit,
                          .declaration = &alias,
                          .ownerDeclaration = owner,
@@ -612,8 +634,10 @@ auto SemanticVisitor::Impl::registerTypeAlias(
                          .access = access,
                          .compilerPrivate = compilerPrivateDeclaration(
                              currentSourceUnit, namespaceScope)});
-  publishTypeAlias(qualified, id, currentSourceUnit,
-                   typeAliases.back().compilerPrivate);
+  if (owner == nullptr) {
+    publishTypeAlias(qualified, id, currentSourceUnit,
+                     typeAliases.back().compilerPrivate);
+  }
 }
 
 auto SemanticVisitor::Impl::registerClassTypeAliases(
@@ -711,8 +735,10 @@ auto SemanticVisitor::Impl::resolveTypeAliases() -> void {
   visibleTypeAliasIds.clear();
   for (TypeAliasId id = 1; id <= typeAliases.size(); ++id) {
     const RegisteredTypeAlias &alias = typeAliases[id - 1];
-    publishTypeAlias(alias.qualifiedName, id, alias.sourceUnit,
-                     alias.compilerPrivate);
+    if (alias.ownerDeclaration == nullptr) {
+      publishTypeAlias(alias.qualifiedName, id, alias.sourceUnit,
+                       alias.compilerPrivate);
+    }
   }
 }
 
@@ -1188,7 +1214,8 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
 
 auto SemanticVisitor::Impl::resolveTypeAliasDependencies(
     const TypeRef &type, const std::vector<std::string> &scope) -> void {
-  if (type.name.last().kind == TokenKind::IDENTIFIER) {
+  if (type.name.last().kind == TokenKind::IDENTIFIER &&
+      !resolveTypeParameter(type.name)) {
     if (const std::optional<ResolvedTypeAlias> dependency =
             resolveTypeAliasPath(type.name, scope)) {
       (void)resolveTypeAlias(dependency->id, &type.name.last());
@@ -1843,6 +1870,140 @@ auto SemanticVisitor::Impl::registerClassAttributes(
   return result;
 }
 
+auto SemanticVisitor::Impl::makeClassPatternParameters(
+    const ClassDecl &declaration, const std::vector<std::string> &scope)
+    -> std::vector<GenericParameterInfo> {
+  std::vector<GenericParameter> parameters;
+  const auto collect = [&](const auto &self, const TypeRef &type) -> void {
+    if (type.isFunctionSignature()) {
+      self(self, type.arguments.back());
+      for (std::size_t index = 0; index + 1 < type.arguments.size(); ++index) {
+        self(self, type.arguments[index]);
+      }
+      return;
+    }
+    if (type.name.segments.size() == 1 &&
+        type.name.last().kind == TokenKind::IDENTIFIER &&
+        type.arguments.empty() &&
+        type.genericArgumentSyntax != GenericArgumentSyntax::Value) {
+      const auto found = std::find_if(
+          parameters.begin(), parameters.end(), [&](const auto &parameter) {
+            return parameter.name.lexeme == type.name.last().lexeme;
+          });
+      if (found == parameters.end()) {
+        parameters.push_back(
+            {.name = type.name.last(), .pack = type.packExpansion});
+      } else if (found->pack.has_value() != type.packExpansion.has_value()) {
+        report(type.name.last(),
+               "A pattern parameter cannot be both a type and a type pack.",
+               "GTI-S2023");
+      }
+    }
+    for (const TypeRef &argument : type.arguments) {
+      self(self, argument);
+    }
+  };
+  for (const TypeRef &pattern : declaration.genericArgumentPatterns()) {
+    collect(collect, pattern);
+  }
+  if (parameters.empty()) {
+    report(declaration.name(),
+           "A generic class argument pattern must declare a type parameter.",
+           "GTI-S2023");
+  }
+  // Binding order is independent of public argument order. The ordinary
+  // generic model retains its one-final-pack invariant.
+  std::stable_partition(parameters.begin(), parameters.end(),
+                        [](const auto &parameter) { return !parameter.pack; });
+  return makeGenericParameters(parameters, declaration.name(), scope);
+}
+
+auto SemanticVisitor::Impl::resolveClassArgumentPatterns(ClassId id) -> void {
+  ClassInfo &owner = classInfo(id);
+  if (owner.declaration->genericArgumentPatterns().empty() ||
+      owner.argumentPatternsResolved) {
+    return;
+  }
+  if (owner.argumentPatternsResolving) {
+    report(owner.name, "Generic class argument pattern forms a type cycle.",
+           "GTI-S2023");
+    return;
+  }
+  owner.argumentPatternsResolving = true;
+  const auto savedNamespace = currentNamespace;
+  const auto savedClass = currentClass;
+  const auto savedSource = currentSourceUnit;
+  currentNamespace = owner.namespaceScope;
+  currentClass = id;
+  currentSourceUnit = owner.sourceUnit;
+  beginTypeParameterScope(owner.genericParameters);
+  for (const TypeRef &pattern : owner.declaration->genericArgumentPatterns()) {
+    resolveTypeAliasDependencies(pattern, owner.namespaceScope);
+    validateType(pattern);
+    owner.genericArgumentPatterns.push_back(typeOf(pattern));
+  }
+  endTypeParameterScope();
+  currentNamespace = savedNamespace;
+  currentClass = savedClass;
+  currentSourceUnit = savedSource;
+
+  const auto project = [&](const auto &self, const SemanticType &type,
+                           std::vector<std::size_t> path) -> void {
+    if (type.kind == SemanticType::TypeParameter ||
+        type.kind == SemanticType::TypePack) {
+      const auto found = std::find_if(
+          owner.genericParameters.begin(), owner.genericParameters.end(),
+          [&](const auto &parameter) {
+            return parameter.id == type.genericParameterId;
+          });
+      if (found != owner.genericParameters.end() &&
+          found->typeArgumentPath.empty()) {
+        found->typeArgumentPath = std::move(path);
+      }
+      return;
+    }
+    for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+      auto child = path;
+      child.push_back(index);
+      self(self, type.arguments[index], std::move(child));
+    }
+  };
+  for (std::size_t index = 0; index < owner.genericArgumentPatterns.size();
+       ++index) {
+    project(project, owner.genericArgumentPatterns[index], {index});
+  }
+  owner.argumentPatternsResolving = false;
+  owner.argumentPatternsResolved = true;
+}
+
+auto SemanticVisitor::Impl::classArgumentPatternsMatch(
+    const ClassInfo &owner, const std::vector<SemanticType> &arguments) const
+    -> bool {
+  if (arguments.size() != owner.genericArgumentPatterns.size()) {
+    return false;
+  }
+  const auto substitution =
+      classSubstitution(SemanticType::classType(owner.id, arguments));
+  for (std::size_t index = 0; index < arguments.size(); ++index) {
+    const auto &pattern = owner.genericArgumentPatterns[index];
+    if (pattern.kind == SemanticType::FunctionSignature &&
+        arguments[index].kind == SemanticType::FunctionSignature &&
+        pattern.signatureReceiver != arguments[index].signatureReceiver) {
+      return false;
+    }
+    // Symbolic generic bodies are rechecked with concrete arguments. Preserve
+    // their public identity rather than inventing components of an opaque S.
+    if (containsOpenTypeParameter(arguments[index])) {
+      continue;
+    }
+    if (substituteType(owner.genericArgumentPatterns[index], substitution) !=
+        arguments[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
                                             std::vector<std::string> scope)
     -> void {
@@ -1861,10 +2022,30 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       }
       const std::string qualified =
           qualifiedName(scope, classDecl->name().lexeme);
+      ClassId familyPrimary = 0;
+      if (const auto existing = classIds.find(qualified);
+          existing != classIds.end()) {
+        const ClassInfo &first = classInfo(existing->second);
+        const auto receiver = signatureClassReceiver(*classDecl);
+        if (receiver && signatureClassReceiver(*first.declaration) &&
+            first.kind == classDecl->kind() &&
+            samePackageOwnershipDomain(first.sourceUnit, currentSourceUnit) &&
+            std::none_of(first.signatureFamilyMembers.begin(),
+                         first.signatureFamilyMembers.end(),
+                         [&](ClassId member) {
+                           return signatureClassReceiver(
+                                      *classInfo(member).declaration) ==
+                                  receiver;
+                         }) &&
+            signatureClassReceiver(*first.declaration) != receiver) {
+          familyPrimary = existing->second;
+        }
+      }
       if (namespaces.contains(qualified) ||
           namespaceAliases.contains(qualified) ||
           typeAliasIds.contains(qualified) || enumIds.contains(qualified) ||
-          classIds.contains(qualified) || conceptIds.contains(qualified)) {
+          (classIds.contains(qualified) && familyPrimary == 0) ||
+          conceptIds.contains(qualified)) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2006", DiagnosticPhase::Semantics, classDecl->name(),
             "Duplicate declaration of '" + classDecl->name().lexeme + "'.");
@@ -1880,19 +2061,24 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
 
       const ClassId id = classes.size() + 1;
       std::vector<GenericParameterInfo> genericParameters =
-          makeGenericParameters(classDecl->genericParameters(),
-                                classDecl->name(), scope);
-      for (const GenericParameter &parameter : classDecl->genericParameters()) {
-        if (parameter.pack) {
-          report(*parameter.pack,
-                 "Generic type packs are currently limited to functions and "
-                 "methods.",
+          classDecl->genericArgumentPatterns().empty()
+              ? makeGenericParameters(classDecl->genericParameters(),
+                                      classDecl->name(), scope)
+              : makeClassPatternParameters(*classDecl, scope);
+      for (std::size_t index = 0; index < genericParameters.size(); ++index) {
+        if (genericParameters[index].pack &&
+            (index + 1 != genericParameters.size() ||
+             genericValueParameterCount(genericParameters) != 0)) {
+          report(genericParameters[index].name,
+                 "A class type pack must be the final generic parameter and "
+                 "cannot be combined with value parameters.",
                  "GTI-S2023");
         }
       }
       if (classDecl->kind() == ClassKind::Union) {
-        if (!classDecl->genericParameters().empty()) {
-          report(classDecl->genericParameters().front().name,
+        if (!genericParameters.empty() ||
+            !classDecl->genericArgumentPatterns().empty()) {
+          report(classDecl->name(),
                  "Unions cannot declare generic parameters in the passive "
                  "storage model.",
                  "GTI-S2066");
@@ -1905,7 +2091,8 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
         }
       }
       classIds.emplace(qualified, id);
-      publishClass(qualified, id, currentSourceUnit);
+      publishClass(qualified, familyPrimary == 0 ? id : familyPrimary,
+                   currentSourceUnit);
       classDeclIds.emplace(classDecl, id);
       CompilerCapabilityTypeKind compilerCapability =
           CompilerCapabilityTypeKind::None;
@@ -2003,6 +2190,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
                     .name = classDecl->name(),
                     .kind = classDecl->kind(),
                     .namespaceScope = scope,
+                    .signatureFamilyPrimary = familyPrimary,
                     .genericParameters = std::move(genericParameters),
                     .cAbiRecord = capabilityPolicies.cAbiRecord,
                     .cAbiAttribute = capabilityPolicies.cAbiSource,
@@ -2015,6 +2203,13 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
                     .compilerPrivate =
                         compilerPrivateDeclaration(currentSourceUnit, scope),
                     .compilerCapability = compilerCapability});
+      if (familyPrimary != 0) {
+        auto &members = classInfo(familyPrimary).signatureFamilyMembers;
+        if (members.empty()) {
+          members.push_back(familyPrimary);
+        }
+        members.push_back(id);
+      }
     } else if (const auto *namespaceDecl =
                    stmtAs<NamespaceDecl>(statement.get())) {
       currentSourceUnit = sourceUnitFor(namespaceDecl->name());
@@ -2049,6 +2244,24 @@ auto SemanticVisitor::Impl::canonicalExactSpecializationType(
       owner.exactValueArguments));
 }
 
+auto SemanticVisitor::Impl::selectSignatureClassDefinition(
+    ClassId id, const std::vector<SemanticType> &arguments) const -> ClassId {
+  if (id == 0 || id > classes.size() || arguments.size() != 1 ||
+      arguments.front().kind != SemanticType::FunctionSignature) {
+    return id;
+  }
+  const auto primary = classInfo(id).signatureFamilyPrimary;
+  const auto &family = classInfo(primary == 0 ? id : primary);
+  for (ClassId member : family.signatureFamilyMembers) {
+    const auto &candidate = classInfo(member);
+    if (signatureClassReceiver(*candidate.declaration) ==
+        arguments.front().signatureReceiver) {
+      return member;
+    }
+  }
+  return id;
+}
+
 auto SemanticVisitor::Impl::selectExactClassSpecialization(
     SemanticType type) const -> SemanticType {
   for (SemanticType &argument : type.arguments) {
@@ -2065,6 +2278,7 @@ auto SemanticVisitor::Impl::selectExactClassSpecialization(
       classInfo(type.classId).exactSpecializationPrimary != 0) {
     return type;
   }
+  type.classId = selectSignatureClassDefinition(type.classId, type.arguments);
   const SemanticType key = canonicalExactSpecializationType(type);
   const auto found = std::find_if(
       exactClassSpecializations.begin(), exactClassSpecializations.end(),
@@ -2223,8 +2437,7 @@ auto SemanticVisitor::Impl::registerClassSpecializations(
       valid = false;
     }
 
-    const std::optional<ClassId> primaryId =
-        resolveClassPath(targetType.name, {});
+    std::optional<ClassId> primaryId = resolveClassPath(targetType.name, {});
     if (!primaryId || *primaryId == 0 || *primaryId > classes.size()) {
       reportExactSpecializationError(*declaration,
                                      "Unknown or invisible generic primary '" +
@@ -2265,6 +2478,7 @@ auto SemanticVisitor::Impl::registerClassSpecializations(
     if (!resolved.valid) {
       continue;
     }
+    primaryId = selectSignatureClassDefinition(*primaryId, resolved.types);
     std::vector<SemanticType> typeArguments = resolved.types;
     for (SemanticType &argument : typeArguments) {
       argument = canonicalExactSpecializationType(std::move(argument));
@@ -2635,6 +2849,14 @@ auto SemanticVisitor::Impl::registerNamespaceSymbols(
       }
       if (const auto found = classDeclIds.find(classDecl);
           found != classDeclIds.end()) {
+        const auto family = classInfo(found->second).signatureFamilyPrimary;
+        if (family != 0) {
+          publishNamespaceSymbol(qualifiedName(scope, classDecl->name().lexeme),
+                                 Symbol{.type = SemanticType::typeName(family),
+                                        .sourceUnit = currentSourceUnit,
+                                        .declaration = classInfo(family).name});
+          continue;
+        }
         declareNamespaceSymbol(scope, classDecl->name(),
                                SemanticType::typeName(found->second), false);
       }
@@ -4759,6 +4981,76 @@ auto SemanticVisitor::Impl::globalReturnBorrowPlace(
   return valid ? result : std::nullopt;
 }
 
+auto SemanticVisitor::Impl::ownedPointeeReturnProjection(
+    const FunctionInfo &function) -> std::optional<OwnedPointeeProjection> {
+  // Deliberately bounded to a transparent accessor. Merely returning a
+  // receiver-derived reference, or performing a borrow somewhere in a larger
+  // body, does not establish the identity of uniquely owned storage.
+  if (function.ownerClass == 0 || function.staticMember ||
+      function.virtualMethod || function.pureVirtual ||
+      function.overrideMethod || function.intrinsic != IntrinsicKind::None ||
+      !function.parameterTypes.empty() || function.parameterPack ||
+      function.declaration == nullptr || !function.declaration->body() ||
+      function.declaration->body()->statements().size() != 1 ||
+      function.returnType.kind != SemanticType::Reference ||
+      function.returnType.arguments.size() != 1) {
+    return std::nullopt;
+  }
+  const auto *returned = stmtAs<ReturnStmt>(
+      function.declaration->body()->statements().front().get());
+  const auto *call =
+      returned == nullptr ? nullptr : exprAs<Call>(returned->value().get());
+  if (call == nullptr || call->arguments().size() != 1 ||
+      !call->typeArguments().empty()) {
+    return std::nullopt;
+  }
+  const auto *field = exprAs<Get>(call->arguments().front().get());
+  if (field == nullptr || field->access().kind != TokenKind::DOT ||
+      exprAs<This>(field->object().get()) == nullptr) {
+    return std::nullopt;
+  }
+  const auto &owner = classInfo(function.ownerClass);
+  const auto member = owner.members.find(field->name().lexeme);
+  if (member == owner.members.end() ||
+      member->second.symbol.variableDeclaration == nullptr ||
+      member->second.symbol.bindingKind != SemanticBindingKind::Field ||
+      member->second.symbol.ownerClass != function.ownerClass) {
+    return std::nullopt;
+  }
+  const Symbol &storage = member->second.symbol;
+  const SemanticType storageType =
+      substituteType(storage.type, instanceTypeSubstitution);
+  if (storageType.kind != SemanticType::UniqueOwner ||
+      storageType.arguments.size() != 1 ||
+      storageType.arguments.front() != function.returnType.arguments.front()) {
+    return std::nullopt;
+  }
+  const bool mutableBorrow =
+      function.returnType.referenceAccess == AccessMode::Mutable;
+  if (mutableBorrow &&
+      (!storage.assignable || function.declaration->receiverMutability() !=
+                                  ReceiverMutability::Mutable)) {
+    return std::nullopt;
+  }
+  const auto enclosingNamespace = currentNamespace;
+  const auto enclosingSourceUnit = currentSourceUnit;
+  const auto enclosingClass = currentClass;
+  currentNamespace = function.namespaceScope;
+  currentSourceUnit = function.sourceUnit;
+  currentClass = function.ownerClass;
+  const auto intrinsic = intrinsicCandidate(call->callee());
+  currentNamespace = enclosingNamespace;
+  currentSourceUnit = enclosingSourceUnit;
+  currentClass = enclosingClass;
+  const auto expected = mutableBorrow ? IntrinsicKind::UniqueOwnerBorrowMut
+                                      : IntrinsicKind::UniqueOwnerBorrow;
+  if (!intrinsic || intrinsic->record().intrinsic != expected) {
+    return std::nullopt;
+  }
+  return OwnedPointeeProjection{.fields = {toolingSymbolFor(storage)},
+                                .borrowIntrinsic = expected};
+}
+
 auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
   BorrowSummaryCandidateIndex candidateIndex =
       functionCandidateBorrowSummaryIndex();
@@ -4794,8 +5086,84 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
     updated.returnBorrowParameter = summary.parameter;
     updated.returnBorrowAccess = summary.access;
     updated.returnBorrowPlace = summary.place;
+    updated.ownedPointeeProjection = ownedPointeeReturnProjection(updated);
     semanticModel.record(*declaration, updated);
     publishFunctionBorrowSummary(updated, candidateIndex);
+  }
+}
+
+auto SemanticVisitor::Impl::registerDesignatedConstructors() -> void {
+  designatedMoves.clear();
+  for (ClassInfo &owner : classes) {
+    if (owner.kind != ClassKind::Struct || owner.compilerPrivate ||
+        owner.cAbiRecord || owner.cOpaqueHandle || !owner.bases.empty() ||
+        !owner.constructors.empty() || owner.copyConstructor ||
+        owner.moveConstructor || owner.fields.empty()) {
+      continue;
+    }
+    std::vector<Parameter> parameters;
+    std::vector<ConstructorInitializer> initializers;
+    std::vector<SemanticType> types;
+    std::vector<const Call *> transfers;
+    bool eligible = true;
+    for (const FieldInfo &entry : owner.fields) {
+      const VariableDecl &field = *entry.declaration;
+      const auto member = owner.members.find(field.name().lexeme);
+      if (member == owner.members.end() ||
+          member->second.access != AccessModifier::Public ||
+          member->second.symbol.type.kind == SemanticType::Reference ||
+          member->second.symbol.type.kind == SemanticType::Array ||
+          typeTraits(member->second.symbol.type).containsBorrowedState) {
+        eligible = false;
+        break;
+      }
+      Token parameter = field.name();
+      parameter.lexeme = "__gti_designated_" + parameter.lexeme;
+      parameter.generated = true;
+      parameters.emplace_back(field.type(), parameter);
+      types.push_back(member->second.symbol.type);
+      Token stdName = parameter;
+      stdName.lexeme = "std";
+      Token moveName = parameter;
+      moveName.lexeme = "move";
+      Token paren = parameter;
+      paren.kind = TokenKind::RIGHT_PAREN;
+      paren.lexeme = ")";
+      ExprList arguments;
+      arguments.push_back(std::make_unique<Variable>(parameter));
+      ExprList fieldArguments;
+      auto transfer = std::make_unique<Call>(
+          std::make_unique<QualifiedName>(
+              NamePath(std::vector<Token>{stdName, moveName})),
+          std::vector<TypeRef>{}, paren, std::move(arguments));
+      transfers.push_back(transfer.get());
+      fieldArguments.push_back(std::move(transfer));
+      initializers.push_back({.target = TypeRef(field.name()),
+                              .arguments = std::move(fieldArguments)});
+    }
+    if (!eligible) {
+      continue;
+    }
+    designatedMoves.insert(transfers.begin(), transfers.end());
+    Token name = owner.name;
+    name.generated = true;
+    auto declaration = std::make_shared<ConstructorDecl>(
+        std::nullopt, name, std::vector<GenericParameter>{},
+        std::move(parameters), std::nullopt, std::move(initializers),
+        std::nullopt, std::make_unique<BlockStmt>(StmtList{}));
+    owner.designatedConstructor =
+        ConstructorInfo{.id = nextConstructorId++,
+                        .owner = owner.id,
+                        .declaration = declaration.get(),
+                        .parameterTypes = std::move(types),
+                        .requiredParameterCount = owner.fields.size()};
+    constructorGenericParameters.emplace(declaration.get(),
+                                         std::vector<GenericParameterInfo>{});
+    ClassLifecycleInfo lifecycle =
+        *semanticModel.findClassLifecycle(*owner.declaration);
+    lifecycle.constructors.push_back(*owner.designatedConstructor);
+    semanticModel.record(*owner.declaration, std::move(lifecycle));
+    semanticModel.designatedConstructors.push_back(std::move(declaration));
   }
 }
 
@@ -5032,17 +5400,13 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
           constructor->genericParameters(), constructor->name(), memberScope);
       constructorGenericParameters.insert_or_assign(constructor,
                                                     info.genericParameters);
-      for (std::size_t index = 0; index < info.genericParameters.size();
-           ++index) {
-        const GenericParameterInfo &parameter = info.genericParameters[index];
-        if (parameter.pack) {
-          report(*constructor->genericParameters()[index].pack,
-                 "Constructor-local generic parameter packs are not "
-                 "supported.",
-                 "GTI-S2026");
-        }
+      info.parameterPack = !constructor->parameters().empty() &&
+                           constructor->parameters().back().pack.has_value();
+      if (info.parameterPack) {
+        info.requiredParameterCount = constructor->parameters().size() - 1;
       }
       beginTypeParameterScope(info.genericParameters);
+      validateParameterPacks(constructor->parameters(), info.genericParameters);
       info.requirements = resolveRequirements(
           constructor->requiresClause() ? &*constructor->requiresClause()
                                         : nullptr,
@@ -5376,7 +5740,13 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
                               semanticModel.isCompilerPrivateType(symbol.type));
     if ((function != nullptr && function->isStatic()) ||
         (field != nullptr && field->isStatic())) {
-      if (!owner.genericParameters.empty()) {
+      // Protocol invocation retains an exact owner specialization and needs
+      // no source-qualified generic member path. Ordinary static members
+      // retain the existing source-path restriction.
+      const bool collectionProtocol =
+          function != nullptr && (name->lexeme == "collection_init" ||
+                                  name->lexeme == "collection_insert");
+      if (!owner.genericParameters.empty() && !collectionProtocol) {
         report(*name,
                "Static members of generic classes and structs require "
                "qualified generic member paths, which are not supported "
@@ -5642,7 +6012,9 @@ auto SemanticVisitor::Impl::publishCallableDeclaration(
   }
   requestSession.hasCThreadRequirements |=
       requiresCThreadConcurrency(declaration->cThreadOperation);
-  semanticModel.record(function, projectCallableDeclaration(*declaration));
+  FunctionInfo projected = projectCallableDeclaration(*declaration);
+  projected.ownedPointeeProjection = ownedPointeeReturnProjection(projected);
+  semanticModel.record(function, std::move(projected));
 }
 
 auto SemanticVisitor::Impl::capabilityRequirement(
@@ -5730,6 +6102,7 @@ auto SemanticVisitor::Impl::recordClassTypeIdentities() -> void {
             .exactTypeArguments = owner.exactTypeArguments,
             .exactValueArguments = owner.exactValueArguments,
             .genericParameters = owner.genericParameters,
+            .genericArgumentPatterns = owner.genericArgumentPatterns,
             .kind = owner.kind,
             .compilerPrivate = owner.compilerPrivate,
             .compilerCapability = owner.compilerCapability});
@@ -5778,6 +6151,7 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
             .exactTypeArguments = owner.exactTypeArguments,
             .exactValueArguments = owner.exactValueArguments,
             .genericParameters = owner.genericParameters,
+            .genericArgumentPatterns = owner.genericArgumentPatterns,
             .fields = std::move(fields),
             .staticFields = std::move(staticFields),
             .storedReference = owner.storedReference,

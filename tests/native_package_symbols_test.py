@@ -20,11 +20,15 @@ def main():
     if darwin:
         symbols = {name.removeprefix("_") for name in symbols}
     missing = []
-    for package in ("glfw", "glad", "sqlite3", "cimgui", "zlib", "libpng", "assimp"):
+    for package in ("glfw", "glad", "sqlite3", "cimgui", "zlib", "libpng", "assimp", "libgit2", "cli11"):
         source = (root / package / "src" / f"{package}.gti").read_text()
         # Public units are deliberately declarations only. Require at least one
         # signature so a formatting/parser mismatch cannot give a vacuous pass.
-        names = set(re.findall(r"^[ \t]+[^\n;{}=]+?[ \t]+(\w+)\([^\n]*\);$", source, re.M))
+        names = set(re.findall(
+            r"^[ \t]+(?:\[\[[^\n]+\]\]\s*)?[^;\n{}=]*?\b(\w+)\s*\([^;{}]*\)\s*;",
+            source,
+            re.M,
+        ))
         if not names:
             raise SystemExit(f"no C declarations found in {package}")
         absent = sorted(names - symbols)

@@ -94,6 +94,7 @@ module.exports = grammar({
   supertypes: ($) => [$.declaration, $.statement, $.expression],
 
   conflicts: ($) => [
+    [$._base_type, $.numeric_conversion],
     [$.generic_function, $.user_type],
     [$.generic_function, $.primary_expression],
     [$.generic_function, $.user_type, $.primary_expression],
@@ -417,7 +418,10 @@ module.exports = grammar({
         choice(
           seq(
             field("name", $.identifier),
-            optional(field("type_parameters", $.generic_parameter_clause)),
+            optional(choice(
+              field("type_parameters", $.generic_parameter_clause),
+              field("type_patterns", $.generic_signature_pattern_clause),
+            )),
           ),
           seq(
             field("name", $.scoped_identifier),
@@ -703,6 +707,14 @@ module.exports = grammar({
     generic_parameter_clause: ($) =>
       seq("<", commaSep1($.generic_parameter), ">"),
 
+    generic_signature_pattern_clause: ($) =>
+      seq(
+        "<",
+        field("pattern", $.function_signature),
+        repeat(seq(",", field("pattern", $.type))),
+        ">",
+      ),
+
     generic_parameter: ($) =>
       choice(
         seq(
@@ -771,7 +783,20 @@ module.exports = grammar({
         ";",
       ),
 
-    type: ($) =>
+    type: ($) => prec.right(choice($._non_function_type, $.function_signature)),
+
+    function_signature: ($) =>
+      prec.right(
+        seq(
+          field("return_type", $._non_function_type),
+          "(",
+          optional(commaSep1(seq(optional("mut"), field("parameter", $.type), optional("...")))),
+          ")",
+          optional(field("receiver_qualifier", choice("mut", "&&"))),
+        ),
+      ),
+
+    _non_function_type: ($) =>
       prec.right(
         choice(
           seq(
@@ -851,12 +876,14 @@ module.exports = grammar({
     type_argument_clause: ($) =>
       seq(
         "<",
-        commaSep1(
-          choice(
-            $.type,
-            $.integer_literal,
-            $.array_extent_parenthesized_expression,
-            $.array_extent_binary_expression,
+        optional(
+          commaSep1(
+            choice(
+              seq($.type, optional("...")),
+              $.integer_literal,
+              $.array_extent_parenthesized_expression,
+              $.array_extent_binary_expression,
+            ),
           ),
         ),
         ">",
@@ -1030,14 +1057,20 @@ module.exports = grammar({
     direct_initializer: ($) =>
       seq(
         "{",
-        optional(seq(commaSep1($._expression_not_comma), optional(","))),
+        optional(seq(choice(commaSep1($._expression_not_comma),
+                            commaSep1($.designated_initializer)), optional(","))),
         "}",
       ),
+
+    designated_initializer: ($) =>
+      seq(".", field("field", $.identifier), "=",
+          field("value", $._initializer_element)),
 
     array_initializer: ($) =>
       seq(
         "{",
-        optional(seq(commaSep1($._initializer_element), optional(","))),
+        optional(seq(choice(commaSep1($._initializer_element),
+                            commaSep1($.designated_initializer)), optional(","))),
         "}",
       ),
 

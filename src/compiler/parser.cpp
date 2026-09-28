@@ -482,6 +482,7 @@ private:
     Token name = consume(TokenKind::IDENTIFIER, "Expect type name.");
     std::optional<TypeRef> exactSpecialization;
     std::vector<GenericParameter> genericParameters;
+    std::vector<TypeRef> genericArgumentPatterns;
     if (check(TokenKind::SCOPE)) {
       NamePath target = parseNamePath(name);
       if (!check(TokenKind::LESS)) {
@@ -493,7 +494,11 @@ private:
       name = target.last();
       exactSpecialization.emplace(std::move(target), std::move(arguments));
     } else if (check(TokenKind::LESS)) {
-      genericParameters = genericParameterList();
+      if (classSignaturePatternAhead()) {
+        genericArgumentPatterns = typeArgumentList();
+      } else {
+        genericParameters = genericParameterList();
+      }
     }
     std::vector<BaseSpecifier> bases;
     if (match({TokenKind::COLON})) {
@@ -509,7 +514,8 @@ private:
       return std::make_shared<ClassDecl>(
           std::move(attributes), std::move(keyword), kind, std::move(name),
           std::move(exactSpecialization), std::move(genericParameters),
-          std::move(bases), StmtList{}, true);
+          std::move(bases), StmtList{}, true,
+          std::move(genericArgumentPatterns));
     }
     consume(TokenKind::LEFT_BRACE, "Expect '{' before type body.");
 
@@ -540,7 +546,8 @@ private:
     return std::make_shared<ClassDecl>(
         std::move(attributes), std::move(keyword), kind, name,
         std::move(exactSpecialization), std::move(genericParameters),
-        std::move(bases), std::move(members), false);
+        std::move(bases), std::move(members), false,
+        std::move(genericArgumentPatterns));
   }
 
   StmtPtr enumDeclaration(Token keyword) {
@@ -956,6 +963,47 @@ private:
     return name;
   }
 
+  // The signature's '(' distinguishes a headerless patterned primary from
+  // the existing parameter declaration grammar. In particular, stop at '=':
+  // a default such as <S = void()> is still an ordinary generic parameter.
+  // This lookahead never resolves identifiers or edits/splits lexer tokens.
+  bool classSignaturePatternAhead() const {
+    std::size_t depth = 0;
+    for (std::size_t offset = 1;; ++offset) {
+      const TokenKind kind = peekAt(offset).kind;
+      if (kind == TokenKind::END_OF_FILE || kind == TokenKind::LEFT_BRACE ||
+          kind == TokenKind::RIGHT_BRACE || kind == TokenKind::SEMICOLON) {
+        return false;
+      }
+      if (depth == 0) {
+        if (kind == TokenKind::LEFT_PAREN) {
+          return true;
+        }
+        if (kind == TokenKind::COMMA || kind == TokenKind::EQUAL ||
+            kind == TokenKind::GREATER || kind == TokenKind::GREATER_EQUAL ||
+            kind == TokenKind::SHIFT_RIGHT ||
+            kind == TokenKind::SHIFT_RIGHT_EQUAL) {
+          return false;
+        }
+      }
+      if (kind == TokenKind::LESS) {
+        ++depth;
+      } else if (kind == TokenKind::GREATER ||
+                 kind == TokenKind::GREATER_EQUAL) {
+        if (depth == 0) {
+          return false;
+        }
+        --depth;
+      } else if (kind == TokenKind::SHIFT_RIGHT ||
+                 kind == TokenKind::SHIFT_RIGHT_EQUAL) {
+        if (depth < 2) {
+          return false;
+        }
+        depth -= 2;
+      }
+    }
+  }
+
   std::vector<GenericParameter> genericParameterList() {
     consume(TokenKind::LESS, "Expect '<' before generic parameters.");
     std::vector<GenericParameter> parameters;
@@ -1270,9 +1318,21 @@ private:
 
   ExprPtr directInitializer(Token brace) {
     ExprList arguments;
+    std::vector<Token> designators;
+    const bool designated = check(TokenKind::DOT);
     if (!check(TokenKind::RIGHT_BRACE)) {
       while (true) {
-        arguments.emplace_back(assignment());
+        if (designated) {
+          consume(TokenKind::DOT,
+                  "Expect '.field = value' in designated construction.");
+          designators.push_back(
+              consume(TokenKind::IDENTIFIER, "Expect a field name after '.'."));
+          consume(TokenKind::EQUAL, "Expect '=' after designated field name.");
+          arguments.emplace_back(
+              check(TokenKind::LEFT_BRACE) ? arrayInitializer() : assignment());
+        } else {
+          arguments.emplace_back(assignment());
+        }
         if (!match({TokenKind::COMMA}) || check(TokenKind::RIGHT_BRACE)) {
           break;
         }
@@ -1282,10 +1342,11 @@ private:
         consume(TokenKind::RIGHT_BRACE,
                 "Expect '}' after direct constructor arguments.");
     return std::make_unique<DirectInitializer>(
-        std::move(brace), std::move(arguments), std::move(closingBrace));
+        std::move(brace), std::move(arguments), std::move(closingBrace),
+        std::move(designators));
   }
 
-  TypeRef parseType() {
+  TypeRef parseType(bool allowFunctionSignature = true) {
     const NestingGuard nesting = enterNesting(peek());
     std::optional<Token> pointeeConst;
     if (match({TokenKind::CONST})) {
@@ -1309,6 +1370,30 @@ private:
       type.reference = previous();
     } else if (check(TokenKind::AND) && peek().lexeme == "&&") {
       type.reference = advance();
+    }
+    if (allowFunctionSignature && match({TokenKind::LEFT_PAREN})) {
+      std::vector<TypeRef> parameters;
+      if (!check(TokenKind::RIGHT_PAREN)) {
+        do {
+          std::optional<Token> access;
+          if (match({TokenKind::MUT})) {
+            access = previous();
+          }
+          parameters.emplace_back(parseType());
+          parameters.back().referenceMutability = std::move(access);
+          if (match({TokenKind::ELLIPSIS})) {
+            parameters.back().packExpansion = previous();
+          }
+        } while (match({TokenKind::COMMA}));
+      }
+      consume(TokenKind::RIGHT_PAREN,
+              "Expect ')' after function signature parameter types.");
+      type = TypeRef::functionSignature(std::move(type), std::move(parameters));
+      if (match({TokenKind::MUT})) {
+        type.functionSignatureQualifier = previous();
+      } else if (check(TokenKind::AND) && peek().lexeme == "&&") {
+        type.functionSignatureQualifier = advance();
+      }
     }
     return type;
   }
@@ -1352,9 +1437,11 @@ private:
       NamePath name = parseNamePath(previous());
       std::vector<TypeRef> arguments;
       if (match({TokenKind::LESS})) {
-        do {
-          arguments.emplace_back(parseGenericArgument());
-        } while (match({TokenKind::COMMA}));
+        if (!check(TokenKind::GREATER)) {
+          do {
+            arguments.emplace_back(parseGenericArgument());
+          } while (match({TokenKind::COMMA}));
+        }
         consumeGenericClose("Expect '>' after generic arguments.");
       }
       return TypeRef(std::move(name), std::move(arguments));
@@ -1426,6 +1513,9 @@ private:
     }
 
     TypeRef argument = parseType();
+    if (match({TokenKind::ELLIPSIS})) {
+      argument.packExpansion = previous();
+    }
     if (argument.name.segments.size() == 1 &&
         argument.name.last().kind == TokenKind::IDENTIFIER &&
         argument.arguments.empty() && argument.arrayExtents.empty() &&
@@ -1450,6 +1540,9 @@ private:
   ExprPtr arrayInitializer() {
     Token brace =
         consume(TokenKind::LEFT_BRACE, "Expect '{' before array initializer.");
+    if (check(TokenKind::DOT)) {
+      return directInitializer(std::move(brace));
+    }
     ExprList elements;
     if (!check(TokenKind::RIGHT_BRACE)) {
       do {
@@ -2429,9 +2522,11 @@ private:
   std::vector<TypeRef> typeArgumentList() {
     consume(TokenKind::LESS, "Expect '<' before generic arguments.");
     std::vector<TypeRef> arguments;
-    do {
-      arguments.emplace_back(parseGenericArgument());
-    } while (match({TokenKind::COMMA}));
+    if (!check(TokenKind::GREATER)) {
+      do {
+        arguments.emplace_back(parseGenericArgument());
+      } while (match({TokenKind::COMMA}));
+    }
     consumeGenericClose("Expect '>' after generic arguments.");
     return arguments;
   }
@@ -2450,7 +2545,7 @@ private:
     }
     if ((isNumericTypeToken(peek().kind) || peek().kind == TokenKind::CHAR) &&
         peekAt(1).kind == TokenKind::LEFT_PAREN) {
-      TypeRef targetType = parseType();
+      TypeRef targetType = parseType(false);
       consume(TokenKind::LEFT_PAREN, "Expect '(' after conversion type.");
       ExprPtr value = assignment();
       Token paren =
@@ -2654,6 +2749,9 @@ private:
       return false;
     }
     std::size_t next = 1;
+    if (peekAt(next).kind == TokenKind::GREATER) {
+      return peekAt(next + 1).kind == TokenKind::LEFT_PAREN;
+    }
     const std::optional<std::size_t> firstArgumentEnd =
         genericArgumentEnd(next);
     if (!firstArgumentEnd) {
@@ -2686,7 +2784,10 @@ private:
           (isIdentifierUseToken(first) && *expressionEnd > offset + 1)))) {
       return expressionEnd;
     }
-    return typeEnd(offset);
+    const auto end = typeEnd(offset);
+    return end && peekAt(*end).kind == TokenKind::ELLIPSIS
+               ? std::optional<std::size_t>(*end + 1)
+               : end;
   }
 
   [[nodiscard]] std::optional<std::size_t>
@@ -2774,7 +2875,7 @@ private:
       if (!errorEnd || peekAt(*errorEnd).kind != TokenKind::GREATER) {
         return std::nullopt;
       }
-      return arrayTypeEnd(*errorEnd + 1);
+      return signatureTypeEnd(*errorEnd + 1);
     }
 
     if (first == TokenKind::AUTO || first == TokenKind::INT ||
@@ -2786,7 +2887,7 @@ private:
         first == TokenKind::DOUBLE || first == TokenKind::BOOL ||
         first == TokenKind::CHAR || first == TokenKind::NULLPTR_TYPE ||
         first == TokenKind::VOID) {
-      return arrayTypeEnd(offset + 1);
+      return signatureTypeEnd(offset + 1);
     }
     if (first != TokenKind::IDENTIFIER) {
       return std::nullopt;
@@ -2798,7 +2899,11 @@ private:
       next += 2;
     }
     if (peekAt(next).kind != TokenKind::LESS) {
-      return arrayTypeEnd(next);
+      return signatureTypeEnd(next);
+    }
+
+    if (peekAt(next + 1).kind == TokenKind::GREATER) {
+      return signatureTypeEnd(next + 2);
     }
 
     do {
@@ -2809,8 +2914,45 @@ private:
       }
       next = *argumentEnd;
     } while (peekAt(next).kind == TokenKind::COMMA);
-    return peekAt(next).kind == TokenKind::GREATER ? arrayTypeEnd(next + 1)
+    return peekAt(next).kind == TokenKind::GREATER ? signatureTypeEnd(next + 1)
                                                    : std::nullopt;
+  }
+
+  [[nodiscard]] std::optional<std::size_t>
+  signatureTypeEnd(std::size_t offset) const {
+    auto end = arrayTypeEnd(offset);
+    if (!end || peekAt(*end).kind != TokenKind::LEFT_PAREN) {
+      return end;
+    }
+    std::size_t next = *end + 1;
+    if (peekAt(next).kind != TokenKind::RIGHT_PAREN) {
+      while (true) {
+        if (peekAt(next).kind == TokenKind::MUT) {
+          ++next;
+        }
+        const auto parameter = typeEnd(next);
+        if (!parameter) {
+          return std::nullopt;
+        }
+        next = *parameter;
+        if (peekAt(next).kind == TokenKind::ELLIPSIS) {
+          ++next;
+        }
+        if (peekAt(next).kind != TokenKind::COMMA) {
+          break;
+        }
+        ++next;
+      }
+    }
+    if (peekAt(next).kind != TokenKind::RIGHT_PAREN) {
+      return std::nullopt;
+    }
+    ++next;
+    if (peekAt(next).kind == TokenKind::MUT ||
+        (peekAt(next).kind == TokenKind::AND && peekAt(next).lexeme == "&&")) {
+      ++next;
+    }
+    return next;
   }
 
   [[nodiscard]] std::optional<std::size_t>

@@ -1,0 +1,56 @@
+using Binary = int(int, bool);
+
+class Signature<R(Args...)> {
+public:
+  using signature = R(Args...);
+  int value() { return 7; }
+  T extra<T>(T value) { return value; }
+};
+
+class Stored<R()> {
+  R item;
+public:
+  Stored(R value) : item(value) {}
+  R read() { return item; }
+};
+
+class Identity<R(R)> {
+public:
+  R call(R value) { return value; }
+};
+
+class Action<void(Args...)> {
+public:
+  void call(Args... args) {}
+};
+
+class Prefix<R(int, Args...)> {
+public:
+  int value() { return 7; }
+};
+
+class Forward<S> {
+public:
+  Signature<S> child{};
+  int value() { return child.value(); }
+};
+
+int inspect<S>(Signature<S>& tag) { return tag.value(); }
+
+int main() {
+  Signature<void()> empty{};
+  Signature<Binary> binary{};
+  Signature<int(int, bool)> same{};
+  Signature<int&(int&)> reference_metadata{};
+  Identity<int(int)> identity{};
+  Action<void()> nullary{};
+  Action<void(int, bool)> action{};
+  Prefix<void(int)> prefix{};
+  Forward<void()> forward{};
+  Stored<int()> stored{7};
+  nullary.call();
+  action.call(3, true);
+  return inspect(empty) + binary.value() + same.value() +
+      reference_metadata.value() + identity.call(7) + prefix.value() +
+      forward.value() + stored.read() + binary.extra(7) - 63;
+}

@@ -371,6 +371,7 @@ auto SemanticVisitor::Impl::typeCapabilities(
   case SemanticType::TypePack:
   case SemanticType::TypeName:
   case SemanticType::Function:
+  case SemanticType::FunctionSignature:
   case SemanticType::NativeFunction:
     return {};
   }
@@ -2951,6 +2952,34 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
   if (carrier == nullptr) {
     return;
   }
+  if (parameter.pack && carrier->type.kind == SemanticType::TypePack &&
+      carrier->type.concretePack) {
+    // Elements cannot be named independently in the source language. Their
+    // entry capabilities remain live for the whole call and whole-pack
+    // forwarding reborrows each exact element, never the aggregate binding.
+    const SymbolId symbol = toolingSymbolFor(*carrier);
+    for (std::size_t index = 0; index < carrier->type.arguments.size();
+         ++index) {
+      const auto &element = carrier->type.arguments[index];
+      if (element.kind != SemanticType::Reference ||
+          element.referenceAccess != AccessMode::Mutable) {
+        continue;
+      }
+      semanticModel.recordLoan(
+          {.id = nextSemanticLoanId++,
+           .kind = SemanticLoanKind::Reference,
+           .owner = symbol,
+           .entry = true,
+           .place = {.root = symbol,
+                     .projections = {{.kind =
+                                          PlaceProjectionKind::ConstantIndex,
+                                      .index = index}}},
+           .access = AccessMode::Mutable,
+           .protectsStorage = true,
+           .carriers = {symbol}});
+    }
+    return;
+  }
   const bool referenceCarrier = carrier->type.kind == SemanticType::Reference &&
                                 carrier->type.arguments.size() == 1;
   const FunctionInfo *function = currentFunctionInfo();
@@ -4692,6 +4721,13 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     return;
   }
 
+  analyzeMoveCall(expr, &declaration);
+}
+
+auto SemanticVisitor::Impl::analyzeMoveCall(
+    const Call &expr, const CallableCandidate *declaration,
+    bool immediateReceiver) -> void {
+
   for (const TypeRef &argument : expr.typeArguments()) {
     validateType(argument);
   }
@@ -4711,6 +4747,63 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
   const ExprPtr &argument = expr.arguments().front();
   const SemanticType valueType = analyzeProjectionBase(argument);
   SemanticPlace place = semanticPlace(argument);
+  const Expr *retainedOwner = nullptr;
+  if (immediateReceiver &&
+      currentReceiverMutability == ReceiverMutability::Consuming &&
+      (valueType.kind == SemanticType::Class ||
+       valueType.kind == SemanticType::Lambda ||
+       valueType.kind == SemanticType::TypeParameter) &&
+      !typeTraits(valueType).containsBorrowedState) {
+    const Expr *accessor = argument.get();
+    while (const auto *grouping = exprAs<Grouping>(accessor))
+      accessor = grouping->expression().get();
+    const Expr *ownerExpression = nullptr;
+    const FunctionInfo *function = nullptr;
+    if (const auto *unary = exprAs<Unary>(accessor);
+        unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+      const auto *resolved = semanticModel.findOperator(*unary);
+      if (resolved != nullptr && resolved->dispatch == CallDispatch::Static &&
+          resolved->receiverMode == CallReceiverMode::MutablePlace &&
+          resolved->borrowOrigin == BorrowOriginKind::Receiver &&
+          resolved->borrowAccess == AccessMode::Mutable) {
+        function = semanticModel.findFunction(resolved->function);
+        ownerExpression = unary->right().get();
+      }
+    } else if (const auto *call = exprAs<Call>(accessor)) {
+      const auto *resolved = semanticModel.findCall(*call);
+      const auto *member = exprAs<Get>(call->callee().get());
+      if (resolved != nullptr && member != nullptr &&
+          member->access().kind == TokenKind::DOT &&
+          call->arguments().empty() &&
+          resolved->dispatch == CallDispatch::Static &&
+          resolved->receiverMode == CallReceiverMode::MutablePlace &&
+          resolved->borrowOrigin == BorrowOriginKind::Receiver &&
+          resolved->borrowAccess == AccessMode::Mutable) {
+        function = semanticModel.findFunction(resolved->function);
+        ownerExpression = member->object().get();
+      }
+    }
+    if (function != nullptr && function->ownedPointeeProjection &&
+        function->ownedPointeeProjection->borrowIntrinsic ==
+            IntrinsicKind::UniqueOwnerBorrowMut &&
+        ownerExpression != nullptr) {
+      const ExpressionInfo *owner =
+          semanticModel.findExpression(*ownerExpression);
+      SemanticPlace anchor = semanticPlace(ownerExpression);
+      if (owner != nullptr && owner->category == ValueCategory::Place &&
+          owner->access == AccessMode::Mutable &&
+          owner->type.kind == SemanticType::Class &&
+          !owner->traits.containsBorrowedState && anchor.root != nullptr &&
+          anchor.receiver && !anchor.projections.empty() &&
+          std::all_of(anchor.projections.begin(), anchor.projections.end(),
+                      [](const auto &projection) {
+                        return projection.kind == PlaceProjectionKind::Field;
+                      })) {
+        retainedOwner = ownerExpression;
+        place = std::move(anchor);
+      }
+    }
+  }
   if (place.root != nullptr &&
       (place.root->bindingKind == SemanticBindingKind::GlobalVariable ||
        place.root->bindingKind == SemanticBindingKind::StaticField)) {
@@ -4781,10 +4874,22 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     } else if (place.root->parameterDeclaration != nullptr) {
       semanticModel.recordExplicitMove(*place.root->parameterDeclaration);
     }
-    semanticModel.recordOwnershipEvent(expr, {.kind = OwnershipEventKind::Move,
-                                              .place = placeKey(place),
-                                              .before = before,
-                                              .after = ValueState::Moved});
+    const bool retainedReceiver =
+        immediateReceiver && place.receiver &&
+        currentReceiverMutability == ReceiverMutability::Consuming &&
+        (retainedOwner != nullptr || valueType.kind == SemanticType::Class ||
+         valueType.kind == SemanticType::Lambda) &&
+        !typeTraits(valueType).containsBorrowedState &&
+        std::all_of(place.projections.begin(), place.projections.end(),
+                    [](const auto &projection) {
+                      return projection.kind == PlaceProjectionKind::Field;
+                    });
+    semanticModel.recordOwnershipEvent(
+        expr, {.kind = retainedReceiver ? OwnershipEventKind::ConsumeReceiver
+                                        : OwnershipEventKind::Move,
+               .place = placeKey(place),
+               .before = before,
+               .after = ValueState::Moved});
     currentType = valueType;
     semanticModel.record(
         expr, ResolvedCallInfo{.returnType = currentType,
@@ -4795,8 +4900,11 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
                                        ? BorrowOriginKind::Argument
                                        : BorrowOriginKind::None,
                                .borrowArgument = 0,
-                               .borrowAccess = borrowAccess(currentType)});
-    bindIntrinsicCallDeclaration(expr, declaration);
+                               .borrowAccess = borrowAccess(currentType),
+                               .retainedReceiverProjection = retainedReceiver,
+                               .retainedReceiverOwner = retainedOwner});
+    if (declaration != nullptr)
+      bindIntrinsicCallDeclaration(expr, *declaration);
     return;
   }
   const Variable *variable = movedVariable(argument);
@@ -4935,7 +5043,8 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
                                      : BorrowOriginKind::None,
                              .borrowArgument = 0,
                              .borrowAccess = borrowAccess(currentType)});
-  bindIntrinsicCallDeclaration(expr, declaration);
+  if (declaration != nullptr)
+    bindIntrinsicCallDeclaration(expr, *declaration);
 }
 
 auto SemanticVisitor::Impl::analyzeIntegerArithmeticIntrinsicCall(
@@ -5848,6 +5957,7 @@ auto SemanticVisitor::Impl::isStorageElementType(const SemanticType &type)
   case SemanticType::PrefixStorage:
   case SemanticType::TypeName:
   case SemanticType::Function:
+  case SemanticType::FunctionSignature:
   case SemanticType::NativeFunction:
   case SemanticType::Lambda:
   case SemanticType::Unexpected:

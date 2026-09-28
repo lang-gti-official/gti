@@ -374,6 +374,12 @@ enum class MirDropObligationKind {
   // AllocateObject arms it, construction failure drops it, and successful
   // construction transfers it into the ordinary owning result.
   ObjectAllocation,
+  // A completed return operand in the caller-provided destination, still
+  // owned by this invocation until its remaining cleanup succeeds. Reparent
+  // arms it from the exact Value obligation; only the final Return may
+  // transfer it out. Failure before publication drops it first.
+  // Generated, with no HIR obligation or full-expression lifetime of its own.
+  ReturnResult,
 };
 
 // A homogeneous fixed-array drop walks these extents in reverse lexicographic
@@ -399,10 +405,16 @@ struct MirDropType {
   // class. The owner may be empty; otherwise Drop invokes this class's source
   // destructor through the failure ABI before releasing the allocation.
   std::optional<HirClassInstanceId> uniquePointeeClass;
+  // An owning pointer to a polymorphic class retains the complete allocated
+  // object's cleanup selection across upcasts. Dispatch its cleanup through
+  // that selection, not the statically named base's subobject recipe.
+  bool polymorphicCleanup = false;
   // Selection of this child within its enclosing aggregate schedule. Root
-  // descriptors have neither selector; a field/base child has exactly one.
+  // descriptors have no selector; a field/base/capture child has exactly one.
   SymbolId uniqueOwnerField = 0;
   std::optional<HirClassInstanceId> uniqueOwnerBase;
+  // Zero-based capture projection within an enclosing closure recipe.
+  std::optional<std::size_t> captureIndex;
   // A finite back-edge to an enclosing class recipe with this exact
   // classInstance/type. It has no destructor or children of its own. Complete
   // root recipes still contain every reachable source destructor, so their
@@ -410,7 +422,8 @@ struct MirDropType {
   bool recursiveCleanup = false;
   // Ordered complete active-subobject cleanup. A class runs its guarded source
   // destructor, if present, then children in reverse field order, then base
-  // order. A unique owner of an aggregate has
+  // order. A closure destroys active captures in reverse capture order.
+  // A unique owner of an aggregate has
   // one unprojected pointee child, followed by allocation release. Storage and
   // prefix storage have one unprojected element child: apply it in reverse
   // index order to initialized slots/the live prefix, end each element's
@@ -418,6 +431,9 @@ struct MirDropType {
   // failure drains remaining children; a second failure terminates immediately
   // with both records. Entering during failure returns on the first new
   // failure.
+  // Expected has two positional alternative recipes (success, error), and
+  // Unexpected has one (error). Passive/void alternatives retain an empty
+  // recipe with their exact type; only the live alternative is executed.
   std::vector<MirDropType> aggregate;
   bool requiresActiveCleanup = false;
 
@@ -602,6 +618,9 @@ struct MirInstruction {
   std::optional<MirCallInputRole> callInputRole;
   std::size_t callInputIndex = 0;
   HirCallInputKind callInputKind = HirCallInputKind::Value;
+  // A retained pointee invocation consumes availability of this owning field,
+  // not its accessor-result loan. Physical owner cleanup remains active.
+  std::optional<MirPlaceId> retainedOwnerPlace;
   bool defaultArgument = false;
   std::optional<MirDropObligationId> preparedParameterDrop;
   std::optional<MirDropObligationId> successResultDrop;
@@ -991,6 +1010,7 @@ struct MirClassFieldInfo {
   HirBindingId field = 0;
   SymbolId symbol = 0;
   SemanticType type = SemanticType::Unknown;
+  AccessMode access = AccessMode::ReadOnly;
   DropKind dropKind = DropKind::Trivial;
   bool requiresActiveCleanup = false;
 
@@ -1137,6 +1157,7 @@ struct MirFunctionInstance {
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
+  std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   std::optional<std::size_t> cArrayCountParameter;

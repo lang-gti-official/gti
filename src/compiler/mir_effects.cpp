@@ -352,6 +352,7 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
         .readsUnknownMemory = true, .invokesRuntime = true, .startsLoan = true},
     // MutexLockFailure: enters the defined-failure runtime path.
     MirEffectTraits{.invokesRuntime = true, .mayTrap = true},
+    MirEffectTraits{}, // ExactTypeParameterConstruction: scalar identity.
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -553,6 +554,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "mutex-guard-read",
     "mutex-guard-read-mut",
     "mutex-lock-failure",
+    "exact-type-parameter-construction",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({
@@ -876,6 +878,8 @@ struct ExactTargets {
   if (instruction.kind == MirInstructionKind::CleanupBeforeAssign &&
       instruction.replacementCleanup) {
     result.nativeCleanup = true;
+    result.boundary =
+        mirDropHasPolymorphicCleanup(*instruction.replacementCleanup);
     for (const auto destructor :
          mirDropDestructorTargets(*instruction.replacementCleanup)) {
       result.addresses.push_back(
@@ -884,6 +888,7 @@ struct ExactTargets {
   } else if (instruction.kind == MirInstructionKind::Call &&
              instruction.elementCleanup) {
     result.nativeCleanup = true;
+    result.boundary = mirDropHasPolymorphicCleanup(*instruction.elementCleanup);
     for (const auto destructor :
          mirDropDestructorTargets(*instruction.elementCleanup)) {
       result.addresses.push_back(
@@ -944,6 +949,7 @@ struct ExactTargets {
       result.nativeCleanup |=
           obligation.dropType.uniquePointeeClass.has_value() ||
           !obligation.dropType.aggregate.empty();
+      result.boundary |= mirDropHasPolymorphicCleanup(obligation.dropType);
       for (const auto destructor :
            mirDropDestructorTargets(obligation.dropType)) {
         result.addresses.push_back(
@@ -1068,6 +1074,71 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
   const auto derive =
       [&](const auto &self,
           const SemanticType &selected) -> std::optional<MirDropType> {
+    if ((selected.kind == SemanticType::Expected &&
+         selected.arguments.size() == 2) ||
+        (selected.kind == SemanticType::Unexpected &&
+         selected.arguments.size() == 1)) {
+      MirDropType result{.type = selected};
+      for (const auto &alternative : selected.arguments) {
+        auto child = self(self, alternative);
+        if (!child) {
+          const bool passive =
+              alternative == SemanticType::Void ||
+              (alternative.kind >= SemanticType::Int8 &&
+               alternative.kind <= SemanticType::Char) ||
+              alternative.kind == SemanticType::RawPointer ||
+              alternative.kind == SemanticType::NativeFunction ||
+              alternative.kind == SemanticType::NullPtr ||
+              alternative.kind == SemanticType::CString ||
+              alternative.kind == SemanticType::StringView ||
+              (alternative.kind == SemanticType::Enum &&
+               program.findPayloadEnum(alternative.enumId) == nullptr);
+          if (passive) {
+            child = MirDropType{.type = alternative};
+          } else {
+            const auto *owner = alternative.kind == SemanticType::Class
+                                    ? classFor(alternative)
+                                    : nullptr;
+            if (owner == nullptr || owner->requiresActiveCleanup)
+              return std::nullopt;
+            child =
+                MirDropType{.type = alternative, .classInstance = owner->id};
+          }
+        }
+        result.requiresActiveCleanup |= child->requiresActiveCleanup;
+        result.aggregate.push_back(*child);
+      }
+      return result;
+    }
+    if (selected.kind == SemanticType::Lambda) {
+      const auto lambda = std::find_if(program.lambdaInstances().begin(),
+                                       program.lambdaInstances().end(),
+                                       [&](const MirLambdaInstance &candidate) {
+                                         return candidate.type == selected;
+                                       });
+      if (lambda == program.lambdaInstances().end() ||
+          lambda->captureTypes.size() !=
+              lambda->captureRequiresActiveCleanup.size())
+        return std::nullopt;
+      const auto exactCaptures = selected.lambdaCaptureTypes();
+      if (exactCaptures.size() != lambda->captureTypes.size() ||
+          !std::equal(exactCaptures.begin(), exactCaptures.end(),
+                      lambda->captureTypes.begin()))
+        return std::nullopt;
+      MirDropType result{.type = selected, .lambdaInstance = lambda->id};
+      for (std::size_t index = lambda->captureTypes.size(); index != 0;
+           --index) {
+        if (!lambda->captureRequiresActiveCleanup[index - 1])
+          continue;
+        auto child = self(self, lambda->captureTypes[index - 1]);
+        if (!child)
+          return std::nullopt;
+        child->captureIndex = index - 1;
+        result.aggregate.push_back(*child);
+      }
+      result.requiresActiveCleanup = !result.aggregate.empty();
+      return result;
+    }
     if ((selected.kind == SemanticType::UniqueOwner ||
          selected.kind == SemanticType::Storage ||
          selected.kind == SemanticType::PrefixStorage) &&
@@ -1096,6 +1167,11 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
       const auto *pointee = classFor(selected.arguments.front());
       if (pointee == nullptr)
         return std::nullopt;
+      if (pointee->polymorphic)
+        return MirDropType{.type = selected,
+                           .uniquePointeeClass = pointee->id,
+                           .polymorphicCleanup = true,
+                           .requiresActiveCleanup = true};
       if (pointee->destructor && pointee->requiresActiveDropState &&
           pointee->bases.empty() &&
           std::none_of(
@@ -1284,8 +1360,16 @@ bool mirTypeRelocationIsDefinedFailureFree(const MirProgram &program,
   return prove(prove, type);
 }
 
+bool mirDropHasPolymorphicCleanup(const MirDropType &type) {
+  return type.polymorphicCleanup ||
+         std::any_of(type.aggregate.begin(), type.aggregate.end(),
+                     mirDropHasPolymorphicCleanup);
+}
+
 bool mirDropMayRaiseDefinedFailure(const MirProgram &program,
                                    const MirDropType &type) {
+  if (mirDropHasPolymorphicCleanup(type))
+    return true;
   for (const auto id : mirDropDestructorTargets(type)) {
     const auto *target = program.findDestructorInstance(id);
     if (target == nullptr || target->mayRaiseDefinedFailure)

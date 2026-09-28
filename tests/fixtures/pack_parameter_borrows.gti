@@ -1,0 +1,16 @@
+#include <std/string>
+void count<T>(mut int& total, T& value) {
+  total++;
+}
+
+int visit<Args...>(Args... args) {
+  mut int total = 0;
+  (count(total, args), ...);
+  (count(total, args), ...);
+  return total;
+}
+
+int main() {
+  std::println(visit(std::string("first"), std::string("second")));
+  return 0;
+}

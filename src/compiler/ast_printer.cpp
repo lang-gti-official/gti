@@ -67,8 +67,12 @@ void AstPrinter::visitConversionExpr(const Conversion &expr) {
 
 void AstPrinter::visitDirectInitializerExpr(const DirectInitializer &expr) {
   std::string text = "(direct-init";
-  for (const ExprPtr &argument : expr.arguments()) {
-    text += " " + printPtr(argument);
+  for (std::size_t i = 0; i < expr.arguments().size(); ++i) {
+    text += " ";
+    if (!expr.designators().empty()) {
+      text += "." + expr.designators()[i].lexeme + "=";
+    }
+    text += printPtr(expr.arguments()[i]);
   }
   result = text + ")";
 }
@@ -171,6 +175,23 @@ void AstPrinter::visitVariableExpr(const Variable &expr) {
 }
 
 std::string AstPrinter::typeToString(const TypeRef &type) {
+  if (type.isFunctionSignature()) {
+    const std::size_t count = *type.functionSignatureParameterCount;
+    if (type.arguments.size() != count + 1) {
+      return "?()";
+    }
+    std::string text = typeToString(type.arguments.back()) + "(";
+    for (std::size_t index = 0; index < count; ++index) {
+      if (index != 0) {
+        text += ",";
+      }
+      text += typeToString(type.arguments[index]);
+    }
+    return text + ")" +
+           (type.functionSignatureQualifier
+                ? " " + type.functionSignatureQualifier->lexeme
+                : "");
+  }
   if (type.isNativeFunction()) {
     std::string text = "(";
     const std::size_t parameterCount =
@@ -198,6 +219,9 @@ std::string AstPrinter::typeToString(const TypeRef &type) {
   if (type.pointeeConst) {
     text = "const " + text;
   }
+  if (type.referenceMutability) {
+    text = "mut " + text;
+  }
   if (!type.arguments.empty()) {
     text += "<";
     for (std::size_t index = 0; index < type.arguments.size(); ++index) {
@@ -220,6 +244,9 @@ std::string AstPrinter::typeToString(const TypeRef &type) {
   }
   if (type.reference) {
     text += "&";
+  }
+  if (type.packExpansion) {
+    text += "...";
   }
   return text;
 }

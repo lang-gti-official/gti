@@ -1,0 +1,32 @@
+mut int order = 0;
+
+int mark(int digit) {
+  order = order * 10 + digit;
+  return digit;
+}
+
+int answer() { return 7; }
+
+class Probe {
+  int result;
+public:
+  Probe<Callable>(int before, Callable callable, int after)
+      : result(before + after + mark(3)) {}
+  int value() { return this.result; }
+};
+
+Probe make_probe<T>(T tag) {
+  return Probe(mark(1), answer, mark(2));
+}
+
+int main() {
+  auto direct = Probe(mark(1), answer, mark(2));
+  if (direct.value() != 6 || order != 123) { return 1; }
+  order = 0;
+  auto first = make_probe(1);
+  if (first.value() != 6 || order != 123) { return 2; }
+  order = 0;
+  auto second = make_probe(true);
+  if (second.value() != 6 || order != 123) { return 3; }
+  return 0;
+}

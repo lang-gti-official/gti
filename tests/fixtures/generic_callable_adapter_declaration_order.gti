@@ -1,0 +1,80 @@
+#include <std/functional>
+#include <std/string>
+#include <std/vector>
+
+namespace api {
+  // F is closure-bearing, so these owners retain native primary templates.
+  // Packet is intentionally declared later and is not a layout dependency.
+  class Target<F> {
+    F value;
+  public:
+    Target(F value) : value(std::move(value)) {}
+    Packet operator()(Packet input, int divisor) {
+      int result = value(input.value);
+      return Packet(result / divisor);
+    }
+  };
+
+  class MutableTarget<F> {
+    F value;
+  public:
+    MutableTarget(F value) : value(std::move(value)) {}
+    Packet operator()(Packet input, int divisor) mut {
+      int result = value(input.value);
+      return Packet(result / divisor);
+    }
+  };
+
+  class OnceTarget<F> {
+    F value;
+  public:
+    OnceTarget(F value) : value(std::move(value)) {}
+    Packet operator()(Packet input, int divisor) && {
+      int result = value(input.value);
+      return Packet(result / divisor);
+    }
+  };
+
+  struct Packet {
+    int value;
+    Packet(int value) : value(value) {}
+  };
+}
+
+api::Target<F> target<F>(F value) {
+  return api::Target<F>(std::move(value));
+}
+api::MutableTarget<F> mutable_target<F>(F value) {
+  return api::MutableTarget<F>(std::move(value));
+}
+api::OnceTarget<F> once_target<F>(F value) {
+  return api::OnceTarget<F>(std::move(value));
+}
+api::Packet invoke_once<F>(F value, int divisor) {
+  return std::move(value)(api::Packet(12), divisor);
+}
+
+class Caller {
+public:
+  ~Caller() { std::println(9); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Caller caller{};
+  auto read_operation = [](int number) -> int { return number; };
+  auto read = target(std::move(read_operation));
+  std::function<api::Packet(api::Packet, int)> callback{std::move(read)};
+  api::Packet first = callback(api::Packet(12), argc == 2 ? 0 : 2);
+  std::println(first.value);
+  auto write_operation = [](int number) -> int { return number; };
+  auto write = mutable_target(std::move(write_operation));
+  mut std::function<api::Packet(api::Packet, int) mut> mutable_callback{std::move(write)};
+  api::Packet second = mutable_callback(api::Packet(15), argc == 3 ? 0 : 3);
+  std::println(second.value);
+  auto once_operation = [](int number) -> int { return number; };
+  auto once = once_target(std::move(once_operation));
+  int once_divisor = argc == 4 ? 0 : 4;
+  api::Packet third = invoke_once(std::move(once), once_divisor);
+  std::println(third.value);
+  return 0;
+}

@@ -54,9 +54,17 @@ lang::FrontendResult analyzeOwned() {
 #include <std/vector>
 using arguments_type = std::vector<std::string>;
 
+class Texts {
+  mut arguments_type first = arguments_type();
+  mut arguments_type second = arguments_type();
+public:
+  Texts() {}
+};
+
 mut int32_t startup_value = 1 + 2;
 
 int main(mut int argc, mut arguments_type argv) {
+  Texts texts{};
   return argc + startup_value;
 }
 )",
@@ -268,6 +276,40 @@ void testOwnedScheduleAndPrinter() {
   if (!plan || body == nullptr) {
     return;
   }
+  const auto *constructor =
+      owned.mir.findConstructorInstance(plan->vectorConstructor);
+  expect(constructor != nullptr && constructor->typeArguments.empty() &&
+             constructor->valueArguments.empty(),
+         "hosted construction does not invent constructor-local arguments");
+  if (constructor) {
+    expect(std::count_if(owned.mir.constructorInstances().begin(),
+                         owned.mir.constructorInstances().end(),
+                         [&](const auto &candidate) {
+                           return candidate.owner == constructor->owner &&
+                                  candidate.parameterTypes ==
+                                      constructor->parameterTypes;
+                         }) == 1,
+           "hosted argv and ordinary vector fields share one constructor "
+           "instance");
+    auto forged = owned.mir;
+    auto &constructors =
+        const_cast<std::vector<lang::MirConstructorInstance> &>(
+            forged.constructorInstances());
+    constructors[constructor->id - 1].typeArguments.push_back(
+        lang::SemanticType::Int32);
+    expect(!lang::verifyMirProgram(forged).valid(),
+           "MIR rejects invented hosted constructor-local arguments");
+  }
+  auto forgedHir = owned.hir;
+  auto &constructors = const_cast<std::vector<lang::HirConstructorInstance> &>(
+      forgedHir.constructorInstances());
+  const auto &hirPlan = forgedHir.hostedProgramEntryPlan();
+  if (hirPlan) {
+    constructors[hirPlan->vectorConstructor - 1].typeArguments.push_back(
+        lang::SemanticType::Int32);
+    expect(!lang::verifyHirProgramPlans(owned.semantics, forgedHir).valid(),
+           "HIR rejects invented hosted constructor-local arguments");
+  }
   expect(!body->blocks.empty() && body->entry == 1 &&
              std::all_of(body->blocks.begin(), body->blocks.end(),
                          [&](const lang::MirBlock &block) {
@@ -428,7 +470,7 @@ void testOwnedScheduleAndPrinter() {
          "effects");
 
   const std::string dump = lang::MirPrinter().print(owned.mir);
-  expect(dump.starts_with("mir-v70 valid=") &&
+  expect(dump.starts_with("mir-v74 valid=") &&
              dump.find("hosted-startup kind=") != std::string::npos &&
              dump.find("hosted-operation @") != std::string::npos &&
              dump.find("hosted-startup-body") != std::string::npos &&

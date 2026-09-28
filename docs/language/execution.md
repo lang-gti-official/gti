@@ -80,7 +80,10 @@ are cleaned before its parameters, and parameters are cleaned in reverse
 initialization order.
 
 A final pack expansion contributes its concrete elements at the written pack
-position and evaluates those elements in pack order. Static and virtual target
+position and evaluates those elements in pack order. Owning pack parameters
+have the same per-element cleanup obligations as ordinary by-value parameters:
+unused elements still require cleanup, copying preserves the source owner,
+and moving transfers that owner's obligation. Static and virtual target
 selection does not add another source-visible evaluation. A temporary callable
 or receiver remains live through the invocation and until its enclosing
 full-expression ends unless ownership is transferred to a longer-lived
@@ -232,6 +235,15 @@ ownership obligation transfers to the caller; nested temporaries remain in the
 return full-expression. If cleanup fails before publication, the initialized
 result is unpublished partial state owned by the failing invocation and
 receives failure cleanup.
+
+A `void` function may use `return expression;` when the expression has exactly
+type `void`. The expression is evaluated once, its full-expression temporaries
+and the callee's locals/parameters are cleaned in the same order as other
+returns, and then control returns without a result value. A defined failure
+during expression evaluation or cleanup follows the ordinary failure edges;
+there is no result destination or publication. A non-void expression remains
+invalid in a void return. This also applies after concrete generic substitution
+and inside void-returning lambdas.
 
 ### 4.2.3 Full Expressions And Cleanup
 

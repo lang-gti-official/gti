@@ -1,0 +1,21 @@
+#include <std/string>
+#include <std/vector>
+
+namespace storage {
+class Texts {
+  mut std::vector<std::string> first = std::vector<std::string>();
+  mut std::vector<std::string> second = std::vector<std::string>();
+public:
+  Texts() {}
+  ~Texts() { std::println(9); }
+  void fill() mut {
+    this.first.push_back(std::string("one"));
+    this.second.push_back(std::string("two"));
+    this.second.push_back(std::string("three"));
+  }
+  void show() {
+    std::println(this.first.size());
+    std::println(this.second.size());
+  }
+};
+}

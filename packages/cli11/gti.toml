@@ -1,0 +1,9 @@
+manifest-version = 1
+
+[package]
+name = "gti-cli11"
+version = "0.1.0"
+
+[package.native]
+include-dirs = ["native", "vendor/cli11/include"]
+cpp-sources = ["native/adapter.cpp"]

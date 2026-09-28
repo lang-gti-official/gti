@@ -93,7 +93,9 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
   // through exact verified MIR shapes below.
   const auto passiveType = [&](const SemanticType &type) {
     return scalarType(type) || type.kind == SemanticType::StringView ||
-           type.kind == SemanticType::CString || rawPointerType(type) ||
+           type.kind == SemanticType::CString ||
+           (type.kind == SemanticType::RawPointer &&
+            type.arguments.size() == 1) ||
            (type.kind == SemanticType::NativeFunction &&
             type.hasNativeFunctionShape()) ||
            passiveCAbiRecordType(type);
@@ -2339,6 +2341,7 @@ bool mirTypeMoveIsDefinedFailureFree(const MirProgram &program,
     case SemanticType::TypePack:
     case SemanticType::TypeName:
     case SemanticType::Function:
+    case SemanticType::FunctionSignature:
     case SemanticType::Lambda:
       return false;
     }

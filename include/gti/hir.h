@@ -52,6 +52,8 @@ struct HirDropObligation {
   std::size_t constructionOrder = 0;
   HirDropObligationKind kind = HirDropObligationKind::Value;
   HirBindingId binding = 0;
+  // Concrete pack bindings retain one lexical obligation per owning element.
+  std::optional<std::size_t> packElement;
   HirValueId value = 0;
   HirFullExpressionId fullExpression = 0;
   HirDropType dropType;
@@ -151,6 +153,8 @@ enum class HirCallInputKind {
   // parameter. This is not a general borrowed-value transfer: MIR verifies
   // the producer, retained owner loan, lifetime slot, and unique consumer.
   MoveBorrowedTemporary,
+  // Once access to an owned field of consuming this; cleanup stays in this.
+  RetainedReceiver,
 };
 
 struct HirCallReceiver {
@@ -215,6 +219,8 @@ struct HirValue {
   AccessMode borrowAccess = AccessMode::ReadOnly;
   std::optional<BorrowOriginPlace> borrowPlace;
   bool storedReferenceAccess = false;
+  bool retainedReceiverProjection = false;
+  std::optional<HirValueId> retainedReceiverOwner;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirValueId> receiver;
@@ -231,6 +237,9 @@ struct HirValue {
   std::optional<HirThreadTaskAdapterId> threadTaskAdapter;
   std::optional<HirConstructorInstanceId> constructorTarget;
   ConstructorKind constructorKind = ConstructorKind::Ordinary;
+  // Semantics resolved a full-field construction; stage all inputs before
+  // publishing fields, with ordinary constructor argument failure cleanup.
+  bool designatedConstruction = false;
   std::optional<HirLambdaId> lambdaTarget;
   std::vector<CallableArgumentBoundary> callableArguments;
   std::optional<CallableBoundary> callableBoundary;
@@ -489,6 +498,7 @@ struct HirFunctionInstance {
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
+  std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   HirBody body;
   std::optional<SourceSpan> instantiationSite;
   bool staticMember = false;

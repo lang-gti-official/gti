@@ -340,6 +340,14 @@ struct mir_failure_status_v1 {
 inline constexpr mir_failure_status_v1 mir_failure_success_v1{
     GTI_FAILURE_CODE_NONE_V1, GTI_FAILURE_DETAIL_NONE_V1};
 
+template <typename Unexpected>
+inline decltype(auto) mir_unexpected_error_ref_v1(Unexpected &value) noexcept {
+  if constexpr (requires { value.error(); })
+    return value.error();
+  else
+    return value.value();
+}
+
 inline mir_failure_status_v1
 mir_checked_index_bounds_v1(std::uint64_t index, std::uint64_t size,
                             ::gti_failure_detail_v1 detail) noexcept {
@@ -370,7 +378,9 @@ inline mir_failure_status_v1 mir_expected_value_v1(Expected &expected,
     return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
             GTI_FAILURE_DETAIL_VALUE_ON_ERROR_V1};
   }
-  *result = expected.value();
+  // GTI's state check owns the failure. The host value() accessor additionally
+  // requires a copyable error for bad_expected_access, even on the success path.
+  *result = *expected;
   return mir_failure_success_v1;
 }
 
@@ -391,7 +401,7 @@ mir_expected_value_ref_v1(Expected &expected, ResultPointer *result) noexcept {
     return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
             GTI_FAILURE_DETAIL_VALUE_ON_ERROR_V1};
   }
-  *result = std::addressof(expected.value());
+  *result = std::addressof(*expected);
   return mir_failure_success_v1;
 }
 
@@ -402,7 +412,7 @@ mir_expected_value_move_v1(Expected &expected, ResultSlot *result) {
     return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
             GTI_FAILURE_DETAIL_VALUE_ON_ERROR_V1};
   }
-  result->construct(std::move(expected).value());
+  result->construct(*std::move(expected));
   return mir_failure_success_v1;
 }
 

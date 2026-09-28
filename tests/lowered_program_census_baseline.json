@@ -181,7 +181,7 @@
       }
     },
     "14-operators.gti": {
-      "declarations": 94,
+      "declarations": 95,
       "bodies": 33,
       "generated_items": 3,
       "generated_kinds": {
@@ -211,7 +211,7 @@
       }
     },
     "16-move-generics.gti": {
-      "declarations": 206,
+      "declarations": 207,
       "bodies": 34,
       "generated_items": 8,
       "generated_kinds": {
@@ -271,14 +271,14 @@
       }
     },
     "20-strings.gti": {
-      "declarations": 400,
-      "bodies": 190,
-      "generated_items": 25,
+      "declarations": 634,
+      "bodies": 195,
+      "generated_items": 33,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
-        "structural_operator_adapter": 9,
-        "callable_adapter": 9,
+        "structural_operator_adapter": 11,
+        "callable_adapter": 15,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
@@ -541,7 +541,7 @@
       }
     },
     "38-vector-emplace.gti": {
-      "declarations": 310,
+      "declarations": 312,
       "bodies": 69,
       "generated_items": 37,
       "generated_kinds": {
@@ -571,14 +571,14 @@
       }
     },
     "40-loan-flow-edges.gti": {
-      "declarations": 400,
-      "bodies": 190,
-      "generated_items": 25,
+      "declarations": 634,
+      "bodies": 195,
+      "generated_items": 33,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
-        "structural_operator_adapter": 9,
-        "callable_adapter": 9,
+        "structural_operator_adapter": 11,
+        "callable_adapter": 15,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
@@ -616,14 +616,14 @@
       }
     },
     "43-program-arguments.gti": {
-      "declarations": 467,
-      "bodies": 201,
-      "generated_items": 38,
+      "declarations": 703,
+      "bodies": 206,
+      "generated_items": 46,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
-        "structural_operator_adapter": 16,
-        "callable_adapter": 9,
+        "structural_operator_adapter": 18,
+        "callable_adapter": 15,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
@@ -631,14 +631,14 @@
       }
     },
     "44-bounded-requires.gti": {
-      "declarations": 383,
-      "bodies": 140,
-      "generated_items": 32,
+      "declarations": 619,
+      "bodies": 145,
+      "generated_items": 40,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
-        "structural_operator_adapter": 11,
-        "callable_adapter": 8,
+        "structural_operator_adapter": 13,
+        "callable_adapter": 14,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
@@ -661,14 +661,14 @@
       }
     },
     "46-defined-integer-arithmetic.gti": {
-      "declarations": 284,
-      "bodies": 117,
-      "generated_items": 9,
+      "declarations": 518,
+      "bodies": 122,
+      "generated_items": 17,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
-        "structural_operator_adapter": 0,
-        "callable_adapter": 8,
+        "structural_operator_adapter": 2,
+        "callable_adapter": 14,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
@@ -751,14 +751,14 @@
       }
     },
     "52-stateful-callables.gti": {
-      "declarations": 418,
-      "bodies": 146,
-      "generated_items": 34,
+      "declarations": 654,
+      "bodies": 151,
+      "generated_items": 42,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
-        "structural_operator_adapter": 11,
-        "callable_adapter": 10,
+        "structural_operator_adapter": 13,
+        "callable_adapter": 16,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
@@ -826,7 +826,7 @@
       }
     },
     "57-contextual-array-arguments.gti": {
-      "declarations": 183,
+      "declarations": 185,
       "bodies": 33,
       "generated_items": 16,
       "generated_kinds": {
@@ -841,18 +841,18 @@
       }
     },
     "58-formatted-output.gti": {
-      "declarations": 413,
-      "bodies": 207,
-      "generated_items": 38,
+      "declarations": 692,
+      "bodies": 262,
+      "generated_items": 57,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
-        "structural_operator_adapter": 9,
-        "callable_adapter": 9,
+        "structural_operator_adapter": 11,
+        "callable_adapter": 15,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
-        "thread_task_adapter": 19
+        "thread_task_adapter": 30
       }
     },
     "59-default-parameters.gti": {
@@ -916,14 +916,14 @@
       }
     },
     "63-random-engine.gti": {
-      "declarations": 299,
-      "bodies": 127,
-      "generated_items": 12,
+      "declarations": 533,
+      "bodies": 132,
+      "generated_items": 20,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
-        "structural_operator_adapter": 0,
-        "callable_adapter": 10,
+        "structural_operator_adapter": 2,
+        "callable_adapter": 16,
         "lifecycle_cleanup": 1,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
@@ -946,7 +946,7 @@
       }
     },
     "65-mutable-ranges.gti": {
-      "declarations": 177,
+      "declarations": 179,
       "bodies": 40,
       "generated_items": 23,
       "generated_kinds": {
@@ -976,14 +976,14 @@
       }
     },
     "67-forward-iterators.gti": {
-      "declarations": 294,
-      "bodies": 51,
-      "generated_items": 26,
+      "declarations": 530,
+      "bodies": 56,
+      "generated_items": 34,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
-        "structural_operator_adapter": 11,
-        "callable_adapter": 4,
+        "structural_operator_adapter": 13,
+        "callable_adapter": 10,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
@@ -1021,14 +1021,14 @@
       }
     },
     "70-qualified-specializations.gti": {
-      "declarations": 128,
-      "bodies": 24,
-      "generated_items": 6,
+      "declarations": 362,
+      "bodies": 29,
+      "generated_items": 14,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
-        "structural_operator_adapter": 0,
-        "callable_adapter": 5,
+        "structural_operator_adapter": 2,
+        "callable_adapter": 11,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
@@ -1051,14 +1051,14 @@
       }
     },
     "72-filesystem-paths.gti": {
-      "declarations": 469,
-      "bodies": 251,
-      "generated_items": 26,
+      "declarations": 703,
+      "bodies": 256,
+      "generated_items": 34,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
-        "structural_operator_adapter": 10,
-        "callable_adapter": 9,
+        "structural_operator_adapter": 12,
+        "callable_adapter": 15,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
@@ -1066,14 +1066,14 @@
       }
     },
     "73-constructor-local-generics.gti": {
-      "declarations": 405,
-      "bodies": 196,
-      "generated_items": 28,
+      "declarations": 639,
+      "bodies": 201,
+      "generated_items": 36,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
-        "structural_operator_adapter": 9,
-        "callable_adapter": 9,
+        "structural_operator_adapter": 11,
+        "callable_adapter": 15,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
@@ -1081,7 +1081,7 @@
       }
     },
     "74-read-only-range-loans.gti": {
-      "declarations": 177,
+      "declarations": 179,
       "bodies": 36,
       "generated_items": 19,
       "generated_kinds": {
@@ -1126,14 +1126,14 @@
       }
     },
     "77-callable-concepts.gti": {
-      "declarations": 302,
-      "bodies": 51,
-      "generated_items": 25,
+      "declarations": 538,
+      "bodies": 56,
+      "generated_items": 33,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
-        "structural_operator_adapter": 11,
-        "callable_adapter": 6,
+        "structural_operator_adapter": 13,
+        "callable_adapter": 12,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
@@ -1171,14 +1171,14 @@
       }
     },
     "80-function-items.gti": {
-      "declarations": 298,
-      "bodies": 52,
-      "generated_items": 25,
+      "declarations": 534,
+      "bodies": 57,
+      "generated_items": 33,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
-        "structural_operator_adapter": 11,
-        "callable_adapter": 4,
+        "structural_operator_adapter": 13,
+        "callable_adapter": 10,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
@@ -1186,14 +1186,14 @@
       }
     },
     "83-complete-ranges.gti": {
-      "declarations": 307,
-      "bodies": 73,
-      "generated_items": 37,
+      "declarations": 543,
+      "bodies": 78,
+      "generated_items": 45,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
-        "structural_operator_adapter": 11,
-        "callable_adapter": 5,
+        "structural_operator_adapter": 13,
+        "callable_adapter": 11,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
@@ -1216,7 +1216,7 @@
       }
     },
     "85-payload-enum-fields.gti": {
-      "declarations": 93,
+      "declarations": 94,
       "bodies": 28,
       "generated_items": 3,
       "generated_kinds": {
@@ -1232,8 +1232,8 @@
     }
   },
   "totals": {
-    "declarations": 12759,
-    "bodies": 3913,
-    "generated_items": 752
+    "declarations": 16339,
+    "bodies": 4038,
+    "generated_items": 883
   }
 }

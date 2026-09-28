@@ -1,0 +1,22 @@
+#include <std/string>
+#include <std/vector>
+
+class Token {
+public:
+  int value;
+  Token(int initial) : value(initial) {}
+  ~Token() {
+    std::println(this.value);
+    int result = 1 / (this.value - 1);
+  }
+};
+
+void ignore<Args...>(int divisor, Args... args) {
+  int result = 1 / divisor;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Token caller = Token(9);
+  ignore(argc == 1 ? 1 : 0, Token(1), Token(2));
+  return 0;
+}

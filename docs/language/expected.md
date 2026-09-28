@@ -47,6 +47,12 @@ mutable expected local provides mutable access to its active value or error;
 an immutable receiver provides read-only access. The access remains tied to the
 expected object's lifetime and does not itself move the contained object.
 
+The error alternative may own resources and be move-only; successful access
+does not require copying it. Both `expected<int, Error>` and
+`expected<void, Error>` retain cleanup for an active owning error. Only the
+active alternative is destroyed. If its destructor fails during another
+failure's cleanup, the ordinary secondary-cleanup-failure rule applies.
+
 Expected-returning calls are non-discardable like every other non-`void`
 function call. Use `[[discard]]` only when ignoring the entire result is
 intentional.

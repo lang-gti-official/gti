@@ -1,0 +1,107 @@
+using Action = void();
+using Predicate = bool(int);
+
+class SignatureTag<S = void> {
+public:
+  using signature = S;
+  int value() { return 7; }
+};
+
+int identify<S>(SignatureTag<S>& value) { return value.value(); }
+int describe<R, A>(SignatureTag<R(A)>& value) { return value.value(); }
+int describe_refs<R, A>(SignatureTag<R&(A&)>& value) { return value.value(); }
+int describe_empty<R>(SignatureTag<R()>& value) { return value.value(); }
+int metadata<T = void>() { SignatureTag<T> value{}; return value.value(); }
+int variadic<R, Args...>(SignatureTag<R()>& value, Args... args) {
+  return value.value();
+}
+T* pointer_identity<T>(T* pointer) { return pointer; }
+
+class Signature<R, Args...> {
+public:
+  using type = R(Args...);
+  int value() { return 7; }
+};
+class Forward<R, Args...> {
+  using nested = Signature<R, Args...>;
+  nested stored{};
+public:
+  int value() { return stored.value(); }
+};
+class Types<Args...> {
+public:
+  int value() { return 7; }
+};
+
+void consume<Values...>(Values... values) {}
+class Relay<Args...> {
+public:
+  void send(Args... args) { consume(args...); }
+  int inspect<T>(T first, Args... args) { consume(first, args...); return 7; }
+  void twice(Args... args) { send(args...); send(args...); }
+  int operator()(Args... args) { consume(args...); return 7; }
+};
+interface Invocable<Args...> { int invoke(Args... args); };
+class Target<Args...> : public Invocable<Args...> {
+public:
+  int invoke(Args... args) override { consume(args...); return 7; }
+};
+int dispatch(Invocable<int, bool>& target) { return target.invoke(1, true); }
+int dispatch_empty(Invocable<>& target) { return target.invoke(); }
+mut int cleanup_count = 0;
+class PackToken {
+  int id;
+public:
+  PackToken(int value) : id(value) {}
+  ~PackToken() { cleanup_count = cleanup_count * 10 + id; }
+};
+int dispatch_owner(Invocable<PackToken, PackToken>& target) {
+  return target.invoke(PackToken(5), PackToken(6));
+}
+
+int main() {
+  SignatureTag<void()> first{};
+  SignatureTag<Action> second{};
+  SignatureTag<Predicate> third{};
+  SignatureTag<int&(int&)> fourth{};
+  SignatureTag<void(int)> action{};
+  SignatureTag defaulted{};
+  void* pointer = nullptr;
+  void* copied = pointer_identity(pointer);
+  if (copied != nullptr) { return 1; }
+  Signature<void> empty{};
+  Signature<int, int, bool> binary{};
+  Signature<int&, int&> borrowing{};
+  Forward<void, int, bool> forwarded{};
+  Forward<void> forwarded_empty{};
+  Types<> no_types{};
+  auto constructed = Types<>();
+  Types<void, int&> metadata_types{};
+  if (empty.value() + binary.value() + borrowing.value() + forwarded.value() +
+      forwarded_empty.value() + no_types.value() + constructed.value() +
+      metadata_types.value() != 56) { return 2; }
+  Relay<> empty_relay{};
+  Relay<int, bool> pair{};
+  empty_relay.send();
+  empty_relay.twice();
+  pair.send(1, true);
+  pair.twice(2, false);
+  if (empty_relay.inspect(1) + pair.inspect(1, 2, true) +
+      empty_relay() + pair(1, true) != 28) { return 3; }
+  Relay<PackToken, PackToken> owning{};
+  owning.send(PackToken(1), PackToken(2));
+  if (cleanup_count != 21) { return 4; }
+  cleanup_count = 0;
+  if (owning(PackToken(3), PackToken(4)) != 7 || cleanup_count != 43) { return 5; }
+  Target<int, bool> virtual_pair{};
+  Target<> virtual_empty{};
+  if (dispatch(virtual_pair) + dispatch_empty(virtual_empty) != 14) { return 6; }
+  Target<PackToken, PackToken> virtual_owner{};
+  cleanup_count = 0;
+  if (dispatch_owner(virtual_owner) != 7 || cleanup_count != 65) { return 7; }
+  return identify(first) + identify(second) + identify(third) +
+         identify(fourth) + describe(action) + describe(third) +
+         describe(fourth) + describe_empty(first) + metadata<void>() +
+         metadata() + variadic(first, 1, true) + defaulted.value() +
+         describe_refs(fourth) - 91;
+}

@@ -19,6 +19,8 @@ def main():
     callee = site("callee_failure =")
     constructor = site("constructor_failure =")
     secondary = site("secondary =")
+    replacement = site("replacement_constructor_failure =")
+    replacement_cleanup = site("replacement_cleanup_failure =")
 
     def ordinary(line):
         return (f"{source.name}:{line}: runtime error[GTI-R0002]: "
@@ -37,6 +39,13 @@ def main():
          f"{source.name}:{secondary}: runtime error[GTI-R0014]: "
          "failure_during_cleanup; primary [GTI-R0002] at "
          f"{source.name}:{argument}; secondary [GTI-R0002]\n"),
+        (0, "4\n5\n9\n", ""),
+        (70, "4\n5\n9\n", ordinary(replacement)),
+        (70, "4\n5\n",
+         f"{source.name}:{replacement_cleanup}: runtime error[GTI-R0014]: "
+         "failure_during_cleanup; primary [GTI-R0002] at "
+         f"{source.name}:{replacement}; secondary [GTI-R0002]\n"),
+        (70, "4\n5\n9\n", ordinary(replacement_cleanup)),
     ]
     modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
              for standard in ("c++20", "c++23") for opt in ("O0", "O1", "O3")]

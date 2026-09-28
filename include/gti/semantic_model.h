@@ -186,6 +186,9 @@ enum class CallableOwnedTransportKind {
   ExactReturn,
   ExactField,
   ThreadTask,
+  // An ordinary owned value at parameter entry. Subsequent transfers and
+  // cleanup are governed by value/loan/lifecycle analysis, not return syntax.
+  Value,
 };
 
 struct CallableOwnedTransport {
@@ -299,6 +302,7 @@ enum class IntrinsicKind {
   MutexGuardRead,
   MutexGuardReadMut,
   MutexLockFailure,
+  ExactTypeParameterConstruction,
   Count,
 };
 
@@ -425,6 +429,17 @@ struct BorrowOriginPlace {
                          const BorrowOriginPlace &) = default;
 };
 
+// A receiver-relative path to private unique-owner storage returned through
+// its checked borrow operation. This describes an accessor, not permission to
+// consume an arbitrary reference. MIR independently verifies the source body.
+struct OwnedPointeeProjection {
+  std::vector<SymbolId> fields;
+  IntrinsicKind borrowIntrinsic = IntrinsicKind::None;
+
+  friend bool operator==(const OwnedPointeeProjection &,
+                         const OwnedPointeeProjection &) = default;
+};
+
 struct FunctionInfo {
   FunctionId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -460,9 +475,16 @@ struct FunctionInfo {
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
+  std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   std::vector<FunctionId> virtualRoots;
   std::vector<CallableParameterContract> callableParameters;
   bool compilerPrivate = false;
+
+  // Source contracts use formal declaration indices. Concrete contracts use
+  // flattened call indices, including each element of a final value pack.
+  [[nodiscard]] std::vector<CallableParameterContract>
+  instantiatedCallableParameters(
+      const std::vector<SemanticType> &concreteParameters) const;
 };
 
 struct LambdaCaptureInfo {
@@ -559,6 +581,7 @@ struct ClassTypeInfo {
   std::vector<SemanticType> exactTypeArguments;
   std::vector<CompileTimeValue> exactValueArguments;
   std::vector<GenericParameterInfo> genericParameters;
+  std::vector<SemanticType> genericArgumentPatterns;
   std::vector<ClassFieldTypeInfo> fields;
   std::vector<ClassFieldTypeInfo> staticFields;
   std::optional<StoredReferenceInfo> storedReference;
@@ -686,6 +709,7 @@ struct ConstructorInfo {
   AccessMode borrowAccess = AccessMode::ReadOnly;
   bool constexprConstructor = false;
   bool compilerPrivate = false;
+  bool parameterPack = false;
 };
 
 struct DestructorInfo {
@@ -721,6 +745,9 @@ struct ResolvedConstructionInfo {
   std::vector<AppliedConceptRequirement> requirements;
   std::vector<SemanticType> parameterTypes;
   std::vector<const Expr *> defaultArguments;
+  // Designated struct construction supplies every field in declaration order,
+  // including declaration defaults. These are caller-side MIR inputs.
+  std::vector<const Expr *> designatedArguments;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
@@ -788,10 +815,24 @@ struct ResolvedCallInfo {
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   CallReceiverMode receiverMode = CallReceiverMode::None;
+  // An immediate invocation keeps the owned field in consuming this.
+  bool retainedReceiverProjection = false;
+  // Exact owning accessor receiver whose availability is consumed, while its
+  // returned pointee is invoked in place. Null for ordinary field forwarding.
+  const Expr *retainedReceiverOwner = nullptr;
   // Exact read-only reference parameters that borrow one fresh value only for
   // this invocation. The full expression retains ownership of each value.
   std::vector<std::size_t> ephemeralBorrowArguments;
   std::vector<CallableArgumentBoundary> callableArguments;
+};
+
+// Contextual collection braces select ordinary static GTI functions. The
+// compiler owns sequencing/transfer; the selected library owns storage policy.
+struct ResolvedCollectionInfo {
+  SemanticType type = SemanticType::Unknown;
+  SemanticType elementType = SemanticType::Unknown;
+  FunctionId initialize = 0;
+  FunctionId insert = 0;
 };
 
 struct NativeFunctionConversionInfo {
@@ -845,7 +886,10 @@ struct DeferredCallableCallInfo {
   std::vector<SemanticType> parameterTypes;
   AccessMode access = AccessMode::ReadOnly;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
-  CallableBoundary boundary = CallableBoundary::Confined;
+  std::optional<CallableBoundary> boundary = CallableBoundary::Confined;
+  // A stored receiver is checked again against its concrete field type.
+  // It is not a confined parameter or an ownership-transfer boundary.
+  SymbolId receiverField = 0;
 };
 
 struct ResolvedOperatorInfo {
@@ -1246,6 +1290,9 @@ enum class StaticAssertResult {
 
 class SemanticModel {
 public:
+  // Own semantic-generated constructor syntax for the lifetime of every
+  // downstream reference; cached parsed source trees remain immutable.
+  std::vector<std::shared_ptr<const ConstructorDecl>> designatedConstructors;
   [[nodiscard]] const SemanticAnalysisSeal &analysisSeal() const;
 
   [[nodiscard]] ExecutionProfile executionProfile() const;
@@ -1406,6 +1453,8 @@ public:
   findPayloadPattern(const Expr &expression) const;
 
   [[nodiscard]] const ResolvedCallInfo *findCall(const Call &call) const;
+  [[nodiscard]] const ResolvedCollectionInfo *
+  findCollection(const ArrayInitializer &initializer) const;
 
   [[nodiscard]] const NativeFunctionConversionInfo *
   findNativeFunctionConversion(const Expr &expression) const;
@@ -1448,6 +1497,12 @@ public:
   [[nodiscard]] SymbolId findResolvedSymbol(const Expr &expression) const;
 
   [[nodiscard]] std::size_t functionCount() const;
+
+  // Query after successful semantic analysis. Entry selection remains the
+  // compiler's resolved function fact, not a driver/editor spelling heuristic.
+  [[nodiscard]] std::optional<Diagnostic>
+  executableEntryDiagnostic(SourceUnitId entryUnit,
+                            const std::string &entryPath) const;
 
   [[nodiscard]] std::size_t lambdaCount() const;
 
@@ -1626,6 +1681,8 @@ private:
                             ResolvedPayloadPatternInfo info);
 
   void record(const Call &call, ResolvedCallInfo info);
+  void recordCollection(const ArrayInitializer &initializer,
+                        ResolvedCollectionInfo info);
 
   void recordNativeFunctionConversion(const Expr &expression,
                                       NativeFunctionConversionInfo info);
@@ -1793,6 +1850,8 @@ private:
   std::unordered_set<const Expr *> contextualIntegerOperands;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
   std::unordered_map<const Expr *, ResolvedConstructionInfo> constructions;
+  std::unordered_map<const ArrayInitializer *, ResolvedCollectionInfo>
+      collections;
   std::unordered_map<const ArrayInitializer *, ResolvedConstructionInfo>
       arrayElementConstructions;
   std::unordered_map<const ConstructorInitializer *,

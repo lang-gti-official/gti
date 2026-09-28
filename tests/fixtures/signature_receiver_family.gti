@@ -1,0 +1,57 @@
+namespace callbacks {
+  // Deliberately put the mutable definition first: selection is not priority.
+  class Callback<R(Args...) mut> {
+  public:
+    using result_type = R;
+    using nested_alias = result_type;
+    int mode() { return 2; }
+  };
+  class Callback<R(Args...) &&> {
+  public:
+    using result_type = R;
+    using nested_alias = result_type;
+    int mode() { return 3; }
+  };
+  class Callback<R(Args...)> {
+  public:
+    using result_type = R;
+    using nested_alias = result_type;
+    int mode() { return 1; }
+  };
+  class Special<R(Args...)> {
+  public:
+    int mode() { return 1; }
+  };
+  class Special<R(Args...) mut> {
+  public:
+    int mode() { return 2; }
+  };
+}
+
+class callbacks::Special<int() mut> {
+public:
+  int mode() { return 42; }
+};
+
+using Read = int(int);
+using Mutable = int(int) mut;
+using Once = int(int) &&;
+
+int inspect<S>() {
+  callbacks::Callback<S> callback{};
+  return callback.mode();
+}
+
+int mutable_mode<R, Args...>(callbacks::Callback<R(Args...) mut>& value) {
+  return value.mode();
+}
+
+int main() {
+  callbacks::Callback<Read> read{};
+  callbacks::Callback<Mutable> write{};
+  callbacks::Callback<Once> once{};
+  callbacks::Special<int() mut> special{};
+  if (special.mode() != 42 || mutable_mode(write) != 2) { return 1; }
+  return read.mode() + write.mode() + once.mode() +
+         inspect<Read>() + inspect<Mutable>() + inspect<Once>() - 12;
+}

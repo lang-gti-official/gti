@@ -18,6 +18,12 @@
 namespace lang {
 namespace {
 
+[[nodiscard]] bool lifecycleContainsClosure(const SemanticType &type) {
+  return type.kind == SemanticType::Lambda ||
+         std::any_of(type.arguments.begin(), type.arguments.end(),
+                     lifecycleContainsClosure);
+}
+
 using lowered_detail::addIssue;
 using lowered_detail::bodyRole;
 using lowered_detail::containsGenerated;
@@ -97,16 +103,46 @@ validGeneratedIdentity(const LoweredGeneratedItemIdentity &identity) {
 }
 
 [[nodiscard]] bool
-validGenericParameters(const std::vector<LoweredGenericParameter> &parameters) {
+validGenericParameters(const std::vector<LoweredGenericParameter> &parameters,
+                       bool allowProjected = false) {
   for (std::size_t index = 0; index < parameters.size(); ++index) {
     const LoweredGenericParameter &parameter = parameters[index];
     if (parameter.id == 0 || parameter.name.empty() ||
+        (!allowProjected && !parameter.typeArgumentPath.empty()) ||
+        (parameter.value && !parameter.typeArgumentPath.empty()) ||
         std::find_if(parameters.begin(),
                      parameters.begin() + static_cast<std::ptrdiff_t>(index),
                      [&](const LoweredGenericParameter &prior) {
                        return prior.id == parameter.id;
                      }) !=
             parameters.begin() + static_cast<std::ptrdiff_t>(index)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+[[nodiscard]] bool
+validClassPatternBindings(const LoweredClassDeclaration &declaration) {
+  if (declaration.genericArgumentPatterns.empty()) {
+    return std::all_of(declaration.genericParameters.begin(),
+                       declaration.genericParameters.end(),
+                       [](const auto &parameter) {
+                         return parameter.typeArgumentPath.empty();
+                       });
+  }
+  if (!resolvedTypes(declaration.genericArgumentPatterns) ||
+      declaration.genericParameters.empty()) {
+    return false;
+  }
+  for (const auto &parameter : declaration.genericParameters) {
+    const auto projected = projectGenericTypeArgument(
+        declaration.genericArgumentPatterns, parameter.typeArgumentPath,
+        parameter.id, parameter.pack);
+    if (!projected || parameter.value ||
+        projected->genericParameterId != parameter.id ||
+        projected->kind != (parameter.pack ? SemanticType::TypePack
+                                           : SemanticType::TypeParameter)) {
       return false;
     }
   }
@@ -291,7 +327,8 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
         declaration.semanticIdentity != payload->id ||
         declaration.name.empty() || payload->qualifiedName.empty() ||
         declaration.generic != !payload->genericParameters.empty() ||
-        !validGenericParameters(payload->genericParameters) ||
+        !validGenericParameters(payload->genericParameters, true) ||
+        !validClassPatternBindings(*payload) ||
         (exactSpecialization &&
          (!payload->genericParameters.empty() ||
           (payload->exactTypeArguments.empty() &&
@@ -667,12 +704,14 @@ verifyLoweredProgram(const LoweredProgram &program) {
             : program.findDeclaration(primaryIdentity->second);
     const std::size_t primaryTypeParameters =
         primary == nullptr ? 0
-                           : static_cast<std::size_t>(std::count_if(
-                                 primary->genericParameters.begin(),
-                                 primary->genericParameters.end(),
-                                 [](const LoweredGenericParameter &parameter) {
-                                   return !parameter.value;
-                                 }));
+        : !primary->genericArgumentPatterns.empty()
+            ? primary->genericArgumentPatterns.size()
+            : static_cast<std::size_t>(
+                  std::count_if(primary->genericParameters.begin(),
+                                primary->genericParameters.end(),
+                                [](const LoweredGenericParameter &parameter) {
+                                  return !parameter.value;
+                                }));
     const std::size_t primaryValueParameters =
         primary == nullptr ? 0
                            : static_cast<std::size_t>(std::count_if(
@@ -795,6 +834,20 @@ verifyLoweredProgram(const LoweredProgram &program) {
        ++index) {
     const LoweredClassInstance &instance = program.classInstances_[index];
     const MirClassInstance &mir = program.mir_.classInstances()[index];
+    if (const auto *declaration =
+            program.findClassDeclaration(instance.declaration)) {
+      for (const LoweredGenericParameter &parameter :
+           declaration->genericParameters) {
+        if (!parameter.typeArgumentPath.empty() &&
+            !projectGenericTypeArgument(instance.typeArguments,
+                                        parameter.typeArgumentPath,
+                                        parameter.id, parameter.pack)) {
+          addIssue(
+              issues, LoweredProgramIssueKind::InvalidInstanceInventory,
+              "lowered class binding projection does not select an argument");
+        }
+      }
+    }
     if (instance.id != index + 1 || instance.id != mir.id ||
         instance.declaration != mir.declaration ||
         instance.typeArguments != mir.type.arguments ||
@@ -1059,7 +1112,9 @@ verifyLoweredProgram(const LoweredProgram &program) {
               ? nullptr
               : program.findClassDeclaration(payload->ownerClass);
       const LoweredLifecycleCleanupForm expectedForm =
-          classDeclaration != nullptr &&
+          owner != nullptr && lifecycleContainsClosure(owner->type)
+              ? LoweredLifecycleCleanupForm::RetainedPrimary
+          : classDeclaration != nullptr &&
                   !classDeclaration->genericParameters.empty()
               ? LoweredLifecycleCleanupForm::ConcreteSpecialization
               : LoweredLifecycleCleanupForm::OrdinaryClass;

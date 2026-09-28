@@ -5,6 +5,7 @@ import importlib.util
 import pathlib
 import sys
 import tempfile
+from unittest import mock
 
 
 def rejected(operation):
@@ -19,6 +20,10 @@ def main():
     spec = importlib.util.spec_from_file_location("installer", sys.argv[1])
     installer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(installer)
+    with mock.patch.object(installer.os, "cpu_count", return_value=12):
+        assert installer.default_jobs() == 12
+    with mock.patch.object(installer.os, "cpu_count", return_value=None):
+        assert installer.default_jobs() == 1
     with tempfile.TemporaryDirectory(prefix="gti-local-installer-test-") as directory:
         root = pathlib.Path(directory)
         configuration = root / "plugins/gti.lua"

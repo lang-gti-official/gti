@@ -35,6 +35,8 @@ struct FrontendOptions {
   std::optional<std::size_t> completionOffset;
   FrontendPhase stopAfter = FrontendPhase::Mir;
   bool toolingOccurrences = true;
+  // Set only for an executable root, never inferred from a source filename.
+  bool requireEntryPoint = false;
   // Optional synchronous work accounting. The caller owns this object for the
   // complete Frontend invocation.
   FrontendWorkMetrics *workMetrics = nullptr;

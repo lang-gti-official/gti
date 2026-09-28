@@ -186,6 +186,11 @@ expected<int, MoveError> forward_named_move_error(bool fail) {
   return value;
 }
 
+expected<void, MoveError> forward_void_move_error(bool fail) {
+  int value = ?make_move_error(fail, 37, 61);
+  return;
+}
+
 int main() {
   if (!condition_value(1, false)) { return 21; }
   if (!condition_value(1, true)) { return 22; }
@@ -286,6 +291,12 @@ int main() {
   [[discard]] forward_named_move_error(true);
   if (move_error_success_total != 112) {
     return 18;
+  }
+  auto void_move_success = forward_void_move_error(false);
+  auto void_move_failure = forward_void_move_error(true);
+  if (!void_move_success.has_value() || void_move_failure.has_value() ||
+      void_move_failure.error().read() != 37) {
+    return 23;
   }
 
   expected<int, int> cleaned_success = cleanup_prior_temporary(false);

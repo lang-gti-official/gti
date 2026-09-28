@@ -140,6 +140,9 @@ paths and downloads disabled, backing up an existing different spec only after
 does not change source compilation, project manifests, LSP semantics, or release
 publication authority. Its local system-LLVM archive is not a self-contained
 release artifact.
+Builds default to all detected logical CPUs (one if detection is unavailable),
+at normal process priority. `--jobs N` overrides the job count; the dry-run and
+normal output both report the selected parallelism.
 
 A `VERSION` change on Gitea `main` dispatches the stable workflow, which owns
 the matching immutable tag and versioned release. The `nightly` release is one
@@ -172,6 +175,13 @@ changes need no trailer. A stable-version advance retains the ordinary release
 workflow, with no competing manual tag.
 
 ## Direct Mode
+
+Executable requests explicitly require a compiler-selected global `main`
+definition in the entry source unit. `ExecutableBuildRequest` enables this
+policy, as does project `check`; it is diagnosed by the shared frontend as
+`GTI-S2094`, not delegated to the native linker. Default library compilation
+requests and direct/project emit-only modes remain valid without an entry.
+Externally supplied native entry points are not a GTI executable contract.
 
 Direct mode accepts one entry `.gti` source and remains manifest-independent.
 Its source graph produces one whole-program C++ artifact and one native compiler
@@ -753,7 +763,7 @@ programs remain unsupported.
 ### Vendored Native Dependencies
 
 The repository's optional `packages/` collection exercises this contract with
-GLFW, GLAD, SQLite3, cimgui, zlib, libpng, Assimp, and libgit2. Its explicit
+GLFW, GLAD, SQLite3, cimgui, zlib, libpng, Assimp, libgit2, and CLI11. Its explicit
 repository-maintainer preparation command verifies pinned upstream archives and
 generates reviewed public GTI units with `gti bindgen`. GLFW, Assimp, and
 libgit2 then compile their vendored upstream sources through approved package
@@ -762,9 +772,22 @@ into the package. Other native C/C++ inputs compile through isolated package
 groups. Libpng, Assimp, and libgit2 compose their zlib dependency through the
 normal package graph. Published standalone Git packages carry their vendored
 inputs, so their consumers do not run the repository preparation command.
+Libgit2 disables HTTPS and SSH transports in its pinned build.
+CLI11 remains header-only behind one exception-containing C++ adapter, so it
+needs no prepared archive or system library. Its reviewed public declarations
+spell the compiler-defined counted-text bridge directly because C bindgen
+deliberately rejects the reserved `gti_c_string_view` record.
 Generated public bindings are direct source units because including a private
 bindgen unit does not re-export its declarations. See
 [`packages/README.md`](../../packages/README.md) for commands and API limits.
+
+The directly compilable GLAD, SQLite3, cimgui, zlib, libpng, and CLI11 packages
+are also published as self-contained repositories under the `gti-lang` Gitea
+organization. Consumers pin their complete commit IDs and use the ordinary
+locked-Git dependency workflow below. Repository-local path copies remain as
+integration fixtures. GLFW, Assimp, and libgit2 manifests select their checked-in
+GTI build programs; consumers must explicitly approve their execution. Dependency
+acquisition and metadata inspection do not execute those programs.
 
 The composition rules above and the bindgen imports below combine into one
 workflow worth naming, because it is what makes a GTI project portable: a

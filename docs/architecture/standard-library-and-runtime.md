@@ -32,14 +32,22 @@ live with their public header. Optional units do not re-export their own
 dependencies, so application source names the canonical unit for every API it
 uses directly.
 
-Integer `std::print`/`std::println` overloads, `<std/string>`'s integer
-`std::to_string`, and `<std/format>`'s bounded sequential replacement are a
-deliberate boundary example. Digit extraction, brace validation, exact
-argument counting, owning-string construction, and format errors are ordinary
-GTI source. The frontend's bounded comma-pack fold supplies only exact ordered
-calls over a pack; it does not recognize any public formatting name or parse a
-format string. Counted literal writes and scalar dynamic-code-unit writes are
-the only host operations.
+The compiler retains one declarative mapping from public nominal type names to
+their canonical optional unit solely for unresolved-type diagnostics and
+missing-include fix-its. That catalog grants no semantic behavior and does not
+make a declaration visible: applying the edit causes the normal source loader
+and semantic declaration identity to resolve the type on the next snapshot.
+Unknown application/package names never receive a guessed standard-library
+include.
+
+Integer `std::print`/`std::println` overloads, `<std/string>` conversion, and
+`<std/format>`'s bounded sequential heterogeneous replacement are a deliberate
+boundary example. Digit extraction, built-in argument adapters, brace
+validation, exact argument counting, owning-string construction, and format
+errors are ordinary GTI source. The frontend's bounded comma-pack fold supplies
+only exact ordered calls over a pack; it does not recognize any public
+formatting or string name or parse a format string. Counted literal writes and
+scalar dynamic-code-unit writes are the only host operations.
 
 The hosted program-entry signature is one deliberately narrow exception to
 name-independent library evolution: semantics validates the canonical
@@ -191,6 +199,48 @@ Windows fails closed with status 127. Environment selection, working directory,
 consumer approval, caching, and output containment remain driver policy rather
 than runtime policy. This boundary provides exact execution, not sandboxing.
 
+## Public Child-Process Boundary
+
+`<std/process>` promotes exact synchronous argv execution to ordinary hosted
+applications without exposing the build-program policy type. Public
+`std::process::command`, `exit_status`, and `errc` are source-defined GTI
+values. They own validation, stable error categories, and the distinction
+between ordinary exit and signal termination; neither compiler nor backend
+recognizes their names.
+
+The versioned `gti_rt_process_run_v1` host entry receives the same counted
+NUL-delimited encoding and writes only scalar termination and native-error
+facts. On POSIX, a close-on-exec error pipe distinguishes a failure of
+`execvp` from a successfully started child that exits with code 127. The
+runtime retains no input bytes and owns no public command, string, or status
+representation. The older `gti_rt_run_process_v1` entry delegates to this
+transport and keeps the build-program normalized-integer behavior.
+
+The bounded public slice waits synchronously and inherits environment, working
+directory, and standard streams. Capture, redirection, environment and
+directory overrides, asynchronous process ownership, cancellation, timeouts,
+and pipelines remain later process-policy work rather than implicit shell
+behavior. Windows is rejected by the source unit until its UTF-16 command-line
+and handle-inheritance boundary is implemented.
+
+## Clock Boundary
+
+`<std/chrono>` keeps duration and time-point policy in ordinary GTI. Its signed
+`nanoseconds`, nominally distinct `steady_time_point` and `system_time_point`,
+checked elapsed subtraction, comparison, and Unix decomposition contain no
+compiler or backend name recognition. Exact `std::checked_sub` supplies the
+recoverable duration-overflow decision.
+
+The two `gti_rt_chrono_*_now_v1` entries expose only a stable status and one
+`int64_t` output. The runtime converts host clock readings into a floor-based
+seconds plus normalized nanosecond remainder, proves the joined value fits,
+and leaves the output unchanged on failure. The steady epoch remains opaque;
+the system result is signed Unix time excluding leap seconds. No native
+`std::chrono` type crosses the ABI.
+
+Generic ratio durations, sleep, calendars, formatting, parsing, time zones,
+and additional clocks remain outside this first observation slice.
+
 ## Managed Concurrency Boundary
 
 The public managed-thread type is the ordinary source-defined `std::thread`
@@ -299,11 +349,37 @@ status values, and stable mode/origin ordinals. It does not know about
 `std::FILE`, `std::string`, formatting, CSV records, buffering, or encoding.
 Portable ownership, chunk allocation, mode spelling, EOF policy, and
 `expected` translation remain ordinary `<std/cstdio>` source.
+The `std::getline` overloads likewise implement delimiter recognition, final
+unterminated-line handling, and owned-string assembly in GTI source over the
+existing single-byte entries; the runtime has no line or terminal-prompt
+policy.
 
 Exact `char`/`uint8_t` conversion bridges the byte representation in trusted
 source without making `char` numeric or adding an implicit conversion. Chunk
 reads use one fixed internal array and return an owned string; application code
 never receives the mutable runtime buffer or native descriptor.
+
+`<std/http>` follows the same public-policy boundary for owned URL construction
+and a synchronous, buffered HTTP/HTTPS client. Absolute parsing, component
+percent-encoding, URL cloning and rendering, request construction, header
+validation, stable error categories, owned response copying, and RAII live in
+ordinary GTI. A versioned `gti_rt_http_*_v1` C ABI accepts only counted views,
+scalar limits,
+stable method ordinals, and opaque integer handles. Its host implementation
+dynamically loads libcurl, enforces certificate and hostname verification,
+disables redirects, bounds buffered response data, and retains no caller
+views. No libcurl type, option, callback, or pointer crosses into public GTI.
+The response handle owns bytes that have already been received; it is not a
+public streaming or socket abstraction.
+
+`<std/json>` needs no runtime or compiler-private capability. Its strict parser,
+owned value tree, exact number lexemes, deterministic serializer, limits,
+structured errors, and explicit `codec<T>` customization are all GTI source.
+This is an intentional proof that a format library can remain portable policy
+once the ordinary string and vector ownership primitives are sufficient. Its
+current native blocker is a general C++ representation defect for
+`expected<T, E>` with a string-owning `E`, tracked as issue #11, rather than a
+request for a JSON-specific compiler intrinsic or runtime parser.
 
 The hosted runtime independently serializes each stdout and stderr entry with
 one process-wide mutex per stream. The bytes of one call do not interleave with

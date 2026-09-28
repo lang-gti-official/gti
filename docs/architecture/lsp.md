@@ -142,6 +142,10 @@ fixed-array extents. Declaration signatures print generic type/value defaults
 from their semantic/AST records, including dependent value expressions;
 selected-call signatures print the complete concrete substitution regardless
 of whether each argument was written, inferred, or defaulted. Generic
+signature-pattern class declarations print their public pattern, such as
+`class Callback<R(Args...)>`, rather than flattening its extracted binders.
+Binder occurrences retain their own symbol identities even when an outer
+alias has the same name. Generic
 constructor declaration hover retains its symbolic
 local type/value parameters and requirements, while selected construction
 hover substitutes the exact inferred arguments, requirements, and parameter
@@ -163,6 +167,13 @@ formation publishes the shared `GTI-S2090` diagnostic; a bare name without an
 eligible callable context retains `GTI-S2076`. The query and protocol layers do
 not infer a function-item type, choose among overloads, or expose the backend's
 private nominal tag.
+
+Consuming public callback signatures likewise use ordinary semantic records:
+binding hover retains `R(Args...) &&`, and missing explicit moves or reuse after
+consumption publish compiler ownership diagnostics. The protocol regression
+changes a valid wrapper invocation to each invalid form and back, checking that
+the newest valid snapshot clears the errors. No wrapper-specific LSP policy is
+needed.
 
 Defaulted default constructors and destructors use those same compiler-owned
 declaration identities. Declaration hover and document-symbol detail include
@@ -431,6 +442,13 @@ manifest preserves standalone analysis; a malformed, unlocked, unmaterialized,
 or checksum-mismatched project publishes the driver's structured diagnostics
 and never invents a partial package graph.
 
+An open document whose canonical path is a declared executable or test root
+also requests the frontend's missing-entry check (`GTI-S2094`). Ordinary
+included files, source-only packages, and standalone documents do not acquire
+executable intent. Completion-marker recovery suppresses this check; normal
+document analysis clears or replaces it through the existing versioned
+diagnostic publication path. The LSP does not scan for `main` itself.
+
 Every open GTI document is still passed to the frontend as a canonical-path
 source override. An unsaved dependency buffer is therefore authoritative over
 the verified on-disk package root for diagnostics, hover, completion,
@@ -516,6 +534,10 @@ Quick fixes come only from compiler `Diagnostic::fixes` associated with the
 current source/generation, an intersecting request range, and an exact
 client-provided diagnostic. Position conversion is tested at the protocol
 edge; compiler source spans remain half-open UTF-8 byte ranges.
+An unresolved canonical standard-library nominal type publishes the compiler's
+missing-include fix through this same path, so an editor code-action request
+can insert (for example) `#include <std/vector>` without the protocol layer
+matching `std::vector` text or maintaining its own header catalog.
 
 ## Incomplete Source
 
@@ -533,7 +555,7 @@ meaning from punctuation.
   compiler-owned Markdown.
 - Definition, references, document highlights, and rename are implemented
   from exact resolved symbols. Rename is deliberately limited to
-  function-local names: identities visible outside the entry document's
+function-local names: identities visible outside the entry document's
   source graph may have references in unopened dependants the snapshot cannot
   see, so the compiler query rejects them instead of producing an incomplete
   edit. A project symbol index is not implemented.

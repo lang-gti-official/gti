@@ -1069,6 +1069,20 @@ SemanticModel::findArrayElementConstruction(
                          : base->findArrayElementConstruction(initializer);
 }
 
+const ResolvedCollectionInfo *
+SemanticModel::findCollection(const ArrayInitializer &initializer) const {
+  const auto found = collections.find(&initializer);
+  if (found != collections.end()) {
+    return &found->second;
+  }
+  return base == nullptr ? nullptr : base->findCollection(initializer);
+}
+
+void SemanticModel::recordCollection(const ArrayInitializer &initializer,
+                                     ResolvedCollectionInfo info) {
+  collections.insert_or_assign(&initializer, std::move(info));
+}
+
 [[nodiscard]] const ResolvedConstructorInitializerInfo *
 SemanticModel::findConstructorInitializer(
     const ConstructorInitializer &initializer) const {
@@ -1091,6 +1105,44 @@ SemanticModel::findResolvedSymbol(const Expr &expression) const {
 
 [[nodiscard]] std::size_t SemanticModel::functionCount() const {
   return functions.size() + (base == nullptr ? 0 : base->functionCount());
+}
+
+std::optional<Diagnostic>
+SemanticModel::executableEntryDiagnostic(SourceUnitId entryUnit,
+                                         const std::string &entryPath) const {
+  std::vector<const FunctionInfo *> candidates;
+  for (const auto &[declaration, function] : functions) {
+    if (function.entryPoint && function.sourceUnit == entryUnit &&
+        declaration->body()) {
+      return std::nullopt;
+    }
+    if (function.sourceUnit == entryUnit && function.ownerClass == 0 &&
+        declaration->name().lexeme == "main" && declaration->body()) {
+      candidates.push_back(&function);
+    }
+  }
+  std::sort(candidates.begin(), candidates.end(),
+            [](const auto *a, const auto *b) {
+              return a->declaration->name().position <
+                     b->declaration->name().position;
+            });
+  Diagnostic diagnostic = makeDiagnostic(
+      "GTI-S2094", DiagnosticPhase::Semantics,
+      candidates.empty() ? SourceSpan{entryPath, 0, 0, 1}
+                         : tokenSpan(candidates.front()->declaration->name()),
+      "Executable requires a global 'main' definition in its entry source "
+      "unit.");
+  for (const FunctionInfo *candidate : candidates) {
+    diagnostic.related.push_back(
+        {tokenSpan(candidate->declaration->name()),
+         "'" + candidate->qualifiedName +
+             "' is a namespaced function, not the program entry point."});
+  }
+  diagnostic.hints.emplace_back(
+      "Define 'int main()' or 'int main(int, std::vector<std::string>)' "
+      "outside all namespaces in the executable's entry file; it may forward "
+      "to a namespaced function.");
+  return diagnostic;
 }
 
 [[nodiscard]] std::size_t SemanticModel::lambdaCount() const {
@@ -1247,7 +1299,9 @@ void SemanticModel::clear() {
   contextualConversions.clear();
   contextualIntegerOperands.clear();
   classLifecycles.clear();
+  designatedConstructors.clear();
   constructions.clear();
+  collections.clear();
   constructorInitializers.clear();
   resolvedSymbols.clear();
   semanticDatabase.clear();
@@ -1908,45 +1962,68 @@ void SemanticModel::recordCompletion(SemanticCompletionContext context) {
 
 void SemanticModel::finalizeOccurrences() { semanticDatabase.finalize(); }
 
+std::vector<CallableParameterContract>
+FunctionInfo::instantiatedCallableParameters(
+    const std::vector<SemanticType> &concreteParameters) const {
+  std::vector<SemanticType> flattened;
+  for (const SemanticType &type : concreteParameters)
+    SemanticType::appendExpandedArgument(flattened, type);
+  std::vector<CallableParameterContract> result;
+  for (const CallableParameterContract &contract : callableParameters) {
+    const bool finalPack = parameterPack && !parameterTypes.empty() &&
+                           contract.parameterIndex + 1 == parameterTypes.size();
+    const std::size_t end =
+        finalPack ? flattened.size() : contract.parameterIndex + 1;
+    for (std::size_t index = contract.parameterIndex;
+         index < end && index < flattened.size(); ++index) {
+      CallableParameterContract concrete = contract;
+      concrete.parameterIndex = index;
+      concrete.callableType = flattened[index];
+      if (concrete.ownedTransport &&
+          concrete.ownedTransport->kind == CallableOwnedTransportKind::Value)
+        concrete.ownedTransport->destinationType = flattened[index];
+      result.push_back(std::move(concrete));
+    }
+  }
+  return result;
+}
+
 void SemanticModel::finalizeCallableArguments(ResolvedCallInfo &call) const {
   const FunctionInfo *function = findFunction(call.function);
   if (function == nullptr) {
     return;
   }
   for (const CallableParameterContract &parameter :
-       function->callableParameters) {
-    if (parameter.parameterIndex < call.parameterTypes.size()) {
-      const auto containsLambda = [&](const auto &self,
-                                      const SemanticType &type) -> bool {
-        return type.kind == SemanticType::Lambda ||
-               std::any_of(type.arguments.begin(), type.arguments.end(),
-                           [&](const SemanticType &argument) {
-                             return self(self, argument);
-                           });
-      };
-      const bool threadTask = parameter.ownedTransport &&
-                              parameter.ownedTransport->kind ==
-                                  CallableOwnedTransportKind::ThreadTask;
-      if (parameter.boundary == CallableBoundary::Owned && !threadTask &&
-          !containsLambda(containsLambda,
-                          call.parameterTypes[parameter.parameterIndex])) {
-        continue;
-      }
-      const auto existing = std::find_if(
-          call.callableArguments.begin(), call.callableArguments.end(),
-          [&](const CallableArgumentBoundary &candidate) {
-            return candidate.parameterIndex == parameter.parameterIndex;
-          });
-      if (existing == call.callableArguments.end()) {
-        call.callableArguments.push_back(
-            {.parameterIndex = parameter.parameterIndex,
-             .boundary = parameter.boundary});
-      } else {
-        // The function contract is authoritative. The provisional lambda
-        // marker recorded at a call site must not mask a later, more
-        // precise boundary when owned callable transport is implemented.
-        existing->boundary = parameter.boundary;
-      }
+       function->instantiatedCallableParameters(call.parameterTypes)) {
+    const auto containsLambda = [&](const auto &self,
+                                    const SemanticType &type) -> bool {
+      return type.kind == SemanticType::Lambda ||
+             std::any_of(type.arguments.begin(), type.arguments.end(),
+                         [&](const SemanticType &argument) {
+                           return self(self, argument);
+                         });
+    };
+    const bool threadTask =
+        parameter.ownedTransport && parameter.ownedTransport->kind ==
+                                        CallableOwnedTransportKind::ThreadTask;
+    if (parameter.boundary == CallableBoundary::Owned && !threadTask &&
+        !containsLambda(containsLambda, parameter.callableType)) {
+      continue;
+    }
+    const auto existing = std::find_if(
+        call.callableArguments.begin(), call.callableArguments.end(),
+        [&](const CallableArgumentBoundary &candidate) {
+          return candidate.parameterIndex == parameter.parameterIndex;
+        });
+    if (existing == call.callableArguments.end()) {
+      call.callableArguments.push_back(
+          {.parameterIndex = parameter.parameterIndex,
+           .boundary = parameter.boundary});
+    } else {
+      // The function contract is authoritative. The provisional lambda
+      // marker recorded at a call site must not mask a later, more
+      // precise boundary when owned callable transport is implemented.
+      existing->boundary = parameter.boundary;
     }
   }
   std::sort(call.callableArguments.begin(), call.callableArguments.end(),
@@ -2257,6 +2334,7 @@ semanticFloatFormat(const SemanticType &type) {
   case SemanticType::TypePack:
   case SemanticType::TypeName:
   case SemanticType::Function:
+  case SemanticType::FunctionSignature:
     traits.copyable = false;
     traits.movable = false;
     traits.copyAssignable = false;

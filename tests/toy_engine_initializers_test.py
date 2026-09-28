@@ -18,7 +18,8 @@ def main():
     compiler = Path(sys.argv[1]).resolve()
     fixtures = Path(__file__).resolve().parent / "fixtures"
     positive = fixtures / "toy_engine_initializers.gti"
-    negative = fixtures / "toy_engine_fallible_field_initializer.gti"
+    fallible = fixtures / "toy_engine_fallible_field_initializer.gti"
+    negative = fixtures / "toy_engine_generated_field_initializer.gti"
     with tempfile.TemporaryDirectory(prefix="gti-toy-engine-initializers-") as directory:
         root = Path(directory)
         for standard in ("c++20", "c++23"):
@@ -26,6 +27,10 @@ def main():
                 executable = root / f"initializers-{standard}-{optimization}"
                 run([compiler, positive, "--std", standard, optimization, "-o", executable])
                 result = run([executable])
+                assert not result.stdout and not result.stderr, result
+                owning = root / f"fallible-{standard}-{optimization}"
+                run([compiler, fallible, "--std", standard, optimization, "-o", owning])
+                result = run([owning])
                 assert not result.stdout and not result.stderr, result
                 artifact = root / f"unsupported-{standard}-{optimization}.cpp"
                 result = subprocess.run(
@@ -39,7 +44,7 @@ def main():
                 assert "initialization method after construction" in result.stderr, result.stderr
                 assert f"{negative}:1:1:" in result.stderr, result.stderr
                 assert not artifact.exists(), artifact
-    print("Toy-engine initializers: six runtime cases and six limitation diagnostics passed")
+    print("Toy-engine initializers: twelve runtime cases and six generated-constructor limitation diagnostics passed")
 
 
 if __name__ == "__main__":

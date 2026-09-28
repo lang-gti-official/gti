@@ -121,6 +121,18 @@ class vector<std::movable T> {
 public:
   vector() : data(gti_internal::allocate_prefix_storage<T>(uint64_t(0))) {}
 
+  /// Collection-brace protocol: reserve once, then consume each owned element.
+  static vector<T> collection_init(uint64_t count) {
+    mut vector<T> result{};
+    result.reserve(count);
+    return std::move(result);
+  }
+
+  static vector<T> collection_insert(mut vector<T> collection, T element) {
+    collection.push_back(std::move(element));
+    return std::move(collection);
+  }
+
   vector(size_t initial_size)
       : data(gti_internal::allocate_prefix_storage<T>(initial_size)),
         reserved(initial_size) {

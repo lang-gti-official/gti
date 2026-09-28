@@ -11,6 +11,12 @@ alone is not the complete backend API.
 
 ## Representation
 
+A source `return expression;` in a void body evaluates the exact void-typed
+HIR expression through ordinary MIR instructions and failure edges, followed
+by full-expression and lexical cleanup. Its `Return` terminator has no value
+or return loan. Verification rejects either payload in any void body; no
+runtime void value or result-publication obligation is introduced.
+
 Plain MIR records and deterministic model queries live in `include/gti/mir.h`.
 Operational contracts are separate: `mir_lowering.h`, `mir_verifier.h`,
 `mir_effects.h`, and `mir_editor.h` own lowering, verification, program-effect
@@ -94,7 +100,65 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v70`/`mir-body-v60`.
+The deterministic serialization is currently `mir-v74`/`mir-body-v64`.
+Program v74/body v64 serialize signature receiver capability in semantic type
+metadata. Read-only, mutable, and consuming signatures cannot share a serialized
+identity. The lowered declaration seal includes the same field in
+`lowered-program-v9`, rejecting a changed class-pattern qualifier.
+This pending format also includes `retained-receiver` call inputs and the
+distinct `ConsumeReceiver` ownership event: consumed availability does not
+imply a physical field move or lifecycle transfer. Function rows also serialize
+`owned-pointee` accessor summaries with exact field identity and private borrow
+operation, independently checked against their source MIR bodies. Declared
+class-field rows retain their read/mutable access independently of executable
+places so the proof can reject a mutable borrow of immutable storage.
+Program v73/body v63 add `polymorphicCleanup` to unique-owner cleanup recipes.
+The root retains the static pointee class identity but selects cleanup of the
+complete allocated object dynamically; it must not substitute that base's
+static destructor or field recipe. Aggregate recipes can contain these leaves.
+Lowering and effects conservatively retain a defined-failure boundary for this
+dispatch, including element cleanup and replacement. Program verification
+reconstructs the canonical recipe and rejects erased dispatch flags or forged
+pointee identities. Static subobject cleanup remains statically selected.
+Lambda invocations with an expanded argument pack retain an explicit HIR
+receiver and lower to an ordered MIR `CallInput` receiver followed by concrete
+argument stages. The call keeps its exact lambda identity, capability and
+flattened signature; ordinary program verification rejects a missing receiver
+or forged parameter type. No native pack matching selects the GTI call.
+Program v72/body v62 add the generated `ReturnResult` drop obligation. A
+completed owning return operand is reparented out of its full-expression into
+this pending lifetime when callee cleanup can fail. It retains the exact
+operand place, HIR value identity, and cleanup recipe, with no independent HIR
+obligation or full-expression ID. The recipe may describe the value payload
+of an `expected` return or its exact `unexpected<Error>` carrier. Only the final instruction before the matching Return
+may transfer it to the caller; failure continuations clean it before older
+temporaries and locals. Verification rejects early transfer across an Invoke,
+missing reparent/publication, wrong failure-cleanup phase, and a fabricated
+full-expression lifetime. Failure-free continuations need no extra obligation.
+Exact owned-callable return/field transport proofs recognize this same pending
+return lifetime. A failure-only drop of that exact result is not a second
+successful use; reparenting alone is insufficient without its final matching
+publication. Body lifecycle verification still owns activation and failure
+paths, including rejection of missing publication and incorrect cleanup phase.
+Program v71/body v61 retain zero-based capture projections in aggregate
+cleanup recipes. A closure recipe contains each active capture exactly once
+in reverse capture order; its source-destructor targets contribute to normal
+and secondary-failure edges just like class fields. Program verification
+reconstructs the recipe from the concrete capture inventory and rejects missing,
+reordered, or forged projections and erased cleanup effects.
+An `owned-value` callable parameter contract describes exact owned entry rather
+than an exact-return/field transport shape. Its verifier checks the concrete
+type, parameter binding/place, availability, and lexical entry-drop obligation.
+The ordinary body lifecycle and loan verifiers govern the remaining control
+flow; invocation inputs must still prove ownership transfer. Confined callable
+contracts retain their separate invocation/forwarding restrictions.
+Concrete pack contracts index the flattened signature while bindings retain one
+source pack root. Verification resolves each contract to its exact element and
+replays closure traits from the concrete captures. Lexical elements require
+entry-active projected drops. A forwarded closure has a distinct prepared
+parameter obligation: copies initialize it without consuming the pack, while
+moves transfer its entry obligation. Invocation transfers that prepared lifetime
+exactly once, including failure-capable calls.
 Program v69/body v60 add exact C-thread condition initialization, destruction,
 signal, broadcast, wait, and timed-wait declarations. The wait calls retain
 `ConditionWait` (atomic enrollment/release followed by reacquisition), and
@@ -568,7 +632,11 @@ definition provenance is a declaration (and every runtime-bound function) is
 verified as an exact bodyless skeleton: one empty reachable entry block ending
 in `Return` for `void`, or `Unreachable` for non-`void`, with only its exact
 formal-parameter places admitted. This prevents declaration provenance from
-masking an executable MIR schedule. General body admission and failure-form
+masking an executable MIR schedule. A final concrete source pack retains one
+grouped parameter place even when its function signature has several (or zero)
+concrete elements. Bodyless verification checks the exact ordered element roles
+against that signature and rejects symbolic, nested, or non-final pack places.
+General body admission and failure-form
 selection consume these proofs together with the body's verified operation and
 cleanup schedule.
 `deriveMirScalarDefinedFailureEffects` is the legacy function-only accessor for
@@ -633,7 +701,12 @@ out. For an owning `Expected` extraction, the unprojected Value-root source
 place is only the drop identity for that chain; it does not imply independent
 storage publication. Verification and backend admission require one consumer,
 matching types and drop descriptors, exact success/failure edges, and no
-additional place or loan use. Version 17 added bounded
+additional place or loan use. Earlier prepared payloads survive later argument
+evaluation, with their exact cleanup recorded on each later failure edge;
+preparation does not imply immediate invocation. Fresh closure arguments likewise
+reparent their value-root lifetime into prepared storage. Their unprojected root
+may be lifetime metadata, but cannot create an additional executable alias or
+replace the source-to-prepared ownership transition. Version 17 added bounded
 `Invoke`/`PropagateFailure` control flow, body-local
 fixed failure-record parameters, and deterministic failure cleanup for
 eligible full-expression-root scalar operations in function and lambda bodies.
@@ -700,12 +773,29 @@ A `MirBody` owns:
   class-copy checkpoint initializes one exact caller-owned prepared-parameter
   place and a class-move checkpoint reparents the exact materialized source
   obligation into such a place, or initializes it when the type has trivial
-  cleanup. The prepared owner remains active until the final `Call` transfers
-  it exactly once. Scheduled constructors retain the earlier bounded checkpoint
-  contract and do not yet use prepared-parameter places. Every checkpoint's
+  cleanup. The prepared owner remains active until the final invocation transfers
+  it exactly once. Scheduled ordinary constructors use this same path:
+  written, defaulted, and pack-expanded inputs retain prepared-parameter
+  places across later argument evaluation and transfer at `Construct`, not at
+  the input checkpoint. Failure while preparing a later argument drains earlier
+  prepared owners in reverse order; constructor-body failure owns the handed-off
+  parameters and partially initialized fields. Copy/move special-member
+  construction retains its separate exact source-place path. Every checkpoint's
   single result has exactly one executable use by the matching `Call` or
   `Construct`, so the invocation consumes only prepared inputs rather than
   reevaluating a source operand;
+- expanded constructor arguments retain the concrete selected parameter type.
+  An exact read-only reference parameter borrows the projected pack element
+  instead of inheriting its source pack's by-value copy/move role. This is a
+  call-input representation rule, not proof of complete constructor-pack
+  or C++ constructor-field support; the remaining gaps are tracked in the
+  active standard-library campaign;
+- each mutable-reference element of a concrete formal pack has one semantic
+  `Parameter` entry loan over its exact `PackElement` place. The carrier binding
+  remains immutable, while the loan grants mutable access to the caller's
+  referent. Forwarding stages the exact loan, not a borrow of the whole pack.
+  Verification checks per-element coverage, access, non-escape and source
+  identity; normal and failure exits retire the entry capabilities;
 - typed lexical/value drop obligations and per-instruction initialize, move,
   reparent, replace, transfer-out, and drop lifecycle events;
 - resolved call targets, static/virtual dispatch, constructor targets,
@@ -760,7 +850,7 @@ A `MirBody` owns:
   compare-exchange. Release loads, acquire stores, release/acquire-release
   failure orders, and a failure order stronger than success are rejected.
   Synchronization metadata on a non-call instruction is invalid;
-- one `MirOperation::FunctionItem` for each contextual GTI function item. The
+- one `MirOperation::FunctionItem` for each selected GTI function item. The
   result type carries the nominal `FunctionId` and exact signature, and
   `functionTarget` carries the concrete MIR function instance. It has no
   operands, place, ownership event, capture environment, or failure behavior.
@@ -768,6 +858,10 @@ A `MirBody` owns:
   namespace-owned rather than class-owned, and exactly match the nominal ID,
   result, and parameter rows. A missing target or forged identity/signature/
   owner is invalid before optimization or backend entry;
+  passive value stages preserve the exact item type and need no prepared drop.
+  A fresh item crossing an owned boundary retains its single-use producer and
+  consumer checks. A namespace call cannot carry a method receiver. Any effects
+  of producing the item are evaluated before the call's arguments in MIR;
 - one ordered `MirThreadTaskAdapter` for every HIR thread-task adapter. The row
   retains the task type, HIR spawn value, exact MIR spawning body/instruction,
   exactly one concrete function or lambda entry, its selected receiver
@@ -798,9 +892,15 @@ A `MirBody` owns:
   Mutable invocation requires an exclusive or owned receiver. Once invocation
   requires the receiver value to trace to an exact MIR `Move` carrying the
   matching available-to-moved ownership event. Every SSA value in that move
-  and optional identity chain has exactly one use, ending at the verified call
-  receiver or forwarding operand, so one move proof cannot authorize two
-  consuming calls. Program verification checks the required capability against
+  and optional identity chain has exactly one executable use, ending at the
+  verified call receiver or forwarding operand. An owning move may additionally
+  have one exact Value-rooted full-expression cleanup place with one matching
+  obligation; that root is not another invocation. Pack-expanded calls use a
+  `MoveValue` receiver stage for an owned moved lambda and retain that same
+  obligation; the stage does not create a prepared parameter. A cleanup-free
+  closure instead retains a plain value stage after its source-consuming Move.
+  One move proof cannot authorize two consuming calls. Program verification
+  checks the required capability against
   formal parameter access, binds the selected capability and full
   parameter/result signature to an exact lambda or `operator()` target, and
   validates each forwarding target, parameter index, concrete call edge,
@@ -1079,6 +1179,13 @@ data remain exact.
 checked-dereference verifier paths. Its index comparison now retains constant
 and dynamic-selection metadata, but replacing that normalization with a
 single key-producing loan transform is outside the bounded fixed-array slice.
+Explicit numeric, bool, char, plain-enum, and non-borrowing cleanup-free class
+constructor-field initializers
+carry an `Initialize` into the exact This-rooted field. The initializer value is an
+ordinary instruction operand, so optimization sees its publication use.
+Program verification requires exactly one matching stage and full-expression
+boundary; constructor metadata cannot stand in for a missing write.
+
 Partial-construction rollback is represented for ordinary constructors: a
 class field completed from one owning constructed temporary is an explicit
 `Initialize` stage that reparents the temporary's obligation into a
@@ -1181,6 +1288,69 @@ predecessor states that cannot justify an event's conditionality. Lifecycle
 instructions and boundary markers are observable effects and cannot be erased
 merely because they produce no SSA result.
 
+Concrete owning pack parameters use one entry-active Binding obligation per
+lexical-drop element, each at its exact `PackElement` place. Those lifetime
+places are canonical across expansions and folds. Program verification checks
+exact element coverage, type/traits, entry activation, and source-order
+construction ordinals; alternate owning projections without the matching
+entry lifetime are invalid. A copied element initializes a separate prepared
+parameter without consuming its source. Because the entry place is shared
+across expressions, it has no individual HIR expression origin. Its exact
+entry obligation supplies copy-source identity instead. A forwarded move uses
+an adjacent `Move`/`CallInput` pair whose lifecycle event transfers the exact
+element obligation into the prepared parameter. Normal and failure cleanup
+drain only remaining active elements in reverse order, retaining the ordinary
+primary/secondary defined-failure protocol. Direct constructor-pack owning
+inputs still need the prepared-parameter invocation contract completed; this
+does not claim complete constructor forwarding.
+
+An active-cleanup nominal receiver's `Move` initializes its existing Value
+obligation from the source binding. Its `CallInput(Receiver, MoveValue)` aliases
+that value without a prepared parameter, destination, or lifecycle transfer.
+The invocation cannot transfer out this obligation: the caller's full-expression
+stack retains it across argument evaluation, the call, and later siblings.
+Verification rejects missing lifetime provenance, duplicate executable uses,
+missing activation, and a transfer at invocation. Ordinary argument inputs keep
+their existing prepared-parameter transfer contract. The C++ backend constructs
+one lifetime slot at the Move, invokes through that slot, and consumes the MIR
+normal/failure drops; it must not delegate the lifetime to a native argument.
+
+`CallInput(Receiver, RetainedReceiver)` is the in-place forwarding counterpart.
+It carries a writable, field-only This place and a semantic `ConsumeReceiver`
+event (available to moved), but no Move instruction, prepared parameter,
+destination, or lifecycle transfer. Availability is consumed independently of
+physical cleanup: the enclosing receiver keeps its fields. Body verification
+checks exact place/event identity and subsequent availability; program
+verification requires an enclosing consuming method and a non-borrowing
+nominal or exact stored-lambda callable target. A retained lambda's complete
+closure type must match its selected lambda instance, not just its signature.
+The staged capability has one exact invocation use.
+The backend emits the selected receiver-qualified call against that retained
+place, leaving outer full-expression cleanup unchanged.
+
+`MirFunctionInstance::ownedPointeeProjection` describes a transparent source
+accessor, not a consuming call. The bounded proof requires one direct declared
+`UniqueOwner<T>` receiver field and the matching checked read/mutable borrow,
+followed by its exact returned loan. The only permitted control-flow split is
+the intrinsic's empty-owner failure edge. Calls to other functions, writes,
+alternate return origins, extra effects, and virtual dispatch do not satisfy
+this proof. The verifier checks the concrete owner field/type, access, intrinsic
+operand lineage, returned loan, failure path, and full-expression boundary;
+ordinary receiver-derived borrow metadata is insufficient. This is the
+accessor-side proof for retained pointee consumption.
+
+For that caller, a `RetainedReceiver` stage has `retainedOwnerPlace` naming the
+mutable field-only This owner anchor, while its executable operand is the
+accessor's actual unprojected mutable CallResult loan. The semantic ownership
+event consumes the anchor, not the borrowed referent. Body verification checks
+anchor/loan identity and preserves every other live-loan conflict. Program
+verification traces the loan to the exact independently verified accessor,
+checks its receiver against the anchor, and requires a single consuming
+invocation use with no escape, reborrow, or additional executable loan use.
+There is no synthetic caller access to the wrapper's private owner storage,
+and no cleanup transfer: the enclosing receiver still owns destruction at
+the caller's full-expression boundary.
+
 Each drop obligation retains a stable HIR construction ordinal. Reached
 full-expression drops are a contiguous suffix immediately before their path's
 boundary marker in reverse ordinal order. Each emitted lexical cleanup sequence
@@ -1204,11 +1374,23 @@ obligation; an alias place or executable use through it invalidates the move
 proof. Lambda-body symbol places identify their exact capture index, and
 program verification ties that projection to the concrete instance. Closure
 movement and drop use the ordinary lambda lifecycle obligation, including
-recursively cleanup-owning captured values. Class
+recursively cleanup-owning captured values. For captures with complete cleanup
+recipes, the obligation retains their exact reverse-order aggregate schedule,
+including nested class/owner/collection cleanup. Destruction failure therefore
+belongs to the enclosing MIR cleanup edge, not native closure teardown. Class
 lifecycle metadata contains every lexically dropped field in
 declaration order; its independently retained drop projection must be the exact
 reverse order. Trivial fields remain structural HIR/layout facts rather than
 lifecycle-verifier authority.
+
+Expected and Unexpected obligations retain positional alternative cleanup
+recipes: `[success, error]` and `[error]`, respectively. Passive alternatives,
+including `void`, retain typed inactive entries; they are not omitted or
+confused with the other alternative. Lowering and whole-program verification
+derive these recipes independently from the concrete types. Failure effects
+include potentially active alternative destructors, while execution cleans
+only the actual active alternative. Secondary cleanup failure preserves the
+original failure record. A `void` success never requires payload access.
 
 A concrete fixed-array obligation retains one aggregate schedule rather than
 inventing a backend-visible drop for every element. Its extent sequence and
@@ -1531,7 +1713,7 @@ Verification checks declaration signatures, synchronization identity, callback
 policy, and the complete hosted ordering. The C++ backend admits these rows as
 part of the hosted schedule; it does not discover lifecycle from public wrapper
 names. The detached declaration/adapter contract is serialized as
-`lowered-program-v8`.
+`lowered-program-v9`.
 
 M-LIFE-01 supplies body-local temporary identity, lifetime start, transfer or
 reparenting, active drop, and LIFO full-expression obligations. MIR v18 added
@@ -1608,8 +1790,18 @@ completing the convert stage. The general C++ MIR emitter consumes every
 operation in this fixed-integer allowlist only after both MIR verification and
 representation preflight.
 
-The bounded `Invoke` family accepts either a trivial scalar result or the exact
-cleanup-owning result obligation of an eligible ordinary call. Scalar values
+The bounded `Invoke` family accepts a trivial scalar result, an eligible
+cleanup-free nominal call result, or the exact cleanup-owning result obligation
+of an eligible ordinary call. A nominal call needs its failure edge in nested
+argument positions as well as at a full-expression root, even without a result
+drop identity: the consumer's prepared slot is initialized only after the
+producer succeeds. A fresh class constructor used as a prepared by-value
+argument has the same requirement, including when the class has no active
+cleanup. Fixed source expressions before a pack expansion use the same
+evaluation context as ordinary arguments. The verifier independently derives
+that context from the exact indexed `CallInput`; earlier prepared owners remain
+live until invocation and are unwound if construction fails. Other constructor
+destinations retain their own publication contracts. Scalar values
 remain usable only from the normal successor. An owning result stays
 uninitialized on the failure edge and is initialized by an explicit lifecycle
 event only on the normal edge; the verifier rejects failure cleanup or use that
@@ -1629,10 +1821,16 @@ The normal path continues argument setup and only the final outer call transfers
 those earlier stages. The verifier derives this relationship from the operation
 result, exact indexed `CallInput`, dominance, failure identity, and prepared
 obligations rather than trusting new serialized metadata. Nested calls with
-their own owning parameter or result state, borrowed results, constructors,
+their own owning parameter or result state, borrowed results, other constructor destinations,
 assignments, and class-valued normal-result merging remain separate work. The
 implemented scalar block-parameter vocabulary does not change owning result
 publication.
+
+A reference return may form its outgoing loan before local cleanup finishes.
+If that cleanup fails, no reference is published: its failure edge ends the
+pending return loan before draining the remaining locals. Ordinary successful
+cleanup leaves the loan available to the Return terminator. Loan dataflow
+verification rejects an abandoned return loan that survives a failure exit.
 
 Cleanup blocks forward the same record through supported initialized and
 partially initialized shapes to the selected hosted, callback, or managed-task

@@ -99,11 +99,46 @@ CSTDIO_SOURCE = r"""
 #include <std/cstdio>
 
 int main() {
-  mut auto chunk = std::read_stdin_some(std::size_t(8));
+  mut auto chunk = std::read_stdin_some(std::size_t(1));
   if (!chunk) { return 1; }
   mut int32_t count = 0;
   for (auto& byte : chunk.value()) { count += 1; }
-  return count - 1;
+  if (count != 1 || chunk.value() != "Q") { return 2; }
+
+  auto prompted = std::try_write_stdout("password: ");
+  auto flushed = std::try_flush_stdout();
+  if (!prompted || !flushed) { return 3; }
+
+  auto password = std::getline();
+  auto token = std::getline('|');
+  auto tail = std::getline();
+  auto input_eof = std::getline();
+  if (!password || password.value() != "secret" ||
+      !token || token.value() != "token" ||
+      !tail || tail.value() != "tail" || input_eof ||
+      input_eof.error() != std::io_errc::end_of_file) {
+    return 4;
+  }
+
+  mut auto file = std::fopen("lines.txt", std::file_mode::read_write_truncate);
+  if (!file) { return 5; }
+  auto written = std::fwrite("first\n\nlast|tail", *file.value());
+  auto rewound = std::fseek(*file.value(), int64_t(0), std::seek_origin::begin);
+  if (!written || !rewound) { return 6; }
+
+  auto first = std::getline(*file.value());
+  auto empty = std::getline(*file.value());
+  auto last = std::getline(*file.value(), '|');
+  auto file_tail = std::getline(*file.value());
+  auto file_eof = std::getline(*file.value());
+  if (!first || first.value() != "first" ||
+      !empty || !empty.value().empty() ||
+      !last || last.value() != "last" ||
+      !file_tail || file_tail.value() != "tail" || file_eof ||
+      file_eof.error() != std::io_errc::end_of_file) {
+    return 7;
+  }
+  return 0;
 }
 """
 
@@ -195,11 +230,11 @@ def main() -> int:
                 executed = subprocess.run(
                     [str(cstdio)],
                     text=True,
-                    input="Q",
+                    input="Qsecret\ntoken|tail",
                     capture_output=True,
                     check=False,
                 )
-                if executed.returncode != 0:
+                if executed.returncode != 0 or executed.stdout != "password: ":
                     return fail(f"run cstdio {suffix}", executed)
 
     return 0

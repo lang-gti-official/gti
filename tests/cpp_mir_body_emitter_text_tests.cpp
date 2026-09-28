@@ -11,7 +11,6 @@ int32_t conversion_source = 7;
 
 class expression_owner_t {
 public:
-  expression_owner_t() {}
   mut int32_t grouped = (7);
   mut int32_t converted = int32_t(7);
   mut int32_t converted_expression = int32_t(3 + 4);
@@ -20,7 +19,6 @@ public:
 
 class payload_owner_t {
 public:
-  payload_owner_t() {}
   mut payload_t empty = payload_t::none;
   mut payload_t valued = payload_t::one(int32_t(9));
 };
@@ -987,11 +985,41 @@ int main() {
          "entry caller from MIR");
 }
 
-// The declaration-level template route end to end: every monomorphized
-// instance of a deduced-callable template proves byte-identical text
-// under its own overlay row, and the production artifact carries exactly
-// one template definition holding one banner per covered instance, with
-// callers passing fused literals by deduction.
+// Free-function instances keep their own verified body and selected call
+// identity. Native templates carry physical closure types, not GTI dispatch.
+void expectDistinctCallableInstances(const lang::FrontendResult &frontend,
+                                     const std::string &text) {
+  std::size_t checked = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    if (function.owner || function.parameterTypes.size() != 1 ||
+        function.parameterTypes.front().kind != lang::SemanticType::Lambda)
+      continue;
+    const std::string symbol = "__gti_callable_inst_" +
+                               std::to_string(function.id) +
+                               "_apply__gti_mir_failure";
+    const std::string signature =
+        symbol + "(Operation __gti_mir_arg_0, ::gti_failure_record_v1 "
+                 "*__gti_mir_failure_record)";
+    const std::string definition =
+        signature +
+        " {\n    // GTI verified-MIR body: "
+        "deduced-callable-failure-v1 function-instance " +
+        std::to_string(function.id) + "\n";
+    const auto at = text.find(definition);
+    expect(at != std::string::npos &&
+               text.find(definition, at + definition.size()) ==
+                   std::string::npos,
+           "each exact callable instance must have one definition carrying "
+           "its own MIR body identity");
+    expect(text.find(signature + ";") != std::string::npos &&
+               text.find("::__gti_program::" + symbol + "(") !=
+                   std::string::npos,
+           "the declaration and actual caller must select the same exact "
+           "instance symbol");
+    ++checked;
+  }
+  expect(checked == 2, "both concrete callable instances must be checked");
+}
 
 void testDeducedCallableTemplateEmission() {
   const lang::FrontendResult frontend =
@@ -1036,23 +1064,19 @@ int main() {
     return occurrences;
   };
   expect(count("(Operation __gti_mir_arg_0, ::gti_failure_record_v1 "
-               "*__gti_mir_failure_record) {") == 1,
-         "exactly one template definition should carry the MIR body");
+               "*__gti_mir_failure_record) {") == 2,
+         "each free-function instance must retain its own MIR body");
   expect(count("deduced-callable-failure-v1 function-instance") == 2,
-         "the single template body should carry one banner per covered "
-         "instance");
+         "each instance body must carry exactly one provenance banner");
+  expectDistinctCallableInstances(frontend, text);
   expect(count("// GTI verified-MIR body: scalar-cfg-failure-v1 "
                "lambda-instance") == 2,
          "both fused literals should embed their verified lambda bodies at "
          "the call sites");
 }
 
-// The reference-return failure ABI (ADR 018 §5): a may-raise body whose
-// return is a loan publishes its pointer through a `T **` out-parameter,
-// the Return-with-loan spells the publication, and the whole artifact —
-// transformed member and MIR-emitted caller carry the convention end to end;
-// no compatibility wrapper may intercept failure ahead of caller cleanup.
-
+// Formal pack bindings remain grouped for source identity, while the call ABI
+// and parameter types are flattened, including when a fixed prefix is present.
 void testForwardedConcretePackLayout() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-forwarded-concrete-pack.gti", R"(
@@ -1084,6 +1108,7 @@ int32_t main() {
   }
 
   const lang::MirFunctionInstance *forwarded = nullptr;
+  bool checkedPrefix = false;
   for (const lang::MirFunctionInstance &function :
        frontend.mir.functionInstances()) {
     const bool projectsPackElement = std::any_of(
@@ -1113,22 +1138,58 @@ int32_t main() {
       }
       const std::size_t index = static_cast<std::size_t>(
           std::distance(function.parameterBindings.begin(), binding));
-      if (index < function.parameterTypes.size() &&
-          function.parameterTypes[index].kind == lang::SemanticType::TypePack &&
-          function.parameterTypes[index].concretePack &&
-          place.type.arguments.size() >= 2 &&
-          function.parameterTypes[index].arguments == place.type.arguments &&
-          function.parameterTypes[index].genericParameterId !=
-              place.type.genericParameterId) {
-        forwarded = &function;
+      if (place.type.arguments.size() < 2)
+        continue;
+      expect(index + place.type.arguments.size() ==
+                     function.parameterTypes.size() &&
+                 std::equal(place.type.arguments.begin(),
+                            place.type.arguments.end(),
+                            function.parameterTypes.begin() + index,
+                            function.parameterTypes.end()),
+             "each grouped source pack must match the exact flattened ABI "
+             "suffix after its fixed parameters");
+      for (const auto &element : function.body.places) {
+        if (element.binding != place.binding ||
+            element.projections.size() != 1 ||
+            element.projections.front().kind !=
+                lang::MirProjectionKind::PackElement)
+          continue;
+        const auto ordinal = element.projections.front().constantIndex;
+        expect(ordinal && *ordinal < place.type.arguments.size() &&
+                   element.type == place.type.arguments[*ordinal],
+               "pack projection identity must select its exact source element");
       }
+      checkedPrefix = checkedPrefix || index != 0;
+      forwarded = &function;
     }
   }
   expect(forwarded != nullptr,
-         "forwarding should retain distinct source pack identities over one "
-         "concrete element layout");
+         "forwarding must retain grouped source packs with projected elements");
+  expect(checkedPrefix, "the fixed-prefix pack mapping must also be checked");
   if (forwarded == nullptr) {
     return;
+  }
+
+  const auto projected =
+      std::find_if(forwarded->body.places.begin(), forwarded->body.places.end(),
+                   [](const auto &place) {
+                     return place.projections.size() == 1 &&
+                            place.projections.front().kind ==
+                                lang::MirProjectionKind::PackElement;
+                   });
+  expect(projected != forwarded->body.places.end(),
+         "the selected body must contain a real pack projection");
+  if (projected != forwarded->body.places.end()) {
+    auto forged = frontend.mir;
+    auto *body =
+        lang::findMirBody(forged, {lang::MirBodyKind::Function, forwarded->id});
+    auto &place =
+        body->places[std::distance(forwarded->body.places.begin(), projected)];
+    place.projections.front().constantIndex =
+        forwarded->parameterTypes.size() + 1;
+    expect(!lang::verifyMirProgram(forged).valid(),
+           "an out-of-layout pack projection must fail independent MIR "
+           "verification before C++ admission");
   }
 
   const lang::CppMirBodyEmissionMap map(
@@ -2048,6 +2109,65 @@ int main() {
          "the forwarded pointer should publish through the out-parameter");
 }
 
+void testOpaquePointerFailureResults() {
+  const std::filesystem::path fixture =
+      std::filesystem::path(__FILE__).parent_path() /
+      "fixtures/native_opaque_pointer_results.gti";
+  std::ifstream stream(fixture);
+  const std::string source{std::istreambuf_iterator<char>(stream),
+                           std::istreambuf_iterator<char>()};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(),
+         "opaque pointer results should pass semantic and MIR verification");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto rows = buildRows(frontend, frontend.mir);
+  const lang::CppMirBodyEmissionMap map(rows);
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  std::size_t returning = 0;
+  bool wrongResultTested = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    if (function.definitionKind != lang::MirDefinitionKind::Source ||
+        !function.mayRaiseDefinedFailure ||
+        function.returnType.kind != lang::SemanticType::RawPointer)
+      continue;
+    ++returning;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = function.id};
+    expect(emitter.supportsFailureBodyText(address),
+           "opaque pointer returns use the typed failure result channel");
+    auto missingRows = rows;
+    std::erase_if(missingRows.types, [&](const auto &row) {
+      return row.type == function.returnType;
+    });
+    const lang::CppMirBodyEmissionMap missingMap(std::move(missingRows));
+    expect(!lang::CppMirBodyEmitter(frontend.mir, missingMap)
+                .supportsFailureBodyText(address),
+           "opaque pointer results require their exact representation row");
+    for (const auto &place : function.body.places) {
+      if (place.type.kind != lang::SemanticType::RawPointer ||
+          place.type == function.returnType)
+        continue;
+      auto malformed = frontend.mir;
+      auto *body = lang::findMirBody(malformed, address);
+      for (auto &block : body->blocks) {
+        if (block.terminator.kind == lang::MirTerminatorKind::Return &&
+            block.terminator.value) {
+          block.terminator.value->type = place.type;
+          wrongResultTested = true;
+        }
+      }
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "a returned pointer cannot substitute a distinct opaque identity");
+      break;
+    }
+  }
+  expect(returning >= 2 && wrongResultTested,
+         "exercise member and forwarding results with distinct opaque types");
+  expect(!gti_test::emitCpp(frontend).contents.empty(),
+         "the complete production backend emits opaque pointer results");
+}
+
 void testNativeCallbackFactoryBody() {
   lang::FrontendResult frontend =
       analyzeWithStandardLibrary("native_callback_factory.gti", R"(
@@ -2319,11 +2439,8 @@ int main() {
          "before entering the success block");
 }
 
-// A deduced-callable template covering instances with different cleanup
-// shapes: a scalar-capturing lambda needs no parameter drop while a
-// class-capturing lambda does, so the two instance bodies cannot share one
-// text. The single emitted template must reunite both variants through an
-// instantiation-time destructibility dispatch instead of failing closed.
+// Free-function instances with different cleanup shapes retain separate MIR
+// bodies. C++ destructibility must not select another instance's GTI execution.
 // (Regression: the combination ICEd with "lowered callable instances do not
 // share one source template representation" while each family alone passed.)
 void testMixedCaptureDeducedCallableTemplateEmission() {
@@ -2385,16 +2502,14 @@ int main() {
     return occurrences;
   };
   expect(count("(Operation __gti_mir_arg_0, ::gti_failure_record_v1 "
-               "*__gti_mir_failure_record) {") == 1,
-         "exactly one template definition should carry both cleanup-shape "
-         "variants");
+               "*__gti_mir_failure_record) {") == 2,
+         "each cleanup-shape instance must retain its own definition");
   expect(count("deduced-callable-failure-v1 function-instance") == 2,
-         "the dispatching template body should carry one banner per covered "
-         "instance");
-  expect(count("if constexpr (std::is_trivially_destructible_v<Operation>)") >=
-             1,
-         "the template body should dispatch the cleanup-shape variants on "
-         "the callable parameter's destructibility");
+         "each concrete cleanup body must retain its exact MIR identity");
+  expectDistinctCallableInstances(frontend, text);
+  expect(count("if constexpr (std::is_trivially_destructible_v<Operation>)") ==
+             0,
+         "native destructibility must not select free-function MIR bodies");
   expect(text.find("::gti_internal::backend::mir_lifetime_slot<Operation>") !=
              std::string::npos,
          "the non-trivial cleanup variant should keep its lifetime-slot "
@@ -2440,6 +2555,7 @@ constexpr NamedTest kTests[] = {
     {"testNestedReferenceReturnForwardsCallResultPointer",
      testNestedReferenceReturnForwardsCallResultPointer},
     {"testNativeCallbackFactoryBody", testNativeCallbackFactoryBody},
+    {"testOpaquePointerFailureResults", testOpaquePointerFailureResults},
     {"testInvokePublishesScalarEdgeArguments",
      testInvokePublishesScalarEdgeArguments},
 };

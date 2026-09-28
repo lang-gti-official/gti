@@ -36,6 +36,7 @@ public:
     functionAnalyses.clear();
     constructorAnalyses.clear();
     activeDefaultArguments.clear();
+    collectionResults.clear();
 
     seedDeclarations(source.declarations(), std::nullopt);
     lowerProgramInitializationPlan();
@@ -61,7 +62,8 @@ private:
   [[nodiscard]] SemanticType
   substitute(const SemanticType &type,
              const GenericSubstitution &substitution) const {
-    if (type.kind == SemanticType::TypeParameter) {
+    if (type.kind == SemanticType::TypeParameter ||
+        (type.kind == SemanticType::TypePack && !type.concretePack)) {
       const auto found = substitution.types.find(type.genericParameterId);
       if (found == substitution.types.end()) {
         return type;
@@ -73,6 +75,14 @@ private:
     SemanticType result = type;
     for (SemanticType &argument : result.arguments) {
       argument = substitute(argument, substitution);
+    }
+    if (result.kind == SemanticType::Class ||
+        result.kind == SemanticType::FunctionSignature) {
+      std::vector<SemanticType> expanded;
+      for (SemanticType &argument : result.arguments) {
+        SemanticType::appendExpandedArgument(expanded, std::move(argument));
+      }
+      result.arguments = std::move(expanded);
     }
     for (SemanticType &argument : result.lambdaEnclosingClassTypes) {
       argument = substitute(argument, substitution);
@@ -143,7 +153,21 @@ private:
     std::size_t valueIndex = 0;
     for (const GenericParameterInfo &parameter :
          declaration.genericParameters) {
-      if (parameter.value) {
+      if (!parameter.typeArgumentPath.empty()) {
+        if (auto type = projectGenericTypeArgument(
+                typeArguments, parameter.typeArgumentPath, parameter.id,
+                parameter.pack)) {
+          result.types.emplace(parameter.id, std::move(*type));
+        }
+      } else if (parameter.pack) {
+        std::vector<SemanticType> elements(
+            typeArguments.begin() + static_cast<std::ptrdiff_t>(typeIndex),
+            typeArguments.end());
+        result.types.emplace(
+            parameter.id,
+            SemanticType::concreteTypePack(parameter.id, std::move(elements)));
+        typeIndex = typeArguments.size();
+      } else if (parameter.value) {
         if (valueIndex < valueArguments.size()) {
           result.values.emplace(parameter.id, valueArguments[valueIndex++]);
         }
@@ -261,6 +285,16 @@ private:
                   SemanticType returnType,
                   std::vector<SemanticType> parameterTypes,
                   std::optional<SourceSpan> site = std::nullopt) {
+    // Calls can discover an instance through individual arguments or through
+    // one forwarded pack. Virtual members are also seeded from declarations.
+    // These paths must publish the same concrete signature; source pack
+    // bindings remain grouped in the body for forwarding and cleanup.
+    std::vector<SemanticType> concreteParameters;
+    for (SemanticType &parameter : parameterTypes) {
+      SemanticType::appendExpandedArgument(concreteParameters,
+                                           std::move(parameter));
+    }
+    parameterTypes = std::move(concreteParameters);
     // Free functions ignore class arguments, matching the previous scan.
     const bool freeFunction = declaration.ownerClass == 0;
     const std::vector<SemanticType> noTypeArguments;
@@ -319,6 +353,7 @@ private:
          .returnBorrowParameter = declaration.returnBorrowParameter,
          .returnBorrowAccess = declaration.returnBorrowAccess,
          .returnBorrowPlace = declaration.returnBorrowPlace,
+         .ownedPointeeProjection = declaration.ownedPointeeProjection,
          .instantiationSite = std::move(site),
          .staticMember = declaration.staticMember,
          .internalLinkage = declaration.internalLinkage,
@@ -648,8 +683,9 @@ private:
         {.constructor = constructor->id,
          .declaration = constructor->declaration,
          .constructedType = type,
-         .typeArguments = type.arguments,
-         .valueArguments = type.valueArguments,
+         // Owner arguments belong to constructedType. These constructors
+         // have no constructor-local generic arguments, exactly as when
+         // ordinary source code selects the same declarations.
          .parameterTypes = constructor->parameterTypes,
          .generatedDefault = constructor->declaration->specifier() &&
                              constructor->declaration->specifier()->kind ==
@@ -742,6 +778,12 @@ private:
         processFunction(processedFunctions++);
       }
       while (processedConstructors < output.program.constructors.size()) {
+        // Function bodies and earlier constructors can discover concrete
+        // generic owners. Their field/default catalogs must be complete
+        // before the next constructor selects its initialization schedule.
+        while (processedClasses < output.program.classes.size()) {
+          processClass(processedClasses++);
+        }
         processConstructor(processedConstructors++);
       }
       while (processedDestructors < output.program.destructors.size()) {
@@ -1062,10 +1104,15 @@ private:
       classArguments = owner.typeArguments;
       classValueArguments = owner.valueArguments;
     }
+    const ClassTypeInfo *genericOwner =
+        declaration->ownerClass == 0
+            ? nullptr
+            : baseModel->findClassType(declaration->ownerClass);
     const bool concreteInstance =
-        !declaration->genericParameters.empty() || !classArguments.empty() ||
-        !classValueArguments.empty() || !snapshot.typeArguments.empty() ||
-        !snapshot.valueArguments.empty();
+        !declaration->genericParameters.empty() ||
+        (genericOwner != nullptr && !genericOwner->genericParameters.empty()) ||
+        !classArguments.empty() || !classValueArguments.empty() ||
+        !snapshot.typeArguments.empty() || !snapshot.valueArguments.empty();
     if (!concreteInstance) {
       return nullptr;
     }
@@ -1135,10 +1182,15 @@ private:
     // argument vector can therefore mean a concrete zero-element pack, not an
     // unresolved declaration; reanalyze it so the pack binding retains that
     // exact concrete-empty identity.
+    const ClassTypeInfo *genericOwner =
+        declaration->ownerClass == 0
+            ? nullptr
+            : baseModel->findClassType(declaration->ownerClass);
     const bool concreteInstance =
-        !declaration->genericParameters.empty() || !classArguments.empty() ||
-        !classValueArguments.empty() || !snapshot.typeArguments.empty() ||
-        !snapshot.valueArguments.empty();
+        !declaration->genericParameters.empty() ||
+        (genericOwner != nullptr && !genericOwner->genericParameters.empty()) ||
+        !classArguments.empty() || !classValueArguments.empty() ||
+        !snapshot.typeArguments.empty() || !snapshot.valueArguments.empty();
     const SemanticModel *model = baseModel;
     if (concreteInstance) {
       SemanticInstanceAnalysis *analysis = ensureFunctionAnalysis(snapshot.id);
@@ -1162,6 +1214,8 @@ private:
           concrete->returnBorrowAccess;
       output.program.functions[index].returnBorrowPlace =
           concrete->returnBorrowPlace;
+      output.program.functions[index].ownedPointeeProjection =
+          concrete->ownedPointeeProjection;
     }
 
     lambdaTargets.clear();
@@ -1182,7 +1236,7 @@ private:
     std::vector<HirCallableParameter> callableParameters;
     callableParameters.reserve(declaration->callableParameters.size());
     for (const CallableParameterContract &parameter :
-         declaration->callableParameters) {
+         declaration->instantiatedCallableParameters(snapshot.parameterTypes)) {
       if (parameter.parameterIndex >= snapshot.parameterTypes.size() ||
           (parameter.boundary == CallableBoundary::Owned &&
            (!parameter.ownedTransport ||
@@ -1199,8 +1253,10 @@ private:
           .boundary = parameter.boundary,
           .ownedTransport = parameter.ownedTransport};
       if (lowered.ownedTransport) {
-        if (lowered.ownedTransport->kind !=
-            CallableOwnedTransportKind::ThreadTask) {
+        if (lowered.ownedTransport->kind == CallableOwnedTransportKind::Value) {
+          lowered.ownedTransport->destinationType = lowered.callableType;
+        } else if (lowered.ownedTransport->kind !=
+                   CallableOwnedTransportKind::ThreadTask) {
           lowered.ownedTransport->destinationType = snapshot.returnType;
         } else if (declaration->ownerClass != 0) {
           const ClassTypeInfo *owner =
@@ -1464,6 +1520,64 @@ private:
                                  implicitBaseValues.end());
       }
     }
+    // A source constructor owns the complete selected initialization order.
+    // Declaration defaults are expressions, not already-live entry state:
+    // select them only for fields not overridden by this constructor, and
+    // lower them into the same body as explicit initializers so failure can
+    // unwind previously completed fields and constructor parameters.
+    SemanticInstanceAnalysis fieldAnalysis;
+    const SemanticModel *fieldModel = baseModel;
+    if (!classArguments.empty() || !classValueArguments.empty()) {
+      fieldAnalysis = instanceProvider->analyzeClassFieldInitializers(
+          owner.declaration, classArguments, classValueArguments);
+      appendInstanceDiagnostics(std::move(fieldAnalysis.diagnostics),
+                                owner.instantiationSite);
+      fieldModel = &fieldAnalysis.model;
+    }
+    for (const HirClassField &field : owner.fields) {
+      // Generated defaults still execute the declaration schedule, rather
+      // than a concrete constructor MIR body. Keep that route intact until
+      // generated construction has its own selected initialization body.
+      if (owner.defaultConstructor == SpecialMemberStatus::Generated ||
+          field.declaration == nullptr || !field.declaration->initializer() ||
+          std::any_of(initializers.begin(), initializers.end(),
+                      [&](const HirConstructorInitializer &initializer) {
+                        return initializer.kind ==
+                                   ConstructorInitializerTargetKind::Field &&
+                               initializer.field == field.info.symbol;
+                      }))
+        continue;
+      const auto value =
+          lowerExpression(field.declaration->initializer(), *fieldModel,
+                          classArguments, classValueArguments, body);
+      if (!value) {
+        lifecycleValid = false;
+        continue;
+      }
+      initializers.push_back({.targetType = field.info.type,
+                              .field = field.info.symbol,
+                              .arguments = {*value},
+                              .explicitArgumentCount = 1});
+    }
+    const auto fieldOrder = [&](const HirConstructorInitializer &initializer) {
+      if (initializer.kind == ConstructorInitializerTargetKind::Base)
+        return std::size_t{0};
+      const auto found =
+          std::find_if(owner.fields.begin(), owner.fields.end(),
+                       [&](const HirClassField &field) {
+                         return field.info.symbol == initializer.field;
+                       });
+      return std::size_t(found - owner.fields.begin()) + 1;
+    };
+    std::stable_sort(initializers.begin(), initializers.end(),
+                     [&](const auto &left, const auto &right) {
+                       return fieldOrder(left) < fieldOrder(right);
+                     });
+    initializerValues.clear();
+    for (const auto &initializer : initializers)
+      initializerValues.insert(initializerValues.end(),
+                               initializer.arguments.begin(),
+                               initializer.arguments.end());
     body.roots =
         lowerStatements(snapshot.source->body()->statements(), analysis->model,
                         classArguments, classValueArguments, body);
@@ -1712,6 +1826,9 @@ private:
 
   [[nodiscard]] bool materializesDropValue(const HirValue &value,
                                            const HirBody &body) const {
+    if (value.retainedReceiverProjection) {
+      return false;
+    }
     if (value.info.category != ValueCategory::Value ||
         value.info.type == SemanticType::Unknown ||
         value.info.type.kind == SemanticType::Reference ||
@@ -1719,7 +1836,8 @@ private:
       return false;
     }
     if (!instanceProvider->requiresActiveCleanupFor(value.info.type) &&
-        !materializesFixedArrayOwnership(value, body)) {
+        !materializesFixedArrayOwnership(value, body) &&
+        !collectionResults.contains(value.id)) {
       return false;
     }
     switch (value.kind) {
@@ -1846,7 +1964,8 @@ private:
       const HirConstructorInitializer &initializer = initializers[index];
       if (initializer.source == nullptr) {
         if (!initializer.arguments.empty()) {
-          appendFullExpression(body, initializer.arguments, 0, index + 1);
+          pendingFullExpressions.push_back(
+              {.constructorInitializer = index + 1});
         }
         continue;
       }
@@ -1866,12 +1985,20 @@ private:
             {.expression = &expression, .statement = statement.id});
       }
     }
-    std::stable_sort(pendingFullExpressions.begin(),
-                     pendingFullExpressions.end(),
-                     [](const PendingFullExpression &left,
-                        const PendingFullExpression &right) {
-                       return left.expression->order < right.expression->order;
-                     });
+    std::stable_sort(
+        pendingFullExpressions.begin(), pendingFullExpressions.end(),
+        [](const PendingFullExpression &left,
+           const PendingFullExpression &right) {
+          if (left.constructorInitializer != 0 ||
+              right.constructorInitializer != 0) {
+            if (left.constructorInitializer == 0)
+              return false;
+            if (right.constructorInitializer == 0)
+              return true;
+            return left.constructorInitializer < right.constructorInitializer;
+          }
+          return left.expression->order < right.expression->order;
+        });
     for (const PendingFullExpression &pending : pendingFullExpressions) {
       const std::vector<HirValueId> roots =
           pending.constructorInitializer != 0 &&
@@ -1884,6 +2011,26 @@ private:
 
     if (lexicalBindings) {
       for (HirBinding &binding : body.bindings) {
+        if (binding.parameter != nullptr &&
+            binding.info.type.kind == SemanticType::TypePack &&
+            binding.info.type.concretePack) {
+          for (std::size_t element = 0;
+               element < binding.info.type.arguments.size(); ++element) {
+            const SemanticType &type = binding.info.type.arguments[element];
+            if (instanceProvider->traitsFor(type).drop != DropKind::Lexical)
+              continue;
+            const HirDropObligationId id = body.dropObligations.size() + 1;
+            body.dropObligations.push_back(
+                {.id = id,
+                 .constructionOrder = id,
+                 .kind = HirDropObligationKind::Binding,
+                 .binding = binding.id,
+                 .packElement = element,
+                 .dropType = dropTypeFor(type),
+                 .initiallyActive = true});
+          }
+          continue;
+        }
         if (binding.info.type.kind == SemanticType::Reference ||
             binding.info.staticStorage ||
             binding.info.traits.drop != DropKind::Lexical) {
@@ -2501,6 +2648,9 @@ private:
       // A named native callback value is a passive pointer, not a confined
       // GTI callable. Packs retain its exact native signature by value.
       return type.hasNativeFunctionShape();
+    case SemanticType::FunctionItem:
+      // Exact namespace identities have no environment to transfer or drop.
+      return type.hasFunctionItemShape();
     case SemanticType::Enum:
       return !instanceProvider->requiresActiveCleanupFor(type);
     default:
@@ -2511,6 +2661,7 @@ private:
   [[nodiscard]] bool
   orderedOwningParameterType(const SemanticType &type) const {
     return type.kind == SemanticType::Class ||
+           type.kind == SemanticType::Lambda ||
            (type.kind == SemanticType::Enum &&
             instanceProvider->requiresActiveCleanupFor(type));
   }
@@ -2661,6 +2812,11 @@ private:
                   CallReceiverMode receiverMode, const HirBody &body) const {
     HirValueId source = receiver;
     const HirValue *input = body.findValue(source);
+    while (input != nullptr && input->kind == HirValueKind::Grouping &&
+           input->retainedReceiverProjection && input->operands.size() == 1) {
+      source = input->operands.front();
+      input = body.findValue(source);
+    }
     if (input == nullptr) {
       return std::nullopt;
     }
@@ -2687,13 +2843,16 @@ private:
     const bool consumesReceiver = receiverMode == CallReceiverMode::Consuming ||
                                   mutability == ReceiverMutability::Consuming;
     if (consumesReceiver) {
-      if (input->info.type.kind != SemanticType::Class ||
+      if ((input->info.type.kind != SemanticType::Class &&
+           input->info.type.kind != SemanticType::Lambda) ||
           input->info.category != ValueCategory::Value ||
           !input->info.traits.movable ||
           input->info.traits.containsBorrowedState) {
         return std::nullopt;
       }
-      kind = HirCallInputKind::MoveValue;
+      kind = input->retainedReceiverProjection
+                 ? HirCallInputKind::RetainedReceiver
+                 : HirCallInputKind::MoveValue;
     } else if (!temporaryReceiver &&
                input->info.category == ValueCategory::Place) {
       kind = receiverMode == CallReceiverMode::MutablePlace
@@ -3148,12 +3307,81 @@ private:
     return id;
   }
 
+  [[nodiscard]] std::optional<HirValueId> lowerCollection(
+      const ArrayInitializer &expression, const ResolvedCollectionInfo &plan,
+      const SemanticModel &model,
+      const std::vector<SemanticType> &classArguments,
+      const std::vector<CompileTimeValue> &classValueArguments, HirBody &body) {
+    const auto call =
+        [&](FunctionId function, std::vector<HirValueId> operands,
+            std::vector<SemanticType> parameters) -> std::optional<HirValueId> {
+      const FunctionInfo *declaration = baseModel->findFunction(function);
+      const auto arguments = orderedArguments(operands, parameters, body);
+      if (declaration == nullptr || !arguments) {
+        lifecycleValid = false;
+        return std::nullopt;
+      }
+      const auto target = enqueueFunction(
+          *declaration, plan.type.arguments, plan.type.valueArguments, {}, {},
+          plan.type, parameters, tokenSpan(expression.brace()));
+      if (target == 0) {
+        lifecycleValid = false;
+        return std::nullopt;
+      }
+      const HirValueId id = nextValueId++;
+      // Even a trivially destructible collection needs a concrete temporary:
+      // each protocol call must publish successfully before the next element
+      // starts, rather than remaining an inline nested class-valued call.
+      collectionResults.insert(id);
+      body.values.push_back(
+          {.id = id,
+           .kind = HirValueKind::Call,
+           .source = &expression,
+           .info = {.type = plan.type,
+                    .category = ValueCategory::Value,
+                    .access = AccessMode::ReadOnly,
+                    .traits = instanceProvider->traitsFor(plan.type)},
+           .operands = std::move(operands),
+           .parameterTypes = std::move(parameters),
+           .definedFailure = {.propagation =
+                                  FailurePropagationKind::DirectCall},
+           .callPlan =
+               HirCallPlan{.receiver = std::nullopt, .arguments = *arguments},
+           .functionTarget = target});
+      output.program.sourceValueIds[&expression].push_back(id);
+      return id;
+    };
+    const HirValueId count =
+        lowerStructuredIndex(expression.elements().size(), body);
+    auto result = call(plan.initialize, {count}, {SemanticType::UInt64});
+    for (const ExprPtr &element : expression.elements()) {
+      if (!result) {
+        return std::nullopt;
+      }
+      const auto value = lowerExpression(element, model, classArguments,
+                                         classValueArguments, body);
+      if (!value) {
+        lifecycleValid = false;
+        return std::nullopt;
+      }
+      result =
+          call(plan.insert, {*result, *value}, {plan.type, plan.elementType});
+    }
+    return result;
+  }
+
   [[nodiscard]] std::optional<HirValueId>
   lowerExpression(const Expr &expression, const SemanticModel &model,
                   const std::vector<SemanticType> &classArguments,
                   const std::vector<CompileTimeValue> &classValueArguments,
                   HirBody &body) {
     ensurePlaceDomain(body);
+    if (const auto *initializer = exprAs<ArrayInitializer>(&expression)) {
+      if (const auto *collection = model.findCollection(*initializer)) {
+        return lowerCollection(*initializer, *collection, model, classArguments,
+                               classValueArguments, body);
+      }
+    }
     if (const auto *unary = dynamic_cast<const Unary *>(&expression);
         unary != nullptr && unary->oper().kind == TokenKind::QUESTION) {
       return lowerExpectedPropagation(*unary, model, classArguments,
@@ -3305,8 +3533,44 @@ private:
       lowerOperand(conversion->value());
     } else if (const auto *initializer = exprAs<DirectInitializer>(raw)) {
       kind = HirValueKind::DirectInitializer;
-      for (const ExprPtr &argument : initializer->arguments()) {
-        lowerOperand(argument);
+      const auto *construction = model.findConstruction(*raw);
+      if (construction != nullptr &&
+          !construction->designatedArguments.empty()) {
+        const SemanticType &target = construction->constructedType;
+        const ClassTypeInfo *owner = baseModel->findClassType(target.classId);
+        std::optional<SemanticInstanceAnalysis> defaults;
+        for (const Expr *argument : construction->designatedArguments) {
+          const bool declarationDefault =
+              owner != nullptr &&
+              std::any_of(owner->fields.begin(), owner->fields.end(),
+                          [&](const ClassFieldTypeInfo &field) {
+                            return field.declaration != nullptr &&
+                                   field.declaration->initializer().get() ==
+                                       argument;
+                          });
+          if (declarationDefault && !defaults &&
+              (!target.arguments.empty() || !target.valueArguments.empty())) {
+            defaults.emplace(instanceProvider->analyzeClassFieldInitializers(
+                target.classId, target.arguments, target.valueArguments));
+            appendInstanceDiagnostics(std::move(defaults->diagnostics),
+                                      tokenSpan(initializer->brace()));
+          }
+          if (auto lowered = lowerDefaultArgument(
+                  argument,
+                  declarationDefault && defaults ? defaults->model : model,
+                  declarationDefault ? target.arguments : classArguments,
+                  declarationDefault ? target.valueArguments
+                                     : classValueArguments,
+                  body)) {
+            operands.push_back(*lowered);
+          } else {
+            lifecycleValid = false;
+          }
+        }
+      } else {
+        for (const ExprPtr &argument : initializer->arguments()) {
+          lowerOperand(argument);
+        }
       }
     } else if (const auto *set = exprAs<DereferenceSet>(raw)) {
       const ResolvedOperatorInfo *resolved = model.findOperator(*set);
@@ -3605,6 +3869,7 @@ private:
                    .payloadIndex = payloadIndex};
     if (const auto *call = exprAs<Call>(raw);
         call != nullptr && exprAs<Get>(call->callee().get()) != nullptr &&
+        model.typeOf(*call->callee()).kind != SemanticType::FunctionItem &&
         !value.operands.empty()) {
       const HirValue *callee = body.findValue(value.operands.front());
       if (callee != nullptr && callee->kind == HirValueKind::MemberAccess &&
@@ -3623,6 +3888,12 @@ private:
       value.info = *info;
       (void)enqueueClass(info->type);
     }
+    if (value.kind == HirValueKind::Grouping && value.operands.size() == 1) {
+      if (const auto *inner = body.findValue(value.operands.front())) {
+        value.retainedReceiverProjection = inner->retainedReceiverProjection;
+        value.retainedReceiverOwner = inner->retainedReceiverOwner;
+      }
+    }
     if (kind == HirValueKind::PackExpansion) {
       if (value.info.type.kind != SemanticType::TypePack ||
           !value.info.type.concretePack || value.symbol == 0) {
@@ -3633,12 +3904,18 @@ private:
           const SemanticTypeTraits traits =
               instanceProvider->traitsFor(element);
           HirCallInputKind inputKind = HirCallInputKind::Value;
-          if (orderedValueParameterType(element)) {
+          if (element.kind == SemanticType::Reference) {
+            inputKind = element.referenceAccess == AccessMode::Mutable
+                            ? HirCallInputKind::MutableBorrow
+                            : HirCallInputKind::ReadBorrow;
+          } else if (orderedValueParameterType(element)) {
             inputKind = HirCallInputKind::Value;
-          } else if (element.kind == SemanticType::Class &&
+          } else if ((element.kind == SemanticType::Class ||
+                      element.kind == SemanticType::Lambda) &&
                      !traits.containsBorrowedState && traits.copyable) {
             inputKind = HirCallInputKind::CopyValue;
-          } else if (element.kind == SemanticType::Class &&
+          } else if ((element.kind == SemanticType::Class ||
+                      element.kind == SemanticType::Lambda) &&
                      !traits.containsBorrowedState && traits.movable) {
             inputKind = HirCallInputKind::MoveValue;
           } else {
@@ -3678,6 +3955,18 @@ private:
     if (const auto *call = exprAs<Call>(raw)) {
       if (const ResolvedCallInfo *resolved = model.findCall(*call)) {
         value.intrinsic = resolved->intrinsic;
+        value.retainedReceiverProjection = resolved->retainedReceiverProjection;
+        if (resolved->retainedReceiverOwner != nullptr) {
+          const auto anchor = std::find_if(
+              body.values.rbegin(), body.values.rend(), [&](const HirValue &v) {
+                return v.source == resolved->retainedReceiverOwner;
+              });
+          if (anchor == body.values.rend()) {
+            lifecycleValid = false;
+          } else {
+            value.retainedReceiverOwner = anchor->id;
+          }
+        }
         value.dispatch = resolved->dispatch;
         value.dispatchOwner = resolved->dispatchOwner;
         value.parameterTypes = resolved->parameterTypes;
@@ -3838,6 +4127,11 @@ private:
       if (const ResolvedLambdaCallInfo *resolved =
               model.findLambdaCall(*call)) {
         value.parameterTypes = resolved->parameterTypes;
+        // The callee is an explicit receiver even when a final pack prevents
+        // formation of the fixed-arity call plan. MIR stages it before the
+        // expanded arguments rather than losing the closure environment.
+        if (value.operands.size() == call->arguments().size() + 1)
+          value.receiver = value.operands.front();
         value.callableBoundary = resolved->boundary;
         value.callableInvocation = resolved->capability;
         if (const auto target = lambdaTargets.find(resolved->lambda);
@@ -3898,6 +4192,7 @@ private:
     }
     if (const ResolvedConstructionInfo *construction =
             model.findConstruction(*raw)) {
+      value.designatedConstruction = !construction->designatedArguments.empty();
       const bool inPlaceStorageConstruction =
           value.intrinsic == IntrinsicKind::StorageConstruct ||
           value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
@@ -4123,6 +4418,23 @@ private:
         }
       }
     }
+    if (value.lambdaTarget && value.receiver && !value.callPlan) {
+      const HirValue *receiver = body.findValue(*value.receiver);
+      if (receiver != nullptr && receiver->retainedReceiverProjection &&
+          value.operands.size() == value.parameterTypes.size() + 1) {
+        const std::vector<HirValueId> arguments(value.operands.begin() + 1,
+                                                value.operands.end());
+        const auto planned = orderedArguments(arguments, value.parameterTypes,
+                                              body, arguments.size());
+        const auto receiverPlan =
+            orderedReceiver(*value.receiver, ReceiverMutability::ReadOnly,
+                            CallReceiverMode::Consuming, body);
+        if (planned && receiverPlan) {
+          value.callPlan =
+              HirCallPlan{.receiver = receiverPlan, .arguments = *planned};
+        }
+      }
+    }
     if (model.findConstruction(*raw) != nullptr && value.constructorTarget &&
         value.constructorKind == ConstructorKind::Ordinary &&
         value.intrinsic == IntrinsicKind::None &&
@@ -4134,7 +4446,8 @@ private:
           value.operands.end());
       const std::size_t explicitArgumentCount =
           exprAs<Call>(raw) != nullptr ? exprAs<Call>(raw)->arguments().size()
-          : exprAs<DirectInitializer>(raw) != nullptr
+          : exprAs<DirectInitializer>(raw) != nullptr &&
+                  exprAs<DirectInitializer>(raw)->designators().empty()
               ? exprAs<DirectInitializer>(raw)->arguments().size()
               : value.parameterTypes.size();
       if (std::optional<std::vector<HirCallArgument>> plannedArguments =
@@ -4258,6 +4571,7 @@ private:
                      std::unique_ptr<SemanticInstanceAnalysis>>
       constructorAnalyses;
   std::unordered_set<const Expr *> activeDefaultArguments;
+  std::unordered_set<HirValueId> collectionResults;
 };
 
 HirLowerer::HirLowerer(TargetInfo target)

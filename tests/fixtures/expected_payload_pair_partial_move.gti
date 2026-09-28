@@ -1,0 +1,14 @@
+#include <std/string>
+#include <std/utility>
+
+expected<std::string, int32_t> text(std::string_view value) {
+  return std::string(value);
+}
+
+int main() {
+  mut auto username = text("user");
+  mut auto password = text("secret");
+  auto result = std::make_pair(std::move(username.value()),
+                               std::move(password.value()));
+  return 0;
+}

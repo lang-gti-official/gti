@@ -80,7 +80,8 @@ def main() -> int:
             r"__gti_mir_v_\d+\.get\(\)\.value", generated
         )
         direct_slot_constructions = re.findall(
-            r"std::construct_at\(__gti_mir_v_\d+\.construction_address\(\), "
+            r"::new \(static_cast<void \*>\(__gti_mir_v_\d+\.construction_address\(\)\)\) "
+            r"[\w:]+\("
             r"::gti_internal::backend::mir_failure_constructor_tag_v1<",
             generated,
         )

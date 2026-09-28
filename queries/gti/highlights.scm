@@ -14,6 +14,9 @@
 (nullptr_literal) @constant.builtin
 (this_expression) @variable.builtin
 
+(designated_initializer
+  field: (identifier) @variable.member)
+
 (primitive_type) @type.builtin
 [
   "nullptr_t"
@@ -312,6 +315,12 @@
 ] @keyword.operator
 
 (generic_parameter_clause
+  [
+    "<"
+    ">"
+  ] @punctuation.bracket)
+
+(generic_signature_pattern_clause
   [
     "<"
     ">"

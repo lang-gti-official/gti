@@ -45,6 +45,9 @@ void gti_glad_gen_buffers(int32_t count, uint32_t *buffers);
 void gti_glad_bind_buffer(uint32_t target, uint32_t buffer);
 void gti_glad_buffer_data(uint32_t target, int64_t bytes, const void *data,
                           uint32_t usage);
+// Typed entry point for GTI float storage, which cannot erase float* to void*.
+void gti_glad_buffer_data_f32(uint32_t target, int64_t bytes, const float *data,
+                              uint32_t usage);
 void gti_glad_delete_buffers(int32_t count, const uint32_t *buffers);
 void gti_glad_vertex_attrib_pointer(uint32_t index, int32_t size, uint32_t type,
                                     int32_t normalized, int32_t stride,

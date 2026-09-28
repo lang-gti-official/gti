@@ -1,0 +1,22 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Reader<R, Args...> {
+public:
+  virtual R probe_read(Args... args) = 0;
+};
+
+class Writer<R, Args...> {
+public:
+  virtual R probe_mut(Args... args) mut = 0;
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 1) {
+    std::unique_ptr<Reader<int, int>> reader{};
+    return reader->probe_read(1);
+  }
+  mut std::unique_ptr<Writer<int, int>> writer{};
+  return writer->probe_mut(1);
+}

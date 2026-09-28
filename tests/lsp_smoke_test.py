@@ -1065,7 +1065,7 @@ def test_semantic_hover(executable, root):
         )["result"]
         assert variadic_hover["contents"]["value"].startswith(
             "```gti\nvoid relay<Args...>(Args... values)\n```"
-        )
+        ), variadic_hover
 
         capability_offset = source.index("Affine")
         session.send(
@@ -4961,6 +4961,151 @@ def test_diagnostic_code_actions(executable, root):
         assert session.receive_until(lambda message: message.get("id") == 4)[
             "result"
         ] == []
+    finally:
+        session.close()
+
+
+def test_missing_standard_library_include_code_action(
+    executable, root, symbol="vector", argument="int", header="std/vector"
+):
+    source = f"// 🙂\nusing values = std::{symbol}<{argument}>;\n"
+    include = f"#include <{header}>\n"
+    corrected_source = include + source
+    path = root / "missing-standard-include.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "workspace": {
+                            "workspaceEdit": {"documentChanges": True}
+                        },
+                        "textDocument": {
+                            "publishDiagnostics": {"dataSupport": True},
+                            "codeAction": {
+                                "isPreferredSupport": True,
+                                "codeActionLiteralSupport": {
+                                    "codeActionKind": {
+                                        "valueSet": ["quickfix"]
+                                    }
+                                },
+                            },
+                        },
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and any(
+                item.get("code") == "GTI-S2089"
+                for item in message["params"]["diagnostics"]
+            )
+        )["params"]
+        diagnostic = next(
+            item
+            for item in publication["diagnostics"]
+            if item.get("code") == "GTI-S2089"
+        )
+        vector = source.index(symbol)
+        assert diagnostic["range"] == {
+            "start": lsp_position(source, vector),
+            "end": lsp_position(source, vector + len(symbol)),
+        }, diagnostic
+        assert diagnostic["data"]["phase"] == "semantics", diagnostic
+        assert diagnostic["data"]["fixes"] == [
+            {
+                "uri": uri,
+                "range": {
+                    "start": {"line": 0, "character": 0},
+                    "end": {"line": 0, "character": 0},
+                },
+                "replacement": include,
+                "message": f"Add #include <{header}>",
+            }
+        ], diagnostic
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/codeAction",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "range": diagnostic["range"],
+                    "context": {
+                        "diagnostics": [diagnostic],
+                        "only": ["quickfix"],
+                    },
+                },
+            }
+        )
+        actions = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]
+        assert len(actions) == 1, actions
+        action = actions[0]
+        assert action["title"] == f"Add #include <{header}>", action
+        assert action["kind"] == "quickfix", action
+        assert action["isPreferred"] is True, action
+        assert action["edit"]["documentChanges"] == [
+            {
+                "textDocument": {"uri": uri, "version": 1},
+                "edits": [
+                    {
+                        "range": {
+                            "start": {"line": 0, "character": 0},
+                            "end": {"line": 0, "character": 0},
+                        },
+                        "newText": include,
+                    }
+                ],
+            }
+        ], action
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": corrected_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+            and not message["params"]["diagnostics"]
+        )
     finally:
         session.close()
 
@@ -9072,6 +9217,11 @@ def main():
     test_standalone_managed_thread_profile(sys.argv[1], root)
     test_managed_thread_tooling(sys.argv[1], root)
     test_diagnostic_capability_negotiation(sys.argv[1], root)
+    test_missing_standard_library_include_code_action(sys.argv[1], root)
+    for symbol in ("function", "move_only_function"):
+        test_missing_standard_library_include_code_action(
+            sys.argv[1], root, symbol, "void()", "std/functional"
+        )
     test_current_language_diagnostics(sys.argv[1], root)
     test_recursive_layout_diagnostic(sys.argv[1], root)
     test_expected_propagation_tooling(sys.argv[1], root)
@@ -9299,14 +9449,21 @@ def main():
         {"jsonrpc": "2.0", "method": "exit", "params": None},
     ]
 
-    process = subprocess.run(
-        [sys.argv[1]],
-        input=b"".join(frame(request) for request in requests),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-        timeout=15,
-    )
+    # This preframed batch does not model an interactive client. A seekable
+    # input avoids bidirectional pipe backpressure in Python's blocking
+    # communicate() writes on macOS; the separate LspSession cases retain
+    # interactive pipes, cancellation, and generation ordering coverage.
+    with tempfile.TemporaryFile() as batch_input:
+        batch_input.write(b"".join(frame(request) for request in requests))
+        batch_input.seek(0)
+        process = subprocess.run(
+            [sys.argv[1]],
+            stdin=batch_input,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=15,
+        )
     if process.returncode != 0:
         raise AssertionError(
             f"gti_lsp exited with {process.returncode}: {process.stderr.decode()}"

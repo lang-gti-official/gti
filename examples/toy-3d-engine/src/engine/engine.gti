@@ -1,0 +1,121 @@
+#include "math.gti"
+#include "model.gti"
+#include "renderer.gti"
+#include "scene.gti"
+#include "ui.gti"
+#include "window.gti"
+#include <glfw/glfw>
+#include <std/memory>
+
+namespace toy3d {
+class Engine {
+  mut std::unique_ptr<Window> window = nullptr;
+  mut std::unique_ptr<Renderer> renderer = nullptr;
+  mut std::unique_ptr<Scene> scene = nullptr;
+  mut std::unique_ptr<Camera> camera = nullptr;
+  mut std::unique_ptr<Model> model = nullptr;
+  mut std::unique_ptr<DebugUi> ui = nullptr;
+
+  void update_input(float delta_seconds) mut {
+    float distance = 2.5 * delta_seconds;
+    if (this.window->key_down(GLFW_KEY_ESCAPE)) {
+      this.window->request_close();
+    }
+    if (this.window->key_down(GLFW_KEY_W)) {
+      this.camera->move_forward(distance);
+    }
+    if (this.window->key_down(GLFW_KEY_S)) {
+      this.camera->move_backward(distance);
+    }
+    if (this.window->key_down(GLFW_KEY_A)) {
+      this.camera->move(-distance, 0.0, 0.0);
+    }
+    if (this.window->key_down(GLFW_KEY_D)) {
+      this.camera->move(distance, 0.0, 0.0);
+    }
+  }
+
+  void shutdown() mut {
+    this.ui->shutdown();
+    this.renderer->shutdown();
+    this.model->shutdown();
+    this.window->shutdown();
+  }
+
+public:
+  Engine() {}
+
+  int run() mut {
+    this.window = std::make_unique<Window>();
+    this.renderer = std::make_unique<Renderer>();
+    this.scene = std::make_unique<Scene>();
+    this.camera = std::make_unique<Camera>();
+    this.model = std::make_unique<Model>();
+    this.ui = std::make_unique<DebugUi>();
+
+    if (!this.window->initialize(960, 540, "GTI toy 3D engine")) {
+      std::println("failed to initialize GLFW and OpenGL");
+      return 1;
+    }
+    if (!this.renderer->initialize()) {
+      std::println("failed to initialize the cube renderer");
+      this.shutdown();
+      return 2;
+    }
+    if (!this.model->load_demo()) {
+      std::println("failed to import the demo model with Assimp");
+      this.shutdown();
+      return 3;
+    }
+    if (!this.ui->initialize()) {
+      std::println("failed to initialize the ImGui debug panel");
+      this.shutdown();
+      return 4;
+    }
+
+    std::println("GTI toy 3D engine");
+    std::println("Assimp model loaded; ImGui debug panel enabled");
+    std::println("WASD moves the camera; Escape closes the window");
+
+    mut double previous_time = this.window->time();
+    while (!this.window->should_close()) {
+      double current_time = this.window->time();
+      mut float delta_seconds = float(current_time - previous_time);
+      previous_time = current_time;
+      if (delta_seconds < 0.0 or delta_seconds > 0.1) {
+        delta_seconds = 0.016666667;
+      }
+
+      this.update_input(delta_seconds);
+
+      mut int32_t width = 0;
+      mut int32_t height = 0;
+      this.window->framebuffer_size(width, height);
+      if (width > 0 and height > 0) {
+        if (!this.ui->build_frame(
+                *this.window, *this.scene, delta_seconds, width, height)) {
+          std::println("failed to build the ImGui frame");
+          this.shutdown();
+          return 5;
+        }
+        this.scene->update(delta_seconds);
+        if (!this.renderer->render(
+                *this.model, *this.scene, *this.camera, width, height)) {
+          std::println("OpenGL reported a model rendering error");
+          this.shutdown();
+          return 6;
+        }
+        if (!this.ui->draw()) {
+          std::println("OpenGL reported an ImGui rendering error");
+          this.shutdown();
+          return 7;
+        }
+      }
+      this.window->finish_frame();
+    }
+
+    this.shutdown();
+    return 0;
+  }
+};
+}

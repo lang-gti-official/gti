@@ -7,6 +7,14 @@
 
 namespace lang::lowered_detail {
 
+namespace {
+[[nodiscard]] bool lifecycleContainsClosure(const SemanticType &type) {
+  return type.kind == SemanticType::Lambda ||
+         std::any_of(type.arguments.begin(), type.arguments.end(),
+                     lifecycleContainsClosure);
+}
+} // namespace
+
 [[nodiscard]] bool generatedLess(const LoweredGeneratedItemIdentity &left,
                                  const LoweredGeneratedItemIdentity &right) {
   return std::tuple{ordinal(left.kind), left.owner, left.ordinal} <
@@ -408,8 +416,10 @@ structuralOperatorAdapter(const LoweredFunctionDeclaration &function,
       continue;
     }
     const LoweredLifecycleCleanupForm form =
-        generic ? LoweredLifecycleCleanupForm::ConcreteSpecialization
-                : LoweredLifecycleCleanupForm::OrdinaryClass;
+        generic && lifecycleContainsClosure(owner->type)
+            ? LoweredLifecycleCleanupForm::RetainedPrimary
+        : generic ? LoweredLifecycleCleanupForm::ConcreteSpecialization
+                  : LoweredLifecycleCleanupForm::OrdinaryClass;
     const LoweredGeneratedItemIdentity identity{
         .kind = LoweredGeneratedItemKind::LifecycleCleanup,
         .owner = destructor.id};

@@ -131,6 +131,14 @@ substituteTemplateType(SemanticType type,
   for (SemanticType &argument : type.arguments) {
     argument = substituteTemplateType(std::move(argument), substitution);
   }
+  if (type.kind == SemanticType::Class ||
+      type.kind == SemanticType::FunctionSignature) {
+    std::vector<SemanticType> expanded;
+    for (SemanticType &argument : type.arguments) {
+      SemanticType::appendExpandedArgument(expanded, std::move(argument));
+    }
+    type.arguments = std::move(expanded);
+  }
   for (SemanticType &argument : type.lambdaEnclosingClassTypes) {
     argument = substituteTemplateType(std::move(argument), substitution);
   }
@@ -178,11 +186,29 @@ appendTemplateArguments(TemplateSubstitution &substitution,
                         const std::vector<CompileTimeValue> &valueArguments) {
   std::size_t typeIndex = 0;
   std::size_t valueIndex = 0;
+  bool projected = false;
   for (const LoweredGenericParameter &parameter : parameters) {
     if (parameter.id == 0) {
       return false;
     }
-    if (parameter.value) {
+    if (!parameter.typeArgumentPath.empty()) {
+      const auto type =
+          projectGenericTypeArgument(typeArguments, parameter.typeArgumentPath,
+                                     parameter.id, parameter.pack);
+      if (!type) {
+        return false;
+      }
+      projected = true;
+      substitution.types.emplace_back(parameter.id, *type);
+    } else if (parameter.pack) {
+      std::vector<SemanticType> elements(
+          typeArguments.begin() + static_cast<std::ptrdiff_t>(typeIndex),
+          typeArguments.end());
+      substitution.types.emplace_back(
+          parameter.id,
+          SemanticType::concreteTypePack(parameter.id, std::move(elements)));
+      typeIndex = typeArguments.size();
+    } else if (parameter.value) {
       if (valueIndex >= valueArguments.size()) {
         return false;
       }
@@ -195,7 +221,7 @@ appendTemplateArguments(TemplateSubstitution &substitution,
       substitution.types.emplace_back(parameter.id, typeArguments[typeIndex++]);
     }
   }
-  return typeIndex == typeArguments.size() &&
+  return (projected || typeIndex == typeArguments.size()) &&
          valueIndex == valueArguments.size();
 }
 
@@ -210,7 +236,7 @@ appendTemplateArguments(TemplateSubstitution &substitution,
                        });
   };
   if ((type.kind == SemanticType::TypeParameter ||
-       type.kind == SemanticType::TypePack) &&
+       (type.kind == SemanticType::TypePack && !type.concretePack)) &&
       !owns(type.genericParameterId, false)) {
     return false;
   }
@@ -266,12 +292,14 @@ appendTemplateArguments(TemplateSubstitution &substitution,
   if (existing == rows.types.end()) {
     rows.types.push_back({.type = concrete,
                           .kind = *concreteKind,
-                          .spelling = std::string(parameterName)});
+                          .spelling = std::string(parameterName),
+                          .bodyTypeOverlay = true});
   } else {
     if (existing->kind != *concreteKind) {
       return false;
     }
     existing->spelling = parameterName;
+    existing->bodyTypeOverlay = true;
   }
   overlays.emplace_back(concrete, parameterName);
   return true;
@@ -289,8 +317,7 @@ cppMirCallableTemplateSignature(const LoweredProgram &program,
       source == nullptr || source->declaration != declaration.id ||
       source->owner != instance.owner ||
       source->typeArguments != instance.typeArguments ||
-      source->valueArguments != instance.valueArguments ||
-      instance.parameterTypes.size() != declaration.parameters.size()) {
+      source->valueArguments != instance.valueArguments) {
     return std::nullopt;
   }
 
@@ -344,13 +371,13 @@ cppMirCallableTemplateSignature(const LoweredProgram &program,
       instance.returnType) {
     return std::nullopt;
   }
-  for (std::size_t index = 0; index < result.parameterTypes.size(); ++index) {
-    if (substituteTemplateType(result.parameterTypes[index],
-                               functionSubstitution) !=
-        instance.parameterTypes[index]) {
-      return std::nullopt;
-    }
-  }
+  std::vector<SemanticType> concreteParameters;
+  for (const SemanticType &parameter : result.parameterTypes)
+    SemanticType::appendExpandedArgument(
+        concreteParameters,
+        substituteTemplateType(parameter, functionSubstitution));
+  if (concreteParameters != instance.parameterTypes)
+    return std::nullopt;
   return result;
 }
 
@@ -365,8 +392,75 @@ std::optional<std::size_t> cppMirApplyCallableTemplateTypeOverlays(
   }
 
   std::vector<std::pair<SemanticType, std::string>> overlays;
+  TemplateSubstitution functionBindings;
+  if (!appendTemplateArguments(functionBindings, declaration.genericParameters,
+                               instance.typeArguments, instance.valueArguments))
+    return std::nullopt;
+  for (const LoweredGenericParameter &parameter :
+       declaration.genericParameters) {
+    const auto binding = std::find_if(
+        functionBindings.types.begin(), functionBindings.types.end(),
+        [&](const auto &entry) { return entry.first == parameter.id; });
+    if (parameter.value || parameter.pack ||
+        binding == functionBindings.types.end() ||
+        !containsLambdaType(binding->second))
+      continue;
+    if (!applyTemplateTypeOverlay(rows, overlays, binding->second,
+                                  parameter.name))
+      return std::nullopt;
+  }
+  if (instance.owner) {
+    const LoweredClassInstance *owner =
+        program.findClassInstance(*instance.owner);
+    const LoweredClassDeclaration *ownerInfo =
+        owner == nullptr ? nullptr
+                         : program.findClassDeclaration(owner->declaration);
+    if (ownerInfo == nullptr) {
+      return std::nullopt;
+    }
+    TemplateSubstitution ownerBindings;
+    if (!appendTemplateArguments(ownerBindings, ownerInfo->genericParameters,
+                                 owner->typeArguments, owner->valueArguments)) {
+      return std::nullopt;
+    }
+    for (const auto &[id, concrete] : ownerBindings.types) {
+      const LoweredGenericParameter *parameter =
+          program.findGenericParameter(id);
+      if (containsLambdaType(concrete) &&
+          (parameter == nullptr || parameter->pack ||
+           !applyTemplateTypeOverlay(rows, overlays, concrete,
+                                     parameter->name))) {
+        return std::nullopt;
+      }
+    }
+  }
   for (std::size_t index = 0; index < declaration.parameters.size(); ++index) {
     const SemanticType &declared = signature->parameterTypes[index];
+    if (declaration.parameters[index].pack &&
+        declared.kind == SemanticType::TypePack) {
+      const LoweredGenericParameter *parameter = program.findGenericParameter(
+          declaration.parameters[index].type.genericParameterId);
+      if (parameter == nullptr || !parameter->pack ||
+          index + 1 != declaration.parameters.size())
+        return std::nullopt;
+      for (std::size_t physical = index;
+           physical < instance.parameterTypes.size(); ++physical) {
+        const SemanticType &element = instance.parameterTypes[physical];
+        const std::string spelling =
+            "std::tuple_element_t<" + std::to_string(physical - index) +
+            ", std::tuple<" + parameter->name + "...>>";
+        if (containsLambdaType(element) &&
+            std::none_of(overlays.begin(), overlays.end(),
+                         [&](const auto &overlay) {
+                           return overlay.first == element;
+                         }) &&
+            !applyTemplateTypeOverlay(rows, overlays, element, spelling))
+          return std::nullopt;
+      }
+      continue;
+    }
+    if (index >= instance.parameterTypes.size())
+      return std::nullopt;
     const SemanticType &concrete = instance.parameterTypes[index];
     if (declared.kind == SemanticType::TypeParameter) {
       const LoweredGenericParameter *parameter =
@@ -412,34 +506,151 @@ std::optional<std::size_t> cppMirApplyGenericOwnerConstructorTypeOverlays(
   const MirClassInstance *mirOwner =
       program.mir().findClassInstance(instance.owner);
   if (source == nullptr || source->declaration != declaration.id ||
-      source->owner != instance.owner || owner == nullptr ||
+      source->owner != instance.owner ||
+      source->typeArguments != instance.typeArguments ||
+      source->valueArguments != instance.valueArguments || owner == nullptr ||
       ownerInfo == nullptr || mirOwner == nullptr ||
       owner->id != mirOwner->id ||
       owner->declaration != mirOwner->declaration ||
-      declaration.owner != ownerInfo->id ||
-      ownerInfo->genericParameters.empty() || owner->typeArguments.empty() ||
-      !owner->valueArguments.empty()) {
+      declaration.owner != ownerInfo->id || !owner->valueArguments.empty()) {
     return std::nullopt;
   }
 
   std::vector<std::pair<SemanticType, std::string>> overlays;
-  std::size_t typeIndex = 0;
+  TemplateSubstitution ownerBindings;
+  if (!appendTemplateArguments(ownerBindings, ownerInfo->genericParameters,
+                               owner->typeArguments, owner->valueArguments))
+    return std::nullopt;
   bool lambdaArgument = false;
+  TemplateSubstitution constructorBindings;
+  if (!appendTemplateArguments(constructorBindings,
+                               declaration.genericParameters,
+                               instance.typeArguments, instance.valueArguments))
+    return std::nullopt;
+  std::vector<SemanticType> concreteParameters;
+  for (const auto &parameter : declaration.parameters) {
+    SemanticType::appendExpandedArgument(
+        concreteParameters,
+        substituteTemplateType(
+            substituteTemplateType(parameter.type, ownerBindings),
+            constructorBindings));
+  }
+  if (concreteParameters != instance.parameterTypes)
+    return std::nullopt;
+  for (const LoweredGenericParameter &parameter :
+       declaration.genericParameters) {
+    const auto binding = std::find_if(
+        constructorBindings.types.begin(), constructorBindings.types.end(),
+        [&](const auto &entry) { return entry.first == parameter.id; });
+    if (parameter.value || binding == constructorBindings.types.end())
+      return std::nullopt;
+    const SemanticType &argument = binding->second;
+    if (parameter.pack) {
+      if (argument.kind != SemanticType::TypePack || !argument.concretePack)
+        return std::nullopt;
+      for (std::size_t index = 0; index < argument.arguments.size(); ++index) {
+        const auto &element = argument.arguments[index];
+        if (!containsLambdaType(element))
+          continue;
+        lambdaArgument = true;
+        if (!applyTemplateTypeOverlay(
+                rows, overlays, element,
+                "std::tuple_element_t<" + std::to_string(index) +
+                    ", std::tuple<" + parameter.name + "...>>"))
+          return std::nullopt;
+      }
+    } else if (containsLambdaType(argument)) {
+      lambdaArgument = true;
+      if (!applyTemplateTypeOverlay(rows, overlays, argument, parameter.name))
+        return std::nullopt;
+    }
+  }
   for (const LoweredGenericParameter &parameter :
        ownerInfo->genericParameters) {
-    if (parameter.pack || parameter.value ||
-        typeIndex >= owner->typeArguments.size()) {
+    const auto binding = std::find_if(
+        ownerBindings.types.begin(), ownerBindings.types.end(),
+        [&](const auto &entry) { return entry.first == parameter.id; });
+    if (parameter.value || binding == ownerBindings.types.end()) {
       return std::nullopt;
     }
-    const SemanticType &argument = owner->typeArguments[typeIndex++];
+    const SemanticType &argument = binding->second;
     lambdaArgument = lambdaArgument || containsLambdaType(argument);
+    if (parameter.pack) {
+      if (argument.kind != SemanticType::TypePack || !argument.concretePack)
+        return std::nullopt;
+      for (std::size_t index = 0; index < argument.arguments.size(); ++index) {
+        const auto &element = argument.arguments[index];
+        if (!containsLambdaType(element) ||
+            std::any_of(
+                overlays.begin(), overlays.end(),
+                [&](const auto &entry) { return entry.first == element; }))
+          continue;
+        if (!applyTemplateTypeOverlay(
+                rows, overlays, element,
+                "std::tuple_element_t<" + std::to_string(index) +
+                    ", std::tuple<" + parameter.name + "...>>"))
+          return std::nullopt;
+      }
+      continue;
+    }
     if (!applyTemplateTypeOverlay(rows, overlays, argument, parameter.name)) {
       return std::nullopt;
     }
   }
-  if (!lambdaArgument || typeIndex != owner->typeArguments.size() ||
-      overlays.empty()) {
+  if (!lambdaArgument || overlays.empty()) {
     return std::nullopt;
+  }
+  return overlays.size();
+}
+
+std::optional<std::size_t> cppMirApplyGenericOwnerDestructorTypeOverlays(
+    CppMirBodyEmissionMapRows &rows, const LoweredProgram &program,
+    const MirDestructorInstance &instance) {
+  const LoweredDestructorInstance *source =
+      program.findDestructorInstance(instance.id);
+  const LoweredClassInstance *owner = program.findClassInstance(instance.owner);
+  const LoweredClassDeclaration *declaration =
+      owner == nullptr ? nullptr
+                       : program.findClassDeclaration(owner->declaration);
+  const MirClassInstance *mirOwner =
+      program.mir().findClassInstance(instance.owner);
+  if (source == nullptr || source->owner != instance.owner ||
+      owner == nullptr || declaration == nullptr || mirOwner == nullptr ||
+      owner->id != mirOwner->id ||
+      owner->declaration != mirOwner->declaration ||
+      owner->typeArguments != mirOwner->type.arguments ||
+      owner->valueArguments != mirOwner->type.valueArguments ||
+      mirOwner->destructor != instance.id ||
+      instance.definitionKind != MirDefinitionKind::Source ||
+      !containsLambdaType(mirOwner->type) || !owner->valueArguments.empty())
+    return std::nullopt;
+  TemplateSubstitution bindings;
+  if (!appendTemplateArguments(bindings, declaration->genericParameters,
+                               owner->typeArguments, owner->valueArguments))
+    return std::nullopt;
+  std::vector<std::pair<SemanticType, std::string>> overlays;
+  for (const LoweredGenericParameter &parameter :
+       declaration->genericParameters) {
+    const auto binding = std::find_if(
+        bindings.types.begin(), bindings.types.end(),
+        [&](const auto &entry) { return entry.first == parameter.id; });
+    if (parameter.value || binding == bindings.types.end())
+      return std::nullopt;
+    const SemanticType &argument = binding->second;
+    if (parameter.pack) {
+      if (argument.kind != SemanticType::TypePack || !argument.concretePack)
+        return std::nullopt;
+      for (std::size_t index = 0; index < argument.arguments.size(); ++index) {
+        if (!applyTemplateTypeOverlay(
+                rows, overlays, argument.arguments[index],
+                "std::tuple_element_t<" + std::to_string(index) +
+                    ", std::tuple<" + parameter.name + "...>>"))
+          return std::nullopt;
+      }
+    } else if (!applyTemplateTypeOverlay(rows, overlays, argument,
+                                         parameter.name)) {
+      return std::nullopt;
+    }
   }
   return overlays.size();
 }
@@ -505,8 +716,7 @@ specializedBodyTextIsReady(const LoweredProgram &program, CppStandard standard,
             ? nullptr
             : program.findConstructorDeclaration(source->declaration);
     if (instance == nullptr || declaration == nullptr ||
-        instance->definitionKind != MirDefinitionKind::Source ||
-        !instance->mayRaiseDefinedFailure) {
+        instance->definitionKind != MirDefinitionKind::Source) {
       return false;
     }
     overlayCount = cppMirApplyGenericOwnerConstructorTypeOverlays(
@@ -517,12 +727,30 @@ specializedBodyTextIsReady(const LoweredProgram &program, CppStandard standard,
     const CppMirBodyEmissionMap overlay(std::move(rows));
     const CppMirBodyEmitter emitter(program.mir(), overlay);
     const CppMirBodyEmissionPlan plan = emitter.buildPlan(analysis.body);
-    return plan.analysis().ready() && plan.supportsFailureText();
+    return plan.analysis().ready() &&
+           (instance->mayRaiseDefinedFailure
+                ? plan.supportsFailureText() || plan.supportsPlainText()
+                : plan.supportsPlainText());
+  }
+  case MirBodyKind::Destructor: {
+    const MirDestructorInstance *instance =
+        program.mir().findDestructorInstance(analysis.body.owner);
+    if (instance == nullptr)
+      return false;
+    overlayCount =
+        cppMirApplyGenericOwnerDestructorTypeOverlays(rows, program, *instance);
+    if (!overlayCount || *overlayCount == 0)
+      return false;
+    const CppMirBodyEmissionMap overlay(std::move(rows));
+    const CppMirBodyEmissionPlan plan =
+        CppMirBodyEmitter(program.mir(), overlay).buildPlan(analysis.body);
+    return plan.analysis().ready() &&
+           (instance->mayRaiseDefinedFailure ? plan.supportsFailureText()
+                                             : plan.supportsPlainText());
   }
   case MirBodyKind::Module:
   case MirBodyKind::FieldInitializers:
   case MirBodyKind::StaticFieldInitializers:
-  case MirBodyKind::Destructor:
   case MirBodyKind::Lambda:
   case MirBodyKind::HostedStartup:
     return false;
@@ -618,6 +846,8 @@ cppLifecycleCleanupForm(LoweredLifecycleCleanupForm form) {
     return CppMirLifecycleCleanupForm::OrdinaryClass;
   case LoweredLifecycleCleanupForm::ConcreteSpecialization:
     return CppMirLifecycleCleanupForm::ConcreteSpecialization;
+  case LoweredLifecycleCleanupForm::RetainedPrimary:
+    return CppMirLifecycleCleanupForm::RetainedPrimary;
   case LoweredLifecycleCleanupForm::Count:
     return CppMirLifecycleCleanupForm::Count;
   }
@@ -1033,6 +1263,7 @@ struct RowFunctionFacts {
   bool concreteSpelling = false;
   bool cLinkage = false;
   bool runtimeBinding = false;
+  bool voidFailureResultParameter = false;
 };
 
 class RowFactProvider final {
@@ -1042,6 +1273,10 @@ public:
   [[nodiscard]] std::string typeSpelling(CppStandard standard,
                                          const SemanticType &type) const {
     return cppSemanticTypeSpelling(lowered, standard, type);
+  }
+
+  [[nodiscard]] std::string classTemplateName(ClassId id) const {
+    return cppClassTemplateNameSpelling(lowered, id);
   }
 
   [[nodiscard]] bool
@@ -1125,17 +1360,25 @@ public:
               ? std::nullopt
               : cppConcreteMemberFunctionSpelling(lowered, declaration, *info,
                                                   *loweredInstance, instance);
+      const std::optional<std::string> callable =
+          loweredInstance == nullptr
+              ? std::nullopt
+              : cppCallableFreeFunctionSpelling(lowered, declaration, *info,
+                                                *loweredInstance, instance);
       RowFunctionFacts result{
           .name = declaration.name,
           .namespaceScope = declaration.namespaceScope,
           .genericParameters = info->genericParameters,
           .spelling = concrete.value_or(concreteMember.value_or(
-              cppFunctionSpelling(*info, declaration.name))),
+              callable.value_or(cppFunctionSpelling(*info, declaration.name)))),
           .concreteSpelling =
               concrete.has_value() || concreteMember.has_value(),
           .cLinkage = info->linkage == LanguageLinkage::C,
           .runtimeBinding =
-              info->definitionKind == MirDefinitionKind::RuntimeBinding};
+              info->definitionKind == MirDefinitionKind::RuntimeBinding,
+          .voidFailureResultParameter =
+              instance.returnType == SemanticType::Void &&
+              cppFunctionHasFailureResultChannel(lowered, *info)};
       result.parameterTypes.reserve(info->parameters.size());
       for (const LoweredParameter &parameter : info->parameters) {
         result.parameterTypes.push_back(parameter.type);
@@ -1226,6 +1469,10 @@ struct RowsBuilder {
           primary.arguments.clear();
           primary.valueArguments.clear();
           templateNameSpelling = facts.typeSpelling(standard, primary);
+          if (classInfo && classInfo->compilerCapability ==
+                               CompilerCapabilityTypeKind::None) {
+            templateNameSpelling = facts.classTemplateName(type.classId);
+          }
         }
       }
       rows.types.push_back(
@@ -1950,7 +2197,8 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
     }
     builder.rows.bodies.push_back(
         {.address = {.kind = MirBodyKind::Function, .owner = function.id},
-         .spelling = std::move(spelling)});
+         .spelling = std::move(spelling),
+         .voidFailureResultParameter = info->voidFailureResultParameter});
   }
 
   // A failure-capable Module/0 body (or a failure-free shape outside the

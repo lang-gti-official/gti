@@ -1,0 +1,6 @@
+#include "engine/engine.gti"
+
+int main() {
+  mut toy3d::Engine engine = toy3d::Engine();
+  return engine.run();
+}

@@ -1,0 +1,97 @@
+==================
+Nested collection and designated initialization
+==================
+int main() {
+  std::vector<int> empty = {};
+  std::vector<std::vector<int>> values = {{1, 2}, {}, {3}};
+  Command root = {.name = "tea", .subcommands = {
+    {.name = "auth", .subcommands = {{.name = "login"}}},
+  }};
+  return 0;
+}
+---
+
+(source_file
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block
+      (variable_declaration
+        (type
+          (user_type
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (type_argument_clause
+              (type
+                (primitive_type)))))
+        (identifier)
+        (initializer_expression
+          (array_initializer)))
+      (variable_declaration
+        (type
+          (user_type
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (type_argument_clause
+              (type
+                (user_type
+                  (scoped_identifier
+                    (identifier)
+                    (identifier))
+                  (type_argument_clause
+                    (type
+                      (primitive_type))))))))
+        (identifier)
+        (initializer_expression
+          (array_initializer
+            (array_initializer
+              (primary_expression
+                (literal
+                  (integer_literal)))
+              (primary_expression
+                (literal
+                  (integer_literal))))
+            (array_initializer)
+            (array_initializer
+              (primary_expression
+                (literal
+                  (integer_literal)))))))
+      (variable_declaration
+        (type
+          (user_type
+            (identifier)))
+        (identifier)
+        (initializer_expression
+          (array_initializer
+            (designated_initializer
+              (identifier)
+              (primary_expression
+                (literal
+                  (string_literal))))
+            (designated_initializer
+              (identifier)
+              (array_initializer
+                (array_initializer
+                  (designated_initializer
+                    (identifier)
+                    (primary_expression
+                      (literal
+                        (string_literal))))
+                  (designated_initializer
+                    (identifier)
+                    (array_initializer
+                      (array_initializer
+                        (designated_initializer
+                          (identifier)
+                          (primary_expression
+                            (literal
+                              (string_literal)))))))))))))
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal))))))))

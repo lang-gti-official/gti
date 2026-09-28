@@ -64,6 +64,60 @@ diagnostics or letting a backend message choose either identity.
 
 ## Production Rules
 
+`GTI-S2094` owns an executable request without a resolved global `main`
+definition in its entry source unit. It is opt-in executable policy, checked
+after successful syntax and semantics and before HIR/backend work. Point at
+the first active namespaced `main` in the entry unit and relate each such
+candidate; when none exists, anchor at byte zero of the entry unit. Explain
+the global forwarding option without a namespace-unwrapping fix-it. Invalid
+source and completion recovery do not receive a cascading missing-entry error.
+The LSP requests this check only for a declared executable/test root.
+
+`GTI-S2000` retains the return-keyword diagnostic for a non-void expression
+returned from a void function. An exactly void-typed expression is accepted,
+including after generic substitution. No fix-it discards or rewrites the
+expression's effects.
+
+`GTI-S2093` owns invalid function-signature components or object uses. Point at
+the invalid component or type use and distinguish signature metadata from an
+owning callable value. The empty parameter list is `()`. No fix-it guesses a
+callback owner, pointer conversion, or alternate signature. Generic value
+construction retains its existing construction diagnostics.
+An explicit `mut` on a signature parameter without a reference also uses
+`GTI-S2093`, anchored to the prefix: `mut T&` is required. No fix-it silently
+changes a value parameter into a borrow.
+
+`GTI-S2023` also owns invalid class-pack declarations and type-list expansions.
+For headerless patterned primaries it also rejects incompatible public type
+arguments at the application name and relates the pattern declaration. Invalid
+receiver-family components relate the selected receiver definition, not the
+first declaration sharing its name. No fix-it converts receiver modes. Invalid
+binder/pack declarations and cyclic patterns are frontend errors, not backend
+failures. No fix-it guesses a different signature or changes a binder's role.
+Point at the pack declaration or expansion ellipsis, and distinguish a nonfinal
+pack, a value/default mixture, a decorated or non-pack expansion, and a list
+placed outside a final signature parameter or class-pack argument. Expanded
+invalid signature elements retain `GTI-S2093`; invalid reference referents
+retain their existing reference diagnostics. Nominal type metadata is not
+itself reference storage. `GTI-S2017` explains when substituting a reference
+into an ordinary binding would require an explicit reference declarator; no
+automatic fix chooses a different generic argument or lifetime contract.
+Concrete named parameter packs admit read-only reference elements;
+`GTI-S2023` still rejects void, signature and mutable-reference elements at the
+pack ellipsis. It does not suggest a fix that would change borrow access.
+
+`GTI-S2023` also reports failure to deduce one exact generic type pack from
+signature/nominal metadata and any supplied value arguments. It anchors the
+failed call and relates the generic pack declaration when deduction has no
+more specific conflict. Repeated-pattern conflicts anchor the incompatible
+argument. No fix-it guesses which signature or supplied pack should change.
+
+`GTI-S2092` owns an invalid contextual collection protocol or element. Protocol
+errors point at the opening brace; an incompatible/copied move-only element
+points at that element and relates the insertion parameter declaring its
+type. Hints explain exact typing or explicit ownership transfer. No automatic
+fix changes ownership intent. The LSP publishes these same frontend records.
+
 - Diagnose invalid GTI in the earliest authoritative frontend phase. A native
   C++ diagnostic is not a substitute for a language diagnostic.
 - Point the primary span at the token/range the user can act on. Use related
@@ -145,7 +199,15 @@ diagnostics or letting a backend message choose either identity.
   explicit `std::move`, its hint must identify unavailable move assignment and
   suggest initializing a new binding; it must not repeat the same
   `std::move(owner)` advice. No fix-it is safe because replacing an existing
-  value can carry cleanup or other ownership obligations.
+  value can carry cleanup or other ownership obligations. An exact named
+  move-only value used as a constructor field initializer also remains
+  `GTI-S2003`, but states that copying the field type is unavailable and names
+  the written source in an explicit-move hint. It has no fix-it because moving
+  versus preserving the source requires programmer intent. A return of an
+  exact named local or parameter of the same move-only type names that binding,
+  identifies the rejected copy, and spells `return std::move(name);` in its
+  hint. Other same-type move-only return expressions state the copy requirement
+  without presenting identical source and destination types as a mismatch.
 - `GTI-S2020` owns malformed or structurally unavailable default-constructor
   policy as well as copy/move construction policy. A valid ordinary form is
   exactly `Type() = default;`; point at `default`, relate the first field
@@ -338,17 +400,30 @@ diagnostics or letting a backend message choose either identity.
   `?std::move(result)` only for a named move-only expected. Do not offer a
   mechanical fix-it because consuming a named result changes its subsequent
   ownership state.
-- `GTI-S2090` owns the bounded GTI function-item boundary. Point at the bare
-  function name for formation/selection failures and at the binding for a
-  storage attempt. Distinguish no eligible exact namespace target, multiple
-  exact targets, a contract outside the confined/thread-task clients, direct
-  call signature mismatch after contextualization, and an attempt to store or
-  escape the item. Relate eligible overload declarations and the selected
+- `GTI-S2089` owns an unresolved exact qualified public standard-library
+  nominal type whose canonical `<std/...>` unit is known. Point at the final
+  type-name segment, name the missing unit, and attach one zero-width compiler
+  fix-it that inserts its `#include` at byte zero of the requesting source.
+  The insertion is intentionally independent of comment and conditional
+  structure and therefore remains mechanically safe. Unknown application or
+  third-party names keep the ordinary unknown-type diagnostic and never
+  receive a guessed include. When the declaration is already loaded elsewhere
+  but invisible from this unit, `GTI-S2024` remains the owning diagnostic and
+  carries the same standard-library include fix.
+- `GTI-S2091` owns struct designated construction: eligibility, unknown,
+  duplicate or out-of-order fields, missing required fields, and incompatible
+  values. Point at the offending field name (or opening brace for an omitted
+  field/unsupported destination). Type mismatches relate the field declaration;
+  ownership hints are explanatory, never an automatic move fix-it.
+- `GTI-S2090` owns the GTI function-item boundary. Point at the bare
+  function name for formation/selection failures. Distinguish no eligible
+  namespace target, ambiguity without an exact context, multiple contextual
+  matches and direct call signature mismatch after contextualization.
+  Storage of an unambiguous exact item is valid. Relate overload declarations and the selected
   callable parameter when available. Explain that the target must be one
   non-generic body-bearing GTI namespace function with the contract's exact
-  result and ordinary argument-binding shape. Suggest passing the name
-  directly to an exact confined or managed-thread client, or wrapping other
-  intended behavior explicitly; do not offer a cast, address-of, or automatic
+  result and ordinary argument-binding shape. Suggest a uniquely named function
+  or an explicitly typed lambda selecting the intended overload; do not offer a cast, address-of, or automatic
   lambda fix-it because those change identity, ABI, or ownership intent.
 - `GTI-S2061` owns a namespace global or static field whose resolved concrete
   type requires active cleanup while GTI has no global/static shutdown plan.
@@ -448,13 +523,19 @@ and suggests the exact `std::move(value)()` spelling. Once the receiver is
 explicitly moved, ordinary `GTI-S2018` availability diagnostics own later or
 possibly repeated use. A consuming call that overlaps a live borrow is
 reported as consuming access rather than being mislabeled read-only.
-The same code rejects a direct consuming receiver that requires active cleanup
-because the backend cannot yet retain that owned value until the enclosing
-full-expression boundary. Relate the first concrete cleanup-owning field,
-base, or declared cleanup when available and suggest a reusable callable or a
-cleanup-free receiver. When the same structural failure is discovered only by
-concrete generic reanalysis, `GTI-S2046` owns it so the instantiation context
-and confined boundary remain visible; it must still stop before HIR/MIR.
+It also rejects a retained consuming-field invocation whose selected fallback
+returns a reference or tracked borrow. The call token is primary, the selected
+callable declaration is related, and the hint suggests an owning result or
+non-consuming invocation. There is no ownership-changing automatic fix.
+Active cleanup alone no longer rejects a moved nominal or lambda receiver:
+the verified MIR full-expression obligation retains the receiver and its
+captures. Other callable, confinement, borrowing, and availability diagnostics
+still apply; this does not relax use-after-move or allow moving borrowed state.
+Virtual and interface consuming operators use the ordinary exact override
+checks. A read-only or mutable method marked `override` cannot implement an
+`&&` requirement and receives `GTI-S2042`; consumption through an ordinary
+borrowed reference still receives `GTI-S2018`. The LSP publishes those same
+diagnostics and clears an invalid override after the qualifier is restored.
 
 Once a parameter has an invoked confined contract, an ordinary value use also
 reports `GTI-S2046`: only direct invocation or proven confined forwarding is
@@ -479,6 +560,12 @@ or the selected generic result/field does not preserve its exact type. Relate
 the diagnostic to the generic parameter declaration. These are source contract
 errors; forged return, field, constructor, or move evidence is instead rejected
 by MIR verification as compiler corruption.
+
+The same owned-entry checks apply to a nominal generic carrier containing a
+closure, not only a direct type parameter. A reference or bodyless parameter
+reports the unsupported boundary at the argument and suggests a visible
+by-value generic or owning-carrier parameter. It must not claim that all owning
+type erasure is unavailable. No automatic fix changes the ownership contract.
 
 `GTI-S2027` owns lambda capture-shape and ownership failures. The parser keeps
 `[target = expression]` recoverable; semantics accepts only

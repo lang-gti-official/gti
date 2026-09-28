@@ -3,6 +3,7 @@
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
+#include "../src/compiler/cpp_mir_body_emitter.h"
 #include "cpp_backend_test_support.h"
 
 #include <algorithm>
@@ -239,6 +240,108 @@ void testPublicPipeline() {
   }
 }
 
+void testReferencePrefixBeforeOwnedField() {
+  const auto frontend = analyze("mutex-reference-prefix.gti", validProgram());
+  expect(frontend.canGenerateCode(), "mutex reference-prefix fixture lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  bool found = false;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    if (constructor.initializers.size() != 2 ||
+        !constructor.initializers.front().storesReference ||
+        !constructor.initializers.back().ownedParameter)
+      continue;
+    found = true;
+    const auto bindings =
+        lang::cppMirOwnedParameterFieldBindings(frontend.mir, constructor);
+    expect(bindings && bindings->size() == 1 &&
+               bindings->front().initializeInstruction != 0,
+           "stored reference prefix preserves exact owned-field publication");
+    for (int mutation = 0; mutation != 4; ++mutation) {
+      auto malformed = frontend.mir;
+      auto &changed = const_cast<lang::MirConstructorInstance &>(
+          *malformed.findConstructorInstance(constructor.id));
+      auto &entry = *changed.body.findBlock(changed.body.entry);
+      if (mutation == 0)
+        std::swap(entry.instructions[0], entry.instructions[1]);
+      if (mutation == 1)
+        entry.instructions[0].operands.front().place = 0;
+      if (mutation == 2)
+        entry.instructions[1].hirValue = 0;
+      if (mutation == 3)
+        entry.instructions[2].fullExpressionEnd = 0;
+      expect(!lang::cppMirOwnedParameterFieldBindings(malformed, changed),
+             "reference prefix requires exact order, source, borrow identity "
+             "and full-expression boundary");
+    }
+  }
+  expect(found,
+         "mutex guard exercises mixed reference and owner initialization");
+}
+
+void testPreparedMutexPayload() {
+  const auto frontend = analyze("mutex-prepared-payload.gti", R"gti(
+#include <std/mutex>
+class payload {
+  int value;
+public:
+  payload(int initial) : value(initial) {}
+  payload(payload& other) = delete;
+  payload(payload&& other) = default;
+};
+int main() { std::mutex<payload> value{payload(4)}; return 0; }
+)gti");
+  expect(frontend.canGenerateCode(), "prepared native payload lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  bool found = false;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    for (const auto &block : constructor.body.blocks) {
+      for (const auto &stage : block.instructions) {
+        if (stage.kind != lang::MirInstructionKind::CallInput ||
+            !stage.preparedParameterDrop || !stage.result)
+          continue;
+        const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
+            frontend.mir, constructor);
+        if (bindings.empty())
+          continue;
+        found = true;
+        expect(bindings.size() == 1 && bindings.front().arguments.size() == 1 &&
+                   bindings.front().arguments.front().moved,
+               "native payload initializer preserves its exact parameter move");
+        for (int mutation = 0; mutation != 5; ++mutation) {
+          auto malformed = frontend.mir;
+          auto &changed = const_cast<lang::MirConstructorInstance &>(
+              *malformed.findConstructorInstance(constructor.id));
+          if (mutation == 4)
+            changed.body.dropObligations[*stage.preparedParameterDrop - 1]
+                .initiallyActive = true;
+          for (auto &candidateBlock : changed.body.blocks)
+            for (auto &instruction : candidateBlock.instructions) {
+              if (instruction.id == stage.id) {
+                if (mutation == 0)
+                  instruction.destination.reset();
+                if (mutation == 1)
+                  instruction.lifecycle.clear();
+                if (mutation == 2)
+                  instruction.lifecycle.front().conditional = true;
+              }
+              if (mutation == 3 &&
+                  instruction.id == bindings.front().constructInstruction)
+                instruction.lifecycle.clear();
+            }
+          expect(lang::cppMirConstructedFieldInitializerBindings(malformed,
+                                                                 changed)
+                     .empty(),
+                 "prepared native payload needs exact slot, activation, "
+                 "invocation transfer and inactive initial state");
+        }
+      }
+    }
+  }
+  expect(found, "fixture exercises a prepared native payload initializer");
+}
+
 void testSemanticBoundaries() {
   const std::string use = R"(
 #include <std/mutex>
@@ -414,6 +517,8 @@ void testVerifierMutations() {
 int main() {
   testDormantImport();
   testPublicPipeline();
+  testReferencePrefixBeforeOwnedField();
+  testPreparedMutexPayload();
   testSemanticBoundaries();
   testVerifierMutations();
   return failures == 0 ? 0 : 1;

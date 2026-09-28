@@ -26,7 +26,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-forward-list-") as temporary:
         for name, flags in modes:
             for fixture in (
-                "forward_list_algorithms", "forward_list_cleanup", "owned_field_restore"
+                "forward_list_algorithms", "forward_list_cleanup", "owned_field_restore",
+                "forward_list_emplacement", "forward_list_emplacement_cleanup",
             ):
                 binary = pathlib.Path(temporary) / f"{fixture}-{name}"
                 command = [
@@ -46,14 +47,33 @@ def main():
                 generated = binary.with_suffix(".gti.cpp").read_text()
                 if "// GTI verified-MIR body:" not in generated:
                     raise AssertionError("missing verified-MIR emission witness")
-                executions = 3 if fixture.endswith("cleanup") else (
-                    2 if fixture == "owned_field_restore" else 1
-                )
+                if fixture == "forward_list_emplacement_cleanup":
+                    if "in-place constructor field reparent" not in generated:
+                        raise AssertionError("missing in-place element publication")
+                    executions = 2
+                elif fixture.endswith("cleanup"):
+                    executions = 3
+                elif fixture == "owned_field_restore":
+                    executions = 2
+                else:
+                    executions = 1
                 for arguments in range(executions):
                     result = run([str(binary), *(["fail"] * arguments)])
                     expected_output = ""
                     valid = (result.returncode, result.stdout, result.stderr) == (0, "", "")
-                    if fixture.endswith("cleanup"):
+                    if fixture == "forward_list_emplacement_cleanup":
+                        expected_output = "2\n1\n" if arguments == 0 else "1\n"
+                        valid = result.stdout == expected_output and (
+                            (result.returncode == 0 and result.stderr == "")
+                            if arguments == 0 else (
+                                result.returncode == 70 and re.fullmatch(
+                                    r".*forward_list_emplacement_cleanup\.gti:\d+: runtime error"
+                                    r"\[GTI-R0002\]: division_by_zero in integer_division\n",
+                                    result.stderr,
+                                ) is not None
+                            )
+                        )
+                    elif fixture.endswith("cleanup"):
                         expected_output = "3\n2\n1\n0\n0\n5\n4\n" if arguments == 0 else "1\n2\n3\n"
                         valid = result.stdout == expected_output and (
                             (result.returncode == 0 and result.stderr == "")

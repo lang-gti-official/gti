@@ -11,6 +11,7 @@ sqlite3 = { path = "../../sqlite3" }
 cimgui = { path = "../../cimgui" }
 zlib = { path = "../../zlib" }
 libpng = { path = "../../libpng" }
+cli11 = { path = "../../cli11" }
 
 [targets.glfw]
 kind = "test"
@@ -35,3 +36,7 @@ root = "src/zlib.gti"
 [targets.libpng]
 kind = "test"
 root = "src/libpng.gti"
+
+[targets.cli11]
+kind = "test"
+root = "src/cli11.gti"

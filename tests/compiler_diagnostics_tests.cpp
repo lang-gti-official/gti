@@ -129,6 +129,146 @@ int main() {
          "semantic diagnostics should preserve literal source lines");
 }
 
+void testOwnershipAndMissingIncludeDiagnostics() {
+  const std::string ownershipSource = R"(
+#include <std/string>
+#include <std/vector>
+
+class Options {
+  std::vector<std::string> arguments;
+public:
+  Options(std::vector<std::string> argv) : arguments(argv) {}
+};
+)";
+  const lang::FrontendResult ownership = lang::Frontend().analyze(
+      "move-only-field-initializer.gti", ownershipSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const lang::Diagnostic *copy =
+      findDiagnosticByCode(ownership.diagnostics, "GTI-S2003");
+  const std::size_t copiedArgument = ownershipSource.find("arguments(argv)") +
+                                     std::string("arguments(").size();
+  expect(!ownership.canGenerateCode() && copy != nullptr &&
+             copy->primary.start == copiedArgument &&
+             copy->primary.end == copiedArgument + 4 &&
+             copy->message ==
+                 "Cannot initialize field 'arguments' by copying move-only "
+                 "type 'std::vector<std::string>'." &&
+             copy->hints ==
+                 std::vector<std::string>{
+                     "Transfer ownership explicitly with "
+                     "std::move(argv), or initialize the field "
+                     "from a fresh value."} &&
+             copy->fixes.empty(),
+         "move-only field initialization should explain the ownership cause "
+         "without offering an intent-changing edit");
+
+  const std::string returnSource = R"(
+#include <std/string>
+
+std::string return_named(std::string result) {
+  return result;
+}
+)";
+  const lang::FrontendResult returned = lang::Frontend().analyze(
+      "move-only-return.gti", returnSource, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  const lang::Diagnostic *returnCopy =
+      findDiagnosticByCode(returned.diagnostics, "GTI-S2003");
+  const std::size_t returnedName =
+      returnSource.find("return result") + std::string("return ").size();
+  expect(
+      !returned.canGenerateCode() && returnCopy != nullptr &&
+          returnCopy->primary.start == returnedName &&
+          returnCopy->primary.end == returnedName + 6 &&
+          returnCopy->message ==
+              "Cannot return 'result' by copy because type 'std::string' "
+              "is move-only." &&
+          returnCopy->hints ==
+              std::vector<std::string>{
+                  "Use 'return std::move(result);' to transfer ownership."} &&
+          returnCopy->fixes.empty(),
+      "a named move-only return should identify the attempted copy and "
+      "spell the exact ownership transfer without offering an "
+      "intent-changing edit");
+
+  const std::string missingSource = "using values = std::vector<int>;\n";
+  const lang::FrontendResult missing = lang::Frontend().analyze(
+      "missing-vector-include.gti", missingSource, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
+  const lang::Diagnostic *include =
+      findDiagnosticByCode(missing.diagnostics, "GTI-S2089");
+  expect(!missing.semanticValid && include != nullptr &&
+             include->primary.start == missingSource.find("vector") &&
+             include->primary.end ==
+                 missingSource.find("vector") + std::string("vector").size() &&
+             include->message ==
+                 "Type 'std::vector' is unavailable because <std/vector> is "
+                 "not included." &&
+             include->hints ==
+                 std::vector<std::string>{"Add '#include <std/vector>' to this "
+                                          "source file."} &&
+             include->fixes.size() == 1 &&
+             include->fixes.front().span.source == include->primary.source &&
+             include->fixes.front().span.start == 0 &&
+             include->fixes.front().span.end == 0 &&
+             include->fixes.front().replacement == "#include <std/vector>\n" &&
+             include->fixes.front().message == "Add #include <std/vector>",
+         "an unresolved canonical standard-library type should carry one "
+         "compiler-owned include fix");
+
+  for (const std::string name : {"function", "move_only_function"}) {
+    const std::string source = "using callback = std::" + name + "<void()>;\n";
+    const lang::FrontendResult callback = lang::Frontend().analyze(
+        "missing-callback-include.gti", source, {standardLibraryPrelude()}, {},
+        {standardLibraryRoot()});
+    const lang::Diagnostic *missingCallback =
+        findDiagnosticByCode(callback.diagnostics, "GTI-S2089");
+    expect(
+        !callback.canGenerateCode() && missingCallback != nullptr &&
+            missingCallback->primary.start == source.find(name) &&
+            missingCallback->primary.end == source.find(name) + name.size() &&
+            missingCallback->fixes.size() == 1 &&
+            missingCallback->fixes.front().replacement ==
+                "#include <std/functional>\n" &&
+            missingCallback->fixes.front().span.start == 0 &&
+            missingCallback->fixes.front().span.end == 0,
+        "owning callback types should offer the canonical functional include");
+    const lang::FrontendResult corrected = lang::Frontend().analyze(
+        "missing-callback-include.gti", "#include <std/functional>\n" + source,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(
+        corrected.canGenerateCode(),
+        "applying the callback include fix should resolve the signature type");
+  }
+
+  const lang::FrontendResult indirect = lang::Frontend().analyze(
+      "indirect-memory-include.gti",
+      "#include <std/cstdio>\nusing owner = std::unique_ptr<int>;\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const lang::Diagnostic *invisible =
+      findDiagnosticByCode(indirect.diagnostics, "GTI-S2024");
+  expect(!indirect.semanticValid && invisible != nullptr &&
+             invisible->fixes.size() == 1 &&
+             invisible->fixes.front().span.start == 0 &&
+             invisible->fixes.front().span.end == 0 &&
+             invisible->fixes.front().replacement ==
+                 "#include <std/memory>\n" &&
+             invisible->fixes.front().message == "Add #include <std/memory>",
+         "a loaded but non-visible standard declaration should carry the "
+         "same direct-include fix");
+
+  const lang::FrontendResult unrelated = lang::Frontend().analyze(
+      "unknown-vendor-vector.gti", "using values = vendor::vector<int>;\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const lang::Diagnostic *unknown =
+      findDiagnosticByCode(unrelated.diagnostics, "GTI-S2000");
+  expect(!unrelated.semanticValid && unknown != nullptr &&
+             unknown->message == "Unknown type 'vendor::vector'." &&
+             unknown->fixes.empty() &&
+             !hasDiagnosticCode(unrelated.diagnostics, "GTI-S2089"),
+         "unknown non-standard types must not receive a guessed include edit");
+}
+
 void testDiagnosticFoundation() {
   for (const auto &[spelling, kind] : lang::keywords) {
     expect(lang::isKeywordToken(kind) || lang::isTypeKeywordToken(kind) ||
@@ -540,6 +680,84 @@ int main() {
          "formatter should produce stable C++-style GTI layout");
   expect(lang::Formatter().format(formatted) == formatted,
          "formatting should be idempotent");
+
+  const auto initializerLayout = [](const std::string &input,
+                                    const std::string &expected) {
+    const std::string output = lang::Formatter().format(input);
+    if (output != expected)
+      std::cerr << "Initializer formatting was:\n" << output;
+    expect(output == expected, "initializer layout should retain nesting");
+    expect(lang::Formatter().format(output) == output,
+           "initializer layout should be idempotent");
+    lang::Lexer beforeLexer;
+    lang::Lexer afterLexer;
+    const auto before = beforeLexer.scan(input);
+    const auto after = afterLexer.scan(output);
+    expect(!before.empty() && before.size() == after.size() &&
+               std::equal(before.begin(), std::prev(before.end()),
+                          after.begin(),
+                          [](const auto &a, const auto &b) {
+                            return a.kind == b.kind && a.lexeme == b.lexeme;
+                          }),
+           "initializer formatting must preserve tokens, even on broken input");
+  };
+  const std::string schemaSource =
+      "void setup(){Command schema={.name=std::string{\"tea\"},"
+      ".subcommands={{.name=std::string{\"auth\"},"
+      ".subcommands={{.name=std::string{\"login\"}}}}}};}";
+  initializerLayout(schemaSource, R"(void setup() {
+  Command schema = {
+    .name = std::string{"tea"},
+    .subcommands = {
+      {
+        .name = std::string{"auth"},
+        .subcommands = {
+          {
+            .name = std::string{"login"}
+          }
+        }
+      }
+    }
+  };
+}
+)");
+  initializerLayout("C c={.a=call(1,2),.b=make<int,int>(3,4),"
+                    ".c=[left,right](int a,int b){return a+b;},.d={}};",
+                    R"(C c = {
+  .a = call(1, 2),
+  .b = make<int, int>(3, 4),
+  .c = [left, right](int a, int b) {
+    return a + b;
+  },
+  .d = {}
+};
+)");
+  initializerLayout("int values[3]={\n1,2,3,\n};make({1,2},{3,4});",
+                    "int values[3] = {\n  1,\n  2,\n  3,\n};\n"
+                    "make({1, 2}, {3, 4});\n");
+  initializerLayout("C c={ // header\n.name=\"{,} 😀\", // name\n"
+                    ".count=call(1,2), /* count */ .empty={\n}};",
+                    "C c = { // header\n  .name = \"{,} 😀\", // name\n"
+                    "  .count = call(1, 2), /* count */\n  .empty = {}\n};\n");
+  initializerLayout("C root={.name=\"tea\",.children={.name=\"auth\"}}",
+                    "C root = {\n  .name = \"tea\",\n  .children = {\n"
+                    "    .name = \"auth\"\n  }\n}\n");
+  initializerLayout("C root={.name=\"tea\",.children={\n{.name=",
+                    "C root = {\n  .name = \"tea\",\n  .children = {\n"
+                    "    {\n      .name =\n");
+  const auto tabs =
+      lang::Formatter({.indentWidth = 4,
+                       .insertSpaces = false,
+                       .breakBeforeBraces = lang::BraceBreakingStyle::Allman})
+          .format("void f(){C c={.n=1,.child={.n=2}};}");
+  expect(tabs == "void f()\n{\n\tC c = {\n\t\t.n = 1,\n"
+                 "\t\t.child = {\n\t\t\t.n = 2\n\t\t}\n\t};\n}\n" &&
+             lang::Formatter(
+                 {.indentWidth = 4,
+                  .insertSpaces = false,
+                  .breakBeforeBraces = lang::BraceBreakingStyle::Allman})
+                     .format(tabs) == tabs,
+         "initializer indentation honors tabs without Allman block wrapping");
 
   const std::string separatedAmpersands = lang::Formatter().format("& &m");
   expect(separatedAmpersands == "& &m\n" &&
@@ -1507,6 +1725,8 @@ private:
 constexpr NamedTest kTests[] = {
     {"testSemanticVisitorRequestReuse", testSemanticVisitorRequestReuse},
     {"testSemanticDiagnostics", testSemanticDiagnostics},
+    {"testOwnershipAndMissingIncludeDiagnostics",
+     testOwnershipAndMissingIncludeDiagnostics},
     {"testDiagnosticFoundation", testDiagnosticFoundation},
     {"testCppReservedIdentifiers", testCppReservedIdentifiers},
     {"testDefaultImmutability", testDefaultImmutability},

@@ -1,0 +1,33 @@
+#include <std/string>
+#include <std/vector>
+
+class Token {
+public:
+  int value;
+  int divisor;
+  Token(int initial, int cleanup_divisor) : value(initial), divisor(cleanup_divisor) {}
+  ~Token() {
+    std::println(this.value);
+    int result = 1 / this.divisor;
+  }
+};
+
+interface Sink<Args...> { void accept(int divisor, Args... args); };
+class Target<Args...> : public Sink<Args...> {
+public:
+  void accept(int divisor, Args... args) override {
+    int result = 1 / divisor;
+  }
+};
+void dispatch(Sink<Token, Token>& target, int divisor, int cleanup_divisor) {
+  target.accept(divisor, Token(1, cleanup_divisor), Token(2, 1));
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Target<Token, Token> target{};
+  int body_divisor = argc < 3 ? 1 : 0;
+  int cleanup_divisor = argc == 2 || argc == 4 ? 0 : 1;
+  Token caller = Token(9, 1);
+  dispatch(target, body_divisor, cleanup_divisor);
+  return 0;
+}
