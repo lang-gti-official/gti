@@ -466,6 +466,43 @@ logicalSourceName(const SourceUnit &unit,
 
 } // namespace
 
+std::optional<std::string>
+managedExecutableDiagnostic(const ManagedOutputPolicy &policy,
+                            const std::filesystem::path &executable) {
+  if (const std::optional<std::string> diagnostic =
+          managedPathDiagnostic(policy, executable, false)) {
+    return diagnostic;
+  }
+
+  std::error_code error;
+  const std::filesystem::file_status status =
+      std::filesystem::symlink_status(executable, error);
+  const bool missing = error == std::errc::no_such_file_or_directory ||
+                       (!error && !std::filesystem::exists(status));
+  if (missing) {
+    return "gti: managed executable does not exist: '" + executable.string() +
+           "'";
+  }
+  if (error) {
+    return "gti: failed to inspect managed executable '" + executable.string() +
+           "': " + error.message();
+  }
+  if (!std::filesystem::is_regular_file(status)) {
+    return "gti: managed executable is not a regular file: '" +
+           executable.string() + "'";
+  }
+#if !defined(_WIN32)
+  constexpr std::filesystem::perms executableBits =
+      std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+      std::filesystem::perms::others_exec;
+  if ((status.permissions() & executableBits) == std::filesystem::perms::none) {
+    return "gti: managed executable is not executable: '" +
+           executable.string() + "'";
+  }
+#endif
+  return std::nullopt;
+}
+
 namespace detail {
 
 std::optional<BuildSourceMaterialProjection>
@@ -715,6 +752,11 @@ struct ResolvedNativeLibrary {
   std::filesystem::path file;
 };
 
+struct ResolvedNativeFramework {
+  std::string name;
+  std::filesystem::path file;
+};
+
 // The concrete files a native link configuration resolved to, established
 // before any cache key exists. `nativeCacheBypassDetail` fills this in while
 // deciding whether every link input has an exact identity; `buildCacheKey`
@@ -722,6 +764,7 @@ struct ResolvedNativeLibrary {
 // different file cannot reuse an entry.
 struct NativeLinkIdentityPlan {
   std::vector<ResolvedNativeLibrary> libraries;
+  std::vector<ResolvedNativeFramework> frameworks;
 };
 
 // Runs one native preprocessor probe and folds the compiler's own dependency
@@ -812,7 +855,7 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
   identity.add("cache.schema", cacheSchema);
   identity.add("compiler.identity", policy.compilerIdentity);
   identity.add("project-model.identity", policy.projectModelIdentity);
-  constexpr std::array<std::string_view, 17> nativeEnvironment{
+  constexpr std::array<std::string_view, 19> nativeEnvironment{
       "PATH",
       "CPATH",
       "C_INCLUDE_PATH",
@@ -828,6 +871,8 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
       "SOURCE_DATE_EPOCH",
       "LD_LIBRARY_PATH",
       "DYLD_LIBRARY_PATH",
+      "DYLD_FRAMEWORK_PATH",
+      "DYLD_FALLBACK_FRAMEWORK_PATH",
       "INCLUDE",
       "LIB",
   };
@@ -980,6 +1025,18 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
     identity.add("native.resolved-library.name", library.name);
     if (!addFileIdentity(identity, "native.resolved-library.file", library.file,
                          true, errorMessage)) {
+      return std::nullopt;
+    }
+  }
+
+  // Apple framework names join only after a real linker-map probe established
+  // the exact text stub or binary selected by this compiler/target/SDK policy.
+  identity.add("native.resolved-framework.count",
+               static_cast<std::uint64_t>(linkPlan.frameworks.size()));
+  for (const ResolvedNativeFramework &framework : linkPlan.frameworks) {
+    identity.add("native.resolved-framework.name", framework.name);
+    if (!addFileIdentity(identity, "native.resolved-framework.file",
+                         framework.file, true, errorMessage)) {
       return std::nullopt;
     }
   }
@@ -1442,6 +1499,141 @@ nativeLibrarySearchDirectories(const NativeInputs &inputs) {
   return directories;
 }
 
+#if defined(__APPLE__)
+std::optional<std::filesystem::path>
+frameworkSelectionFromLinkMap(std::string_view linkMap, std::string_view name,
+                              std::string &detail) {
+  const std::string marker = "/" + std::string(name) + ".framework/";
+  const std::string binaryName(name);
+  const std::string stubName = binaryName + ".tbd";
+  std::optional<std::filesystem::path> selected;
+  while (!linkMap.empty()) {
+    const std::size_t newline = linkMap.find('\n');
+    std::string_view line = linkMap.substr(0, newline);
+    if (!line.empty() && line.back() == '\r') {
+      line.remove_suffix(1);
+    }
+    if (line == "# Sections:") {
+      break;
+    }
+    const std::size_t fieldEnd = line.find("] ");
+    if (fieldEnd != std::string_view::npos) {
+      const std::string_view pathText = line.substr(fieldEnd + 2);
+      if (pathText.find(marker) != std::string_view::npos) {
+        const std::filesystem::path candidate(pathText);
+        const std::string filename = candidate.filename().string();
+        if (filename == binaryName || filename == stubName) {
+          const std::filesystem::path normalized =
+              normalizedAbsolute(candidate);
+          if (selected && *selected != normalized) {
+            detail = "framework '" + std::string(name) +
+                     "' resolved to multiple link inputs";
+            return std::nullopt;
+          }
+          selected = normalized;
+        }
+      }
+    }
+    if (newline == std::string_view::npos) {
+      break;
+    }
+    linkMap.remove_prefix(newline + 1);
+  }
+  if (!selected) {
+    detail = "framework '" + std::string(name) +
+             "' did not appear in the native linker's map";
+  }
+  return selected;
+}
+#endif
+
+// Uses the selected native compiler and linker to resolve every `-framework`
+// name exactly as the real link will. The emitted Apple link map names the
+// chosen framework stub or binary; that file then joins the cache key by path
+// and content. A failed, missing, or ambiguous trace remains a conservative
+// cache bypass and never prevents the ordinary native build from running.
+std::optional<std::string>
+resolveNativeFrameworks(const ExecutableBuildRequest &request,
+                        const std::vector<std::string> &frameworkNames,
+                        NativeLinkIdentityPlan &plan) {
+  if (frameworkNames.empty()) {
+    return std::nullopt;
+  }
+#if !defined(__APPLE__)
+  return "name-resolved frameworks require an Apple linker resolution trace";
+#else
+  std::vector<std::string> uniqueNames;
+  uniqueNames.reserve(frameworkNames.size());
+  for (const std::string &name : frameworkNames) {
+    if (std::find(uniqueNames.begin(), uniqueNames.end(), name) ==
+        uniqueNames.end()) {
+      uniqueNames.push_back(name);
+    }
+  }
+
+  const std::filesystem::path source =
+      temporaryArtifactPath(request.output(), ".framework-probe.cpp");
+  const std::filesystem::path output =
+      temporaryArtifactPath(request.output(), ".framework-probe");
+  const std::filesystem::path linkMap =
+      temporaryArtifactPath(request.output(), ".framework-probe.map");
+  TemporaryArtifact sourceCleanup(source, true);
+  TemporaryArtifact outputCleanup(output, true);
+  TemporaryArtifact linkMapCleanup(linkMap, true);
+  std::string writeError;
+  if (!publishTextAtomically(source, "int main() { return 0; }\n",
+                             writeError)) {
+    return "framework resolution probe could not create its source: " +
+           writeError;
+  }
+
+  std::vector<std::string> command{request.nativeCompiler(), "-x", "c++"};
+  appendNativeTargetPolicy(command, request.nativeInputs().targetPolicy);
+  command.push_back(source.string());
+  for (const std::string &name : uniqueNames) {
+    command.emplace_back("-framework");
+    command.push_back(name);
+  }
+  command.emplace_back("-Xlinker");
+  command.emplace_back("-map");
+  command.emplace_back("-Xlinker");
+  command.push_back(linkMap.string());
+  command.emplace_back("-o");
+  command.push_back(output.string());
+  const ProcessResult probe =
+      invokeProcess(command, {.outputMode = ProcessOutputMode::Capture,
+                              .captureSuccessfulOutput = false,
+                              .description = "native framework resolution"});
+  if (!probe.succeeded()) {
+    return "framework resolution probe failed with exit code " +
+           std::to_string(probe.exitCode);
+  }
+
+  std::string readError;
+  const std::optional<std::string> contents = readTextFile(linkMap, readError);
+  if (!contents) {
+    return "framework resolution probe produced no readable linker map: " +
+           readError;
+  }
+  for (const std::string &name : uniqueNames) {
+    std::string detail;
+    const std::optional<std::filesystem::path> selected =
+        frameworkSelectionFromLinkMap(*contents, name, detail);
+    if (!selected) {
+      return detail;
+    }
+    std::error_code statusError;
+    if (!std::filesystem::is_regular_file(*selected, statusError) ||
+        statusError) {
+      return "framework '" + name + "' resolved to unreadable link input '" +
+             selected->string() + "'";
+    }
+    plan.frameworks.push_back({.name = name, .file = *selected});
+  }
+  return std::nullopt;
+#endif
+}
+
 // Returns the reason a native configuration must bypass the cache, or
 // nullopt when every native input can join the identity exactly, filling
 // `plan` with the concrete files that named libraries resolved to. Declared
@@ -1455,9 +1647,10 @@ nativeLibrarySearchDirectories(const NativeInputs &inputs) {
 // identities. Narrowing a bypass here must never widen what the key trusts:
 // an unidentifiable input bypasses.
 std::optional<std::string>
-nativeCacheBypassDetail(const NativeInputs &inputs,
+nativeCacheBypassDetail(const ExecutableBuildRequest &request,
                         NativeLinkIdentityPlan &plan) {
   plan = {};
+  const NativeInputs &inputs = request.nativeInputs();
   if (!inputs.compilerArguments.empty() || !inputs.cCompilerArguments.empty() ||
       !inputs.linkerArguments.empty() || !inputs.trailingArguments.empty()) {
     return "opaque native argument vectors can introduce undeclared "
@@ -1474,7 +1667,7 @@ nativeCacheBypassDetail(const NativeInputs &inputs,
       });
   std::vector<std::filesystem::path> linkFiles;
   std::vector<std::string> namedLibraries;
-  bool namedFramework = false;
+  std::vector<std::string> namedFrameworks;
   const auto collectOperands =
       [&](const std::vector<NativeLinkOperand> &operands) {
         for (const NativeLinkOperand &operand : operands) {
@@ -1486,7 +1679,7 @@ nativeCacheBypassDetail(const NativeInputs &inputs,
             namedLibraries.push_back(operand.value);
             break;
           case NativeLinkOperandKind::Framework:
-            namedFramework = true;
+            namedFrameworks.push_back(operand.value);
             break;
           }
         }
@@ -1494,19 +1687,12 @@ nativeCacheBypassDetail(const NativeInputs &inputs,
   if (inputs.orderedLinkOperands.empty() && !groupLinkContribution) {
     linkFiles = inputs.libraryFiles;
     namedLibraries = inputs.libraries;
-    namedFramework = !inputs.frameworks.empty();
+    namedFrameworks = inputs.frameworks;
   } else {
     collectOperands(inputs.orderedLinkOperands);
     for (const NativeDependencyGroup &group : inputs.dependencyGroups) {
       collectOperands(group.linkOperands);
     }
-  }
-
-  if (namedFramework) {
-    // A framework resolves through undeclared `-F` and system framework
-    // directories to a bundle whose binary, headers, and re-exported
-    // dependencies are not determined by any declared path.
-    return "name-resolved frameworks require framework search resolution";
   }
 
   const std::vector<std::filesystem::path> searchDirectories =
@@ -1552,6 +1738,10 @@ nativeCacheBypassDetail(const NativeInputs &inputs,
              "' cannot be read for cache identity";
     }
   }
+  if (const std::optional<std::string> frameworkBypass =
+          resolveNativeFrameworks(request, namedFrameworks, plan)) {
+    return frameworkBypass;
+  }
   return std::nullopt;
 }
 
@@ -1559,7 +1749,7 @@ bool hasDependencyInjectingNativeEnvironment() {
   // These variables name mutable search roots or toolchain resources. Hashing
   // only the variable spelling cannot identify headers, linker scripts,
   // archives, plugins, or sub-tools reached through the named location.
-  constexpr std::array<std::string_view, 13> variables{
+  constexpr std::array<std::string_view, 15> variables{
       "CPATH",
       "C_INCLUDE_PATH",
       "CPLUS_INCLUDE_PATH",
@@ -1571,6 +1761,8 @@ bool hasDependencyInjectingNativeEnvironment() {
       "DEVELOPER_DIR",
       "LD_LIBRARY_PATH",
       "DYLD_LIBRARY_PATH",
+      "DYLD_FRAMEWORK_PATH",
+      "DYLD_FALLBACK_FRAMEWORK_PATH",
       "INCLUDE",
       "LIB",
   };
@@ -2330,8 +2522,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
       result.cache.detail =
           "build-report capture requires a real native invocation";
     } else if (const std::optional<std::string> bypassDetail =
-                   nativeCacheBypassDetail(request.nativeInputs(),
-                                           linkIdentityPlan)) {
+                   nativeCacheBypassDetail(request, linkIdentityPlan)) {
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail = bypassDetail;
     } else if (hasDependencyInjectingNativeEnvironment()) {
