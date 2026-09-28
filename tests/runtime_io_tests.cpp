@@ -109,6 +109,25 @@ int main() {
          "unknown seek origins must be rejected before host access");
 
 #if !defined(_WIN32)
+  const std::string successfulCommand{"true\0", 5};
+  expect(gti_rt_run_process_v1(view(successfulCommand)) == 0,
+         "the build-process bridge should run one exact argv executable");
+  const std::string statusCommand{"sh\0-c\0exit 23\0", 14};
+  expect(gti_rt_run_process_v1(view(statusCommand)) == 23,
+         "the build-process bridge should preserve exact arguments and exit "
+         "status");
+#else
+  const std::string unsupportedCommand{"true\0", 5};
+  expect(gti_rt_run_process_v1(view(unsupportedCommand)) == 127,
+         "the deferred Windows build-process bridge should fail closed");
+#endif
+  expect(gti_rt_run_process_v1(view("unterminated")) == 127,
+         "the build-process bridge should reject an unterminated argv blob");
+  const std::string emptyExecutable{"\0", 1};
+  expect(gti_rt_run_process_v1(view(emptyExecutable)) == 127,
+         "the build-process bridge should reject an empty executable");
+
+#if !defined(_WIN32)
   int pipeDescriptors[2]{-1, -1};
   const int pipeStatus = ::pipe(pipeDescriptors);
   expect(pipeStatus == 0,

@@ -1,9 +1,9 @@
 # Native binding packages
 
-These are optional GTI **path-dependency packages**, separate from `stdlib`.
-They use existing GTI C ABI semantics, `gti bindgen`, and package-scope native
-inputs. No compiler special cases, global library installation, or implicit
-network/build hooks are involved.
+These are optional GTI native binding packages, separate from `stdlib`. They
+use existing GTI C ABI semantics, `gti bindgen`, package-scope native inputs,
+and—where upstream configuration is required—consumer-approved package build
+scripts. No compiler special cases or global library installation are involved.
 
 ## Prepare and use
 
@@ -23,31 +23,35 @@ For an uninstalled compiler, pass its path:
 python3 packages/prepare.py --gti out/stdlib-release-ZEdrCj/gti
 ```
 
-Preparation requires Python 3.10+, GTI with bindgen/libclang, a C/C++ compiler,
-and CMake for GLFW and Assimp. GLAD gets an isolated local virtual environment
-with exact Jinja2/MarkupSafe versions. On macOS install Xcode command-line tools. Linux's
-GLFW build selects X11, not Wayland; it needs X11, Xrandr, Xinerama, Xcursor and
-Xi development headers (on Debian/Ubuntu: `libx11-dev libxrandr-dev
-libxinerama-dev libxcursor-dev libxi-dev`). Preparation currently accepts native
+Preparation is a maintainer workflow for this monorepo checkout: published Git
+packages already contain their pinned vendored sources and generated bindings.
+It requires Python 3.10+ and GTI with bindgen/libclang. GLAD gets an isolated
+local virtual environment with exact Jinja2/MarkupSafe versions. On macOS
+install Xcode command-line tools. GLFW's consumer build selects X11, not
+Wayland on Linux; it needs CMake plus X11, Xrandr, Xinerama, Xcursor and Xi
+development headers (on Debian/Ubuntu: `libx11-dev libxrandr-dev
+libxinerama-dev libxcursor-dev libxi-dev`). Consumer builds of GLFW, Assimp,
+and libgit2 compile their checked-in `build.gti` programs and require CMake and
+a C/C++ compiler. Preparation accepts native
 64-bit macOS/Linux hosts; Windows and cross-compilation are not supported by
 this preparation script. Only macOS arm64 execution has been checked locally.
 
-`--jobs N` controls native preparation builds and defaults to the logical CPU count.
-Preparing an individual package is supported, for example
+`--jobs N` remains accepted for preparation-command compatibility; native build
+parallelism is now controlled by `gti build --jobs N`. Preparing an individual package is supported, for example
 `python3 packages/prepare.py assimp`; its zlib dependency is prepared too (as
 for libpng). Assimp downloads a roughly 160 MiB archive and has a substantially
-larger first build than the other packages; its test models, documentation and
-unused tools are omitted from extraction. Use `--jobs 2` to limit build load.
+larger first consumer build than the other packages; its test models,
+documentation and unused tools are omitted from extraction. Use
+`gti build --jobs 2` to limit build load.
 `--offline` reuses verified downloaded archives and an already prepared GLAD
 environment. Missing cached inputs fail instead of contacting the network.
 Pinned URLs, revisions, checksums and license locations are recorded in
 `upstream-lock.json`; no moving Git branch is consumed by preparation.
 
-Native sources, archives, public generated bindings and build outputs are
+Native sources, public generated bindings and build outputs are
 ignored local products. Preparation verifies archive hashes, rejects unsafe
 archive entries/symlink destinations, and refuses to overwrite modified
-upstream sources or generated bindings. Native archives and CMake-generated
-headers are republished from build results. To deliberately regenerate after
+upstream sources or generated bindings. To deliberately regenerate after
 changing pins, move the relevant old `vendor`/`native/generated` directories aside first.
 
 Declare only the packages your application needs:
@@ -61,10 +65,22 @@ cimgui = { path = "../gti/packages/cimgui" }
 zlib = { path = "../gti/packages/zlib" }
 libpng = { path = "../gti/packages/libpng" }
 assimp = { path = "../gti/packages/assimp" }
+libgit2 = { path = "../gti/packages/libgit2" }
+
+[build]
+allow-build-scripts = [
+  "gti-glfw@0.1.0",
+  "gti-assimp@0.1.0",
+  "gti-libgit2@0.1.0",
+]
 ```
 
 Paths are relative to your application's `gti.toml`. Then use a direct package
 include, such as `#include <sqlite3/sqlite3>`, and `gti build`/`gti run`.
+Only approve scripts for dependencies actually used by the application, after
+reviewing the package and its pinned Git revision. Approval permits arbitrary
+host code; build-script sandboxing and enforced network denial are not yet
+implemented.
 Single-file direct compilation does not resolve package aliases. GTI does not
 re-export declarations through nested includes, so bindgen writes directly to
 each public `src/<package>.gti` unit during preparation. Those generated files
@@ -73,19 +89,26 @@ declarations from the earlier `glfw-gti` package at commit
 `8c766034e8f352e5f0c8af91eccf248a06bc41b2`.
 
 GTI compiles the declared C/C++ sources and links dependencies through their
-manifests. GLFW and Assimp are prepared as host static archives with upstream
-CMake: GLFW needs Objective-C on macOS, and Assimp needs upstream configuration
+manifests. GLFW, Assimp, and libgit2 use GTI-authored `build.gti` programs to
+invoke pinned upstream CMake builds in GTI-managed output directories and
+publish only validated native outputs back to the driver. The previous
+`build.py` implementations remain in each package as examples of the compatible
+external-command form, but their manifests select `source = "build.gti"`.
+Unchanged program/compiler/toolchain identities and declared input contents
+reuse those outputs. GLFW needs Objective-C on macOS, and Assimp needs upstream configuration
 and generated headers for its C++ implementation. Libpng composes zlib
 through a real path dependency; copied, checksum-pinned zlib **headers** stay
 local to libpng's isolated native group, while its implementation is linked
 only once from the zlib package. Assimp also depends on that same zlib package.
-Its preparation builds a pinned zlib archive for CMake discovery, while the GTI
-consumer links the zlib package's implementation, not a second system zlib.
+Its build script builds a private pinned zlib archive for CMake discovery,
+while the GTI consumer links the zlib package's implementation, not a second
+system zlib. Libgit2 follows the same model.
 
-This repository folder is not a package registry or a set of independently
-published Git repositories. A bare GTI Git dependency cannot select a subfolder
-of this compiler repository, nor run `prepare.py` automatically. Use prepared
-local paths. Publishing standalone prepared packages is a separate step.
+This compiler repository remains a convenient path-package development tree.
+The published `gti-lang` repositories are the Git-dependency distribution
+units: add a full 40-hex revision, run `gti fetch`, approve any declared build
+script, and build with `--locked` in reproducible workflows. A Git dependency
+cannot select a subfolder of this compiler repository.
 
 ## Included surfaces
 
@@ -98,8 +121,9 @@ local paths. Publishing standalone prepared packages is a separate step.
 | `zlib/zlib` | zlib 1.3.2 | One-shot compression/decompression, CRC32, Adler32, version/error queries in namespace `zlib` |
 | `libpng/libpng` | libpng 1.6.58 | PNG information and tightly packed RGBA8 memory encode/decode in namespace `png` |
 | `assimp/assimp` | Assimp 6.0.5 | File/memory import, release/errors, mesh positions/normals/UVs/face indices, material indices, node hierarchy/local transforms and selected post-processing flags in namespace `assimp` |
+| `libgit2/libgit2` | libgit2 1.9.6 | Library lifecycle, version/error access, bare repository creation/opening and selected repository queries in namespace `git` |
 
-GLAD, cimgui, zlib, libpng and Assimp are deliberate initial API subsets, not claims of
+GLAD, cimgui, zlib, libpng, Assimp, and libgit2 are deliberate initial API subsets, not claims of
 complete upstream coverage. GLAD exposes C function-pointer variables and C
 macros rather than callable link symbols; its native adapter turns the selected
 operations into ordinary C functions for bindgen. Cimgui's adapter normalizes
@@ -160,11 +184,16 @@ and execute it independently of the other binding smoke tests.
   File import may open external resources; memory import has no custom sidecar
   resource loader. Post-process flag combinations must obey Assimp's rules.
   Native parsing is not sandboxed or given an application-specific resource budget.
+- libgit2 repositories are owned native handles. Free each successful open or
+  initialization exactly once before `gti_git_shutdown`; returned paths and
+  error strings are borrowed. Repository operations perform filesystem I/O and
+  are not sandboxed by the package or by GTI build scripting.
 
 The smoke examples are executable documentation. They do not need a display:
 GLFW version, unloaded GLAD state, SQLite prepared query, cimgui frame creation,
 zlib round trip, and libpng round trip/error cases. The separate Assimp test
 checks triangle import, geometry/hierarchy/transforms, invalid input and bounds.
+The libgit2 test creates and reopens a temporary bare repository.
 They do not establish real OpenGL rendering or Linux/Windows runtime behavior.
 
 `packages/examples/window` combines GLFW and GLAD into an OpenGL 3.3 window.

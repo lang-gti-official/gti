@@ -21,7 +21,8 @@ import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parent
-PACKAGES = ("glfw", "glad", "sqlite3", "cimgui", "zlib", "libpng", "assimp")
+PACKAGES = ("glfw", "glad", "sqlite3", "cimgui", "zlib", "libpng", "assimp",
+            "libgit2")
 GENERATOR_REQUIREMENTS = ("Jinja2==3.1.6", "MarkupSafe==3.0.3")
 
 
@@ -61,15 +62,19 @@ def archive_files(data, zipped=False, exclude_directories=()):
     if zipped:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             for item in archive.infolist():
+                if excluded(item.filename):
+                    continue
                 if stat.S_ISLNK(item.external_attr >> 16):
                     raise ValueError(f"archive symlink: {item.filename}")
-                entries.append((item.filename, None if item.is_dir() or excluded(item.filename) else archive.read(item)))
+                entries.append((item.filename, None if item.is_dir() else archive.read(item)))
     else:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
             for item in archive.getmembers():
+                if excluded(item.name):
+                    continue
                 if not (item.isdir() or item.isfile()):
                     raise ValueError(f"archive special entry: {item.name}")
-                entries.append((item.name, None if item.isdir() or excluded(item.name) else archive.extractfile(item).read()))
+                entries.append((item.name, None if item.isdir() else archive.extractfile(item).read()))
     roots = set()
     files = {}
     folded = set()
@@ -165,61 +170,17 @@ def prepare_glad(cache, offline):
         staged.rename(output)
 
 
-def publish_native_file(source, relative):
-    if not source.is_file():
-        raise ValueError(f"missing native build product: {source}")
-    target = contained(ROOT, relative)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=".native-", dir=target.parent)
-    os.close(descriptor)
-    try:
-        shutil.copyfile(source, temporary)
-        os.replace(temporary, target)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
-
-
-def prepare_assimp(jobs, host):
-    zlib_source = ROOT / "zlib/vendor/zlib"
-    zlib_build = contained(ROOT, f"assimp/build/zlib-{host}")
-    run(["cmake", "-S", zlib_source, "-B", zlib_build,
-         "-DCMAKE_BUILD_TYPE=Release", "-DZLIB_BUILD_SHARED=OFF",
-         "-DZLIB_BUILD_STATIC=ON", "-DZLIB_BUILD_TESTING=OFF", "-DZLIB_INSTALL=OFF"])
-    run(["cmake", "--build", zlib_build, "--config", "Release", "--parallel", jobs, "--target", "zlibstatic"])
-    zlib_archive = zlib_build / "libz.a"
-    if not zlib_archive.is_file():
-        raise ValueError(f"missing pinned zlib archive: {zlib_archive}")
-    build = contained(ROOT, f"assimp/build/native-{host}")
-    run(["cmake", "-S", ROOT / "assimp/vendor/assimp", "-B", build,
-         "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=OFF",
-         f"-DCMAKE_ARCHIVE_OUTPUT_DIRECTORY={build / 'lib'}",
-         "-DASSIMP_BUILD_TESTS=OFF", "-DASSIMP_BUILD_ASSIMP_TOOLS=OFF",
-         "-DASSIMP_BUILD_SAMPLES=OFF", "-DASSIMP_INSTALL=OFF",
-         "-DASSIMP_NO_EXPORT=ON", "-DASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT=ON",
-         "-DASSIMP_BUILD_DRACO=OFF", "-DASSIMP_HUNTER_ENABLED=OFF",
-         "-DASSIMP_DOUBLE_PRECISION=OFF", "-DASSIMP_WARNINGS_AS_ERRORS=OFF",
-         "-DASSIMP_BUILD_ZLIB=OFF", "-DASSIMP_BUILD_MINIZIP=ON",
-         f"-DZLIB_INCLUDE_DIR={zlib_source}", f"-DZLIB_LIBRARY={zlib_archive}",
-         f"-DZLIB_LIBRARY_REL={zlib_archive}", f"-DZLIB_LIBRARY_DBG={zlib_archive}"])
-    run(["cmake", "--build", build, "--config", "Release", "--parallel", jobs, "--target", "assimp"])
-    publish_native_file(build / "lib/libassimp.a", f"assimp/native/lib/{host}/libassimp.a")
-    for header in ("config.h", "revision.h"):
-        publish_native_file(build / "include/assimp" / header, f"assimp/native/generated/assimp/{header}")
-
-
-def prepare_glfw(jobs, host):
-    build = contained(ROOT, f"glfw/build/native-{host}")
-    run(["cmake", "-S", ROOT / "glfw/vendor/glfw", "-B", build,
-         "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=OFF",
-         "-DGLFW_BUILD_DOCS=OFF", "-DGLFW_BUILD_TESTS=OFF", "-DGLFW_BUILD_EXAMPLES=OFF",
-         "-DGLFW_BUILD_WAYLAND=OFF"])
-    run(["cmake", "--build", build, "--config", "Release", "--parallel", jobs, "--target", "glfw"])
-    publish_native_file(build / "src/libglfw3.a", f"glfw/native/lib/{host}/libglfw3.a")
+def prepare_consumer_zlib(consumer):
+    canonical_zlib_source = ROOT / "zlib/vendor/zlib"
+    zlib_source = contained(ROOT, f"{consumer}/vendor/zlib")
+    if not zlib_source.exists():
+        shutil.copytree(canonical_zlib_source, zlib_source)
 
 
 def generate_bindings(name, gti):
     namespace = {"sqlite3": "sqlite", "glad": "gl", "cimgui": "imgui",
-                 "zlib": "zlib", "libpng": "png", "assimp": "assimp"}[name]
+                 "zlib": "zlib", "libpng": "png", "assimp": "assimp",
+                 "libgit2": "git"}[name]
     package = ROOT / name
     destination = contained(package, f"src/{name}.gti")
     marker = contained(package, "src/.bindings.json")
@@ -245,6 +206,10 @@ def generate_bindings(name, gti):
         # Upstream headers mark themselves as system headers. Bind the explicit
         # C adapter instead, without overriding bindgen's provenance boundary.
         for pattern in ("aiScene", "aiNode", "aiMesh", "GtiAssimp*", "gti_assimp_*"):
+            command += ["--allow", pattern]
+    elif name == "libgit2":
+        command += ["-I", package / "vendor/libgit2/include"]
+        for pattern in ("GtiGit*", "gti_git_*"):
             command += ["--allow", pattern]
     elif name == "zlib":
         command += ["-I", package / "vendor/zlib"]
@@ -278,7 +243,7 @@ def main():
     if not os_name or not arch:
         parser.error("currently supports native 64-bit macOS and Linux hosts only")
     selected = args.packages or list(PACKAGES)
-    if any(name in selected for name in ("libpng", "assimp")) and "zlib" not in selected:
+    if any(name in selected for name in ("libpng", "assimp", "libgit2")) and "zlib" not in selected:
         selected.append("zlib")
     gti = shutil.which(args.gti)
     if any(name != "glfw" for name in selected) and not gti:
@@ -304,10 +269,10 @@ def main():
                     output.write(source.read_bytes())
     if "glad" in selected:
         prepare_glad(cache, args.offline)
-    if "glfw" in selected:
-        prepare_glfw(args.jobs, f"{os_name}-{arch}")
     if "assimp" in selected:
-        prepare_assimp(args.jobs, f"{os_name}-{arch}")
+        prepare_consumer_zlib("assimp")
+    if "libgit2" in selected:
+        prepare_consumer_zlib("libgit2")
     for name in selected:
         if name != "glfw":
             generate_bindings(name, gti)

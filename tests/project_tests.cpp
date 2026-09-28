@@ -1,3 +1,4 @@
+#include "gti/driver/build_script.h"
 #include "gti/driver/dependencies.h"
 #include "gti/driver/manifest.h"
 #include "gti/driver/project.h"
@@ -2753,6 +2754,138 @@ void testCrossToolchainManifestDiagnostics() {
   }
 }
 
+void testPackageBuildScripts() {
+  {
+    TemporaryDirectory sourcePackage;
+    expect(writeFile(sourcePackage.root() / "src/main.gti",
+                     "int main() { return 0; }\n") &&
+               writeFile(sourcePackage.root() / "build.gti",
+                         "int main() { return 0; }\n") &&
+               writeFile(sourcePackage.root() / "gti.toml",
+                         validManifest("\n[package.build-script]\n"
+                                       "source = \"build.gti\"\n"
+                                       "inputs = []\n")),
+           "GTI build-script manifest fixture should be writable");
+    const lang::driver::ManifestLoadResult loaded =
+        lang::driver::loadProjectManifest(sourcePackage.root() / "gti.toml");
+    expect(loaded.succeeded() && loaded.manifest &&
+               loaded.manifest->package().buildScript &&
+               loaded.manifest->package().buildScript->source ==
+                   std::filesystem::canonical(sourcePackage.root() /
+                                              "build.gti") &&
+               loaded.manifest->package().buildScript->command.empty() &&
+               loaded.manifest->package().buildScript->inputs.size() == 1,
+           "a GTI source build program should parse and automatically enter "
+           "its own content into the cache inputs");
+
+    expect(writeFile(sourcePackage.root() / "gti.toml",
+                     validManifest("\n[package.build-script]\n"
+                                   "source = \"build.gti\"\n"
+                                   "command = [\"true\"]\n"
+                                   "inputs = []\n")),
+           "ambiguous build-script fixture should be writable");
+    const lang::driver::ManifestLoadResult ambiguous =
+        lang::driver::loadProjectManifest(sourcePackage.root() / "gti.toml");
+    expect(!ambiguous.succeeded() &&
+               findDiagnostic(ambiguous.diagnostics, "GTI-B1002") != nullptr,
+           "a package must choose either a GTI source program or an external "
+           "command, never both");
+
+    expect(writeFile(sourcePackage.root() / "build.txt", "not GTI\n") &&
+               writeFile(sourcePackage.root() / "gti.toml",
+                         validManifest("\n[package.build-script]\n"
+                                       "source = \"build.txt\"\n"
+                                       "inputs = []\n")),
+           "wrong-extension build-script fixture should be writable");
+    const lang::driver::ManifestLoadResult wrongExtension =
+        lang::driver::loadProjectManifest(sourcePackage.root() / "gti.toml");
+    expect(!wrongExtension.succeeded() &&
+               findDiagnostic(wrongExtension.diagnostics, "GTI-B2001") !=
+                   nullptr,
+           "a GTI build-program source must use the .gti extension");
+  }
+
+  TemporaryDirectory temporary;
+  const std::filesystem::path app = temporary.root() / "app";
+  const std::filesystem::path native = temporary.root() / "native";
+  expect(writeFile(app / "src/main.gti", "int main() { return 0; }\n") &&
+             writeFile(native / "src/.gitkeep", "") &&
+             writeFile(native / "build.cmake",
+                       R"(file(MAKE_DIRECTORY "$ENV{GTI_BUILD_OUT_DIR}/include")
+file(WRITE "$ENV{GTI_BUILD_OUT_DIR}/libnative.a" "")
+file(WRITE "$ENV{GTI_BUILD_OUTPUT}" "version = 1\ninclude-dirs = [\"include\"]\nlink-files = [\"libnative.a\"]\n")
+)") &&
+             writeFile(native / "gti.toml",
+                       "manifest-version = 1\n\n[package]\n"
+                       "name = \"native_pkg\"\nversion = \"0.1.0\"\n\n"
+                       "[package.build-script]\n"
+                       "command = [\"cmake\", \"-P\", \"build.cmake\"]\n"
+                       "inputs = [\"build.cmake\"]\n") &&
+             writeFile(app / "gti.toml",
+                       "manifest-version = 1\n\n[package]\n"
+                       "name = \"build_script_app\"\nversion = \"0.1.0\"\n\n"
+                       "[dependencies]\nnative = { path = \"../native\" }\n\n"
+                       "[build]\nallow-build-scripts = "
+                       "[\"native_pkg@0.1.0\"]\n\n"
+                       "[targets.app]\nkind = \"executable\"\n"
+                       "root = \"src/main.gti\"\n"),
+         "build-script fixtures should be writable");
+
+  lang::driver::ProjectResolutionResult resolved =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          app, std::nullopt, "dev", lang::TargetInfo::host(), {}, std::nullopt,
+          {}, lang::driver::RuntimeProfile::Hosted));
+  expect(resolved.succeeded() && resolved.plan &&
+             resolved.plan->buildScripts().size() == 1 &&
+             resolved.plan->nativeInputs().dependencyGroups.size() == 1,
+         "an explicitly approved dependency build script should enter the "
+         "resolved plan without executing during resolution");
+  if (resolved.plan) {
+    expect(!std::filesystem::exists(
+               resolved.plan->buildScripts().front().outputDirectory /
+               "gti-build-output.toml"),
+           "project resolution must not execute a build script");
+    const lang::driver::BuildScriptExecutionResult execution =
+        lang::driver::executeBuildScripts(
+            *resolved.plan,
+            {.cCompiler = "cc", .cppCompiler = "c++", .jobs = 1});
+    expect(execution.succeeded() && execution.nativeInputs &&
+               execution.nativeInputs->dependencyGroups.size() == 1 &&
+               execution.nativeInputs->dependencyGroups.front()
+                       .includeDirectories.size() == 1 &&
+               execution.nativeInputs->dependencyGroups.front()
+                       .linkOperands.size() == 1,
+           "a successful build script should contribute validated native "
+           "outputs to its dependency group");
+    expect(execution.outcomes.size() == 1 && !execution.outcomes.front().reused,
+           "the first build-script execution should report a native build");
+    const lang::driver::BuildScriptExecutionResult reused =
+        lang::driver::executeBuildScripts(
+            *resolved.plan,
+            {.cCompiler = "cc", .cppCompiler = "c++", .jobs = 1});
+    expect(reused.succeeded() && reused.outcomes.size() == 1 &&
+               reused.outcomes.front().reused,
+           "unchanged declared inputs should reuse validated build-script "
+           "outputs");
+  }
+
+  expect(writeFile(app / "gti.toml",
+                   "manifest-version = 1\n\n[package]\n"
+                   "name = \"build_script_app\"\nversion = \"0.1.0\"\n\n"
+                   "[dependencies]\nnative = { path = \"../native\" }\n\n"
+                   "[targets.app]\nkind = \"executable\"\n"
+                   "root = \"src/main.gti\"\n"),
+         "unapproved build-script fixture should be writable");
+  resolved =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          app, std::nullopt, "dev", lang::TargetInfo::host(), {}, std::nullopt,
+          {}, lang::driver::RuntimeProfile::Hosted));
+  expect(!resolved.succeeded() &&
+             findDiagnostic(resolved.diagnostics, "GTI-B2002") != nullptr,
+         "a dependency build script must be rejected until the selected "
+         "package explicitly approves it");
+}
+
 int main() {
   lang::installCrashHandlers("gti_project_tests");
   testDiscoveryParsingAndResolution();
@@ -2778,6 +2911,7 @@ int main() {
   testCrossToolchainManifest();
   testCrossToolchainFailClosed();
   testCrossToolchainManifestDiagnostics();
+  testPackageBuildScripts();
 
   if (failures != 0) {
     std::cerr << failures << " project test(s) failed\n";

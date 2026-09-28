@@ -1,0 +1,37 @@
+#include <std/build>
+
+int main() {
+  mut std::build::command command = std::build::command("true");
+#if target.os == "windows"
+  if (command.run() != 127) { return 1; }
+#else
+  if (command.run() != 0) { return 1; }
+  mut std::build::command status = std::build::command("sh");
+  status.arg("-c");
+  status.arg("exit 7");
+  if (status.run() != 7) { return 2; }
+#endif
+
+  mut std::build::context context = std::build::context(
+      "build-output.toml", "package", "output", "host", "target",
+      "test-os", "dev", "2", "cc", "c++");
+  if (context.output_file() != "build-output.toml" ||
+      context.package_dir() != "package" || context.output_dir() != "output" ||
+      context.host() != "host" || context.target() != "target" ||
+      context.target_os() != "test-os" || context.profile() != "dev" ||
+      context.jobs() != "2" || context.cc() != "cc" ||
+      context.cxx() != "c++") {
+    return 4;
+  }
+
+  mut std::build::outputs outputs = std::build::outputs();
+  outputs.include_dir("include");
+  outputs.c_source("native/source.c");
+  outputs.cpp_source("native/source.cpp");
+  outputs.library_dir("lib");
+  outputs.link_file("lib/example.a");
+  outputs.library("m");
+  outputs.framework("Cocoa");
+  if (outputs.publish(context) != 0) { return 5; }
+  return 0;
+}

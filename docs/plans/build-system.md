@@ -943,12 +943,13 @@ diagnostics must not disguise C++ backend failures as GTI source errors.
 `gti metadata --format json` exposes the manifest schema version, canonical
 manifest and package paths, package identity, host target fields, sorted
 profiles, sorted executable/test targets with their kinds, and each
-target/profile output and generated-C++ path. Metadata schema version 9 reports
+target/profile output and generated-C++ path. Metadata schema version 11 reports
 every declared execution profile and effective GTI configuration flag set plus
 every effective native category, C source, C++ source, C standard, C argument,
 and ordered link operand, the
 composed per-dependency native groups (`dependencyNative`), and the
-resolved workspace/package/dependency graph. It is
+resolved workspace/package/dependency graph, declared build-script policy, and
+approved per-plan build-script commands, inputs, and output directories. It is
 deterministic, works for multi-target manifests without selecting one target,
 performs no compilation, and creates no output directories.
 
@@ -996,17 +997,28 @@ subcommand.
 
 ### Build hooks
 
-Arbitrary package build scripts are a non-goal for the initial system. When a
-real need appears, prefer declared generator inputs and outputs executed through
-an explicit tool dependency. Any future build hook needs:
+Status: consumer-approved native package build programs are complete, including
+GTI-authored `build.gti` programs and the original external-command form.
 
-- declared input and output paths;
-- deterministic cache identity;
-- no implicit network access;
-- a clear host-versus-target execution model;
-- dependency permission and trust policy;
-- cycle detection;
-- machine-readable diagnostics.
+The implemented hook accepts exactly one GTI source file or exact argv command,
+declared contained inputs, content-based cache identity, a managed output
+directory, and a versioned TOML output contract. GTI programs use the ordinary
+compiler and the source-defined `<std/build>` context, exact-command, and
+structured-output API; external commands remain compatible. Dependency scripts
+require an exact `name@version` entry in
+the selected package's `[build].allow-build-scripts`; resolution, metadata,
+fetch, and check do not execute code. The implementation currently provides:
+
+- declared input paths and validated contained output paths;
+- deterministic cache identity over inputs, command, toolchains, and target;
+- a clear host-command versus target-output environment contract;
+- consumer-owned dependency permission and lockfile-backed source identity;
+- dependency-first ordering inherited from the acyclic package graph;
+- structured driver diagnostics and versioned machine-readable outputs.
+
+Sandboxing and enforced network denial remain future hardening. Until then,
+approval explicitly authorizes arbitrary host code from the reviewed package
+revision. Windows execution support is also deferred.
 
 ## Language And ABI Boundaries
 
@@ -1151,7 +1163,7 @@ Status: complete
 - Compile each selected source to an atomically published managed intermediate
   object, then place C objects followed by C++ objects before runtime and
   manifest libraries in the existing final C++ link.
-- Report the resolved C and C++ inputs through metadata schema version 9 while
+- Report the resolved C and C++ inputs through metadata schema version 11 while
   keeping `check` compiler-free and output-free.
 
 Acceptance criteria:
@@ -1457,7 +1469,7 @@ need them.
    root. If resolution fails, it retains the recovery path for a broken
    manifest and validates/removes only the nearest literal
    `<package>/build/gti`. Both paths refuse symbolic-link boundaries.
-6. Metadata JSON schema version 9 is a read-only enumeration of every current
+6. Metadata JSON schema version 11 is a read-only enumeration of every current
    target/profile plan, including target kinds, declared execution profiles,
    effective GTI configuration flags, resolved native C and C++ sources, C
    policy, other native inputs, ordered link operands, and composed

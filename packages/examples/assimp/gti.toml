@@ -7,6 +7,9 @@ version = "0.1.0"
 [dependencies]
 assimp = { path = "../../assimp" }
 
+[build]
+allow-build-scripts = ["gti-assimp@0.1.0"]
+
 [targets.import-model]
 kind = "test"
 root = "src/main.gti"
