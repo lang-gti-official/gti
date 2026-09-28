@@ -150,8 +150,8 @@ def main() -> None:
             f"workflow lost explicit compile/test resource budgets: {workflow}",
         )
         expect(
-            "runs-on: ubuntu-24.04" in contents and "ubuntu-latest" not in contents,
-            f"workflow lost its provisioned Ubuntu 24.04 runner label: {workflow}",
+            "runs-on: ubuntu-latest" in contents and "ubuntu-24.04" not in contents,
+            f"workflow lost its floating Ubuntu runner label: {workflow}",
         )
         expect(
             "scripts/check_ci_sanitizers.py --sanitizer thread --sanitizer address,undefined"

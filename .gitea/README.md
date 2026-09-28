@@ -11,7 +11,7 @@ on a GitHub mirror or on GitHub-created tags.
 1. Use Gitea 1.26 or newer and enable the Actions repository unit.
 2. Keep `.gitea/workflows` in the instance's configured workflow directories.
    GTI intentionally ships no alternative-host workflow fallback.
-3. Register a trusted repository runner whose `ubuntu-24.04` label maps to
+3. Register a trusted repository runner whose `ubuntu-latest` label maps to
    the intended host or container. Gitea requires static runner labels for the
    versions used by this repository.
 4. Optionally set `GTI_JOBS` and `GTI_TEST_JOBS` to positive integers in
@@ -32,7 +32,7 @@ source and therefore require outbound access to that upstream release host.
 An Ubuntu runner should be based on Ubuntu 24.04 so `llvm-18-dev` is available.
 
 The current publication jobs create one archive for the native OS and
-architecture of the runner claiming `ubuntu-24.04`. Before advertising
+architecture of the runner claiming `ubuntu-latest`. Before advertising
 additional binary platforms from Gitea, register those native runners and add
 statically labelled package jobs for them; source support for a target is not
 evidence that a binary archive was published for it.
