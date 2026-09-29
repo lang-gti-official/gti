@@ -16135,12 +16135,22 @@ loanReferentType(const MirProgram &program, const MirBody &body,
     if (producer != nullptr && producer->kind == MirInstructionKind::Call &&
         (producer->intrinsic == IntrinsicKind::ExpectedValue ||
          producer->intrinsic == IntrinsicKind::ExpectedError) &&
-        producer->loan && *producer->loan == loan.id &&
-        source->type.kind == SemanticType::Expected &&
-        source->type.arguments.size() == 2) {
+        producer->loan && *producer->loan == loan.id && producer->receiver &&
+        producer->receiver->type.kind == SemanticType::Expected &&
+        producer->receiver->type.arguments.size() == 2) {
       const std::size_t payload =
           producer->intrinsic == IntrinsicKind::ExpectedValue ? 0u : 1u;
-      if (producer->info.type == source->type.arguments[payload]) {
+      if (producer->info.type == producer->receiver->type.arguments[payload]) {
+        return producer->info.type;
+      }
+      if (payload == 0 &&
+          producer->receiver->type.arguments.front().kind ==
+              SemanticType::Reference &&
+          producer->receiver->type.arguments.front().referenceAccess ==
+              AccessMode::ReadOnly &&
+          producer->receiver->type.arguments.front().arguments.size() == 1 &&
+          producer->info.type ==
+              producer->receiver->type.arguments.front().arguments.front()) {
         return producer->info.type;
       }
     }
@@ -19637,6 +19647,98 @@ checkedStorageReadLoanProducer(const MirBody &body, const MirLoan &loan) {
     }
   }
   return found;
+}
+
+// GTI expected<T&, E> has a pointer-backed native carrier even though native
+// std::expected rejects reference payloads. This exact checked extraction is
+// the only operation that may publish that stored pointer as a CallResult
+// loan; MIR still owns the lifetime proof through the named Expected place.
+[[nodiscard]] const MirInstruction *
+fallibleExpectedBorrowLoanProducer(const MirBody &body, const MirLoan &loan) {
+  if (loan.kind != MirLoanKind::CallResult || loan.entry || loan.escapes ||
+      loan.producedBy == 0 || loan.access != AccessMode::ReadOnly) {
+    return nullptr;
+  }
+  const MirInstruction *found = nullptr;
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != MirInstructionKind::Call ||
+          instruction.intrinsic != IntrinsicKind::ExpectedValue ||
+          !instruction.loan || *instruction.loan != loan.id ||
+          instruction.hirValue != loan.producedBy ||
+          producedCallResultLoan(body, instruction) != &loan) {
+        continue;
+      }
+      const MirPlace *carrier =
+          instruction.receiver && instruction.receiver->place != 0
+              ? body.findPlace(instruction.receiver->place)
+              : nullptr;
+      if (found != nullptr || carrier == nullptr || !instruction.result ||
+          !instruction.receiver ||
+          instruction.receiver->kind != MirOperandKind::BorrowRead ||
+          carrier->type != instruction.receiver->type ||
+          carrier->type.kind != SemanticType::Expected ||
+          carrier->type.arguments.size() != 2 ||
+          carrier->type.arguments.front().kind != SemanticType::Reference ||
+          carrier->type.arguments.front().referenceAccess !=
+              AccessMode::ReadOnly ||
+          carrier->type.arguments.front().arguments.size() != 1 ||
+          instruction.info.type !=
+              carrier->type.arguments.front().arguments.front() ||
+          instruction.borrowOrigin != BorrowOriginKind::Receiver ||
+          instruction.borrowAccess != AccessMode::ReadOnly ||
+          !instruction.operands.empty() ||
+          instruction.localFailureSites.size() > 1 ||
+          instruction.definedFailure.propagation !=
+              FailurePropagationKind::None) {
+        return nullptr;
+      }
+      found = &instruction;
+    }
+  }
+  return found;
+}
+
+// A local expected<T&, E> may be formed directly from a stable referent. MIR
+// carries the referent address as a loan operand while the destination owns
+// the private fallible-borrow carrier. Keep this exact so no general
+// loan-to-value conversion enters the backend vocabulary.
+[[nodiscard]] const MirLoan *
+fallibleBorrowInitializationLoan(const MirBody &body,
+                                 const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Initialize ||
+      !instruction.destination || instruction.operands.size() != 1 ||
+      instruction.operands.front().kind != MirOperandKind::Loan ||
+      instruction.operands.front().loan == 0 ||
+      instruction.operands.front().place == 0 || instruction.result ||
+      instruction.receiver || instruction.loan ||
+      !instruction.definedFailure.empty() ||
+      !instruction.localFailureSites.empty()) {
+    return nullptr;
+  }
+  const MirPlace *destination = body.findPlace(*instruction.destination);
+  const MirOperand &operand = instruction.operands.front();
+  const MirPlace *referent = body.findPlace(operand.place);
+  const MirLoan *loan = body.findLoan(operand.loan);
+  if (destination == nullptr || referent == nullptr || loan == nullptr ||
+      destination->root != MirPlaceRootKind::Binding ||
+      !destination->projections.empty() || destination->binding == 0 ||
+      destination->type.kind != SemanticType::Expected ||
+      destination->type.arguments.size() != 2 ||
+      destination->type.arguments.front().kind != SemanticType::Reference ||
+      destination->type.arguments.front().referenceAccess !=
+          AccessMode::ReadOnly ||
+      destination->type.arguments.front().arguments.size() != 1 ||
+      destination->type.arguments.front().arguments.front() != referent->type ||
+      operand.type != referent->type ||
+      instruction.info.type != destination->type || loan->escapes ||
+      (loan->access != AccessMode::ReadOnly &&
+       loan->access != AccessMode::Mutable) ||
+      std::find(loan->carriers.begin(), loan->carriers.end(),
+                destination->binding) == loan->carriers.end()) {
+    return nullptr;
+  }
+  return loan;
 }
 
 // A range over `expected<T, E>.value()` retains one read-only pointer into the
@@ -26308,6 +26410,14 @@ private:
                << ".destroy(); // GTI MIR conditional binding reparent\n";
         return;
       }
+      if (slot != nullptr) {
+        if (const MirLoan *loan =
+                fallibleBorrowInitializationLoan(facts.body, instruction)) {
+          output << destinationSpelling(facts, slot->id)
+                 << " = *__gti_mir_loan_" << loan->id << ";\n";
+          return;
+        }
+      }
       if (slot != nullptr && slot->root == MirPlaceRootKind::Binding &&
           slot->projections.empty() &&
           slot->type.kind == SemanticType::Reference &&
@@ -29724,8 +29834,12 @@ private:
           payloadLoan != nullptr &&
           expectedPayloadRangeLoanProducer(facts.body, *payloadLoan) ==
               &instruction;
+      const bool fallibleBorrowExtraction =
+          payloadLoan != nullptr &&
+          fallibleExpectedBorrowLoanProducer(facts.body, *payloadLoan) ==
+              &instruction;
       const bool classExtraction =
-          payloadRangeExtraction ||
+          payloadRangeExtraction || fallibleBorrowExtraction ||
           expectedClassExtractionPlace(facts.body, *instruction.result) !=
               nullptr ||
           expectedClassCopyExtraction(facts.body, *instruction.result);
@@ -29742,7 +29856,7 @@ private:
              << '(';
       emitStoragePlaceValue(facts, *expectedPlace);
       output << ", &__gti_mir_";
-      if (payloadRangeExtraction) {
+      if (payloadRangeExtraction || fallibleBorrowExtraction) {
         output << "loan_" << payloadLoan->id;
       } else {
         output << (classExtraction ? "ref_v_" : "v_") << *instruction.result;
@@ -29844,13 +29958,17 @@ private:
           payloadLoan != nullptr &&
           expectedPayloadRangeLoanProducer(facts.body, *payloadLoan) ==
               &instruction;
+      const bool fallibleBorrowExtraction =
+          payloadLoan != nullptr &&
+          fallibleExpectedBorrowLoanProducer(facts.body, *payloadLoan) ==
+              &instruction;
       const bool classExtraction =
-          payloadRangeExtraction ||
+          payloadRangeExtraction || fallibleBorrowExtraction ||
           expectedClassExtractionPlace(facts.body, *instruction.result) !=
               nullptr ||
           expectedClassCopyExtraction(facts.body, *instruction.result);
       output << "__gti_mir_";
-      if (payloadRangeExtraction) {
+      if (payloadRangeExtraction || fallibleBorrowExtraction) {
         output << "loan_" << payloadLoan->id;
       } else {
         output << (classExtraction ? "ref_v_" : "v_") << *instruction.result;
@@ -31315,7 +31433,18 @@ private:
         output << "return;\n";
         return;
       }
+      const bool forwardedFallibleBorrowCarrier =
+          terminator.returnLoan && terminator.value &&
+          terminator.value->type == facts.body.returnType &&
+          facts.body.returnType.kind == SemanticType::Expected &&
+          facts.body.returnType.arguments.size() == 2 &&
+          facts.body.returnType.arguments.front().kind ==
+              SemanticType::Reference &&
+          facts.body.returnType.arguments.front().referenceAccess ==
+              AccessMode::ReadOnly &&
+          facts.body.returnType.arguments.front().arguments.size() == 1;
       if (terminator.returnLoan && *terminator.returnLoan != 0 &&
+          !forwardedFallibleBorrowCarrier &&
           storedValueReturnLoanProducer(
               facts.body, *facts.body.findLoan(*terminator.returnLoan)) ==
               nullptr &&
@@ -31390,11 +31519,33 @@ private:
           }
         }
         if (failureForm) {
-          // The loan pointer publishes through the `T **` out-parameter
-          // (ADR 018 §5); the wrapper dereferences on the boundary.
+          const bool fallibleBorrowResult =
+              facts.body.returnType.kind == SemanticType::Expected &&
+              facts.body.returnType.arguments.size() == 2 &&
+              facts.body.returnType.arguments.front().kind ==
+                  SemanticType::Reference &&
+              facts.body.returnType.arguments.front().referenceAccess ==
+                  AccessMode::ReadOnly &&
+              facts.body.returnType.arguments.front().arguments.size() == 1;
+          // An ordinary reference result publishes the pointer through the
+          // `T **` out-parameter (ADR 018 §5). A fallible borrow instead
+          // constructs its private pointer-backed Expected carrier from the
+          // referent, so publish the dereferenced loan. An owning error makes
+          // that carrier a placement result; construct it in the caller's
+          // exact lifetime slot rather than assigning into raw storage.
           writeIndent();
-          output << "*__gti_mir_out_result = __gti_mir_loan_"
-                 << *terminator.returnLoan << ";\n";
+          const bool placementFallibleBorrow =
+              fallibleBorrowResult &&
+              expectedClassPlacementResultType(program, representations,
+                                               facts.body.returnType);
+          if (placementFallibleBorrow) {
+            output << "std::construct_at(__gti_mir_out_result, *";
+          } else {
+            output << "*__gti_mir_out_result = "
+                   << (fallibleBorrowResult ? "*" : "");
+          }
+          output << "__gti_mir_loan_" << *terminator.returnLoan
+                 << (placementFallibleBorrow ? ");\n" : ";\n");
           writeIndent();
           output << "return true;\n";
           return;
@@ -35764,6 +35915,22 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           !function->mayRaiseDefinedFailure && function->virtualMethod &&
           function->overrideMethod &&
           cppMirVirtualFailureContractRoot(program_, *function) != nullptr;
+      const bool exactPassiveExpectedResult =
+          returnKind && *returnKind == CppMirTypeRepresentationKind::Expected &&
+          function->returnType.arguments.size() == 2 &&
+          cppMirExpectedTypeRepresentation(
+              function->returnType.arguments.front()) &&
+          (*cppMirExpectedTypeRepresentation(
+               function->returnType.arguments.front()) ==
+               CppMirTypeRepresentationKind::Scalar ||
+           *cppMirExpectedTypeRepresentation(
+               function->returnType.arguments.front()) ==
+               CppMirTypeRepresentationKind::Void ||
+           (function->returnType.arguments.front().kind ==
+                SemanticType::Reference &&
+            function->returnType.arguments.front().referenceAccess ==
+                AccessMode::ReadOnly &&
+            function->returnType.arguments.front().arguments.size() == 1));
       if ((!function->mayRaiseDefinedFailure && !failureFreeVirtualOverride) ||
           !returnKind ||
           (*returnKind != CppMirTypeRepresentationKind::Scalar &&
@@ -35788,16 +35955,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            // boundary default-constructible on every shipped standard.
            !(*returnKind == CppMirTypeRepresentationKind::Enum &&
              cppMirEnumBoundaryRow(representations_, function->returnType)) &&
-           !(*returnKind == CppMirTypeRepresentationKind::Expected &&
-             function->returnType.arguments.size() == 2 &&
-             cppMirExpectedTypeRepresentation(
-                 function->returnType.arguments.front()) &&
-             (*cppMirExpectedTypeRepresentation(
-                  function->returnType.arguments.front()) ==
-                  CppMirTypeRepresentationKind::Scalar ||
-              *cppMirExpectedTypeRepresentation(
-                  function->returnType.arguments.front()) ==
-                  CppMirTypeRepresentationKind::Void)))) {
+           !exactPassiveExpectedResult)) {
         {
           return false;
         }
@@ -35907,6 +36065,22 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       const bool exactOwningPayloadEnumResult =
           cppMirOwningPayloadEnumPlacementResult(program_, representations_,
                                                  lambda->returnType);
+      const bool exactPassiveExpectedResult =
+          returnKind && *returnKind == CppMirTypeRepresentationKind::Expected &&
+          lambda->returnType.arguments.size() == 2 &&
+          cppMirExpectedTypeRepresentation(
+              lambda->returnType.arguments.front()) &&
+          (*cppMirExpectedTypeRepresentation(
+               lambda->returnType.arguments.front()) ==
+               CppMirTypeRepresentationKind::Scalar ||
+           *cppMirExpectedTypeRepresentation(
+               lambda->returnType.arguments.front()) ==
+               CppMirTypeRepresentationKind::Void ||
+           (lambda->returnType.arguments.front().kind ==
+                SemanticType::Reference &&
+            lambda->returnType.arguments.front().referenceAccess ==
+                AccessMode::ReadOnly &&
+            lambda->returnType.arguments.front().arguments.size() == 1));
       const bool passiveResult =
           returnKind &&
           (*returnKind == CppMirTypeRepresentationKind::Void ||
@@ -35921,16 +36095,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            *returnKind == CppMirTypeRepresentationKind::StringView ||
            (*returnKind == CppMirTypeRepresentationKind::Enum &&
             cppMirEnumBoundaryRow(representations_, lambda->returnType)) ||
-           (*returnKind == CppMirTypeRepresentationKind::Expected &&
-            lambda->returnType.arguments.size() == 2 &&
-            cppMirExpectedTypeRepresentation(
-                lambda->returnType.arguments.front()) &&
-            (*cppMirExpectedTypeRepresentation(
-                 lambda->returnType.arguments.front()) ==
-                 CppMirTypeRepresentationKind::Scalar ||
-             *cppMirExpectedTypeRepresentation(
-                 lambda->returnType.arguments.front()) ==
-                 CppMirTypeRepresentationKind::Void)));
+           exactPassiveExpectedResult);
       if (!passiveResult) {
         return false;
       }
@@ -36086,14 +36251,21 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         discharged == nullptr && checkedStorageRead == nullptr
             ? expectedPayloadRangeLoanProducer(body, loan)
             : nullptr;
-    const MirInstruction *mutexGuardRead =
+    const MirInstruction *fallibleExpectedRead =
         discharged == nullptr && checkedStorageRead == nullptr &&
                 expectedPayloadRead == nullptr
+            ? fallibleExpectedBorrowLoanProducer(body, loan)
+            : nullptr;
+    const MirInstruction *mutexGuardRead =
+        discharged == nullptr && checkedStorageRead == nullptr &&
+                expectedPayloadRead == nullptr &&
+                fallibleExpectedRead == nullptr
             ? mutexGuardReadLoanProducer(body, loan)
             : nullptr;
     const MirInstruction *referenceCall =
         discharged == nullptr && checkedStorageRead == nullptr &&
-                expectedPayloadRead == nullptr && mutexGuardRead == nullptr
+                expectedPayloadRead == nullptr &&
+                fallibleExpectedRead == nullptr && mutexGuardRead == nullptr
             ? loanProducingReferenceCall(program_, body, loan)
             : nullptr;
     if (discharged != nullptr) {
@@ -36133,6 +36305,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           expectedPayloadRead->info.type !=
               loanSource->type.arguments.front() ||
           !payloadRow) {
+        return false;
+      }
+    } else if (fallibleExpectedRead != nullptr) {
+      const bool referentRow = std::any_of(
+          representations_.types().begin(), representations_.types().end(),
+          [&](const CppMirTypeRepresentation &row) {
+            return row.type == fallibleExpectedRead->info.type &&
+                   !row.spelling.empty();
+          });
+      if (!referentRow) {
         return false;
       }
     } else if (mutexGuardRead != nullptr) {
@@ -38944,6 +39126,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               return false;
             }
           }
+          continue;
+        }
+        if (fallibleBorrowInitializationLoan(body, instruction) != nullptr) {
           continue;
         }
         if (destination != nullptr &&

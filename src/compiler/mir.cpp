@@ -4310,11 +4310,19 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
       !instruction.successResultDrop &&
       (instruction.definedFailure.propagation != FailurePropagationKind::None ||
        locallyFailingBorrowIntrinsic);
+  const bool fallibleBorrowCarrier =
+      instruction.info.type.kind == SemanticType::Expected &&
+      instruction.info.type.arguments.size() == 2 &&
+      instruction.info.type.arguments.front().kind == SemanticType::Reference &&
+      instruction.info.type.arguments.front().referenceAccess ==
+          AccessMode::ReadOnly &&
+      instruction.info.type.arguments.front().arguments.size() == 1;
   const bool transferredBorrowedCallResult =
       instruction.kind == MirInstructionKind::Call && instruction.loan &&
       instruction.borrowOrigin != BorrowOriginKind::None &&
       instruction.successResultDrop && instruction.result &&
-      instruction.info.type.kind == SemanticType::Class &&
+      (instruction.info.type.kind == SemanticType::Class ||
+       fallibleBorrowCarrier) &&
       instruction.info.category == ValueCategory::Value &&
       instruction.info.traits.movable &&
       instruction.info.traits.containsBorrowedState &&
@@ -7451,10 +7459,19 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   // publication can consume either its success payload or its exact
   // Unexpected<Error> wrapper; neither is the completed Expected yet.
   const auto isReturnCarrierType = [&](const SemanticType &type) {
+    const bool fallibleBorrowPayload =
+        body.returnType.kind == SemanticType::Expected &&
+        body.returnType.arguments.size() == 2 &&
+        body.returnType.arguments.front().kind == SemanticType::Reference &&
+        body.returnType.arguments.front().referenceAccess ==
+            AccessMode::ReadOnly &&
+        body.returnType.arguments.front().arguments.size() == 1 &&
+        type == body.returnType.arguments.front().arguments.front();
     return type == body.returnType ||
            (body.returnType.kind == SemanticType::Expected &&
             body.returnType.arguments.size() == 2 &&
             (type == body.returnType.arguments.front() ||
+             fallibleBorrowPayload ||
              (type.kind == SemanticType::Unexpected &&
               type.arguments.size() == 1 &&
               type.arguments.front() == body.returnType.arguments.back())));
@@ -8484,9 +8501,54 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                  *retire.loan == source.loan &&
                  retire.hirValue == instruction.hirValue;
         }();
+        // expected<T&, E> publishes the same pointer-and-provenance handoff
+        // as a plain reference return, but its public result type is the
+        // fallible carrier rather than Reference itself. The source loan is
+        // retired at this exact boundary; the fresh parentless Return loan is
+        // the only capability that escapes the body.
+        const bool fallibleBorrowReturnTransfer = [&] {
+          if (body.returnType.kind != SemanticType::Expected ||
+              body.returnType.arguments.size() != 2 ||
+              body.returnType.arguments.front().kind !=
+                  SemanticType::Reference ||
+              body.returnType.arguments.front().referenceAccess !=
+                  AccessMode::ReadOnly ||
+              body.returnType.arguments.front().arguments.size() != 1 ||
+              produced.kind != MirLoanKind::Return || produced.entry ||
+              !produced.escapes || produced.parent != 0 ||
+              source.kind != MirOperandKind::Loan || source.place != 0 ||
+              source.value != 0 || instruction.hirValue == 0 ||
+              instruction.hirValue != produced.producedBy ||
+              instruction.info.type != source.type ||
+              (source.type !=
+                   body.returnType.arguments.front().arguments.front() &&
+               source.type != body.returnType)) {
+            return false;
+          }
+          const MirLoan *retained = body.findLoan(source.loan);
+          if (retained == nullptr || retained->id == produced.id ||
+              retained->escapes || retained->source != produced.source ||
+              (retained->access != produced.access &&
+               retained->access != AccessMode::Mutable)) {
+            return false;
+          }
+          const auto current =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [&](const MirInstruction &candidate) {
+                             return candidate.id == instruction.id;
+                           });
+          if (current == block.instructions.end() ||
+              std::next(current) == block.instructions.end()) {
+            return false;
+          }
+          const MirInstruction &retire = *std::next(current);
+          return retire.kind == MirInstructionKind::EndBorrow && retire.loan &&
+                 *retire.loan == source.loan &&
+                 retire.hirValue == instruction.hirValue;
+        }();
         if ((produced.parent == 0 && source.kind == MirOperandKind::Loan &&
              !storedCarrierReturnTransfer && !callResultReturnTransfer &&
-             !parameterEntryReturnTransfer) ||
+             !parameterEntryReturnTransfer && !fallibleBorrowReturnTransfer) ||
             (produced.parent != 0 && (source.kind != MirOperandKind::Loan ||
                                       source.loan != produced.parent))) {
           return failure(body, owner,

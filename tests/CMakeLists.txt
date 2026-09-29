@@ -1860,6 +1860,14 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(nested_borrow_chain_runtime
                          PROPERTIES TIMEOUT 300)
     add_test(
+      NAME fallible_borrow_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/fallible_borrow_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/fallible_borrow.gti"
+    )
+    set_tests_properties(fallible_borrow_runtime PROPERTIES TIMEOUT 300)
+    add_test(
       NAME mut_reference_retained_chain_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/mut_reference_retained_chain_runtime_test.py"

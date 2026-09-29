@@ -1685,7 +1685,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       methodDeclaration || intrinsicDeclaration || hasReturnBorrowSummary ||
           isBorrowReturningType(declaredReturnType),
       methodDeclaration ? "method return type" : "function return type");
-  if (nestsBorrowedState(declaredReturnType)) {
+  if (nestsBorrowedState(declaredReturnType) &&
+      !isFallibleBorrowType(declaredReturnType)) {
     report(stmt.name(),
            "Borrowed state cannot be nested in a function return type in "
            "the current lifetime model.",
@@ -6714,6 +6715,17 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
       diagnostic.hints.emplace_back(
           "Apply '?' to a fallible result, or handle this value without "
           "error propagation.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (isFallibleBorrowType(operandType)) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2086", DiagnosticPhase::Semantics, expr.oper(),
+          "Error propagation for 'expected<T&, E>' is not supported yet.");
+      diagnostic.hints.emplace_back(
+          "Inspect has_value(), return the error explicitly, and borrow "
+          "value() only on the success path.");
       diagnostics.emplace_back(std::move(diagnostic));
       currentType = SemanticType::Unknown;
       return;

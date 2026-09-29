@@ -664,7 +664,7 @@ public:
     return 0;
   }
 
-  expected<value, error> get(string_view key) {
+  expected<value&, error> get(string_view key) {
     if (!this.is_object()) {
       return unexpected(error(errc::type_mismatch));
     }
@@ -675,7 +675,7 @@ public:
                                 size_t(0), size_t(0), std::move(path));
       return unexpected(std::move(failure));
     }
-    return this.object_values[index].clone();
+    return this.object_values[index];
   }
 
   expected<std::string, error> get_string(string_view key) {

@@ -572,6 +572,18 @@ loan's pointer local; re-borrowing the provenance place would re-point the
 published reference at the receiver's storage instead of the returned
 element.
 
+The checked-borrow Expected extension reuses that authority without adding a
+native reference-valued sum. A successful `expected<T&, E>` return publishes a
+fresh escaping `Return` loan from the exact referent loan, then retires the
+body-local source at the same boundary. An error Return carries only the exact
+`Unexpected<E>` value. Forwarding a complete carrier instead publishes its
+ordinary Expected runtime value and uses the Return loan solely for owner
+provenance; reconstructing success from the loan would corrupt an active error
+alternative. A direct local success initialization consumes one exact Loan
+operand whose place names the runtime `T` and whose loan names the protected
+owner. Verification admits only the read-only specialization, exact types,
+one carrier, non-widened access, and immediate source-loan retirement.
+
 Version 50 adds a bounded two-phase mutable loan for source-defined plain
 subscript and dereference stores rooted in a local, parameter, receiver, or
 existing loan. The target call produces a non-escaping `CallResult` loan in the

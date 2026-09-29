@@ -4956,6 +4956,21 @@ auto SemanticVisitor::Impl::globalReturnBorrowPlace(
       valid = false;
       break;
     }
+    const auto unexpectedReturn = [&]() {
+      const ExprPtr *candidate = returned;
+      while (candidate != nullptr && *candidate) {
+        const auto *grouping = exprAs<Grouping>(candidate->get());
+        if (grouping == nullptr) {
+          break;
+        }
+        candidate = &grouping->expression();
+      }
+      return candidate != nullptr && *candidate &&
+             exprAs<Unexpected>(candidate->get()) != nullptr;
+    }();
+    if (isFallibleBorrowType(function.returnType) && unexpectedReturn) {
+      continue;
+    }
     SemanticPlace place = semanticPlace(*returned);
     std::optional<BorrowOriginPlace> candidate;
     if (place.root != nullptr && !place.receiver &&
@@ -4982,7 +4997,7 @@ auto SemanticVisitor::Impl::globalReturnBorrowPlace(
   currentNamespace = enclosingNamespace;
   currentSourceUnit = enclosingSourceUnit;
   currentClass = enclosingClass;
-  return valid ? result : std::nullopt;
+  return valid && result ? result : std::nullopt;
 }
 
 auto SemanticVisitor::Impl::ownedPointeeReturnProjection(

@@ -1409,13 +1409,17 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
           // value instead of publishing an lvalue into the expected.
           return expressionInfo(std::move(type));
         }
-        return expressionInfo(std::move(type), ValueCategory::Place,
-                              objectInfo != nullptr &&
-                                      objectInfo->category ==
-                                          ValueCategory::Place &&
-                                      objectInfo->access == AccessMode::Mutable
-                                  ? AccessMode::Mutable
-                                  : AccessMode::ReadOnly);
+        const bool fallibleBorrowValue = member->name().lexeme == "value" &&
+                                         isFallibleBorrowType(*objectType);
+        return expressionInfo(
+            std::move(type), ValueCategory::Place,
+            fallibleBorrowValue
+                ? AccessMode::ReadOnly
+                : (objectInfo != nullptr &&
+                           objectInfo->category == ValueCategory::Place &&
+                           objectInfo->access == AccessMode::Mutable
+                       ? AccessMode::Mutable
+                       : AccessMode::ReadOnly));
       }
     }
     const ResolvedCallInfo *resolved = semanticModel.findCall(call);
@@ -6727,6 +6731,11 @@ auto SemanticVisitor::Impl::isAssignable(SemanticType target,
     }
     return isAssignable(target.arguments[1], value.arguments[0],
                         errorExpression);
+  }
+  if (target.arguments.front().kind == SemanticType::Reference &&
+      target.arguments.front().referenceAccess == AccessMode::ReadOnly &&
+      target.arguments.front().arguments.size() == 1) {
+    return value == target.arguments.front().arguments.front();
   }
   return target.arguments[0] != SemanticType::Void &&
          isAssignable(target.arguments[0], value, expression);
