@@ -773,7 +773,9 @@ public:
         break;
       case SymbolKind::TypeAlias:
         result.signature = "using " + symbol->qualifiedName + " = " +
-                           types.print(symbol->type);
+                           types.print(occurrence->type != SemanticType::Unknown
+                                           ? occurrence->type
+                                           : symbol->type);
         break;
       case SymbolKind::ValueParameter:
         result.signature = "uint64_t " + symbol->name;
