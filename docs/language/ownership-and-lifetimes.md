@@ -380,6 +380,15 @@ This is implicit single-origin lifetime inference, not a general lifetime
 parameter system. Other parameters may contribute ordinary values, but a
 returned borrow may not choose between owners or combine dependencies.
 
+`expected<T&, E>` applies this same inference to a checked read-only borrow.
+The success path publishes the referent together with the receiver, argument,
+or global owner dependency; an `unexpected(E)` path publishes no loan. A local
+complete result is itself a carrier of that dependency, and `value()` creates
+a child read loan rather than copying `T`. Copying, moving, or forwarding the
+complete carrier preserves the one dependency. Fields, globals, parameters,
+lambda returns, mutable reference payloads, and multiple-owner results remain
+outside this bounded form. See [Expected values](expected.md#fallible-borrows).
+
 Under the default single-threaded execution profile, a free function or static
 method may instead return `T&` or `mut T&` from one exact namespace-global or
 non-generic static-field place. Every reachable return must name the same

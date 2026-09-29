@@ -2649,6 +2649,22 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
       continue;
     }
     if (!block.terminator.returnLoan) {
+      const bool fallibleBorrowErrorReturn =
+          instance.returnType.kind == SemanticType::Expected &&
+          instance.returnType.arguments.size() == 2 &&
+          instance.returnType.arguments.front().kind ==
+              SemanticType::Reference &&
+          instance.returnType.arguments.front().referenceAccess ==
+              AccessMode::ReadOnly &&
+          instance.returnType.arguments.front().arguments.size() == 1 &&
+          block.terminator.value &&
+          block.terminator.value->type.kind == SemanticType::Unexpected &&
+          block.terminator.value->type.arguments.size() == 1 &&
+          block.terminator.value->type.arguments.front() ==
+              instance.returnType.arguments.back();
+      if (fallibleBorrowErrorReturn) {
+        continue;
+      }
       return verificationFailure(
           body, instance.id,
           "owner-dependent return is missing its escaping loan", block.id);

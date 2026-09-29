@@ -1927,12 +1927,19 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
   // The builtin expected members carry their identity to MIR as
   // intrinsics: the calls name no declaration, so without the record
   // the lowered Call would be target-less and unnameable by a backend.
-  const auto recordIntrinsic = [&](IntrinsicKind intrinsic) {
-    ResolvedCallInfo resolved{.returnType = currentType,
+  const auto recordIntrinsic = [&](IntrinsicKind intrinsic,
+                                   SemanticType returnType =
+                                       SemanticType::Unknown) {
+    ResolvedCallInfo resolved{.returnType = returnType == SemanticType::Unknown
+                                                ? currentType
+                                                : std::move(returnType),
                               .intrinsic = intrinsic,
                               .dispatchOwner = expected};
+    const bool fallibleBorrowValue =
+        intrinsic == IntrinsicKind::ExpectedValue &&
+        isFallibleBorrowType(expected);
     if (intrinsic == IntrinsicKind::ExpectedValue &&
-        expectedPayloadRangeCandidate == &call) {
+        (fallibleBorrowValue || expectedPayloadRangeCandidate == &call)) {
       const auto *receiver = exprAs<Variable>(member.object().get());
       const Symbol *symbol =
           receiver == nullptr ? nullptr : resolve(receiver->name());
@@ -1940,7 +1947,7 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
           symbol != nullptr && symbol->type.kind == SemanticType::Expected &&
           (symbol->bindingKind == SemanticBindingKind::LocalVariable ||
            symbol->bindingKind == SemanticBindingKind::Parameter);
-      if (namedLocalOrValueParameter) {
+      if (fallibleBorrowValue || namedLocalOrValueParameter) {
         resolved.borrowOrigin = BorrowOriginKind::Receiver;
         resolved.borrowAccess = AccessMode::ReadOnly;
         resolved.receiverMode = CallReceiverMode::ReadOnlyPlace;
@@ -1961,8 +1968,12 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
   }
   if (member.name().lexeme == "value") {
     requireArity(0);
-    currentType = expected.arguments[0];
-    recordIntrinsic(IntrinsicKind::ExpectedValue);
+    const SemanticType payload = expected.arguments[0];
+    currentType =
+        payload.kind == SemanticType::Reference && payload.arguments.size() == 1
+            ? payload.arguments.front()
+            : payload;
+    recordIntrinsic(IntrinsicKind::ExpectedValue, payload);
     return;
   }
   if (member.name().lexeme == "error") {
@@ -1972,6 +1983,14 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
     return;
   }
   if (member.name().lexeme == "value_or") {
+    if (isFallibleBorrowType(expected)) {
+      report(member.name(),
+             "A fallible borrow does not provide 'value_or'; handle the "
+             "error state before borrowing its value.",
+             "GTI-S2045");
+      currentType = SemanticType::Unknown;
+      return;
+    }
     if (expected.arguments[0] == SemanticType::Void) {
       report(member.name(), "expected<void, E> does not provide 'value_or'.");
       currentType = SemanticType::Unknown;
@@ -3295,8 +3314,18 @@ auto SemanticVisitor::Impl::validateReferencePlacement(
         resolved, type.reference ? *type.reference : type.name.last(),
         allowDefaultLibraryStorageReference);
   if (baseTypeOf(type, currentNamespace).kind != SemanticType::Class) {
-    for (const TypeRef &argument : type.arguments) {
+    for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+      const TypeRef &argument = type.arguments[index];
       if (containsReference(argument)) {
+        const bool permittedFallibleBorrow =
+            resolved.kind == SemanticType::Expected && index == 0 &&
+            isFallibleBorrowType(resolved) && argument.reference &&
+            argument.arguments.empty();
+        if (permittedFallibleBorrow) {
+          validateReferenceReferent(resolved.arguments.front(),
+                                    *argument.reference, false);
+          continue;
+        }
         report(argument.reference ? *argument.reference : argument.name.last(),
                "References cannot be nested inside another type yet.",
                "GTI-S2017");
@@ -3435,7 +3464,7 @@ auto SemanticVisitor::Impl::validateReferenceBinding(
 
 auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
     const SemanticType &type, const ExprPtr &initializer) -> void {
-  if (!isDirectStoredReferenceType(type) &&
+  if (!isDirectStoredReferenceType(type) && !isFallibleBorrowType(type) &&
       type.kind != SemanticType::StringView &&
       type.kind != SemanticType::CString) {
     report(expressionToken(initializer),
@@ -3444,7 +3473,20 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
            "GTI-S2045");
     return;
   }
-  if (!hasStableBorrowStorage(initializer)) {
+  const ExpressionInfo *info =
+      initializer ? semanticModel.findExpression(*initializer) : nullptr;
+  if (isFallibleBorrowType(type) && info != nullptr &&
+      info->type.kind == SemanticType::Unexpected) {
+    report(expressionToken(initializer),
+           "A local fallible borrow cannot be initialized directly from "
+           "'unexpected' yet; obtain the error state from a function "
+           "returning the complete fallible-borrow type.",
+           "GTI-S2045");
+    return;
+  }
+  const bool fallibleBorrowFromCall =
+      isFallibleBorrowType(type) && transientBorrowProduction(initializer);
+  if (!hasStableBorrowStorage(initializer) && !fallibleBorrowFromCall) {
     report(expressionToken(initializer),
            "Stored-reference value is derived from temporary storage that "
            "does not outlive the binding.",
@@ -3490,6 +3532,31 @@ auto SemanticVisitor::Impl::validateStoredBorrowReturn(
   // particular, a rejected confined callable result must not cascade into
   // an unrelated owner-origin diagnostic for the enclosing return type.
   if (valueType == SemanticType::Unknown) {
+    return;
+  }
+  if (isFallibleBorrowType(returnType)) {
+    if (valueType.kind == SemanticType::Unexpected) {
+      return;
+    }
+    const std::optional<SemanticType> referent =
+        fallibleBorrowReferent(returnType);
+    if (referent && valueType == *referent) {
+      validateReferenceReturn(returnType.arguments.front(), valueType, value);
+      validateCurrentReturnBorrowSource(value, "fallible borrow", "GTI-S2045");
+      return;
+    }
+    if (valueType != returnType) {
+      return;
+    }
+    const ExpressionInfo *info =
+        value ? semanticModel.findExpression(*value) : nullptr;
+    if (info == nullptr || !info->traits.containsBorrowedState) {
+      return;
+    }
+    if (rejectEscapingLocalChildLoan(value, "a fallible-borrow return")) {
+      return;
+    }
+    validateCurrentReturnBorrowSource(value, "fallible borrow", "GTI-S2045");
     return;
   }
   if (!isDirectStoredReferenceType(returnType)) {

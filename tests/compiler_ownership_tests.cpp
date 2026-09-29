@@ -2712,7 +2712,7 @@ int main() {
   int& missing;
   int values[2] = {1, 2};
   int[2]& array_reference = values;
-  expected<int&, int> nested = 1;
+  expected<expected<int&, int>, int> nested = unexpected(1);
   Counter& dangling_owner = *std::make_unique<Counter>();
   int& dangling_member = Counter().value;
   inspect(mutable_value);
@@ -15951,6 +15951,351 @@ int main() {
          "expected validation should produce focused diagnostics");
 }
 
+void testFallibleBorrows() {
+  const lang::FrontendResult frontend =
+      analyzeTrustedPreludeFixture("fallible-borrows.gti", R"(
+enum class lookup_errc { missing };
+int32_t global_value = 19;
+
+class Box {
+  int32_t value;
+public:
+  Box(int32_t value) : value(value) {}
+  expected<int32_t&, lookup_errc> find(bool present) {
+    if (!present) { return unexpected(lookup_errc::missing); }
+    return this.value;
+  }
+};
+
+class owning_error {
+  int32_t code;
+public:
+  owning_error(int32_t code) : code(code + 1) {}
+  owning_error(owning_error& other) = delete;
+  owning_error(owning_error&& other) = default;
+  ~owning_error() {}
+};
+
+expected<int32_t&, lookup_errc> borrow_parameter(int32_t& value,
+                                                  bool present) {
+  if (!present) { return unexpected(lookup_errc::missing); }
+  return value;
+}
+
+expected<int32_t&, lookup_errc> borrow_global(bool present) {
+  if (!present) { return unexpected(lookup_errc::missing); }
+  return global_value;
+}
+
+expected<int32_t&, lookup_errc> forward(Box& box, bool present) {
+  auto result = box.find(present);
+  return result;
+}
+
+expected<int32_t&, owning_error> borrow_with_owning_error(int32_t& value,
+                                                           bool present) {
+  if (!present) { return unexpected(owning_error(0)); }
+  return value;
+}
+
+int main() {
+  Box box{7};
+  auto found = forward(box, true);
+  int32_t& alias = found.value();
+  int32_t local = 13;
+  expected<int32_t&, lookup_errc> direct = local;
+  auto copied = direct;
+  auto moved = std::move(copied);
+  auto parameter = borrow_parameter(local, true);
+  auto global = borrow_global(true);
+  auto owned = borrow_with_owning_error(local, true);
+  return alias + moved.value() + parameter.value() + global.value() +
+         owned.value() - 65;
+}
+)");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected fallible-borrow diagnostic: " << diagnostic.code
+                << ": " << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "receiver-, parameter-, and global-tied fallible borrows should "
+         "reach verified MIR, including local copy, move, and forwarding");
+
+  std::size_t fallibleFunctions = 0;
+  std::size_t escapingReturnLoans = 0;
+  bool owningErrorCallHasInvoke = false;
+  const auto parameterBorrowHir = std::find_if(
+      frontend.hir.functionInstances().begin(),
+      frontend.hir.functionInstances().end(),
+      [](const lang::HirFunctionInstance &function) {
+        return function.source != nullptr &&
+               function.source->name().lexeme == "borrow_parameter";
+      });
+  const lang::MirFunctionInstance *parameterBorrowFunction =
+      parameterBorrowHir == frontend.hir.functionInstances().end()
+          ? nullptr
+          : frontend.mir.findFunctionInstance(parameterBorrowHir->id);
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    const lang::SemanticType &type = function.returnType;
+    if (type.kind != lang::SemanticType::Expected ||
+        type.arguments.size() != 2 ||
+        type.arguments.front().kind != lang::SemanticType::Reference) {
+      continue;
+    }
+    ++fallibleFunctions;
+    escapingReturnLoans += std::count_if(
+        function.body.loans.begin(), function.body.loans.end(),
+        [](const lang::MirLoan &loan) {
+          return loan.kind == lang::MirLoanKind::Return && loan.escapes;
+        });
+  }
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        const lang::MirFunctionInstance *target =
+            instruction.functionTarget
+                ? frontend.mir.findFunctionInstance(*instruction.functionTarget)
+                : nullptr;
+        if (target == nullptr || !target->mayRaiseDefinedFailure ||
+            target->returnType.kind != lang::SemanticType::Expected ||
+            target->returnType.arguments.size() != 2 ||
+            target->returnType.arguments.front().kind !=
+                lang::SemanticType::Reference ||
+            target->returnType.arguments.back().kind !=
+                lang::SemanticType::Class ||
+            !instruction.successResultDrop) {
+          continue;
+        }
+        owningErrorCallHasInvoke =
+            block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+            block.terminator.invokeInstruction == instruction.id;
+      }
+    }
+  }
+  expect(fallibleFunctions == 5 && escapingReturnLoans >= 5,
+         "each fallible-borrow producer should publish an escaping Return "
+         "loan while preserving its one owner dependency");
+  expect(owningErrorCallHasInvoke,
+         "a fallible-borrow call with an owning error should arm its result "
+         "only on the exact failure-routing Invoke success edge");
+
+  lang::MirProgram forgedReturn = frontend.mir;
+  auto &forgedFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      forgedReturn.functionInstances());
+  bool forgedRetirement = false;
+  if (parameterBorrowFunction != nullptr) {
+    const auto function =
+        std::find_if(forgedFunctions.begin(), forgedFunctions.end(),
+                     [&](const lang::MirFunctionInstance &candidate) {
+                       return candidate.id == parameterBorrowFunction->id;
+                     });
+    if (function != forgedFunctions.end()) {
+      const auto published = std::find_if(
+          function->body.loans.begin(), function->body.loans.end(),
+          [](const lang::MirLoan &loan) {
+            return loan.kind == lang::MirLoanKind::Return && loan.escapes;
+          });
+      if (published != function->body.loans.end()) {
+        for (lang::MirBlock &block : function->body.blocks) {
+          for (std::size_t index = 0; index + 1 < block.instructions.size();
+               ++index) {
+            if (block.instructions[index].kind ==
+                    lang::MirInstructionKind::Borrow &&
+                block.instructions[index].loan == published->id &&
+                block.instructions[index + 1].kind ==
+                    lang::MirInstructionKind::EndBorrow) {
+              block.instructions[index + 1].loan = published->id;
+              forgedRetirement = true;
+            }
+          }
+        }
+      }
+    }
+  }
+  expect(forgedRetirement && !lang::verifyMirProgram(forgedReturn).valid(),
+         "MIR verification should reject a fallible-borrow return that "
+         "retires the published loan instead of its exact source loan");
+
+  const std::string cpp23 = gti_test::emitCppText(frontend);
+  const std::string cpp20 =
+      gti_test::emitCppText(frontend, lang::CppStandard::Cpp20);
+  expect(
+      cpp23.find("::gti_internal::backend::borrowed_expected<std::int32_t") !=
+              std::string::npos &&
+          cpp20.find(
+              "::gti_internal::backend::borrowed_expected<std::int32_t") !=
+              std::string::npos &&
+          cpp23.find("std::expected<std::int32_t &") == std::string::npos &&
+          cpp23.find(" = *__gti_mir_loan_") != std::string::npos &&
+          cpp23.find("std::construct_at(__gti_mir_out_result, "
+                     "*__gti_mir_loan_") != std::string::npos,
+      "both native standards should use GTI's private pointer-backed "
+      "fallible-borrow carrier and initialize passive or owning-error "
+      "representations from a verified loan");
+
+  const lang::FrontendResult liveConflict =
+      analyzeTrustedPreludeFixture("fallible-borrow-live-conflict.gti", R"(
+enum class lookup_errc { missing };
+class Box {
+  mut int value;
+public:
+  Box(int value) : value(value) {}
+  expected<int&, lookup_errc> find() { return this.value; }
+  void set(int value) mut { this.value = value; }
+};
+int main() {
+  mut Box box{7};
+  auto found = box.find();
+  box.set(9);
+  return found.value();
+}
+)");
+  expect(!liveConflict.canGenerateCode() &&
+             hasDiagnostic(liveConflict.diagnostics,
+                           "overlaps a borrow that may still be live") &&
+             hasRelatedDiagnostic(liveConflict.diagnostics,
+                                  "Retained borrow originates here"),
+         "a live fallible borrow should block mutation of its owner and "
+         "identify the producing call");
+
+  const lang::FrontendResult temporaryOwner =
+      analyzeTrustedPreludeFixture("fallible-borrow-temporary.gti", R"(
+enum class lookup_errc { missing };
+class Box {
+  int value;
+public:
+  Box(int value) : value(value) {}
+  expected<int&, lookup_errc> find() { return this.value; }
+};
+int main() {
+  auto found = Box(7).find();
+  return found.value();
+}
+)");
+  expect(!temporaryOwner.canGenerateCode() &&
+             hasDiagnostic(temporaryOwner.diagnostics,
+                           "derived from temporary storage"),
+         "a fallible borrow must not outlive a temporary receiver");
+
+  const lang::FrontendResult missingOwner =
+      analyzeTrustedPreludeFixture("fallible-borrow-local-escape.gti", R"(
+enum class lookup_errc { missing };
+expected<int&, lookup_errc> invalid() {
+  int local = 7;
+  return local;
+}
+int main() { return 0; }
+)");
+  expect(!missingOwner.canGenerateCode() &&
+             hasDiagnostic(missingOwner.diagnostics,
+                           "requires either one exact global/static storage "
+                           "origin or exactly one read-only reference"),
+         "a local referent must not escape through a fallible borrow");
+
+  const lang::FrontendResult ambiguousOwner =
+      analyzeTrustedPreludeFixture("fallible-borrow-ambiguous.gti", R"(
+enum class lookup_errc { missing };
+expected<int&, lookup_errc> choose(int& first, int& second) { return first; }
+int main() { return 0; }
+)");
+  expect(!ambiguousOwner.canGenerateCode() &&
+             hasDiagnostic(ambiguousOwner.diagnostics,
+                           "Borrowed return dependency is ambiguous") &&
+             hasRelatedDiagnostic(ambiguousOwner.diagnostics,
+                                  "Eligible owner dependency source"),
+         "a free fallible borrow should require one unambiguous owner "
+         "parameter");
+
+  const lang::FrontendResult forbiddenStorage =
+      analyzeTrustedPreludeFixture("fallible-borrow-storage.gti", R"(
+enum class lookup_errc { missing };
+expected<int&, lookup_errc> global_result;
+class Holder { expected<int&, lookup_errc> result; };
+void inspect(expected<int&, lookup_errc> result) {}
+int main() {
+  int local = 1;
+  auto lambda = [](int& value) -> expected<int&, lookup_errc> {
+    return value;
+  };
+  return 0;
+}
+)");
+  expect(
+      !forbiddenStorage.canGenerateCode() &&
+          hasDiagnostic(forbiddenStorage.diagnostics,
+                        "cannot have global or static storage duration") &&
+          hasDiagnostic(forbiddenStorage.diagnostics,
+                        "Borrowed state cannot be nested in another field") &&
+          hasDiagnostic(forbiddenStorage.diagnostics,
+                        "Function parameters cannot nest borrowed state") &&
+          hasDiagnostic(forbiddenStorage.diagnostics,
+                        "Lambda return types cannot carry borrowed state"),
+      "fallible borrows should remain local return values rather than "
+      "escaping through fields, globals, parameters, or lambdas");
+
+  const std::string unsupportedSource = R"(
+enum class lookup_errc { missing };
+expected<int&, lookup_errc> borrow(int& value) { return value; }
+expected<int&, lookup_errc> propagate(int& value) { return ?borrow(value); }
+int fallback(int& value) {
+  expected<int&, lookup_errc> result = value;
+  return result.value_or(value);
+}
+int direct_error() {
+  expected<int&, lookup_errc> result = unexpected(lookup_errc::missing);
+  return 0;
+}
+int main() { return 0; }
+)";
+  const lang::FrontendResult unsupportedOperations =
+      analyzeTrustedPreludeFixture("fallible-borrow-operations.gti",
+                                   unsupportedSource);
+  const std::size_t propagationOperator = unsupportedSource.find("?borrow");
+  const lang::Diagnostic *propagationDiagnostic =
+      findDiagnosticByCode(unsupportedOperations.diagnostics, "GTI-S2086");
+  const bool unsupportedContract =
+      !unsupportedOperations.canGenerateCode() &&
+      propagationOperator != std::string::npos &&
+      countDiagnosticCode(unsupportedOperations.diagnostics, "GTI-S2086") ==
+          1 &&
+      propagationDiagnostic != nullptr &&
+      propagationDiagnostic->phase == lang::DiagnosticPhase::Semantics &&
+      std::filesystem::path(propagationDiagnostic->primary.source).filename() ==
+          "gti-trusted-fallible-borrow-operations.gti" &&
+      propagationDiagnostic->primary.start == propagationOperator &&
+      propagationDiagnostic->primary.end == propagationOperator + 1 &&
+      propagationDiagnostic->related.empty() &&
+      propagationDiagnostic->fixes.empty() &&
+      hasDiagnostic(unsupportedOperations.diagnostics,
+                    "Error propagation for 'expected<T&, E>' is not "
+                    "supported yet") &&
+      hasDiagnosticHint(unsupportedOperations.diagnostics,
+                        "Inspect has_value()") &&
+      hasDiagnostic(unsupportedOperations.diagnostics,
+                    "does not provide 'value_or'") &&
+      hasDiagnostic(unsupportedOperations.diagnostics,
+                    "cannot be initialized directly from 'unexpected'");
+  if (!unsupportedContract) {
+    std::cerr << "Expected fallible-borrow '?' offset " << propagationOperator
+              << '\n';
+    for (const lang::Diagnostic &diagnostic :
+         unsupportedOperations.diagnostics) {
+      std::cerr << "  " << diagnostic.code << ' ' << diagnostic.primary.source
+                << ':' << diagnostic.primary.start << ".."
+                << diagnostic.primary.end << ' ' << diagnostic.message << '\n';
+    }
+  }
+  expect(unsupportedContract,
+         "unsupported fallible-borrow propagation, fallback, and direct "
+         "error construction should fail semantically rather than in MIR or "
+         "native C++");
+}
+
 void testExpectedPropagationOperator() {
   const std::string source = R"(
 expected<int, int> leaf(bool fail, int error, int value) {
@@ -18294,6 +18639,7 @@ constexpr NamedTest kTests[] = {
     {"testConfinedCallableResults", testConfinedCallableResults},
     {"testOwnedCallableTransport", testOwnedCallableTransport},
     {"testExpectedValues", testExpectedValues},
+    {"testFallibleBorrows", testFallibleBorrows},
     {"testExpectedPropagationOperator", testExpectedPropagationOperator},
     {"testFieldInitializerRollbackAndFailureEdges",
      testFieldInitializerRollbackAndFailureEdges},

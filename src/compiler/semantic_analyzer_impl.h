@@ -1193,6 +1193,11 @@ private:
   [[nodiscard]] bool
   isDirectStoredReferenceType(const SemanticType &type) const;
 
+  [[nodiscard]] bool isFallibleBorrowType(const SemanticType &type) const;
+
+  [[nodiscard]] std::optional<SemanticType>
+  fallibleBorrowReferent(const SemanticType &type) const;
+
   [[nodiscard]] std::optional<SemanticType>
   storedReferenceReferent(const SemanticType &type) const;
 

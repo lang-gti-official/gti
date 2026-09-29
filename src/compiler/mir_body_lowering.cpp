@@ -14,6 +14,17 @@ namespace {
          type == SemanticType::UInt32 || type == SemanticType::UInt64;
 }
 
+[[nodiscard]] std::optional<SemanticType>
+mirFallibleBorrowReferent(const SemanticType &type) {
+  if (type.kind != SemanticType::Expected || type.arguments.size() != 2 ||
+      type.arguments.front().kind != SemanticType::Reference ||
+      type.arguments.front().referenceAccess != AccessMode::ReadOnly ||
+      type.arguments.front().arguments.size() != 1) {
+    return std::nullopt;
+  }
+  return type.arguments.front().arguments.front();
+}
+
 [[nodiscard]] std::optional<Literal>
 programConstantLiteral(const ConstantValue &constant) {
   if (const auto *integer = std::get_if<ConstantInteger>(&constant)) {
@@ -2423,11 +2434,17 @@ private:
     if (!origin.valid()) {
       return 0;
     }
+    const std::optional<SemanticType> fallibleReferent =
+        mirFallibleBorrowReferent(value.info.type);
+    const SemanticType originType =
+        fallibleReferent ? *fallibleReferent : value.info.type;
     MirPlace lowered{.root = MirPlaceRootKind::Symbol,
                      .symbol = origin.root,
-                     .type = value.info.type,
-                     .access = value.info.access,
-                     .traits = value.info.traits,
+                     .type = originType,
+                     .access = fallibleReferent ? AccessMode::ReadOnly
+                                                : value.info.access,
+                     .traits = fallibleReferent ? semanticTraits(originType)
+                                                : value.info.traits,
                      .sourceValue = value.id,
                      .key = PlaceKey{.domain = output.placeDomain,
                                      .root = origin.root,
@@ -4702,7 +4719,9 @@ private:
     const MirDropObligationId resultDrop =
         detachedBorrowResult ? 0 : dropObligationForValue(value.id);
     const bool transferableBorrowedResult =
-        call.loan && value.info.type.kind == SemanticType::Class &&
+        call.loan &&
+        (value.info.type.kind == SemanticType::Class ||
+         mirFallibleBorrowReferent(value.info.type).has_value()) &&
         value.info.category == ValueCategory::Value &&
         value.info.traits.movable && value.info.traits.containsBorrowedState;
     // A cleanup-owning result exists only after a failure-capable call
@@ -7252,8 +7271,19 @@ private:
     std::vector<MirOperand> operands;
     MirLoanId retainedLoan = 0;
     if (statement.value) {
-      if (binding != nullptr &&
-          binding->info.type.kind == SemanticType::Reference) {
+      const HirValue *initializer = findValue(*statement.value);
+      const std::optional<SemanticType> fallibleReferent =
+          binding == nullptr ? std::nullopt
+                             : mirFallibleBorrowReferent(binding->info.type);
+      if (binding != nullptr && fallibleReferent && initializer != nullptr &&
+          initializer->info.type == *fallibleReferent) {
+        MirOperand reference =
+            referenceOperand(*statement.value, *statement.binding);
+        reference.place = placeForValue(*statement.value);
+        retainedLoan = reference.loan;
+        operands.push_back(std::move(reference));
+      } else if (binding != nullptr &&
+                 binding->info.type.kind == SemanticType::Reference) {
         MirOperand reference =
             referenceOperand(*statement.value, *statement.binding);
         // The loan is provenance authority; the place is the exact runtime
@@ -8083,6 +8113,37 @@ private:
         // a runtime value. Its full-expression and lexical cleanup still run
         // before the operand-free return below.
         emitValue(*statement.value);
+      } else if (const std::optional<SemanticType> fallibleReferent =
+                     mirFallibleBorrowReferent(output.returnType);
+                 fallibleReferent && findValue(*statement.value) != nullptr &&
+                 findValue(*statement.value)->info.type == *fallibleReferent) {
+        // A successful expected<T&, E> return transports the referent's
+        // runtime address and the owner's semantic dependency separately.
+        // Publish a fresh Return loan so body-local cleanup can retire the
+        // source loan before the pointer is wrapped at the ABI boundary.
+        MirOperand borrow = referenceOperand(*statement.value);
+        if (borrow.loan == 0 || borrow.loan > output.loans.size()) {
+          valid = false;
+          return;
+        }
+        const MirLoan retainedLoan = output.loans[borrow.loan - 1];
+        const MirLoanId published =
+            createLoan(MirLoanKind::Return, retainedLoan.source,
+                       retainedLoan.access, *statement.value);
+        (void)appendInstruction({.kind = MirInstructionKind::Borrow,
+                                 .hirValue = *statement.value,
+                                 .operands = {borrow},
+                                 .loan = published,
+                                 .info = findValue(*statement.value)->info});
+        (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                 .hirValue = *statement.value,
+                                 .loan = borrow.loan});
+        removeLoanFromState(borrow.loan, scopes, bindingLoans);
+        output.loans[published - 1].escapes = true;
+        result = MirOperand{.kind = MirOperandKind::Loan,
+                            .loan = published,
+                            .type = *fallibleReferent};
+        returnLoan = published;
       } else if (output.returnType.kind == SemanticType::Reference) {
         MirOperand borrow = referenceOperand(*statement.value);
         if (borrow.loan != 0) {

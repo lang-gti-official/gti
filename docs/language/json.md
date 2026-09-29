@@ -101,11 +101,14 @@ object.get_uint64("id");
 object.get_double("ratio");
 ```
 
-`get` returns a deep owned clone because GTI does not currently admit
-`expected<T&, E>`. After a program has validated a shape, `at(key)` and
-`at(index)` return borrowed values without cloning. Their missing-key,
-wrong-kind, and out-of-range cases use GTI's defined checked runtime failure;
-they never insert.
+`get` returns `expected<value&, error>`. Its success state is a checked,
+read-only borrow of the stored value rather than a deep clone; its error state
+reports a missing key or kind mismatch without retaining a loan. The result
+cannot outlive the object and keeps that object read-only until the carrier and
+any reference extracted by `value()` reach their last use. After a program has
+validated a shape, `at(key)` and `at(index)` return borrowed values directly
+without cloning. Their missing-key, wrong-kind, and out-of-range cases use
+GTI's defined checked runtime failure; they never insert.
 
 Arrays expose `elements()` for ordinary range iteration. Objects expose
 `object_size()`, `key_at(index)`, and `value_at(index)`, which retain insertion
