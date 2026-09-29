@@ -38,7 +38,10 @@ one-off implementation-note or redesign files when an existing category fits.
    flow and effects in MIR, and representation choices in backends.
 4. Add focused positive and negative tests at the layer that owns the rule.
    Run broader relevant CTest, CLI, LSP, Tree-sitter, formatter, or installed
-   toolchain checks in proportion to the change.
+   toolchain checks in proportion to the change. Use a GTI compiler executable
+   built with host optimization for every test that compiles or analyzes GTI
+   (`Release`, `RelWithDebInfo`, or `MinSizeRel`); an unoptimized compiler is
+   not valid verification evidence.
 5. Update the canonical architecture or language document when implementation
    behavior changes. Update a plan when its status changes; do not describe
    planned behavior as current.

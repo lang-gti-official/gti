@@ -642,6 +642,12 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   add_test(
+    NAME optimized_test_compiler_policy
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/optimized_test_compiler_policy_test.py"
+            "${PROJECT_SOURCE_DIR}"
+  )
+  add_test(
     NAME cthread_runtime_firewall
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/runtime_cthread_boundary_test.py"

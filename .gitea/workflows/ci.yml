@@ -257,9 +257,10 @@ jobs:
           CXX: clang++
         run: >-
           cmake -S . -B build-sanitized -G Ninja
-          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
           -DGTI_BUILD_LSP=OFF
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
 
       - name: Build

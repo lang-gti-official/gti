@@ -10,6 +10,17 @@ endif()
 
 project("gti" VERSION "${GTI_PROJECT_VERSION}" LANGUAGES C CXX)
 
+option(GTI_BUILD_LSP "Build the GTI language server" ON)
+option(GTI_BUNDLE_LLVM "Download and build pinned LLVM support libraries" OFF)
+option(GTI_RELEASE_BUILD "Require a self-contained, release-ready toolchain" OFF)
+option(GTI_BUILD_FUZZERS
+       "Build opt-in libFuzzer harnesses (Clang only; never installed)" OFF)
+
+# Enforce the host compiler configuration before dependency discovery.
+include(CTest)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/OptimizedTestCompiler.cmake")
+gti_require_optimized_test_compiler()
+
 find_program(GTI_GIT_EXECUTABLE git)
 set(GTI_BUILD_IDENTITY_HEADER
     "${CMAKE_CURRENT_BINARY_DIR}/generated/gti/build_identity_config.h")
@@ -40,12 +51,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
-
-option(GTI_BUILD_LSP "Build the GTI language server" ON)
-option(GTI_BUNDLE_LLVM "Download and build pinned LLVM support libraries" OFF)
-option(GTI_RELEASE_BUILD "Require a self-contained, release-ready toolchain" OFF)
-option(GTI_BUILD_FUZZERS
-       "Build opt-in libFuzzer harnesses (Clang only; never installed)" OFF)
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
@@ -702,9 +707,7 @@ if(TARGET gti_lsp)
           COMPONENT gti_toolchain)
 endif()
 
-include(CTest)
-# After include(CTest) so fuzz/CMakeLists.txt sees BUILD_TESTING and can
-# register its fixed-corpus smoke test.
+# BUILD_TESTING and the optimized compiler policy are established above.
 if(GTI_BUILD_FUZZERS)
   add_subdirectory("fuzz")
 endif()
