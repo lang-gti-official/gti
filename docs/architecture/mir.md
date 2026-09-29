@@ -100,7 +100,14 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v74`/`mir-body-v64`.
+The deterministic serialization is currently `mir-v75`/`mir-body-v65`.
+Program v75/body v65 add exact `payload-variant`/`payload-field` selectors to
+aggregate cleanup recipes. Enum roots retain finite active-alternative recipes,
+including concrete-class recursive back-edges. Program verification independently
+derives and compares the complete recipe. Borrowed `PayloadExtract` values are
+places, not owning copies: the verifier checks the exact selected switch edge,
+payload type/access, and source loan; backends spell an address into that original
+variant. Loan conflicts conservatively protect the whole matched enum.
 Program v74/body v64 serialize signature receiver capability in semantic type
 metadata. Read-only, mutable, and consuming signatures cannot share a serialized
 identity. The lowered declaration seal includes the same field in

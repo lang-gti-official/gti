@@ -1125,8 +1125,15 @@ class or struct may also own the enum directly in a field. Construction
 rollback arms that field only after successful publication, generated movement
 transfers its obligation with the containing value, and replacement of a
 mutable field drops the old active alternative before accepting the new one.
-Generic or polymorphic callable transport, lambda capture, recursive fields,
-arrays, generic wrappers, stored-reference owners, compiler-private or native
+Concrete generic class payloads and finite recursive owning-class containment
+retain this same contract. MIR records active-variant/field cleanup selectors
+and finite recursion through concrete class cleanup; a failing destructor does
+not skip remaining sibling cleanup. Borrowed payload patterns introduce
+arm-scoped shared (`auto&`) or exclusive (`mut auto&`) loans into stable enum
+storage. Their conflict root is conservatively the whole enum, and a checked
+receiver-derived return retains its original owner dependency.
+Generic or polymorphic enum callable transport, lambda capture, direct array
+payloads, stored-reference owners, compiler-private or native
 layout records, and polymorphic bases remain diagnosed rather than inventing
 indirect cleanup state.
 

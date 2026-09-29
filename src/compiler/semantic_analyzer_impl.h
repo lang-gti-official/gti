@@ -2609,7 +2609,8 @@ private:
 
   [[nodiscard]] bool
   byValueTypeReachesClass(const SemanticType &type, ClassId target,
-                          std::unordered_set<ClassId> &visiting) const;
+                          std::unordered_set<ClassId> &visiting,
+                          std::unordered_set<EnumId> &visitingEnums) const;
 
   void validateOrdinaryClassLayouts();
 

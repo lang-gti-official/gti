@@ -4049,6 +4049,12 @@ auto SemanticVisitor::Impl::isReceiverDerivedBorrow(
   }
   if (const auto *variable = exprAs<Variable>(expression.get())) {
     const Symbol *symbol = resolve(variable->name());
+    if (symbol != nullptr && symbol->retainedLoan != 0) {
+      const SemanticLoanInfo *loan =
+          semanticModel.findLoan(symbol->retainedLoan);
+      if (loan != nullptr && loan->receiverOrigin)
+        return true;
+    }
     if (currentClass && symbol != nullptr &&
         symbol->bindingKind == SemanticBindingKind::Field &&
         !symbol->staticMember) {

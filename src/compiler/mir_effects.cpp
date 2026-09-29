@@ -1081,6 +1081,31 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
   const auto derive =
       [&](const auto &self,
           const SemanticType &selected) -> std::optional<MirDropType> {
+    if (selected.kind == SemanticType::Enum) {
+      const auto *enumeration = program.findPayloadEnum(selected.enumId);
+      if (enumeration == nullptr)
+        return std::nullopt;
+      MirDropType result{.type = selected,
+                         .requiresActiveCleanup =
+                             enumeration->requiresActiveCleanup};
+      for (const auto &variant : enumeration->variants) {
+        if (variant.payloadTypes.size() !=
+            variant.payloadRequiresActiveCleanup.size())
+          return std::nullopt;
+        for (std::size_t index = variant.payloadTypes.size(); index != 0;
+             --index) {
+          if (!variant.payloadRequiresActiveCleanup[index - 1])
+            continue;
+          auto child = self(self, variant.payloadTypes[index - 1]);
+          if (!child)
+            return std::nullopt;
+          child->payloadVariant = variant.variantIndex;
+          child->payloadField = index - 1;
+          result.aggregate.push_back(*child);
+        }
+      }
+      return result;
+    }
     if ((selected.kind == SemanticType::Expected &&
          selected.arguments.size() == 2) ||
         (selected.kind == SemanticType::Unexpected &&

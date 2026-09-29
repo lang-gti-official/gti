@@ -7574,6 +7574,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         obligation.dropType.uniqueOwnerField != 0 ||
         obligation.dropType.uniqueOwnerBase ||
         obligation.dropType.captureIndex ||
+        obligation.dropType.payloadVariant ||
+        obligation.dropType.payloadField ||
         obligation.dropType.recursiveCleanup ||
         (obligation.dropType.uniquePointeeClass &&
          ((obligation.dropType.type.kind != SemanticType::UniqueOwner ||
@@ -7592,6 +7594,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
          !obligation.dropType.uniquePointeeClass) ||
         (!obligation.dropType.aggregate.empty() &&
          !obligation.dropType.uniquePointeeClass && !alternativeRecipe &&
+         obligation.dropType.type.kind != SemanticType::Enum &&
          obligation.dropType.type.kind != SemanticType::Storage &&
          obligation.dropType.type.kind != SemanticType::PrefixStorage &&
          !(obligation.dropType.type.kind == SemanticType::Lambda &&

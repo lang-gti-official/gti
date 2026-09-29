@@ -171,7 +171,9 @@ void AstPrinter::visitUnexpectedExpr(const Unexpected &expr) {
 }
 
 void AstPrinter::visitVariableExpr(const Variable &expr) {
-  result = expr.name().lexeme;
+  result = (expr.isMutablePattern() ? "mut " : "") +
+           std::string(expr.isReferencePattern() ? "auto& " : "") +
+           expr.name().lexeme;
 }
 
 std::string AstPrinter::typeToString(const TypeRef &type) {

@@ -898,7 +898,8 @@ An `enum class` with at least one parameterized alternative is a closed tagged
 sum. It cannot declare an integral backing type or explicit enumerator values.
 Every payload field is named, immutable, and non-variadic. The admitted field
 types are primitive scalars, `std::string_view`, `nullptr_t`, one-level raw
-pointers, integral scoped enums, and ordinary class values. A concrete class
+pointers, integral scoped enums, and ordinary concrete class instances,
+including generic instances. A concrete class
 payload may require active cleanup through its destructor or owned fields; the
 enum then has lexical cleanup and folds its copy, move, and ownership policy
 from every alternative. Stored borrowed state remains ill-formed. Active
@@ -931,11 +932,13 @@ initializer or an ordinary constructor initializer. Its containing value
 inherits the enum's structural copy, move, assignment, and cleanup traits and
 may use the existing direct class-value call and return transport. A mutable
 direct field may be replaced from an explicit move; the old active alternative
-is dropped before the replacement obligation is published. This permission is
-not recursive and does not extend through a fixed array, `expected`,
-owner/container, another payload enum, generic wrapper, stored-reference
-class, compiler-private capability, polymorphic base, or native-layout
-declaration.
+is dropped before the replacement obligation is published. Recursive owning
+class containment is permitted when its by-value layout is finite, including
+an alternative holding a vector of enclosing nodes. A direct enum/class
+by-value cycle remains ill-formed. This does not authorize reference payloads,
+direct non-class aggregate payloads, stored-reference classes,
+compiler-private capabilities, polymorphic bases, or native-layout
+declarations.
 
 Generic callable families, including methods and constructors declared on a
 generic owner, polymorphic dispatch, native/runtime declarations, operators,
@@ -970,8 +973,15 @@ Each binding is an immutable copied value scoped to its arm; a class-typed
 binding therefore requires a copyable payload type, and its copy drops at the
 arm's end exactly like an ordinary local. A move-only active payload can still
 be matched exhaustively by using its tag-only form, such as
-`case Message::owned:`. Consuming or borrowed payload bindings remain a
-follow-on pattern family. Every alternative
+`case Message::owned:`. `case Message::owned(auto& item)` instead binds an
+arm-scoped shared reference to the original payload; `mut auto& item` binds an
+exclusive mutable reference and requires mutable enum storage. Temporary
+subjects cannot provide either reference. The entire matched enum is the
+conservative alias-conflict root, including for sibling fields: two mutable
+payload bindings in the same arm conflict. Owner replacement, movement, or
+conflicting access is forbidden while the loan lives. Existing checked return
+summaries can relay receiver-derived payload references, but cannot let local
+or temporary payloads escape. Consuming patterns remain unsupported. Every alternative
 must be handled exactly once unless a `default` arm is present. A complete
 payload switch is exhaustive for return, ownership-state, loan, HIR, and MIR
 control-flow analysis. `GTI-S2067` owns payload declaration, construction, and

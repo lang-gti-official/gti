@@ -4611,7 +4611,7 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
       return std::nullopt;
     }
     const SemanticType &payloadType = enumerator->payloadTypes[index];
-    if (!typeTraits(payloadType).copyable) {
+    if (!binding->isReferencePattern() && !typeTraits(payloadType).copyable) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2067", DiagnosticPhase::Semantics, binding->name(),
           "Payload field " + std::to_string(index + 1) + " of variant '" +
@@ -4622,14 +4622,22 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
           "Match the variant without payload bindings (for example 'case " +
           typeSpelling(subjectType) +
           "::" + enumerator->declaration->name.lexeme +
-          ":') until consuming payload patterns are available.");
+          ":'), or borrow it with 'auto& " + binding->name().lexeme + "'.");
       diagnostics.emplace_back(std::move(diagnostic));
       return std::nullopt;
     }
+    const SemanticType bindingType =
+        binding->isReferencePattern()
+            ? SemanticType::referenceTo(payloadType, binding->isMutablePattern()
+                                                         ? AccessMode::Mutable
+                                                         : AccessMode::ReadOnly)
+            : payloadType;
     result.bindings.push_back(
         {.name = &binding->name(),
          .source = binding,
-         .binding = bindingInfo(payloadType, AccessMode::ReadOnly),
+         .binding = bindingInfo(bindingType, binding->isMutablePattern()
+                                                 ? AccessMode::Mutable
+                                                 : AccessMode::ReadOnly),
          .payloadIndex = index});
   }
   return result;
