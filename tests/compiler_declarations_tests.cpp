@@ -8420,9 +8420,13 @@ Result main() {
   const std::size_t concreteAliasUse = source.find("IntBox::value_type");
   const auto concreteAliasDefinition =
       queries.definition(frontend, unit, concreteAliasUse + 9);
+  const auto concreteAliasHover =
+      queries.hover(frontend, unit, concreteAliasUse + 9);
   const auto qualifierDefinition =
       queries.definition(frontend, unit, concreteAliasUse + 1);
-  expect(concreteAliasDefinition && qualifierDefinition &&
+  expect(concreteAliasDefinition && qualifierDefinition && concreteAliasHover &&
+             concreteAliasHover->signature ==
+                 "using Box::value_type = int32_t" &&
              concreteAliasDefinition->target.start ==
                  source.find("value_type = stored_type") &&
              qualifierDefinition->target.start == source.find("IntBox ="),
@@ -8511,6 +8515,69 @@ int main() {
              completionAlias->detail == "using Traits::value_type = int32_t",
          "qualified completion should expose accessible class-scoped type "
          "aliases with canonical GTI details");
+
+  const auto completeAlias = [](const std::string &source) {
+    return lang::LanguageQueries().complete(
+        {.entryPath = "concrete-alias-completion.gti",
+         .source = source,
+         .byteOffset = source.rfind("val") + 3});
+  };
+  const std::string concreteCompletionSource = R"(
+class Box<T> {
+  using value_hidden = T;
+public:
+  using value_type = T;
+};
+using Concrete = Box<int>;
+using Partial = Concrete::val;
+int main() { return 0; }
+)";
+  const auto concreteCompletion = completeAlias(concreteCompletionSource);
+  const auto concreteCandidate = std::find_if(
+      concreteCompletion.candidates.begin(),
+      concreteCompletion.candidates.end(),
+      [](const auto &candidate) { return candidate.label == "value_type"; });
+  expect(
+      concreteCandidate != concreteCompletion.candidates.end() &&
+          concreteCandidate->kind == lang::CompletionCandidateKind::TypeAlias &&
+          concreteCandidate->detail == "using Concrete::value_type = int32_t" &&
+          std::none_of(concreteCompletion.candidates.begin(),
+                       concreteCompletion.candidates.end(),
+                       [](const auto &candidate) {
+                         return candidate.label == "value_hidden";
+                       }),
+      "concrete alias completion should substitute member types and retain "
+      "private filtering");
+  const auto nestedCompletion = completeAlias(R"(
+struct Inner<T> { using value_type = T; };
+struct Outer<T> { using nested_type = Inner<T>; };
+using Concrete = Outer<uint64_t>;
+using Partial = Concrete::nested_type::val;
+int main() { return 0; }
+)");
+  expect(std::any_of(
+             nestedCompletion.candidates.begin(),
+             nestedCompletion.candidates.end(),
+             [](const auto &candidate) {
+               return candidate.label == "value_type" &&
+                      candidate.detail ==
+                          "using Concrete::nested_type::value_type = uint64_t";
+             }),
+         "chained concrete alias completion should preserve every owner "
+         "substitution");
+  const auto hiddenCompletion = completeAlias(R"(
+struct Inner<T> { using value_type = T; };
+class Outer<T> { using hidden = Inner<T>; };
+using Concrete = Outer<int>;
+using Partial = Concrete::hidden::val;
+int main() { return 0; }
+)");
+  expect(std::none_of(hiddenCompletion.candidates.begin(),
+                      hiddenCompletion.candidates.end(),
+                      [](const auto &candidate) {
+                        return candidate.label == "value_type";
+                      }),
+         "qualified completion must not bypass a private intermediate alias");
 
   auto invalidTokens = lexer.scan(R"(
 using First = Second;

@@ -3629,6 +3629,26 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path)
   }
   const NamePath ownerPath(
       std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
+  std::optional<ClassId> completionOwner =
+      resolveClassPath(ownerPath, currentNamespace);
+  std::optional<SemanticType> specializedOwner;
+  if (!completionOwner) {
+    if (const auto alias = resolveTypeAliasPath(ownerPath, currentNamespace)) {
+      if (!validateTypeAliasAccess(*alias, ownerPath.last())) {
+        semanticModel.recordCompletion(std::move(context));
+        return;
+      }
+      const SemanticType selected = substituteType(
+          alias->type,
+          GenericSubstitution{.types = instanceTypeSubstitution,
+                              .values = instanceValueSubstitution});
+      if (selected.kind == SemanticType::Class && selected.classId != 0 &&
+          selected.classId <= classes.size()) {
+        completionOwner = selected.classId;
+        specializedOwner = selected;
+      }
+    }
+  }
   if (const std::optional<EnumId> owner =
           resolveEnumPath(ownerPath, currentNamespace)) {
     context.kind = SemanticCompletionKind::Enum;
@@ -3644,18 +3664,29 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path)
            .scopeDistance = 0,
            .enumType = *owner});
     }
-  } else if (const std::optional<ClassId> owner =
-                 resolveClassPath(ownerPath, currentNamespace)) {
+  } else if (const std::optional<ClassId> owner = completionOwner) {
     context.kind = SemanticCompletionKind::Member;
     const ClassInfo &classType = classInfo(*owner);
+    const GenericSubstitution substitution =
+        specializedOwner ? classSubstitution(*specializedOwner)
+                         : GenericSubstitution{};
+    const auto candidateDetail = [&](const std::string &name,
+                                     const SemanticType &type) {
+      return specializedOwner ? "using " + pathSpelling(ownerPath) +
+                                    "::" + name + " = " + typeSpelling(type)
+                              : std::string{};
+    };
     std::unordered_set<std::string> seenTypeAliases;
     for (const auto &[name, alias] : classType.typeAliases) {
+      const SemanticType selectedType =
+          substituteType(alias.type, substitution);
       if ((alias.access == AccessModifier::Private &&
            currentClass != alias.ownerClass) ||
-          (!classType.genericParameters.empty() && currentClass != *owner) ||
+          (!specializedOwner && !classType.genericParameters.empty() &&
+           currentClass != *owner) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
            (alias.compilerPrivate ||
-            semanticModel.isCompilerPrivateType(alias.type)))) {
+            semanticModel.isCompilerPrivateType(selectedType)))) {
         continue;
       }
       context.candidates.push_back(
@@ -3663,7 +3694,8 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path)
            .name = name,
            .qualifiedName = qualifiedName(classType.namespaceScope,
                                           classType.name.lexeme + "::" + name),
-           .type = alias.type,
+           .detail = candidateDetail(name, selectedType),
+           .type = selectedType,
            .scopeDistance = 0,
            .typeAlias = alias.declaration,
            .symbol = symbolForDeclaration(alias.declaration->name()),
@@ -3672,29 +3704,36 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path)
     }
     for (TypeAliasId id = 1; id <= typeAliases.size(); ++id) {
       const RegisteredTypeAlias &alias = typeAliases[id - 1];
+      const SemanticType selectedType =
+          substituteType(alias.type, substitution);
       if (alias.ownerClass != *owner ||
           alias.resolution != TypeAliasResolution::Resolved ||
           !seenTypeAliases.insert(alias.declaration->name().lexeme).second ||
           (alias.access == AccessModifier::Private &&
            currentClass != alias.ownerClass) ||
-          (!classType.genericParameters.empty() && currentClass != *owner) ||
+          (!specializedOwner && !classType.genericParameters.empty() &&
+           currentClass != *owner) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
            (alias.compilerPrivate ||
-            semanticModel.isCompilerPrivateType(alias.type)))) {
+            semanticModel.isCompilerPrivateType(selectedType)))) {
         continue;
       }
       context.candidates.push_back(
           {.kind = SemanticCompletionCandidateKind::TypeAlias,
            .name = alias.declaration->name().lexeme,
            .qualifiedName = alias.qualifiedName,
-           .type = alias.type,
+           .detail =
+               candidateDetail(alias.declaration->name().lexeme, selectedType),
+           .type = selectedType,
            .scopeDistance = 0,
            .typeAlias = alias.declaration,
            .symbol = symbolForDeclaration(alias.declaration->name()),
            .compilerPrivate = alias.compilerPrivate});
     }
     for (const auto &[name, member] : classType.members) {
-      if (!member.symbol.staticMember ||
+      // Alias qualification currently names type members, not static values.
+      // Do not advertise a spelling that ordinary symbol lookup cannot use.
+      if (specializedOwner || !member.symbol.staticMember ||
           (member.access == AccessModifier::Private &&
            currentClass != member.symbol.ownerClass)) {
         continue;
