@@ -16174,6 +16174,113 @@ int main() {
 }
 
 void testFallibleBorrows() {
+  const auto nestedPath = std::filesystem::path(__FILE__).parent_path() /
+                          "fixtures/fallible_nested_borrow.gti";
+  std::ifstream nestedInput(nestedPath);
+  const std::string nestedSource{std::istreambuf_iterator<char>(nestedInput),
+                                 {}};
+  const auto nested =
+      analyzeTrustedPreludeFixture("fallible-nested-borrow.gti", nestedSource);
+  expect(nested.canGenerateCode() && lang::verifyMirProgram(nested.mir).valid(),
+         "fallible read-only results should preserve mutable-receiver and "
+         "nested-carrier origins");
+  if (nested.canGenerateCode()) {
+    std::size_t returnLoans = 0;
+    bool checkedRuntimePlace = false;
+    for (const auto &function : nested.mir.functionInstances()) {
+      if (function.returnType.kind != lang::SemanticType::Expected)
+        continue;
+      for (const auto &loan : function.body.loans) {
+        if (loan.kind != lang::MirLoanKind::Return || !loan.escapes)
+          continue;
+        ++returnLoans;
+        expect(loan.access == lang::AccessMode::ReadOnly,
+               "a fallible reference success must not inherit mutable receiver "
+               "access");
+        auto wrongAccess = nested.mir;
+        auto *body = lang::findMirBody(
+            wrongAccess, {lang::MirBodyKind::Function, function.id});
+        body->loans[loan.id - 1].access = lang::AccessMode::Mutable;
+        expect(!lang::verifyMirProgram(wrongAccess).valid(),
+               "fallible borrowed returns reject a forged mutable publication "
+               "capability");
+      }
+      for (const auto &block : function.body.blocks) {
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Borrow ||
+              instruction.operands.size() != 1 ||
+              instruction.operands.front().kind != lang::MirOperandKind::Loan ||
+              instruction.operands.front().place == 0)
+            continue;
+          const auto *place =
+              function.body.findPlace(instruction.operands.front().place);
+          if (place == nullptr || place->projections.size() != 3)
+            continue;
+          checkedRuntimePlace = true;
+          auto wrongReferent = nested.mir;
+          auto *body = lang::findMirBody(
+              wrongReferent, {lang::MirBodyKind::Function, function.id});
+          body->places[place->id - 1].projections.front().field = 0;
+          expect(!lang::verifyMirProgram(wrongReferent).valid(),
+                 "fallible nested-carrier return must retain the exact "
+                 "designated runtime field path");
+        }
+      }
+    }
+    expect(returnLoans == 2 && checkedRuntimePlace,
+           "cross-feature fixture must publish both return loans and its "
+           "nested referent projection");
+    bool checkedCopiedCarrier = false;
+    for (const auto &constructor : nested.mir.constructorInstances()) {
+      for (const auto &loan : constructor.body.loans) {
+        if (loan.kind != lang::MirLoanKind::Stored || !loan.escapes ||
+            loan.storedField == 0)
+          continue;
+        for (const auto &block : constructor.body.blocks) {
+          for (const auto &instruction : block.instructions) {
+            if (instruction.kind != lang::MirInstructionKind::Borrow ||
+                instruction.loan != loan.id ||
+                instruction.operands.size() != 1 ||
+                instruction.operands.front().kind != lang::MirOperandKind::Loan)
+              continue;
+            checkedCopiedCarrier = true;
+            auto missingCarrier = nested.mir;
+            auto *body = lang::findMirBody(
+                missingCarrier,
+                {lang::MirBodyKind::Constructor, constructor.id});
+            for (auto &changedBlock : body->blocks)
+              for (auto &changed : changedBlock.instructions)
+                if (changed.id == instruction.id)
+                  changed.operands.front().value = 0;
+            expect(!lang::verifyMirProgram(missingCarrier).valid(),
+                   "copied nested carrier publication must identify its exact "
+                   "initialized class value");
+          }
+        }
+      }
+    }
+    expect(checkedCopiedCarrier,
+           "fallible fixture exercises a generated nested carrier copy");
+    expect(!gti_test::emitCppText(nested).empty(),
+           "fallible nested-carrier and mutable-receiver results must reach "
+           "the native backend");
+  }
+  const auto shellEscape =
+      analyzeTrustedPreludeFixture("fallible-carrier-shell.gti", R"(
+enum class Error { missing };
+struct View { int& item; View(int& item) : item(item) {} };
+struct Envelope {
+  View view;
+  int shell = 5;
+  Envelope(View view) : view(view) {}
+};
+expected<int&, Error> bad(Envelope owner) { return owner.shell; }
+int main() { return 0; }
+)");
+  expect(!shellEscape.canGenerateCode() &&
+             hasDiagnosticCode(shellEscape.diagnostics, "GTI-S2085"),
+         "fallible returns cannot substitute a same-typed local carrier field "
+         "for its external referent");
   const lang::FrontendResult frontend =
       analyzeTrustedPreludeFixture("fallible-borrows.gti", R"(
 enum class lookup_errc { missing };
@@ -16447,18 +16554,17 @@ int main() {
   return 0;
 }
 )");
-  expect(
-      !forbiddenStorage.canGenerateCode() &&
-          hasDiagnostic(forbiddenStorage.diagnostics,
-                        "cannot have global or static storage duration") &&
-          hasDiagnostic(forbiddenStorage.diagnostics,
-                        "Borrowed state cannot be nested in another field") &&
-          hasDiagnostic(forbiddenStorage.diagnostics,
-                        "Function parameters cannot nest borrowed state") &&
-          hasDiagnostic(forbiddenStorage.diagnostics,
-                        "Lambda return types cannot carry borrowed state"),
-      "fallible borrows should remain local return values rather than "
-      "escaping through fields, globals, parameters, or lambdas");
+  expect(!forbiddenStorage.canGenerateCode() &&
+             hasDiagnostic(forbiddenStorage.diagnostics,
+                           "cannot have global or static storage duration") &&
+             hasDiagnostic(forbiddenStorage.diagnostics,
+                           "through direct or nested nominal fields") &&
+             hasDiagnostic(forbiddenStorage.diagnostics,
+                           "Function parameters cannot nest borrowed state") &&
+             hasDiagnostic(forbiddenStorage.diagnostics,
+                           "Lambda return types cannot carry borrowed state"),
+         "fallible borrows should remain local return values rather than "
+         "escaping through fields, globals, parameters, or lambdas");
 
   const std::string unsupportedSource = R"(
 enum class lookup_errc { missing };

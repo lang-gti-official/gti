@@ -3976,6 +3976,9 @@ auto SemanticVisitor::Impl::validateStoredCarrierReturnSource(
       function.returnType.arguments.size() == 1) {
     resultReferent = function.returnType.arguments.front();
     required = StoredCarrierReturnProvenance::ExternalReferent;
+  } else if (isFallibleBorrowType(function.returnType)) {
+    resultReferent = fallibleBorrowReferent(function.returnType);
+    required = StoredCarrierReturnProvenance::ExternalReferent;
   } else if (isDirectStoredReferenceType(function.returnType)) {
     resultReferent = storedReferenceReferent(function.returnType);
     required = StoredCarrierReturnProvenance::CarrierValue;

@@ -565,6 +565,10 @@ same-typed unrelated field substitutes for the external owner. A projected
 receiver can inherit this dependency only along the verified reference-bearing
 path. Backend projection spelling follows those typed fields and represents
 the final reference dereference without reconstructing ownership.
+For a cleanup-free, generated-copy read-only carrier parameter, native member
+initialization may copy that shell only when the copy binding also proves its
+exact entry-to-field `Stored` publication. The same proof admits the parameter's
+representation slot; it does not turn the by-value shell into the referent.
 
 The bounded mutable-carrier extension reuses this explicit loan vocabulary
 rather than adding backend-only lifetime inference. A mutable parameter or
@@ -606,6 +610,11 @@ alternative. A direct local success initialization consumes one exact Loan
 operand whose place names the runtime `T` and whose loan names the protected
 owner. Verification admits only the read-only specialization, exact types,
 one carrier, non-widened access, and immediate source-loan retirement.
+The success loan always uses read-only access, including when the enclosing
+method has a mutable receiver. A by-value nominal carrier parameter can provide
+that success through its one exact designated reference path; the Return
+operand retains both the external owner loan and the separately verified
+runtime field/dereference place, never the carrier shell's address.
 
 Version 50 adds a bounded two-phase mutable loan for source-defined plain
 subscript and dereference stores rooted in a local, parameter, receiver, or

@@ -21,6 +21,11 @@ expected<void, std::string_view> initialise(bool fail) {
 }
 ```
 
+Wrapping a success value preserves its ordinary ownership rules: returning a
+named move-only payload requires `return std::move(payload);`. Returning a fresh
+value directly is also permitted. The expected wrapper does not introduce an
+implicit copy or an implicit move.
+
 Expected values follow the C++ observer model:
 
 ```gti

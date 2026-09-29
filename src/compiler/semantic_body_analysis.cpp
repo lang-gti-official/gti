@@ -2182,8 +2182,8 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     validateOwnerDependentTextReturn(valueType, stmt.value());
   }
   if (!isOwnershipAssignable(currentReturnType, valueType, stmt.value())) {
-    if (isMoveOnlyOwnerType(currentReturnType) &&
-        currentReturnType == valueType) {
+    if (isMoveOnlyOwnerType(valueType) &&
+        isAssignable(currentReturnType, valueType, stmt.value().get())) {
       const Variable *returned = movedVariable(stmt.value());
       const Symbol *returnedSymbol =
           returned == nullptr ? nullptr : resolve(returned->name());
@@ -2424,6 +2424,9 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                 "A mutable payload pattern requires a mutable enum receiver.",
                 "GTI-S2067");
           } else if (Symbol *carrier = resolveMutable(*payload.name)) {
+            if (access == AccessMode::Mutable) {
+              recordMutableBindingUse(stmt.expression());
+            }
             SemanticLoanId parent = 0;
             if (const auto source = retainedLoanSource(stmt.expression()))
               parent = source->loan;

@@ -1,9 +1,6 @@
 {
   "schema_version": 1,
   "tests": [
-    {"name": "testUninstantiatedGenericSignatureClosure", "suite": "declarations"},
-    {"name": "testDependentTypeDefaultConstraints", "suite": "declarations"},
-    {"name": "testDependentCarrierRepresentationClosure", "suite": "declarations"},
     {
       "name": "testDefiniteReturnAnalysis",
       "suite": "frontend"
@@ -117,6 +114,14 @@
       "suite": "declarations"
     },
     {
+      "name": "testUninstantiatedGenericSignatureClosure",
+      "suite": "declarations"
+    },
+    {
+      "name": "testDependentCarrierRepresentationClosure",
+      "suite": "declarations"
+    },
+    {
       "name": "testExactQualifiedClassSpecializations",
       "suite": "declarations"
     },
@@ -158,6 +163,10 @@
     },
     {
       "name": "testValueGenerics",
+      "suite": "declarations"
+    },
+    {
+      "name": "testDependentTypeDefaultConstraints",
       "suite": "declarations"
     },
     {
@@ -282,6 +291,10 @@
     },
     {
       "name": "testNestedMemberReferenceReturnForwarding",
+      "suite": "ownership"
+    },
+    {
+      "name": "testProjectedAccessorReturnLoanOrder",
       "suite": "ownership"
     },
     {

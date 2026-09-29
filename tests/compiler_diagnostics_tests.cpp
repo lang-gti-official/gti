@@ -191,6 +191,66 @@ std::string return_named(std::string result) {
       "spell the exact ownership transfer without offering an "
       "intent-changing edit");
 
+  const std::string expectedReturnSource = R"(
+#include <std/string>
+enum class error { failed };
+expected<std::string, error> value() {
+  std::string text = std::string("tea");
+  return text;
+}
+int main() { return 0; }
+)";
+  const lang::FrontendResult expectedReturned = lang::Frontend().analyze(
+      "move-only-expected-return.gti", expectedReturnSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const lang::Diagnostic *expectedCopy =
+      findDiagnosticByCode(expectedReturned.diagnostics, "GTI-S2003");
+  const std::size_t expectedName =
+      expectedReturnSource.find("return text") + std::string("return ").size();
+  expect(!expectedReturned.canGenerateCode() && expectedCopy != nullptr &&
+             expectedCopy->primary.source ==
+                 std::filesystem::absolute("move-only-expected-return.gti")
+                     .lexically_normal()
+                     .string() &&
+             expectedCopy->primary.start == expectedName &&
+             expectedCopy->primary.end == expectedName + 4 &&
+             expectedCopy->message ==
+                 "Cannot return 'text' by copy because type 'std::string' "
+                 "is move-only." &&
+             expectedCopy->hints ==
+                 std::vector<std::string>{"Use 'return std::move(text);' to "
+                                          "transfer ownership."} &&
+             expectedCopy->fixes.empty(),
+         "wrapping a named success payload must diagnose its attempted copy "
+         "before backend admission, with the same exact ownership hint");
+  std::string nestedReturnSource = expectedReturnSource;
+  nestedReturnSource.replace(
+      nestedReturnSource.find("expected<std::string, error>"),
+      std::string("expected<std::string, error>").size(),
+      "expected<expected<std::string, error>, error>");
+  const auto nestedReturned = lang::Frontend().analyze(
+      "nested-expected-return.gti", nestedReturnSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const auto *nestedCopy =
+      findDiagnosticByCode(nestedReturned.diagnostics, "GTI-S2003");
+  expect(!nestedReturned.canGenerateCode() && nestedCopy != nullptr &&
+             nestedCopy->message == expectedCopy->message &&
+             nestedCopy->hints == expectedCopy->hints &&
+             nestedCopy->primary.start ==
+                 nestedReturnSource.find("return text") +
+                     std::string("return ").size(),
+         "nested expected success conversions cannot bypass payload ownership");
+  for (const std::string replacement :
+       {"std::move(text)", "std::string(\"tea\")"}) {
+    std::string valid = expectedReturnSource;
+    valid.replace(expectedName, 4, replacement);
+    const lang::FrontendResult accepted = lang::Frontend().analyze(
+        "owned-expected-success.gti", valid, {standardLibraryPrelude()}, {},
+        {standardLibraryRoot()});
+    expect(accepted.canGenerateCode(),
+           "explicitly moved and fresh success payloads remain legal");
+  }
+
   const std::string missingSource = "using values = std::vector<int>;\n";
   const lang::FrontendResult missing = lang::Frontend().analyze(
       "missing-vector-include.gti", missingSource, {standardLibraryPrelude()},
@@ -695,6 +755,22 @@ int main() {
          "mutable-reference arguments, mutable address-taking, and mutable "
          "receivers, field writes, and indexed writes should each preserve a "
          "required local mut qualifier");
+
+  const auto payloadBorrow =
+      lang::Frontend().analyze("mutable-payload-advisory.gti", R"(
+enum class Data { some(int item), none };
+int main() {
+  mut Data input = Data::some(3);
+  switch (input) {
+    case Data::some(mut auto& item): item = 7; return item;
+    case Data::none: return 0;
+  }
+}
+)");
+  expect(payloadBorrow.canGenerateCode() &&
+             countDiagnosticCode(payloadBorrow.diagnostics, "GTI-S2096") == 0,
+         "a mutable payload borrow requires its enum owner's mut qualifier "
+         "and must not offer an invalid removal fix");
 }
 
 void testPrintIsAnIdentifier() {

@@ -2670,6 +2670,16 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
         } else if (instance.returnType.kind == SemanticType::Reference &&
                    instance.returnType.arguments.size() == 1) {
           resultReferent = instance.returnType.arguments.front();
+        } else if (instance.returnType.kind == SemanticType::Expected &&
+                   instance.returnType.arguments.size() == 2 &&
+                   instance.returnType.arguments.front().kind ==
+                       SemanticType::Reference &&
+                   instance.returnType.arguments.front().referenceAccess ==
+                       AccessMode::ReadOnly &&
+                   instance.returnType.arguments.front().arguments.size() ==
+                       1) {
+          resultReferent =
+              instance.returnType.arguments.front().arguments.front();
         } else if (const std::optional<SemanticType> returnedCarrier =
                        [&]() -> std::optional<SemanticType> {
                      const auto carrier = findStoredCarrierReference(
@@ -2806,9 +2816,19 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
           block.id);
     }
     if (storedCarrierReference || dynamicTextCarrier) {
+      const bool fallibleReference =
+          instance.returnType.kind == SemanticType::Expected &&
+          instance.returnType.arguments.size() == 2 &&
+          instance.returnType.arguments.front().kind ==
+              SemanticType::Reference &&
+          instance.returnType.arguments.front().referenceAccess ==
+              AccessMode::ReadOnly &&
+          instance.returnType.arguments.front().arguments.size() == 1;
       const SemanticType expectedPayload =
           instance.returnType.kind == SemanticType::Reference
               ? instance.returnType.arguments.front()
+          : fallibleReference
+              ? instance.returnType.arguments.front().arguments.front()
               : instance.returnType;
       const MirInstruction *transfer = nullptr;
       for (const MirBlock &candidateBlock : body.blocks) {
@@ -2850,7 +2870,8 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
             "dependency payload type",
             block.id);
       }
-      if (instance.returnType.kind == SemanticType::Reference) {
+      if (instance.returnType.kind == SemanticType::Reference ||
+          fallibleReference) {
         const MirOperand &published = transfer->operands.front();
         const MirPlace *runtime = body.findPlace(published.place);
         const bool exactDesignatedReferent =

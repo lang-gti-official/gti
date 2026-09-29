@@ -8278,12 +8278,25 @@ private:
         // runtime address and the owner's semantic dependency separately.
         // Publish a fresh Return loan so body-local cleanup can retire the
         // source loan before the pointer is wrapped at the ABI boundary.
-        MirOperand borrow = referenceOperand(*statement.value);
+        MirOperand borrow =
+            referenceOperand(*statement.value, 0, AccessMode::ReadOnly);
         if (borrow.loan == 0 || borrow.loan > output.loans.size()) {
           valid = false;
           return;
         }
         const MirLoan retainedLoan = output.loans[borrow.loan - 1];
+        if (retainedLoan.kind == MirLoanKind::Stored && retainedLoan.entry &&
+            !retainedLoan.designatedFields.empty()) {
+          // A by-value carrier's loan protects its external owner, not its
+          // shell. Preserve the exact designated runtime referent separately
+          // just as for an ordinary reference return.
+          borrow.place = placeForValue(*statement.value);
+          const MirPlace *runtime = output.findPlace(borrow.place);
+          if (runtime == nullptr || runtime->type != *fallibleReferent) {
+            valid = false;
+            return;
+          }
+        }
         const MirLoanId published =
             createLoan(MirLoanKind::Return, retainedLoan.source,
                        retainedLoan.access, *statement.value);
@@ -8298,6 +8311,7 @@ private:
         removeLoanFromState(borrow.loan, scopes, bindingLoans);
         output.loans[published - 1].escapes = true;
         result = MirOperand{.kind = MirOperandKind::Loan,
+                            .place = borrow.place,
                             .loan = published,
                             .type = *fallibleReferent};
         returnLoan = published;
