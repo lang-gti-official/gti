@@ -1,0 +1,61 @@
+#include <std/unordered_map>
+#include <std/functional>
+
+class CollisionHash {
+public:
+  std::size_t operator()(int& key) { return 1; }
+};
+
+int main() {
+  mut std::unordered_map<int, int> basic{};
+  if (!basic.empty() || basic.size() != 0) { return 1; }
+  for (mut int key = 0; key < 40; key++) {
+    auto inserted = basic.insert(key, key * 3);
+    if (!inserted.second) { return 2; }
+  }
+  basic.reserve(std::size_t(100));
+  basic.rehash(std::size_t(80));
+  for (mut int key = 0; key < 40; key++) {
+    if (!basic.contains(key) || basic.at(key) != key * 3) { return 3; }
+  }
+  int existing = 17;
+  if (basic.count(existing) != 1 || basic.bucket_count() < 80 ||
+      basic.load_factor() > basic.max_load_factor()) { return 13; }
+  {
+    auto duplicate = basic.insert(existing, 900);
+    if (duplicate.second || duplicate.first->second != 51) { return 4; }
+  }
+  {
+    auto assigned = basic.insert_or_assign(existing, 900);
+    if (assigned.second || assigned.first->second != 900) { return 5; }
+  }
+  for (mut int key = 0; key < 40; key += 2) {
+    if (basic.erase(key) != 1 || basic.erase(key) != 0) { return 6; }
+  }
+  for (mut int key = 40; key < 60; key++) {
+    auto inserted = basic.insert(key, key * 3);
+    if (!inserted.second) { return 7; }
+  }
+  if (basic.size() != 40) { return 8; }
+
+  mut std::unordered_map<int, int, CollisionHash> collision{};
+  for (mut int key = 0; key < 12; key++) {
+    [[discard]] collision.insert(key, key);
+  }
+  if (collision.bucket_size(collision.bucket(existing)) != 12) { return 14; }
+  for (mut int key = 1; key < 12; key += 2) {
+    if (collision.erase(key) != 1) { return 9; }
+  }
+  collision.rehash(std::size_t(32));
+  for (mut int key = 0; key < 12; key += 2) {
+    if (!collision.contains(key) || collision.at(key) != key) { return 10; }
+  }
+  collision.clear();
+  if (!collision.empty()) { return 11; }
+  [[discard]] collision.insert(42, 24);
+  int final_key = 42;
+  if (collision.at(final_key) != 24) { return 12; }
+  std::unordered_map<int, int> reserved = std::unordered_map<int, int>(std::size_t(30));
+  if (reserved.bucket_count() < 30 || !reserved.empty()) { return 15; }
+  return 0;
+}

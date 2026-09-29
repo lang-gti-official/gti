@@ -378,44 +378,4 @@ namespace std {
     return T(left / T(2) + right / T(2));
   }
 
-  namespace detail {
-    std::size_t multiply_shift_hash(uint64_t& value, uint64_t l) {
-      // Must be odd so multiplication is a permutation of uint64_t values.
-      constexpr uint64_t multiplier = uint64_t(11400714819323198485);
-      auto product = std::wrapping_mul(multiplier, value);
-      return product >> (64 - l);
-    }
-  }
 }
-
-class std::hash<uint64_t> {
-public:
-  hash() {}
-  std::size_t operator()(uint64_t& value) {
-    return detail::multiply_shift_hash(value, uint64_t(64));
-  }
-};
-
-class std::hash<uint32_t> {
-public:
-  hash() {}
-  std::size_t operator()(uint64_t& value) {
-    return detail::multiply_shift_hash(value, uint64_t(32));
-  }
-};
-
-class std::hash<uint16_t> {
-public:
-  hash() {}
-  std::size_t operator()(uint64_t& value) {
-    return detail::multiply_shift_hash(value, uint64_t(16));
-  }
-};
-
-class std::hash<uint8_t> {
-public:
-  hash() {}
-  std::size_t operator()(uint64_t& value) {
-    return detail::multiply_shift_hash(value, uint64_t(8));
-  }
-};

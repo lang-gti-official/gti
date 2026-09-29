@@ -85,7 +85,9 @@ The current implemented foundation includes:
   referent is `char`, indexed half-open range copying, front/back and mutable
   checked access, resize, owner-tied `c_string()` and checked
   `try_c_string()` NUL-terminated views,
-  shrink-to-fit, pop-back, and
+  shrink-to-fit, pop-back, equality and lexicographic relational comparisons
+  against strings or counted string views (unsigned code-unit order, including
+  embedded NULs; no locale or Unicode collation), and
   source-defined base-10 `std::to_string` conversion for every fixed-width
   integer, plus `print`/`println` traversal through either a read-only borrow
   of a named owner or direct ownership transfer from a fresh string result;
@@ -99,6 +101,10 @@ The current implemented foundation includes:
 - `std::forward_list<T>` as a move-only linked owner with constant-time front
   access/push/pop, iterative clear, resize, reverse, stable merge/sort, removal,
   and adjacent uniqueness; and
+- `<std/map>` `std::map<K, V, Compare = std::less<K>>` and
+  `<std/unordered_map>` `std::unordered_map<K, V, Hash = std::hash<K>,
+  KeyEqual = std::equal_to<K>>` as move-only owning dictionaries with checked
+  owner-tied iteration and nested-borrow insertion results; and
 - `<std/iterator>` public `std::input_iterator<I>`,
   `std::sentinel_for<S, I>`, `std::dereferences_to<I, T>`, and
   `std::forward_iterator<I>` concepts over exact private structural and
@@ -147,8 +153,10 @@ The current implemented foundation includes:
   iterator-aware indirect predicate/operation, and nullary `once_action`
   concepts; consuming `invoke_once`; and source-defined `less<T>`,
   `greater<T>`, `equal_to<T>`, and `not_equal_to<T>` function objects over the
-  corresponding exact comparison concepts. `hash<T>` remains a customization
-  scaffold. Source-defined owning callable classes provide
+  corresponding exact comparison concepts. Exact `hash<T>` specializations
+  support fixed-width signed/unsigned integers (including their aliases),
+  `bool`, and `char`; `<std/string>` additionally supplies `hash<std::string>`.
+  Source-defined owning callable classes provide
   `std::function<R(Args...)>` and `std::move_only_function<R(Args...)>` for
   repeatable read-only targets with value, read-only reference, or mutable
   reference arguments (for example, `std::function<void(mut int&)>`).
@@ -372,6 +380,52 @@ ordinary GTI fields. Compiler-private capabilities may supply unique ownership
 or partially initialized storage without exposing raw addresses, manual
 deallocation, logical size, or capacity policy as public language state.
 
+### Associative Containers
+
+`map` uses an AVL tree; `unordered_map` uses bucket chains and cached hashes.
+Both implementations are ordinary GTI with owned nodes and checked slot-index
+links. Keys are immutable after insertion; mapped values remain mutable through
+an exclusive iterator or reference. A retained iterator or element reference
+protects the whole container against conflicting access; these APIs do not
+promise C++'s more permissive node-invalidation rules.
+
+Both expose `key_type`, `mapped_type`, `value_type`, `size_type`, `iterator`, and
+`const_iterator`, along with `size`, `empty`, `contains`, `count`, `at`, `find`,
+`find_mut`, `begin`, `begin_mut`, `end`, `erase(key)`, and `clear`. `end()` is a
+distinct sentinel. Read-only traversal permits shared aliases; mutable
+traversal carries one exclusive dependency. `map` additionally provides
+`lower_bound` and `upper_bound`. `unordered_map` provides `reserve`, `rehash`,
+`bucket_count`, `load_factor`, and read/write `max_load_factor`; a new finite,
+positive maximum applies to later growth/reserve/rehash without immediately
+rehashing existing elements.
+
+Name a specialized member type through a concrete alias, for example
+`using Dictionary = std::map<int, int>;` followed by `Dictionary::iterator`.
+
+`insert(key, value)`, `insert_or_assign(key, value)`, `emplace(key, args...)`,
+and `try_emplace(key, args...)` return `std::pair<iterator, bool>`. `first`
+identifies the existing or inserted element, and `second` reports whether an
+element was inserted. This is ordinary nested borrowed storage: retaining the
+pair protects its owner, moving the pair transfers that protection, and copying
+its exclusive iterator is rejected. `try_emplace` does not construct a mapped
+value on a duplicate key. `get_or_insert(key)` requires a default-initializable
+mapped type and returns a mutable reference, inserting a default value only
+when absent. The current API does not expose insertion through `operator[]`:
+the general operator requirements model cannot yet express that conditional
+default-construction requirement.
+
+`at` on a missing key raises `GTI-R0015` (`key_not_found`). Invalid sentinel
+dereference/increment and invalid load-factor arguments raise `GTI-R0016`
+(`invalid_container_argument`). These are defined failures with ordinary
+cleanup, not native undefined behavior. The comparator, hash and equality
+policies must be read-callable with the exact required result (`bool` or
+`size_t`). Equality and hashing must agree; ordered comparison must define a
+strict weak ordering. Stateful policies may be passed to the constructors.
+See [`86-associative-containers.gti`](../../examples/86-associative-containers.gti)
+for insertion-result movement and scoped mutable access.
+
+### Sequential Storage
+
 `vector::swap`, `string::swap`, and `forward_list::swap` exchange their owned
 storage in constant time without allocation or copying, moving, or destroying
 elements. Vector and string capacities follow the exchanged storage; sizes and
@@ -530,13 +584,24 @@ owner, weak owner, or general unsafe memory API. The typed
 `std::allocator`/`std::storage<T>` pair is intentionally not a raw-memory escape
 hatch.
 
-`<std/functional>` declares the generic customization primary `std::hash<T>`.
+`<std/functional>` declares the non-callable customization primary `std::hash<T>`.
 A package may provide a complete exact specialization for a nominal type it
 owns, such as `class std::hash<Widget> { ... };`; the specialization must expose
-the declared exact call shape. The standard library does not yet provide the
-primitive hash implementations or the public hashability capability needed by
-an associative container. Exact specialization is the customization mechanism,
-not evidence that those library contracts are complete.
+an exact public read-only `std::size_t operator()(Widget&)`. Unspecialized types
+have no hash operation, so a required hash invocation fails during semantic
+analysis rather than native linking. The exact `std::read_callable<Hash, Key,
+std::size_t>` and `std::read_binary_callable<Equal, Key, Key, bool>` relationships
+express hasher and equality requirements without a container-specific compiler
+capability. Key equivalence must imply equal hash values, and both operations
+must remain consistent while keys are stored; this semantic relationship cannot
+be proved from their signatures.
+
+Primitive hashes accept every value, including signed minima and unsigned
+maxima, without checked conversion overflow. `char` hashes its unsigned code
+unit and string hashing includes every byte, including embedded NULs. Hash
+values are lookup implementation details, not a portable serialization format
+or a cryptographic digest. Default hashing of floating-point, scoped-enum,
+pointer, and other unspecialized types is not currently supplied.
 
 ## 7.5 Errors And Failure
 

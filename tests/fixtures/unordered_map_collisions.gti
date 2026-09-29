@@ -1,0 +1,49 @@
+#include <std/unordered_map>
+
+class CollisionHash {
+public:
+  std::size_t operator()(int& value) { return std::size_t(value % 7); }
+};
+
+int main() {
+  mut std::unordered_map<int, int, CollisionHash> values{};
+  mut bool present[128] = {};
+  mut int payload[128] = {};
+  mut uint64_t state = 17;
+  mut std::size_t count = 0;
+  for (mut int step = 0; step < 3000; step++) {
+    state = (state * uint64_t(1664525) + uint64_t(1013904223)) % uint64_t(4294967296);
+    int key = int((state / uint64_t(65536)) % uint64_t(128));
+    std::size_t index = std::size_t(key);
+    if (step % 3 == 0) {
+      std::size_t erased = values.erase(key);
+      if (present[index]) {
+        if (erased != 1) return 1;
+        present[index] = false;
+        count--;
+      } else if (erased != 0) return 2;
+    } else {
+      auto inserted = values.insert_or_assign(key, step);
+      if (inserted.second == present[index]) return 3;
+      if (inserted.second) count++;
+      present[index] = true;
+      payload[index] = step;
+    }
+    if (step % 17 == 0) values.rehash(std::size_t(step % 257));
+    if (step % 97 == 0) values.reserve(std::size_t(step % 521));
+    if (values.size() != count) return 4;
+    mut std::size_t traversed = 0;
+    for (auto& entry : values) {
+      std::size_t slot = std::size_t(entry.first);
+      if (!present[slot] || entry.second != payload[slot]) return 5;
+      traversed++;
+    }
+    if (traversed != count) return 6;
+    for (mut int probe = 0; probe < 128; probe++) {
+      std::size_t slot = std::size_t(probe);
+      if (values.contains(probe) != present[slot]) return 7;
+      if (present[slot] && values.at(probe) != payload[slot]) return 8;
+    }
+  }
+  return 0;
+}

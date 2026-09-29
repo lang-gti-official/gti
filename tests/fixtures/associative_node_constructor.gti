@@ -1,0 +1,24 @@
+struct Entry<K, V> {
+  K first;
+  mut V second;
+  Entry(K key, V value) : first(std::move(key)), second(std::move(value)) {}
+};
+
+struct Node<K, V> {
+  mut Entry<K, V> entry;
+  uint64_t hash;
+  mut uint64_t next;
+  Node(K key, V value, uint64_t hash, uint64_t next)
+      : entry(Entry<K, V>(std::move(key), std::move(value))),
+        hash(hash), next(next) {}
+};
+
+int main() {
+  Node<int, int> node = Node<int, int>(1, 2, uint64_t(3), uint64_t(0));
+  if (node.entry.first != 1 || node.entry.second != 2 ||
+      node.hash != uint64_t(3) || node.next != uint64_t(0)) return 1;
+  Node<uint64_t, int> other = Node<uint64_t, int>(uint64_t(4), 5, uint64_t(6), uint64_t(7));
+  if (other.entry.first != uint64_t(4) || other.entry.second != 5 ||
+      other.hash != uint64_t(6) || other.next != uint64_t(7)) return 2;
+  return 0;
+}

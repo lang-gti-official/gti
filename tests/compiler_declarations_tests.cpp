@@ -2763,6 +2763,80 @@ int main() {
       "family while concrete calls keep their direct representation");
 }
 
+void testUninstantiatedGenericSignatureClosure() {
+  const auto frontend =
+      lang::Frontend().analyze("generic-signature-closure.gti", R"(
+struct Result<T> { T value; };
+class Dormant<T> {
+  Result<char> field = {.value = 'x'};
+public:
+  Dormant(Result<int8_t> input) {}
+  Result<int> result();
+  void accept(Result<bool> input);
+  Result<T> dependent(Result<T> input) { return input; }
+};
+int main() { return 0; }
+)");
+  expect(frontend.canGenerateCode(),
+         "unused generic signatures should reach verified MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  std::size_t concrete = 0;
+  bool dependentOwner = false;
+  for (const auto &instance : frontend.hir.classInstances()) {
+    if (instance.source == nullptr)
+      continue;
+    if (instance.source->name().lexeme == "Result") {
+      ++concrete;
+      expect(instance.typeArguments.size() == 1 &&
+                 instance.typeArguments.front().kind !=
+                     lang::SemanticType::TypeParameter,
+             "only concrete signature components should be instantiated");
+    }
+    dependentOwner |= instance.source->name().lexeme == "Dormant";
+  }
+  expect(concrete == 4 && !dependentOwner,
+         "return, parameter, constructor and field types must close without a "
+         "dependent owner");
+  expect(
+      frontend.hir.functionInstances().size() == 1,
+      "signature discovery must not instantiate an unused generic method body");
+  const auto generated = gti_test::emitCppText(frontend);
+  expect(concreteBackendSymbols(generated, "__gti_type_", "Result").size() == 4,
+         "each concrete declaration signature type must have a representation "
+         "identity");
+}
+
+void testDependentCarrierRepresentationClosure() {
+  const auto frontend = analyzeTrustedPreludeFixture("carrier-closure.gti", R"(
+struct Leaf<T> { T value; Leaf(T value) : value(std::move(value)) {} };
+struct Wrapper<T> { Leaf<T> leaf; Wrapper(T value) : leaf(Leaf<T>(std::move(value))) {} };
+struct Independent<T> { T value; };
+class Owner<T> {
+  using value_type = T;
+public:
+  Owner() {}
+  Wrapper<T> result(T value) { return Wrapper<T>(std::move(value)); }
+  Independent<int> concrete();
+};
+int main() { Owner<int> owner{}; auto value = owner.result(42); return value.leaf.value - 42; }
+)");
+  expect(frontend.canGenerateCode(), "dependent carrier closure must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto generated = gti_test::emitCppText(frontend);
+  expect(
+      concreteBackendSymbols(generated, "__gti_type_", "Owner").empty() &&
+          concreteBackendSymbols(generated, "__gti_type_", "Wrapper").empty() &&
+          concreteBackendSymbols(generated, "__gti_type_", "Leaf").empty(),
+      "dependent owner result and transitive field must share native "
+      "template representation with concrete MIR signatures");
+  expect(
+      concreteBackendSymbols(generated, "__gti_type_", "Independent").size() ==
+          1,
+      "fully concrete signature references must retain direct representation");
+}
+
 void testExactQualifiedClassSpecializations() {
   const std::string source = R"(
 class demo::Value<int> {
@@ -6003,6 +6077,67 @@ int main() { return 0; }
          "an initializer-list colon");
 }
 
+void testDependentTypeDefaultConstraints() {
+  const std::string declarations = R"(
+class Ordered<std::totally_ordered T> {};
+class NotOrdered {};
+class Holder<T, Compare = Ordered<T>> {};
+class Nested<T, Compare = Holder<T>> {};
+class Constrained<T, std::integral U = T> {};
+)";
+  const auto analyze = [&](const std::string &suffix) {
+    return lang::Frontend().analyze(
+        "dependent-type-defaults.gti", declarations + suffix,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  };
+  const auto valid = analyze(R"(
+int main() {
+  Holder<int> ordinary{};
+  Holder<NotOrdered, int> customized{};
+  Nested<int> nested{};
+  Nested<NotOrdered, int> nested_customized{};
+  Constrained<int> constrained{};
+  Constrained<double, int> constrained_customized{};
+  return 0;
+}
+)");
+  expect(valid.canGenerateCode(),
+         "dependent defaults should defer unresolved constraints and an "
+         "explicit argument should bypass an unused default");
+  for (const std::string &suffix :
+       {"int main() { Holder<NotOrdered> value{}; return 0; }",
+        "int main() { Nested<NotOrdered> value{}; return 0; }",
+        "int main() { Constrained<double> value{}; return 0; }",
+        "void consume(Holder<NotOrdered>& value) {}",
+        "class Bad<T, Compare = Ordered<double*>> {};"}) {
+    const auto invalid = analyze(suffix);
+    expect(!invalid.canGenerateCode() &&
+               hasDiagnosticCode(invalid.diagnostics, "GTI-S2029"),
+           "selected dependent defaults and invalid closed defaults must "
+           "retain frontend constraint diagnostics: " +
+               suffix);
+  }
+  const auto ordinaryUse =
+      analyze("class Unconstrained<T> { Ordered<T> value; };\n");
+  expect(!ordinaryUse.canGenerateCode() &&
+             hasDiagnosticCode(ordinaryUse.diagnostics, "GTI-S2029"),
+         "default-only deferral must not weaken ordinary symbolic class "
+         "argument constraints");
+  const auto functionDefault = analyze(R"(
+int choose<T, C = Ordered<T>>(T& value) { return 7; }
+int main() { NotOrdered value{}; return choose<NotOrdered, int>(value) - 7; }
+)");
+  expect(functionDefault.canGenerateCode(),
+         "explicit function generic arguments bypass a dependent default");
+  const auto badFunctionDefault = analyze(R"(
+int choose<T, C = Ordered<T>>(T& value) { return 7; }
+int main() { NotOrdered value{}; return choose(value); }
+)");
+  expect(!badFunctionDefault.canGenerateCode() &&
+             hasDiagnosticCode(badFunctionDefault.diagnostics, "GTI-S2029"),
+         "a selected function default validates nested constraints before HIR");
+}
+
 void testValueGenerics() {
   const std::string source = R"(
 constexpr uint64_t default_array_base = 2;
@@ -8219,6 +8354,7 @@ public:
 
 using IntBox = Box<int>;
 using TraitValue = Traits::value_type;
+using BoxValue = IntBox::value_type;
 using Completion = expected<void, int>;
 using Result = int;
 
@@ -8229,7 +8365,8 @@ Result main() {
   Triple values = {1, 2, 3};
   IntBox box = IntBox(values[1]);
   Traits traits{};
-  TraitValue trait_value = traits.identity(4);
+  BoxValue input = 4;
+  TraitValue trait_value = traits.identity(input);
   Completion completion = complete();
   if (count == 3 and box.get() == 2 and trait_value == 4 and
       completion) { return 0; }
@@ -8280,6 +8417,17 @@ Result main() {
              definition && definition->target.start == aliasDeclaration,
          "class-scoped aliases should participate in shared hover and "
          "definition queries");
+  const std::size_t concreteAliasUse = source.find("IntBox::value_type");
+  const auto concreteAliasDefinition =
+      queries.definition(frontend, unit, concreteAliasUse + 9);
+  const auto qualifierDefinition =
+      queries.definition(frontend, unit, concreteAliasUse + 1);
+  expect(concreteAliasDefinition && qualifierDefinition &&
+             concreteAliasDefinition->target.start ==
+                 source.find("value_type = stored_type") &&
+             qualifierDefinition->target.start == source.find("IntBox ="),
+         "concrete alias qualifiers and their members should retain distinct "
+         "source declaration identities for editor navigation");
 
   const lang::FrontendResult constrainedAlias =
       lang::Frontend().analyze("generic-class-type-alias.gti",
@@ -8298,6 +8446,29 @@ int main() {
   expect(constrainedAlias.canGenerateCode(),
          "a generic class alias should preserve the owner's capabilities and "
          "substitute its concrete target in an instantiated member body");
+
+  const auto qualifiedAliases =
+      lang::Frontend().analyze("concrete-alias-members.gti", R"(
+using Value = Concrete::nested_type::value_type;
+using Concrete = Outer<int>;
+struct Inner<T> { using value_type = T; };
+struct Outer<T> { using nested_type = Inner<T>; };
+int main() { Value value = 7; return value - 7; }
+)");
+  expect(qualifiedAliases.canGenerateCode(),
+         "concrete aliases should qualify nested type members with canonical "
+         "substitution independently of declaration order");
+  const auto privateQualifier =
+      lang::Frontend().analyze("private-alias-qualifier.gti", R"(
+struct Inner<T> { using value_type = T; };
+class Outer<T> { using hidden = Inner<T>; };
+using Concrete = Outer<int>;
+using Leaked = Concrete::hidden::value_type;
+int main() { return 0; }
+)");
+  expect(!privateQualifier.canGenerateCode() &&
+             hasDiagnosticCode(privateQualifier.diagnostics, "GTI-S2007"),
+         "a public final member must not bypass a private alias qualifier");
 
   const lang::FrontendResult classKinds =
       lang::Frontend().analyze("class-kind-type-aliases.gti",
@@ -9548,6 +9719,10 @@ constexpr NamedTest kTests[] = {
     {"testRecursiveClassLayouts", testRecursiveClassLayouts},
     {"testNamedGenerics", testNamedGenerics},
     {"testNativeGenericCarrierClosure", testNativeGenericCarrierClosure},
+    {"testUninstantiatedGenericSignatureClosure",
+     testUninstantiatedGenericSignatureClosure},
+    {"testDependentCarrierRepresentationClosure",
+     testDependentCarrierRepresentationClosure},
     {"testExactQualifiedClassSpecializations",
      testExactQualifiedClassSpecializations},
     {"testConstrainedGenerics", testConstrainedGenerics},
@@ -9562,6 +9737,8 @@ constexpr NamedTest kTests[] = {
     {"testSymbolicAutoLocalBinding", testSymbolicAutoLocalBinding},
     {"testConstructorLocalTypeGenerics", testConstructorLocalTypeGenerics},
     {"testValueGenerics", testValueGenerics},
+    {"testDependentTypeDefaultConstraints",
+     testDependentTypeDefaultConstraints},
     {"testContextualArrayArguments", testContextualArrayArguments},
     {"testVariadicGenerics", testVariadicGenerics},
     {"testExactFunctionOverloadsAndConversions",

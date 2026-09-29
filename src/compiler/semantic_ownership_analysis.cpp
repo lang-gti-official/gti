@@ -954,20 +954,137 @@ auto SemanticVisitor::Impl::isMoveOnlyOwnerType(const SemanticType &type) const
   return !traits.copyable && traits.movable;
 }
 
+auto SemanticVisitor::Impl::storedReferencePath(const SemanticType &type) const
+    -> std::optional<StoredReferencePath> {
+  std::vector<SemanticType> visiting;
+  const auto visit =
+      [&](const auto &self,
+          const SemanticType &current) -> std::optional<StoredReferencePath> {
+    const ClassInfo *owner = classInfo(current);
+    if (owner == nullptr || owner->kind == ClassKind::Union ||
+        owner->cAbiRecord || owner->cOpaqueHandle ||
+        (hasSourceDestructorBody(*owner) &&
+         (!visiting.empty() || !isDefaultLibraryMutexGuardCarrier(*owner))) ||
+        std::find(visiting.begin(), visiting.end(), current) !=
+            visiting.end()) {
+      return std::nullopt;
+    }
+    visiting.push_back(current);
+    const GenericSubstitution substitution = classSubstitution(current);
+    std::optional<StoredReferencePath> path;
+    bool invalid = false;
+    for (const ClassBaseTypeInfo &base : owner->bases) {
+      invalid = invalid || (!base.interface &&
+                            typeTraits(substituteType(base.type, substitution))
+                                .containsBorrowedState);
+    }
+    for (const FieldInfo &field : owner->fields) {
+      if (field.declaration == nullptr) {
+        continue;
+      }
+      const auto member = owner->members.find(field.declaration->name().lexeme);
+      if (member == owner->members.end()) {
+        continue;
+      }
+      const SemanticType fieldType = substituteType(
+          substituteType(member->second.symbol.type, substitution),
+          GenericSubstitution{.types = instanceTypeSubstitution,
+                              .values = instanceValueSubstitution});
+      std::optional<StoredReferencePath> child;
+      if (fieldType.kind == SemanticType::Reference) {
+        if (fieldType.arguments.size() != 1) {
+          invalid = true;
+          continue;
+        }
+        child = StoredReferencePath{.reference = fieldType};
+      } else if (typeTraits(fieldType).containsBorrowedState) {
+        child = self(self, fieldType);
+        if (!child) {
+          invalid = true;
+          continue;
+        }
+      }
+      if (!child) {
+        continue;
+      }
+      if (path) {
+        invalid = true;
+        continue;
+      }
+      child->fields.insert(child->fields.begin(), field.declaration);
+      path = std::move(child);
+    }
+    visiting.pop_back();
+    return invalid ? std::nullopt : path;
+  };
+  return visit(visit, type);
+}
+
+auto SemanticVisitor::Impl::storedCarrierConstructorParameter(
+    const SemanticType &type, const ConstructorInfo &constructor,
+    std::span<const SemanticType> parameterTypes) const
+    -> std::optional<std::size_t> {
+  const auto path = storedReferencePath(type);
+  const ClassInfo *owner = classInfo(type);
+  if (!path || path->fields.empty() || owner == nullptr ||
+      constructor.declaration == nullptr) {
+    return std::nullopt;
+  }
+  const VariableDecl *field = path->fields.front();
+  const auto member = owner->members.find(field->name().lexeme);
+  if (member == owner->members.end()) {
+    return std::nullopt;
+  }
+  const SemanticType fieldType =
+      substituteType(member->second.symbol.type, classSubstitution(type));
+  for (const ConstructorInitializer &initializer :
+       constructor.declaration->initializers()) {
+    if (initializer.target.name.segments.size() != 1 ||
+        initializer.target.name.last().lexeme != field->name().lexeme ||
+        initializer.arguments.size() != 1) {
+      continue;
+    }
+    const ExprPtr *argument = &initializer.arguments.front();
+    while (const auto *group = exprAs<Grouping>(argument->get())) {
+      argument = &group->expression();
+    }
+    if (const Call *call = directCall(*argument)) {
+      const auto intrinsic = intrinsicCandidate(call->callee());
+      if (!intrinsic || intrinsic->record().intrinsic != IntrinsicKind::Move ||
+          call->arguments().size() != 1 ||
+          fieldType.kind == SemanticType::Reference) {
+        return std::nullopt;
+      }
+      argument = &call->arguments().front();
+    }
+    const Variable *source = movedVariable(*argument);
+    if (source == nullptr) {
+      return std::nullopt;
+    }
+    const auto &parameters = constructor.declaration->parameters();
+    for (std::size_t index = 0;
+         index < parameters.size() && index < parameterTypes.size(); ++index) {
+      if (parameters[index].name.lexeme == source->name().lexeme &&
+          parameterTypes[index] == fieldType && !parameters[index].pack) {
+        return index;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
 auto SemanticVisitor::Impl::isDirectStoredReferenceType(
     const SemanticType &type) const -> bool {
-  const ClassInfo *owner = classInfo(type);
-  return owner != nullptr && owner->storedReference.has_value();
+  return storedReferencePath(type).has_value();
 }
 
 auto SemanticVisitor::Impl::storedReferenceReferent(
     const SemanticType &type) const -> std::optional<SemanticType> {
-  const ClassInfo *owner = classInfo(type);
-  if (owner == nullptr || !owner->storedReference) {
+  const auto path = storedReferencePath(type);
+  if (!path) {
     return std::nullopt;
   }
-  const SemanticType reference =
-      substituteType(owner->storedReference->type, classSubstitution(type));
+  const SemanticType &reference = path->reference;
   if (reference.kind != SemanticType::Reference ||
       reference.arguments.size() != 1) {
     return std::nullopt;
@@ -1153,9 +1270,8 @@ auto SemanticVisitor::Impl::borrowAccess(const SemanticType &type) const
   if (owner != nullptr && isDefaultLibraryMutexGuardCarrier(*owner)) {
     return AccessMode::Mutable;
   }
-  return owner != nullptr && owner->storedReference
-             ? owner->storedReference->access
-             : AccessMode::ReadOnly;
+  const auto path = storedReferencePath(type);
+  return path ? path->reference.referenceAccess : AccessMode::ReadOnly;
 }
 
 auto SemanticVisitor::Impl::nestsBorrowedState(const SemanticType &type) const
@@ -1475,6 +1591,12 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
   }
   if (name == "index_bounds_check") {
     return IntrinsicKind::StorageBoundsCheck;
+  }
+  if (name == "require_key") {
+    return IntrinsicKind::RequireKey;
+  }
+  if (name == "require_container_argument") {
+    return IntrinsicKind::RequireContainerArgument;
   }
   if (name == "allocate_prefix_storage") {
     return IntrinsicKind::AllocatePrefixStorage;
@@ -2932,7 +3054,7 @@ auto SemanticVisitor::Impl::createRetainedLoan(
     Symbol &carrier, SymbolId carrierSymbol, SemanticLoanKind kind,
     const Expr *origin, SemanticLoanPlace place, SymbolId owner,
     bool receiverOrigin, AccessMode access, bool protectsStorage,
-    SemanticLoanId parent, bool entry, SymbolId designatedField)
+    SemanticLoanId parent, bool entry, std::vector<SymbolId> designatedFields)
     -> SemanticLoanId {
   const SemanticLoanId id = nextSemanticLoanId++;
   const ClassInfo *carrierOwner = classInfo(carrier.type);
@@ -2949,7 +3071,7 @@ auto SemanticVisitor::Impl::createRetainedLoan(
                             .access = access,
                             .protectsStorage = protectsStorage,
                             .lifecycleBound = lifecycleBound,
-                            .designatedField = designatedField,
+                            .designatedFields = std::move(designatedFields),
                             .carriers = {carrierSymbol}});
   loanFlow.records.emplace(
       id, LoanFlowRecord{.id = id,
@@ -3032,17 +3154,29 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
   const SemanticLoanPlace place{.root = carrierSymbol};
   const AccessMode access = referenceCarrier ? carrier->type.referenceAccess
                                              : borrowAccess(carrier->type);
-  SymbolId designatedField = 0;
+  std::vector<SymbolId> designatedFields;
   if (storedValueCarrier && !dynamicTextCarrier) {
-    const ClassInfo *owner = classInfo(carrier->type);
-    if (owner != nullptr && owner->storedReference) {
-      const auto member =
-          owner->members.find(owner->storedReference->field->name().lexeme);
-      if (member != owner->members.end()) {
-        designatedField = toolingSymbolFor(member->second.symbol);
+    SemanticType ownerType = carrier->type;
+    if (const auto path = storedReferencePath(ownerType)) {
+      for (const VariableDecl *field : path->fields) {
+        const ClassInfo *owner = classInfo(ownerType);
+        if (owner == nullptr) {
+          return;
+        }
+        const auto member = owner->members.find(field->name().lexeme);
+        if (member == owner->members.end()) {
+          return;
+        }
+        const SymbolId symbol = toolingSymbolFor(member->second.symbol);
+        if (symbol == 0) {
+          return;
+        }
+        designatedFields.push_back(symbol);
+        ownerType = substituteType(member->second.symbol.type,
+                                   classSubstitution(ownerType));
       }
     }
-    if (designatedField == 0) {
+    if (designatedFields.empty()) {
       return;
     }
   }
@@ -3057,7 +3191,7 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
       // it were that owner would incorrectly reject increment, copy, and
       // move of the iterator itself.  The caller's retained loan continues
       // to protect the actual owner for the duration of the call.
-      referenceCarrier, 0, true, designatedField);
+      referenceCarrier, 0, true, designatedFields);
   semanticModel.recordBindingLoan(parameter, id);
 }
 
@@ -4668,6 +4802,30 @@ auto SemanticVisitor::Impl::analyzeMutexIntrinsicCall(
 auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     const Call &expr, const CallableCandidate &declaration) -> void {
   const IntrinsicKind intrinsic = declaration.record().intrinsic;
+  if (intrinsic == IntrinsicKind::RequireKey ||
+      intrinsic == IntrinsicKind::RequireContainerArgument) {
+    std::vector<SemanticType> argumentTypes;
+    for (const auto &argument : expr.arguments()) {
+      argumentTypes.push_back(analyze(argument));
+    }
+    for (const auto &argument : expr.typeArguments()) {
+      validateType(argument);
+    }
+    if (!expr.typeArguments().empty() || argumentTypes.size() != 1 ||
+        argumentTypes.front() != SemanticType::Bool) {
+      report(expr.paren(),
+             "A container contract check requires exactly one bool condition "
+             "and no type arguments.",
+             "GTI-S2019");
+    }
+    currentType = SemanticType::Void;
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = SemanticType::Void,
+                               .parameterTypes = std::move(argumentTypes),
+                               .intrinsic = intrinsic});
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
   if (integerArithmeticIntrinsic(intrinsic)) {
     analyzeIntegerArithmeticIntrinsicCall(expr, declaration);
     bindIntrinsicCallDeclaration(expr, declaration);

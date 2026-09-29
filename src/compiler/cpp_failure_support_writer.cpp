@@ -47,6 +47,10 @@ public:
       return "GTI_FAILURE_CODE_INFALLIBLE_HOST_OPERATION_FAILED_V1";
     case DefinedFailureCode::HostedRuntimeContractFailure:
       return "GTI_FAILURE_CODE_HOSTED_RUNTIME_CONTRACT_FAILURE_V1";
+    case DefinedFailureCode::KeyNotFound:
+      return "GTI_FAILURE_CODE_KEY_NOT_FOUND_V1";
+    case DefinedFailureCode::InvalidContainerArgument:
+      return "GTI_FAILURE_CODE_INVALID_CONTAINER_ARGUMENT_V1";
     case DefinedFailureCode::None:
     case DefinedFailureCode::Count:
       break;
@@ -124,6 +128,10 @@ public:
       return "GTI_FAILURE_DETAIL_RECURSIVE_THREAD_LOCAL_INITIALIZATION_V1";
     case DefinedFailureDetail::MutexLock:
       return "GTI_FAILURE_DETAIL_MUTEX_LOCK_V1";
+    case DefinedFailureDetail::KeyLookup:
+      return "GTI_FAILURE_DETAIL_KEY_LOOKUP_V1";
+    case DefinedFailureDetail::ContainerArgument:
+      return "GTI_FAILURE_DETAIL_CONTAINER_ARGUMENT_V1";
     case DefinedFailureDetail::None:
     case DefinedFailureDetail::Count:
       break;
@@ -339,6 +347,12 @@ struct mir_failure_status_v1 {
 
 inline constexpr mir_failure_status_v1 mir_failure_success_v1{
     GTI_FAILURE_CODE_NONE_V1, GTI_FAILURE_DETAIL_NONE_V1};
+
+inline mir_failure_status_v1
+mir_checked_contract_v1(bool condition, ::gti_failure_code_v1 code,
+                        ::gti_failure_detail_v1 detail) noexcept {
+  return condition ? mir_failure_success_v1 : mir_failure_status_v1{code, detail};
+}
 
 template <typename Unexpected>
 inline decltype(auto) mir_unexpected_error_ref_v1(Unexpected &value) noexcept {

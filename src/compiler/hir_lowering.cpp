@@ -507,6 +507,30 @@ private:
     return id;
   }
 
+  // Declarations are emitted even when their generic owner has no executable
+  // instance. Their nondependent signature components still require concrete
+  // representation identities; discovering them must not instantiate a
+  // dependent owner or any of its function bodies.
+  bool seedConcreteDeclarationType(const SemanticType &type) {
+    bool concrete =
+        type != SemanticType::Unknown &&
+        type.kind != SemanticType::TypeParameter &&
+        (type.kind != SemanticType::TypePack || type.concretePack) &&
+        type.arrayLengthParameterId == 0;
+    for (const CompileTimeValue &value : type.valueArguments) {
+      concrete = concrete && value.kind != CompileTimeValue::Parameter;
+    }
+    for (const SemanticType &argument : type.arguments) {
+      // Do not short-circuit discovery of a concrete sibling or nested type.
+      const bool argumentConcrete = seedConcreteDeclarationType(argument);
+      concrete = concrete && argumentConcrete;
+    }
+    if (concrete) {
+      (void)enqueueClass(type);
+    }
+    return concrete;
+  }
+
   void seedDeclarations(const StmtList &declarations,
                         std::optional<ClassId> enclosingClass) {
     for (const StmtPtr &statement : declarations) {
@@ -528,6 +552,17 @@ private:
       if (const auto *classDeclaration = stmtAs<ClassDecl>(statement.get())) {
         const ClassTypeInfo *classInfo =
             baseModel->findClassType(*classDeclaration);
+        if (classInfo != nullptr) {
+          for (const ClassBaseTypeInfo &base : classInfo->bases) {
+            seedConcreteDeclarationType(base.type);
+          }
+          for (const ClassFieldTypeInfo &field : classInfo->fields) {
+            seedConcreteDeclarationType(field.type);
+          }
+          for (const ClassFieldTypeInfo &field : classInfo->staticFields) {
+            seedConcreteDeclarationType(field.type);
+          }
+        }
         if (classInfo != nullptr && classInfo->genericParameters.empty()) {
           (void)enqueueClass(SemanticType::classType(classInfo->id));
         }
@@ -571,6 +606,12 @@ private:
       }
       if (const auto *function = stmtAs<FunctionDecl>(statement.get())) {
         const FunctionInfo *info = baseModel->findFunction(*function);
+        if (info != nullptr) {
+          seedConcreteDeclarationType(info->returnType);
+          for (const SemanticType &parameter : info->parameterTypes) {
+            seedConcreteDeclarationType(parameter);
+          }
+        }
         if (info == nullptr || !info->genericParameters.empty()) {
           continue;
         }
@@ -584,6 +625,15 @@ private:
         }
         (void)enqueueFunction(*info, classArguments, {}, {}, {},
                               info->returnType, info->parameterTypes);
+        continue;
+      }
+      if (const auto *constructor = stmtAs<ConstructorDecl>(statement.get())) {
+        if (const ConstructorInfo *info =
+                baseModel->findConstructor(*constructor)) {
+          for (const SemanticType &parameter : info->parameterTypes) {
+            seedConcreteDeclarationType(parameter);
+          }
+        }
         continue;
       }
       // Program-wide storage is lowered once from the semantic initialization
@@ -1737,7 +1787,7 @@ private:
                       .parent = loan.parent,
                       .place = qualifyPlace(loan.place, body.placeDomain),
                       .access = loan.access,
-                      .designatedField = loan.designatedField,
+                      .designatedFields = loan.designatedFields,
                       .lifecycleBound = loan.lifecycleBound,
                       .entry = loan.entry};
       for (const SymbolId carrier : loan.carriers) {
@@ -2056,8 +2106,13 @@ private:
       }
       if (call.callPlan->receiver) {
         const HirCallReceiver &receiver = *call.callPlan->receiver;
+        const HirValue *source = body.findValue(receiver.value);
         if (receiver.kind == HirCallInputKind::ReadTemporaryBorrow ||
-            receiver.kind == HirCallInputKind::MutableTemporaryBorrow) {
+            receiver.kind == HirCallInputKind::MutableTemporaryBorrow ||
+            (receiver.kind == HirCallInputKind::Value && source != nullptr &&
+             source->info.type.kind == SemanticType::Class &&
+             source->info.category == ValueCategory::Value &&
+             source->info.traits.containsBorrowedState)) {
           temporaryBorrowValues.insert(receiver.value);
         }
       }
@@ -2781,12 +2836,13 @@ private:
                  input->info.type != parameter) {
         return std::nullopt;
       } else if (input->info.category == ValueCategory::Place &&
-                 input->info.traits.copyable &&
-                 !input->info.traits.containsBorrowedState) {
+                 input->info.traits.copyable) {
         kind = HirCallInputKind::CopyValue;
       } else if (input->info.category == ValueCategory::Value &&
                  input->info.traits.movable &&
-                 !input->info.traits.containsBorrowedState) {
+                 (!input->info.traits.containsBorrowedState ||
+                  input->kind != HirValueKind::Call ||
+                  !input->functionTarget)) {
         kind = HirCallInputKind::MoveValue;
       } else if (input->kind == HirValueKind::Call && input->functionTarget &&
                  input->borrowOrigin != BorrowOriginKind::None &&
@@ -2813,7 +2869,11 @@ private:
     HirValueId source = receiver;
     const HirValue *input = body.findValue(source);
     while (input != nullptr && input->kind == HirValueKind::Grouping &&
-           input->retainedReceiverProjection && input->operands.size() == 1) {
+           input->operands.size() == 1 &&
+           (input->retainedReceiverProjection ||
+            (receiverMode == CallReceiverMode::Value &&
+             input->info.type.kind == SemanticType::Class &&
+             input->info.traits.containsBorrowedState))) {
       source = input->operands.front();
       input = body.findValue(source);
     }
@@ -2976,7 +3036,7 @@ private:
         .info = operatorResultInfo(resolved),
         .operands = {receiver},
         .parameterTypes = value.parameterTypes,
-        .definedFailure = std::move(value.definedFailure),
+        .definedFailure = {},
         .borrowOrigin = value.borrowOrigin,
         .borrowArgument = value.borrowArgument,
         .borrowAccess = value.borrowAccess,
@@ -3013,7 +3073,13 @@ private:
     value.parameterTypes.clear();
     value.intrinsic = IntrinsicKind::None;
     value.synchronization = {};
-    value.definedFailure = {};
+    if (value.kind == HirValueKind::MemberSet) {
+      // A built-in compound store retains its checked arithmetic outcomes.
+      // Only the selected access call's propagation belongs to arrowCall.
+      value.definedFailure.propagation = FailurePropagationKind::None;
+    } else {
+      value.definedFailure = {};
+    }
     value.borrowOrigin = BorrowOriginKind::None;
     value.borrowArgument = 0;
     value.borrowAccess = AccessMode::ReadOnly;
@@ -3928,6 +3994,17 @@ private:
     }
     const ResolvedOperatorInfo *resolvedValueOperator =
         model.findOperator(*raw);
+    if (resolvedValueOperator == nullptr &&
+        value.kind == HirValueKind::MemberSet) {
+      const ResolvedOperatorInfo *projection =
+          model.findProjectionOperator(*raw);
+      if (projection != nullptr &&
+          projection->kind == OverloadedOperator::Arrow) {
+        // Scalar compound assignment has no overloaded mutation operator.
+        // Its separately resolved arrow still owns evaluation of the target.
+        resolvedValueOperator = projection;
+      }
+    }
     const bool loweredAssignmentCall =
         value.kind == HirValueKind::Call && resolvedValueOperator != nullptr &&
         isAssignmentOperator(resolvedValueOperator->kind);
@@ -4247,7 +4324,7 @@ private:
       value.storedReferenceAccess =
           member != nullptr && member->type.kind == SemanticType::Reference;
     }
-    if (const ResolvedOperatorInfo *resolved = model.findOperator(*raw);
+    if (const ResolvedOperatorInfo *resolved = resolvedValueOperator;
         resolved != nullptr && resolved->function != 0) {
       value.parameterTypes = resolved->parameterTypes;
       value.dispatch = resolved->dispatch;
@@ -4464,7 +4541,16 @@ private:
           resolved != nullptr &&
           (resolved->receiverMode == CallReceiverMode::FreshTemporaryRead ||
            resolved->receiverMode == CallReceiverMode::FreshTemporaryMutable);
-      if (freshReceiver &&
+      const HirValue *receiver = body.findValue(value.operands.front());
+      const bool borrowedValueReceiver =
+          resolved != nullptr &&
+          resolved->receiverMode == CallReceiverMode::Value &&
+          resolved->receiverMutability == ReceiverMutability::ReadOnly &&
+          receiver != nullptr &&
+          receiver->info.category == ValueCategory::Value &&
+          receiver->info.type.kind == SemanticType::Class &&
+          receiver->info.traits.containsBorrowedState;
+      if ((freshReceiver || borrowedValueReceiver) &&
           value.operands.size() >= value.parameterTypes.size() + 1) {
         const HirValueId receiverValue = value.operands.front();
         std::vector<HirValueId> arguments(
@@ -4489,7 +4575,7 @@ private:
           value.operation == TokenKind::ARROW) ||
          value.kind == HirValueKind::MemberSet) &&
         value.functionTarget && !value.operands.empty()) {
-      if (const ResolvedOperatorInfo *resolved = model.findOperator(*raw);
+      if (const ResolvedOperatorInfo *resolved = resolvedValueOperator;
           resolved != nullptr && resolved->kind == OverloadedOperator::Arrow) {
         return splitOverloadedArrowProjection(std::move(value), *resolved,
                                               body);

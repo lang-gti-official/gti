@@ -915,7 +915,8 @@ auto SemanticVisitor::Impl::firstUnsatisfiedConstraint(
     const SemanticType &argument, GenericConstraintSet constraints) const
     -> std::optional<GenericConstraintKind> {
   if (argument == SemanticType::Unknown || constraints == 0 ||
-      invalidConstraintSet(constraints)) {
+      invalidConstraintSet(constraints) ||
+      (resolvingGenericTypeDefault && containsOpenTypeParameter(argument))) {
     return std::nullopt;
   }
   if (argument.kind == SemanticType::TypeParameter ||

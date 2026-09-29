@@ -168,6 +168,13 @@ Processing a field, call, operator, constructor, destructor, lambda, return, or
 parameter type can discover another concrete instance. A fixed pass over the
 initial declarations is therefore incorrect.
 
+Declaration seeding also closes over nondependent type components in generic
+function and constructor signatures, fields, and bases. A concrete return such
+as `pair<size_t, bool>` needs a class-instance identity even if its generic
+owner is never instantiated: retained declarations still refer to that type.
+Dependent components remain symbolic, and signature discovery does not enqueue
+the unused generic owner or its executable method bodies.
+
 Before a class type enters the worklist, lowering asks the semantic model for
 its exact-specialization identity recursively. A matching primary application
 therefore enqueues the specialization's distinct `ClassId`; a nonmatching
@@ -216,6 +223,12 @@ the same ordered prepared-parameter schedule as class arguments: copying a
 copyable local or field creates a fresh owned stage, while moving retains the
 exact source ownership event. This applies to ordinary calls as well as packs;
 the stage, rather than an untracked backend copy, owns argument cleanup.
+Read-only overloaded operators on borrowed-class prvalues also receive an
+ordered `Value` receiver input. HIR gives the source carrier an explicit
+full-expression lifetime slot while retaining its existing dependency loan;
+the receiver stage is only an identity, not a copy or ownership transfer.
+This does not admit borrowed carriers to the separate fresh-owning-temporary
+receiver capability or permit mutable access that semantics rejected.
 Callable parameters and call values
 use an explicit boundary enum rather than a generic "non-escaping" boolean. The
 `Confined` boundary retains invocation/forwarding requirements. A confined

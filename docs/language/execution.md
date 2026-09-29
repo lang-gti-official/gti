@@ -933,10 +933,12 @@ The initial category vocabulary is:
 | `GTI-R0012` | `infallible_host_operation_failed` | failure of an explicitly infallible host operation |
 | `GTI-R0013` | `hosted_runtime_contract_failure` | malformed or impossible hosted/runtime state detected before unsafe state is exposed |
 | `GTI-R0014` | `failure_during_cleanup` | second failure during failure cleanup |
+| `GTI-R0015` | `key_not_found` | required associative-container key is absent |
+| `GTI-R0016` | `invalid_container_argument` | invalid argument to a checked container operation |
 
 Codes and category meanings are stable identities. Existing codes are never
 renumbered or reused; unassigned codes are reserved. Ordinary records use
-`GTI-R0001` through `GTI-R0013`; their details are stable snake-case
+`GTI-R0001` through `GTI-R0013`, `GTI-R0015`, and `GTI-R0016`; their details are stable snake-case
 identifiers from this bounded vocabulary and are printed exactly, rather than
 replaced by backend prose:
 
@@ -952,13 +954,24 @@ replaced by backend prose:
 | `invalid_expected_access` | `value_on_error`, `error_on_value` |
 | `invalid_storage_state` | `duplicate_construction`, `uninitialized_access`, `relocation_capacity`, `invalid_relocation_source`, `occupied_relocation_destination` |
 | `allocation_failure` | `unique_owner`, `private_storage`, `element_construction`, `hosted_arguments` |
-| `infallible_host_operation_failed` | `stdout_write`, `automatic_join` |
+| `infallible_host_operation_failed` | `stdout_write`, `automatic_join`, `mutex_lock` |
 | `hosted_runtime_contract_failure` | `negative_argument_count`, `recursive_thread_local_initialization` |
+| `key_not_found` | `key_lookup` |
+| `invalid_container_argument` | `container_argument` |
 
 `GTI-R0014` is not stored in an ordinary record and therefore has no ordinary
 detail identifier. It is the effective category of the emergency envelope;
 its report uses the exact bounded primary/secondary detail shape specified
 below.
+
+Associative-container policy remains source-defined: a library computes whether
+a required key exists or an argument satisfies its contract. The private,
+declaration-bound `gti_internal::require_key(bool)` and
+`gti_internal::require_container_argument(bool)` checks turn a false condition
+into the corresponding exact outcome above. A true condition succeeds. These
+checks use the same verified failure edges and deterministic cleanup as other
+defined failures; the backend does not recognize public container names or
+decide their policy.
 
 A public vector or string checks logical size and uses its public detail;
 `invalid_storage_state` denotes a trusted internal invariant failure and must

@@ -1105,7 +1105,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
               .storesReference = fieldType.kind == SemanticType::Reference,
               .borrowAccess = isDefaultLibraryMutexGuardCarrier(owner)
                                   ? AccessMode::Mutable
-                                  : fieldType.referenceAccess,
+                                  : borrowAccess(fieldType),
               .ownedParameter = ownedParameter});
     }
   }
@@ -2870,10 +2870,12 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
                                                  globalStorage)) {
     // The helper emits the one profile-specific policy diagnostic.
   } else if (instanceField && declaredType.kind != SemanticType::Reference &&
-             typeTraits(declaredType).containsBorrowedState) {
+             typeTraits(declaredType).containsBorrowedState &&
+             (!currentClass ||
+              !storedReferencePath(SemanticType::classType(*currentClass)))) {
     report(stmt.name(),
-           "Borrowed state cannot be nested in another field in the current "
-           "lifetime model.",
+           "A class or struct may contain only one stored-reference "
+           "dependency, through direct or nested nominal fields.",
            "GTI-S2045");
   } else if (declaredType.kind == SemanticType::Reference &&
              !stmt.initializer() && !instanceField) {

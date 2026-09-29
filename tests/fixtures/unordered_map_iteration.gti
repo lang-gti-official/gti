@@ -1,0 +1,34 @@
+#include <std/unordered_map>
+
+int main() {
+  mut std::unordered_map<int, int> values{};
+  [[discard]] values.insert(3, 30);
+  [[discard]] values.insert(1, 10);
+  [[discard]] values.insert(2, 20);
+  int erased = 1;
+  [[discard]] values.erase(erased);
+  mut int key_sum = 0;
+  mut int value_sum = 0;
+  for (auto& entry : values) {
+    key_sum += entry.first;
+    value_sum += entry.second;
+  }
+  if (key_sum != 5 || value_sum != 50) { return 1; }
+  for (mut auto& entry : values) { entry.second += 1; }
+  int key = 3;
+  if (values.at(key) != 31) { return 2; }
+  {
+    auto found = values.find(key);
+    auto end = values.end();
+    if (!(found != end) || (*found).first != 3 || (*found).second != 31) { return 3; }
+  }
+  int absent = 9;
+  {
+    auto missing = values.find(absent);
+    auto end = values.end();
+    if (missing != end || values.find(absent) != end) { return 4; }
+  }
+  values.clear();
+  for (auto& entry : values) { return 5; }
+  return 0;
+}

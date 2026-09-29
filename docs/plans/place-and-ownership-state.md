@@ -487,7 +487,45 @@ This systems-readiness integration slice unlocks allocation-free
 streaming parsers and serializers over the new byte-I/O API. It is not evidence
 for a general nested-owner graph.
 
-## 10. Decision Summary
+## 10. Nested Single-Owner Carrier Fields
+
+Status: implemented through verified MIR and exercised by ordinary
+`std::pair<iterator, bool>` insertion results from both associative containers.
+The focused native, ownership-negative, LSP and verifier gates pass; combined
+publication remains subject to the production completion gates.
+
+An ordinary class or struct may nest a carrier through nominal fields when
+there is exactly one path to one stored reference. The dependency is on the
+external owner, not on the temporary or parameter shell used to construct the
+aggregate. Multiple borrowed fields remain rejected even if two particular
+values happen to borrow the same owner. Arrays, inherited borrowed state,
+captures, global/static storage, dependency-reseating assignment and custom
+carrier destructors keep their existing restrictions.
+
+Semantics resolves the entire field-declaration path after generic
+substitution. Each explicit constructor initializes the containing borrowed
+field from one exact carrier parameter, by permitted copy or explicit move.
+Shared-carrier copies retain aliases; exclusive-carrier movement transfers the
+one dependency. Ordinary non-borrowed fields preserve their independent value
+and cleanup semantics. Extracting, copying, moving or returning a nested
+carrier must preserve the same owner and access, and must not end the owner
+loan while any live alias remains.
+
+HIR transports this exact field path and constructor dependency. MIR verifies
+the concrete nominal path, constructor publication, carrier transfer,
+child-before-parent endpoints and cleanup on every represented edge. Native
+field layout cannot invent or repair provenance. The separate
+`expected<T&, E>` work is not evidence for these aggregate rules.
+
+Evidence covers positive and negative generic/nongeneric cases, shared and
+exclusive nesting, extraction and return, precise frontend/LSP diagnostics,
+verifier mutations (wrong path, wrong source, duplicate borrow, premature end),
+and O0/O1/O3 C++20/C++23, no-elide and sanitizer execution of both reduced
+carriers and production map insertion results. A carrier with an owning
+non-borrowed sibling retains that sibling's independent move/copy and cleanup
+rules. Lifecycle-bound mutex guards remain direct carriers only.
+
+## 11. Decision Summary
 
 M-OWN-01 adopts one structural `PlaceKey`, one exhaustive conservative
 relation, and one finite ownership-state transfer contract. M-OWN-02 implements

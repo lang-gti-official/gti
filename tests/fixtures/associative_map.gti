@@ -1,0 +1,33 @@
+#include <std/map>
+
+int main() {
+  mut std::map<int, int> values{};
+  for (mut int key = 0; key < 100; key++) {
+    if (!values.insert(key, key * 3).second) { return 1; }
+  }
+  if (values.size() != 100) { return 2; }
+  for (mut int key = 0; key < 100; key++) {
+    if (!values.contains(key) || values.at(key) != key * 3) { return 3; }
+  }
+  int middle = 50;
+  bool duplicate = values.insert(50, 9).second;
+  if (duplicate || values.at(middle) != 150) { return 4; }
+  for (mut int key = 0; key < 100; key += 2) {
+    if (values.erase(key) != 1 || values.contains(key)) { return 5; }
+  }
+  for (mut int key = 1; key < 100; key += 2) {
+    if (values.at(key) != key * 3) { return 6; }
+  }
+  for (mut int key = 0; key < 100; key += 2) {
+    if (!values.insert(key, key).second) { return 7; }
+  }
+  mut int next = 0;
+  for (auto& entry : values) {
+    if (entry.first != next) { return 9; }
+    next++;
+  }
+  if (next != 100) { return 10; }
+  values.clear();
+  if (!values.empty()) { return 8; }
+  return 0;
+}

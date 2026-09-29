@@ -1,0 +1,69 @@
+#include <std/unordered_map>
+#include <std/memory>
+#include <std/string>
+
+mut int constructions = 0;
+mut int destructions = 0;
+
+class Payload {
+  int value;
+public:
+  Payload(int value) : value(value) { constructions++; }
+  Payload(Payload& other) = delete;
+  Payload(Payload&& other) = default;
+  ~Payload() { destructions++; }
+  int read() { return this.value; }
+};
+
+int main() {
+  {
+    mut std::unordered_map<std::string, std::unique_ptr<int>> owners{};
+    [[discard]] owners.insert(std::string("first"), std::make_unique<int>(17));
+    [[discard]] owners.insert(std::string("second"), std::make_unique<int>(23));
+    std::string first = std::string("first");
+    if (*owners.at(first) != 17) { return 1; }
+    {
+      auto duplicate = owners.insert(std::string("first"), std::make_unique<int>(99));
+      if (duplicate.second) { return 2; }
+    }
+    if (*owners.at(first) != 17) { return 3; }
+    {
+      auto assigned = owners.insert_or_assign(std::string("first"), std::make_unique<int>(31));
+      if (assigned.second) { return 14; }
+    }
+    if (*owners.at(first) != 31) { return 15; }
+    {
+      auto inserted = owners.insert_or_assign(std::string("third"), std::make_unique<int>(41));
+      if (!inserted.second) { return 16; }
+    }
+    owners.rehash(std::size_t(50));
+    if (*owners.at(first) != 31) { return 4; }
+    if (owners.erase(first) != 1) { return 5; }
+    mut auto transferred = std::move(owners);
+    std::string second = std::string("second");
+    if (*transferred.at(second) != 23) { return 6; }
+    transferred.clear();
+  }
+  {
+    mut std::unordered_map<int, Payload> values{};
+    {
+      auto inserted = values.try_emplace(1, 11);
+      if (!inserted.second) { return 7; }
+    }
+    {
+      auto duplicate = values.try_emplace(1, 22);
+      if (duplicate.second || constructions != 1) { return 8; }
+    }
+    {
+      auto inserted = values.try_emplace(2, 33);
+      if (!inserted.second || constructions != 2) { return 9; }
+    }
+    int key = 1;
+    if (values.at(key).read() != 11) { return 10; }
+    if (values.erase(key) != 1 || destructions != 1) { return 11; }
+    values.clear();
+    if (destructions != 2) { return 12; }
+  }
+  if (constructions != 2 || destructions != 2) { return 13; }
+  return 0;
+}

@@ -661,6 +661,15 @@ outside verified MIR. Native overload resolution and template deduction
 therefore provide physical spelling only for the named carrier cases, never
 language semantics.
 
+Retained generic carriers also close their dependent declaration-type graph:
+generic classes appearing in their dependent fields, bases, aliases, enum
+payloads, or method and constructor signatures use the same template-carrier representation
+transitively. Otherwise a symbolic `Wrapper<T>` field or result would instantiate
+a different C++ class from the digest-named `Wrapper<int>` addressed by concrete
+MIR. Fully concrete declaration references do not force this propagation.
+This is representation coherence only; executable methods still come from the
+selected concrete verified MIR bodies.
+
 Closure-typed (unnameable) free-function instances retain separate artifact-local
 C++ symbols keyed by their exact lowered/MIR instance identity. Each symbol's
 native template carries only the unnameable physical types and emits that one
@@ -989,6 +998,15 @@ TransferOut must agree in type, place, order, and identity. The carrier adds no
 observable cleanup; its initialization and handoff are still mandatory MIR
 events. This proof does not generalize to active-cleanup payloads or arbitrary
 constructor argument expressions.
+Ordinary source constructors may use the same prepared-input schedule for a
+class with generated copy, move, and destruction, scalar/enum fields, no
+state-bearing base, and no active cleanup. Every prepared input has a distinct
+obligation and exactly one matching constructor handoff; scalar sibling inputs
+retain their argument positions. A conservatively failure-capable target is
+eligible only when its complete verified body is accounted for by the exact
+passive parameter-to-field moves, lexical parameter drops, and inert boundaries.
+The failure summary remains unchanged; unrelated constructor work cannot be
+hidden behind the native initializer spelling.
 
 An all-owned-parameter initializer list may stay in native member-initializer
 form only when every declared initializer has one exact source-parameter move
@@ -1115,7 +1133,7 @@ matching concrete type, passive lifecycle, and the recorded full-expression
 boundary. Active cleanup and additional projections stay on their existing
 lifetime-slot paths.
 
-Move-only class replacement of one direct mutable owned field has three
+Move-only class replacement of a mutable owned nominal field path has three
 additional exact representations. A transformed source call may initialize one
 value-rooted obligation, publish it through an unconditional `Replace` into
 the field, and then drop only the moved-from slot shell. A move from one field
@@ -1126,10 +1144,14 @@ success path ends that loan before the slot drop, and no alias or extra
 lifecycle event exists. A targetless concrete default construction may use the
 same replace/drop schedule when its own unconditional `Initialize` is the
 single activation. Each route requires an exact noncopyable, move-assignable
-class representation and one resolved active-cleanup field row. The emitter
-does not recognize the owning wrapper or container name. Apart from the
-checked-array replacement extension below, projected destinations beyond one
-direct field, conditional lifecycle events, incomplete
+class representation and one resolved active-cleanup terminal field. Every
+intermediate projection must resolve to a mutable nominal field and its exact
+native representation row. An indexed owning receiver may retire an exact
+chain of mutable call-result loans, child before parent, with the same source;
+the moved-from RHS shell is destroyed only after those recorded endings. The
+emitter does not recognize the owning wrapper or container name. Apart from
+the checked-array replacement extension below, non-field projections,
+conditional lifecycle events, incomplete
 borrow endings, or additional consumers fail closed.
 
 For complete represented cleanup families, `CleanupBeforeAssign` drains the

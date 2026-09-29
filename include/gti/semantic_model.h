@@ -55,10 +55,9 @@ struct SemanticLoanInfo {
   // the carrier's destructor performs the operation that releases the
   // protected resource.
   bool lifecycleBound = false;
-  // For a StoredValue loan carried by a direct stored-reference parameter,
-  // this is the exact semantic field that designates the external referent.
-  // Zero for ordinary reference loans and non-entry retained loans.
-  SymbolId designatedField = 0;
+  // For a StoredValue parameter loan, this exact nominal field path ends at
+  // the reference designating its external referent. Empty for other loans.
+  std::vector<SymbolId> designatedFields;
   std::vector<SymbolId> carriers;
   std::vector<SemanticLoanEndpoint> endpoints;
 };
@@ -305,6 +304,8 @@ enum class IntrinsicKind {
   MutexGuardReadMut,
   MutexLockFailure,
   ExactTypeParameterConstruction,
+  RequireKey,
+  RequireContainerArgument,
   Count,
 };
 

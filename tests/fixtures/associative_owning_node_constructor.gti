@@ -1,0 +1,26 @@
+#include <std/string>
+#include <std/memory>
+
+struct Entry<K, V> {
+  K first;
+  mut V second;
+  Entry(K key, V value) : first(std::move(key)), second(std::move(value)) {}
+};
+struct Node<K, V> {
+  mut Entry<K, V> entry;
+  uint64_t hash;
+  mut uint64_t next;
+  Node(K key, V value, uint64_t hash, uint64_t next)
+      : entry(Entry<K, V>(std::move(key), std::move(value))),
+        hash(hash), next(next) {}
+};
+int main() {
+  Node<std::string, int> node = Node<std::string, int>(
+      std::string("key"), 2, uint64_t(3), uint64_t(0));
+  if (node.entry.first != "key" || node.entry.second != 2) return 1;
+  Node<std::string, std::unique_ptr<int>> owner =
+      Node<std::string, std::unique_ptr<int>>(
+          std::string("owned"), std::make_unique<int>(7), uint64_t(0), uint64_t(0));
+  if (owner.entry.first != "owned" || *owner.entry.second != 7) return 2;
+  return 0;
+}

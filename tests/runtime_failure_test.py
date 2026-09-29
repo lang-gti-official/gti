@@ -68,6 +68,15 @@ def main() -> int:
     expect(helper, "unicode", 0, b"", UNICODE)
     expect(helper, "cleanup", 0, b"", CLEANUP)
     expect(helper, "invalid_outcome", 1, b"", b"")
+    expect(helper, "reserved_14", 1, b"", b"")
+    for mode, code, category, detail in (
+        ("key_not_found", 15, "key_not_found", "key_lookup"),
+        ("container_argument", 16, "invalid_container_argument", "container_argument"),
+        ("mutex_lock", 12, "infallible_host_operation_failed", "mutex_lock"),
+    ):
+        expect(helper, mode, 0, b"", (
+            f"unit.gti:7: runtime error[GTI-R{code:04d}]: {category} in {detail}\n"
+        ).encode())
     expect(helper, "canonical_outcomes", 0, b"", CANONICAL_OUTCOMES)
     expect(helper, "noncanonical_outcomes", 1, b"", b"")
     expect(helper, "write_closed", 0, b"", b"")

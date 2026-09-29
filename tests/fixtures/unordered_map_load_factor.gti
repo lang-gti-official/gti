@@ -1,0 +1,25 @@
+#include <std/unordered_map>
+
+int main() {
+  mut std::unordered_map<int, int> values{};
+  values.max_load_factor(0.25);
+  if (values.max_load_factor() != 0.25) { return 1; }
+  values.reserve(std::size_t(20));
+  if (values.bucket_count() < 80) { return 2; }
+  for (mut int key = 0; key < 100; key++) {
+    [[discard]] values.insert(key, key);
+    if (values.load_factor() > values.max_load_factor()) { return 3; }
+  }
+  std::size_t original = values.bucket_count();
+  values.max_load_factor(2.0);
+  if (values.bucket_count() != original) { return 4; }
+  values.rehash(std::size_t(0));
+  if (values.bucket_count() < 50 || values.load_factor() > 2.0) { return 5; }
+  for (mut int key = 0; key < 100; key++) {
+    if (values.at(key) != key) { return 6; }
+  }
+  values.max_load_factor(0.125);
+  [[discard]] values.insert(100, 100);
+  if (values.bucket_count() < 808 || values.load_factor() > 0.125) { return 7; }
+  return 0;
+}

@@ -56,7 +56,10 @@ in both HIR and MIR hosted plans.
 from member and free calls, loop-slot reuse, and failure with exact caller
 cleanup across the same eight native modes. The lifecycle emitter suite checks
 output placement and retirement and rejects using that no-drop representation
-for classes with active cleanup or borrowed state. These focused gates do not
+for classes with active cleanup. A cleanup-free borrowed result is admitted
+only when its exact stored loan is unused and ends at the full expression;
+the verifier still rejects escaped carriers, child loans, and missing loan
+retirement. These focused gates do not
 establish completion of the callable campaign.
 
 `constructor_argument_staging_runtime` covers two fresh owning arguments to a
@@ -599,7 +602,7 @@ upstream code.
 | `reference_parameter_range_runtime` | single, nested, and triple read-only traversal through a class reference parameter use shared MIR referent carriers; public-derived arguments bind to base/interface references; direct concrete virtual calls cover local, global, field, generic, returned-bound, and ordinary-base receivers; failure-capable descendants retain the status ABI; and the matrix runs at O0/O3 under C++20/C++23 |
 | `compiler_pipeline` / `mutable_range_runtime` / `cli_workflow` / `lsp_protocol` range coverage | L-RANGE-01 read-only and L-RANGE-02 mutable fixed-array/`std::vector`/owned-temporary plans; exact exclusive parent and iteration child loans; nested/empty/break/continue/return flow; invalidation, overlap, escape, immutable-owner, and missing-`begin_mut()` rejection; exact normal/failure cleanup; C++20/C++23 O0/O3 runtime parity; `GTI-S2083` publication/clearing; and incomplete-source recovery |
 | `compiler_ownership` / `generic_algorithm_cluster` complete-range coverage | L-RANGE-04 exact `input_range`, `range_of`, `mutable_range_of`, `sized_range`, range predicate/operation relationships; application-defined nominal and fixed-array instantiation; concrete HIR protocol/strategy replacement; checked fixed-array index arithmetic after symbolic-operator suppression; missing endpoints, wrong referent, missing mutable endpoint, wrong size result, and callable mismatch rejection; C++20/C++23 O0/O3 runtime parity |
-| `compiler_pipeline` / `mutable_stored_dependency_runtime` / `lsp_protocol` stored-carrier coverage | read-only copy construction with shared owner dependency and independent shells; mutable one-origin construction, conditional return, move relay, exclusive child reborrow, early cleanup, and owner reactivation; assignment, mutable-copy, nesting, global storage, and ambiguous-origin rejection; exact carrier/stored-referent relay; `GTI-S2045`/`GTI-S2085` publication; and direct MIR mutations of ancestry, double retirement, return provenance, entry dependency, payload type, and runtime referent place |
+| `compiler_pipeline` / `mutable_stored_dependency_runtime` / `nested_borrow_fields` / `nested_borrow_fields_lsp` / `lsp_protocol` stored-carrier coverage | read-only copy construction with shared owner dependency and independent shells; mutable one-origin construction, conditional return, move relay, exclusive child reborrow, early cleanup, and owner reactivation; exact single-path nominal nesting; assignment, mutable-copy, multiple-path, global storage, and ambiguous-origin rejection; exact carrier/stored-referent relay; `GTI-S2045`/`GTI-S2085` publication; and direct MIR mutations of ancestry, field paths, double retirement, return provenance, entry dependency, payload type, and runtime referent place |
 | `evaluation_order_runtime` | effectful call arguments emit as ordered MIR statements and run left to right at O0/O3 under C++20/C++23 |
 | `string_owned_output_runtime` | named owning strings retain read-only `string&` output selection, while fresh `std::to_string` and `filesystem::path::string()` results transfer into the exact by-value `print`/`println` overloads at O0/O3 under C++20/C++23 |
 | `string_index_range_runtime` | independent half-open string copies, empty and endpoint ranges, embedded zero/UTF-8 code units, source lifetime independence, invalid and huge endpoints with exact public bounds category and cleanup; O0/O1/O3 under C++20/C++23 plus generated-program ASan/UBSan |
@@ -1213,12 +1216,39 @@ Mutable stored-carrier coverage follows the same cross-phase split.
 `compiler_pipeline` accepts one exact mutable field/constructor origin,
 conditional construction and return, by-value move relay, child reborrow, and
 owner reactivation after the final carrier endpoint. It rejects copy,
-assignment/reseating, nested or global storage, ambiguous origins, and direct
+assignment/reseating, multiple borrowed field paths or global storage, ambiguous origins, and direct
 owner access while the exclusive dependency remains live. Ownership tests
 inspect the mutable Parameter/Stored/Return MIR inventory and forge both
 ancestry and double retirement; the dedicated runtime test compiles and runs
 the move/return/reactivation program at O0/O3 under the C++20 and C++23 backend
 modes.
+
+`nested_borrow_fields` extends that contract through one nominal field path,
+including concrete generic wrappers and `std::pair<iterator, bool>`. Shared
+copies preserve aliases; exclusive moves and extraction transfer one dependency.
+The runtime matrix covers returned and discarded carriers, copied scalar fields
+of temporary results in loops, and owner reactivation under C++20/C++23
+O0/O1/O3, disabled copy elision, and ASan/UBSan. Negative cases reject multiple
+paths even to the same owner, reseating, local-owner escape, exclusive copies,
+custom destruction and mutable reborrows through a read-only receiver. MIR
+mutations independently reject forged/truncated paths, access modes,
+constructor sources and endpoints. `nested_borrow_fields_lsp` checks field
+hover/definition, UTF-16 diagnostic spans, related information, recovery and
+diagnostic clearing. The associative-container suites exercise the same rule
+through insertion results rather than a compiler-recognized result wrapper.
+
+`associative_map` and `unordered_map` cover ordering/bucket collisions, model
+comparison through repeated insertion and erasure, read/mutable iteration,
+owned keys and values, duplicate emplacement, replacement, custom policies,
+and concrete member aliases. Their negative cases retain immutable keys and
+whole-owner iterator conflict rules. `container_contract_failure` checks missing
+keys, invalid sentinel operations and load factors, plus checked overflow
+through a nested iterator's arrow projection, with caller cleanup.
+`associative_constructor_runtime` covers passive and owning node construction,
+prepared arguments, nested owned-field replacement, and later-argument failure
+in the same eight native modes. Lifecycle mutation tests independently reject
+changed field rows/access, premature parent-loan end and forged prepared-input
+handoffs. These are ordinary source declarations, not public-name exceptions.
 
 The example and emitted C++ confirm composition but do not replace either
 layer's assertions.

@@ -6550,6 +6550,492 @@ void testConstructedCallbackConditionalArgument() {
   expect(constructors == 3, "fixture must cover three prepared constructors");
 }
 
+void testGenericScalarConstructedFieldPublication() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/associative_node_constructor.gti";
+  std::ifstream input(fixture);
+  expect(input.good(), "generic constructed-field fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(),
+         "generic scalar node constructors must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  expect(!gti_test::emitCpp(frontend).contents.empty(),
+         "generic scalar move constructors must publish native fields");
+  std::size_t nodes = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    if (constructor.initializers.size() != 3 ||
+        constructor.initializers.front().targetType.kind !=
+            lang::SemanticType::Class)
+      continue;
+    const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
+        frontend.mir, constructor);
+    expect(bindings.size() == 1 && bindings.front().arguments.size() == 2,
+           "node entry must claim both exact scalar moved arguments");
+    if (bindings.size() != 1)
+      continue;
+    ++nodes;
+    const auto &binding = bindings.front();
+    for (int mutation = 0; mutation < 4; ++mutation) {
+      auto malformed = frontend.mir;
+      auto *changed = const_cast<lang::MirConstructorInstance *>(
+          malformed.findConstructorInstance(constructor.id));
+      for (auto &block : changed->body.blocks) {
+        for (auto &instruction : block.instructions) {
+          if (mutation == 0 &&
+              instruction.id == binding.argumentInstructions.front())
+            instruction.operands.front().type =
+                lang::SemanticType(lang::SemanticType::Bool);
+          if (mutation == 1 &&
+              instruction.id == binding.argumentInstructions[1])
+            instruction.callInputIndex = 1;
+          if (mutation == 2 && instruction.id == binding.initializeInstruction)
+            instruction.constructorInitializer = 2;
+        }
+      }
+      if (mutation == 3) {
+        auto *target = const_cast<lang::MirConstructorInstance *>(
+            malformed.findConstructorInstance(binding.constructor));
+        for (auto &instruction : target->body.blocks.front().instructions)
+          if (instruction.kind == lang::MirInstructionKind::Lifecycle)
+            instruction.fullExpressionEnd = 0;
+      }
+      expect(
+          lang::cppMirConstructedFieldInitializerBindings(malformed, *changed)
+              .empty(),
+          "forged moved type, argument index, field identity, or target "
+          "boundary must reject");
+    }
+  }
+  expect(nodes == 2,
+         "both concrete generic node instances must exercise the proof");
+}
+
+void testOwningConstructedFieldInputTransfers() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/associative_owning_node_constructor.gti";
+  std::ifstream input(fixture);
+  expect(input.good(), "owning nested constructor fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(), "owning nested constructors must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.analyzeProgram().ready(),
+         "owning field construction must preserve prepared input transfers");
+  std::size_t transfers = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    if (constructor.initializers.size() != 3)
+      continue;
+    for (const auto &block : constructor.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Construct ||
+            instruction.lifecycle.empty())
+          continue;
+        ++transfers;
+        expect(instruction.successResultDrop.has_value(),
+               "field result activates only on constructor success");
+        auto malformed = frontend.mir;
+        auto *body = lang::findMirBody(
+            malformed, {lang::MirBodyKind::Constructor, constructor.id});
+        for (auto &changed : body->findBlock(block.id)->instructions)
+          if (changed.id == instruction.id)
+            changed.lifecycle.clear();
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "constructor cannot omit owning input handoff");
+      }
+    }
+  }
+  expect(transfers == 2,
+         "one- and two-owner field constructors must be exercised");
+}
+
+void testMovedClassArgumentBeforeCheckedArgument() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/associative_owned_argument.gti";
+  std::ifstream input(fixture);
+  expect(input.good(), "owned argument staging fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(), "owned argument staging must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.analyzeProgram().ready(),
+         "a prepared class move must survive later argument failure edges");
+  std::size_t stages = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &stage : block.instructions) {
+        if (stage.kind != lang::MirInstructionKind::CallInput ||
+            stage.callInputKind != lang::HirCallInputKind::MoveValue ||
+            stage.info.type.kind != lang::SemanticType::Class ||
+            !stage.preparedParameterDrop || !stage.result || !stage.destination)
+          continue;
+        const auto uses = function.body.usesOf(*stage.result);
+        if (uses.size() != 1 || uses.front().block == block.id)
+          continue;
+        ++stages;
+        const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                           function.id};
+        const auto text =
+            emitter.emitFailureBodyText(address, "prepared", 1).text;
+        const auto slot = "__gti_mir_p_" + std::to_string(*stage.destination);
+        expect(
+            text.find(slot + ".construct(std::move(") != std::string::npos &&
+                text.find("std::move(" + slot + ".get())") !=
+                    std::string::npos &&
+                text.find(slot + ".destroy()") != std::string::npos,
+            "prepare, call transfer, and retirement must share the exact slot");
+        auto malformed = frontend.mir;
+        auto *body = lang::findMirBody(malformed, address);
+        body->dropObligations[*stage.preparedParameterDrop - 1]
+            .initiallyActive = true;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "prepared argument cannot be active before its move initializes "
+               "it");
+      }
+    }
+  }
+  expect(stages != 0,
+         "fixture must move a class across a later checked argument");
+}
+
+void testBorrowedFieldCompoundAssignment() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/associative_iterator_compound.gti";
+  std::ifstream input(fixture);
+  expect(input.good(), "borrowed field compound assignment fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(),
+         "iterator compound assignment must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.analyzeProgram().ready(),
+         "checked compound assignment must retain its borrowed field lvalue");
+  std::size_t assignments = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Assign ||
+            instruction.operation != lang::MirOperation::AddAssign ||
+            !instruction.destination)
+          continue;
+        const auto *place = function.body.findPlace(*instruction.destination);
+        if (!place || place->root != lang::MirPlaceRootKind::Binding ||
+            place->projections.size() != 2 ||
+            place->projections.front().kind !=
+                lang::MirProjectionKind::Dereference ||
+            place->projections.back().kind != lang::MirProjectionKind::Field)
+          continue;
+        ++assignments;
+        auto malformed = frontend.mir;
+        auto *body = lang::findMirBody(
+            malformed, {lang::MirBodyKind::Function, function.id});
+        body->places[place->id - 1].projections.back().field = 0;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "compound assignment cannot forge a borrowed field projection");
+      }
+    }
+  }
+  expect(assignments == 1,
+         "one projected compound assignment must exercise this route");
+}
+
+void testBorrowedTemporaryOperatorReceiver() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/borrowed_temporary_operator_receiver.gti";
+  std::ifstream input(fixture);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(),
+         "borrowed temporary operators must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, rows);
+  expect(emitter.analyzeProgram().ready(),
+         "borrowed operator receivers must alias their exact lifetime slot");
+  std::size_t receivers = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::CallInput ||
+            instruction.callInputKind != lang::HirCallInputKind::Value ||
+            instruction.callInputRole != lang::MirCallInputRole::Receiver ||
+            !instruction.info.traits.containsBorrowedState)
+          continue;
+        ++receivers;
+        expect(!instruction.destination && !instruction.preparedParameterDrop &&
+                   instruction.lifecycle.empty(),
+               "receiver identity stage must not copy, move, or own cleanup");
+        for (int mutation = 0; mutation != 3; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *body = lang::findMirBody(
+              malformed, {lang::MirBodyKind::Function, function.id});
+          for (auto &changedBlock : body->blocks) {
+            for (auto &changed : changedBlock.instructions) {
+              if (changed.id != instruction.id)
+                continue;
+              if (mutation == 0)
+                changed.callSite = 0;
+              else if (mutation == 1)
+                changed.callInputRole = lang::MirCallInputRole::Argument;
+              else
+                changed.callInputKind = lang::HirCallInputKind::MoveValue;
+            }
+          }
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "temporary receiver schedule must reject forged site, role, "
+                 "or ownership-transfer kind");
+        }
+      }
+    }
+  }
+  expect(receivers == 4, "grouped, conditional, and direct comparisons need "
+                         "ordered receiver stages");
+}
+
+void testPassiveNestedConstructorArgument() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/passive_nested_constructor_argument.gti";
+  std::ifstream input(fixture);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(),
+         "passive nested constructor argument must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  expect(lang::CppMirBodyEmitter(frontend.mir, rows).analyzeProgram().ready(),
+         "source constructors can move prepared passive class arguments into "
+         "fields");
+  std::size_t tested = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
+        frontend.mir, constructor);
+    for (const auto &binding : bindings) {
+      if (binding.arguments.size() != 2 ||
+          binding.arguments.front().type.kind != lang::SemanticType::Class)
+        continue;
+      ++tested;
+      for (int mutation = 0; mutation != 2; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *body = lang::findMirBody(
+            malformed, {lang::MirBodyKind::Constructor, constructor.id});
+        for (auto &block : body->blocks) {
+          for (auto &instruction : block.instructions) {
+            if (mutation == 0 && instruction.id == binding.constructInstruction)
+              instruction.lifecycle.clear();
+            if (mutation == 1 &&
+                instruction.kind == lang::MirInstructionKind::CallInput &&
+                instruction.preparedParameterDrop)
+              instruction.callInputIndex = 1;
+          }
+        }
+        expect(
+            lang::cppMirConstructedFieldInitializerBindings(
+                malformed, *malformed.findConstructorInstance(constructor.id))
+                .empty(),
+            "passive prepared arguments require exact input position and "
+            "invocation handoff");
+      }
+    }
+  }
+  expect(tested == 1,
+         "fixture must exercise one moved passive class constructor argument");
+}
+
+void testNestedOwnedFieldAssignment() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/nested_owned_field_assignment.gti";
+  std::ifstream input(fixture);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(),
+         "nested owned field replacement must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto originalRows = buildRows(frontend, frontend.mir);
+  const lang::CppMirBodyEmissionMap rows(originalRows);
+  const lang::CppMirBodyEmitter emitter(frontend.mir, rows);
+  expect(emitter.analyzeProgram().ready(),
+         "nested owned fields must preserve explicit replacement cleanup");
+  std::size_t assignments = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        const auto *destination =
+            instruction.destination
+                ? function.body.findPlace(*instruction.destination)
+                : nullptr;
+        if (instruction.kind != lang::MirInstructionKind::Assign ||
+            destination == nullptr ||
+            destination->root != lang::MirPlaceRootKind::Loan ||
+            destination->projections.size() != 2)
+          continue;
+        ++assignments;
+        expect(instruction.replacementPair != 0 &&
+                   instruction.lifecycle.size() == 1 &&
+                   instruction.lifecycle.front().kind ==
+                       lang::MirLifecycleEventKind::Replace,
+               "nested replacement retains paired cleanup and exact source "
+               "lifetime transfer");
+        for (int mutation = 0; mutation != 3; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *body = lang::findMirBody(
+              malformed, {lang::MirBodyKind::Function, function.id});
+          auto &changed = body->places[destination->id - 1];
+          if (mutation == 0)
+            changed.projections.front().field = 0;
+          else if (mutation == 1)
+            changed.projections.back().kind =
+                lang::MirProjectionKind::Dereference;
+          else {
+            for (const auto &instance : malformed.classInstances()) {
+              auto *owner = const_cast<lang::MirClassInstance *>(&instance);
+              for (auto &field : owner->declaredFields) {
+                if (field.symbol == destination->projections.front().field)
+                  field.access = lang::AccessMode::ReadOnly;
+              }
+            }
+          }
+          const lang::CppMirBodyEmitter rejected(malformed, rows);
+          expect(!rejected.analyzeProgram().ready(),
+                 "nested replacement must reject forged field, projection "
+                 "kind, or field mutability");
+        }
+        auto missingRows = originalRows;
+        const auto field = destination->projections.front().field;
+        std::erase_if(missingRows.symbols, [&](const auto &row) {
+          return row.kind == lang::CppMirSymbolRepresentationKind::Field &&
+                 row.symbol == field;
+        });
+        const lang::CppMirBodyEmissionMap incomplete(std::move(missingRows));
+        const lang::CppMirBodyEmitter rejected(frontend.mir, incomplete);
+        expect(!rejected.analyzeProgram().ready(),
+               "every intermediate nominal field requires its exact native "
+               "representation row");
+        auto wrongEnd = frontend.mir;
+        auto *changedBody = lang::findMirBody(
+            wrongEnd, {lang::MirBodyKind::Function, function.id});
+        const auto *child = changedBody->findLoan(destination->loan);
+        expect(
+            child != nullptr && child->parent != 0,
+            "indexed owner replacement must carry its parent call-result loan");
+        if (child != nullptr && child->parent != 0) {
+          bool changed = false;
+          for (auto &changedBlock : changedBody->blocks) {
+            for (auto &ending : changedBlock.instructions) {
+              if (ending.kind == lang::MirInstructionKind::EndBorrow &&
+                  ending.loan == child->id) {
+                ending.loan = child->parent;
+                changed = true;
+              }
+            }
+          }
+          expect(changed && !lang::CppMirBodyEmitter(wrongEnd, rows)
+                                 .analyzeProgram()
+                                 .ready(),
+                 "nested replacement cannot retire the parent before its child "
+                 "loan");
+        }
+      }
+    }
+  }
+  expect(assignments == 1,
+         "fixture must exercise one nested loan-rooted owned replacement");
+}
+
+void testNestedBorrowedFieldProjection() {
+  const auto mutableFixture = std::filesystem::path(__FILE__).parent_path() /
+                              "fixtures/nested_borrow_fields_mutable.gti";
+  std::ifstream mutableInput(mutableFixture);
+  const std::string mutableSource{std::istreambuf_iterator<char>(mutableInput),
+                                  {}};
+  const auto mutableFrontend =
+      analyzeWithStandardLibrary(mutableFixture.string(), mutableSource);
+  expect(mutableFrontend.canGenerateCode(),
+         "mutable nested field fixture must verify");
+  if (mutableFrontend.canGenerateCode()) {
+    const lang::CppMirBodyEmissionMap mutableRows(
+        buildRows(mutableFrontend, mutableFrontend.mir));
+    expect(lang::CppMirBodyEmitter(mutableFrontend.mir, mutableRows)
+               .analyzeProgram()
+               .ready(),
+           "nested construction must consume staged reference inputs and "
+           "discarded shells must preserve explicit dependency retirement");
+    bool mutated = false;
+    auto malformed = mutableFrontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        malformed.functionInstances());
+    for (auto &function : functions) {
+      for (auto &block : function.body.blocks) {
+        for (auto &instruction : block.instructions) {
+          if (instruction.kind == lang::MirInstructionKind::Call &&
+              instruction.info.traits.containsBorrowedState &&
+              instruction.result && instruction.loan &&
+              function.body.usesOf(*instruction.result).empty()) {
+            instruction.loan.reset();
+            mutated = true;
+          }
+        }
+      }
+    }
+    expect(mutated && !lang::verifyMirProgram(malformed).valid(),
+           "discarding a carrier shell cannot erase its owner dependency");
+  }
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/nested_borrow_fields.gti";
+  std::ifstream input(fixture);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(), "nested field loan fixture must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, rows);
+  expect(emitter.analyzeProgram().ready(),
+         "nested one-owner fields must retain exact constructor and return "
+         "publication");
+  std::size_t paths = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &place : function.body.places) {
+      if (place.root != lang::MirPlaceRootKind::Binding ||
+          place.projections.size() != 3 ||
+          place.projections[0].kind != lang::MirProjectionKind::Field ||
+          place.projections[1].kind != lang::MirProjectionKind::Field ||
+          place.projections[2].kind != lang::MirProjectionKind::Dereference)
+        continue;
+      ++paths;
+      for (int mutation = 0; mutation != 3; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *body = lang::findMirBody(
+            malformed, {lang::MirBodyKind::Function, function.id});
+        auto &changed = body->places[place.id - 1];
+        if (mutation == 0)
+          changed.projections[1].field = 0;
+        if (mutation == 1)
+          changed.projections.back().kind = lang::MirProjectionKind::Field;
+        if (mutation == 2)
+          changed.type = lang::SemanticType::Bool;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "nested reference projection cannot forge field, dereference, "
+               "or referent type");
+      }
+    }
+  }
+  expect(paths != 0,
+         "fixture must exercise a binding field-field-reference chain");
+}
+
 void testPassiveConstructorFieldPublication() {
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/passive_constructor_field.gti";
@@ -6874,10 +7360,12 @@ int32_t main() { return plain_t().value - 7; }
                 count(slot + ".mark_constructed()") == 0;
   expect(text.find("mir_lifetime_slot<") != std::string::npos &&
              exactPublication && count(slot + ".get().") == 1 &&
-             count(slot + ".destroy()") == 0 &&
+             count(slot + ".destroy()") == 1 &&
+             text.find(slot + ".destroy()") > text.find(slot + ".get().") &&
              count("std::move(" + slot + ".get())") == 0,
          "the constructor should publish once into its value slot and the "
-         "field Load should read it once without an invented copy or drop");
+         "field Load should read it once and retire its cleanup-free "
+         "representation slot without inventing a semantic copy or drop");
 
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
@@ -7086,6 +7574,20 @@ constexpr NamedTest kTests[] = {
     {"testNestedCleanupFreeClassResult", testNestedCleanupFreeClassResult},
     {"testPassiveConstructorFieldPublication",
      testPassiveConstructorFieldPublication},
+    {"testGenericScalarConstructedFieldPublication",
+     testGenericScalarConstructedFieldPublication},
+    {"testBorrowedFieldCompoundAssignment",
+     testBorrowedFieldCompoundAssignment},
+    {"testNestedBorrowedFieldProjection", testNestedBorrowedFieldProjection},
+    {"testNestedOwnedFieldAssignment", testNestedOwnedFieldAssignment},
+    {"testPassiveNestedConstructorArgument",
+     testPassiveNestedConstructorArgument},
+    {"testBorrowedTemporaryOperatorReceiver",
+     testBorrowedTemporaryOperatorReceiver},
+    {"testMovedClassArgumentBeforeCheckedArgument",
+     testMovedClassArgumentBeforeCheckedArgument},
+    {"testOwningConstructedFieldInputTransfers",
+     testOwningConstructedFieldInputTransfers},
     {"testConstructedCallbackConditionalArgument",
      testConstructedCallbackConditionalArgument},
     {"testErasedOwnedResultReturn", testErasedOwnedResultReturn},

@@ -1,0 +1,327 @@
+#include <std/vector>
+#include <std/memory>
+#include <std/functional>
+#include <std/utility>
+#include <std/cmath>
+
+namespace std {
+namespace detail {
+struct unordered_map_node<K, V> {
+  mut map_entry<K, V> entry;
+  size_t hash;
+  mut size_t next;
+
+  unordered_map_node(K key, V value, size_t hash, size_t next)
+      : entry(map_entry<K, V>(std::move(key), std::move(value))),
+        hash(hash), next(next) {}
+};
+
+class unordered_map_sentinel {
+  size_t limit;
+public:
+  unordered_map_sentinel(size_t limit) : limit(limit) {}
+  size_t position() { return this.limit; }
+};
+
+class unordered_map_iterator<K, V> {
+  vector<unique_ptr<unordered_map_node<K, V>>>& nodes;
+  mut size_t current;
+public:
+  unordered_map_iterator(vector<unique_ptr<unordered_map_node<K, V>>>& nodes,
+                         size_t position) : nodes(nodes), current(position) {}
+  map_entry<K, V>& operator*() {
+    gti_internal::require_container_argument(this.current < this.nodes.size());
+    return this.nodes[this.current]->entry;
+  }
+  map_entry<K, V>& operator->() { return *this; }
+  void operator++() mut {
+    gti_internal::require_container_argument(this.current < this.nodes.size());
+    this.current++;
+    while (this.current < this.nodes.size() &&
+           this.nodes[this.current] == nullptr) { this.current++; }
+  }
+  bool operator!=(unordered_map_sentinel& end) { return this.current != end.position(); }
+  bool operator==(unordered_map_sentinel& end) { return this.current == end.position(); }
+  bool operator!=(unordered_map_iterator<K, V>& other) { return this.current != other.current; }
+  bool operator==(unordered_map_iterator<K, V>& other) { return this.current == other.current; }
+};
+
+class unordered_map_mut_iterator<K, V> {
+  mut vector<unique_ptr<unordered_map_node<K, V>>>& nodes;
+  mut size_t current;
+public:
+  unordered_map_mut_iterator(mut vector<unique_ptr<unordered_map_node<K, V>>>& nodes,
+                             size_t position) : nodes(nodes), current(position) {}
+  map_entry<K, V>& operator*() {
+    gti_internal::require_container_argument(this.current < this.nodes.size());
+    return this.nodes[this.current]->entry;
+  }
+  mut map_entry<K, V>& operator*() mut {
+    gti_internal::require_container_argument(this.current < this.nodes.size());
+    return this.nodes[this.current]->entry;
+  }
+  map_entry<K, V>& operator->() { return *this; }
+  mut map_entry<K, V>& operator->() mut { return *this; }
+  void operator++() mut {
+    gti_internal::require_container_argument(this.current < this.nodes.size());
+    this.current++;
+    while (this.current < this.nodes.size() &&
+           this.nodes[this.current] == nullptr) { this.current++; }
+  }
+  bool operator!=(unordered_map_sentinel& end) { return this.current != end.position(); }
+  bool operator==(unordered_map_sentinel& end) { return this.current == end.position(); }
+};
+}
+
+/// Owning hash table with cached hashes and separately owned stable entries.
+/// Links are slot indexes (index + 1), never untracked pointers.
+class unordered_map<K, V, Hash = std::hash<K>, KeyEqual = std::equal_to<K>> {
+  mut vector<unique_ptr<detail::unordered_map_node<K, V>>> nodes{};
+  mut vector<size_t> free_slots{};
+  mut vector<size_t> buckets{};
+  mut size_t element_count = 0;
+  mut float load_limit = 1.0;
+  Hash hasher;
+  KeyEqual equal;
+
+  size_t locate(K& key, size_t hash) {
+    if (this.buckets.empty()) { return 0; }
+    mut size_t node = this.buckets[hash % this.buckets.size()];
+    while (node != 0) {
+      if (this.nodes[node - 1]->hash == hash &&
+          this.equal(this.nodes[node - 1]->entry.first, key)) { return node; }
+      node = this.nodes[node - 1]->next;
+    }
+    return 0;
+  }
+
+  size_t first_position() {
+    mut size_t position = 0;
+    while (position < this.nodes.size() && this.nodes[position] == nullptr) {
+      position++;
+    }
+    return position;
+  }
+
+  size_t minimum_buckets(size_t elements) {
+    double required = double(elements) / double(this.load_limit);
+    mut size_t result = size_t(required);
+    if (double(result) < required) { result++; }
+    return result;
+  }
+
+  void ensure_for_one() mut {
+    size_t next_size = this.element_count + 1;
+    size_t minimum = this.minimum_buckets(next_size);
+    if (minimum <= this.buckets.size()) { return; }
+    mut size_t grown = this.buckets.size() * 2;
+    if (grown < minimum) { grown = minimum; }
+    if (grown < 8) { grown = 8; }
+    this.rehash(grown);
+  }
+
+  size_t add(K key, V value, size_t hash) mut {
+    // User hashing/equality and element construction precede publication.
+    // Rehash uses cached scalar hashes and never reinvokes user hash code.
+    auto owned = std::make_unique<detail::unordered_map_node<K, V>>(
+        std::move(key), std::move(value), hash, size_t(0));
+    this.ensure_for_one();
+    size_t bucket = hash % this.buckets.size();
+    mut size_t added = this.nodes.size() + 1;
+    if (this.free_slots.empty()) {
+      this.nodes.push_back(std::move(owned));
+    } else {
+      added = this.free_slots.back();
+      this.nodes[added - 1] = std::move(owned);
+      this.free_slots.pop_back();
+    }
+    this.nodes[added - 1]->next = this.buckets[bucket];
+    this.buckets[bucket] = added;
+    this.element_count++;
+    return added - 1;
+  }
+
+public:
+  using key_type = K;
+  using mapped_type = V;
+  using value_type = detail::map_entry<K, V>;
+  using size_type = size_t;
+  using iterator = detail::unordered_map_mut_iterator<K, V>;
+  using const_iterator = detail::unordered_map_iterator<K, V>;
+  unordered_map()
+    requires std::default_initializable<Hash> && std::default_initializable<KeyEqual> &&
+             std::read_callable<Hash, K, std::size_t> &&
+             std::read_binary_callable<KeyEqual, K, K, bool>
+      : hasher(Hash()), equal(KeyEqual()) {}
+  unordered_map(Hash hash, KeyEqual equal)
+    requires std::read_callable<Hash, K, std::size_t> &&
+             std::read_binary_callable<KeyEqual, K, K, bool>
+      : hasher(std::move(hash)), equal(std::move(equal)) {}
+  unordered_map(size_t bucket_count)
+    requires std::default_initializable<Hash> && std::default_initializable<KeyEqual> &&
+             std::read_callable<Hash, K, std::size_t> &&
+             std::read_binary_callable<KeyEqual, K, K, bool>
+      : hasher(Hash()), equal(KeyEqual()) { this.rehash(bucket_count); }
+  unordered_map(size_t bucket_count, Hash hash, KeyEqual equal)
+    requires std::read_callable<Hash, K, std::size_t> &&
+             std::read_binary_callable<KeyEqual, K, K, bool>
+      : hasher(std::move(hash)), equal(std::move(equal)) { this.rehash(bucket_count); }
+  unordered_map(unordered_map<K, V, Hash, KeyEqual>& other) = delete;
+  unordered_map(unordered_map<K, V, Hash, KeyEqual>&& other) = default;
+
+  size_t size() { return this.element_count; }
+  bool empty() { return this.element_count == 0; }
+  size_t bucket_count() { return this.buckets.size(); }
+  float load_factor() {
+    if (this.buckets.empty()) { return 0.0; }
+    return float(this.element_count) / float(this.buckets.size());
+  }
+  float max_load_factor() { return this.load_limit; }
+  void max_load_factor(float value) mut {
+    gti_internal::require_container_argument(std::isfinite(value) && value > 0.0);
+    this.load_limit = value;
+  }
+  bool contains(K& key) { return this.locate(key, this.hasher(key)) != 0; }
+  size_t count(K& key) {
+    if (this.contains(key)) { return 1; }
+    return 0;
+  }
+  size_t bucket(K& key) {
+    if (this.buckets.empty()) { return 0; }
+    size_t hash = this.hasher(key);
+    return hash % this.buckets.size();
+  }
+  size_t bucket_size(size_t bucket) {
+    mut size_t node = this.buckets[bucket];
+    mut size_t result = 0;
+    while (node != 0) {
+      result++;
+      node = this.nodes[node - 1]->next;
+    }
+    return result;
+  }
+
+  V& at(K& key) {
+    size_t node = this.locate(key, this.hasher(key));
+    gti_internal::require_key(node != 0);
+    return this.nodes[node - 1]->entry.second;
+  }
+  mut V& at(K& key) mut {
+    size_t node = this.locate(key, this.hasher(key));
+    gti_internal::require_key(node != 0);
+    return this.nodes[node - 1]->entry.second;
+  }
+
+  pair<iterator, bool> insert(K key, V value) mut {
+    size_t hash = this.hasher(key);
+    size_t node = this.locate(key, hash);
+    if (node != 0) {
+      return pair<iterator, bool>(iterator(this.nodes, node - 1), false);
+    }
+    size_t position = this.add(std::move(key), std::move(value), hash);
+    return pair<iterator, bool>(iterator(this.nodes, position), true);
+  }
+  pair<iterator, bool> insert_or_assign(K key, V value) mut {
+    size_t hash = this.hasher(key);
+    size_t node = this.locate(key, hash);
+    if (node != 0) {
+      this.nodes[node - 1]->entry.second = std::move(value);
+      return pair<iterator, bool>(iterator(this.nodes, node - 1), false);
+    }
+    size_t position = this.add(std::move(key), std::move(value), hash);
+    return pair<iterator, bool>(iterator(this.nodes, position), true);
+  }
+
+  pair<iterator, bool> try_emplace<Args...>(K key, Args... args) mut {
+    size_t hash = this.hasher(key);
+    size_t node = this.locate(key, hash);
+    if (node != 0) {
+      return pair<iterator, bool>(iterator(this.nodes, node - 1), false);
+    }
+    size_t position = this.add(std::move(key), V(args...), hash);
+    return pair<iterator, bool>(iterator(this.nodes, position), true);
+  }
+
+  pair<iterator, bool> emplace<Args...>(K key, Args... args) mut {
+    return this.insert(std::move(key), V(args...));
+  }
+
+  mut V& get_or_insert(K key) mut requires std::default_initializable<V> {
+    size_t hash = this.hasher(key);
+    size_t node = this.locate(key, hash);
+    if (node != 0) { return this.nodes[node - 1]->entry.second; }
+    size_t position = this.add(std::move(key), V(), hash);
+    return this.nodes[position]->entry.second;
+  }
+
+  size_t erase(K& key) mut {
+    if (this.buckets.empty()) { return 0; }
+    size_t hash = this.hasher(key);
+    size_t bucket = hash % this.buckets.size();
+    mut size_t previous = 0;
+    mut size_t node = this.buckets[bucket];
+    while (node != 0) {
+      if (this.nodes[node - 1]->hash == hash &&
+          this.equal(this.nodes[node - 1]->entry.first, key)) {
+        this.free_slots.push_back(node);
+        size_t next = this.nodes[node - 1]->next;
+        if (previous == 0) { this.buckets[bucket] = next; }
+        else { this.nodes[previous - 1]->next = next; }
+        this.element_count--;
+        this.nodes[node - 1].reset();
+        return 1;
+      }
+      previous = node;
+      node = this.nodes[node - 1]->next;
+    }
+    return 0;
+  }
+
+  void rehash(size_t requested) mut {
+    mut size_t capacity = requested;
+    size_t minimum = this.minimum_buckets(this.element_count);
+    if (capacity < minimum) { capacity = minimum; }
+    if (capacity < 8) { capacity = 8; }
+    if (capacity == this.buckets.size()) { return; }
+    mut vector<size_t> replacement{};
+    replacement.resize(capacity, size_t(0));
+    for (mut size_t index = 0; index < this.nodes.size(); index++) {
+      if (this.nodes[index] != nullptr) {
+        size_t bucket = this.nodes[index]->hash % capacity;
+        this.nodes[index]->next = replacement[bucket];
+        replacement[bucket] = index + 1;
+      }
+    }
+    this.buckets.swap(replacement);
+  }
+  void reserve(size_t requested) mut {
+    size_t minimum = this.minimum_buckets(requested);
+    if (minimum > this.buckets.size()) { this.rehash(minimum); }
+  }
+  void clear() mut {
+    this.element_count = 0;
+    for (mut size_t index = 0; index < this.buckets.size(); index++) {
+      this.buckets[index] = 0;
+    }
+    this.free_slots.clear();
+    this.nodes.clear();
+  }
+  detail::unordered_map_iterator<K, V> begin() {
+    return detail::unordered_map_iterator<K, V>(this.nodes, this.first_position());
+  }
+  detail::unordered_map_mut_iterator<K, V> begin_mut() mut {
+    return detail::unordered_map_mut_iterator<K, V>(this.nodes, this.first_position());
+  }
+  detail::unordered_map_sentinel end() { return detail::unordered_map_sentinel(this.nodes.size()); }
+  detail::unordered_map_iterator<K, V> find(K& key) {
+    size_t node = this.locate(key, this.hasher(key));
+    if (node == 0) { return detail::unordered_map_iterator<K, V>(this.nodes, this.nodes.size()); }
+    return detail::unordered_map_iterator<K, V>(this.nodes, node - 1);
+  }
+  iterator find_mut(K& key) mut {
+    size_t node = this.locate(key, this.hasher(key));
+    if (node == 0) { return iterator(this.nodes, this.nodes.size()); }
+    return iterator(this.nodes, node - 1);
+  }
+};
+}

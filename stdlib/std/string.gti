@@ -81,6 +81,20 @@ namespace std {
       return true;
     }
 
+    int compare_bytes(string_view other) {
+      mut size_t shared = this.count;
+      if (other.size() < shared) { shared = other.size(); }
+      for (mut size_t index = 0; index < shared; index++) {
+        uint8_t left = uint8_t(gti_internal::prefix_storage_read(this.data, index));
+        uint8_t right = uint8_t(other[index]);
+        if (left < right) { return -1; }
+        if (left > right) { return 1; }
+      }
+      if (this.count < other.size()) { return -1; }
+      if (this.count > other.size()) { return 1; }
+      return 0;
+    }
+
   public:
     string() : data(gti_internal::allocate_prefix_storage<char>(uint64_t(0))) {}
 
@@ -339,6 +353,16 @@ namespace std {
     bool operator!=(string& other) {
       return !this.equals(other);
     }
+
+    /// Lexicographic unsigned-code-unit order, including embedded NULs.
+    bool operator<(string_view other) { return this.compare_bytes(other) < 0; }
+    bool operator>(string_view other) { return this.compare_bytes(other) > 0; }
+    bool operator<=(string_view other) { return this.compare_bytes(other) <= 0; }
+    bool operator>=(string_view other) { return this.compare_bytes(other) >= 0; }
+    bool operator<(string& other) { return this.compare_bytes(other.view()) < 0; }
+    bool operator>(string& other) { return this.compare_bytes(other.view()) > 0; }
+    bool operator<=(string& other) { return this.compare_bytes(other.view()) <= 0; }
+    bool operator>=(string& other) { return this.compare_bytes(other.view()) >= 0; }
   };
 
   void print(string& value) {

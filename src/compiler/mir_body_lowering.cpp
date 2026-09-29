@@ -165,7 +165,7 @@ public:
              initializerIndex < initializers->size(); ++initializerIndex) {
           const HirConstructorInitializer &initializer =
               (*initializers)[initializerIndex];
-          const std::vector<Scope> incomingScopes = scopes;
+          std::vector<Scope> incomingScopes = scopes;
           const std::vector<TemporaryDrop> incomingTemporaryDrops =
               temporaryDrops;
           for (const HirValueId argument : initializer.arguments) {
@@ -218,7 +218,10 @@ public:
               (field->info.traits.drop == DropKind::Trivial ||
                (initializer.targetType.kind == SemanticType::Class &&
                 !field->requiresActiveCleanup)) &&
-              !field->info.traits.containsBorrowedState;
+              (!field->info.traits.containsBorrowedState ||
+               (constructor != nullptr &&
+                constructor->borrowOrigin == BorrowOriginKind::Argument &&
+                initializer.targetType.kind == SemanticType::Class));
           if (explicitCleanupFreeFieldStage) {
             const MirPlaceId destination =
                 appendPlace({.root = MirPlaceRootKind::This,
@@ -293,6 +296,20 @@ public:
               initializer.arguments.size() == 1) {
             markStoredBorrow(initializer.arguments.front(), initializer.field,
                              initializer.borrowAccess);
+          } else if (constructorOwner != nullptr &&
+                     field != constructorOwner->fields.end() &&
+                     field->info.traits.containsBorrowedState &&
+                     initializer.targetType.kind == SemanticType::Class &&
+                     initializer.arguments.size() == 1) {
+            const MirLoanId transferred = markStoredCarrierBorrow(
+                initializer.arguments.front(), initializer.field,
+                initializer.borrowAccess);
+            // Publication retired this exact entry dependency inside the
+            // initializer. It is no longer part of the pre-expression live
+            // prefix against which transient cleanup is computed.
+            for (Scope &scope : incomingScopes) {
+              std::erase(scope.loans, transferred);
+            }
           }
           const HirConstructorInstance *target =
               initializer.constructorTarget
@@ -2505,12 +2522,12 @@ private:
       return;
     }
     lowered.lifecycleBound = loan.lifecycleBound;
-    if (lowered.designatedField != 0 &&
-        lowered.designatedField != loan.designatedField) {
+    if (!lowered.designatedFields.empty() &&
+        lowered.designatedFields != loan.designatedFields) {
       valid = false;
       return;
     }
-    lowered.designatedField = loan.designatedField;
+    lowered.designatedFields = loan.designatedFields;
     if (lowered.access == AccessMode::ReadOnly &&
         loan.access == AccessMode::Mutable) {
       valid = false;
@@ -2723,6 +2740,14 @@ private:
   }
 
   [[nodiscard]] MirPlaceId loanOrValuePlace(const HirValue &value) {
+    // A returned carrier is a class value whose loan protects a different
+    // external owner. It is not a reference to that owner: field selection
+    // must project from the materialized SSA shell, not from the loan source.
+    if (value.info.category == ValueCategory::Value &&
+        value.info.type.kind == SemanticType::Class &&
+        value.info.traits.containsBorrowedState) {
+      return 0;
+    }
     const auto found = valueLoans.find(value.id);
     if (found != valueLoans.end()) {
       return appendPlace({.root = MirPlaceRootKind::Loan,
@@ -3209,7 +3234,9 @@ private:
       return loanForValue(value->operands.back());
     }
     if (value->kind == HirValueKind::MemberAccess &&
-        value->storedReferenceAccess && !value->operands.empty()) {
+        (value->storedReferenceAccess ||
+         value->info.traits.containsBorrowedState) &&
+        !value->operands.empty()) {
       return loanForValue(value->operands.front());
     }
     return 0;
@@ -5207,7 +5234,12 @@ private:
     for (std::size_t depth = scopes.size(); depth > 0; --depth) {
       const std::vector<MirLoanId> &before = baseline[depth - 1].loans;
       std::vector<MirLoanId> &after = scopes[depth - 1].loans;
-      for (auto candidate = after.begin(); candidate != after.end();) {
+      // As with ordinary full-expression cleanup, nested call-result loans
+      // must end child-first. A projected return may have materialized its
+      // final address already while both intermediate accessor loans remain.
+      for (std::size_t index = after.size(); index > 0; --index) {
+        const auto candidate =
+            after.begin() + static_cast<std::ptrdiff_t>(index - 1);
         const bool added =
             std::find(before.begin(), before.end(), *candidate) == before.end();
         const MirLoan *loan = output.findLoan(*candidate);
@@ -5216,9 +5248,7 @@ private:
             !retained.contains(*candidate)) {
           (void)appendInstruction(
               {.kind = MirInstructionKind::EndBorrow, .loan = loan->id});
-          candidate = after.erase(candidate);
-        } else {
-          ++candidate;
+          after.erase(candidate);
         }
       }
     }
@@ -6458,8 +6488,9 @@ private:
     emittedValues.insert(id);
   }
 
-  [[nodiscard]] MirOperand referenceOperand(HirValueId valueId,
-                                            HirBindingId binding = 0) {
+  [[nodiscard]] MirOperand
+  referenceOperand(HirValueId valueId, HirBindingId binding = 0,
+                   std::optional<AccessMode> requestedAccess = {}) {
     const HirValue *value = findValue(valueId);
     if (value == nullptr) {
       return {};
@@ -6713,12 +6744,16 @@ private:
               .type = value->info.type};
     }
     const MirPlaceId sourcePlace = placeForValue(valueId);
-    const MirLoanId loan = createLoan(MirLoanKind::Local, sourcePlace,
-                                      value->info.access, valueId, binding);
+    // A mutable place can supply a shared reference. The selected reference
+    // contract, not the maximum access of the source expression, determines
+    // the capability published by a reference return.
+    const AccessMode access = requestedAccess.value_or(value->info.access);
+    const MirLoanId loan =
+        createLoan(MirLoanKind::Local, sourcePlace, access, valueId, binding);
     (void)appendInstruction(
         {.kind = MirInstructionKind::Borrow,
          .hirValue = valueId,
-         .operands = {{.kind = value->info.access == AccessMode::Mutable
+         .operands = {{.kind = access == AccessMode::Mutable
                                    ? MirOperandKind::BorrowWrite
                                    : MirOperandKind::BorrowRead,
                        .place = sourcePlace,
@@ -6731,6 +6766,36 @@ private:
     }
     return {
         .kind = MirOperandKind::Loan, .loan = loan, .type = value->info.type};
+  }
+
+  MirLoanId markStoredCarrierBorrow(HirValueId valueId, SymbolId field,
+                                    AccessMode access) {
+    const MirLoanId sourceLoan = loanForValue(valueId);
+    const MirLoan *source = output.findLoan(sourceLoan);
+    const HirValue *value = findValue(valueId);
+    if (source == nullptr || source->kind != MirLoanKind::Stored ||
+        !source->entry || source->designatedFields.empty() ||
+        source->access != access || value == nullptr ||
+        !value->info.traits.containsBorrowedState) {
+      valid = false;
+      return 0;
+    }
+    const MirLoanId published = createLoan(MirLoanKind::Stored, source->source,
+                                           access, valueId, 0, field);
+    (void)appendInstruction({.kind = MirInstructionKind::Borrow,
+                             .hirValue = valueId,
+                             .operands = {{.kind = MirOperandKind::Loan,
+                                           .value = mirValueFor(valueId),
+                                           .loan = sourceLoan,
+                                           .type = value->info.type}},
+                             .loan = published,
+                             .info = value->info});
+    (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                             .hirValue = valueId,
+                             .loan = sourceLoan});
+    removeLoanFromState(sourceLoan, scopes, bindingLoans);
+    output.loans[published - 1].escapes = true;
+    return sourceLoan;
   }
 
   void markStoredBorrow(HirValueId valueId, SymbolId field, AccessMode access) {
@@ -8084,7 +8149,8 @@ private:
         // before the operand-free return below.
         emitValue(*statement.value);
       } else if (output.returnType.kind == SemanticType::Reference) {
-        MirOperand borrow = referenceOperand(*statement.value);
+        MirOperand borrow = referenceOperand(*statement.value, 0,
+                                             output.returnType.referenceAccess);
         if (borrow.loan != 0) {
           MirLoanId storedCarrierEntry = 0;
           MirLoanId referenceParameterEntry = 0;
@@ -8104,7 +8170,7 @@ private:
                 std::find(candidate.carriers.begin(), candidate.carriers.end(),
                           parameter) != candidate.carriers.end();
             if (candidate.kind == MirLoanKind::Stored && candidate.entry &&
-                candidate.designatedField != 0 && carriedByParameter) {
+                !candidate.designatedFields.empty() && carriedByParameter) {
               storedCarrierEntry = borrow.loan;
             } else if (candidate.kind == MirLoanKind::Parameter &&
                        candidate.entry && carriedByParameter) {
@@ -8299,10 +8365,10 @@ private:
                                                                 : 0;
             const bool exactStoredCarrierEntry =
                 retainedLoan.kind == MirLoanKind::Stored &&
-                retainedLoan.entry && retainedLoan.designatedField != 0;
+                retainedLoan.entry && !retainedLoan.designatedFields.empty();
             const bool exactDynamicTextEntry =
                 retainedLoan.kind == MirLoanKind::Stored &&
-                retainedLoan.entry && retainedLoan.designatedField == 0 &&
+                retainedLoan.entry && retainedLoan.designatedFields.empty() &&
                 (value->info.type.kind == SemanticType::StringView ||
                  value->info.type.kind == SemanticType::CString) &&
                 value->info.type.kind == output.returnType.kind;

@@ -204,6 +204,24 @@ int run(const char *mode) {
     return static_cast<int>(
         gti_rt_failure_write_report_v1(&ordinary.record, &ordinary.artifact));
   }
+  if (std::strcmp(mode, "key_not_found") == 0 ||
+      std::strcmp(mode, "container_argument") == 0 ||
+      std::strcmp(mode, "mutex_lock") == 0 ||
+      std::strcmp(mode, "reserved_14") == 0) {
+    const bool key = std::strcmp(mode, "key_not_found") == 0;
+    const bool mutex = std::strcmp(mode, "mutex_lock") == 0;
+    const bool reserved = std::strcmp(mode, "reserved_14") == 0;
+    Fixture check(reserved ? 14
+                  : key    ? GTI_FAILURE_CODE_KEY_NOT_FOUND_V1
+                  : mutex ? GTI_FAILURE_CODE_INFALLIBLE_HOST_OPERATION_FAILED_V1
+                          : GTI_FAILURE_CODE_INVALID_CONTAINER_ARGUMENT_V1,
+                  key     ? GTI_FAILURE_DETAIL_KEY_LOOKUP_V1
+                  : mutex ? GTI_FAILURE_DETAIL_MUTEX_LOCK_V1
+                          : GTI_FAILURE_DETAIL_CONTAINER_ARGUMENT_V1,
+                  1, "unit.gti", 8);
+    return static_cast<int>(
+        gti_rt_failure_write_report_v1(&check.record, &check.artifact));
+  }
   if (std::strcmp(mode, "canonical_outcomes") == 0) {
     const gti_failure_outcome_descriptor_v1 outcomes[] = {
         {

@@ -232,7 +232,11 @@ type alias in that owner. A public alias of a non-generic type may be named with
 
 A generic class alias may name the owner's type or value parameters and is
 substituted for each concrete member-body and backend instance. The alias is
-usable unqualified within that owner. The grammar does not yet represent an
+usable unqualified within that owner. A type alias naming a specialization may
+qualify its public type members: `using IntBox = Box<int>;` permits
+`IntBox::value_type`. Each alias qualifier retains its access checks and its
+owning specialization's generic substitution, including chained type members.
+The grammar does not yet represent an
 intermediate specialization in a type path, so `Box<int>::value_type` is not a
 GTI spelling and `Box::value_type` is rejected outside generic `Box` as an
 unspecialized type. Class aliases are direct members rather than inherited
@@ -493,7 +497,13 @@ continues to reject unsupported borrowed storage.
 Generic declarations may give their type and value parameter list a trailing
 suffix of defaults. A type default must resolve to an exact type, may
 reference only visible types and earlier generic parameters, and must satisfy
-its inline constraint. A value default uses the closed expression domain above
+its inline constraint. Constraint checks within a dependent type default wait
+until its earlier parameters are substituted and the default is selected.
+An explicitly supplied argument does not instantiate the unused default;
+closed invalid defaults still fail at declaration time. Selecting a default
+validates nested class constraints as well as the defaulted parameter's own
+constraint before HIR. This does not defer constraints in ordinary generic
+fields or other non-default type uses. A value default uses the closed expression domain above
 and may reference only earlier visible namespace `constexpr uint64_t` bindings
 whose initializers are themselves closed `uint64_t` arithmetic and earlier
 value parameters. Arithmetic is checked in the `uint64_t` domain at the

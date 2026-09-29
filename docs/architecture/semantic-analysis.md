@@ -53,6 +53,15 @@ This ordering prevents declaration-order dependence. A new declaration kind may
 need registration, source-unit publication, tooling-symbol creation, body
 analysis, and finalization—not only a visitor method.
 
+Dependent generic type defaults retain their resolved symbolic semantic type.
+Only while resolving that default, constraints on open type arguments defer;
+name lookup, arity, and closed constraints remain checked immediately. Selecting
+an omitted argument substitutes the earlier arguments, then checks nested class
+constraints and the defaulted parameter's constraint. An explicit argument
+bypasses the unused default. Ordinary symbolic fields do not enter this context.
+HIR and tooling consume the already selected, validated type rather than asking
+the native compiler to instantiate or reject a default.
+
 `FunctionInfo::ownedPointeeProjection` is separate from ordinary return-borrow
 origins. It identifies a bounded transparent accessor whose entire body returns
 the declaration-bound private unique-owner borrow of one direct receiver field.
@@ -81,7 +90,10 @@ generic-parameter scope, resolves the transparent target, and installs a
 separate type-member map. Value and callable collection consults that map for
 same-owner name collisions but does not turn aliases into storage members or
 inherit them with base value/function members. Type lookup, concrete generic
-reanalysis, and tooling all consume the same resolved target. Lowered-program
+reanalysis, and tooling all consume the same resolved target. Type lookup
+through a concrete type alias substitutes the containing specialization
+at every member step, preserving access checks on the qualifier chain and
+source identities for both qualifiers and selected members. Lowered-program
 rows retain the source declaration so the C++ backend can emit the alias in its
 owning class; no HIR or MIR instruction is introduced because an alias has no
 runtime effect.

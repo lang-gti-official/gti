@@ -263,7 +263,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v74 valid=" << program.valid() << '\n';
+    output << "mir-v75 valid=" << program.valid() << '\n';
     for (const MirNativeCallbackAdapter &adapter :
          program.nativeCallbackAdapters()) {
       output << "native-callback @" << adapter.id
@@ -687,7 +687,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v64\n";
+    output << "mir-body-v65\n";
     body(value, 0);
     return output.str();
   }
@@ -1219,9 +1219,13 @@ private:
       separator(index);
       output << value.carriers[index];
     }
-    output << "] field=" << value.storedField
-           << " designated-field=" << value.designatedField
-           << " lifecycle-bound=" << value.lifecycleBound
+    output << "] field=" << value.storedField << " designated-fields=[";
+    for (std::size_t index = 0; index < value.designatedFields.size();
+         ++index) {
+      separator(index);
+      output << value.designatedFields[index];
+    }
+    output << "] lifecycle-bound=" << value.lifecycleBound
            << " two-phase=" << value.twoPhase << " entry=" << value.entry
            << " escapes=" << value.escapes << '\n';
   }

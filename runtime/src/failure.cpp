@@ -103,6 +103,9 @@ constexpr std::string_view kFailureCategories[] = {
     "allocation_failure",
     "infallible_host_operation_failed",
     "hosted_runtime_contract_failure",
+    "", // 14 is not an ordinary failure record.
+    "key_not_found",
+    "invalid_container_argument",
 };
 
 constexpr std::string_view kFailureDetails[] = {
@@ -139,10 +142,13 @@ constexpr std::string_view kFailureDetails[] = {
     "automatic_join",
     "negative_argument_count",
     "recursive_thread_local_initialization",
+    "mutex_lock",
+    "key_lookup",
+    "container_argument",
 };
 
-static_assert(std::size(kFailureCategories) == 14);
-static_assert(std::size(kFailureDetails) == 33);
+static_assert(std::size(kFailureCategories) == 17);
+static_assert(std::size(kFailureDetails) == 36);
 
 struct ReportOutput {
   WriteFunction write = nullptr;
@@ -228,6 +234,10 @@ struct ResolvedFailure {
     return detail == GTI_FAILURE_DETAIL_NEGATIVE_ARGUMENT_COUNT_V1 ||
            detail ==
                GTI_FAILURE_DETAIL_RECURSIVE_THREAD_LOCAL_INITIALIZATION_V1;
+  case GTI_FAILURE_CODE_KEY_NOT_FOUND_V1:
+    return detail == GTI_FAILURE_DETAIL_KEY_LOOKUP_V1;
+  case GTI_FAILURE_CODE_INVALID_CONTAINER_ARGUMENT_V1:
+    return detail == GTI_FAILURE_DETAIL_CONTAINER_ARGUMENT_V1;
   default:
     return false;
   }

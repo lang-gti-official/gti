@@ -1,0 +1,52 @@
+#include <std/utility>
+
+class WriteView {
+  mut int& item;
+public:
+  WriteView(mut int& item) : item(item) {}
+  void write(int value) mut { mut int& target = this.item; target = value; }
+  int read() { return this.item; }
+  int& view() { return this.item; }
+};
+
+std::pair<WriteView, bool> make_result(mut int& value) {
+  return std::pair<WriteView, bool>(WriteView(value), true);
+}
+
+class Counter {
+  mut int value = 0;
+public:
+  std::pair<WriteView, bool> borrow() mut {
+    return std::pair<WriteView, bool>(WriteView(this.value), true);
+  }
+  int read() { return this.value; }
+};
+
+int main() {
+  mut int value = 1;
+  {
+    mut auto result = make_result(value);
+    result.first.write(42);
+    if (!result.second || result.first.read() != 42) { return 1; }
+    if (result.first.view() != 42) { return 3; }
+    mut auto moved = std::move(result);
+    moved.first.write(43);
+    mut auto extracted = std::move(moved.first);
+    extracted.write(44);
+  }
+  if (value != 44) { return 2; }
+  value = 45;
+  [[discard]] make_result(value);
+  value = 46;
+  mut Counter counter{};
+  {
+    mut auto result = counter.borrow();
+    result.first.write(9);
+  }
+  [[discard]] counter.borrow();
+  for (mut int index = 0; index < 3; index++) {
+    if (!counter.borrow().second) { return 5; }
+  }
+  if (counter.read() != 9) { return 4; }
+  return value - 46;
+}

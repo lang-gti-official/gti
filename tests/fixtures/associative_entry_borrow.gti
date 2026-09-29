@@ -1,0 +1,17 @@
+#include <std/vector>
+#include <std/memory>
+
+struct Entry { mut int value; Entry(int v) : value(v) {} };
+class Table {
+  mut std::vector<std::unique_ptr<Entry>> entries{};
+public:
+  Table() { this.entries.push_back(std::make_unique<Entry>(3)); }
+  int& read() { return this.entries[std::size_t(0)]->value; }
+  mut int& write() mut { return this.entries[std::size_t(0)]->value; }
+};
+
+int main() {
+  mut Table table{};
+  { mut int& value = table.write(); value = 5; }
+  return table.read() - 5;
+}

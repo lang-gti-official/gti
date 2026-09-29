@@ -163,6 +163,8 @@ add_test(NAME collection_initialization_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/collection_initialization_runtime_test.py" $<TARGET_FILE:gti>)
 add_test(NAME collection_initialization_lsp
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/collection_initialization_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+add_test(NAME nested_borrow_fields_lsp
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_borrow_fields_lsp_test.py" $<TARGET_FILE:gti_lsp>)
 
 set(GTI_COMPILER_TEST_SUITES
     frontend
@@ -1438,6 +1440,31 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(generic_callable_concepts_runtime
                        PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME associative_hash_contracts
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/associative_hash_contracts_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(associative_hash_contracts PROPERTIES TIMEOUT 300)
+  foreach(associative_suite IN ITEMS associative_map unordered_map
+      associative_ownership_runtime associative_constructor_runtime
+      nested_borrow_fields container_contract_failure)
+    add_test(
+      NAME "${associative_suite}"
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/${associative_suite}_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties("${associative_suite}" PROPERTIES TIMEOUT 600)
+  endforeach()
+  add_test(
+    NAME string_ordering_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/string_ordering_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(string_ordering_runtime PROPERTIES TIMEOUT 300)
   add_test(
     NAME function_item_runtime
     COMMAND "${Python3_EXECUTABLE}"

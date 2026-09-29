@@ -255,7 +255,7 @@ int main() {
 
   const std::string snapshot = lang::MirPrinter().print(frontend.mir);
   const bool validSnapshot =
-      snapshot.starts_with("mir-v74 ") &&
+      snapshot.starts_with("mir-v75 ") &&
       snapshot.find("failure-metadata artifact=" +
                     metadata.artifactIdentity().hex()) != std::string::npos &&
       snapshot.find("failure-site @1 source=8:main.gti") != std::string::npos &&
@@ -1216,6 +1216,86 @@ int main() { return caller(1); }
          "nested call propagation stays valid on its own shape when its "
          "outer argument input is rewired; eligibility is "
          "position-independent");
+}
+
+void testContainerContractChecks() {
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-container-contract/main.gti",
+      "#include <std/functional>\n"
+      "void check(bool valid) { std::key(valid); std::argument(valid); }\n",
+      {standardLibraryPrelude()},
+      {{(standardLibraryRoot() / "std/functional.gti").string(),
+        "namespace std {\n"
+        "void key(bool valid) { gti_internal::require_key(valid); }\n"
+        "void argument(bool valid) { "
+        "gti_internal::require_container_argument(valid); }\n}\n"}},
+      {standardLibraryRoot()});
+  if (!frontend.canGenerateCode())
+    printDiagnostics(frontend);
+  expect(frontend.canGenerateCode(),
+         "private bool contract checks must lower to verified MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  for (const auto intrinsic : {lang::IntrinsicKind::RequireKey,
+                               lang::IntrinsicKind::RequireContainerArgument}) {
+    bool found = false;
+    forEachInstruction(
+        frontend.mir, [&](const lang::MirInstruction &instruction) {
+          if (instruction.intrinsic != intrinsic)
+            return;
+          found = true;
+          expect(instruction.localFailureSites.size() == 1 &&
+                     instruction.definedFailure.localOrigins.size() == 1,
+                 "each contract check must own exactly one failure site");
+        });
+    expect(found,
+           "both declaration-bound contract checks must survive MIR lowering");
+    for (int mutation = 0; mutation != 4; ++mutation) {
+      auto forged = frontend.mir;
+      auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+          forged.functionInstances());
+      for (auto &function : functions)
+        for (auto &block : function.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (instruction.intrinsic != intrinsic)
+              continue;
+            if (mutation == 0)
+              instruction.operands.front().type = lang::SemanticType::Int32;
+            if (mutation == 1)
+              instruction.parameterTypes.clear();
+            if (mutation == 2)
+              instruction.definedFailure.localOrigins.clear();
+            if (mutation == 3)
+              instruction.intrinsic =
+                  intrinsic == lang::IntrinsicKind::RequireKey
+                      ? lang::IntrinsicKind::RequireContainerArgument
+                      : lang::IntrinsicKind::RequireKey;
+          }
+      expect(!lang::verifyMirProgram(forged).valid(),
+             "contract check operand, parameter, origin and category mutations "
+             "must fail closed");
+    }
+  }
+  expect(
+      !lang::validDefinedFailureCode(static_cast<lang::DefinedFailureCode>(14)),
+      "emergency code14 must remain excluded from ordinary failure records");
+  for (const std::string call : {"require_key(1)", "require_key()",
+                                 "require_container_argument(true, false)"}) {
+    const auto invalid = lang::Frontend().analyze(
+        "/tmp/gti-container-contract/invalid.gti",
+        "#include <std/functional>\nvoid invoke() { std::invalid(); }\n",
+        {standardLibraryPrelude()},
+        {{(standardLibraryRoot() / "std/functional.gti").string(),
+          "namespace std { void invalid() { gti_internal::" + call + "; } }"}},
+        {standardLibraryRoot()});
+    expect(!invalid.canGenerateCode() &&
+               std::any_of(invalid.diagnostics.begin(),
+                           invalid.diagnostics.end(),
+                           [](const lang::Diagnostic &diagnostic) {
+                             return diagnostic.code == "GTI-S2019";
+                           }),
+           "trusted contract check calls must still require one exact bool");
+  }
 }
 
 void testEmptyDescriptorContract() {
@@ -3269,6 +3349,7 @@ int main() { auto owner = std::make_unique<Derived>(); return owner->read(); }
 
 int main() {
   testCanonicalMetadataAndMirSites();
+  testContainerContractChecks();
   testInvokeEdgesAndFailureCleanup();
   testEmptyDescriptorContract();
   testHostedProgramEntryMetadata();
