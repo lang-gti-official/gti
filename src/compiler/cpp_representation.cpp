@@ -780,6 +780,14 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
     return result;
   }
   case SemanticType::Expected: {
+    if (type.arguments.size() == 2 &&
+        type.arguments.front().kind == SemanticType::Reference &&
+        type.arguments.front().referenceAccess == AccessMode::ReadOnly &&
+        type.arguments.front().arguments.size() == 1) {
+      return "::gti_internal::backend::borrowed_expected<" +
+             spell(type.arguments.front().arguments.front()) + ", " +
+             spell(type.arguments.back()) + ">";
+    }
     std::string result = standard == CppStandard::Cpp23 ? "std::expected<"
                                                         : "::nonstd::expected<";
     if (type.arguments.size() == 2) {

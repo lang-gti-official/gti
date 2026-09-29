@@ -393,6 +393,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testFallibleBorrows",
+      "suite": "ownership"
+    },
+    {
       "name": "testExpectedPropagationOperator",
       "suite": "ownership"
     },

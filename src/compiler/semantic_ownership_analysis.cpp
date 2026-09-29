@@ -1078,6 +1078,27 @@ auto SemanticVisitor::Impl::isDirectStoredReferenceType(
   return storedReferencePath(type).has_value();
 }
 
+auto SemanticVisitor::Impl::isFallibleBorrowType(const SemanticType &type) const
+    -> bool {
+  if (type.kind != SemanticType::Expected || type.arguments.size() != 2) {
+    return false;
+  }
+  const SemanticType &success = type.arguments.front();
+  return success.kind == SemanticType::Reference &&
+         success.referenceAccess == AccessMode::ReadOnly &&
+         success.arguments.size() == 1 &&
+         !typeTraits(success.arguments.front()).containsBorrowedState &&
+         !typeTraits(type.arguments.back()).containsBorrowedState;
+}
+
+auto SemanticVisitor::Impl::fallibleBorrowReferent(
+    const SemanticType &type) const -> std::optional<SemanticType> {
+  if (!isFallibleBorrowType(type)) {
+    return std::nullopt;
+  }
+  return type.arguments.front().arguments.front();
+}
+
 auto SemanticVisitor::Impl::storedReferenceReferent(
     const SemanticType &type) const -> std::optional<SemanticType> {
   const auto path = storedReferencePath(type);
@@ -1095,7 +1116,7 @@ auto SemanticVisitor::Impl::storedReferenceReferent(
 auto SemanticVisitor::Impl::isBorrowReturningType(
     const SemanticType &type) const -> bool {
   return type.kind == SemanticType::Reference ||
-         isDirectStoredReferenceType(type);
+         isDirectStoredReferenceType(type) || isFallibleBorrowType(type);
 }
 
 auto SemanticVisitor::Impl::functionReturnBorrowSummary(
@@ -1265,6 +1286,9 @@ auto SemanticVisitor::Impl::borrowAccess(const SemanticType &type) const
     -> AccessMode {
   if (type.kind == SemanticType::Reference) {
     return type.referenceAccess;
+  }
+  if (isFallibleBorrowType(type)) {
+    return AccessMode::ReadOnly;
   }
   const ClassInfo *owner = classInfo(type);
   if (owner != nullptr && isDefaultLibraryMutexGuardCarrier(*owner)) {

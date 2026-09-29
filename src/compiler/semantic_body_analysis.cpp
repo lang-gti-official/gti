@@ -1685,7 +1685,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       methodDeclaration || intrinsicDeclaration || hasReturnBorrowSummary ||
           isBorrowReturningType(declaredReturnType),
       methodDeclaration ? "method return type" : "function return type");
-  if (nestsBorrowedState(declaredReturnType)) {
+  if (nestsBorrowedState(declaredReturnType) &&
+      !isFallibleBorrowType(declaredReturnType)) {
     report(stmt.name(),
            "Borrowed state cannot be nested in a function return type in "
            "the current lifetime model.",
@@ -2366,6 +2367,8 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
 
     scopes = beforeSwitch;
     beginScope();
+    loanFlow.activeSwitchArms.push_back(
+        {.switchIndex = loanSwitchIndex, .armIndex = armIndex});
     for (auto &[source, pattern] : payloadPatterns) {
       if (!pattern.bindings.empty() && arm.labels.size() != 1) {
         report(expressionToken(*source),
@@ -2379,18 +2382,57 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
         if (payload.name == nullptr) {
           continue;
         }
-        const SymbolId symbol =
-            recordBindingOccurrence(*payload.name, payload.binding.type, false,
-                                    SemanticBindingKind::LocalVariable);
+        const bool mutableReferent =
+            payload.binding.type.kind == SemanticType::Reference &&
+            payload.binding.type.referenceAccess == AccessMode::Mutable;
+        const SymbolId symbol = recordBindingOccurrence(
+            *payload.name, payload.binding.type, mutableReferent,
+            SemanticBindingKind::LocalVariable);
         payload.binding.symbol = symbol;
-        semanticModel.recordPayloadBinding(*payload.name, payload.binding);
-        declare(*payload.name, payload.binding.type, false,
+        declare(*payload.name, payload.binding.type, mutableReferent,
                 SemanticBindingKind::LocalVariable);
+        if (payload.binding.type.kind == SemanticType::Reference) {
+          const AccessMode access = payload.binding.type.referenceAccess;
+          const ExpressionInfo *subject =
+              semanticModel.findExpression(*stmt.expression());
+          SemanticLoanPlace place = retainedLoanPlace(stmt.expression());
+          if (subject == nullptr || subject->category != ValueCategory::Place ||
+              !place.valid()) {
+            report(*payload.name,
+                   "A borrowed payload pattern requires a stable enum place; "
+                   "bind the enum to a local variable before matching it.",
+                   "GTI-S2067");
+          } else if (access == AccessMode::Mutable &&
+                     subject->access != AccessMode::Mutable) {
+            report(
+                *payload.name,
+                "A mutable payload pattern requires a mutable enum receiver.",
+                "GTI-S2067");
+          } else if (Symbol *carrier = resolveMutable(*payload.name)) {
+            SemanticLoanId parent = 0;
+            if (const auto source = retainedLoanSource(stmt.expression()))
+              parent = source->loan;
+            reportBorrowConflict(
+                *payload.name, conflictingLoans(place, access, parent),
+                "Cannot borrow this payload while an overlapping enum borrow "
+                "may still be live.");
+            // Variant replacement invalidates every field. The original enum
+            // is the conservative alias root even when the runtime referent
+            // is one exact active payload field.
+            payload.binding.retainedLoan = createRetainedLoan(
+                *carrier, symbol, SemanticLoanKind::Reference, payload.source,
+                place, place.root, place.receiver, access, true, parent);
+            // The binding is born at this arm's entry, not at the switch
+            // subject's full expression. Keep its endpoint lexical until
+            // arm-local NLL creation/endpoint plans are represented.
+            loanFlow.records.at(payload.binding.retainedLoan).confinedToRegion =
+                false;
+          }
+        }
+        semanticModel.recordPayloadBinding(*payload.name, payload.binding);
       }
       semanticModel.recordPayloadPattern(*source, std::move(pattern));
     }
-    loanFlow.activeSwitchArms.push_back(
-        {.switchIndex = loanSwitchIndex, .armIndex = armIndex});
     analyze(arm.statements);
     loanFlow.activeSwitchArms.pop_back();
     endScope();
@@ -6720,6 +6762,17 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
       currentType = SemanticType::Unknown;
       return;
     }
+    if (isFallibleBorrowType(operandType)) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2086", DiagnosticPhase::Semantics, expr.oper(),
+          "Error propagation for 'expected<T&, E>' is not supported yet.");
+      diagnostic.hints.emplace_back(
+          "Inspect has_value(), return the error explicitly, and borrow "
+          "value() only on the success path.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      currentType = SemanticType::Unknown;
+      return;
+    }
     if (currentReturnType.kind != SemanticType::Expected ||
         currentReturnType.arguments.size() != 2) {
       Diagnostic diagnostic = makeDiagnostic(
@@ -7043,6 +7096,14 @@ auto SemanticVisitor::Impl::visitUnexpectedExpr(const Unexpected &expr)
 }
 
 auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
+  if (expr.isReferencePattern()) {
+    report(expr.name(),
+           "A borrowed payload binding is only valid directly in a "
+           "payload-enum case pattern.",
+           "GTI-S2067");
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (expr.name().completion) {
     captureUnqualifiedCompletion(expr.name());
     currentType = SemanticType::Unknown;

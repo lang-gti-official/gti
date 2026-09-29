@@ -416,6 +416,10 @@ struct MirDropType {
   std::optional<HirClassInstanceId> uniqueOwnerBase;
   // Zero-based capture projection within an enclosing closure recipe.
   std::optional<std::size_t> captureIndex;
+  // Active-alternative field selection within an enclosing payload enum.
+  // Both selectors are present together; fields run in reverse source order.
+  std::optional<std::size_t> payloadVariant;
+  std::optional<std::size_t> payloadField;
   // A finite back-edge to an enclosing class recipe with this exact
   // classInstance/type. It has no destructor or children of its own. Complete
   // root recipes still contain every reachable source destructor, so their

@@ -976,11 +976,87 @@ public:
 enum class holder { one(shell<int32_t> value), none };
 int main() { return 0; }
 )");
-  expect(hasCode(genericPayload, "GTI-S2067") &&
-             hasMessage(genericPayload, "Generic class payload type") &&
-             hasMessage(genericPayload, "bounded payload-enum representation"),
-         "concrete generic class payloads should retain a stable early "
-         "diagnostic until their representation is defined");
+  expect(genericPayload.canGenerateCode() &&
+             lang::verifyMirProgram(genericPayload.mir).valid(),
+         "unused concrete generic class alternatives must still discover "
+         "their exact lifecycle representation");
+
+  const lang::FrontendResult genericOwnedPayload =
+      analyze("generic-owning-class-payload-enum.gti", R"(
+class resource<T> {
+  T value;
+public:
+  resource(T value) : value(value) {}
+  ~resource() {}
+};
+enum class holder { one(resource<int32_t> value), none };
+int main() { return 0; }
+)");
+  expect(genericOwnedPayload.canGenerateCode() &&
+             lang::verifyMirProgram(genericOwnedPayload.mir).valid(),
+         "an unused generic owning alternative must have an exact concrete "
+         "class lifecycle row");
+  if (genericOwnedPayload.canGenerateCode()) {
+    lang::MirProgram forged = genericOwnedPayload.mir;
+    auto &payloadRows = lang::MirProgramTestAccess::payloadEnums(forged);
+    expect(!payloadRows.empty(), "the owning generic fixture needs a sum row");
+    if (!payloadRows.empty()) {
+      auto &variant = payloadRows.front().variants.front();
+      variant.payloadTypes.front().arguments.front() =
+          lang::SemanticType::UInt64;
+      const auto checked = lang::verifyMirProgram(forged);
+      expect(!checked.valid() &&
+                 hasMirMessage(checked, "payload-enum lifecycle table"),
+             "a forged alternative cannot borrow another generic "
+             "instantiation's cleanup proof");
+    }
+  }
+
+  const lang::FrontendResult recursiveLayout =
+      analyze("recursive-class-payload-layout.gti", R"(
+enum class tree { one(node value), none };
+class node { tree data = tree::none; };
+int main() { return 0; }
+)");
+  expect(hasCode(recursiveLayout, "GTI-S2082") &&
+             hasMessage(recursiveLayout, "cannot contain itself by value"),
+         "a by-value cycle through a payload enum must be rejected before "
+         "HIR or native layout planning");
+
+  const auto cleanup = analyze("enum-cleanup-selectors.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class data { one(resource first, resource second), none };
+int main() { data value = data::one(resource(), resource()); return 0; }
+)");
+  expect(cleanup.canGenerateCode() &&
+             lang::verifyMirProgram(cleanup.mir).valid(),
+         "owning enum cleanup needs a verified active-field recipe");
+  for (int mutation = 0; mutation != 3; ++mutation) {
+    auto forged = cleanup.mir;
+    bool changed = false;
+    for (const auto &function : forged.functionInstances()) {
+      auto &body = const_cast<lang::MirBody &>(function.body);
+      for (auto &drop : body.dropObligations) {
+        if (changed || drop.dropType.type.kind != lang::SemanticType::Enum ||
+            drop.dropType.aggregate.size() != 2)
+          continue;
+        if (mutation == 0)
+          drop.dropType.aggregate.front().payloadVariant = 999;
+        else if (mutation == 1)
+          drop.dropType.aggregate.front().payloadField.reset();
+        else
+          std::swap(drop.dropType.aggregate[0], drop.dropType.aggregate[1]);
+        changed = true;
+      }
+    }
+    expect(
+        changed && !lang::verifyMirProgram(forged).valid(),
+        "wrong variant, absent field, or reversed cleanup order must reject");
+  }
 
   const lang::FrontendResult stableLayout =
       analyze("owning-payload-layout-query.gti", R"(
@@ -999,6 +1075,185 @@ int main() { return 0; }
          "diagnostic before HIR lowering");
 }
 
+void testBorrowedPayloadPatterns() {
+  const std::string prefix = R"(
+class resource {
+  mut int32_t count = 3;
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  void add() mut { this.count++; }
+  int32_t read() { return this.count; }
+};
+enum class data { empty, some(resource item) };
+)";
+  const auto shared = analyze("shared-pattern.gti", prefix + R"(
+int main() {
+  data value = data::some(resource());
+  switch (value) {
+    case data::some(auto& item): return item.read();
+    case data::empty: return 0;
+  }
+}
+)");
+  if (!shared.canGenerateCode()) {
+    printDiagnostics(shared);
+  }
+  expect(shared.canGenerateCode(),
+         "a shared pattern borrows a move-only payload");
+  if (shared.canGenerateCode()) {
+    expect(lang::verifyMirProgram(shared.mir).valid(),
+           "shared payload borrowing must verify end to end");
+    for (int mutation = 0; mutation != 4; ++mutation) {
+      lang::MirProgram forged = shared.mir;
+      bool changed = false;
+      for (const auto &function : forged.functionInstances()) {
+        auto &body = const_cast<lang::MirBody &>(function.body);
+        for (auto &block : body.blocks) {
+          for (auto &instruction : block.instructions) {
+            if (changed ||
+                instruction.operation != lang::MirOperation::PayloadExtract ||
+                instruction.info.category != lang::ValueCategory::Place)
+              continue;
+            if (mutation == 0) {
+              instruction.payloadIndex = 999;
+            } else if (mutation == 1) {
+              for (auto &predecessor : body.blocks) {
+                if (predecessor.terminator.kind ==
+                    lang::MirTerminatorKind::Switch)
+                  predecessor.terminator.target = block.id;
+              }
+            } else if (mutation == 2) {
+              for (auto &loan : body.loans)
+                if (loan.producedBy == instruction.hirValue)
+                  loan.access = lang::AccessMode::Mutable;
+            } else {
+              instruction.operands.front().place = 999999;
+            }
+            changed = true;
+          }
+        }
+      }
+      expect(changed && !lang::verifyMirProgram(forged).valid(),
+             "forged payload field, unguarded edge, upgraded loan, or absent "
+             "subject must fail "
+             "MIR verification");
+    }
+  }
+  const auto mutablePattern = analyze("mutable-pattern.gti", prefix + R"(
+int main() {
+  mut data value = data::some(resource());
+  switch (value) {
+    case data::some(mut auto& item): item.add(); return item.read();
+    case data::empty: return 0;
+  }
+}
+)");
+  if (!mutablePattern.canGenerateCode())
+    printDiagnostics(mutablePattern);
+  expect(mutablePattern.canGenerateCode(),
+         "an exclusive pattern can mutate its payload");
+  const auto mixed = analyze("mixed-copy-borrow-pattern.gti", R"(
+enum class data { some(int32_t first, int32_t second) };
+int main() {
+  data value = data::some(1, 7);
+  switch (value) {
+    case data::some(copy, auto& reference): return reference;
+  }
+}
+)");
+  expect(mixed.canGenerateCode() && lang::verifyMirProgram(mixed.mir).valid(),
+         "copied and borrowed bindings compose within one arm");
+  const auto immutable = analyze("immutable-pattern.gti", prefix + R"(
+int main() {
+  data value = data::some(resource());
+  switch (value) {
+    case data::some(mut auto& item): item.add(); return 0;
+    case data::empty: return 0;
+  }
+}
+)");
+  expect(hasCode(immutable, "GTI-S2067") &&
+             hasMessage(immutable, "mutable enum"),
+         "an exclusive pattern cannot upgrade an immutable enum");
+  const auto temporary = analyze("temporary-pattern.gti", prefix + R"(
+int main() {
+  switch (data::some(resource())) {
+    case data::some(auto& item): return item.read();
+    case data::empty: return 0;
+  }
+}
+)");
+  expect(hasCode(temporary, "GTI-S2067") &&
+             hasMessage(temporary, "stable enum"),
+         "pattern borrows require stable original owner storage");
+  const auto copied = analyze("copy-pattern.gti", prefix + R"(
+int main() {
+  data value = data::some(resource());
+  switch (value) {
+    case data::some(item): return item.read();
+    case data::empty: return 0;
+  }
+}
+)");
+  expect(hasCode(copied, "GTI-S2067") && hasMessage(copied, "move-only"),
+         "plain patterns continue to copy and reject move-only payloads");
+  const auto sharedMutation =
+      analyze("shared-pattern-mutation.gti", prefix + R"(
+int main() {
+  mut data value = data::some(resource());
+  switch (value) {
+    case data::some(auto& item): item.add(); return 0;
+    case data::empty: return 0;
+  }
+}
+)");
+  expect(!sharedMutation.canGenerateCode(),
+         "a shared payload borrow cannot mutate");
+  const auto ownerReplacement =
+      analyze("borrowed-pattern-replacement.gti", prefix + R"(
+int main() {
+  mut data value = data::some(resource());
+  switch (value) {
+    case data::some(auto& item): value = data::empty; return item.read();
+    case data::empty: return 0;
+  }
+}
+)");
+  expect(!ownerReplacement.canGenerateCode(),
+         "a live payload loan blocks enum replacement");
+  const auto localEscape =
+      analyze("borrowed-pattern-local-escape.gti", prefix + R"(
+resource& escape() {
+  data value = data::some(resource());
+  switch (value) {
+    case data::some(auto& item): return item;
+    default: while (true) {}
+  }
+}
+)");
+  expect(!localEscape.canGenerateCode(),
+         "a payload borrow cannot outlive a local enum");
+  const auto siblings = analyze("borrowed-pattern-siblings.gti", prefix + R"(
+enum class pair_data { pair(resource left, resource right) };
+int main() {
+  mut pair_data value = pair_data::pair(resource(), resource());
+  switch (value) {
+    case pair_data::pair(mut auto& left, mut auto& right):
+      left.add(); right.add(); return 0;
+  }
+}
+)");
+  expect(!siblings.canGenerateCode(),
+         "exclusive payload loans conservatively conflict at the enum owner");
+  const std::string formatted = lang::Formatter().format(
+      "switch(value){case data::some(mut auto& item):item.add();break;}");
+  expect(formatted.find("mut auto& item") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "the formatter preserves borrowed patterns and remains idempotent");
+}
+
 } // namespace
 
 int main() {
@@ -1008,6 +1263,7 @@ int main() {
   testPayloadEnumDiagnostics();
   testClassPayloadEnums();
   testOrdinaryEnumsAndFormatting();
+  testBorrowedPayloadPatterns();
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

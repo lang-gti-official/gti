@@ -1,0 +1,54 @@
+#include <std/vector>
+
+mut int32_t drops = 0;
+#ifdef DESTRUCTOR_FAILURE
+mut int32_t zero = 0;
+#endif
+
+class resource {
+  int32_t identity;
+public:
+  resource(int32_t identity) : identity(identity) {}
+  resource(resource&& other) = default;
+  ~resource() {
+    std::println(this.identity);
+    drops = drops + 1;
+#ifdef DESTRUCTOR_FAILURE
+    if (this.identity == 2) {
+      int32_t checked = int32_t(1) / zero;
+    }
+#endif
+  }
+};
+
+enum class tree_data {
+  empty,
+  leaf(resource value),
+  branch(std::vector<node> children)
+};
+
+class node {
+  tree_data data;
+public:
+  node(tree_data value) : data(std::move(value)) {}
+  node(node&& other) = default;
+};
+
+node make_tree() {
+  mut std::vector<node> children = std::vector<node>();
+  resource first = resource(1);
+  children.push_back(node(tree_data::leaf(std::move(first))));
+  mut std::vector<node> grandchildren = std::vector<node>();
+  grandchildren.push_back(node(tree_data::leaf(resource(2))));
+  grandchildren.push_back(node(tree_data::leaf(resource(3))));
+  children.push_back(node(tree_data::branch(std::move(grandchildren))));
+  return node(tree_data::branch(std::move(children)));
+}
+
+int main() {
+  {
+    node tree = make_tree();
+    node moved = std::move(tree);
+  }
+  return drops == 3 ? 0 : 1;
+}

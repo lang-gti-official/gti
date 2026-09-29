@@ -370,6 +370,16 @@ State-checked native observers use unchecked dereference only after GTI's
 guard or verified state proof, avoiding the host `std::expected::value()`
 requirement that an error type be copyable.
 
+`expected<T&, E>` does not use native `std::expected`, which forbids reference
+payloads. Its private C++20/C++23 carrier stores either `const T*` or `E`; GTI
+source still observes a non-null read-only reference. MIR supplies every
+pointer from an admitted loan. Direct successful returns and local
+initializations dereference that loan when constructing the carrier, while a
+forwarded complete carrier is published as a value so its active error state
+is preserved. Checked `value()` extraction binds a child CallResult loan to the
+stored pointer after the ordinary wrong-state edge succeeds. The backend does
+not infer the owner from the pointer or extend its lifetime.
+
 Expected placement also uses MIR's recursive generated-relocation proof for
 aggregate owners containing guarded resource fields. Moving the aggregate
 invokes each field move; each guarded leaf disarms its own source. This is

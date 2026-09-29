@@ -221,5 +221,20 @@ int main() {
                                 std::json::errc::unexpected_end) {
     return 37;
   }
+
+  auto borrowed_name = body.get("name");
+  if (!borrowed_name || !borrowed_name.value().is_string()) {
+    return 38;
+  }
+  auto missing_value = body.get("missing/value");
+  if (missing_value ||
+      missing_value.error().code() != std::json::errc::missing_key ||
+      missing_value.error().path() != "/missing~1value") {
+    return 39;
+  }
+  auto after_borrow = body.set("after_borrow", true);
+  if (!after_borrow || !body.contains("after_borrow")) {
+    return 40;
+  }
   return 0;
 }

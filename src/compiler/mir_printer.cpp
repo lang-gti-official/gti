@@ -263,7 +263,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v75 valid=" << program.valid() << '\n';
+    output << "mir-v76 valid=" << program.valid() << '\n';
     for (const MirNativeCallbackAdapter &adapter :
          program.nativeCallbackAdapters()) {
       output << "native-callback @" << adapter.id
@@ -687,7 +687,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v65\n";
+    output << "mir-body-v66\n";
     body(value, 0);
     return output.str();
   }
@@ -1140,6 +1140,10 @@ private:
     optional(value.dropType.uniqueOwnerBase);
     output << " capture=";
     optional(value.dropType.captureIndex);
+    output << " payload-variant=";
+    optional(value.dropType.payloadVariant);
+    output << " payload-field=";
+    optional(value.dropType.payloadField);
     output << " recursive=" << value.dropType.recursiveCleanup
            << " aggregate=[";
     for (const auto &step : value.dropType.aggregate)
@@ -1162,6 +1166,10 @@ private:
     optional(step.uniqueOwnerBase);
     output << ";capture=";
     optional(step.captureIndex);
+    output << ";payload-variant=";
+    optional(step.payloadVariant);
+    output << ";payload-field=";
+    optional(step.payloadField);
     output << ";recursive=" << step.recursiveCleanup
            << ";active=" << step.requiresActiveCleanup << ";children=[";
     for (const auto &child : step.aggregate)

@@ -399,11 +399,14 @@ fix changes ownership intent. The LSP publishes these same frontend records.
 - `GTI-S2086` owns an invalid prefix `?` propagation expression. Point at the
   operator and distinguish a non-`expected<T, E>` operand, a callable that does
   not return `expected<U, E>`, a non-identical enclosing error type, and an
-  unavailable copy or move for either active alternative. Suggest explicit
-  error handling or conversion for type/context failures, and
+  unavailable copy or move for either active alternative. The bounded
+  `expected<T&, E>` specialization also uses this family until propagation can
+  preserve its successful child loan; suggest explicit state inspection and
+  borrowing `value()` only on that success path. Suggest explicit error
+  handling or conversion for other type/context failures, and
   `?std::move(result)` only for a named move-only expected. Do not offer a
-  mechanical fix-it because consuming a named result changes its subsequent
-  ownership state.
+  mechanical fix-it because consuming a named result or choosing a borrow
+  lifetime changes program intent.
 - `GTI-S2089` owns an unresolved exact qualified public standard-library
   nominal type whose canonical `<std/...>` unit is known. Point at the final
   type-name segment, name the missing unit, and attach one zero-width compiler

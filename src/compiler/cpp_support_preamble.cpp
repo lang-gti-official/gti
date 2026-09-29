@@ -353,6 +353,7 @@ void writeCppSupportPreamble(std::ostream &output,
               "#include <system_error>\n";
   }
   if (usesExpected) {
+    output << "#include <optional>\n";
     if (features.standard == CppStandard::Cpp23) {
       output << "#include <expected>\n";
     } else {
@@ -418,6 +419,48 @@ inline constexpr auto make_unexpected_result(Error error) {
   return ::nonstd::make_unexpected(error);
 }
 )");
+  }
+  if (usesExpected) {
+    output << R"(
+
+// std::expected deliberately forbids reference payloads. GTI's
+// expected<T&, E> is a checked read-only borrow, so its native carrier keeps
+// the address while MIR remains authoritative for the referent lifetime.
+template <typename Value, typename Error>
+class borrowed_expected final {
+public:
+  borrowed_expected() = default;
+  borrowed_expected(const Value &value)
+      : state_(expected_result<const Value *, Error>{std::addressof(value)}) {}
+
+  template <typename Unexpected,
+            std::enable_if_t<!std::is_same_v<
+                                 std::remove_cvref_t<Unexpected>,
+                                 borrowed_expected>,
+                             int> = 0>
+  borrowed_expected(Unexpected &&unexpected)
+      : state_(expected_result<const Value *, Error>{
+            std::forward<Unexpected>(unexpected)}) {}
+
+  [[nodiscard]] bool has_value() const noexcept {
+    return state_->has_value();
+  }
+  explicit operator bool() const noexcept { return has_value(); }
+
+  [[nodiscard]] const Value &operator*() const { return ***state_; }
+  [[nodiscard]] const Value &value() const { return ***state_; }
+
+  [[nodiscard]] Error &error() & { return state_->error(); }
+  [[nodiscard]] const Error &error() const & { return state_->error(); }
+  [[nodiscard]] Error &&error() && { return std::move(state_->error()); }
+  [[nodiscard]] const Error &&error() const && {
+    return std::move(state_->error());
+  }
+
+private:
+  std::optional<expected_result<const Value *, Error>> state_;
+};
+)";
   }
   output << R"(
 

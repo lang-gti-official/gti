@@ -100,10 +100,17 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v75`/`mir-body-v65`.
-Program v75/body v65 replace a stored carrier's single designated field symbol
+The deterministic serialization is currently `mir-v76`/`mir-body-v66`.
+Program v76/body v66 replace a stored carrier's single designated field symbol
 with its ordered `designated-fields` path. The complete concrete nominal path
 retains one external dependency through nested carrier construction and return.
+The combined format also adds exact `payload-variant`/`payload-field` selectors to
+aggregate cleanup recipes. Enum roots retain finite active-alternative recipes,
+including concrete-class recursive back-edges. Program verification independently
+derives and compares the complete recipe. Borrowed `PayloadExtract` values are
+places, not owning copies: the verifier checks the exact selected switch edge,
+payload type/access, and source loan; backends spell an address into that original
+variant. Loan conflicts conservatively protect the whole matched enum.
 Program v74/body v64 serialize signature receiver capability in semantic type
 metadata. Read-only, mutable, and consuming signatures cannot share a serialized
 identity. The lowered declaration seal includes the same field in
@@ -587,6 +594,18 @@ operand. Backends copy the forwarded call-result pointer into the return
 loan's pointer local; re-borrowing the provenance place would re-point the
 published reference at the receiver's storage instead of the returned
 element.
+
+The checked-borrow Expected extension reuses that authority without adding a
+native reference-valued sum. A successful `expected<T&, E>` return publishes a
+fresh escaping `Return` loan from the exact referent loan, then retires the
+body-local source at the same boundary. An error Return carries only the exact
+`Unexpected<E>` value. Forwarding a complete carrier instead publishes its
+ordinary Expected runtime value and uses the Return loan solely for owner
+provenance; reconstructing success from the loan would corrupt an active error
+alternative. A direct local success initialization consumes one exact Loan
+operand whose place names the runtime `T` and whose loan names the protected
+owner. Verification admits only the read-only specialization, exact types,
+one carrier, non-widened access, and immediate source-loan retirement.
 
 Version 50 adds a bounded two-phase mutable loan for source-defined plain
 subscript and dereference stores rooted in a local, parameter, receiver, or
