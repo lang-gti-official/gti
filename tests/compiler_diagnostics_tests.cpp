@@ -1488,7 +1488,7 @@ int main() {
 
   const std::string incompleteDeclarationSource =
       "class Client { public: static int create() { return 1; } }; "
-      "int main() { auto client = Client::\n}";
+      "int unfinished() { auto client = Client::\n}";
   const lang::CompletionResult incompleteDeclarationCompletion =
       complete(incompleteDeclarationSource, "Client::");
   expect(findCandidate(incompleteDeclarationCompletion, "create") !=
