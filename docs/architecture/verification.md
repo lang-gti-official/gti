@@ -1523,6 +1523,22 @@ an active development tree merely to change generators. Compile parallelism
 may use the available host capacity; choose CTest parallelism separately
 because runtime tests can themselves launch native compilers or workers.
 
+Every build tree with `BUILD_TESTING=ON` or `GTI_BUILD_FUZZERS=ON` must build
+the GTI compiler executable with host optimization. This policy does not
+remove the GTI `-O0` generated-program cases in the test matrices. The root
+CMake project enforces the host configuration before dependency discovery: an
+omitted single-configuration build type becomes `Release`, and the accepted
+explicit configurations are `Release`, `RelWithDebInfo`, and `MinSizeRel`.
+Multi-config test trees expose only those configurations. An explicit `Debug`
+test tree is rejected because runtime and corpus tests repeatedly launch the
+compiler and an unoptimized binary can make those gates orders of magnitude
+slower. Use `RelWithDebInfo` when an optimized test binary still needs symbols.
+A separate `Debug` tree configured with
+`BUILD_TESTING=OFF` and `GTI_BUILD_FUZZERS=OFF` is valid for debugger-only
+investigation, but results from that binary are not verification evidence.
+Sanitizer CI uses an optimized `RelWithDebInfo` compiler with its sanitizer
+instrumentation retained.
+
 ## Repository Build Generator
 
 First-party developer instructions and Gitea automation configure CMake
@@ -1683,7 +1699,8 @@ composition. They exist only under
 exploration is an explicit local activity, never a merge gate:
 
 ```sh
-cmake -S . -B build-fuzz -G Ninja -DGTI_BUILD_FUZZERS=ON -DGTI_BUILD_LSP=OFF
+cmake -S . -B build-fuzz -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DGTI_BUILD_FUZZERS=ON -DGTI_BUILD_LSP=OFF
 cmake --build build-fuzz --target gti_parser_fuzzer \
     gti_formatter_fuzzer gti_pipeline_fuzzer gti_source_loader_fuzzer
 mkdir -p /tmp/gti-fuzz-work

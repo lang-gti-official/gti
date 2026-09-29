@@ -139,7 +139,7 @@ approved support libraries (`LLVMSupport`, `LLVMTargetParser`, and
 ```sh
 git clone https://git.internal.howetotech.dev/gti-lang/gti.git gti
 cd gti
-cmake -S . -B build -G Ninja
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
 
 ./build/gti examples/01-basics.gti -o /tmp/gti-basics
@@ -166,9 +166,20 @@ GTI's build graph or artifact semantics:
 
 ```sh
 cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER_LAUNCHER=sccache \
   -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
 ```
+
+Test-enabled builds always use a GTI compiler executable built with host
+optimization because many tests compile GTI programs repeatedly. This does
+not remove the GTI `-O0` cases exercised by the test matrix.
+Single-configuration builds default to `Release`; an explicit `Debug`
+configuration is rejected while
+`BUILD_TESTING=ON` or `GTI_BUILD_FUZZERS=ON`. Use `RelWithDebInfo` for
+optimized, debuggable test runs, or create a separate `Debug` tree with both
+testing and fuzzers disabled for debugger-only work. `Release`,
+`RelWithDebInfo`, and `MinSizeRel` are the supported test configurations.
 
 First-party C and C++ sources use the exact clang-format release recorded in
 `.clang-format-version`. Verify or apply the repository format with:

@@ -136,6 +136,12 @@ def main() -> None:
         and "atomic_runtime_test.py" in release,
         "stable release is not owned by VERSION changes on Gitea main",
     )
+    expect(
+        "-DCMAKE_BUILD_TYPE=Debug" not in ci
+        and "-DCMAKE_BUILD_TYPE=RelWithDebInfo" in ci
+        and '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"' in ci,
+        "compiler sanitizer CI must test an optimized compiler with symbols",
+    )
     for workflow, contents in (
         ("ci.yml", ci),
         ("nightly.yml", nightly),
