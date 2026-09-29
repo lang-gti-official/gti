@@ -1193,13 +1193,18 @@ module.exports = grammar({
           choice(
             $.pack_expansion,
             seq(
-              commaSep1(choice($._expression_not_comma, $.array_initializer)),
+              commaSep1(choice($._expression_not_comma, $.array_initializer,
+                               $.payload_reference_pattern)),
               optional(seq(",", $.pack_expansion)),
             ),
           ),
         ),
         ")",
       ),
+
+    payload_reference_pattern: ($) =>
+      seq(optional(field("mutable", "mut")), "auto", "&",
+          field("name", $.identifier)),
 
     pack_expansion: ($) =>
       seq(field("name", $.identifier), field("operator", "...")),

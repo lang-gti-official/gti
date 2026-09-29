@@ -1100,7 +1100,10 @@ switch-statement       = "switch" "(" expression ")"
 
 switch-item            = switch-label | block-item ;
 
-switch-label           = "case" logical-or-expression ":" | "default" ":" ;
+switch-label           = "case" ( logical-or-expression | payload-borrow-pattern ) ":" | "default" ":" ;
+payload-borrow-pattern = qualified-name "(" payload-pattern-binding
+                         { "," payload-pattern-binding } ")" ;
+payload-pattern-binding = identifier | [ "mut" ] "auto" "&" identifier ;
 
 (* Switch subjects are concrete integer, char, or scoped-enum values. Case
    labels must be compile-time literals, explicitly converted integer
@@ -1111,7 +1114,9 @@ switch-label           = "case" logical-or-expression ":" | "default" ":" ;
    inside an enclosing loop, so GTI has no implicit fallthrough. Each arm is a
    lexical scope even without source braces. A payload-enum label is either a
    unit alternative or `EnumName::case(bindings...)`. Bindings are immutable
-   copied values local to that arm and therefore require a copyable field;
+   copied values local to that arm and therefore require a copyable field.
+   `auto& name` is a shared payload borrow, and `mut auto& name` is an
+   exclusive borrow requiring mutable stable enum storage;
    omitting the binding produces a tag-only pattern that can observe a
    move-only alternative. Without `default`, every payload variant must appear
    exactly once. *)

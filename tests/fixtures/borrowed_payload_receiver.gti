@@ -1,0 +1,23 @@
+#include <std/vector>
+
+enum class data { numbers(std::vector<int32_t> items) };
+class wrapper {
+  mut data content = data::numbers(std::vector<int32_t>());
+public:
+  wrapper() {}
+  std::vector<int32_t>& items() {
+    switch (this.content) {
+      case data::numbers(auto& items): return items;
+    }
+  }
+  mut std::vector<int32_t>& items() mut {
+    switch (this.content) {
+      case data::numbers(mut auto& items): return items;
+    }
+  }
+};
+int main() {
+  mut wrapper value = wrapper();
+  value.items().push_back(9);
+  return value.items()[std::size_t(0)] == 9 ? 0 : 1;
+}

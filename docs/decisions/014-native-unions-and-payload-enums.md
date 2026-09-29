@@ -29,8 +29,8 @@ GTI adopts two separate source constructs:
   every case or provide `default`. The frontend owns case identity,
   construction, binding, and exhaustiveness.
 
-The payload family remains intentionally non-generic. It accepts passive
-fields and concrete class values, including move-only classes whose active
+Enum declarations remain non-generic; their payload fields accept passive
+values and concrete class instances, including generic and move-only classes whose active
 cleanup is represented per alternative. Construction transfers owning class
 operands into the selected alternative, whole-enum move transfers that active
 alternative (including replacement assignment), and tag-only exhaustive
@@ -40,14 +40,31 @@ and direct by-value transport through ordinary source-defined free functions,
 non-polymorphic methods and constructors, and exact typed lambdas. The
 call/return path retains ordered argument transfer, direct result placement,
 success-only result activation, and defined-failure cleanup in verified MIR.
-An ordinary non-generic, non-polymorphic class or struct may additionally own
+An ordinary non-polymorphic class or struct may additionally own
 the enum as a direct field. Its existing structural class lifecycle transports
 the field through containing-value moves and calls/returns, while verified
 field publication and construction rollback preserve exactly-once cleanup.
-Generic callable transport (including generic-owner methods and constructors),
-polymorphic callable transport, lambda capture, recursive fields, arrays and
-other wrapper containment, stored borrowed state, active non-class carriers,
-consuming or borrowed patterns, generic payloads, and a stable source layout
+Recursive containment through ordinary owning classes is admitted when the
+by-value layout is finite, for example enum → vector<node> → node → enum.
+Verified MIR cleanup recipes carry exact alternative/field selectors and
+finite concrete-class recursion edges. Cleanup selects the active variant,
+drains fields in reverse construction order, and continues remaining sibling
+cleanup if a destructor raises a defined failure. Direct by-value cycles are
+still rejected.
+
+Patterns retain immutable copy syntax `case Data::array(items)`. The spelling
+`case Data::array(auto& items)` instead borrows the original payload read-only;
+`case Data::array(mut auto& items)` takes an exclusive mutable borrow. The
+original enum must be stable storage, and mutable borrowing requires mutable
+access to it. Bindings have arm scope; ordinary checked return summaries may
+relay a borrow from a receiver, but local or temporary owners cannot escape.
+Conflict checking conservatively uses the entire matched enum, so simultaneous
+sibling mutable payload borrows are rejected. These bindings do not permit
+enum declarations to store reference payloads.
+
+Generic enum callable transport (including generic-owner methods and constructors),
+polymorphic callable transport, lambda capture, direct array or non-class
+payloads, stored borrowed state, consuming patterns, and a stable source layout
 remain outside this decision. The C++ backend may use `std::variant` plus a
 private disengaged representation state because all language decisions are
 complete before emission; that state is not a source alternative and a future
@@ -65,9 +82,9 @@ this decision.
   compiler-private optional or variant abstraction.
 - Exhaustiveness is a semantic control-flow fact retained through HIR and MIR,
   so a backend cannot silently add an unmatched continuation.
-- Broader ownership-capable and generic payloads must extend partial
-  initialization, recursive cleanup, and consuming/borrowed pattern proofs
-  before their syntax is accepted.
+- Owning recursive sums enable `std::json::value` to store exactly one active
+  alternative instead of a tag plus storage for every alternative; JSON has
+  no compiler-recognized name or privileged lowering path.
 - Stable payload layout and C ABI unions require separate decisions and
   evidence.
 
@@ -78,6 +95,6 @@ this decision.
 - **Make `std::variant` or `std::optional` intrinsic:** this would force the
   compiler to understand a high-level library policy and obstruct alternate
   backends.
-- **Expose payload enums immediately for arbitrary owning types:** the bounded
-  concrete-class family proves exactly-once cleanup, but recursive aggregates,
-  stored loans, and consuming patterns still lack complete lifecycle proofs.
+- **Expose payload enums immediately for arbitrary owning types:** the
+  concrete-class family proves exactly-once recursive cleanup, but stored
+  loans and consuming patterns still require separate lifecycle proofs.

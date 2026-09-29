@@ -673,6 +673,34 @@ private:
   [[nodiscard]] std::optional<MirDropType>
   uniqueCleanupType(const SemanticType &type,
                     std::unordered_set<HirClassInstanceId> &visiting) const {
+    if (type.kind == SemanticType::Enum) {
+      const auto enumeration = std::find_if(
+          program.enumDeclarations().begin(), program.enumDeclarations().end(),
+          [&](const auto &candidate) {
+            return candidate.declaration == type.enumId;
+          });
+      if (enumeration == program.enumDeclarations().end() ||
+          !enumeration->payload)
+        return std::nullopt;
+      MirDropType result{.type = type,
+                         .requiresActiveCleanup =
+                             enumeration->requiresActiveCleanup};
+      for (const auto &variant : enumeration->enumerators) {
+        for (std::size_t index = variant.payloadTypes.size(); index != 0;
+             --index) {
+          if (!variant.payloadRequiresActiveCleanup[index - 1])
+            continue;
+          auto child =
+              uniqueCleanupType(variant.payloadTypes[index - 1], visiting);
+          if (!child)
+            return std::nullopt;
+          child->payloadVariant = variant.variantIndex;
+          child->payloadField = index - 1;
+          result.aggregate.push_back(*child);
+        }
+      }
+      return result;
+    }
     if ((type.kind == SemanticType::Expected && type.arguments.size() == 2) ||
         (type.kind == SemanticType::Unexpected && type.arguments.size() == 1)) {
       MirDropType result{.type = type};
@@ -1103,7 +1131,7 @@ private:
           !enumeration->requiresActiveCleanup) {
         return std::nullopt;
       }
-      return MirDropType{.type = type, .requiresActiveCleanup = true};
+      return lowerDropType({.type = type, .requiresActiveCleanup = true});
     }
     if (type.kind != SemanticType::Class) {
       return std::nullopt;
@@ -6435,12 +6463,18 @@ private:
                                                     ? SemanticType::Unknown
                                                     : sourceValue->info.type});
       } else if (instruction.operation == MirOperation::PayloadExtract) {
+        if (const auto subject = payloadSwitchSubjects.find(operand);
+            subject != payloadSwitchSubjects.end()) {
+          instruction.operands.push_back(subject->second);
+          continue;
+        }
         const HirValue *sourceValue = findValue(operand);
         const MirPlaceId sourcePlace = placeForValue(operand);
         if (sourceValue != nullptr && sourcePlace != 0 &&
             sourceValue->info.category == ValueCategory::Place &&
             sourceValue->info.type.kind == SemanticType::Enum &&
-            sourceValue->info.traits.drop == DropKind::Lexical) {
+            (sourceValue->info.traits.drop == DropKind::Lexical ||
+             value->info.category == ValueCategory::Place)) {
           emitPlaceDependencies(operand);
           instruction.operands.push_back({.kind = MirOperandKind::BorrowRead,
                                           .place = sourcePlace,
@@ -6471,7 +6505,9 @@ private:
         transferTemporaryOut(instruction, operand);
       }
     }
-    (void)initializeValueLifecycle(instruction, *value);
+    if (value->kind != HirValueKind::PayloadExtraction ||
+        value->info.category != ValueCategory::Place)
+      (void)initializeValueLifecycle(instruction, *value);
     (void)appendInstruction(std::move(instruction));
     endConsumedCallResultLoans(value->operands, *value);
     emittedValues.insert(id);
@@ -6486,6 +6522,46 @@ private:
     emitPlaceDependencies(valueId);
     const MirLoanId existing = loanForValue(valueId);
     const HirLoan *desired = binding == 0 ? nullptr : loanForBinding(binding);
+    if (desired != nullptr && value->kind == HirValueKind::PayloadExtraction &&
+        value->info.category == ValueCategory::Place) {
+      emitValue(valueId);
+      const MirPlaceId field = placeForValue(valueId);
+      if (field == 0) {
+        valid = false;
+        return {};
+      }
+      output.places[field - 1].key = desired->place;
+      MirLoanId parent = 0;
+      if (desired->parent != 0) {
+        const auto found = semanticLoans.find(desired->parent);
+        if (found == semanticLoans.end()) {
+          valid = false;
+          return {};
+        }
+        parent = found->second;
+      }
+      const MirLoanId loan =
+          createLoan(MirLoanKind::Local, field, desired->access, valueId,
+                     binding, 0, parent);
+      recordLoanIdentity(loan, *desired, binding);
+      (void)appendInstruction(
+          {.kind = MirInstructionKind::Borrow,
+           .hirValue = valueId,
+           .operands = {{.kind = desired->access == AccessMode::Mutable
+                                     ? MirOperandKind::BorrowWrite
+                                     : MirOperandKind::BorrowRead,
+                         .place = field,
+                         .type = value->info.type}},
+           .loan = loan,
+           .info = value->info});
+      scopes.back().loans.push_back(loan);
+      valueLoans.insert_or_assign(valueId, loan);
+      bindingLoans.insert_or_assign(binding, loan);
+      return {.kind = MirOperandKind::Loan,
+              .place = field,
+              .loan = loan,
+              .type = value->info.type};
+    }
     if (desired != nullptr) {
       const bool exactRangeElement = std::any_of(
           source.statements.begin(), source.statements.end(),
@@ -7937,7 +8013,18 @@ private:
       if (sourceValue != nullptr && sourcePlace != 0 &&
           sourceValue->info.category == ValueCategory::Place &&
           sourceValue->info.type.kind == SemanticType::Enum &&
-          sourceValue->info.traits.drop == DropKind::Lexical) {
+          (sourceValue->info.traits.drop == DropKind::Lexical ||
+           std::any_of(
+               statement.switchArms.begin(), statement.switchArms.end(),
+               [&](const HirSwitchArm &arm) {
+                 return std::any_of(
+                     arm.payloadBindings.begin(), arm.payloadBindings.end(),
+                     [&](const HirSwitchArm::PayloadBinding &payload) {
+                       const HirBinding *binding = findBinding(payload.binding);
+                       return binding != nullptr && binding->info.type.kind ==
+                                                        SemanticType::Reference;
+                     });
+               }))) {
         emitPlaceDependencies(*statement.value);
         subject = {.kind = MirOperandKind::BorrowRead,
                    .place = sourcePlace,
@@ -7947,6 +8034,8 @@ private:
       }
     }
     endFullExpressionLoans(subjectScopes);
+    if (statement.value)
+      payloadSwitchSubjects[*statement.value] = subject;
     emitTemporaryDrops(subjectTemporaryDrops, statement.value.value_or(0),
                        statement.id);
     const MirBlockId exitBlock = appendBlock();
@@ -8055,14 +8144,17 @@ private:
           valid = false;
           continue;
         }
-        MirInstruction initialize{.kind = MirInstructionKind::Initialize,
-                                  .hirStatement = statement.id,
-                                  .destination = destination,
-                                  .operands = {valueOperand(payload.value)},
-                                  .info = {.type = binding->info.type,
-                                           .category = ValueCategory::Place,
-                                           .access = binding->info.access,
-                                           .traits = binding->info.traits}};
+        MirInstruction initialize{
+            .kind = MirInstructionKind::Initialize,
+            .hirStatement = statement.id,
+            .destination = destination,
+            .operands = {binding->info.type.kind == SemanticType::Reference
+                             ? referenceOperand(payload.value, payload.binding)
+                             : valueOperand(payload.value)},
+            .info = {.type = binding->info.type,
+                     .category = ValueCategory::Place,
+                     .access = binding->info.access,
+                     .traits = binding->info.traits}};
         // A copied class payload binding owns its copy: arm the binding's
         // obligation at this Initialize so the arm-exit Drop ends an
         // active lifetime, exactly like an ordinary local initialization.
@@ -8515,6 +8607,9 @@ private:
   std::unordered_map<HirValueId, MirValueId> contextualValues;
   std::unordered_map<HirValueId, MirValueId> materializedValues;
   std::unordered_map<HirValueId, MirPlaceId> valuePlaces;
+  // Every extraction observes the same subject representation that selected
+  // its arm, including mixed copied/borrowed bindings of passive enums.
+  std::unordered_map<HirValueId, MirOperand> payloadSwitchSubjects;
   std::unordered_map<HirValueId, MirLoanId> valueLoans;
   std::unordered_map<HirBindingId, MirLoanId> bindingLoans;
   std::unordered_map<MirPlaceId, MirLoanId> packEntryLoans;

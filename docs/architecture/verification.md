@@ -983,6 +983,18 @@ lifecycle matrix, including partial-construction failure and unsupported-shape
 diagnostics. The Tree-sitter corpus and capture tests own editor grammar and
 highlighting.
 
+Recursive owning sums additionally use `recursive_payload_sum_runtime` for
+finite generic containment, reverse sibling cleanup, partially constructed
+owners/alternatives, and destructor failure. `borrowed_payload_pattern_runtime`
+covers shared/exclusive active-payload references, mixed copied and borrowed
+bindings, projected fields, checked receiver returns, and owning enum field
+exchange. Both include C++20/C++23, optimized/unoptimized, disabled-elision,
+and ASan/UBSan execution. The semantic/MIR suite rejects direct layout cycles,
+forged active-variant cleanup selectors, unguarded extractions, and upgraded
+loans. `borrowed_payload_pattern_lsp` checks navigation, tokens, exact
+diagnostic locations, and versioned recovery. `json_stdlib` is the end-to-end
+library client of recursive enum storage, without a privileged lowering path.
+
 For defined integer arithmetic, `defined_integer_arithmetic` covers all eight
 fixed-width domains, all nine add/subtract/multiply identities, signed and
 unsigned boundaries, in-range parity, checked error construction, unsupported

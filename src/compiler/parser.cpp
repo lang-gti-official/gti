@@ -92,6 +92,7 @@ private:
   void reset() {
     current = 0;
     nestingDepth = 0;
+    casePatternDepth = 0;
     conditionalDepth = 0;
     diagnostics.clear();
     currentClassName.reset();
@@ -2214,6 +2215,7 @@ private:
           Token label = advance();
           ExprPtr caseValue;
           if (label.kind == TokenKind::CASE) {
+            NestingGuard patternGuard(casePatternDepth);
             caseValue = logicalOr();
           }
           Token colon =
@@ -2484,8 +2486,26 @@ private:
     ExprList arguments;
     if (!check(TokenKind::RIGHT_PAREN)) {
       do {
-        ExprPtr argument =
-            check(TokenKind::LEFT_BRACE) ? arrayInitializer() : assignment();
+        ExprPtr argument;
+        if (casePatternDepth != 0 &&
+            (check(TokenKind::AUTO) || check(TokenKind::MUT))) {
+          std::optional<Token> mutability;
+          if (match({TokenKind::MUT}))
+            mutability = previous();
+          Token automatic = consume(
+              TokenKind::AUTO, "Expect 'auto' in a borrowed payload pattern.");
+          Token reference =
+              consume(TokenKind::AMPERSAND,
+                      "Expect '&' after 'auto' in a payload pattern.");
+          Token name = consume(TokenKind::IDENTIFIER,
+                               "Expect a payload binding name after '&'.");
+          argument = std::make_unique<Variable>(
+              std::move(name), std::move(automatic), std::move(reference),
+              std::move(mutability));
+        } else {
+          argument =
+              check(TokenKind::LEFT_BRACE) ? arrayInitializer() : assignment();
+        }
         if (match({TokenKind::ELLIPSIS})) {
           const auto *variable = exprAs<Variable>(argument.get());
           if (variable == nullptr) {
@@ -3300,6 +3320,7 @@ private:
   std::vector<ParseDiagnostic> diagnostics;
   std::size_t current = 0;
   std::size_t nestingDepth = 0;
+  std::size_t casePatternDepth = 0;
   // Number of compile-time conditionals whose body is currently being parsed.
   // A conditional-continuation directive (`#elif`/`#else`/`#endif`) is a
   // recovery boundary only while one is open; nested recovery propagates it to
