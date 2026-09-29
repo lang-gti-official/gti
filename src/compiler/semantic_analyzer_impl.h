@@ -2,6 +2,7 @@
 
 #include "gti/semantic_analyzer.h"
 
+#include "diagnostic_registry.h"
 #include "gti/frontend_work.h"
 #include "gti/standard_library.h"
 #include "semantic_diagnostics.h"
@@ -1774,6 +1775,12 @@ private:
                                         std::string_view surface);
 
   void finalizeCThreadRequirements();
+
+  void recordMutableBindingUse(SymbolId symbol);
+
+  void recordMutableBindingUse(const ExprPtr &expression);
+
+  void finalizeAdvisoryDiagnostics();
 
   struct CThreadCallUse {
     const FunctionDecl *caller = nullptr;
@@ -3750,6 +3757,12 @@ private:
   // They do not introduce another owner: every binding refers into this one
   // object, and resetRequestState() is its only public-entry reset operation.
   struct RequestSessionState {
+    struct MutableLocalCandidate {
+      SymbolId symbol = 0;
+      Token keyword;
+      Token name;
+    };
+
     std::vector<SemanticDiagnostic> diagnostics;
     SemanticModel semanticModel;
     // Diagnostic construction lives in its own translation unit
@@ -3776,6 +3789,8 @@ private:
         valueParameterScopes;
     std::vector<std::unordered_set<GenericParameterId>> typePackScopes;
     std::vector<std::vector<AppliedConceptRequirement>> requirementScopes;
+    std::vector<MutableLocalCandidate> mutableLocalCandidates;
+    std::unordered_set<SymbolId> mutableBindingUses;
     TypeSubstitution instanceTypeSubstitution;
     ValueSubstitution instanceValueSubstitution;
     std::vector<std::string> currentNamespace;
