@@ -3429,7 +3429,7 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
         }
 
         namespace_source = source.replace(
-            "return choose(1, 2);", "uint64_t result = math::po; return 0;"
+            "return choose(1, 2);", "uint64_t result = math::\nreturn 0;"
         )
         session.send(
             {
@@ -3447,7 +3447,7 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 3
         )
-        namespace_prefix = namespace_source.index("po;", namespace_source.index("math::"))
+        namespace_prefix = namespace_source.index("math::") + len("math::")
         session.send(
             {
                 "jsonrpc": "2.0",
@@ -3455,9 +3455,7 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
                 "method": "textDocument/completion",
                 "params": {
                     "textDocument": {"uri": uri},
-                    "position": lsp_position(
-                        namespace_source, namespace_prefix + 2
-                    ),
+                    "position": lsp_position(namespace_source, namespace_prefix),
                 },
             }
         )

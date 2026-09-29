@@ -1486,6 +1486,16 @@ int main() {
          "namespace completion should preserve overloads, GTI signatures, and "
          "parameter snippets");
 
+  const std::string incompleteDeclarationSource =
+      "class Client { public: static int create() { return 1; } }; "
+      "int main() { auto client = Client::\n}";
+  const lang::CompletionResult incompleteDeclarationCompletion =
+      complete(incompleteDeclarationSource, "Client::");
+  expect(findCandidate(incompleteDeclarationCompletion, "create") !=
+             incompleteDeclarationCompletion.candidates.end(),
+         "completion should retain a declaration whose initializer reaches "
+         "the cursor before its semicolon is written");
+
   const std::string languageSurfaceSource =
       "interface Renderable { int render(); }; "
       "void relay<Args...>(Args... values) {} "
