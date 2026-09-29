@@ -547,7 +547,10 @@ marker so the parser/analyzer can capture real scope, receiver, visibility, and
 overload candidates in fragments such as `object.` or `foo(`. A variable
 initializer that consumes this marker remains available to semantic completion
 even when the user has not yet typed its trailing semicolon; ordinary compiler
-snapshots continue to reject that source. Features may return partial or no
+snapshots continue to reject that source. Published diagnostics do not gate
+completion when the marker's scope and receiver remain recoverable: an
+unrelated error such as a missing return in the enclosing function remains
+visible while candidates are returned. Features may return partial or no
 semantic results; they must not confidently invent missing meaning from
 punctuation.
 

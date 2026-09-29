@@ -3428,8 +3428,10 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
             "newText": "local",
         }
 
-        namespace_source = source.replace(
-            "return choose(1, 2);", "uint64_t result = math::\nreturn 0;"
+        namespace_source = source + (
+            "uint64_t unfinished() {\n"
+            "  uint64_t result = math::\n"
+            "}\n"
         )
         session.send(
             {
@@ -3441,13 +3443,17 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
                 },
             }
         )
-        session.receive_until(
+        namespace_diagnostics = session.receive_until(
             lambda message: message.get("method")
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 3
-        )
-        namespace_prefix = namespace_source.index("math::") + len("math::")
+        )["params"]["diagnostics"]
+        assert any(
+            diagnostic.get("code") == "GTI-S2031"
+            for diagnostic in namespace_diagnostics
+        ), namespace_diagnostics
+        namespace_prefix = namespace_source.rindex("math::") + len("math::")
         session.send(
             {
                 "jsonrpc": "2.0",
