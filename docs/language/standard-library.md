@@ -421,7 +421,7 @@ cleanup, not native undefined behavior. The comparator, hash and equality
 policies must be read-callable with the exact required result (`bool` or
 `size_t`). Equality and hashing must agree; ordered comparison must define a
 strict weak ordering. Stateful policies may be passed to the constructors.
-See [`86-associative-containers.gti`](../../examples/86-associative-containers.gti)
+See [`87-associative-containers.gti`](../../examples/87-associative-containers.gti)
 for insertion-result movement and scoped mutable access.
 
 ### Sequential Storage

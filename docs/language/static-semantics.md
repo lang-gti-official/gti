@@ -40,6 +40,13 @@ qualifier is available only on `operator()` and denotes consuming access, not a
 general rvalue-reference type. A consuming call operator may mutate its
 receiver while consuming it.
 
+An explicit `mut` on an ordinary local value that is never required for a
+write, mutable-reference argument, mutable raw address, or mutable receiver is
+well-formed but produces warning `GTI-S2096`. Removing that token is a
+semantics-preserving quick fix. The compiler is conservative at boundaries it
+cannot prove: generated range/reference bindings and compiler-trusted library
+implementation locals do not receive this advisory warning.
+
 `T&` denotes a non-null read-only borrow of `T`. `mut T&` denotes a non-null
 writable borrow. Reference binding and escape are subject to the ownership
 rules in [Ownership And Lifetimes](ownership-and-lifetimes.md).
@@ -142,6 +149,16 @@ specified by [`native-c-interop.md`](native-c-interop.md#native-callback-types).
 
 The complete programmer obligations are incorporated from
 [`raw-pointers.md`](raw-pointers.md).
+
+## 3.3.1 Unreachable Statements
+
+After a statement that cannot fall through, the first statement of the
+consecutive unreachable tail produces warning `GTI-S2095`. Unreachable source
+is still parsed and semantically analyzed in isolated flow state so names,
+hover/completion facts, and independent errors remain available without
+repairing the reachable ownership state. The compiler does not offer an
+automatic deletion because removing an unreachable region can still discard
+intentional declarations or documentation.
 
 ## 3.4 Names, Scopes, And Visibility
 

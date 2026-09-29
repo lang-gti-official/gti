@@ -15,7 +15,8 @@ def check(executable, concurrent, selected="thrd_join"):
             "call_once": "std::call_once(flag, initialize); return 0;"}[selected]
     declarations = ("void initialize() {}\n" if selected == "call_once" else "")
     locals = ("std::once_flag flag{}; " if selected == "call_once" else
-              "std::thrd_t handle = 0; mut int32_t result = 0; ")
+              "std::thrd_t handle = 0; mut int32_t result = 0; "
+              if selected == "thrd_join" else "std::thrd_t handle = 0; ")
     source = ("// 😀 source-position control\n#include <std/cthread>\n"
               + declarations + "int main() { " + locals
               + (call if concurrent else "unsafe { " + call + " }") + " }\n")

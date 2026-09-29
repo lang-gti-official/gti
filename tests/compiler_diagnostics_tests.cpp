@@ -611,6 +611,90 @@ int main() {
          "ignored function results and invalid discard attributes should fail");
   expect(invalidSemantic.errors().size() == 3,
          "nodiscard should produce focused diagnostics for all invalid uses");
+  const lang::Diagnostic *ignored =
+      findDiagnosticByCode(invalidSemantic.errors(), "GTI-S2009");
+  expect(ignored != nullptr && ignored->group == "unused-result" &&
+             ignored->fixes.size() == 1 &&
+             ignored->fixes.front().replacement == "[[discard]] " &&
+             !ignored->fixes.front().preferred,
+         "an ignored result should offer an explicit, non-preferred discard "
+         "fix without changing expression evaluation");
+}
+
+void testAdvisoryDiagnostics() {
+  const lang::FrontendResult result =
+      lang::Frontend().analyze("advisory-diagnostics.gti", R"(
+int main() {
+  mut int read_only = 1;
+  mut int changed = 2;
+  changed = 3;
+  return read_only + changed;
+  int unreachable = 4;
+}
+)");
+  expect(result.canGenerateCode(),
+         "warning-only programs should remain eligible for code generation");
+  const lang::Diagnostic *unnecessary =
+      findDiagnosticByCode(result.diagnostics, "GTI-S2096");
+  expect(unnecessary != nullptr &&
+             unnecessary->severity == lang::DiagnosticSeverity::Warning &&
+             unnecessary->group == "unused-mut" &&
+             unnecessary->tags ==
+                 std::vector{lang::DiagnosticTag::Unnecessary} &&
+             unnecessary->fixes.size() == 1 &&
+             unnecessary->fixes.front().replacement.empty() &&
+             unnecessary->fixes.front().preferred &&
+             unnecessary->primary.start == std::string_view(R"(
+int main() {
+  mut int read_only = 1;
+  mut int changed = 2;
+  changed = 3;
+  return read_only + changed;
+  int unreachable = 4;
+}
+)")
+                                               .find("mut int read_only"),
+         "an unused local mut should have a stable warning group, unnecessary "
+         "tag, and exact token removal fix");
+  expect(countDiagnosticCode(result.diagnostics, "GTI-S2096") == 1,
+         "a binding that is assigned later must retain mut without a warning");
+  const lang::Diagnostic *unreachable =
+      findDiagnosticByCode(result.diagnostics, "GTI-S2095");
+  expect(unreachable != nullptr &&
+             unreachable->severity == lang::DiagnosticSeverity::Warning &&
+             unreachable->group == "unreachable-code" &&
+             unreachable->tags ==
+                 std::vector{lang::DiagnosticTag::Unnecessary} &&
+             unreachable->fixes.empty(),
+         "the first statement in an unreachable tail should be tagged but "
+         "should not receive a semantics-changing deletion fix");
+
+  const lang::FrontendResult requiredMutation =
+      lang::Frontend().analyze("required-mutation.gti", R"(
+void replace(mut int& value) { value = 3; }
+struct Box {
+  mut int value = 0;
+  void change() mut { this.value = 4; }
+};
+int main() {
+  mut int referenced = 1;
+  replace(referenced);
+  mut int addressed = 2;
+  unsafe { int* pointer = &addressed; *pointer = 5; }
+  mut Box box = Box();
+  box.change();
+  box.value += 1;
+  mut int[1] values = {1};
+  values[0] *= 2;
+  return referenced + addressed + box.value + values[0];
+}
+)");
+  expect(requiredMutation.canGenerateCode() &&
+             countDiagnosticCode(requiredMutation.diagnostics, "GTI-S2096") ==
+                 0,
+         "mutable-reference arguments, mutable address-taking, and mutable "
+         "receivers, field writes, and indexed writes should each preserve a "
+         "required local mut qualifier");
 }
 
 void testPrintIsAnIdentifier() {
@@ -1767,6 +1851,7 @@ constexpr NamedTest kTests[] = {
     {"testCppReservedIdentifiers", testCppReservedIdentifiers},
     {"testDefaultImmutability", testDefaultImmutability},
     {"testDefaultNodiscard", testDefaultNodiscard},
+    {"testAdvisoryDiagnostics", testAdvisoryDiagnostics},
     {"testPrintIsAnIdentifier", testPrintIsAnIdentifier},
     {"testFormatting", testFormatting},
     {"testLanguageQueries", testLanguageQueries},

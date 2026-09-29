@@ -618,8 +618,12 @@ private:
     if (match({TokenKind::CONSTEXPR})) {
       constexprKeyword = previous();
     }
+    std::optional<Token> mutKeyword;
+    if (match({TokenKind::MUT})) {
+      mutKeyword = previous();
+    }
     const Mutability mutability =
-        match({TokenKind::MUT}) ? Mutability::Mutable : Mutability::Immutable;
+        mutKeyword ? Mutability::Mutable : Mutability::Immutable;
     TypeRef type = parseType();
     std::optional<OperatorName> operatorName;
     Token name;
@@ -696,9 +700,9 @@ private:
     }
 
     parseArrayDeclaratorSuffix(type);
-    return variableDeclaration(mutability, std::move(type), name,
-                               std::move(staticKeyword),
-                               std::move(constexprKeyword));
+    return variableDeclaration(
+        mutability, std::move(type), name, std::move(staticKeyword),
+        std::move(constexprKeyword), std::move(mutKeyword));
   }
 
   StmtPtr functionDeclaration(
@@ -1201,7 +1205,8 @@ private:
   StmtPtr
   variableDeclaration(Mutability mutability, TypeRef type, Token name,
                       std::optional<Token> staticKeyword = std::nullopt,
-                      std::optional<Token> constexprKeyword = std::nullopt) {
+                      std::optional<Token> constexprKeyword = std::nullopt,
+                      std::optional<Token> mutKeyword = std::nullopt) {
     const bool hadCompletion = consumedCompletion;
     ExprPtr initializer;
     if (match({TokenKind::EQUAL})) {
@@ -1217,7 +1222,8 @@ private:
     }
     return std::make_shared<VariableDecl>(
         mutability, std::move(type), name, std::move(initializer),
-        std::move(staticKeyword), false, std::move(constexprKeyword));
+        std::move(staticKeyword), false, std::move(constexprKeyword), false,
+        false, std::move(mutKeyword));
   }
 
   StmtPtr mutableFieldGroupDeclaration(Token keyword) {

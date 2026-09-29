@@ -89,7 +89,8 @@ own `main` function.
 | `83-complete-ranges.gti` | structural whole-range algorithms over application ranges and fixed arrays |
 | `84-optional-values.gti` | allocation-free optional storage, checked access, reset, emplacement, and move-only payloads |
 | `85-payload-enum-fields.gti` | ordinary class and struct fields that directly own active-cleanup payload enums |
-| `86-associative-containers.gti` | ordered and hashed dictionaries, nested borrowed insertion results, moves, and owner reactivation |
+| `86-owning-callbacks.gti` | retained lambda callbacks, `std::function`, cloning/replacement, mutable state, move-only captures, and one-shot invocation |
+| `87-associative-containers.gti` | ordered and hashed dictionaries, nested borrowed insertion results, moves, and owner reactivation |
 
 Build and run an example from the repository root:
 
@@ -280,8 +281,8 @@ inherit aliases through base classes, or add a `Box<int>::value_type` spelling.
 
 `80-function-items.gti` passes exact namespace free functions directly to
 confined generic callables and standard algorithms. Function items are
-zero-state GTI callable identities; they are not native function pointers and
-cannot be stored as ordinary values.
+zero-state GTI callable identities; they are not native function pointers.
+The owning callback example below also demonstrates retaining one in a wrapper.
 
 `83-complete-ranges.gti` defines an application-owned range with the exact
 read-only, mutable, and sized structural protocol. The same source-defined
@@ -299,6 +300,23 @@ directly inside an ordinary class and struct. Moving the containing object,
 replacing its active field, and leaving scope each destroy exactly the active
 payload. Generic, polymorphic, recursive, array, and public native-layout
 owners remain outside this bounded slice.
+
+`86-owning-callbacks.gti` starts with an authentication callback setter that
+accepts a lambda directly and invokes it after registration has returned. It
+then shows all three receiver modes: read-only `std::function<R(Args...)>`,
+mutable `std::function<R(Args...) mut>`, and one-shot
+`std::move_only_function<R(Args...) &&>`. GTI wrappers are move-only; use
+`clone()` explicitly when the target is copyable, and `move_only_function` for
+owned move-only captures. An empty wrapper can be observed or reset but must
+not be invoked. Comments explain where ownership moves and which values can
+no longer be used.
+
+With the locally installed toolchain, run it from the repository root:
+
+```sh
+./toolchain/bin/gti examples/86-owning-callbacks.gti -o /tmp/gti-callbacks
+/tmp/gti-callbacks
+```
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see
