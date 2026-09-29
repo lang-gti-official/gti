@@ -391,6 +391,24 @@ def main():
         )
         assert "warning[GTI-S2075]" in unknown_result.stderr
 
+        advisory_source = root / "advisory-diagnostics.gti"
+        advisory_source.write_text(
+            "int main() { mut int value = 1; return value; "
+            "int unreachable = 2; }\n",
+            encoding="utf-8",
+        )
+        advisory_result = run(
+            [
+                gti,
+                str(advisory_source),
+                "--emit-cpp",
+                "-o",
+                str(root / "advisory.cpp"),
+            ]
+        )
+        assert "warning[GTI-S2095]" in advisory_result.stderr
+        assert "warning[GTI-S2096]" in advisory_result.stderr
+
         long_output = root / "long-output"
         run([gti, str(direct_source), "--output", str(long_output)])
         run([str(long_output)])

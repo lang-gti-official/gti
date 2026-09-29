@@ -1078,6 +1078,12 @@ auto SemanticVisitor::Impl::analyze(const StmtList &statements) -> void {
       reachable = summarizeFlow(statement.get()).canFallThrough;
     } else {
       if (!hasUnreachableTail) {
+        if (statement != nullptr && statement->extent()) {
+          Diagnostic diagnostic = makeDiagnostic(
+              DiagnosticId::UnreachableStatement, *statement->extent());
+          diagnostic.tags.push_back(DiagnosticTag::Unnecessary);
+          diagnostics.emplace_back(std::move(diagnostic));
+        }
         reachableScopes = scopes;
         reachableLoanFlow = loanFlow;
         reachableValueControlFlow = valueControlFlow;
@@ -2086,8 +2092,9 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   ExpressionInfo info = classifyExpression(expr, result);
   semanticModel.record(expr, info);
   semanticModel.recordDefinedFailure(expr, classifyDefinedFailure(expr, info));
-  if (const SemanticPlace place = semanticPlace(&expr); place.root != nullptr) {
-    semanticModel.recordPlace(expr, placeKey(place));
+  const SemanticPlace expressionPlace = semanticPlace(&expr);
+  if (expressionPlace.root != nullptr) {
+    semanticModel.recordPlace(expr, placeKey(expressionPlace));
   }
   validateProjectedPlaceRead(expr);
   validateLoanPlaceAccess(expr, requestedRoles);
@@ -2204,6 +2211,12 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
           resolved->symbol.staticMember || resolved->symbol.internalLinkage;
       symbolId = toolingSymbolFor(resolved->symbol);
     }
+  } else if (kind == ExprKind::IndexSet) {
+    const IndexSet &set = static_cast<const IndexSet &>(expr);
+    roles = OccurrenceRole::Reference | OccurrenceRole::Write;
+    if (set.oper().kind != TokenKind::EQUAL) {
+      roles |= OccurrenceRole::Read;
+    }
   }
   const FunctionDecl *functionItemDeclaration = nullptr;
   if (const FunctionItemSelectionInfo *item =
@@ -2214,6 +2227,14 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   }
   semanticModel.recordResolvedSymbol(expr, symbolId);
   recordProgramStorageEffect(expr, bindingKind, symbolId, roles);
+  if (hasRole(roles, OccurrenceRole::Write)) {
+    if (expressionPlace.root != nullptr) {
+      recordMutableBindingUse(toolingSymbolFor(*expressionPlace.root));
+    }
+    if (mutableBinding && bindingKind == SemanticBindingKind::LocalVariable) {
+      recordMutableBindingUse(symbolId);
+    }
+  }
   recordProgramCallEffects(expr);
   if (info.category == ValueCategory::Value &&
       requiresActiveCleanupFor(info.type)) {
@@ -2240,6 +2261,46 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   }
   currentType = result;
   return result;
+}
+
+auto SemanticVisitor::Impl::recordMutableBindingUse(SymbolId symbol) -> void {
+  if (symbol != 0) {
+    requestSession.mutableBindingUses.insert(symbol);
+  }
+}
+
+auto SemanticVisitor::Impl::recordMutableBindingUse(const ExprPtr &expression)
+    -> void {
+  if (!expression) {
+    return;
+  }
+  const SemanticPlace place = semanticPlace(expression);
+  if (place.root != nullptr) {
+    recordMutableBindingUse(toolingSymbolFor(*place.root));
+    return;
+  }
+  const SemanticLoanPlace loan = loanPlace(expression);
+  recordMutableBindingUse(loan.root);
+}
+
+auto SemanticVisitor::Impl::finalizeAdvisoryDiagnostics() -> void {
+  if (hadError() || instanceAnalysisActive) {
+    return;
+  }
+  for (const RequestSessionState::MutableLocalCandidate &candidate :
+       requestSession.mutableLocalCandidates) {
+    if (requestSession.mutableBindingUses.contains(candidate.symbol)) {
+      continue;
+    }
+    Diagnostic diagnostic =
+        makeDiagnostic(DiagnosticId::UnnecessaryMutableBinding,
+                       candidate.keyword, {candidate.name.lexeme});
+    diagnostic.tags.push_back(DiagnosticTag::Unnecessary);
+    diagnostic.fixes.push_back({.span = tokenSpan(candidate.keyword),
+                                .replacement = "",
+                                .message = "Remove unnecessary 'mut'"});
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
 }
 
 auto SemanticVisitor::Impl::analyze(const ExprPtr &expr) -> SemanticType {
@@ -5528,6 +5589,9 @@ auto SemanticVisitor::Impl::semanticPlace(const Expr *expression)
   }
   if (kind == ExprKind::IndexSet) {
     return semanticPlace(*static_cast<const IndexSet *>(expression));
+  }
+  if (kind == ExprKind::Set) {
+    return semanticPlace(*static_cast<const Set *>(expression));
   }
   if (kind == ExprKind::Unary) {
     const auto *unary = static_cast<const Unary *>(expression);

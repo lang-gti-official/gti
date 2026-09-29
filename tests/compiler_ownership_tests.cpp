@@ -557,6 +557,9 @@ int main() { return helper(); }
   expect(unreachableDeclarations.canGenerateCode(),
          "consecutive unreachable statements should retain an isolated scope "
          "for diagnostics and tooling");
+  expect(countDiagnosticCode(unreachableDeclarations.diagnostics,
+                             "GTI-S2095") == 1,
+         "one warning should cover a consecutive unreachable statement tail");
 }
 
 void testProjectedFieldMoves() {

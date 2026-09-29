@@ -48,6 +48,13 @@ def lsp_position(source, offset):
     return {"line": line, "character": character}
 
 
+def has_error_diagnostics(params):
+    return any(
+        diagnostic.get("severity", 1) == 1
+        for diagnostic in params.get("diagnostics", [])
+    )
+
+
 def semantic_tokens_by_position(data):
     tokens = {}
     line = 0
@@ -217,7 +224,7 @@ def test_inheritance_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         session.send(
@@ -531,7 +538,7 @@ def test_unsaved_dependency_reanalysis(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == library_uri
             and message["params"].get("version") == 2
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         session.send(
@@ -571,7 +578,7 @@ def test_unsaved_dependency_reanalysis(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == library_uri
             and message["params"].get("version") == 4
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -966,7 +973,7 @@ def test_semantic_hover(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         call_offset = source.index("choose(uint64_t", source.index("int main"))
@@ -1180,7 +1187,7 @@ def test_class_scoped_type_alias_tooling(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
         )
-        assert publication["params"]["diagnostics"] == [], publication
+        assert not has_error_diagnostics(publication["params"]), publication
 
         alias_declaration = source.index("value_type = int32_t")
         alias_use = source.index("value_type", source.index("using Value"))
@@ -1358,7 +1365,7 @@ def test_documentation_hover(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def hover(request_id, offset):
@@ -1429,7 +1436,7 @@ def test_documentation_hover(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == dependency_uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
         updated = hover(5, call + 1)
         updated_value = updated["contents"]["value"]
@@ -1531,7 +1538,7 @@ def test_documentation_completion_and_signature_help(executable, root):
                 == "textDocument/publishDiagnostics"
                 and message["params"]["uri"] == uri
                 and message["params"].get("version") == 1
-                and not message["params"]["diagnostics"]
+                and not has_error_diagnostics(message["params"])
             )
 
             call = source.index("calculate(uint64_t(1))")
@@ -1707,7 +1714,7 @@ def test_callable_contract_hover(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def hover(request_id, offset):
@@ -1877,7 +1884,7 @@ def test_requires_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def hover(request_id, offset):
@@ -2132,7 +2139,7 @@ def test_requires_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 5
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -2333,7 +2340,7 @@ def test_constructor_local_generic_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 3
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
         recovered_hover = request(10, "textDocument/hover", construction + 1)
         assert selected_signature in recovered_hover["contents"]["value"]
@@ -2525,7 +2532,7 @@ def test_copy_constructible_carrier_provenance_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 4
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -2688,7 +2695,7 @@ def test_defaulted_lifecycle_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 3
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -2833,7 +2840,7 @@ def test_constexpr_aggregate_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 3
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -2904,7 +2911,7 @@ def test_semantic_definition(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def definition(request_id, offset):
@@ -3079,7 +3086,7 @@ def test_exact_qualified_specialization_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         primary_declaration = source.index("Value<T>")
@@ -3320,7 +3327,7 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
         refresh = session.receive_until(
             lambda message: message.get("method")
@@ -3579,7 +3586,7 @@ def test_io_tooling_boundary(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"],
+            and not has_error_diagnostics(message["params"]),
             timeout=20,
         )
 
@@ -4033,7 +4040,7 @@ def test_atomic_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def position_request(request_id, method, offset, text=source):
@@ -4296,7 +4303,7 @@ def test_mutex_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def position_request(request_id, method, offset, text=source):
@@ -4551,7 +4558,7 @@ def test_managed_thread_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def position_request(request_id, method, offset, text=source):
@@ -4969,6 +4976,177 @@ def test_diagnostic_code_actions(executable, root):
         session.close()
 
 
+def test_advisory_diagnostics_and_actions(executable, root):
+    warning_source = (
+        "int main() {\n"
+        "  mut int value = 1;\n"
+        "  return value;\n"
+        "  int unreachable = 2;\n"
+        "}\n"
+    )
+    ignored_source = (
+        "int calculate() { return 1; }\n"
+        "int main() { calculate(); return 0; }\n"
+    )
+    path = root / "advisory-diagnostics.gti"
+    path.write_text(warning_source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "workspace": {
+                            "workspaceEdit": {"documentChanges": True}
+                        },
+                        "textDocument": {
+                            "publishDiagnostics": {
+                                "dataSupport": True,
+                                "tagSupport": {"valueSet": [1, 2]},
+                            },
+                            "codeAction": {
+                                "isPreferredSupport": True,
+                                "codeActionLiteralSupport": {
+                                    "codeActionKind": {
+                                        "valueSet": ["quickfix"]
+                                    }
+                                },
+                            },
+                        },
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        publication = open_document(
+            session, uri, warning_source, expect_clean=False, version=1
+        )["params"]
+        by_code = {
+            diagnostic["code"]: diagnostic
+            for diagnostic in publication["diagnostics"]
+        }
+        assert set(by_code) == {"GTI-S2095", "GTI-S2096"}, by_code
+        for code, group in (
+            ("GTI-S2095", "unreachable-code"),
+            ("GTI-S2096", "unused-mut"),
+        ):
+            assert by_code[code]["severity"] == 2
+            assert by_code[code]["tags"] == [1]
+            assert by_code[code]["data"]["group"] == group
+        unnecessary = by_code["GTI-S2096"]
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/codeAction",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "range": unnecessary["range"],
+                    "context": {
+                        "diagnostics": [unnecessary],
+                        "only": ["quickfix"],
+                    },
+                },
+            }
+        )
+        actions = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]
+        assert len(actions) == 1, actions
+        assert actions[0]["isPreferred"] is True
+        assert actions[0]["edit"]["documentChanges"][0]["edits"][0][
+            "newText"
+        ] == ""
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": ignored_source}],
+                },
+            }
+        )
+        ignored_publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"].get("uri") == uri
+            and message["params"].get("version") == 2
+            and any(
+                diagnostic.get("code") == "GTI-S2009"
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )["params"]
+        ignored = next(
+            diagnostic
+            for diagnostic in ignored_publication["diagnostics"]
+            if diagnostic.get("code") == "GTI-S2009"
+        )
+        assert ignored["data"]["group"] == "unused-result"
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/codeAction",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "range": ignored["range"],
+                    "context": {
+                        "diagnostics": [ignored],
+                        "only": ["quickfix"],
+                    },
+                },
+            }
+        )
+        ignored_actions = session.receive_until(
+            lambda message: message.get("id") == 3
+        )["result"]
+        assert len(ignored_actions) == 1, ignored_actions
+        assert ignored_actions[0]["isPreferred"] is False
+        assert ignored_actions[0]["edit"]["documentChanges"][0]["edits"][0][
+            "newText"
+        ] == "[[discard]] "
+    finally:
+        session.close()
+
+    plain_session = LspSession(executable)
+    try:
+        plain_session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"dataSupport": True}
+                        }
+                    }
+                },
+            }
+        )
+        plain_session.receive_until(lambda message: message.get("id") == 1)
+        plain_session.send(
+            {"jsonrpc": "2.0", "method": "initialized", "params": {}}
+        )
+        publication = open_document(
+            plain_session, uri, warning_source, expect_clean=False, version=1
+        )["params"]
+        assert publication["diagnostics"]
+        assert all("tags" not in item for item in publication["diagnostics"])
+    finally:
+        plain_session.close()
+
+
 def test_missing_standard_library_include_code_action(
     executable, root, symbol="vector", argument="int", header="std/vector"
 ):
@@ -5108,7 +5286,7 @@ def test_missing_standard_library_include_code_action(
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 2
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -6017,7 +6195,7 @@ def test_global_borrow_return_diagnostics(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         session.send(
@@ -6072,7 +6250,7 @@ def test_global_borrow_return_diagnostics(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 3
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -6137,7 +6315,7 @@ def test_unique_ptr_null_state_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         session.send(
@@ -6187,7 +6365,7 @@ def test_unique_ptr_null_state_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 3
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -6399,7 +6577,7 @@ def test_layout_query_tooling(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
         )
-        assert publication["params"]["diagnostics"] == [], publication
+        assert not has_error_diagnostics(publication["params"]), publication
 
         session.send(
             {
@@ -6620,7 +6798,7 @@ def test_integer_arithmetic_tooling(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
         )
-        assert publication["params"]["diagnostics"] == [], publication
+        assert not has_error_diagnostics(publication["params"]), publication
 
         selected = source.index("checked_add")
         session.send(
@@ -6791,7 +6969,7 @@ def test_owned_move_capture_tooling(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
         )
-        assert publication["params"]["diagnostics"] == [], publication
+        assert not has_error_diagnostics(publication["params"]), publication
 
         capture_target = source.index("owned = std::move")
         capture_source = source.index("source)", capture_target)
@@ -6997,7 +7175,7 @@ def test_native_record_tooling(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
         )
-        assert publication["params"]["diagnostics"] == [], publication
+        assert not has_error_diagnostics(publication["params"]), publication
 
         session.send(
             {
@@ -7402,7 +7580,7 @@ def test_native_callback_tooling(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
         )
-        assert publication["params"]["diagnostics"] == [], publication
+        assert not has_error_diagnostics(publication["params"]), publication
 
         alias_use = source.index("Callback set_callback")
         session.send(
@@ -7691,7 +7869,7 @@ def test_watched_dependency_reanalysis(executable, root):
             == "textDocument/publishDiagnostics"
             and message.get("params", {}).get("uri") == entry_uri
         )
-        assert initial["params"]["diagnostics"] == []
+        assert not has_error_diagnostics(initial["params"])
 
         dependency_path.write_text(
             "int renamed_watched_value() { return 1; }\n", encoding="utf-8"
@@ -7883,7 +8061,7 @@ def test_worker_survives_failed_analysis(executable, root):
             == "textDocument/publishDiagnostics"
             and message.get("params", {}).get("uri") == healthy_uri
         )
-        assert recovered["params"]["diagnostics"] == [], recovered
+        assert not has_error_diagnostics(recovered["params"]), recovered
 
         # And shared state must still serve a semantic request, which proves
         # the snapshot map and its mutex were never left locked.
@@ -7965,7 +8143,7 @@ def test_contextual_array_hover(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def hover(request_id, offset):
@@ -8075,7 +8253,7 @@ def test_pack_fold_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         pack_declaration = source.index(
@@ -8217,7 +8395,10 @@ def open_document(session, uri, source, expect_clean=True, version=1):
         and message["params"].get("version") == version
     )
     if expect_clean:
-        assert publication["params"]["diagnostics"] == [], publication
+        assert not any(
+            diagnostic.get("severity", 1) == 1
+            for diagnostic in publication["params"]["diagnostics"]
+        ), publication
     return publication
 
 
@@ -9031,7 +9212,7 @@ def test_restricted_arithmetic_operator_tooling(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
         )
-        assert publication["params"]["diagnostics"] == [], publication
+        assert not has_error_diagnostics(publication["params"]), publication
 
         session.send(
             {
@@ -9245,6 +9426,7 @@ def main():
     test_owned_move_capture_tooling(sys.argv[1], root)
     test_pack_fold_tooling(sys.argv[1], root)
     test_diagnostic_code_actions(sys.argv[1], root)
+    test_advisory_diagnostics_and_actions(sys.argv[1], root)
     test_references_and_highlights(sys.argv[1], root)
     test_document_symbols(sys.argv[1], root)
     test_flat_document_symbols(sys.argv[1], root)
@@ -10204,7 +10386,7 @@ def test_mutable_temporary_receiver_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 2
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         inspect = valid_source.index("inspect", valid_source.index("int main"))
@@ -10331,7 +10513,7 @@ def test_range_loan_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 2
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         session.send(
@@ -10445,7 +10627,7 @@ def test_expected_payload_range_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 2
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -10548,7 +10730,7 @@ def test_mutable_stored_dependency_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 3
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -10731,7 +10913,7 @@ def test_owner_dependent_span_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 4
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         session.send(
@@ -10749,7 +10931,7 @@ def test_owner_dependent_span_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 5
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         view_call = valid_text_source.index("text.view") + len("text.")
@@ -10839,7 +11021,7 @@ def test_owner_dependent_span_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 8
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -10926,7 +11108,7 @@ def test_temporary_argument_borrow_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 2
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def help_at(request_id, offset):
@@ -11015,7 +11197,7 @@ def test_signature_help_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def help_at(request_id, offset):

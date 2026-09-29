@@ -521,6 +521,10 @@
       "suite": "diagnostics"
     },
     {
+      "name": "testAdvisoryDiagnostics",
+      "suite": "diagnostics"
+    },
+    {
       "name": "testPrintIsAnIdentifier",
       "suite": "diagnostics"
     },

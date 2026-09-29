@@ -176,7 +176,7 @@ void testGenericAndManagedPipeline() {
 #include <std/vector>
 
 int main() {
-  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2, 3});
+  std::vector<int32_t> values = std::vector<int32_t>({1, 2, 3});
   auto count = std::count_if(values, tasks::positive);
   if (count != 3) { return 1; }
   [[discard]] std::for_each(values, tasks::observe);
