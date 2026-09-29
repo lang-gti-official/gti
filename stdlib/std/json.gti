@@ -333,27 +333,86 @@ std::string pointer_for_index(size_t index) {
 }
 }
 
-class value {
-  mut kind value_kind;
-  mut bool boolean_value = false;
-  mut std::string scalar_text;
-  mut std::vector<value> array_values;
-  mut std::vector<std::string> object_names;
-  mut std::vector<value> object_values;
+namespace detail {
+struct object_data {
+  mut std::vector<std::string> names{};
+  mut std::vector<value> values{};
+};
 
-  value(kind type)
-      : value_kind(type), scalar_text(std::string("")),
-        array_values(std::vector<value>()),
-        object_names(std::vector<std::string>()),
-        object_values(std::vector<value>()) {}
+enum class value_data {
+  null_value,
+  boolean(bool input),
+  number(std::string text),
+  string(std::string text),
+  array(std::vector<value> items),
+  object(object_data members),
+};
+}
+
+class value {
+  mut detail::value_data data;
+
+  value(detail::value_data input) : data(std::move(input)) {}
+
+  detail::value_data replace_data(detail::value_data replacement) mut {
+    detail::value_data previous = std::move(this.data);
+    this.data = std::move(replacement);
+    return std::move(previous);
+  }
+
+  std::string& scalar_text() {
+    while (true) {
+      switch (this.data) {
+        case detail::value_data::number(auto& text): return text;
+        case detail::value_data::string(auto& text): return text;
+        default: gti_internal::index_bounds_check(size_t(0), size_t(0)); break;
+      }
+    }
+  }
+
+  std::vector<value>& array_values() {
+    while (true) {
+      switch (this.data) {
+        case detail::value_data::array(auto& items): return items;
+        default: gti_internal::index_bounds_check(size_t(0), size_t(0)); break;
+      }
+    }
+  }
+
+  mut std::vector<value>& array_values() mut {
+    while (true) {
+      switch (this.data) {
+        case detail::value_data::array(mut auto& items): return items;
+        default: gti_internal::index_bounds_check(size_t(0), size_t(0)); break;
+      }
+    }
+  }
+
+  detail::object_data& object_data() {
+    while (true) {
+      switch (this.data) {
+        case detail::value_data::object(auto& members): return members;
+        default: gti_internal::index_bounds_check(size_t(0), size_t(0)); break;
+      }
+    }
+  }
+
+  mut detail::object_data& object_data() mut {
+    while (true) {
+      switch (this.data) {
+        case detail::value_data::object(mut auto& members): return members;
+        default: gti_internal::index_bounds_check(size_t(0), size_t(0)); break;
+      }
+    }
+  }
 
   size_t find_key(string_view key) {
-    for (mut size_t index = 0; index < this.object_names.size(); index++) {
-      if (this.object_names[index] == key) {
+    for (mut size_t index = 0; index < this.object_data().names.size(); index++) {
+      if (this.object_data().names[index] == key) {
         return index;
       }
     }
-    return this.object_names.size();
+    return this.object_data().names.size();
   }
 
 public:
@@ -361,113 +420,113 @@ public:
   value(value&& other) = default;
 
   static value null() {
-    return value(kind::null_value);
+    return value(detail::value_data::null_value);
   }
 
   static value boolean(bool input) {
-    mut value result = value(kind::boolean);
-    result.boolean_value = input;
-    return std::move(result);
+    return value(detail::value_data::boolean(input));
   }
 
   static expected<value, error> string(string_view input) {
     if (!detail::valid_utf8(input)) {
       return unexpected(error(errc::invalid_unicode));
     }
-    mut value result = value(kind::string);
-    result.scalar_text.append(input);
-    return std::move(result);
+    return value(detail::value_data::string(std::string(input)));
   }
 
   static expected<value, error> number_text(string_view input) {
     if (!detail::valid_number_text(input)) {
       return unexpected(error(errc::invalid_number));
     }
-    mut value result = value(kind::number);
-    result.scalar_text.append(input);
-    return std::move(result);
+    return value(detail::value_data::number(std::string(input)));
   }
 
   static value integer(int64_t input) {
-    mut value result = value(kind::number);
-    result.scalar_text = std::to_string(input);
-    return std::move(result);
+    return value(detail::value_data::number(std::to_string(input)));
   }
 
   static value unsigned_integer(uint64_t input) {
-    mut value result = value(kind::number);
-    result.scalar_text = std::to_string(input);
-    return std::move(result);
+    return value(detail::value_data::number(std::to_string(input)));
   }
 
   static value array() {
-    return value(kind::array);
+    return value(detail::value_data::array(std::vector<value>()));
   }
 
   static value object() {
-    return value(kind::object);
+    return value(detail::value_data::object(detail::object_data()));
   }
 
   kind type() {
-    return this.value_kind;
+    switch (this.data) {
+      case detail::value_data::null_value: return kind::null_value;
+      case detail::value_data::boolean: return kind::boolean;
+      case detail::value_data::number: return kind::number;
+      case detail::value_data::string: return kind::string;
+      case detail::value_data::array: return kind::array;
+      case detail::value_data::object: return kind::object;
+    }
   }
 
   bool is_null() {
-    return this.value_kind == kind::null_value;
+    return this.type() == kind::null_value;
   }
 
   bool is_boolean() {
-    return this.value_kind == kind::boolean;
+    return this.type() == kind::boolean;
   }
 
   bool is_number() {
-    return this.value_kind == kind::number;
+    return this.type() == kind::number;
   }
 
   bool is_string() {
-    return this.value_kind == kind::string;
+    return this.type() == kind::string;
   }
 
   bool is_array() {
-    return this.value_kind == kind::array;
+    return this.type() == kind::array;
   }
 
   bool is_object() {
-    return this.value_kind == kind::object;
+    return this.type() == kind::object;
   }
 
   expected<bool, error> as_boolean() {
     if (!this.is_boolean()) {
       return unexpected(error(errc::type_mismatch));
     }
-    return this.boolean_value;
+    switch (this.data) {
+      case detail::value_data::boolean(input): return input;
+      default: return unexpected(error(errc::type_mismatch));
+    }
   }
 
   expected<std::string, error> as_string() {
     if (!this.is_string()) {
       return unexpected(error(errc::type_mismatch));
     }
-    return this.scalar_text.clone();
+    return this.scalar_text().clone();
   }
 
   expected<std::string, error> as_number_text() {
     if (!this.is_number()) {
       return unexpected(error(errc::type_mismatch));
     }
-    return this.scalar_text.clone();
+    return this.scalar_text().clone();
   }
 
   expected<uint64_t, error> as_uint64() {
     if (!this.is_number()) {
       return unexpected(error(errc::type_mismatch));
     }
-    if (this.scalar_text.empty() || this.scalar_text[0] == '-') {
+    if (this.scalar_text().empty() || this.scalar_text()[0] == '-') {
       return unexpected(error(errc::number_out_of_range));
     }
 
     mut uint64_t result = uint64_t(0);
-    for (mut size_t index = 0; index < this.scalar_text.size(); index++) {
-      uint8_t code = uint8_t(this.scalar_text[index]);
+    for (mut size_t index = 0; index < this.scalar_text().size(); index++) {
+      uint8_t code = uint8_t(this.scalar_text()[index]);
       if (code < uint8_t(48) || code > uint8_t(57)) {
         return unexpected(error(errc::number_out_of_range));
       }
@@ -485,17 +544,17 @@ public:
     if (!this.is_number()) {
       return unexpected(error(errc::type_mismatch));
     }
-    if (this.scalar_text.empty()) {
+    if (this.scalar_text().empty()) {
       return unexpected(error(errc::number_out_of_range));
     }
 
     mut bool negative = false;
     mut size_t offset = 0;
-    if (this.scalar_text[0] == '-') {
+    if (this.scalar_text()[0] == '-') {
       negative = true;
       offset = 1;
     }
-    if (offset == this.scalar_text.size()) {
+    if (offset == this.scalar_text().size()) {
       return unexpected(error(errc::number_out_of_range));
     }
 
@@ -504,8 +563,8 @@ public:
     if (negative) {
       limit = uint64_t(9223372036854775808);
     }
-    while (offset < this.scalar_text.size()) {
-      uint8_t code = uint8_t(this.scalar_text[offset]);
+    while (offset < this.scalar_text().size()) {
+      uint8_t code = uint8_t(this.scalar_text()[offset]);
       if (code < uint8_t(48) || code > uint8_t(57)) {
         return unexpected(error(errc::number_out_of_range));
       }
@@ -533,7 +592,7 @@ public:
 
     mut size_t offset = 0;
     mut bool negative = false;
-    if (this.scalar_text[offset] == '-') {
+    if (this.scalar_text()[offset] == '-') {
       negative = true;
       offset++;
     }
@@ -542,9 +601,9 @@ public:
     mut int32_t decimal_exponent = 0;
     mut int32_t significant_digits = 0;
     mut bool significant = false;
-    while (offset < this.scalar_text.size() &&
-           detail::is_digit(this.scalar_text[offset])) {
-      uint8_t digit = uint8_t(uint8_t(this.scalar_text[offset]) - uint8_t(48));
+    while (offset < this.scalar_text().size() &&
+           detail::is_digit(this.scalar_text()[offset])) {
+      uint8_t digit = uint8_t(uint8_t(this.scalar_text()[offset]) - uint8_t(48));
       if (digit != uint8_t(0)) {
         significant = true;
       }
@@ -559,12 +618,12 @@ public:
       offset++;
     }
 
-    if (offset < this.scalar_text.size() && this.scalar_text[offset] == '.') {
+    if (offset < this.scalar_text().size() && this.scalar_text()[offset] == '.') {
       offset++;
-      while (offset < this.scalar_text.size() &&
-             detail::is_digit(this.scalar_text[offset])) {
+      while (offset < this.scalar_text().size() &&
+             detail::is_digit(this.scalar_text()[offset])) {
         uint8_t digit =
-            uint8_t(uint8_t(this.scalar_text[offset]) - uint8_t(48));
+            uint8_t(uint8_t(this.scalar_text()[offset]) - uint8_t(48));
         if (!significant && digit == uint8_t(0)) {
           if (decimal_exponent > -1000) {
             decimal_exponent--;
@@ -585,17 +644,17 @@ public:
 
     mut bool exponent_negative = false;
     mut int32_t exponent = 0;
-    if (offset < this.scalar_text.size() &&
-        (this.scalar_text[offset] == 'e' ||
-         this.scalar_text[offset] == 'E')) {
+    if (offset < this.scalar_text().size() &&
+        (this.scalar_text()[offset] == 'e' ||
+         this.scalar_text()[offset] == 'E')) {
       offset++;
-      if (this.scalar_text[offset] == '+' || this.scalar_text[offset] == '-') {
-        exponent_negative = this.scalar_text[offset] == '-';
+      if (this.scalar_text()[offset] == '+' || this.scalar_text()[offset] == '-') {
+        exponent_negative = this.scalar_text()[offset] == '-';
         offset++;
       }
-      while (offset < this.scalar_text.size()) {
+      while (offset < this.scalar_text().size()) {
         uint8_t digit =
-            uint8_t(uint8_t(this.scalar_text[offset]) - uint8_t(48));
+            uint8_t(uint8_t(this.scalar_text()[offset]) - uint8_t(48));
         if (exponent < 1000) {
           exponent = exponent * 10 + int32_t(digit);
           if (exponent > 1000) {
@@ -651,15 +710,15 @@ public:
     if (!this.is_object()) {
       return false;
     }
-    return this.find_key(key) != this.object_names.size();
+    return this.find_key(key) != this.object_data().names.size();
   }
 
   size_t size() {
     if (this.is_array()) {
-      return this.array_values.size();
+      return this.array_values().size();
     }
     if (this.is_object()) {
-      return this.object_values.size();
+      return this.object_data().values.size();
     }
     return 0;
   }
@@ -669,13 +728,13 @@ public:
       return unexpected(error(errc::type_mismatch));
     }
     size_t index = this.find_key(key);
-    if (index == this.object_names.size()) {
+    if (index == this.object_data().names.size()) {
       mut std::string path = detail::pointer_for_key(key);
       mut error failure = error(errc::missing_key, false, size_t(0),
                                 size_t(0), size_t(0), std::move(path));
       return unexpected(std::move(failure));
     }
-    return this.object_values[index];
+    return this.object_data().values[index];
   }
 
   expected<std::string, error> get_string(string_view key) {
@@ -683,14 +742,14 @@ public:
       return unexpected(error(errc::type_mismatch));
     }
     size_t index = this.find_key(key);
-    if (index == this.object_names.size()) {
+    if (index == this.object_data().names.size()) {
       mut std::string path = detail::pointer_for_key(key);
       mut error failure = error(errc::missing_key, false, size_t(0),
                                 size_t(0), size_t(0), std::move(path));
       return unexpected(std::move(failure));
     }
     mut expected<std::string, error> converted =
-        this.object_values[index].as_string();
+        this.object_data().values[index].as_string();
     if (!converted) {
       errc code = converted.error().code();
       mut std::string path = detail::pointer_for_key(key);
@@ -706,14 +765,14 @@ public:
       return unexpected(error(errc::type_mismatch));
     }
     size_t index = this.find_key(key);
-    if (index == this.object_names.size()) {
+    if (index == this.object_data().names.size()) {
       mut std::string path = detail::pointer_for_key(key);
       mut error failure = error(errc::missing_key, false, size_t(0),
                                 size_t(0), size_t(0), std::move(path));
       return unexpected(std::move(failure));
     }
     mut expected<bool, error> converted =
-        this.object_values[index].as_boolean();
+        this.object_data().values[index].as_boolean();
     if (!converted) {
       errc code = converted.error().code();
       mut std::string path = detail::pointer_for_key(key);
@@ -729,14 +788,14 @@ public:
       return unexpected(error(errc::type_mismatch));
     }
     size_t index = this.find_key(key);
-    if (index == this.object_names.size()) {
+    if (index == this.object_data().names.size()) {
       mut std::string path = detail::pointer_for_key(key);
       mut error failure = error(errc::missing_key, false, size_t(0),
                                 size_t(0), size_t(0), std::move(path));
       return unexpected(std::move(failure));
     }
     mut expected<int64_t, error> converted =
-        this.object_values[index].as_int64();
+        this.object_data().values[index].as_int64();
     if (!converted) {
       errc code = converted.error().code();
       mut std::string path = detail::pointer_for_key(key);
@@ -752,14 +811,14 @@ public:
       return unexpected(error(errc::type_mismatch));
     }
     size_t index = this.find_key(key);
-    if (index == this.object_names.size()) {
+    if (index == this.object_data().names.size()) {
       mut std::string path = detail::pointer_for_key(key);
       mut error failure = error(errc::missing_key, false, size_t(0),
                                 size_t(0), size_t(0), std::move(path));
       return unexpected(std::move(failure));
     }
     mut expected<uint64_t, error> converted =
-        this.object_values[index].as_uint64();
+        this.object_data().values[index].as_uint64();
     if (!converted) {
       errc code = converted.error().code();
       mut std::string path = detail::pointer_for_key(key);
@@ -775,14 +834,14 @@ public:
       return unexpected(error(errc::type_mismatch));
     }
     size_t index = this.find_key(key);
-    if (index == this.object_names.size()) {
+    if (index == this.object_data().names.size()) {
       mut std::string path = detail::pointer_for_key(key);
       mut error failure = error(errc::missing_key, false, size_t(0),
                                 size_t(0), size_t(0), std::move(path));
       return unexpected(std::move(failure));
     }
     mut expected<double, error> converted =
-        this.object_values[index].as_double();
+        this.object_data().values[index].as_double();
     if (!converted) {
       errc code = converted.error().code();
       mut std::string path = detail::pointer_for_key(key);
@@ -798,8 +857,8 @@ public:
       gti_internal::index_bounds_check(size_t(0), size_t(0));
     }
     size_t index = this.find_key(key);
-    gti_internal::index_bounds_check(index, this.object_values.size());
-    return this.object_values[index];
+    gti_internal::index_bounds_check(index, this.object_data().values.size());
+    return this.object_data().values[index];
   }
 
   mut value& at(string_view key) mut {
@@ -807,64 +866,64 @@ public:
       gti_internal::index_bounds_check(size_t(0), size_t(0));
     }
     size_t index = this.find_key(key);
-    gti_internal::index_bounds_check(index, this.object_values.size());
-    return this.object_values[index];
+    gti_internal::index_bounds_check(index, this.object_data().values.size());
+    return this.object_data().values[index];
   }
 
   value& at(size_t index) {
     if (!this.is_array()) {
       gti_internal::index_bounds_check(size_t(0), size_t(0));
     }
-    return this.array_values[index];
+    return this.array_values()[index];
   }
 
   mut value& at(size_t index) mut {
     if (!this.is_array()) {
       gti_internal::index_bounds_check(size_t(0), size_t(0));
     }
-    return this.array_values[index];
+    return this.array_values()[index];
   }
 
   std::vector<value>& elements() {
     if (!this.is_array()) {
       gti_internal::index_bounds_check(size_t(0), size_t(0));
     }
-    return this.array_values;
+    return this.array_values();
   }
 
   mut std::vector<value>& elements() mut {
     if (!this.is_array()) {
       gti_internal::index_bounds_check(size_t(0), size_t(0));
     }
-    return this.array_values;
+    return this.array_values();
   }
 
   size_t object_size() {
     if (!this.is_object()) {
       return 0;
     }
-    return this.object_names.size();
+    return this.object_data().names.size();
   }
 
   std::string& key_at(size_t index) {
     if (!this.is_object()) {
       gti_internal::index_bounds_check(size_t(0), size_t(0));
     }
-    return this.object_names[index];
+    return this.object_data().names[index];
   }
 
   value& value_at(size_t index) {
     if (!this.is_object()) {
       gti_internal::index_bounds_check(size_t(0), size_t(0));
     }
-    return this.object_values[index];
+    return this.object_data().values[index];
   }
 
   mut value& value_at(size_t index) mut {
     if (!this.is_object()) {
       gti_internal::index_bounds_check(size_t(0), size_t(0));
     }
-    return this.object_values[index];
+    return this.object_data().values[index];
   }
 
   expected<void, error> set(string_view key, mut value input) mut {
@@ -875,12 +934,12 @@ public:
       return unexpected(error(errc::invalid_unicode));
     }
     size_t index = this.find_key(key);
-    if (index < this.object_names.size()) {
-      this.object_values[index].swap(input);
+    if (index < this.object_data().names.size()) {
+      this.object_data().values[index].swap(input);
       return;
     }
-    this.object_names.push_back(std::string(key));
-    this.object_values.push_back(std::move(input));
+    this.object_data().names.push_back(std::string(key));
+    this.object_data().values.push_back(std::move(input));
     return;
   }
 
@@ -908,7 +967,7 @@ public:
     if (!this.is_array()) {
       return unexpected(error(errc::type_mismatch));
     }
-    this.array_values.push_back(std::move(input));
+    this.array_values().push_back(std::move(input));
     return;
   }
 
@@ -933,32 +992,32 @@ public:
   }
 
   void swap(mut value& other) mut {
-    kind previous_kind = this.value_kind;
-    this.value_kind = other.value_kind;
-    other.value_kind = previous_kind;
-
-    bool previous_boolean = this.boolean_value;
-    this.boolean_value = other.boolean_value;
-    other.boolean_value = previous_boolean;
-
-    this.scalar_text.swap(other.scalar_text);
-    this.array_values.swap(other.array_values);
-    this.object_names.swap(other.object_names);
-    this.object_values.swap(other.object_values);
+    detail::value_data previous = std::move(this.data);
+    this.data = other.replace_data(std::move(previous));
   }
 
   value clone() {
-    mut value result = value(this.value_kind);
-    result.boolean_value = this.boolean_value;
-    result.scalar_text = this.scalar_text.clone();
-    for (mut size_t index = 0; index < this.array_values.size(); index++) {
-      result.array_values.push_back(this.array_values[index].clone());
+    switch (this.data) {
+      case detail::value_data::null_value: return value::null();
+      case detail::value_data::boolean(input): return value::boolean(input);
+      case detail::value_data::number(auto& text):
+        return value(detail::value_data::number(text.clone()));
+      case detail::value_data::string(auto& text):
+        return value(detail::value_data::string(text.clone()));
+      case detail::value_data::array(auto& items):
+        mut std::vector<value> copied = std::vector<value>();
+        for (mut size_t index = 0; index < items.size(); index++) {
+          copied.push_back(items[index].clone());
+        }
+        return value(detail::value_data::array(std::move(copied)));
+      case detail::value_data::object(auto& members):
+        mut detail::object_data copied{};
+        for (mut size_t index = 0; index < members.names.size(); index++) {
+          copied.names.push_back(members.names[index].clone());
+          copied.values.push_back(members.values[index].clone());
+        }
+        return value(detail::value_data::object(std::move(copied)));
     }
-    for (mut size_t index = 0; index < this.object_names.size(); index++) {
-      result.object_names.push_back(this.object_names[index].clone());
-      result.object_values.push_back(this.object_values[index].clone());
-    }
-    return std::move(result);
   }
 };
 

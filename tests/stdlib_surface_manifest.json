@@ -16,7 +16,7 @@
     "stdlib/std/functional.gti": "8c7f6f50ec568bc995d25115b3a96630bacd3210b8069ac747a1d6cd062db69f",
     "stdlib/std/http.gti": "0e819904ed7735887138f79656732a5159f238443ef415df5e6cad11a70367b6",
     "stdlib/std/iterator.gti": "2c67bfceaaaa2c79ce474434d5e9962ce15bd08127ce175c97efe8b05ebcd1f1",
-    "stdlib/std/json.gti": "af20c36d5e68711505441b7bb14c72ae16ae373077c693d8354a4e55ecf02a83",
+    "stdlib/std/json.gti": "c73b68761f0194bd11596403c3ef70f56f2d5db8be6e311fb98ba23c79f6239a",
     "stdlib/std/list.gti": "b90968de7e8f71110d7e6d897ff7a1bca3da55e210ae85d48de316b6ea252648",
     "stdlib/std/memory.gti": "4d900f169374e1979a93db2f0c0ee9d7296883e6cd6f0fda46b1cf4c9364a29c",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
