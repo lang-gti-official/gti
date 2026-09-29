@@ -1,0 +1,38 @@
+[
+  {
+    "id": "IgnoredReturnValue",
+    "code": "GTI-S2009",
+    "phase": "Semantics",
+    "severity": "Error",
+    "group": "unused-result",
+    "format": "Function return value must be used or explicitly discarded with '[[discard]]'.",
+    "arguments": 0
+  },
+  {
+    "id": "UnknownConfigurationFlag",
+    "code": "GTI-S2075",
+    "phase": "Semantics",
+    "severity": "Warning",
+    "group": "configuration",
+    "format": "Configuration flag '{0}' is referenced but defined nowhere in this compilation.",
+    "arguments": 1
+  },
+  {
+    "id": "UnreachableStatement",
+    "code": "GTI-S2095",
+    "phase": "Semantics",
+    "severity": "Warning",
+    "group": "unreachable-code",
+    "format": "Statement is unreachable.",
+    "arguments": 0
+  },
+  {
+    "id": "UnnecessaryMutableBinding",
+    "code": "GTI-S2096",
+    "phase": "Semantics",
+    "severity": "Warning",
+    "group": "unused-mut",
+    "format": "Mutable binding '{0}' is never used mutably.",
+    "arguments": 1
+  }
+]

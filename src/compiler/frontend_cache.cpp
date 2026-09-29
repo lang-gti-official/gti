@@ -47,8 +47,8 @@ std::size_t tokenBytes(const std::vector<Token> &tokens) {
 std::size_t diagnosticBytes(const std::vector<Diagnostic> &diagnostics) {
   std::size_t result = diagnostics.size() * sizeof(Diagnostic);
   for (const Diagnostic &diagnostic : diagnostics) {
-    result += diagnostic.code.size() + diagnostic.message.size() +
-              diagnostic.primary.source.size();
+    result += diagnostic.code.size() + diagnostic.group.size() +
+              diagnostic.message.size() + diagnostic.primary.source.size();
     result += diagnostic.related.size() * sizeof(RelatedDiagnostic);
     for (const RelatedDiagnostic &related : diagnostic.related) {
       result += related.span.source.size() + related.message.size();
@@ -62,6 +62,7 @@ std::size_t diagnosticBytes(const std::vector<Diagnostic> &diagnostics) {
     for (const std::string &hint : diagnostic.hints) {
       result += hint.size();
     }
+    result += diagnostic.tags.size() * sizeof(DiagnosticTag);
   }
   return result;
 }

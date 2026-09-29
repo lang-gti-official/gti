@@ -521,10 +521,16 @@ The shared compiler token contract classifies `double` as a built-in type and
 the complete `d`/`D`-suffixed decimal as one numeric semantic token. The LSP
 does not rescan the suffix or infer float width independently.
 
-Diagnostic serialization preserves compiler codes, severities, phases, hints,
-related locations, and fix-its while respecting the client's
+Diagnostic serialization preserves compiler codes, severities, groups, phases,
+hints, related locations, and fix-its while respecting the client's
 `publishDiagnostics` capabilities. Hints stay in the plain-text message for
 universal display and are also exposed as structured data when supported.
+Compiler diagnostic tags are published only when the client's negotiated
+`tagSupport.valueSet` admits that exact LSP tag; the current unreachable-code
+and unnecessary-`mut` warnings use `Unnecessary`. Quick-fix preference is
+compiler-owned per fix. Removing an unnecessary local `mut` is preferred,
+whereas inserting `[[discard]]` for an ignored result is deliberately
+non-preferred because using the value may be the intended repair.
 When several open roots diagnose the same dependency span, publication merges
 their related information instead of selecting one root arbitrarily; distinct
 include and instantiation locations therefore remain visible on the one

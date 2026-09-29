@@ -72,7 +72,7 @@ std::mutex<int32_t> program_value{1};
 
 int main() {
   {
-    mut std::mutex_guard<int32_t> first = program_value.lock();
+    std::mutex_guard<int32_t> first = program_value.lock();
     mut std::mutex_guard<int32_t> moved = std::move(first);
     mut int32_t& current = moved.get();
     current = current + 1;

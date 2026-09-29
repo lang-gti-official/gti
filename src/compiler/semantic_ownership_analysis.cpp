@@ -2043,6 +2043,7 @@ auto SemanticVisitor::Impl::validateMutableCallArgumentLoans(
       continue;
     }
     const SemanticLoanPlace stable = transientLoanPlace(arguments[index]);
+    recordMutableBindingUse(stable.root);
     if (stable.root == 0 && !stable.receiver) {
       continue;
     }

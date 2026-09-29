@@ -117,6 +117,15 @@ add_executable("gti_documentation_index_tests"
 target_link_libraries("gti_documentation_index_tests" PRIVATE gti_compiler)
 add_test(NAME documentation_index COMMAND gti_documentation_index_tests)
 
+add_test(
+  NAME diagnostic_registry_generator
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${PROJECT_SOURCE_DIR}/tests/diagnostic_registry_generator_test.py"
+    "${PROJECT_SOURCE_DIR}/scripts/generate_diagnostics.py"
+    "${PROJECT_SOURCE_DIR}/diagnostics/semantic.json"
+)
+
 if(TARGET gti_lsp_state)
   add_executable("gti_frontend_cache_tests"
                  "${PROJECT_SOURCE_DIR}/tests/frontend_cache_tests.cpp")
