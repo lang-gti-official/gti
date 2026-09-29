@@ -29,6 +29,11 @@ enum class DiagnosticPhase {
   Backend,
 };
 
+enum class DiagnosticTag {
+  Unnecessary = 1,
+  Deprecated = 2,
+};
+
 struct SourceSpan {
   std::string source;
   std::size_t start = 0;
@@ -47,17 +52,20 @@ struct FixIt {
   SourceSpan span;
   std::string replacement;
   std::string message;
+  bool preferred = true;
 };
 
 struct Diagnostic {
   std::string code;
   DiagnosticPhase phase = DiagnosticPhase::Semantics;
   DiagnosticSeverity severity = DiagnosticSeverity::Error;
+  std::string group;
   SourceSpan primary;
   std::string message;
   std::vector<RelatedDiagnostic> related;
   std::vector<FixIt> fixes;
   std::vector<std::string> hints;
+  std::vector<DiagnosticTag> tags;
 };
 
 SourceSpan tokenSpan(const Token &token);

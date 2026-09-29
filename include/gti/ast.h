@@ -2346,12 +2346,13 @@ public:
                std::optional<Token> staticKeyword = std::nullopt,
                bool rangeBinding = false,
                std::optional<Token> constexprKeyword = std::nullopt,
-               bool rangeOwner = false, bool rangeIterator = false)
+               bool rangeOwner = false, bool rangeIterator = false,
+               std::optional<Token> mutKeyword = std::nullopt)
       : mutability_(mutability), type_(std::move(type)), name_(std::move(name)),
         initializer_(std::move(initializer)),
         staticKeyword_(std::move(staticKeyword)), rangeBinding_(rangeBinding),
         constexprKeyword_(std::move(constexprKeyword)), rangeOwner_(rangeOwner),
-        rangeIterator_(rangeIterator) {}
+        rangeIterator_(rangeIterator), mutKeyword_(std::move(mutKeyword)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitVariableDecl(*this);
@@ -2377,6 +2378,9 @@ public:
   [[nodiscard]] const std::optional<Token> &constexprKeyword() const {
     return constexprKeyword_;
   }
+  [[nodiscard]] const std::optional<Token> &mutKeyword() const {
+    return mutKeyword_;
+  }
 
 private:
   Mutability mutability_;
@@ -2388,6 +2392,7 @@ private:
   std::optional<Token> constexprKeyword_;
   bool rangeOwner_ = false;
   bool rangeIterator_ = false;
+  std::optional<Token> mutKeyword_;
 };
 
 class StructuredBindingDecl final

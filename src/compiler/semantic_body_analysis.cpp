@@ -16,6 +16,8 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   genericDefaultConstants.clear();
   genericDefaultConstantUses.clear();
   requirementScopes.clear();
+  requestSession.mutableLocalCandidates.clear();
+  requestSession.mutableBindingUses.clear();
   typeParameterScopes.clear();
   valueParameterScopes.clear();
   typePackScopes.clear();
@@ -153,6 +155,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   finalizeCThreadRequirements();
   finalizeProgramInitialization(program);
   semanticModel.finalizeOccurrences();
+  finalizeAdvisoryDiagnostics();
   catalog.assertUnchangedSinceSeal();
   if (workMetrics != nullptr) {
     workMetrics->semanticFinalizationMicroseconds = static_cast<std::size_t>(
@@ -173,7 +176,10 @@ auto SemanticVisitor::Impl::check(const Expr &expr) -> bool {
 }
 
 auto SemanticVisitor::Impl::hadError() const -> bool {
-  return !diagnostics.empty();
+  return std::any_of(diagnostics.begin(), diagnostics.end(),
+                     [](const Diagnostic &diagnostic) {
+                       return diagnostic.severity == DiagnosticSeverity::Error;
+                     });
 }
 
 auto SemanticVisitor::Impl::errors() const
@@ -1318,10 +1324,16 @@ auto SemanticVisitor::Impl::visitExpressionStmt(const ExpressionStmt &stmt)
 
   if (call != nullptr && resultType != SemanticType::Void &&
       resultType != SemanticType::Unknown) {
-    report(call->paren(),
-           "Function return value must be used or explicitly discarded "
-           "with '[[discard]]'.",
-           "GTI-S2009");
+    Diagnostic diagnostic =
+        makeDiagnostic(DiagnosticId::IgnoredReturnValue, call->paren());
+    SourceSpan insertion = tokenSpan(expressionToken(stmt.expression()));
+    insertion.end = insertion.start;
+    diagnostic.fixes.push_back(
+        {.span = std::move(insertion),
+         .replacement = "[[discard]] ",
+         .message = "Explicitly discard the return value",
+         .preferred = false});
+    diagnostics.emplace_back(std::move(diagnostic));
   }
 }
 
@@ -2148,6 +2160,9 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     }
     const SemanticType valueType =
         analyzeInitializer(stmt.value(), currentReturnType);
+    if (currentReturnType.referenceAccess == AccessMode::Mutable) {
+      recordMutableBindingUse(stmt.value());
+    }
     forceProgramStorageBoundaryAccess(stmt.value());
     validateReferenceReturn(currentReturnType, valueType, stmt.value());
     requireInitializedReceiver(stmt.keyword());
@@ -2797,6 +2812,13 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   const SymbolId symbol = recordBindingOccurrence(
       stmt.name(), declaredType, stmt.isMutable(), bindingKind,
       bindingKind == SemanticBindingKind::StaticField, internalLinkage);
+  if (!instanceAnalysisActive && !isCompilerTrustedRequester(stmt.name()) &&
+      bindingKind == SemanticBindingKind::LocalVariable && stmt.isMutable() &&
+      stmt.mutKeyword() && !stmt.isRangeBinding() &&
+      declaredType.kind != SemanticType::Reference && symbol != 0) {
+    requestSession.mutableLocalCandidates.push_back(
+        {.symbol = symbol, .keyword = *stmt.mutKeyword(), .name = stmt.name()});
+  }
   attachDeclarationDocumentation(symbol, stmt);
   BindingInfo info =
       bindingInfo(declaredType, stmt.isMutable() ? AccessMode::Mutable
@@ -2942,6 +2964,10 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     }
     initializerType =
         analyzeInitializer(stmt.initializer(), declaredType, true);
+    if (declaredType.kind == SemanticType::Reference &&
+        declaredType.referenceAccess == AccessMode::Mutable) {
+      recordMutableBindingUse(stmt.initializer());
+    }
     if (establishesLoan) {
       --suppressLoanPlaceAccessDepth;
       --programStoragePlaceUseDepth;
@@ -6860,6 +6886,9 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
         std::move(pointee), info->access == AccessMode::Mutable
                                 ? AccessMode::Mutable
                                 : AccessMode::ReadOnly);
+    if (info->access == AccessMode::Mutable) {
+      recordMutableBindingUse(expr.right());
+    }
     if (addressType.arguments.front().kind == SemanticType::RawPointer &&
         (!contextualNativeOutPointerType ||
          *contextualNativeOutPointerType != addressType ||

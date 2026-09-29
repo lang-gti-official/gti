@@ -3705,6 +3705,9 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
   validateCallPlaceExclusivity(function.parameterTypes, arguments, paren,
                                receiverPlace, callReceiverAccess,
                                transientReceiver);
+  if (receiverPlace && selectedReceiverAccess == AccessMode::Mutable) {
+    recordMutableBindingUse(receiverPlace->root);
+  }
 
   if (function.staticMember) {
     // Object-qualified static access is diagnosed while resolving Get.
