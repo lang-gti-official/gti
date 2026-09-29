@@ -588,18 +588,23 @@ rest of the function.
 
 One deliberately confined stored-reference form is available for owner-tied
 values such as iterators, views, and guard-shaped capabilities. A class or
-struct may contain one direct `T&` or `mut T&` field. Every constructor must
-bind that field directly from one exact reference parameter with the same
-access mode. Neither form supports copy or move assignment because assignment
-would reseat an established dependency.
+struct may contain one direct `T&` or `mut T&` field, or one nominal field
+whose type recursively contains that single reference. The complete object
+must have exactly one reference-bearing field path. A direct reference must
+bind from one exact reference parameter with the same access mode. A nested
+carrier field must initialize directly from one exact carrier parameter,
+using an explicit move for an exclusive dependency. Neither form supports
+copy or move assignment because assignment would reseat an established
+dependency.
 
-A read-only carrier is copy-constructible and move-constructible. A copy
+A read-only carrier permits copy construction when its ordinary fields are
+copy-constructible, and move construction when they are movable. A copy
 constructs a new carrier shell, copies its ordinary fields independently, and
 adds an alias to the same shared owner dependency. A mutable carrier is
 move-constructible but not copy-constructible: its one exclusive dependency is
 transferred, never duplicated. An instance method may return a carrier whose
 dependency is derived from `this`; a free function or static method may return
-one when exactly one compatible reference or direct-carrier parameter supplies
+one when exactly one compatible reference or carrier parameter supplies
 the origin:
 
 ```gti
@@ -633,13 +638,29 @@ entry; it is not inferred from an emitted C++ reference field. See
 [`41-owner-dependencies.gti`](../../examples/41-owner-dependencies.gti) for a
 runnable shared factory/generic relay and an exclusive write view.
 
-Multiple reference fields, inherited or nested borrowed state, user-defined
+Nesting uses the same rule, rather than an exception for a particular library
+type. For example, `std::pair<Iterator<int>, bool>` may carry one iterator and
+an insertion flag, and another nominal wrapper may contain that pair. The
+compiler tracks the complete field path to the reference; copying a shared
+wrapper aliases its owner, while moving an exclusive wrapper transfers its
+dependency. Extracting an exclusive nested field also requires a move. A
+by-value carrier may return its exact externally borrowed reference field,
+but cannot return a reference to its own shell or an ordinary owned field.
+A read-only method may expose a shared reference through a mutable reference
+field without granting the caller mutable access.
+
+Multiple reference fields (even if they refer to the same owner), inherited
+borrowed state, arrays of borrowed carriers, user-defined
 destructors, global/static or captured borrowed storage, multi-origin and
 dependency-changing returns, and assignment that would replace a carrier's
 dependency remain rejected. Mutable dependencies are limited to an exact
 stable local, parameter, receiver, or existing-loan origin. They do not admit
 raw or opaque origins, dynamic-index identity, arbitrary lifetime parameters,
 or an independently escaping child reference.
+
+The compiler-trusted mutex guard retains its existing direct, destructor-bound
+dependency rule. Wrapping it in another carrier is not included: its lock
+obligation cannot be shortened to an ordinary carrier's last-use endpoint.
 
 Retaining one of these values creates a semantic owner loan, so the owner
 cannot be moved, replaced, or used through a mutable method while that loan

@@ -358,6 +358,8 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     // MutexLockFailure: enters the defined-failure runtime path.
     MirEffectTraits{.invokesRuntime = true, .mayTrap = true},
     MirEffectTraits{}, // ExactTypeParameterConstruction: scalar identity.
+    MirEffectTraits{.mayTrap = true}, // RequireKey
+    MirEffectTraits{.mayTrap = true}, // RequireContainerArgument
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -562,6 +564,8 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "mutex-guard-read-mut",
     "mutex-lock-failure",
     "exact-type-parameter-construction",
+    "require-key",
+    "require-container-argument",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({

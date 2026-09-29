@@ -1,6 +1,14 @@
 {
   "schema_version": 1,
   "tests": [
+    {"name": "testNestedOwnedFieldAssignment", "suite": "lifecycle"},
+    {"name": "testPassiveNestedConstructorArgument", "suite": "lifecycle"},
+    {"name": "testGenericScalarConstructedFieldPublication", "suite": "lifecycle"},
+    {"name": "testOwningConstructedFieldInputTransfers", "suite": "lifecycle"},
+    {"name": "testMovedClassArgumentBeforeCheckedArgument", "suite": "lifecycle"},
+    {"name": "testBorrowedFieldCompoundAssignment", "suite": "lifecycle"},
+    {"name": "testBorrowedTemporaryOperatorReceiver", "suite": "lifecycle"},
+    {"name": "testNestedBorrowedFieldProjection", "suite": "lifecycle"},
     {
       "name": "testPreparedConstructorReplacement",
       "suite": "lifecycle"

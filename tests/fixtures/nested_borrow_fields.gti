@@ -1,0 +1,35 @@
+#include <std/utility>
+
+class ReadView {
+public:
+  int& item;
+  ReadView(int& item) : item(item) {}
+  int& read() { return this.item; }
+};
+
+class Envelope<T> {
+public:
+  T payload;
+  int marker;
+  Envelope(T payload, int marker) : payload(std::move(payload)), marker(marker) {}
+};
+
+std::pair<ReadView, bool> make_result(int& value) {
+  return std::pair<ReadView, bool>(ReadView(value), true);
+}
+
+int& read_result(std::pair<ReadView, bool> result) {
+  return result.first.item;
+}
+
+int main() {
+  int value = 42;
+  auto result = make_result(value);
+  if (!result.second || result.first.read() != 42) { return 1; }
+  auto copy = result;
+  if (copy.first.read() != 42) { return 2; }
+  if (read_result(copy) != 42) { return 4; }
+  auto nested = Envelope<std::pair<ReadView, bool>>(std::move(result), 9);
+  if (nested.marker != 9 || nested.payload.first.read() != 42) { return 3; }
+  return 0;
+}

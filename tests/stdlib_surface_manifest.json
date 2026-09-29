@@ -1,7 +1,7 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "f543af7b3c37128bcb42800df30f6d27782f20e96b099e2dd4ee37f181ebf86b",
+    "stdlib/prelude.gti": "62268d148fec975957e82d41a84536ba5f9c7b54c375451ac6422386846f5639",
     "stdlib/std/algorithm.gti": "c946106b09514ca1ae6f5e5df32b27f49cd8c3234df602e3927dafd821506c1d",
     "stdlib/std/array.gti": "eff214cb420565f2fe12e02cdee5e2a3cce6407d41f766633c04bbee3d0f69c2",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
@@ -13,22 +13,24 @@
     "stdlib/std/filesystem.gti": "114f4b841c6878ddaebfdcdab4e25b478bced44f3eb6f0e5be3c5cc7359c9874",
     "stdlib/std/format.gti": "0a6d4cb63ad0e661bf47f8fa8782317dc3c298b87903c497bcf982e36b0ce28b",
     "stdlib/std/forward_list.gti": "2152aab44209cfa14a3b1709f6250c3ef85db78e1e665d5bc8299f3cb353a4bf",
-    "stdlib/std/functional.gti": "8c7f6f50ec568bc995d25115b3a96630bacd3210b8069ac747a1d6cd062db69f",
+    "stdlib/std/functional.gti": "2fa13a7b511a42cb3cd87d6ca1a6550e77c77109320b5457f5292bb3e5333540",
     "stdlib/std/http.gti": "0e819904ed7735887138f79656732a5159f238443ef415df5e6cad11a70367b6",
     "stdlib/std/iterator.gti": "2c67bfceaaaa2c79ce474434d5e9962ce15bd08127ce175c97efe8b05ebcd1f1",
     "stdlib/std/json.gti": "af20c36d5e68711505441b7bb14c72ae16ae373077c693d8354a4e55ecf02a83",
     "stdlib/std/list.gti": "b90968de7e8f71110d7e6d897ff7a1bca3da55e210ae85d48de316b6ea252648",
+    "stdlib/std/map.gti": "39a314ff20943e99786f0165a77baca5d9276a73c6b31d253d8a5967647d706b",
     "stdlib/std/memory.gti": "4d900f169374e1979a93db2f0c0ee9d7296883e6cd6f0fda46b1cf4c9364a29c",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
-    "stdlib/std/numeric.gti": "43b2aa059b32e75e94fbe672840c0cbff11e1f9e71bae235082c34bb048ef804",
+    "stdlib/std/numeric.gti": "3870d075ff7dfdbbe7b7704ec80b1bbb2d79491d2f5a21e974ab3c3b39eaf336",
     "stdlib/std/optional.gti": "9b038467204b82f5675326e67254bee896b2d6a5648f47bb22f325bbb202b8d8",
     "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
-    "stdlib/std/string.gti": "2f0987b77614adc3e8a9a60827e41da28eb2db4a939714a414fbc89fbb603aae",
+    "stdlib/std/string.gti": "34766e98891441bfdc0d3e7439ba12f4e1394dd6c0bd6b9e5d7f8894ef0c670a",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
-    "stdlib/std/utility.gti": "4a5ecc9a549629f1f25c7c0f1f802d9450ada2260747018bb063d500d65ca2a7",
+    "stdlib/std/unordered_map.gti": "dd9a09af61807b6482123f37f4875608c7eb6a5e83129ae7f498586b174e8aa7",
+    "stdlib/std/utility.gti": "54a3fc018daa437f139c6f39ac2140b81f3d62b43f347a09fdf70c9ff9c4dab0",
     "stdlib/std/vector.gti": "e2b034609bc1135425c99846888d8926f3f90c4a784925e958604ba4b076dbd1"
   },
   "cases": [
@@ -60,6 +62,83 @@
       "source": "tests/fixtures/stdlib_surface_array.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "associative-hashes",
+      "mode": "run",
+      "source": "tests/fixtures/associative_hash_contracts.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "associative-map",
+      "mode": "run",
+      "source": "tests/fixtures/associative_map.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "associative-map-balancing",
+      "mode": "run",
+      "source": "tests/fixtures/associative_map_balancing.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "associative-map-insert-result",
+      "mode": "run",
+      "source": "tests/fixtures/associative_map_insert_result.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "associative-map-iteration",
+      "mode": "run",
+      "source": "tests/fixtures/associative_map_iteration.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "associative-map-ownership",
+      "mode": "run",
+      "source": "tests/fixtures/associative_map_ownership.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "atomic",
@@ -478,6 +557,13 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "string-ordering",
+      "mode": "run",
+      "source": "tests/fixtures/string_ordering.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "tcp",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_tcp.gti",
@@ -510,6 +596,90 @@
       "source": "tests/fixtures/stdlib_surface_unique_ptr_upcast.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "unordered-map-collisions",
+      "mode": "run",
+      "source": "tests/fixtures/unordered_map_collisions.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "unordered-map-core",
+      "mode": "run",
+      "source": "tests/fixtures/unordered_map_core.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "unordered-map-insert-result",
+      "mode": "run",
+      "source": "tests/fixtures/unordered_map_insert_result.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "unordered-map-iteration",
+      "mode": "run",
+      "source": "tests/fixtures/unordered_map_iteration.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "unordered-map-load-factor",
+      "mode": "run",
+      "source": "tests/fixtures/unordered_map_load_factor.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "unordered-map-ownership",
+      "mode": "run",
+      "source": "tests/fixtures/unordered_map_ownership.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "utility-make-pair",
@@ -893,6 +1063,15 @@
       "evidence": ["tests/fixtures/stdlib_surface_functional.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_callable_concepts_runtime_test.py", "tests/generic_algorithm_cluster_test.py", "stdlib/std/functional.gti"]
     },
     {
+      "id": "functional.hashes",
+      "source": "stdlib/std/functional.gti",
+      "status": "executable",
+      "operations": ["std::hash<bool>","std::hash<char>","std::hash<int16_t>","std::hash<int32_t>","std::hash<int64_t>","std::hash<int8_t>","std::hash<uint16_t>","std::hash<uint32_t>","std::hash<uint64_t>","std::hash<uint8_t>"],
+      "case_ids": ["associative-hashes"],
+      "required_instantiations": ["all fixed-width signed/unsigned integers", "bool", "char", "application-owned exact hash specialization", "move-only stored source hasher"],
+      "evidence": ["stdlib/std/functional.gti", "tests/fixtures/associative_hash_contracts.gti", "tests/associative_hash_contracts_test.py"]
+    },
+    {
       "id": "functional.owning",
       "source": "stdlib/std/functional.gti",
       "status": "executable",
@@ -900,14 +1079,6 @@
       "case_ids": ["owning-function", "owning-function-borrows", "owning-function-items", "owning-function-schema", "owning-function-temporary-target", "owning-function-mutable", "owning-function-mutable-arguments", "owning-function-mutable-arguments-cleanup"],
       "required_instantiations": ["int(int) copyable captured lambda, explicit clone and setter transfer", "void() read-callable lambda", "int(int) move-only unique-owner capture", "mixed read-only reference/value arguments with noncopyable referents", "stored and returned namespace function items, capture, replacement, clone and callee evaluation order", "nested immutable command schema with vector children and an owned leaf handler", "int(int) mut stateful targets, independent clone state, replacement, reset and exactly-once destruction"],
       "evidence": ["tests/fixtures/owning_function.gti", "tests/fixtures/owning_function_borrows.gti", "tests/fixtures/owning_function_items.gti", "tests/fixtures/owning_function_schema.gti", "tests/fixtures/owning_function_mutable.gti", "tests/fixtures/owning_function_mutable_arguments.gti", "tests/owning_function_tests.cpp", "tests/owning_function_runtime_test.py", "stdlib/std/functional.gti"]
-    },
-    {
-      "id": "functional.scaffold",
-      "source": "stdlib/std/functional.gti",
-      "status": "scaffold",
-      "operations": ["std::hash<T>::operator()"],
-      "reason": "The generic customization primary is declaration-only and the canonical language document does not promise primitive hash implementations.",
-      "evidence": ["stdlib/std/functional.gti", "docs/language/standard-library.md"]
     },
     {
       "id": "http.executable",
@@ -1015,6 +1186,61 @@
       "operations": ["std::list public surface"],
       "reason": "The move-only shape is present, but node storage and operation bodies are absent.",
       "evidence": ["stdlib/std/list.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+    },
+    {
+      "id": "map.executable",
+      "source": "stdlib/std/map.gti",
+      "status": "executable",
+      "operations": [
+        "std::map::at",
+        "std::map::begin",
+        "std::map::begin_mut",
+        "std::map::clear",
+        "std::map::const_iterator",
+        "std::map::contains",
+        "std::map::count",
+        "std::map::emplace",
+        "std::map::empty",
+        "std::map::end",
+        "std::map::erase",
+        "std::map::find",
+        "std::map::find_mut",
+        "std::map::get_or_insert",
+        "std::map::insert",
+        "std::map::insert_or_assign",
+        "std::map::iterator",
+        "std::map::key_type",
+        "std::map::lower_bound",
+        "std::map::map",
+        "std::map::mapped_type",
+        "std::map::size",
+        "std::map::size_type",
+        "std::map::try_emplace",
+        "std::map::upper_bound",
+        "std::map::value_type"
+      ],
+      "case_ids": [
+        "associative-map",
+        "associative-map-balancing",
+        "associative-map-iteration",
+        "associative-map-ownership",
+        "associative-map-insert-result"
+      ],
+      "required_instantiations": [
+        "scalar keys and values",
+        "move-only string keys and unique-owner values",
+        "custom read-only policies",
+        "checked mutable and read-only traversal",
+        "pair<iterator, bool> insertion and move",
+        "duplicate emplacement without construction",
+        "destructor cleanup and node reuse"
+      ],
+      "evidence": [
+        "stdlib/std/map.gti",
+        "tests/associative_map_test.py",
+        "tests/container_contract_failure_test.py",
+        "docs/language/standard-library.md"
+      ]
     },
     {
       "id": "memory.executable",
@@ -1169,15 +1395,6 @@
       "evidence": ["tests/fixtures/stdlib_surface_numeric.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/generic_callable_concepts_runtime_test.py", "tests/defined_integer_runtime_test.py", "tests/numeric_boundaries_runtime_test.py", "tests/fixtures/numeric_boundaries.gti", "tests/fixtures/numeric_boundaries_oracle.cpp", "tests/fixtures/numeric_boundaries_failure.gti"]
     },
     {
-      "id": "numeric.unsupported-hash-specializations",
-      "source": "stdlib/std/numeric.gti",
-      "status": "unsupported",
-      "operations": ["std::hash<uint16_t>", "std::hash<uint32_t>", "std::hash<uint64_t>", "std::hash<uint8_t>"],
-      "reason": "Latent specialization bodies exist, but the canonical standard-library contract explicitly does not ship primitive hash implementations or a hashability capability.",
-      "evidence": ["stdlib/std/numeric.gti", "docs/language/standard-library.md"],
-      "required_instantiations": []
-    },
-    {
       "id": "optional.executable",
       "source": "stdlib/std/optional.gti",
       "status": "executable",
@@ -1262,39 +1479,13 @@
       "id": "string.executable",
       "source": "stdlib/std/string.gti",
       "status": "executable",
-      "operations": [
-        "std::string::append",
-        "std::string::as_span",
-        "std::string::at",
-        "std::string::back",
-        "std::string::begin",
-        "std::string::c_string",
-        "std::string::capacity",
-        "std::string::clear",
-        "std::string::clone",
-        "std::string::empty",
-        "std::string::end",
-        "std::string::front",
-        "std::string::operator comparisons",
-        "std::string::operator[]",
-        "std::string::pop_back",
-        "std::string::push_back",
-        "std::string::reserve",
-        "std::string::resize",
-        "std::string::shrink_to_fit",
-        "std::string::size",
-        "std::string::string(size_t,size_t,string&)",
-        "std::string::try_c_string",
-        "std::string::view",
-        "std::to_string",
-        "std::to_string(float)"
-      ],
-      "case_ids": ["span", "string", "string-c-string", "string-index-range"],
+      "operations": ["std::hash<std::string>","std::string::append","std::string::as_span","std::string::at","std::string::back","std::string::begin","std::string::c_string","std::string::capacity","std::string::clear","std::string::clone","std::string::empty","std::string::end","std::string::front","std::string::operator comparisons","std::string::operator[]","std::string::pop_back","std::string::push_back","std::string::reserve","std::string::resize","std::string::shrink_to_fit","std::string::size","std::string::string(size_t,size_t,string&)","std::string::try_c_string","std::string::view","std::to_string","std::to_string(float)"],
+      "case_ids": ["span", "string", "string-c-string", "string-index-range", "string-ordering", "associative-hashes"],
       "required_instantiations": [
         "std::to_string for every fixed-width integer family",
         "std::to_string(float)"
       ],
-      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_string.gti", "tests/fixtures/string_index_range.gti", "tests/string_index_range_runtime_test.py", "tests/fixtures/string_c_string.gti", "tests/fixtures/string_c_string.cpp", "tests/string_c_string_runtime_test.py", "stdlib/std/string.gti"]
+      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_string.gti", "tests/fixtures/string_index_range.gti", "tests/string_index_range_runtime_test.py", "tests/fixtures/string_c_string.gti", "tests/fixtures/string_c_string.cpp", "tests/string_c_string_runtime_test.py", "tests/fixtures/string_ordering.gti", "tests/string_ordering_runtime_test.py", "tests/fixtures/associative_hash_contracts.gti", "stdlib/std/string.gti"]
     },
     {
       "id": "string.swap",
@@ -1322,6 +1513,67 @@
       "case_ids": ["thread"],
       "required_instantiations": ["noncapturing lambda", "owned move-capture lambda", "once-callable class", "typed named task", "typed closure", "owned result cleanup"],
       "evidence": ["examples/66-managed-threads.gti", "stdlib/std/thread.gti", "tests/managed_thread_runtime_test.py", "tests/managed_thread_tests.cpp", "tests/runtime_thread_tests.cpp"]
+    },
+    {
+      "id": "unordered_map.executable",
+      "source": "stdlib/std/unordered_map.gti",
+      "status": "executable",
+      "operations": [
+        "std::unordered_map::at",
+        "std::unordered_map::begin",
+        "std::unordered_map::begin_mut",
+        "std::unordered_map::bucket",
+        "std::unordered_map::bucket_count",
+        "std::unordered_map::bucket_size",
+        "std::unordered_map::clear",
+        "std::unordered_map::const_iterator",
+        "std::unordered_map::contains",
+        "std::unordered_map::count",
+        "std::unordered_map::emplace",
+        "std::unordered_map::empty",
+        "std::unordered_map::end",
+        "std::unordered_map::erase",
+        "std::unordered_map::find",
+        "std::unordered_map::find_mut",
+        "std::unordered_map::get_or_insert",
+        "std::unordered_map::insert",
+        "std::unordered_map::insert_or_assign",
+        "std::unordered_map::iterator",
+        "std::unordered_map::key_type",
+        "std::unordered_map::load_factor",
+        "std::unordered_map::mapped_type",
+        "std::unordered_map::max_load_factor",
+        "std::unordered_map::rehash",
+        "std::unordered_map::reserve",
+        "std::unordered_map::size",
+        "std::unordered_map::size_type",
+        "std::unordered_map::try_emplace",
+        "std::unordered_map::unordered_map",
+        "std::unordered_map::value_type"
+      ],
+      "case_ids": [
+        "unordered-map-core",
+        "unordered-map-collisions",
+        "unordered-map-iteration",
+        "unordered-map-ownership",
+        "unordered-map-load-factor",
+        "unordered-map-insert-result"
+      ],
+      "required_instantiations": [
+        "scalar keys and values",
+        "move-only string keys and unique-owner values",
+        "custom read-only policies",
+        "checked mutable and read-only traversal",
+        "pair<iterator, bool> insertion and move",
+        "duplicate emplacement without construction",
+        "destructor cleanup and node reuse"
+      ],
+      "evidence": [
+        "stdlib/std/unordered_map.gti",
+        "tests/unordered_map_test.py",
+        "tests/container_contract_failure_test.py",
+        "docs/language/standard-library.md"
+      ]
     },
     {
       "id": "utility.pair",

@@ -1,0 +1,26 @@
+#include <std/utility>
+
+class Key {
+  int number;
+public:
+  Key(int value) : number(value) {}
+  int read() { return this.number; }
+};
+
+struct Entry {
+  Key key;
+  int value;
+  Entry(Key key, int value) : key(std::move(key)), value(std::move(value)) {}
+};
+
+struct Node {
+  Entry entry;
+  int sibling = 0;
+  Node(Key key, int value) : entry(Entry(std::move(key), std::move(value))) {}
+};
+
+int main() {
+  Node node{Key(7), 11};
+  if (node.entry.key.read() != 7 || node.entry.value != 11) { return 1; }
+  return 0;
+}

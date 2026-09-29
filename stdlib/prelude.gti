@@ -36,6 +36,8 @@ namespace gti_internal {
   // when `index >= size`, so container indexing reports the logical bound
   // rather than leaking the private storage invariant.
   void index_bounds_check(uint64_t index, uint64_t size);
+  void require_key(bool found);
+  void require_container_argument(bool valid);
 
   gti_internal::prefix_storage<T> allocate_prefix_storage<T>(uint64_t count);
   void prefix_storage_append<T, Args...>(mut gti_internal::prefix_storage<T>& storage, Args... args);

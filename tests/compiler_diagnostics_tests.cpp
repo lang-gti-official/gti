@@ -241,6 +241,32 @@ std::string return_named(std::string result) {
         "applying the callback include fix should resolve the signature type");
   }
 
+  for (const std::string name : {"map", "unordered_map"}) {
+    const std::string source =
+        "using dictionary = std::" + name + "<int, int>;\n";
+    const auto missingMap = lang::Frontend().analyze(
+        "missing-associative-include.gti", source, {standardLibraryPrelude()},
+        {}, {standardLibraryRoot()});
+    const lang::Diagnostic *diagnostic =
+        findDiagnosticByCode(missingMap.diagnostics, "GTI-S2089");
+    const std::string directive = "#include <std/" + name + ">\n";
+    expect(!missingMap.canGenerateCode() && diagnostic != nullptr &&
+               diagnostic->primary.start == source.find(name) &&
+               diagnostic->primary.end == source.find(name) + name.size() &&
+               diagnostic->fixes.size() == 1 &&
+               diagnostic->fixes.front().span.source ==
+                   diagnostic->primary.source &&
+               diagnostic->fixes.front().span.start == 0 &&
+               diagnostic->fixes.front().span.end == 0 &&
+               diagnostic->fixes.front().replacement == directive,
+           "associative containers should offer the canonical include fix");
+    const auto corrected = lang::Frontend().analyze(
+        "missing-associative-include.gti", directive + source,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(corrected.canGenerateCode(),
+           "applying an associative include fix should resolve the type");
+  }
+
   const lang::FrontendResult indirect = lang::Frontend().analyze(
       "indirect-memory-include.gti",
       "#include <std/cstdio>\nusing owner = std::unique_ptr<int>;\n",

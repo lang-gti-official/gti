@@ -1,0 +1,18 @@
+#include <std/memory>
+#include <std/string>
+
+struct Node {
+  std::string key;
+  int value;
+  std::size_t next;
+  Node(std::string key, int value, std::size_t next)
+      : key(std::move(key)), value(value), next(next) {}
+};
+
+int add(std::string key, int value) {
+  auto owned = std::make_unique<Node>(std::move(key), value, std::size_t(0));
+  if (owned->key != "first" || owned->next != 0) return 1;
+  return owned->value - 17;
+}
+
+int main() { return add(std::string("first"), 17); }

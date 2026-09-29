@@ -100,7 +100,10 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v74`/`mir-body-v64`.
+The deterministic serialization is currently `mir-v75`/`mir-body-v65`.
+Program v75/body v65 replace a stored carrier's single designated field symbol
+with its ordered `designated-fields` path. The complete concrete nominal path
+retains one external dependency through nested carrier construction and return.
 Program v74/body v64 serialize signature receiver capability in semantic type
 metadata. Read-only, mutable, and consuming signatures cannot share a serialized
 identity. The lowered declaration seal includes the same field in
@@ -531,17 +534,30 @@ Version 37 makes a by-value stored-reference carrier return similarly
 self-contained; version 48 completes its independent proof. Lowering gives the
 carrier parameter one body-local entry `Stored` loan whose unprojected formal-
 binding source is the opaque identity of the external dependency proven by
-semantics, and the loan retains the exact designated reference-field symbol.
+semantics, and the loan retains the exact ordered designated field path down
+to the reference leaf. Each step is checked against the concrete class fields;
+the whole carrier must have exactly one such dependency path.
 Returning the carrier or its exact stored referent publishes a fresh escaping
 `Return` loan through one `Borrow` operand that names that entry loan. A carrier
 return also names the exact SSA value loaded or moved from one of that loan's
 carrier bindings. A reference return carries a binding-rooted runtime place
-whose only projections are the designated field and its dereference. The entry
+whose only projections are that designated field path and its dereference. The entry
 loan ends at that transfer. The verifier independently rejects a projected or
 wrong-field entry, a shell or unrelated same-typed carrier, an ordinary call-
 result place, a reused or multiply produced return loan, a wrong payload or
 referent type, or a terminator that does not carry the same loan and exact
 runtime value/place.
+
+Construction of a nested carrier consumes the parameter's entry dependency
+through an explicit `Borrow` publication to the exact initialized field,
+followed by `EndBorrow` for the incoming dependency. The field initializer's
+ordered copy/move value remains the physical shell transfer. Verification
+checks the constructor's parameter, initialized field, full reference path,
+access mode, and value transfer together; neither the shell's address nor a
+same-typed unrelated field substitutes for the external owner. A projected
+receiver can inherit this dependency only along the verified reference-bearing
+path. Backend projection spelling follows those typed fields and represents
+the final reference dereference without reconstructing ownership.
 
 The bounded mutable-carrier extension reuses this explicit loan vocabulary
 rather than adding backend-only lifetime inference. A mutable parameter or
@@ -1639,6 +1655,14 @@ non-virtual GTI target, concrete owner type, receiver qualifier, result
 non-escape traits, producer type, place type/access/source identity, and drop
 descriptor to agree. This is an explicit MIR borrow schedule, not a native
 rvalue convention.
+
+A read-only operator on a borrowed-class prvalue uses the ordinary ordered
+`Value` receiver stage instead. Its source has an explicit full-expression
+materialization/lifetime obligation and retains its separately verified stored
+dependency loan. The stage aliases the source result without copying, moving,
+or transferring that obligation. Native emission requires the exact source
+value, stage site/role/type, unique result slot, activation, and scheduled drop;
+it does not reclassify this carrier as a fresh owning temporary.
 
 An ordinary-call argument may use `ReadTemporaryBorrow` only when its HIR
 input names an exact fresh class/struct producer and its selected parameter is

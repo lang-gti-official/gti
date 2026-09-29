@@ -356,9 +356,83 @@ namespace std {
     }
   };
 
-  class hash<T> {
-  public:
-    size_t operator()(T & value);
-  };
+  // The primary is deliberately non-callable. Exact specializations supply
+  // executable hashing; an unsupported key must fail before native linking.
+  class hash<T> {};
+
+  // Hashes are process-local lookup values, not a serialized representation.
+  // Converting a negative integer directly to size_t would be checked failure.
+  // Complementing -(value + 1) also handles the minimum signed value safely.
+  namespace detail {
+    size_t signed_integer_hash<std::signed_integral T>(T value) {
+      if (value < T(0)) {
+        return ~size_t(-T(value + T(1)));
+      }
+      return size_t(value);
+    }
+  }
 
 }
+
+class std::hash<int8_t> {
+public:
+  std::size_t operator()(int8_t& value) {
+    return detail::signed_integer_hash(value);
+  }
+};
+
+class std::hash<int16_t> {
+public:
+  std::size_t operator()(int16_t& value) {
+    return detail::signed_integer_hash(value);
+  }
+};
+
+class std::hash<int32_t> {
+public:
+  std::size_t operator()(int32_t& value) {
+    return detail::signed_integer_hash(value);
+  }
+};
+
+class std::hash<int64_t> {
+public:
+  std::size_t operator()(int64_t& value) {
+    return detail::signed_integer_hash(value);
+  }
+};
+
+class std::hash<uint8_t> {
+public:
+  std::size_t operator()(uint8_t& value) { return std::size_t(value); }
+};
+
+class std::hash<uint16_t> {
+public:
+  std::size_t operator()(uint16_t& value) { return std::size_t(value); }
+};
+
+class std::hash<uint32_t> {
+public:
+  std::size_t operator()(uint32_t& value) { return std::size_t(value); }
+};
+
+class std::hash<uint64_t> {
+public:
+  std::size_t operator()(uint64_t& value) { return value; }
+};
+
+class std::hash<bool> {
+public:
+  std::size_t operator()(bool& value) {
+    if (value) { return 1; }
+    return 0;
+  }
+};
+
+class std::hash<char> {
+public:
+  std::size_t operator()(char& value) {
+    return std::size_t(uint8_t(value));
+  }
+};

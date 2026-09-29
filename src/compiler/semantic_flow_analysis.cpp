@@ -1243,7 +1243,9 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
     const bool mutableAccess =
         symbol == nullptr ||
         (symbol->type.kind == SemanticType::Reference
-             ? symbol->type.referenceAccess == AccessMode::Mutable
+             ? symbol->type.referenceAccess == AccessMode::Mutable &&
+                   (symbol->ownerClass == 0 || symbol->staticMember ||
+                    receiverAllowsMutation(currentReceiverMutability))
              : symbol->assignable &&
                    (symbol->ownerClass == 0 || symbol->staticMember ||
                     receiverAllowsMutation(currentReceiverMutability)));
@@ -1376,7 +1378,8 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
     const bool mutableAccess =
         member == nullptr ||
         (member->symbol.type.kind == SemanticType::Reference
-             ? member->symbol.type.referenceAccess == AccessMode::Mutable
+             ? member->symbol.type.referenceAccess == AccessMode::Mutable &&
+                   memberReceiverIsMutable(get)
              : member->symbol.assignable &&
                    (get.access().kind == TokenKind::ARROW
                         ? (rawReceiver != nullptr &&
@@ -1849,6 +1852,17 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
           anchor(token);
           addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
                             storageBoundsCheckDetail());
+          break;
+        case IntrinsicKind::RequireKey:
+          anchor(token);
+          addFailureOutcome(operation, DefinedFailureCode::KeyNotFound,
+                            DefinedFailureDetail::KeyLookup);
+          break;
+        case IntrinsicKind::RequireContainerArgument:
+          anchor(token);
+          addFailureOutcome(operation,
+                            DefinedFailureCode::InvalidContainerArgument,
+                            DefinedFailureDetail::ContainerArgument);
           break;
         case IntrinsicKind::StorageRelocate:
         case IntrinsicKind::StorageShiftRight:
@@ -2811,6 +2825,10 @@ auto SemanticVisitor::Impl::recordQualifiedPathUses(
   }
   const NamePath ownerPath(
       std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
+  if (resolveTypeAliasPath(ownerPath, currentNamespace)) {
+    recordTypeUse(TypeRef(ownerPath));
+    return;
+  }
   if (const std::optional<ClassId> classId =
           resolveClassPath(ownerPath, currentNamespace)) {
     const ClassInfo &owner = classInfo(*classId);
@@ -4143,6 +4161,20 @@ auto SemanticVisitor::Impl::resolveTypeAliasPath(
   if (const std::optional<ClassId> owner =
           resolveClassPath(namespacePath, fromScope)) {
     return member(*owner, path.last().lexeme);
+  }
+  if (const auto qualifier = resolveTypeAliasPath(namespacePath, fromScope)) {
+    const SemanticType ownerType = substituteType(
+        qualifier->type,
+        GenericSubstitution{.types = instanceTypeSubstitution,
+                            .values = instanceValueSubstitution});
+    if (ownerType.kind == SemanticType::Class) {
+      if (auto alias = member(ownerType.classId, path.last().lexeme)) {
+        alias->type = substituteType(alias->type, classSubstitution(ownerType));
+        alias->specializedOwner = true;
+        alias->qualifiers.push_back(*qualifier);
+        return alias;
+      }
+    }
   }
   return std::nullopt;
 }

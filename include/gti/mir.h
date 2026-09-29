@@ -335,10 +335,11 @@ struct MirLoan {
   HirValueId producedBy = 0;
   std::vector<HirBindingId> carriers;
   SymbolId storedField = 0;
-  // Exact stored-reference field whose referent this loan designates. Unlike
-  // storedField (a constructor storage target), this is provenance metadata
-  // for a by-value carrier dependency and has no backend representation.
-  SymbolId designatedField = 0;
+  // Exact nominal field path ending at the reference this loan designates.
+  // Unlike storedField (a constructor storage target), this is provenance
+  // metadata for a by-value carrier dependency and has no backend
+  // representation.
+  std::vector<SymbolId> designatedFields;
   // True only for a stored exclusive dependency whose carrier destructor
   // releases the protected resource. Cleanup must Drop that carrier before
   // ending this loan on every normal and failure edge.

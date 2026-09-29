@@ -901,6 +901,8 @@ private:
     ClassId ownerClass = 0;
     AccessModifier access = AccessModifier::Public;
     bool compilerPrivate = false;
+    bool specializedOwner = false;
+    std::vector<ResolvedTypeAlias> qualifiers;
   };
 
   enum class ConceptResolution {
@@ -1190,6 +1192,21 @@ private:
 
   [[nodiscard]] bool isMoveOnlyOwnerType(const SemanticType &type) const;
 
+  struct StoredReferencePath {
+    std::vector<const VariableDecl *> fields;
+    SemanticType reference = SemanticType::Unknown;
+  };
+
+  // A concrete carrier may wrap its one direct reference in ordinary nominal
+  // fields. The complete declaration path is the dependency identity; an
+  // aggregate with two paths is not a one-owner carrier.
+  [[nodiscard]] std::optional<StoredReferencePath>
+  storedReferencePath(const SemanticType &type) const;
+
+  [[nodiscard]] std::optional<std::size_t> storedCarrierConstructorParameter(
+      const SemanticType &type, const ConstructorInfo &constructor,
+      std::span<const SemanticType> parameterTypes) const;
+
   [[nodiscard]] bool
   isDirectStoredReferenceType(const SemanticType &type) const;
 
@@ -1352,14 +1369,12 @@ private:
 
   void registerStorageLoan(SymbolId owner, bool receiver, SemanticLoanId loan);
 
-  SemanticLoanId createRetainedLoan(Symbol &carrier, SymbolId carrierSymbol,
-                                    SemanticLoanKind kind, const Expr *origin,
-                                    SemanticLoanPlace place, SymbolId owner,
-                                    bool receiverOrigin, AccessMode access,
-                                    bool protectsStorage,
-                                    SemanticLoanId parent = 0,
-                                    bool entry = false,
-                                    SymbolId designatedField = 0);
+  SemanticLoanId createRetainedLoan(
+      Symbol &carrier, SymbolId carrierSymbol, SemanticLoanKind kind,
+      const Expr *origin, SemanticLoanPlace place, SymbolId owner,
+      bool receiverOrigin, AccessMode access, bool protectsStorage,
+      SemanticLoanId parent = 0, bool entry = false,
+      std::vector<SymbolId> designatedFields = {});
 
   void recordParameterEntryLoan(const Parameter &parameter);
 
@@ -2251,6 +2266,9 @@ private:
   applyGenericDefaults(const std::vector<GenericParameterInfo> &parameters,
                        GenericSubstitution &substitution, const Token &site,
                        bool diagnoseFailure);
+
+  [[nodiscard]] std::optional<ConstraintFailure>
+  firstNestedTypeConstraintFailure(const SemanticType &type) const;
 
   [[nodiscard]] const std::vector<GenericParameterInfo> &
   genericParametersFor(const FunctionDecl &function) const;
@@ -3803,6 +3821,7 @@ private:
     bool allowPayloadEnumeratorReference = false;
     bool currentStaticMemberFunction = false;
     bool allowPackTypeReference = false;
+    bool resolvingGenericTypeDefault = false;
     LoanFlowState loanFlow;
     bool instanceClassContextActive = false;
     bool instanceAnalysisActive = false;
@@ -3966,6 +3985,8 @@ private:
   bool &currentStaticMemberFunction =
       requestSession.currentStaticMemberFunction;
   bool &allowPackTypeReference = requestSession.allowPackTypeReference;
+  bool &resolvingGenericTypeDefault =
+      requestSession.resolvingGenericTypeDefault;
   LoanFlowState &loanFlow = requestSession.loanFlow;
   std::vector<ValueControlFlowContext> &valueControlFlow =
       requestSession.valueFlow.controlFlow;

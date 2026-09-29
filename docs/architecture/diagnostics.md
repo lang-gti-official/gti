@@ -176,10 +176,11 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   and API shape require intent. An exact eligible read-only call-only borrow is
   accepted and emits no diagnostic; local and stored bindings remain invalid.
 - `GTI-S2045` owns unsupported stored-reference carrier shapes and incoherent
-  borrowed-value return dependencies. One direct read-only or mutable field
-  bound by every constructor from one exact compatible reference parameter is
-  accepted. Point at the field, constructor binding, storage declaration, or
-  return expression that introduces a second/nested/global/captured origin,
+  borrowed-value return dependencies. One read-only or mutable reference field,
+  optionally nested through nominal carrier fields, is accepted when every
+  constructor binds the exact field path from one compatible parameter.
+  Point at the field, constructor binding, storage declaration, or
+  return expression that introduces a second/global/captured origin,
   custom cleanup, dependency-changing assignment, or ambiguous/incompatible
   return. A mutable carrier is move-only; attempts to copy it use the ordinary
   ownership-transfer diagnostic, while assignment remains the ordinary

@@ -24,6 +24,9 @@ enum class DefinedFailureCode : std::uint16_t {
   AllocationFailure = 11,
   InfallibleHostOperationFailed = 12,
   HostedRuntimeContractFailure = 13,
+  // 14 belongs exclusively to the failure-during-cleanup emergency envelope.
+  KeyNotFound = 15,
+  InvalidContainerArgument = 16,
   Count,
 };
 
@@ -62,6 +65,8 @@ enum class DefinedFailureDetail : std::uint8_t {
   NegativeArgumentCount,
   RecursiveThreadLocalInitialization,
   MutexLock,
+  KeyLookup,
+  ContainerArgument,
   Count,
 };
 
@@ -109,7 +114,8 @@ struct DefinedFailureOperation {
 };
 
 [[nodiscard]] constexpr bool validDefinedFailureCode(DefinedFailureCode code) {
-  return code > DefinedFailureCode::None && code < DefinedFailureCode::Count;
+  return code > DefinedFailureCode::None && code < DefinedFailureCode::Count &&
+         static_cast<std::uint16_t>(code) != 14;
 }
 
 [[nodiscard]] constexpr bool
@@ -174,6 +180,10 @@ validDefinedFailureOutcome(DefinedFailureOutcome outcome) {
     return outcome.detail == DefinedFailureDetail::NegativeArgumentCount ||
            outcome.detail ==
                DefinedFailureDetail::RecursiveThreadLocalInitialization;
+  case DefinedFailureCode::KeyNotFound:
+    return outcome.detail == DefinedFailureDetail::KeyLookup;
+  case DefinedFailureCode::InvalidContainerArgument:
+    return outcome.detail == DefinedFailureDetail::ContainerArgument;
   case DefinedFailureCode::None:
   case DefinedFailureCode::Count:
     return false;
@@ -210,6 +220,10 @@ definedFailureCodeName(DefinedFailureCode code) {
     return "infallible_host_operation_failed";
   case DefinedFailureCode::HostedRuntimeContractFailure:
     return "hosted_runtime_contract_failure";
+  case DefinedFailureCode::KeyNotFound:
+    return "key_not_found";
+  case DefinedFailureCode::InvalidContainerArgument:
+    return "invalid_container_argument";
   case DefinedFailureCode::None:
   case DefinedFailureCode::Count:
     return "none";
@@ -282,6 +296,10 @@ definedFailureDetailName(DefinedFailureDetail detail) {
     return "automatic_join";
   case DefinedFailureDetail::MutexLock:
     return "mutex_lock";
+  case DefinedFailureDetail::KeyLookup:
+    return "key_lookup";
+  case DefinedFailureDetail::ContainerArgument:
+    return "container_argument";
   case DefinedFailureDetail::NegativeArgumentCount:
     return "negative_argument_count";
   case DefinedFailureDetail::RecursiveThreadLocalInitialization:

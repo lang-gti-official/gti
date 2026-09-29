@@ -75,6 +75,7 @@ standardLibraryIncludeForType(std::string_view qualifiedName) {
       Entry{"std::io_errc", "std/cstdio"},
       Entry{"std::less", "std/functional"},
       Entry{"std::list", "std/list"},
+      Entry{"std::map", "std/map"},
       Entry{"std::memory_order_acq_rel", "std/atomic"},
       Entry{"std::memory_order_acquire", "std/atomic"},
       Entry{"std::memory_order_relaxed", "std/atomic"},
@@ -112,6 +113,7 @@ standardLibraryIncludeForType(std::string_view qualifiedName) {
       Entry{"std::thrd_t", "std/cthread"},
       Entry{"std::timespec", "std/cthread"},
       Entry{"std::unique_ptr", "std/memory"},
+      Entry{"std::unordered_map", "std/unordered_map"},
       Entry{"std::vector", "std/vector"},
       Entry{"std::weak_ptr", "std/memory"},
   };

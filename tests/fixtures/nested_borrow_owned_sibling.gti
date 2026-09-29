@@ -1,0 +1,21 @@
+#include <std/utility>
+#include <std/string>
+
+class View {
+public:
+  int& item;
+  View(int& item) : item(item) {}
+};
+
+std::pair<View, std::string> describe(int& value) {
+  return std::pair<View, std::string>(View(value), std::string("answer"));
+}
+
+int main() {
+  int value = 42;
+  auto result = describe(value);
+  if (result.first.item != 42 || result.second != "answer") { return 1; }
+  auto moved = std::move(result);
+  if (moved.first.item != 42 || moved.second != "answer") { return 2; }
+  return 0;
+}

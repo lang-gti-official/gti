@@ -1214,6 +1214,12 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
 
 auto SemanticVisitor::Impl::resolveTypeAliasDependencies(
     const TypeRef &type, const std::vector<std::string> &scope) -> void {
+  if (type.name.segments.size() > 1) {
+    TypeRef qualifier = type;
+    qualifier.name.segments.pop_back();
+    qualifier.arguments.clear();
+    resolveTypeAliasDependencies(qualifier, scope);
+  }
   if (type.name.last().kind == TokenKind::IDENTIFIER &&
       !resolveTypeParameter(type.name)) {
     if (const std::optional<ResolvedTypeAlias> dependency =
@@ -4606,14 +4612,46 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
       }
       const auto member = owner.members.find(field.declaration->name().lexeme);
       if (member != owner.members.end() &&
-          typeTraits(member->second.symbol.type).containsBorrowedState) {
+          typeTraits(member->second.symbol.type).containsBorrowedState &&
+          !storedReferencePath(SemanticType::classType(owner.id))) {
         report(field.declaration->name(),
-               "Borrowed state cannot be nested in another field in the "
-               "current lifetime model.",
+               "A class or struct may contain only one stored-reference "
+               "dependency, through direct or nested nominal fields.",
                "GTI-S2045");
       }
     }
     if (!owner.storedReference) {
+      const SemanticType ownerType = SemanticType::classType(owner.id);
+      const auto path = storedReferencePath(ownerType);
+      if (path) {
+        if (hasSourceDestructorBody(owner)) {
+          report(owner.destructor->declaration->tilde(),
+                 "A class carrying a stored reference cannot declare a "
+                 "destructor in the current lifetime model.",
+                 "GTI-S2045");
+        }
+        if (owner.constructors.empty()) {
+          report(path->fields.front()->name(),
+                 "A nested stored-reference field requires a declared "
+                 "constructor that binds it from one exact carrier parameter.",
+                 "GTI-S2045");
+        }
+        for (ConstructorInfo &constructor : owner.constructors) {
+          if (constructor.declaration == nullptr) {
+            continue;
+          }
+          constructor.borrowParameter = storedCarrierConstructorParameter(
+              ownerType, constructor, constructor.parameterTypes);
+          constructor.borrowAccess = path->reference.referenceAccess;
+          if (!constructor.borrowParameter) {
+            report(constructor.declaration->name(),
+                   "Every constructor of a nested stored-reference class "
+                   "must initialize its borrowed field directly from one "
+                   "exact carrier parameter, optionally using std::move.",
+                   "GTI-S2045");
+          }
+        }
+      }
       continue;
     }
     const StoredReferenceInfo &stored = *owner.storedReference;

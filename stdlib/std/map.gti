@@ -1,0 +1,405 @@
+#include <std/vector>
+#include <std/memory>
+#include <std/functional>
+#include <std/utility>
+
+namespace std {
+namespace detail {
+struct map_node<K, V> {
+  mut map_entry<K, V> entry;
+  mut size_t left = 0;
+  mut size_t right = 0;
+  mut size_t parent = 0;
+  mut int height = 1;
+
+  map_node(K key, V value, size_t ancestor)
+      : entry(map_entry<K, V>(std::move(key), std::move(value))), parent(ancestor) {}
+};
+
+class map_sentinel {};
+
+class map_iterator<K, V> {
+  vector<unique_ptr<map_node<K, V>>>& nodes;
+  mut size_t position;
+
+public:
+  map_iterator(vector<unique_ptr<map_node<K, V>>>& source, size_t index)
+      : nodes(source), position(index) {}
+
+  map_entry<K, V>& operator*() {
+    gti_internal::require_container_argument(this.position != 0);
+    return this.nodes[this.position - 1]->entry;
+  }
+
+  map_entry<K, V>& operator->() { return *this; }
+
+  bool operator!=(map_sentinel& end) { return this.position != 0; }
+  bool operator==(map_sentinel& end) { return this.position == 0; }
+  bool operator!=(map_iterator<K, V>& other) {
+    return this.position != other.position;
+  }
+  bool operator==(map_iterator<K, V>& other) {
+    return this.position == other.position;
+  }
+
+  void operator++() mut {
+    gti_internal::require_container_argument(this.position != 0);
+    size_t right = this.nodes[this.position - 1]->right;
+    if (right != 0) {
+      this.position = right;
+      while (this.nodes[this.position - 1]->left != 0) {
+        this.position = this.nodes[this.position - 1]->left;
+      }
+    } else {
+      mut size_t child = this.position;
+      mut size_t parent = this.nodes[child - 1]->parent;
+      while (parent != 0 && this.nodes[parent - 1]->right == child) {
+        child = parent;
+        parent = this.nodes[child - 1]->parent;
+      }
+      this.position = parent;
+    }
+  }
+};
+
+class map_mut_iterator<K, V> {
+  mut vector<unique_ptr<map_node<K, V>>>& nodes;
+  mut size_t position;
+
+public:
+  map_mut_iterator(mut vector<unique_ptr<map_node<K, V>>>& source, size_t index)
+      : nodes(source), position(index) {}
+
+  map_entry<K, V>& operator*() {
+    gti_internal::require_container_argument(this.position != 0);
+    return this.nodes[this.position - 1]->entry;
+  }
+  mut map_entry<K, V>& operator*() mut {
+    gti_internal::require_container_argument(this.position != 0);
+    return this.nodes[this.position - 1]->entry;
+  }
+  map_entry<K, V>& operator->() { return *this; }
+  mut map_entry<K, V>& operator->() mut { return *this; }
+  bool operator!=(map_sentinel& end) { return this.position != 0; }
+  bool operator==(map_sentinel& end) { return this.position == 0; }
+
+  void operator++() mut {
+    gti_internal::require_container_argument(this.position != 0);
+    size_t right = this.nodes[this.position - 1]->right;
+    if (right != 0) {
+      this.position = right;
+      while (this.nodes[this.position - 1]->left != 0) {
+        this.position = this.nodes[this.position - 1]->left;
+      }
+    } else {
+      mut size_t child = this.position;
+      mut size_t parent = this.nodes[child - 1]->parent;
+      while (parent != 0 && this.nodes[parent - 1]->right == child) {
+        child = parent;
+        parent = this.nodes[child - 1]->parent;
+      }
+      this.position = parent;
+    }
+  }
+};
+}
+
+/// An owning ordered dictionary. Its AVL tree stores links as slot indexes,
+/// never untracked pointers; zero is the absent link, other links are index+1.
+class map<K, V, Compare = std::less<K>> {
+  mut vector<unique_ptr<detail::map_node<K, V>>> nodes{};
+  mut vector<size_t> free_slots{};
+  mut size_t root = 0;
+  mut size_t element_count = 0;
+  Compare compare;
+
+  int height(size_t node) {
+    if (node == 0) { return 0; }
+    return this.nodes[node - 1]->height;
+  }
+
+  void refresh(size_t node) mut {
+    int left = this.height(this.nodes[node - 1]->left);
+    int right = this.height(this.nodes[node - 1]->right);
+    if (left > right) { this.nodes[node - 1]->height = left + 1; }
+    else { this.nodes[node - 1]->height = right + 1; }
+  }
+
+  void replace_link(size_t parent, size_t previous, size_t replacement) mut {
+    if (parent == 0) { this.root = replacement; }
+    else if (this.nodes[parent - 1]->left == previous) {
+      this.nodes[parent - 1]->left = replacement;
+    } else { this.nodes[parent - 1]->right = replacement; }
+    if (replacement != 0) { this.nodes[replacement - 1]->parent = parent; }
+  }
+
+  size_t rotate_left(size_t node) mut {
+    size_t pivot = this.nodes[node - 1]->right;
+    size_t middle = this.nodes[pivot - 1]->left;
+    size_t parent = this.nodes[node - 1]->parent;
+    this.replace_link(parent, node, pivot);
+    this.nodes[node - 1]->right = middle;
+    if (middle != 0) { this.nodes[middle - 1]->parent = node; }
+    this.nodes[pivot - 1]->left = node;
+    this.nodes[node - 1]->parent = pivot;
+    this.refresh(node);
+    this.refresh(pivot);
+    return pivot;
+  }
+
+  size_t rotate_right(size_t node) mut {
+    size_t pivot = this.nodes[node - 1]->left;
+    size_t middle = this.nodes[pivot - 1]->right;
+    size_t parent = this.nodes[node - 1]->parent;
+    this.replace_link(parent, node, pivot);
+    this.nodes[node - 1]->left = middle;
+    if (middle != 0) { this.nodes[middle - 1]->parent = node; }
+    this.nodes[pivot - 1]->right = node;
+    this.nodes[node - 1]->parent = pivot;
+    this.refresh(node);
+    this.refresh(pivot);
+    return pivot;
+  }
+
+  void rebalance(mut size_t node) mut {
+    while (node != 0) {
+      this.refresh(node);
+      size_t left = this.nodes[node - 1]->left;
+      size_t right = this.nodes[node - 1]->right;
+      int balance = this.height(left) - this.height(right);
+      if (balance > 1) {
+        if (this.height(this.nodes[left - 1]->left) <
+            this.height(this.nodes[left - 1]->right)) {
+          [[discard]] this.rotate_left(left);
+        }
+        node = this.rotate_right(node);
+      } else if (balance < -1) {
+        if (this.height(this.nodes[right - 1]->right) <
+            this.height(this.nodes[right - 1]->left)) {
+          [[discard]] this.rotate_right(right);
+        }
+        node = this.rotate_left(node);
+      }
+      node = this.nodes[node - 1]->parent;
+    }
+  }
+
+  size_t locate(K& key) {
+    mut size_t node = this.root;
+    while (node != 0) {
+      if (this.compare(key, this.nodes[node - 1]->entry.first)) {
+        node = this.nodes[node - 1]->left;
+      } else if (this.compare(this.nodes[node - 1]->entry.first, key)) {
+        node = this.nodes[node - 1]->right;
+      } else { return node; }
+    }
+    return 0;
+  }
+
+public:
+  using key_type = K;
+  using mapped_type = V;
+  using value_type = detail::map_entry<K, V>;
+  using size_type = size_t;
+  using iterator = detail::map_mut_iterator<K, V>;
+  using const_iterator = detail::map_iterator<K, V>;
+
+  map() requires std::default_initializable<Compare> &&
+                 std::read_binary_callable<Compare, K, K, bool>
+      : compare(Compare()) {}
+  map(Compare ordering) requires std::read_binary_callable<Compare, K, K, bool>
+      : compare(std::move(ordering)) {}
+  map(map<K, V, Compare>& other) = delete;
+  map(map<K, V, Compare>&& other) = default;
+
+  size_t size() { return this.element_count; }
+  bool empty() { return this.element_count == 0; }
+  bool contains(K& key) { return this.locate(key) != 0; }
+  size_t count(K& key) {
+    if (this.contains(key)) { return 1; }
+    return 0;
+  }
+
+  detail::map_iterator<K, V> begin() {
+    mut size_t node = this.root;
+    if (node != 0) {
+      while (this.nodes[node - 1]->left != 0) {
+        node = this.nodes[node - 1]->left;
+      }
+    }
+    return detail::map_iterator<K, V>(this.nodes, node);
+  }
+
+  detail::map_sentinel end() { return detail::map_sentinel(); }
+
+  detail::map_mut_iterator<K, V> begin_mut() mut {
+    mut size_t node = this.root;
+    if (node != 0) {
+      while (this.nodes[node - 1]->left != 0) {
+        node = this.nodes[node - 1]->left;
+      }
+    }
+    return detail::map_mut_iterator<K, V>(this.nodes, node);
+  }
+
+  detail::map_iterator<K, V> find(K& key) {
+    size_t node = this.locate(key);
+    return detail::map_iterator<K, V>(this.nodes, node);
+  }
+
+  detail::map_mut_iterator<K, V> find_mut(K& key) mut {
+    size_t node = this.locate(key);
+    return detail::map_mut_iterator<K, V>(this.nodes, node);
+  }
+
+  detail::map_iterator<K, V> lower_bound(K& key) {
+    mut size_t node = this.root;
+    mut size_t result = 0;
+    while (node != 0) {
+      if (this.compare(this.nodes[node - 1]->entry.first, key)) {
+        node = this.nodes[node - 1]->right;
+      } else {
+        result = node;
+        node = this.nodes[node - 1]->left;
+      }
+    }
+    return detail::map_iterator<K, V>(this.nodes, result);
+  }
+
+  detail::map_iterator<K, V> upper_bound(K& key) {
+    mut size_t node = this.root;
+    mut size_t result = 0;
+    while (node != 0) {
+      if (this.compare(key, this.nodes[node - 1]->entry.first)) {
+        result = node;
+        node = this.nodes[node - 1]->left;
+      } else { node = this.nodes[node - 1]->right; }
+    }
+    return detail::map_iterator<K, V>(this.nodes, result);
+  }
+
+  V& at(K& key) {
+    size_t node = this.locate(key);
+    gti_internal::require_key(node != 0);
+    return this.nodes[node - 1]->entry.second;
+  }
+
+  mut V& at(K& key) mut {
+    size_t node = this.locate(key);
+    gti_internal::require_key(node != 0);
+    return this.nodes[node - 1]->entry.second;
+  }
+
+private:
+  pair<size_t, bool> insert_position(K key, V value) mut {
+    mut size_t parent = 0;
+    mut size_t node = this.root;
+    mut bool left = false;
+    while (node != 0) {
+      parent = node;
+      if (this.compare(key, this.nodes[node - 1]->entry.first)) {
+        left = true;
+        node = this.nodes[node - 1]->left;
+      } else if (this.compare(this.nodes[node - 1]->entry.first, key)) {
+        left = false;
+        node = this.nodes[node - 1]->right;
+      } else { return pair<size_t, bool>(node, false); }
+    }
+    auto owned = std::make_unique<detail::map_node<K, V>>(
+        std::move(key), std::move(value), parent);
+    mut size_t added = this.nodes.size() + 1;
+    if (this.free_slots.empty()) {
+      this.nodes.push_back(std::move(owned));
+    } else {
+      added = this.free_slots.back();
+      this.nodes[added - 1] = std::move(owned);
+      this.free_slots.pop_back();
+    }
+    if (parent == 0) { this.root = added; }
+    else if (left) { this.nodes[parent - 1]->left = added; }
+    else { this.nodes[parent - 1]->right = added; }
+    this.element_count++;
+    this.rebalance(parent);
+    return pair<size_t, bool>(added, true);
+  }
+
+public:
+  pair<iterator, bool> insert(K key, V value) mut {
+    auto result = this.insert_position(std::move(key), std::move(value));
+    return pair<iterator, bool>(iterator(this.nodes, result.first), result.second);
+  }
+
+  pair<iterator, bool> insert_or_assign(K key, V value) mut {
+    size_t node = this.locate(key);
+    if (node != 0) {
+      this.nodes[node - 1]->entry.second = std::move(value);
+      return pair<iterator, bool>(iterator(this.nodes, node), false);
+    }
+    auto result = this.insert_position(std::move(key), std::move(value));
+    return pair<iterator, bool>(iterator(this.nodes, result.first), result.second);
+  }
+
+  pair<iterator, bool> try_emplace<Args...>(K key, Args... args) mut {
+    size_t node = this.locate(key);
+    if (node != 0) {
+      return pair<iterator, bool>(iterator(this.nodes, node), false);
+    }
+    auto result = this.insert_position(std::move(key), V(args...));
+    return pair<iterator, bool>(iterator(this.nodes, result.first), result.second);
+  }
+
+  pair<iterator, bool> emplace<Args...>(K key, Args... args) mut {
+    auto result = this.insert_position(std::move(key), V(args...));
+    return pair<iterator, bool>(iterator(this.nodes, result.first), result.second);
+  }
+
+  mut V& get_or_insert(K key) mut requires std::default_initializable<V> {
+    size_t node = this.locate(key);
+    if (node != 0) { return this.nodes[node - 1]->entry.second; }
+    auto result = this.insert_position(std::move(key), V());
+    return this.nodes[result.first - 1]->entry.second;
+  }
+
+  size_t erase(K& key) mut {
+    size_t node = this.locate(key);
+    if (node == 0) { return 0; }
+    // Reserve the vacant-slot record before changing any tree links.
+    this.free_slots.push_back(node);
+    size_t left = this.nodes[node - 1]->left;
+    size_t right = this.nodes[node - 1]->right;
+    size_t parent = this.nodes[node - 1]->parent;
+    mut size_t start = parent;
+    if (left == 0) { this.replace_link(parent, node, right); }
+    else if (right == 0) { this.replace_link(parent, node, left); }
+    else {
+      mut size_t successor = right;
+      while (this.nodes[successor - 1]->left != 0) {
+        successor = this.nodes[successor - 1]->left;
+      }
+      size_t ancestor = this.nodes[successor - 1]->parent;
+      if (ancestor == node) { start = successor; }
+      else {
+        size_t child = this.nodes[successor - 1]->right;
+        this.replace_link(ancestor, successor, child);
+        this.nodes[successor - 1]->right = right;
+        this.nodes[right - 1]->parent = successor;
+        start = ancestor;
+      }
+      this.replace_link(parent, node, successor);
+      this.nodes[successor - 1]->left = left;
+      this.nodes[left - 1]->parent = successor;
+    }
+    this.element_count--;
+    this.rebalance(start);
+    this.nodes[node - 1].reset();
+    return 1;
+  }
+
+  void clear() mut {
+    this.root = 0;
+    this.element_count = 0;
+    this.free_slots.clear();
+    this.nodes.clear();
+  }
+};
+}

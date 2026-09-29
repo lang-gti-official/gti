@@ -1077,7 +1077,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v64\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v65\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -3070,7 +3070,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v74 ") &&
+  expect(mirDump.starts_with("mir-v75 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -5613,8 +5613,6 @@ int main() {
           hasDiagnostic(invalid.diagnostics, "may store only one reference") &&
           hasDiagnostic(invalid.diagnostics,
                         "Every constructor of a stored-reference class") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "Borrowed state cannot be nested") &&
           hasDiagnostic(invalid.diagnostics, "cannot declare a destructor") &&
           hasDiagnostic(invalid.diagnostics,
                         "cannot have global or static storage") &&
@@ -5881,8 +5879,6 @@ int main() {
                                {standardLibraryPrelude()});
   expect(!unsupported.canGenerateCode() &&
              hasDiagnostic(unsupported.diagnostics,
-                           "Borrowed state cannot be nested") &&
-             hasDiagnostic(unsupported.diagnostics,
                            "Borrowed return dependency is ambiguous") &&
              hasDiagnostic(unsupported.diagnostics,
                            "mutable reference or direct mutable "
@@ -5894,8 +5890,172 @@ int main() {
              hasDiagnosticCode(unsupported.diagnostics, "GTI-S2003") &&
              hasDiagnostic(unsupported.diagnostics,
                            "Cannot assign a value of type"),
-         "multi-origin, nested, global, copied, and reseated mutable "
+         "multi-origin, global, copied, and reseated mutable "
          "dependency graphs should remain rejected");
+}
+
+void testNestedBorrowedFields() {
+  const auto arrowUpdate =
+      lang::Frontend().analyze("nested-carrier-arrow-update.gti", R"(
+struct Record { mut int value = 7; };
+class Cursor {
+  mut Record& record;
+public:
+  Cursor(mut Record& record) : record(record) {}
+  mut Record& operator->() mut { return this.record; }
+};
+class Wrapper<T> {
+public:
+  mut T cursor;
+  Wrapper(T cursor) : cursor(std::move(cursor)) {}
+};
+int main() {
+  mut Record record{};
+  { mut Wrapper<Cursor> wrapper{Cursor(record)}; wrapper.cursor->value += 2; }
+  return record.value - 9;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(arrowUpdate.canGenerateCode() &&
+             lang::verifyMirProgram(arrowUpdate.mir).valid(),
+         "a scalar compound store must invoke the selected nested arrow "
+         "projection");
+  std::size_t arrowCalls = 0;
+  bool checkedAddition = false;
+  for (const auto &function : arrowUpdate.mir.functionInstances()) {
+    if (function.entryKind != lang::ProgramEntryKind::NoArguments) {
+      continue;
+    }
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        const auto *callee = instruction.functionTarget
+                                 ? arrowUpdate.mir.findFunctionInstance(
+                                       *instruction.functionTarget)
+                                 : nullptr;
+        if (callee &&
+            callee->overloadedOperator == lang::OverloadedOperator::Arrow) {
+          ++arrowCalls;
+        }
+        if (instruction.operation == lang::MirOperation::Add &&
+            !instruction.definedFailure.localOrigins.empty()) {
+          checkedAddition = true;
+        }
+      }
+    }
+  }
+  expect(arrowCalls == 1 && checkedAddition,
+         "arrow compound update evaluates its target once and retains checked "
+         "arithmetic");
+  const auto readonlyReturn =
+      lang::Frontend().analyze("mutable-carrier-shared-return.gti", R"(
+class View {
+  mut int& item;
+public:
+  View(mut int& value) : item(value) {}
+  int& get() { return this.item; }
+};
+int main() { mut int owner = 42; View view{owner}; return view.get(); }
+)",
+                               {standardLibraryPrelude()});
+  expect(readonlyReturn.canGenerateCode() &&
+             lang::verifyMirProgram(readonlyReturn.mir).valid(),
+         "a mutable stored reference can publish a read-only receiver borrow");
+  auto strongerReturn = readonlyReturn.mir;
+  bool changedReturn = false;
+  auto &returnFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      strongerReturn.functionInstances());
+  for (auto &function : returnFunctions) {
+    for (auto &loan : function.body.loans) {
+      if (loan.kind == lang::MirLoanKind::Return &&
+          loan.access == lang::AccessMode::ReadOnly) {
+        loan.access = lang::AccessMode::Mutable;
+        changedReturn = true;
+      }
+    }
+  }
+  expect(changedReturn && !lang::verifyMirProgram(strongerReturn).valid(),
+         "a read-only result cannot publish stronger source access");
+  const auto frontend =
+      lang::Frontend().analyze("nested-borrowed-fields.gti", R"(
+class View {
+public:
+  int& item;
+  View(int& value) : item(value) {}
+  int& read() { return this.item; }
+};
+class Box<T> {
+public:
+  T value;
+  bool inserted;
+  Box(T value, bool inserted) : value(std::move(value)), inserted(inserted) {}
+};
+Box<View> make(int& owner) { return Box<View>(View(owner), true); }
+int main() {
+  int owner = 42;
+  auto result = make(owner);
+  auto copied = result;
+  auto nested = Box<Box<View>>(std::move(result), false);
+  return copied.value.read() + nested.value.value.read() - 84;
+}
+)",
+                               {standardLibraryPrelude()});
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics) {
+      std::cerr << "Nested-borrow diagnostic: " << diagnostic.code << ' '
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "nested one-owner fields must preserve shared aliases through "
+         "construction, copying, moving and projected method calls");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const auto mutate = [&](const auto &edit) {
+    auto program = frontend.mir;
+    auto &constructors =
+        const_cast<std::vector<lang::MirConstructorInstance> &>(
+            program.constructorInstances());
+    bool changed = false;
+    for (auto &constructor : constructors) {
+      for (auto &loan : constructor.body.loans) {
+        if (loan.entry && loan.kind == lang::MirLoanKind::Stored &&
+            loan.designatedFields.size() == 2) {
+          edit(constructor, loan);
+          changed = true;
+          break;
+        }
+      }
+      if (changed) {
+        break;
+      }
+    }
+    expect(changed && !lang::verifyMirProgram(program).valid(),
+           "nested carrier proof corruption must be rejected independently");
+  };
+  mutate([](auto &, auto &loan) { loan.designatedFields.pop_back(); });
+  mutate([](auto &, auto &loan) {
+    std::reverse(loan.designatedFields.begin(), loan.designatedFields.end());
+  });
+  mutate([](auto &, auto &loan) { loan.access = lang::AccessMode::Mutable; });
+  mutate([](auto &constructor, auto &entry) {
+    for (auto &loan : constructor.body.loans) {
+      if (loan.kind == lang::MirLoanKind::Stored && loan.escapes) {
+        loan.storedField = entry.designatedFields.back();
+      }
+    }
+  });
+  mutate([](auto &constructor, auto &entry) {
+    for (auto &block : constructor.body.blocks) {
+      for (auto &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+            instruction.loan == entry.id) {
+          instruction.loan.reset();
+        }
+      }
+    }
+  });
 }
 
 void testStoredCarrierReturnProvenance() {
@@ -5990,7 +6150,7 @@ int main() {
   expect(
       relayMir != nullptr && entryLoan != nullptr && returnLoan != nullptr &&
           returnTransfer != nullptr && returnTransfer->operands.size() == 1 &&
-          entryLoan->designatedField != 0 &&
+          !entryLoan->designatedFields.empty() &&
           relayMir->body.findPlace(entryLoan->source) != nullptr &&
           relayMir->body.findPlace(entryLoan->source)->projections.empty() &&
           returnTransfer->operands.front().kind == lang::MirOperandKind::Loan &&
@@ -6177,7 +6337,7 @@ int main() {
         const auto shell = std::find_if(
             carrier->declaredFields.begin(), carrier->declaredFields.end(),
             [&](const lang::MirClassFieldInfo &field) {
-              return field.symbol != entryLoan->designatedField &&
+              return field.symbol != entryLoan->designatedFields.front() &&
                      field.type == lang::SemanticType::Int32;
             });
         if (shell != carrier->declaredFields.end()) {
@@ -6268,7 +6428,7 @@ int main() {
           candidate->body.loans.begin(), candidate->body.loans.end(),
           [](const lang::MirLoan &loan) {
             return loan.kind == lang::MirLoanKind::Stored && loan.entry &&
-                   loan.designatedField != 0;
+                   !loan.designatedFields.empty();
           });
       lang::MirValueId alternateValue = 0;
       for (const lang::MirValue &value : candidate->body.values) {
@@ -6543,6 +6703,65 @@ int use() {
                              "be live"),
          "dropping a copied or moved alias must not end the owner loan while "
          "another carrier remains live");
+}
+
+void testProjectedAccessorReturnLoanOrder() {
+  const auto stdlib = standardLibraryPrelude().parent_path();
+  const auto frontend =
+      lang::Frontend().analyze("projected-accessor-return.gti", R"(
+#include <std/vector>
+#include <std/memory>
+struct Entry { mut int value; Entry(int v) : value(v) {} };
+class Table {
+  mut std::vector<std::unique_ptr<Entry>> entries{};
+public:
+  Table() { this.entries.push_back(std::make_unique<Entry>(3)); }
+  int& read() { return this.entries[std::size_t(0)]->value; }
+  mut int& write() mut { return this.entries[std::size_t(0)]->value; }
+};
+int main() {
+  mut Table table{};
+  { mut int& value = table.write(); value = 5; }
+  return table.read() - 5;
+}
+)",
+                               {standardLibraryPrelude()}, {}, {stdlib});
+  expect(
+      frontend.canGenerateCode() &&
+          lang::verifyMirProgram(frontend.mir).valid(),
+      "projected entry access must retire nested accessor loans child-first");
+  bool mutated = false;
+  lang::MirProgram invalid = frontend.mir;
+  auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      invalid.functionInstances());
+  for (auto &function : functions) {
+    for (auto &block : function.body.blocks) {
+      for (std::size_t index = 1; index < block.instructions.size(); ++index) {
+        auto &childEnd = block.instructions[index - 1];
+        auto &parentEnd = block.instructions[index];
+        if (childEnd.kind != lang::MirInstructionKind::EndBorrow ||
+            parentEnd.kind != lang::MirInstructionKind::EndBorrow ||
+            !childEnd.loan || !parentEnd.loan) {
+          continue;
+        }
+        const auto *child = function.body.findLoan(*childEnd.loan);
+        if (child == nullptr || child->parent != *parentEnd.loan) {
+          continue;
+        }
+        std::swap(childEnd.loan, parentEnd.loan);
+        mutated = true;
+        break;
+      }
+      if (mutated) {
+        break;
+      }
+    }
+    if (mutated) {
+      break;
+    }
+  }
+  expect(mutated && !lang::verifyMirProgram(invalid).valid(),
+         "the verifier must reject reversing the child-first return cleanup");
 }
 
 void testNestedMemberReferenceReturnForwarding() {
@@ -15706,7 +15925,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v74 ") &&
+             mirDump.starts_with("mir-v75 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -18258,8 +18477,11 @@ constexpr NamedTest kTests[] = {
     {"testStoredReferenceGroundwork", testStoredReferenceGroundwork},
     {"testMutableStoredDependencies", testMutableStoredDependencies},
     {"testStoredCarrierReturnProvenance", testStoredCarrierReturnProvenance},
+    {"testNestedBorrowedFields", testNestedBorrowedFields},
     {"testNestedMemberReferenceReturnForwarding",
      testNestedMemberReferenceReturnForwarding},
+    {"testProjectedAccessorReturnLoanOrder",
+     testProjectedAccessorReturnLoanOrder},
     {"testReferenceArgumentRuntimePlaceCoherence",
      testReferenceArgumentRuntimePlaceCoherence},
     {"testCallSiblingArgumentBorrowConflicts",

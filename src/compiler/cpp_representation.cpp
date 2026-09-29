@@ -164,6 +164,106 @@ semanticTypeContainsLexicalClosure(const SemanticType &type) {
                      semanticTypeContainsLexicalClosure);
 }
 
+// A dependent native template signature/field must instantiate the same carrier
+// that concrete MIR calls address. Propagate template representation through
+// those declaration dependencies; otherwise a dependent `Carrier<T>` silently
+// creates a second native class beside the hashed concrete `Carrier<int>`.
+[[nodiscard]] bool
+concreteClassHasTemplateDependency(const LoweredProgram &program,
+                                   ClassId requested) {
+  std::vector<ClassId> templates;
+  const auto add = [&](ClassId id) {
+    const LoweredClassDeclaration *declaration =
+        program.findClassDeclaration(id);
+    if (declaration == nullptr) {
+      return;
+    }
+    const auto *primary = concreteClassPrimary(program, *declaration);
+    if (primary != nullptr && !primary->genericParameters.empty() &&
+        std::find(templates.begin(), templates.end(), primary->id) ==
+            templates.end()) {
+      templates.push_back(primary->id);
+    }
+  };
+  for (const LoweredDeclaration &row : program.declarations()) {
+    const auto *declaration =
+        std::get_if<LoweredClassDeclaration>(&row.payload);
+    if (declaration != nullptr &&
+        declaration->exactSpecializationPrimary == 0 &&
+        !declaration->genericParameters.empty() &&
+        !concreteClassSupportsDirectRepresentation(program, *declaration,
+                                                   row)) {
+      add(declaration->id);
+    }
+  }
+  const auto dependent = [&](const auto &self,
+                             const SemanticType &type) -> bool {
+    return type.kind == SemanticType::TypeParameter ||
+           (type.kind == SemanticType::TypePack && !type.concretePack) ||
+           type.arrayLengthParameterId != 0 ||
+           std::any_of(type.valueArguments.begin(), type.valueArguments.end(),
+                       [](const CompileTimeValue &value) {
+                         return value.kind == CompileTimeValue::Parameter;
+                       }) ||
+           std::any_of(type.arguments.begin(), type.arguments.end(),
+                       [&](const SemanticType &argument) {
+                         return self(self, argument);
+                       });
+  };
+  const auto visit = [&](const auto &self, const SemanticType &type) -> void {
+    if (type.kind == SemanticType::Class && dependent(dependent, type)) {
+      add(type.classId);
+    }
+    for (const SemanticType &argument : type.arguments) {
+      self(self, argument);
+    }
+  };
+  for (std::size_t index = 0; index < templates.size(); ++index) {
+    const ClassId owner = templates[index];
+    if (owner == requested) {
+      return true;
+    }
+    const auto *declaration = program.findClassDeclaration(owner);
+    const auto *ownerRow = classDeclarationRow(program, owner);
+    for (const auto &base : declaration->bases) {
+      visit(visit, base.type);
+    }
+    for (const LoweredDeclaration &row : program.declarations()) {
+      if (const auto *storage =
+              std::get_if<LoweredStorageDeclaration>(&row.payload);
+          storage != nullptr && storage->ownerClass == owner) {
+        visit(visit, storage->type);
+      } else if (const auto *function =
+                     std::get_if<LoweredFunctionDeclaration>(&row.payload);
+                 function != nullptr && function->ownerClass == owner) {
+        visit(visit, function->returnType);
+        for (const auto &parameter : function->parameters) {
+          visit(visit, parameter.type);
+        }
+      } else if (const auto *constructor =
+                     std::get_if<LoweredConstructorDeclaration>(&row.payload);
+                 constructor != nullptr && constructor->owner == owner) {
+        for (const auto &parameter : constructor->parameters) {
+          visit(visit, parameter.type);
+        }
+      } else if (ownerRow != nullptr && row.parent == ownerRow->id) {
+        if (const auto *alias =
+                std::get_if<LoweredTypeAliasDeclaration>(&row.payload)) {
+          visit(visit, alias->type);
+        } else if (const auto *enumeration =
+                       std::get_if<LoweredEnumDeclaration>(&row.payload)) {
+          for (const auto &enumerator : enumeration->enumerators) {
+            for (const auto &payload : enumerator.payloadTypes) {
+              visit(visit, payload);
+            }
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
 [[nodiscard]] bool
 concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
                                        const SemanticType &type) {
@@ -722,6 +822,7 @@ std::optional<std::string> cppConcreteClassName(const LoweredProgram &program,
       primary->genericParameters.empty() ||
       !concreteClassSupportsDirectRepresentation(program, *declaration,
                                                  *primaryRow) ||
+      concreteClassHasTemplateDependency(program, primary->id) ||
       concreteClassIsCallableTemplateCarrier(program, type)) {
     return std::nullopt;
   }

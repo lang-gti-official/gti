@@ -1299,6 +1299,16 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   const ClassInfo &owner = classInfo(classId);
   const GenericSubstitution substitution = classSubstitution(selectedClass);
   const SemanticType constructedType = selectedClass;
+  if (typeTraits(constructedType).containsBorrowedState &&
+      !storedReferencePath(constructedType)) {
+    report(paren,
+           "A borrowed aggregate must contain exactly one stored-reference "
+           "path through ordinary nominal fields and cannot declare a "
+           "custom destructor.",
+           "GTI-S2045");
+    currentType = constructedType;
+    return;
+  }
   if (!isCompilerTrustedRequester(paren) &&
       typeRequiresThreads(constructedType) &&
       !validateConcurrentSurfaceAvailability(paren, "This concurrent value")) {
@@ -1836,6 +1846,29 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
                 selected.constructor->declaration->parameters(),
                 arguments.size());
   recordDefaultArgumentDependencies(defaultArguments);
+  std::optional<std::size_t> storedParameter =
+      selected.constructor == nullptr ? std::nullopt
+                                      : selected.constructor->borrowParameter;
+  AccessMode storedAccess = selected.constructor == nullptr
+                                ? AccessMode::ReadOnly
+                                : selected.constructor->borrowAccess;
+  if (const auto path = storedReferencePath(constructedType);
+      path && selected.kind == ConstructorKind::Ordinary) {
+    storedParameter = selected.constructor == nullptr
+                          ? std::nullopt
+                          : storedCarrierConstructorParameter(
+                                constructedType, *selected.constructor,
+                                selected.parameterTypes);
+    storedAccess = borrowAccess(constructedType);
+    if (!storedParameter) {
+      report(paren,
+             "Construction of a stored-reference carrier must bind its one "
+             "borrowed field from one exact constructor parameter.",
+             "GTI-S2045");
+      currentType = constructedType;
+      return;
+    }
+  }
   semanticModel.record(
       construction,
       ResolvedConstructionInfo{
@@ -1851,20 +1884,14 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
           .parameterTypes = selected.parameterTypes,
           .defaultArguments = std::move(defaultArguments),
           .borrowOrigin =
-              selected.constructor != nullptr &&
-                      selected.constructor->borrowParameter
+              storedParameter
                   ? BorrowOriginKind::Argument
                   : (selected.kind != ConstructorKind::Ordinary &&
                              typeTraits(constructedType).containsBorrowedState
                          ? BorrowOriginKind::Argument
                          : BorrowOriginKind::None),
-          .borrowArgument = selected.constructor != nullptr &&
-                                    selected.constructor->borrowParameter
-                                ? *selected.constructor->borrowParameter
-                                : 0,
-          .borrowAccess = selected.constructor == nullptr
-                              ? AccessMode::ReadOnly
-                              : selected.constructor->borrowAccess,
+          .borrowArgument = storedParameter.value_or(0),
+          .borrowAccess = storedAccess,
           .generatedDefault = selected.generatedDefault,
           .kind = selected.kind});
   if (const auto *call = exprAs<Call>(&construction)) {
@@ -2515,6 +2542,11 @@ auto SemanticVisitor::Impl::validateArrayExtent(
 
 auto SemanticVisitor::Impl::validateTypeAliasAccess(
     const ResolvedTypeAlias &alias, const Token &use) -> bool {
+  for (const ResolvedTypeAlias &qualifier : alias.qualifiers) {
+    if (!validateTypeAliasAccess(qualifier, use)) {
+      return false;
+    }
+  }
   if (alias.compilerPrivate && !isCompilerTrustedRequester(use)) {
     reportCompilerPrivateAccess(use, alias.qualifiedName);
     return false;
@@ -2533,7 +2565,7 @@ auto SemanticVisitor::Impl::validateTypeAliasAccess(
   }
   if (alias.ownerClass != 0 && alias.ownerClass <= classes.size() &&
       !classInfo(alias.ownerClass).genericParameters.empty() &&
-      currentClass != alias.ownerClass) {
+      !alias.specializedOwner && currentClass != alias.ownerClass) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2030", DiagnosticPhase::Semantics, use,
         "Type alias '" + alias.qualifiedName +
@@ -2553,6 +2585,7 @@ auto SemanticVisitor::Impl::validateTypeAliasAccess(
 auto SemanticVisitor::Impl::validateType(const TypeRef &type,
                                          bool allowNativeCOuterPointer,
                                          bool allowNativeFunctionType) -> void {
+  const std::size_t diagnosticStart = diagnostics.size();
   if (type.name.last().completion) {
     if (type.name.segments.size() == 1) {
       captureUnqualifiedCompletion(type.name.last());
@@ -3162,6 +3195,12 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
       validateType(argument);
     }
   }
+  if (type.arguments.size() < expectedArguments &&
+      diagnostics.size() == diagnosticStart) {
+    if (const auto failure = firstNestedTypeConstraintFailure(typeOf(type))) {
+      reportConstraintFailure(type.name.last(), *failure);
+    }
+  }
 }
 
 auto SemanticVisitor::Impl::compilerCapabilityType(
@@ -3746,10 +3785,13 @@ auto SemanticVisitor::Impl::storedCarrierReturnProvenance(
     const ClassInfo *owner = classInfo(objectType);
     const MemberInfo *selected = findMember(objectType, member->name());
     if (object == StoredCarrierReturnProvenance::CarrierValue) {
-      if (owner != nullptr && owner->storedReference && selected != nullptr &&
-          selected->symbol.variableDeclaration ==
-              owner->storedReference->field) {
-        return StoredCarrierReturnProvenance::ExternalReferent;
+      const auto path = storedReferencePath(objectType);
+      if (owner != nullptr && path && !path->fields.empty() &&
+          selected != nullptr &&
+          selected->symbol.variableDeclaration == path->fields.front()) {
+        return path->fields.size() == 1
+                   ? StoredCarrierReturnProvenance::ExternalReferent
+                   : StoredCarrierReturnProvenance::CarrierValue;
       }
       return StoredCarrierReturnProvenance::CarrierShellProjection;
     }
@@ -4373,6 +4415,40 @@ auto SemanticVisitor::Impl::evaluateGenericValueExpression(
               *constantUnsignedMagnitude(*evaluated.value))};
 }
 
+auto SemanticVisitor::Impl::firstNestedTypeConstraintFailure(
+    const SemanticType &type) const -> std::optional<ConstraintFailure> {
+  // Defaults can mention an earlier parameter without proving its eventual
+  // constraints. Validate every closed component now, and the remaining
+  // components after substitution when the default is actually selected.
+  for (const SemanticType &argument : type.arguments) {
+    if (auto failure = firstNestedTypeConstraintFailure(argument)) {
+      return failure;
+    }
+  }
+  if (type.kind != SemanticType::Class || type.classId == 0 ||
+      type.classId > classes.size()) {
+    return std::nullopt;
+  }
+  std::size_t index = 0;
+  for (const GenericParameterInfo &parameter :
+       classInfo(type.classId).genericParameters) {
+    if (parameter.value) {
+      continue;
+    }
+    const std::size_t end = parameter.pack ? type.arguments.size() : index + 1;
+    for (; index < end && index < type.arguments.size(); ++index) {
+      if (containsOpenTypeParameter(type.arguments[index])) {
+        continue;
+      }
+      if (auto failure =
+              firstConstraintFailure({parameter}, {type.arguments[index]})) {
+        return failure;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
 auto SemanticVisitor::Impl::applyGenericDefaults(
     const std::vector<GenericParameterInfo> &parameters,
     GenericSubstitution &substitution, const Token &site, bool diagnoseFailure)
@@ -4435,6 +4511,20 @@ auto SemanticVisitor::Impl::applyGenericDefaults(
       }
       valid = false;
     } else {
+      if (const auto failure = firstNestedTypeConstraintFailure(type)) {
+        if (diagnoseFailure) {
+          reportConstraintFailure(site, *failure);
+        }
+        valid = false;
+      }
+      if (!containsOpenTypeParameter(type)) {
+        if (const auto failure = firstConstraintFailure({parameter}, {type})) {
+          if (diagnoseFailure) {
+            reportConstraintFailure(site, *failure);
+          }
+          valid = false;
+        }
+      }
       substitution.types.emplace(parameter.id, type);
     }
   }
@@ -4653,6 +4743,8 @@ auto SemanticVisitor::Impl::makeGenericParameters(
                "GTI-S2023");
       } else {
         const std::size_t diagnosticStart = diagnostics.size();
+        const bool enclosingDefault = resolvingGenericTypeDefault;
+        resolvingGenericTypeDefault = true;
         validateType(*parameter.defaultType);
         const SemanticType type = typeOf(*parameter.defaultType);
         if (type == SemanticType::Unknown &&
@@ -4675,6 +4767,7 @@ auto SemanticVisitor::Impl::makeGenericParameters(
             found->defaultType = std::make_shared<SemanticType>(type);
           }
         }
+        resolvingGenericTypeDefault = enclosingDefault;
       }
     } else if (parameter.defaultValue) {
       const auto unavailableValueParameter =

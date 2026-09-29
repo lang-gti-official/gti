@@ -89,6 +89,7 @@ own `main` function.
 | `83-complete-ranges.gti` | structural whole-range algorithms over application ranges and fixed arrays |
 | `84-optional-values.gti` | allocation-free optional storage, checked access, reset, emplacement, and move-only payloads |
 | `85-payload-enum-fields.gti` | ordinary class and struct fields that directly own active-cleanup payload enums |
+| `86-associative-containers.gti` | ordered and hashed dictionaries, nested borrowed insertion results, moves, and owner reactivation |
 
 Build and run an example from the repository root:
 

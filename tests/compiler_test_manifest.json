@@ -1,6 +1,9 @@
 {
   "schema_version": 1,
   "tests": [
+    {"name": "testUninstantiatedGenericSignatureClosure", "suite": "declarations"},
+    {"name": "testDependentTypeDefaultConstraints", "suite": "declarations"},
+    {"name": "testDependentCarrierRepresentationClosure", "suite": "declarations"},
     {
       "name": "testDefiniteReturnAnalysis",
       "suite": "frontend"
@@ -271,6 +274,10 @@
     },
     {
       "name": "testStoredCarrierReturnProvenance",
+      "suite": "ownership"
+    },
+    {
+      "name": "testNestedBorrowedFields",
       "suite": "ownership"
     },
     {

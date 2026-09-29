@@ -1,0 +1,40 @@
+#include <std/string>
+#include <std/functional>
+
+bool less_than<std::totally_ordered T>(T& left, T& right) {
+  return left < right;
+}
+
+int main() {
+  std::string empty{};
+  std::string a = std::string("a");
+  std::string ab = std::string("ab");
+  std::string equal = std::string("ab");
+  std::string binary = std::string("a\0b");
+  std::string binary_later = std::string("a\0c");
+  if (!less_than(empty, a) || !less_than(a, ab) || less_than(ab, a) ||
+      less_than(ab, equal)) { return 1; }
+  if (!(ab <= equal) || !(ab >= equal) || ab > equal || ab != equal) { return 2; }
+  if (!(binary < binary_later) || !(binary < ab) || !(binary > a)) { return 3; }
+  if (!(ab < "ac") || !(ab > "aa") || !(ab <= "ab") || !(ab >= "ab")) { return 4; }
+  if (empty < "" || empty > "" || !(empty <= "") || !(empty >= "")) { return 5; }
+  std::less<std::string> less{};
+  std::greater<std::string> greater{};
+  if (!less(a, ab) || !greater(ab, a)) { return 6; }
+
+  // Every byte pair checks unsigned ordering, including the signed-char
+  // boundary and zero bytes, against an independent integer comparison.
+  for (mut int left = 0; left < 256; left++) {
+    mut std::string first{};
+    first.push_back(char(uint8_t(left)));
+    for (mut int right = 0; right < 256; right++) {
+      mut std::string second{};
+      second.push_back(char(uint8_t(right)));
+      if ((first < second) != (left < right) ||
+          (first > second) != (left > right) ||
+          (first <= second) != (left <= right) ||
+          (first >= second) != (left >= right)) { return 7; }
+    }
+  }
+  return 0;
+}
