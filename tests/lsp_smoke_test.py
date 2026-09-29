@@ -5997,6 +5997,58 @@ def test_constructor_ownership_diagnostic(executable, root):
         session.close()
 
 
+def test_expected_success_ownership_diagnostic(executable, root):
+    source = (
+        '#include <std/string>\n'
+        'enum class error { failed };\n'
+        'expected<std::string, error> value() {\n'
+        '  std::string text = std::string("tea");\n'
+        '  /*😀*/ return text;\n'
+        '}\n'
+        'int main() { return 0; }\n'
+    )
+    path = root / "expected-success-ownership.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    session = LspSession(executable)
+
+    def publication(version):
+        return session.receive_until(lambda message:
+            message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"].get("uri") == uri
+            and message["params"].get("version") == version)["params"]["diagnostics"]
+
+    try:
+        session.send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                      "params": {"capabilities": {"textDocument": {
+                          "publishDiagnostics": {"dataSupport": True}}}}})
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",
+                      "params": {"textDocument": {"uri": uri, "languageId": "gti",
+                                                  "version": 1, "text": source}}})
+        errors = publication(1)
+        diagnostic = next((item for item in errors
+                           if item.get("code") == "GTI-S2003"), None)
+        assert diagnostic is not None, errors
+        offset = source.index("return text") + len("return ")
+        assert diagnostic["range"] == {
+            "start": lsp_position(source, offset),
+            "end": lsp_position(source, offset + 4)}, diagnostic
+        assert diagnostic["message"].startswith(
+            "Cannot return 'text' by copy because type 'std::string' is move-only."), diagnostic
+        assert diagnostic["data"]["hints"] == [
+            "Use 'return std::move(text);' to transfer ownership."]
+        assert "fixes" not in diagnostic["data"]
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
+                      "params": {"textDocument": {"uri": uri, "version": 2},
+                                 "contentChanges": [{"text": source.replace(
+                                     "return text;", "return std::move(text);")}]}})
+        assert not publication(2)
+    finally:
+        session.close()
+
+
 def test_read_only_receiver_diagnostic(executable, root):
     source = (
         "struct Component {\n"
@@ -9413,6 +9465,7 @@ def main():
     test_static_assertion_tooling(sys.argv[1], root)
     test_concrete_generic_diagnostics(sys.argv[1], root)
     test_constructor_ownership_diagnostic(sys.argv[1], root)
+    test_expected_success_ownership_diagnostic(sys.argv[1], root)
     test_read_only_receiver_diagnostic(sys.argv[1], root)
     test_unique_ptr_null_state_tooling(sys.argv[1], root)
     test_global_borrow_return_diagnostics(sys.argv[1], root)
@@ -10654,7 +10707,7 @@ def test_mutable_stored_dependency_tooling(executable, root):
         "  return owner - 3;\n"
         "}\n"
     )
-    invalid_source = valid_source.replace(
+    nested_source = valid_source.replace(
         "MutView relay(MutView view) { return std::move(view); }\n",
         "class Nested {\n"
         "  MutView view;\n"
@@ -10663,6 +10716,8 @@ def test_mutable_stored_dependency_tooling(executable, root):
         "};\n"
         "MutView relay(MutView view) { return std::move(view); }\n",
     )
+    invalid_source = nested_source.replace(
+        "  MutView view;\n", "  MutView view;\n  MutView second;\n")
     path = root / "mutable-stored-dependency.gti"
     path.write_text(valid_source, encoding="utf-8")
     uri = path.resolve().as_uri()
@@ -10693,15 +10748,23 @@ def test_mutable_stored_dependency_tooling(executable, root):
                 "method": "textDocument/didChange",
                 "params": {
                     "textDocument": {"uri": uri, "version": 2},
-                    "contentChanges": [{"text": invalid_source}],
+                    "contentChanges": [{"text": nested_source}],
                 },
             }
         )
+        nested_publication = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"].get("uri") == uri
+            and message["params"].get("version") == 2)["params"]
+        assert not has_error_diagnostics(nested_publication), nested_publication
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
+                      "params": {"textDocument": {"uri": uri, "version": 3},
+                                 "contentChanges": [{"text": invalid_source}]}})
         invalid = session.receive_until(
             lambda message: message.get("method")
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
-            and message["params"].get("version") == 2
+            and message["params"].get("version") == 3
             and any(
                 item.get("code") == "GTI-S2045"
                 for item in message["params"]["diagnostics"]
@@ -10711,7 +10774,7 @@ def test_mutable_stored_dependency_tooling(executable, root):
             item
             for item in invalid["diagnostics"]
             if item.get("code") == "GTI-S2045"
-            and "cannot be nested" in item.get("message", "")
+            and "only one stored-reference" in item.get("message", "")
         )
         assert nested["data"]["phase"] == "semantics", nested
 
@@ -10720,7 +10783,7 @@ def test_mutable_stored_dependency_tooling(executable, root):
                 "jsonrpc": "2.0",
                 "method": "textDocument/didChange",
                 "params": {
-                    "textDocument": {"uri": uri, "version": 3},
+                    "textDocument": {"uri": uri, "version": 4},
                     "contentChanges": [{"text": valid_source}],
                 },
             }
@@ -10729,7 +10792,7 @@ def test_mutable_stored_dependency_tooling(executable, root):
             lambda message: message.get("method")
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
-            and message["params"].get("version") == 3
+            and message["params"].get("version") == 4
             and not has_error_diagnostics(message["params"])
         )
     finally:

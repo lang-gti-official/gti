@@ -4,6 +4,14 @@ enum class lookup_errc { missing };
 
 int32_t global_value = 19;
 
+expected<std::string, lookup_errc> owned_success(bool named) {
+  if (named) {
+    std::string text = std::string("tea");
+    return std::move(text);
+  }
+  return std::string("tea");
+}
+
 class Box {
   mut int32_t value;
 
@@ -105,6 +113,12 @@ int main() {
   auto owned_missing = find_owned(local, false);
   if (owned_missing || owned_missing.error().text() != "missing") {
     return 8;
+  }
+  auto named_success = owned_success(true);
+  auto direct_success = owned_success(false);
+  if (!named_success || !direct_success ||
+      named_success.value() != "tea" || direct_success.value() != "tea") {
+    return 9;
   }
   return 0;
 }

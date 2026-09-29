@@ -4753,15 +4753,28 @@ consumer, and release refreshes remain outstanding for the full campaign.
 
 ### L-CONT-02: Associative Containers
 
-- **State/role:** blocked; ADR 020's exact `std::hash<AppType>` customization
-  mechanism is complete, while the remaining prerequisites are `L-CONT-01`,
-  the hash/equality/ordering capability contracts, and accepted `S-ALLOC-01`;
-  systems-readiness work for one demonstrated associative container.
-- **Scope:** Specify exact hasher, equality, ordering, invalidation, allocation,
-  and deterministic-iteration contracts before adding one hash or tree map.
-- **Exit gate:** generic capability failures are semantic, allocation/failure
-  follows the shared contracts, and runtime/benchmark evidence justifies the
-  chosen first container.
+- **State/role:** bounded implementation complete and locally validated.
+  Ordinary source-defined `std::map` and `std::unordered_map`
+  unlock command registries and keyed application state. They use the existing
+  checked owning storage and allocation/failure contracts, not a new allocator
+  model or public-name compiler intrinsic.
+- **Implemented:** AVL ordered storage and bucket-chain hashed storage;
+  source-defined comparison/hash/equality constraints; owning keys/values;
+  lookup, insertion, erasure, iteration, and capacity/load-factor operations.
+  Insertion returns ordinary `std::pair<iterator, bool>`, enabled by one checked
+  external-owner dependency through a nested nominal field path. Concrete
+  class aliases expose the corresponding iterator and key/value aliases.
+- **Safety boundary:** iterator and reference loans conservatively protect the
+  whole container. Nested carriers retain exactly one borrow path; multiple
+  borrowed fields, reseating, nested lifecycle guards, and hidden owner escapes
+  remain rejected. This does not adopt C++ iterator invalidation rules or permit
+  unchecked embedded references.
+- **Remaining breadth:** allocator customization, `operator[]` (which needs
+  conditional operator requirements), multi-owner carriers, finer-grained
+  invalidation, and comparative performance tuning are separate follow-ups.
+  The current gates cover capability rejection, tree balancing, hash collisions,
+  ownership/cleanup, failure behavior, all selected native modes, and editor
+  integration; they do not claim a comparative performance benchmark result.
 
 ## Phase O: Optimization And Backend Migration
 

@@ -19,7 +19,7 @@ public:
   View(int& item) : item(item) {}
 };
 int main() {
-  mut int owner = 42;
+  mut int owner = 41; owner = 42;
   auto result = std::pair<View, bool>(View(owner), true);
   // edit here
   return result.first.item - 42;
@@ -62,7 +62,8 @@ int main() {
                 "publishDiagnostics": {"relatedInformation": True, "dataSupport": True}}}})
             session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
             open_document(1)
-            assert not diagnostics(1)
+            initial = diagnostics(1)
+            assert not initial, initial
             params = {"textDocument": {"uri": uri},
                       "position": {"line": 10, "character": source.splitlines()[10].index("item")}}
             hover = request("textDocument/hover", params)

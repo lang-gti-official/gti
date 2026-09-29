@@ -6784,6 +6784,13 @@ auto SemanticVisitor::Impl::isOwnershipAssignable(
   if (!isAssignable(target, value, expression.get())) {
     return false;
   }
+  // Wrapping a success payload does not bypass its copy/move policy. A
+  // borrowed success payload is a distinct reference conversion, not a copy.
+  if (target.kind == SemanticType::Expected && target.arguments.size() == 2 &&
+      target != value && value.kind != SemanticType::Unexpected &&
+      target.arguments.front().kind != SemanticType::Reference) {
+    return isOwnershipAssignable(target.arguments.front(), value, expression);
+  }
   if (target != value || !expression || target.kind == SemanticType::TypePack) {
     return true;
   }

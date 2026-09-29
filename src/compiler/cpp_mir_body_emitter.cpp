@@ -33862,8 +33862,20 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
     }
   };
   const auto admittedParameterType = [&](const SemanticType &type) {
+    const MirClassInstance *carrier = uniqueClassInstanceForType(program, type);
+    const bool passiveBorrowedCopy =
+        carrier != nullptr && carrier->traits.containsBorrowedState &&
+        carrier->traits.copyable &&
+        carrier->copyConstructor == SpecialMemberStatus::Generated &&
+        carrier->moveConstructor == SpecialMemberStatus::Generated &&
+        carrier->destructorStatus == SpecialMemberStatus::Generated &&
+        !carrier->destructor && !carrier->requiresActiveDropState &&
+        !carrier->requiresActiveCleanup && !carrier->abstract &&
+        !carrier->cAbiRecord && !carrier->unionLayout &&
+        carrier->bases.empty() && carrier->structuralBases.empty();
     return scalarParameterType(type) ||
-           passiveGeneratedCopyClass(program, type) != nullptr;
+           passiveGeneratedCopyClass(program, type) != nullptr ||
+           passiveBorrowedCopy;
   };
 
   const MirClassInstance *owner = program.findClassInstance(constructor.owner);
@@ -33964,6 +33976,24 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
     }
     if (parameterMatches != 1) {
       continue;
+    }
+
+    if (loadedValue->info.traits.containsBorrowedState) {
+      // Copy the carrier representation, not the address of its parameter
+      // shell. The exact entry-to-field publication separately carries the
+      // external owner's provenance and must name this very copied value.
+      const auto publications = std::count_if(
+          constructor.body.loans.begin(), constructor.body.loans.end(),
+          [&](const MirLoan &loan) {
+            const auto *publication =
+                storedFieldValueLoanProducer(constructor.body, loan);
+            return publication != nullptr && loan.source == source->id &&
+                   loan.access == AccessMode::ReadOnly &&
+                   loan.storedField == initializer.field &&
+                   publication->operands.front().value == loadedValue->id;
+          });
+      if (publications != 1)
+        continue;
     }
 
     const MirInstruction *initialize = nullptr;
@@ -37501,12 +37531,27 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       const bool passiveConstructorParameter =
           passiveParameter != nullptr &&
           passiveParameter->moveConstructor == SpecialMemberStatus::Generated;
+      bool copiedBorrowCarrierParameter = false;
+      if (address.kind == MirBodyKind::Constructor && !failureForm &&
+          place.type.kind == SemanticType::Class) {
+        const auto *constructor =
+            program_.findConstructorInstance(address.owner);
+        const auto copies =
+            constructor == nullptr
+                ? std::nullopt
+                : cppMirCopyParameterFieldBindings(program_, *constructor);
+        copiedBorrowCarrierParameter =
+            copies && std::any_of(copies->begin(), copies->end(),
+                                  [&](const auto &binding) {
+                                    return binding.sourcePlace == place.id;
+                                  });
+      }
       if (parameterBindings != nullptr &&
           std::find(parameterBindings->begin(), parameterBindings->end(),
                     place.binding) != parameterBindings->end() &&
           address.kind != MirBodyKind::Function &&
           !(failureForm && address.kind == MirBodyKind::Constructor) &&
-          !passiveConstructorParameter &&
+          !passiveConstructorParameter && !copiedBorrowCarrierParameter &&
           !(place.type.kind == SemanticType::Enum &&
             cppMirOwningPayloadEnumPlacementResult(program_, representations_,
                                                    place.type) &&

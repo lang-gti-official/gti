@@ -8,6 +8,19 @@ assertions.
 
 ## Primary Targets
 
+The associative-container integration on 2026-09-29 exercised all 310 registered
+gates in the optimized Release/Ninja configuration. Three stale test-inventory
+expectations were corrected (compiler registration order, emitter registration
+order, and the two new prelude container checks). After the final nested
+Expected ownership-rejection refinement, all three and the affected compiler,
+Expected/borrow runtime, and LSP gates passed in an 18-test rerun. The complete
+stdlib sweep and both 84-example corpus gates passed in the broad run. Clean
+installed-library consumers pass 9/9; staged CLI, project, LSP, threading,
+atomic, owning-success return, and dictionary-example checks exercise the
+packaged library outside the checkout. Tree-sitter corpus, highlights,
+shipped-source parsing, and source-text checks pass. These are local macOS
+results, not claims about unrun Linux/Windows release jobs.
+
 The owning-callback completion run on 2026-09-28 passes all 294 registered
 CTest gates after a full Release/Ninja build. Clean installed-library consumers
 pass 9/9 tests; staged callback schema, owned Expected results, consuming
@@ -549,7 +562,7 @@ upstream code.
 | `class_signature_pattern_runtime` | headerless signature-pattern primaries, result/pack extraction, aliases, repeated/fixed components, empty and reference metadata, ordinary/pack methods and generic forwarding under C++20/C++23 at O0/O1/O3; compiler tests reject mismatches and forged lowered binding projections |
 | `stored_callable_types` / `stored_callable_invocation_runtime` | retained-field callable invocation, concrete heap-owned models and owned value-pack forwarding: exact symbolic result and concrete capability checks, body-scoped representation overlays, forged allocation-type/MIR receiver/capture-recipe/pack-index/cleanup/copyability rejection, repeated calls and owned capture cleanup; 272 executions across C++20/C++23 O0/O1/O3, no-elide and sanitizer modes. Failure cases assert reverse capture and pack-element order, remaining caller cleanup, and exact primary/secondary records, including heap-owned captures. This is prerequisite evidence for L-CALL-02, not public-wrapper completion |
 | `function_signature_lsp` | unsaved signatures and class packs; concrete deduced function/method hover; exact component/call/pack-conflict spans and related declaration publication/clearing; incomplete-source recovery and formatting round-trip |
-| `compiler_pipeline` | manifest-backed aggregate of 141 tests across independently buildable frontend, declarations/types/generics, ownership/lifecycle/ranges/callables, constexpr/configuration/numerics/static-initialization, diagnostics/formatting/queries, and bounded end-to-end executables; the aggregate rejects missing or duplicate registrations before running every suite once |
+| `compiler_pipeline` | manifest-backed aggregate of 149 tests across independently buildable frontend, declarations/types/generics, ownership/lifecycle/ranges/callables, constexpr/configuration/numerics/static-initialization, diagnostics/formatting/queries, and bounded end-to-end executables; the aggregate rejects missing or duplicate registrations before running every suite once |
 | `semantic_header_boundary` | fail-closed include direction for semantic core, model/query, and analyzer/provider headers; exact direct analyzer-consumer allowlist; and frontend/HIR contracts that cannot regain the analyzer umbrella |
 | `semantic_header_self_containment` | independent translation units include and instantiate the semantic core, model, and analyzer contracts without relying on transitive include order |
 | `parser_conditional_recovery` | timeout-bounded stray and active conditional-continuation recovery in switch and extern contexts; exact parser diagnostics; nearest-owner propagation; later branch/declaration retention; and valid nested conditional-switch parsing |
@@ -1248,6 +1261,13 @@ constructor sources and endpoints. `nested_borrow_fields_lsp` checks field
 hover/definition, UTF-16 diagnostic spans, related information, recovery and
 diagnostic clearing. The associative-container suites exercise the same rule
 through insertion results rather than a compiler-recognized result wrapper.
+The fallible/nested cross-feature fixture additionally proves read-only
+publication from mutable receivers and exact external-referent projection from
+a copied nested wrapper. Access, runtime-path, and copied-publication mutations
+must fail MIR verification. The owning-success return reduction for issue #14
+requires `GTI-S2003` before backend entry, with the exact named-owner move hint;
+native direct/move success and installed LSP span/clearing checks cover its
+valid alternatives.
 
 `associative_map` and `unordered_map` cover ordering/bucket collisions, model
 comparison through repeated insertion and erasure, read/mutable iteration,
@@ -1452,6 +1472,13 @@ Generated C++ is not a stable public text contract. Marker identities are a
 test-only ownership witness; behavior comparison remains on process status and
 output. A baseline update is valid only after the changed inventory is
 reviewed and the corpus oracle and relevant focused tests are green.
+
+The associative-container refresh additionally retains the callback and
+dictionary examples together. Two private container contract checks extend the
+prelude inventory; source-defined string comparison/hash policy and concrete
+callable dependencies extend the affected imported-library closures. The
+complete emitter census and both native corpus endpoints pass against the
+measured inventory before that baseline is admitted.
 
 These gates do not prove all compiler semantics. The example corpus may omit a
 specific operation or malformed-MIR case, and behavior-only checks cannot see

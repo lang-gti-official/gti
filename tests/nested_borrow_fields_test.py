@@ -150,4 +150,5 @@ if __name__ == "__main__":
     os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
     reject_invalid_sources(pathlib.Path(sys.argv[1]).resolve())
     run_runtime_matrix(names=("nested_borrow_fields", "nested_borrow_fields_mutable",
-                              "nested_borrow_owned_sibling", "borrowed_arrow_compound"))
+                              "nested_borrow_owned_sibling", "borrowed_arrow_compound",
+                              "fallible_nested_borrow"))
