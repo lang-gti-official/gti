@@ -444,6 +444,21 @@ bool supportsDiagnosticData(const JsonValue *params) {
                     false);
 }
 
+bool supportsDiagnosticTag(const JsonValue *params, lang::DiagnosticTag tag) {
+  const JsonValue *valueSet = member(
+      member(publishDiagnosticsCapabilities(params), "tagSupport"), "valueSet");
+  const JsonArray *values =
+      valueSet == nullptr ? nullptr : valueSet->getAsArray();
+  if (values == nullptr) {
+    return false;
+  }
+  const std::int64_t expected = static_cast<std::int64_t>(tag);
+  return std::any_of(values->begin(), values->end(),
+                     [expected](const JsonValue &value) {
+                       return value.getAsInteger() == expected;
+                     });
+}
+
 const JsonValue *codeActionCapabilities(const JsonValue *params) {
   return member(member(member(params, "capabilities"), "textDocument"),
                 "codeAction");
@@ -721,7 +736,9 @@ void mergeDiagnosticRelatedInformation(LspDiagnostic &target,
 }
 
 JsonValue diagnosticJson(const LspDiagnostic &published,
-                         bool includeRelatedInformation, bool includeData) {
+                         bool includeRelatedInformation, bool includeData,
+                         bool includeUnnecessaryTag,
+                         bool includeDeprecatedTag) {
   const lang::Diagnostic &diagnostic = published.diagnostic;
   JsonObject result{
       {"range",
@@ -737,6 +754,17 @@ JsonValue diagnosticJson(const LspDiagnostic &published,
 
   const std::string message = diagnosticMessage(diagnostic);
   result["message"] = message;
+
+  JsonArray tags;
+  for (const lang::DiagnosticTag tag : diagnostic.tags) {
+    if ((tag == lang::DiagnosticTag::Unnecessary && includeUnnecessaryTag) ||
+        (tag == lang::DiagnosticTag::Deprecated && includeDeprecatedTag)) {
+      tags.push_back(static_cast<int>(tag));
+    }
+  }
+  if (!tags.empty()) {
+    result["tags"] = std::move(tags);
+  }
 
   if (includeRelatedInformation && !published.related.empty()) {
     JsonArray relatedInformation;
@@ -758,6 +786,9 @@ JsonValue diagnosticJson(const LspDiagnostic &published,
     JsonObject data;
     const std::string_view phase = lang::phaseName(diagnostic.phase);
     data["phase"] = std::string(phase);
+    if (!diagnostic.group.empty()) {
+      data["group"] = diagnostic.group;
+    }
     if (!diagnostic.hints.empty()) {
       JsonArray hints;
       for (const std::string &hint : diagnostic.hints) {
@@ -829,7 +860,9 @@ bool diagnosticRequested(const LspDiagnostic &diagnostic,
 
 JsonValue codeActionJson(const CodeActionCandidate &candidate,
                          bool documentChanges, bool includeRelatedInformation,
-                         bool includeDiagnosticData, bool includePreferred) {
+                         bool includeDiagnosticData, bool includePreferred,
+                         bool includeUnnecessaryTag,
+                         bool includeDeprecatedTag) {
   const std::string title =
       candidate.fix.fix.message.empty()
           ? (candidate.diagnostic.diagnostic.code.empty()
@@ -838,7 +871,8 @@ JsonValue codeActionJson(const CodeActionCandidate &candidate,
           : candidate.fix.fix.message;
   JsonArray diagnostics;
   diagnostics.push_back(diagnosticJson(
-      candidate.diagnostic, includeRelatedInformation, includeDiagnosticData));
+      candidate.diagnostic, includeRelatedInformation, includeDiagnosticData,
+      includeUnnecessaryTag, includeDeprecatedTag));
   JsonObject action{{"title", title},
                     {"kind", "quickfix"},
                     {"diagnostics", std::move(diagnostics)}};
@@ -1724,6 +1758,10 @@ private:
         supportsWatchedFilesDynamicRegistration(params);
     diagnosticRelatedInformation = supportsDiagnosticRelatedInformation(params);
     diagnosticData = supportsDiagnosticData(params);
+    diagnosticUnnecessaryTag =
+        supportsDiagnosticTag(params, lang::DiagnosticTag::Unnecessary);
+    diagnosticDeprecatedTag =
+        supportsDiagnosticTag(params, lang::DiagnosticTag::Deprecated);
     codeActionLiterals = supportsCodeActionLiterals(params);
     preferredCodeActions = supportsPreferredCodeActions(params);
     hierarchicalDocumentSymbols = supportsHierarchicalDocumentSymbols(params);
@@ -2675,7 +2713,7 @@ private:
                        targetVersion == documentVersions.end()
                            ? std::nullopt
                            : std::optional<std::int64_t>(targetVersion->second),
-                   .preferred = index == 0});
+                   .preferred = fix.fix.preferred});
             }
           }
         }
@@ -2683,9 +2721,10 @@ private:
     }
 
     for (const CodeActionCandidate &candidate : candidates) {
-      actions.push_back(codeActionJson(candidate, workspaceDocumentChanges,
-                                       diagnosticRelatedInformation,
-                                       diagnosticData, preferredCodeActions));
+      actions.push_back(codeActionJson(
+          candidate, workspaceDocumentChanges, diagnosticRelatedInformation,
+          diagnosticData, preferredCodeActions, diagnosticUnnecessaryTag,
+          diagnosticDeprecatedTag));
     }
     sendJson(response(id, JsonValue(std::move(actions))));
   }
@@ -3411,13 +3450,17 @@ private:
               std::to_string(static_cast<int>(diagnostic.diagnostic.phase)) +
               ':' +
               std::to_string(static_cast<int>(diagnostic.diagnostic.severity)) +
-              '\n' + std::to_string(span.start) + ':' +
-              std::to_string(span.end) + '\n' +
-              diagnosticMessage(diagnostic.diagnostic);
+              ':' + diagnostic.diagnostic.group + '\n' +
+              std::to_string(span.start) + ':' + std::to_string(span.end) +
+              '\n' + diagnosticMessage(diagnostic.diagnostic);
+          for (const lang::DiagnosticTag tag : diagnostic.diagnostic.tags) {
+            key += "\ntag:" + std::to_string(static_cast<int>(tag));
+          }
           for (const LspFixIt &fix : diagnostic.fixes) {
             key += '\n' + fix.uri + ':' + std::to_string(fix.fix.span.start) +
                    ':' + std::to_string(fix.fix.span.end) + ':' +
-                   fix.fix.replacement + ':' + fix.fix.message;
+                   fix.fix.replacement + ':' + fix.fix.message + ':' +
+                   (fix.fix.preferred ? "preferred" : "nonpreferred");
           }
           const auto [found, inserted] =
               diagnosticIndexes.emplace(key, publication.diagnostics.size());
@@ -3444,7 +3487,8 @@ private:
       diagnostics.reserve(publication.diagnostics.size());
       for (const LspDiagnostic &diagnostic : publication.diagnostics) {
         diagnostics.push_back(diagnosticJson(
-            diagnostic, diagnosticRelatedInformation, diagnosticData));
+            diagnostic, diagnosticRelatedInformation, diagnosticData,
+            diagnosticUnnecessaryTag, diagnosticDeprecatedTag));
       }
       publishDiagnostics(publication.uri, std::move(diagnostics),
                          publication.version);
@@ -3616,6 +3660,8 @@ private:
   bool watchedFilesDynamicRegistration = false;
   bool diagnosticRelatedInformation = false;
   bool diagnosticData = false;
+  bool diagnosticUnnecessaryTag = false;
+  bool diagnosticDeprecatedTag = false;
   bool codeActionLiterals = false;
   bool preferredCodeActions = false;
   bool hierarchicalDocumentSymbols = false;

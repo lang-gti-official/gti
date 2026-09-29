@@ -664,9 +664,9 @@ int main() {
   value.push_back(' ');
   value.append("runtime");
   mut std::string copy = value.clone();
-  mut std::string signed_text =
+  std::string signed_text =
       std::to_string(int64_t(-9223372036854775807 - 1));
-  mut std::string unsigned_text =
+  std::string unsigned_text =
       std::to_string(uint64_t(18446744073709551615));
   bool cloned = value == copy;
   copy[0] = 'E';
@@ -682,7 +682,7 @@ int main() {
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  if (!valid.canGenerateCode()) {
+  if (!valid.diagnostics.empty()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected standard-string diagnostic: "
                 << diagnostic.message << '\n';
@@ -1183,7 +1183,7 @@ int main() {
   return 1;
 }
 )");
-  if (!valid.canGenerateCode()) {
+  if (!valid.diagnostics.empty()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected checked-arithmetic diagnostic: "
                 << diagnostic.message << '\n';

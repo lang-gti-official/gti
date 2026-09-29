@@ -47,7 +47,7 @@ option(GTI_RELEASE_BUILD "Require a self-contained, release-ready toolchain" OFF
 option(GTI_BUILD_FUZZERS
        "Build opt-in libFuzzer harnesses (Clang only; never installed)" OFF)
 
-find_package(Python3 COMPONENTS Interpreter QUIET)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
 if(Python3_Interpreter_FOUND)
   add_custom_target(
     format
@@ -66,6 +66,24 @@ if(Python3_Interpreter_FOUND)
     VERBATIM
   )
 endif()
+
+set(GTI_DIAGNOSTIC_REGISTRY_HEADER
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/gti/diagnostic_registry_generated.h")
+add_custom_command(
+  OUTPUT "${GTI_DIAGNOSTIC_REGISTRY_HEADER}"
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_diagnostics.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/diagnostics/semantic.json"
+    "${GTI_DIAGNOSTIC_REGISTRY_HEADER}"
+  DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_diagnostics.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/diagnostics/semantic.json"
+  COMMENT "Generating typed diagnostic registry"
+  VERBATIM
+)
+add_custom_target(gti_diagnostic_registry
+                  DEPENDS "${GTI_DIAGNOSTIC_REGISTRY_HEADER}")
 
 if(GTI_RELEASE_BUILD)
   set(GTI_BUNDLE_LLVM ON)
@@ -305,6 +323,7 @@ add_library(
 target_include_directories(
   "gti_semantic_analysis"
   PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include"
+          "${CMAKE_CURRENT_BINARY_DIR}/generated"
 )
 target_include_directories(
   "gti_semantic_analysis" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS}
@@ -314,6 +333,7 @@ target_precompile_headers(
   "gti_semantic_analysis"
   PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/compiler/semantic_analyzer_impl.h"
 )
+add_dependencies("gti_semantic_analysis" gti_diagnostic_registry)
 
 add_library(
   "gti_compiler" STATIC
@@ -376,6 +396,9 @@ add_library(
   "src/compiler/token.cpp"
 )
 target_include_directories("gti_compiler" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_include_directories("gti_compiler" PRIVATE
+                           "${CMAKE_CURRENT_BINARY_DIR}/generated")
+add_dependencies("gti_compiler" gti_diagnostic_registry)
 target_link_libraries(
   "gti_compiler"
   PRIVATE

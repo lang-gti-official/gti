@@ -105,7 +105,7 @@ int main() {
   auto first_started = std::thread::start(
       []() -> void { std::println("first task"); });
   if (!first_started.has_value()) { return 1; }
-  mut std::thread first = std::move(first_started).value();
+  std::thread first = std::move(first_started).value();
   mut std::thread moved = std::move(first);
   auto first_join = moved.join();
   if (!first_join.has_value() || moved.joinable()) { return 2; }
@@ -130,7 +130,7 @@ int main() {
   {
     auto fourth_started = std::thread::start(fresh_task());
     if (!fourth_started.has_value()) { return 7; }
-    mut std::thread fourth = std::move(fourth_started).value();
+    std::thread fourth = std::move(fourth_started).value();
   }
   std::println("after automatic join");
   return 0;
@@ -500,7 +500,7 @@ int main() {
   if (!started.has_value()) { return 1; }
   auto joined = worker.join();
   if (!joined.has_value()) { return 2; }
-  mut result_value result = std::move(joined).value();
+  result_value result = std::move(joined).value();
   if (result.read() != 42) { return 3; }
   return 0;
 }

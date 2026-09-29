@@ -172,7 +172,7 @@ int32_t increment<T>(T marker, int32_t value) {
 int main() {
   int32_t left = increment<int32_t>(1, 1);
   int32_t right = increment<int64_t>(int64_t(2), 2);
-  mut int32_t values[2] = {left, right};
+  int32_t values[2] = {left, right};
   return values[0] / right;
 }
 )";

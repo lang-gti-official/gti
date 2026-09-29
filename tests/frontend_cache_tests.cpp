@@ -88,7 +88,8 @@ std::string resultFingerprint(const lang::FrontendResult &result) {
 
   for (const lang::Diagnostic &diagnostic : result.diagnostics) {
     output << diagnostic.code << ':' << static_cast<int>(diagnostic.phase)
-           << ':' << static_cast<int>(diagnostic.severity) << ':';
+           << ':' << static_cast<int>(diagnostic.severity) << ':'
+           << diagnostic.group << ':';
     appendSpan(output, diagnostic.primary);
     output << ':' << diagnostic.message << '\n';
     for (const lang::RelatedDiagnostic &related : diagnostic.related) {
@@ -99,10 +100,14 @@ std::string resultFingerprint(const lang::FrontendResult &result) {
     for (const lang::FixIt &fix : diagnostic.fixes) {
       output << "fix:";
       appendSpan(output, fix.span);
-      output << ':' << fix.replacement << ':' << fix.message << '\n';
+      output << ':' << fix.replacement << ':' << fix.message << ':'
+             << fix.preferred << '\n';
     }
     for (const std::string &hint : diagnostic.hints) {
       output << "hint:" << hint << '\n';
+    }
+    for (const lang::DiagnosticTag tag : diagnostic.tags) {
+      output << "tag:" << static_cast<int>(tag) << '\n';
     }
   }
 

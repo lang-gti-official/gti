@@ -1,5 +1,7 @@
 #include "gti/source_loader.h"
 
+#include "diagnostic_registry.h"
+
 #include "configuration_directive_processor.h"
 #include "loaded_lexical_unit.h"
 
@@ -167,10 +169,7 @@ SourceGraph SourceLoader::load(
         continue;
       }
       Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2075", DiagnosticPhase::Semantics, token,
-          "Configuration flag '" + token.lexeme +
-              "' is referenced but defined nowhere in this compilation.");
-      diagnostic.severity = DiagnosticSeverity::Warning;
+          DiagnosticId::UnknownConfigurationFlag, token, {token.lexeme});
       diagnostic.hints.emplace_back(
           "Check the spelling or define the flag in source, with '-D " +
           token.lexeme + "', or in '[build].defines'.");
