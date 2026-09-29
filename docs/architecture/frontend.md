@@ -261,6 +261,12 @@ continuation directive with no open conditional is instead advanced as invalid
 input, so every synchronization loop either consumes input or unwinds to its
 owning grammar production.
 
+Completion-marker parsing may retain a variable declaration when its
+initializer consumed the marker before the user wrote the trailing semicolon.
+That exception is local to the dedicated completion snapshot: ordinary parsing
+still requires the terminator, and a marker consumed by the declaration's type
+or name does not suppress the syntax error after its initializer.
+
 Recursive declaration, statement, type, compile-condition, assignment, call,
 grouping, and unary parsing share a structural depth budget of 64. Crossing
 that budget produces parser-owned `GTI-P0005` at the first token beyond the
