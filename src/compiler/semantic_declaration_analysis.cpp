@@ -1637,13 +1637,6 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
                  "The first payload-enum family does not store references "
                  "or fixed arrays.",
                  "GTI-S2067");
-        } else if (type.kind == SemanticType::Class &&
-                   (!type.arguments.empty() || !type.valueArguments.empty())) {
-          report(location,
-                 "Generic class payload type '" + typeSpelling(type) +
-                     "' is not supported by the bounded payload-enum "
-                     "representation.",
-                 "GTI-S2067");
         } else if (type != SemanticType::Unknown &&
                    !payloadTypeAllowed(type, info.id)) {
           report(location,
@@ -2912,9 +2905,26 @@ auto SemanticVisitor::Impl::collectClassMembers(const StmtList &statements,
 
 auto SemanticVisitor::Impl::byValueTypeReachesClass(
     const SemanticType &type, ClassId target,
-    std::unordered_set<ClassId> &visiting) const -> bool {
+    std::unordered_set<ClassId> &visiting,
+    std::unordered_set<EnumId> &visitingEnums) const -> bool {
   if (type.kind == SemanticType::Array && type.arguments.size() == 1) {
-    return byValueTypeReachesClass(type.arguments.front(), target, visiting);
+    return byValueTypeReachesClass(type.arguments.front(), target, visiting,
+                                   visitingEnums);
+  }
+  if (type.kind == SemanticType::Enum && type.enumId != 0 &&
+      type.enumId <= enums.size()) {
+    if (!visitingEnums.insert(type.enumId).second) {
+      return false;
+    }
+    bool reaches = false;
+    for (const auto &[_, enumerator] : enums[type.enumId - 1].enumerators) {
+      for (const SemanticType &payload : enumerator.payloadTypes) {
+        reaches = reaches || byValueTypeReachesClass(payload, target, visiting,
+                                                     visitingEnums);
+      }
+    }
+    visitingEnums.erase(type.enumId);
+    return reaches;
   }
   if (type.kind != SemanticType::Class || type.classId == 0 ||
       type.classId > classes.size()) {
@@ -2939,7 +2949,7 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
     }
     const SemanticType fieldType =
         substituteType(member->second.symbol.type, substitution);
-    if (byValueTypeReachesClass(fieldType, target, visiting)) {
+    if (byValueTypeReachesClass(fieldType, target, visiting, visitingEnums)) {
       visiting.erase(type.classId);
       return true;
     }
@@ -2986,7 +2996,9 @@ auto SemanticVisitor::Impl::validateOrdinaryClassLayouts() -> void {
       const SemanticType fieldType =
           substituteType(member->second.symbol.type, substitution);
       std::unordered_set<ClassId> visiting;
-      if (!byValueTypeReachesClass(fieldType, owner.id, visiting)) {
+      std::unordered_set<EnumId> visitingEnums;
+      if (!byValueTypeReachesClass(fieldType, owner.id, visiting,
+                                   visitingEnums)) {
         continue;
       }
 
@@ -4994,6 +5006,21 @@ auto SemanticVisitor::Impl::globalReturnBorrowPlace(
       valid = false;
       break;
     }
+    const auto unexpectedReturn = [&]() {
+      const ExprPtr *candidate = returned;
+      while (candidate != nullptr && *candidate) {
+        const auto *grouping = exprAs<Grouping>(candidate->get());
+        if (grouping == nullptr) {
+          break;
+        }
+        candidate = &grouping->expression();
+      }
+      return candidate != nullptr && *candidate &&
+             exprAs<Unexpected>(candidate->get()) != nullptr;
+    }();
+    if (isFallibleBorrowType(function.returnType) && unexpectedReturn) {
+      continue;
+    }
     SemanticPlace place = semanticPlace(*returned);
     std::optional<BorrowOriginPlace> candidate;
     if (place.root != nullptr && !place.receiver &&
@@ -5020,7 +5047,7 @@ auto SemanticVisitor::Impl::globalReturnBorrowPlace(
   currentNamespace = enclosingNamespace;
   currentSourceUnit = enclosingSourceUnit;
   currentClass = enclosingClass;
-  return valid ? result : std::nullopt;
+  return valid && result ? result : std::nullopt;
 }
 
 auto SemanticVisitor::Impl::ownedPointeeReturnProjection(

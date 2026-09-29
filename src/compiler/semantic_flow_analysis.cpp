@@ -1412,13 +1412,17 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
           // value instead of publishing an lvalue into the expected.
           return expressionInfo(std::move(type));
         }
-        return expressionInfo(std::move(type), ValueCategory::Place,
-                              objectInfo != nullptr &&
-                                      objectInfo->category ==
-                                          ValueCategory::Place &&
-                                      objectInfo->access == AccessMode::Mutable
-                                  ? AccessMode::Mutable
-                                  : AccessMode::ReadOnly);
+        const bool fallibleBorrowValue = member->name().lexeme == "value" &&
+                                         isFallibleBorrowType(*objectType);
+        return expressionInfo(
+            std::move(type), ValueCategory::Place,
+            fallibleBorrowValue
+                ? AccessMode::ReadOnly
+                : (objectInfo != nullptr &&
+                           objectInfo->category == ValueCategory::Place &&
+                           objectInfo->access == AccessMode::Mutable
+                       ? AccessMode::Mutable
+                       : AccessMode::ReadOnly));
       }
     }
     const ResolvedCallInfo *resolved = semanticModel.findCall(call);
@@ -4639,7 +4643,7 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
       return std::nullopt;
     }
     const SemanticType &payloadType = enumerator->payloadTypes[index];
-    if (!typeTraits(payloadType).copyable) {
+    if (!binding->isReferencePattern() && !typeTraits(payloadType).copyable) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2067", DiagnosticPhase::Semantics, binding->name(),
           "Payload field " + std::to_string(index + 1) + " of variant '" +
@@ -4650,14 +4654,22 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
           "Match the variant without payload bindings (for example 'case " +
           typeSpelling(subjectType) +
           "::" + enumerator->declaration->name.lexeme +
-          ":') until consuming payload patterns are available.");
+          ":'), or borrow it with 'auto& " + binding->name().lexeme + "'.");
       diagnostics.emplace_back(std::move(diagnostic));
       return std::nullopt;
     }
+    const SemanticType bindingType =
+        binding->isReferencePattern()
+            ? SemanticType::referenceTo(payloadType, binding->isMutablePattern()
+                                                         ? AccessMode::Mutable
+                                                         : AccessMode::ReadOnly)
+            : payloadType;
     result.bindings.push_back(
         {.name = &binding->name(),
          .source = binding,
-         .binding = bindingInfo(payloadType, AccessMode::ReadOnly),
+         .binding = bindingInfo(bindingType, binding->isMutablePattern()
+                                                 ? AccessMode::Mutable
+                                                 : AccessMode::ReadOnly),
          .payloadIndex = index});
   }
   return result;
@@ -6759,6 +6771,11 @@ auto SemanticVisitor::Impl::isAssignable(SemanticType target,
     }
     return isAssignable(target.arguments[1], value.arguments[0],
                         errorExpression);
+  }
+  if (target.arguments.front().kind == SemanticType::Reference &&
+      target.arguments.front().referenceAccess == AccessMode::ReadOnly &&
+      target.arguments.front().arguments.size() == 1) {
+    return value == target.arguments.front().arguments.front();
   }
   return target.arguments[0] != SemanticType::Void &&
          isAssignable(target.arguments[0], value, expression);

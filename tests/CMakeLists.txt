@@ -1830,6 +1830,20 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(payload_enum_containment_runtime
                          PROPERTIES TIMEOUT 240)
     add_test(
+      NAME recursive_payload_sum_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/recursive_payload_sum_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(recursive_payload_sum_runtime PROPERTIES TIMEOUT 300)
+    add_test(
+      NAME borrowed_payload_pattern_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/borrowed_payload_pattern_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(borrowed_payload_pattern_runtime PROPERTIES TIMEOUT 300)
+    add_test(
       NAME argument_reference_return_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/argument_reference_return_runtime_test.py"
@@ -1886,6 +1900,14 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(nested_borrow_chain_runtime
                          PROPERTIES TIMEOUT 300)
+    add_test(
+      NAME fallible_borrow_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/fallible_borrow_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/fallible_borrow.gti"
+    )
+    set_tests_properties(fallible_borrow_runtime PROPERTIES TIMEOUT 300)
     add_test(
       NAME mut_reference_retained_chain_runtime
       COMMAND "${Python3_EXECUTABLE}"
@@ -2134,6 +2156,12 @@ if(Python3_Interpreter_FOUND)
       NAME expected_payload_range_lsp
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"
               "$<TARGET_FILE:gti_lsp>" expected-payload-range
+    )
+    add_test(
+      NAME borrowed_payload_pattern_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/borrowed_payload_pattern_lsp_test.py"
+              "$<TARGET_FILE:gti_lsp>"
     )
     add_test(
       NAME block_comment_lsp

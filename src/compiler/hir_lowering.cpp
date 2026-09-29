@@ -595,6 +595,10 @@ private:
             variant.payloadRequiresActiveCleanup.reserve(
                 enumerator.payloadTypes.size());
             for (const SemanticType &payload : enumerator.payloadTypes) {
+              // An alternative is representation-bearing even if no source
+              // construction mentions it. Discover its exact concrete class
+              // before lifecycle verification and detached backend planning.
+              (void)enqueueClass(payload);
               variant.payloadRequiresActiveCleanup.push_back(
                   instanceProvider->requiresActiveCleanupFor(payload));
             }
@@ -2433,15 +2437,23 @@ private:
               const HirBindingId binding =
                   lowerPayloadBinding(*payload.name, payload.binding, body);
               const HirValueId extraction = nextValueId++;
+              const bool borrowed =
+                  payload.binding.type.kind == SemanticType::Reference;
+              const SemanticType extractedType =
+                  borrowed ? payload.binding.type.arguments.front()
+                           : payload.binding.type;
               body.values.push_back(
                   {.id = extraction,
                    .kind = HirValueKind::PayloadExtraction,
                    .source = payload.source,
-                   .info = {.type = payload.binding.type,
-                            .category = ValueCategory::Value,
-                            .access = AccessMode::ReadOnly,
-                            .traits = instanceProvider->traitsFor(
-                                payload.binding.type)},
+                   .info = {.type = extractedType,
+                            .category = borrowed ? ValueCategory::Place
+                                                 : ValueCategory::Value,
+                            .access = borrowed
+                                          ? payload.binding.type.referenceAccess
+                                          : AccessMode::ReadOnly,
+                            .traits =
+                                instanceProvider->traitsFor(extractedType)},
                    .operands = {*subject},
                    .enumOwner = payloadPattern->owner,
                    .enumVariant = payloadPattern->variantIndex,

@@ -2750,6 +2750,22 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
       continue;
     }
     if (!block.terminator.returnLoan) {
+      const bool fallibleBorrowErrorReturn =
+          instance.returnType.kind == SemanticType::Expected &&
+          instance.returnType.arguments.size() == 2 &&
+          instance.returnType.arguments.front().kind ==
+              SemanticType::Reference &&
+          instance.returnType.arguments.front().referenceAccess ==
+              AccessMode::ReadOnly &&
+          instance.returnType.arguments.front().arguments.size() == 1 &&
+          block.terminator.value &&
+          block.terminator.value->type.kind == SemanticType::Unexpected &&
+          block.terminator.value->type.arguments.size() == 1 &&
+          block.terminator.value->type.arguments.front() ==
+              instance.returnType.arguments.back();
+      if (fallibleBorrowErrorReturn) {
+        continue;
+      }
       return verificationFailure(
           body, instance.id,
           "owner-dependent return is missing its escaping loan", block.id);
@@ -3215,7 +3231,9 @@ verifyMirProgramBorrowContracts(const MirProgram &program) {
         !obligation.dropType.aggregate.empty() ||
         obligation.dropType.uniqueOwnerField != 0 ||
         obligation.dropType.uniqueOwnerBase ||
-        obligation.dropType.captureIndex) {
+        obligation.dropType.captureIndex ||
+        obligation.dropType.payloadVariant ||
+        obligation.dropType.payloadField) {
       return verificationFailure(
           body, owner, "drop carries an unsupported unique cleanup path");
     }
@@ -3439,6 +3457,8 @@ verifyMirPayloadEnums(const MirProgram &program) {
                   variant.payloadRequiresActiveCleanup.size();
       for (std::size_t fieldIndex = 0; fieldIndex < variant.payloadTypes.size();
            ++fieldIndex) {
+        if (fieldIndex >= variant.payloadRequiresActiveCleanup.size())
+          break;
         const SemanticType &field = variant.payloadTypes[fieldIndex];
         const std::optional<bool> fieldActive =
             typeRequiresActiveCleanup(field, typeRequiresActiveCleanup);
@@ -3446,9 +3466,9 @@ verifyMirPayloadEnums(const MirProgram &program) {
             exact && field != SemanticType::Unknown &&
             field != SemanticType::Void && fieldActive &&
             *fieldActive == variant.payloadRequiresActiveCleanup[fieldIndex];
-        // L-SUM-01 deliberately admits only concrete class values as active
-        // payload fields. Recursive cleanup carriers need their own
-        // partial-state representation before they can be forged into MIR.
+        // Active alternatives enter through concrete class instances, which
+        // carry their own partial construction and recursive cleanup recipe.
+        // Direct non-class owning carriers remain outside this contract.
         exact = exact && (!variant.payloadRequiresActiveCleanup[fieldIndex] ||
                           field.kind == SemanticType::Class);
         active = active || variant.payloadRequiresActiveCleanup[fieldIndex];
@@ -3553,6 +3573,93 @@ verifyMirPayloadEnums(const MirProgram &program) {
                   instruction.operands.front().type == enumeration->type &&
                   value->info.type ==
                       variant->payloadTypes[*instruction.payloadIndex];
+          if (exact && value->info.category == ValueCategory::Place) {
+            const MirOperand &operand = instruction.operands.front();
+            const MirPlace *subject = body->findPlace(operand.place);
+            bool guarded = block.id != body->entry;
+            std::size_t incoming = 0;
+            // A borrowed extraction is introduced at the selected arm entry.
+            // Prove the exact subject/variant edge, not just the enum type.
+            for (const MirBlock &predecessor : body->blocks) {
+              const auto &terminator = predecessor.terminator;
+              const auto successors = terminatorSuccessors(terminator);
+              if (std::find(successors.begin(), successors.end(), block.id) ==
+                  successors.end())
+                continue;
+              ++incoming;
+              if (terminator.kind != MirTerminatorKind::Switch ||
+                  !terminator.value || *terminator.value != operand ||
+                  terminator.target == block.id) {
+                guarded = false;
+                continue;
+              }
+              std::size_t matchingEdges = 0;
+              bool rightVariant = false;
+              for (const auto &target : terminator.switchTargets) {
+                if (target.target != block.id)
+                  continue;
+                ++matchingEdges;
+                rightVariant =
+                    target.value &&
+                    target.value->enumOwner == instruction.enumOwner &&
+                    target.value->value.magnitude == *instruction.enumVariant &&
+                    !target.value->value.negative;
+              }
+              guarded = guarded && matchingEdges == 1 && rightVariant;
+            }
+            // Arm bindings precede user code. No operation before this
+            // extraction may invalidate the selected alternative. Other
+            // extractions and binding/loan setup do not mutate its owner.
+            for (const auto &prefix : block.instructions) {
+              if (prefix.id == instruction.id)
+                break;
+              const auto *destination =
+                  prefix.destination ? body->findPlace(*prefix.destination)
+                                     : nullptr;
+              const bool bindingInitialization =
+                  prefix.kind == MirInstructionKind::Initialize &&
+                  destination != nullptr &&
+                  destination->root == MirPlaceRootKind::Binding &&
+                  destination->projections.empty() && destination->key &&
+                  subject != nullptr && subject->key &&
+                  placeRelation(*destination->key, *subject->key).relation ==
+                      PlaceRelation::Disjoint;
+              guarded = guarded &&
+                        (prefix.operation == MirOperation::PayloadExtract ||
+                         prefix.kind == MirInstructionKind::Borrow ||
+                         bindingInitialization);
+            }
+            exact = guarded && incoming == 1 && subject != nullptr &&
+                    subject->key &&
+                    (operand.kind == MirOperandKind::BorrowRead ||
+                     operand.kind == MirOperandKind::BorrowWrite) &&
+                    (value->info.access != AccessMode::Mutable ||
+                     subject->access == AccessMode::Mutable) &&
+                    instruction.lifecycle.empty();
+            bool borrowed = false;
+            for (const MirLoan &loan : body->loans) {
+              const MirPlace *field = body->findPlace(loan.source);
+              if (field == nullptr || field->root != MirPlaceRootKind::Value ||
+                  field->value != value->id ||
+                  loan.producedBy != instruction.hirValue)
+                continue;
+              borrowed = true;
+              const auto relation =
+                  field->key && subject != nullptr && subject->key
+                      ? placeRelation(*field->key, *subject->key).relation
+                      : PlaceRelation::MayAlias;
+              exact = exact && field->projections.empty() &&
+                      field->type == value->info.type &&
+                      (relation == PlaceRelation::Equal ||
+                       relation == PlaceRelation::LeftStrictPrefix) &&
+                      field->access == value->info.access &&
+                      loan.access == value->info.access &&
+                      loan.producedBy == instruction.hirValue &&
+                      (loan.kind == MirLoanKind::Local ||
+                       (loan.kind == MirLoanKind::Return && loan.escapes));
+            }
+            exact = exact && borrowed;
+          }
         }
         if (!exact) {
           result.errors.push_back(

@@ -1,0 +1,33 @@
+#include <std/vector>
+
+enum class data { empty, numbers(std::vector<int32_t> items) };
+enum class scalar { item(int32_t value) };
+
+int main() {
+  mut scalar number = scalar::item(1);
+  switch (number) {
+    case scalar::item(mut auto& item): item = 9; break;
+  }
+  switch (number) {
+    case scalar::item(auto& item): if (item != 9) { return 4; } break;
+  }
+  mut std::vector<int32_t> initial = std::vector<int32_t>();
+  initial.push_back(4);
+  mut data value = data::numbers(std::move(initial));
+  switch (value) {
+    case data::numbers(mut auto& items):
+      items.push_back(7);
+      break;
+    case data::empty:
+      return 1;
+  }
+  switch (value) {
+    case data::numbers(auto& items):
+      std::println(items.size());
+      std::println(items[std::size_t(0)]);
+      std::println(items[std::size_t(1)]);
+      return items.size() == std::size_t(2) && items[std::size_t(0)] == 4 && items[std::size_t(1)] == 7 ? 0 : 2;
+    case data::empty:
+      return 3;
+  }
+}

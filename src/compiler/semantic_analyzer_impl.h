@@ -1210,6 +1210,11 @@ private:
   [[nodiscard]] bool
   isDirectStoredReferenceType(const SemanticType &type) const;
 
+  [[nodiscard]] bool isFallibleBorrowType(const SemanticType &type) const;
+
+  [[nodiscard]] std::optional<SemanticType>
+  fallibleBorrowReferent(const SemanticType &type) const;
+
   [[nodiscard]] std::optional<SemanticType>
   storedReferenceReferent(const SemanticType &type) const;
 
@@ -2622,7 +2627,8 @@ private:
 
   [[nodiscard]] bool
   byValueTypeReachesClass(const SemanticType &type, ClassId target,
-                          std::unordered_set<ClassId> &visiting) const;
+                          std::unordered_set<ClassId> &visiting,
+                          std::unordered_set<EnumId> &visitingEnums) const;
 
   void validateOrdinaryClassLayouts();
 

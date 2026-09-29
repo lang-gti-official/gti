@@ -1509,6 +1509,11 @@ private:
 class Variable final : public ExprOfKind<ExprKind::Variable> {
 public:
   explicit Variable(Token name) : name_(std::move(name)) {}
+  Variable(Token name, Token patternAuto, Token patternReference,
+           std::optional<Token> patternMutability)
+      : name_(std::move(name)), patternAuto_(std::move(patternAuto)),
+        patternReference_(std::move(patternReference)),
+        patternMutability_(std::move(patternMutability)) {}
   Variable(Variable &&) = default;
   Variable(const Variable &) = delete;
   Variable &operator=(Variable &&) = default;
@@ -1520,9 +1525,18 @@ public:
   }
 
   [[nodiscard]] const Token &name() const { return name_; }
+  [[nodiscard]] bool isReferencePattern() const {
+    return patternReference_.has_value();
+  }
+  [[nodiscard]] bool isMutablePattern() const {
+    return patternMutability_.has_value();
+  }
 
 private:
   Token name_;
+  std::optional<Token> patternAuto_;
+  std::optional<Token> patternReference_;
+  std::optional<Token> patternMutability_;
 };
 
 class BlockStmt final : public StmtOfKind<StmtKind::BlockStmt> {

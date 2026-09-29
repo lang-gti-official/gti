@@ -47,6 +47,62 @@ mutable expected local provides mutable access to its active value or error;
 an immutable receiver provides read-only access. The access remains tied to the
 expected object's lifetime and does not itself move the contained object.
 
+## Fallible borrows
+
+`expected<T&, E>` is the bounded checked-borrow form. Its success alternative
+is a non-null, read-only borrow rather than an owned `T`:
+
+```gti
+enum class lookup_errc { missing };
+
+class table {
+  int value;
+public:
+  expected<int&, lookup_errc> find(bool present) {
+    if (!present) {
+      return unexpected(lookup_errc::missing);
+    }
+    return this.value;
+  }
+};
+```
+
+The owner dependency follows the same single-origin rules as `T&`. An instance
+method may borrow from its receiver. A free or static function may borrow from
+one exact read-only reference/direct borrowed-value parameter, or from one
+exact global/static place in the single-threaded profile. Error returns carry
+no borrow. Forwarding, copying, or moving the complete expected value preserves
+the same dependency rather than creating an independent lifetime.
+
+A successful local may also be formed directly from a stable place:
+
+```gti
+int value = 42;
+expected<int&, lookup_errc> result = value;
+int& observed = result.value();
+```
+
+`value()` produces a read-only loan tied to both the expected carrier and its
+original owner; it does not copy `T`. The owner cannot be mutated, moved, or
+replaced while either the carrier or an extracted reference remains live. The
+ordinary path-aware last-use rules release that dependency. Retaining a result
+from a temporary owner is rejected.
+
+The initial surface intentionally excludes `expected<mut T&, E>`, fields,
+global variables, parameters, and lambda returns containing a fallible borrow.
+`value_or` is unavailable because choosing between a borrowed referent and a
+fallback needs an explicit lifetime contract. Prefix `?` does not yet propagate
+`expected<T&, E>`; inspect `has_value()`, return the error explicitly, and call
+`value()` only on the success path. A local fallible borrow also cannot yet be
+initialized directly from `unexpected`; obtain that state from a function
+returning the complete type. These cases receive semantic diagnostics before
+HIR or MIR lowering.
+
+Native C++ reference payloads are not used. Both C++20 and C++23 represent the
+success state with a private pointer-backed carrier while GTI MIR remains the
+authority for the referent lifetime. This representation detail neither makes
+the pointer nullable in GTI source nor weakens the checked state access.
+
 The error alternative may own resources and be move-only; successful access
 does not require copying it. Both `expected<int, Error>` and
 `expected<void, Error>` retain cleanup for an active owning error. Only the
@@ -77,6 +133,10 @@ success, `?operand` produces its `T` value (or completes as `void`); on error,
 the callable immediately returns `unexpected(error)` after cleaning up the
 live full-expression and lexical obligations on that path. Propagation never
 performs an implicit error conversion.
+
+Here `T` is an owned value or `void`; the checked-borrow specialization above
+is diagnosed until propagation can preserve its loan without materializing or
+copying the referent.
 
 A temporary expected is consumed and its active alternative is moved. Applying
 `?` to a named expected place copies the active alternative, so both `T` and

@@ -219,6 +219,10 @@
           "named": true
         },
         {
+          "type": "payload_reference_pattern",
+          "named": true
+        },
+        {
           "type": "primary_expression",
           "named": true
         },
@@ -4071,6 +4075,32 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "payload_reference_pattern",
+    "named": true,
+    "fields": {
+      "mutable": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "mut",
+            "named": false
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {

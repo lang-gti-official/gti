@@ -1,0 +1,64 @@
+==================
+Borrowed payload bindings
+==================
+int main() {
+  switch (data) {
+    case Data::array(auto& items): return items.size();
+    case Data::object(mut auto& fields): fields.clear(); break;
+    default: return 0;
+  }
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block
+      (switch_statement
+        (primary_expression
+          (identifier))
+        (switch_body
+          (case_label
+            (call_expression
+              (primary_expression
+                (scoped_identifier
+                  (identifier)
+                  (identifier)))
+              (argument_list
+                (payload_reference_pattern
+                  (identifier)))))
+          (return_statement
+            (initializer_expression
+              (call_expression
+                (member_expression
+                  (primary_expression
+                    (identifier))
+                  (identifier))
+                (argument_list))))
+          (case_label
+            (call_expression
+              (primary_expression
+                (scoped_identifier
+                  (identifier)
+                  (identifier)))
+              (argument_list
+                (payload_reference_pattern
+                  (identifier)))))
+          (expression_statement
+            (call_expression
+              (member_expression
+                (primary_expression
+                  (identifier))
+                (identifier))
+              (argument_list)))
+          (break_statement)
+          (default_label)
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (integer_literal))))))))))
