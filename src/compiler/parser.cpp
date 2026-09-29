@@ -1201,6 +1201,7 @@ private:
   variableDeclaration(Mutability mutability, TypeRef type, Token name,
                       std::optional<Token> staticKeyword = std::nullopt,
                       std::optional<Token> constexprKeyword = std::nullopt) {
+    const bool hadCompletion = consumedCompletion;
     ExprPtr initializer;
     if (match({TokenKind::EQUAL})) {
       initializer = initializerExpression();
@@ -1208,7 +1209,11 @@ private:
       initializer = directInitializer(previous());
     }
 
-    consume(TokenKind::SEMICOLON, "Expect ';' after variable declaration.");
+    if (check(TokenKind::SEMICOLON)) {
+      advance();
+    } else if (hadCompletion == consumedCompletion) {
+      consume(TokenKind::SEMICOLON, "Expect ';' after variable declaration.");
+    }
     return std::make_shared<VariableDecl>(
         mutability, std::move(type), name, std::move(initializer),
         std::move(staticKeyword), false, std::move(constexprKeyword));

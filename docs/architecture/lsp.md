@@ -544,9 +544,12 @@ matching `std::vector` text or maintaining its own header catalog.
 Editor analysis enables parser recovery and semantic analysis of recovered
 declarations. Completion runs a dedicated frontend analysis with a cursor
 marker so the parser/analyzer can capture real scope, receiver, visibility, and
-overload candidates in fragments such as `object.` or `foo(`. Features may
-return partial or no semantic results; they must not confidently invent missing
-meaning from punctuation.
+overload candidates in fragments such as `object.` or `foo(`. A variable
+initializer that consumes this marker remains available to semantic completion
+even when the user has not yet typed its trailing semicolon; ordinary compiler
+snapshots continue to reject that source. Features may return partial or no
+semantic results; they must not confidently invent missing meaning from
+punctuation.
 
 ## Current Limits
 
