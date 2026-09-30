@@ -340,6 +340,12 @@ mathematical value against the selected concrete operand type, and records a
 signed operand fact when the sign expression itself adopts that type. HIR,
 MIR lowering, and target representation consume the recorded expression
 type/fact; they do not re-decide literal eligibility from native promotions.
+Symbolic operands constrained by `std::numeric` (including composed concepts)
+also supply that context, so equality does not reject literals that arithmetic
+already accepts. Concrete integer instances range-check and retype the literal;
+floating instances retain the ordinary integer literal and existing floating
+operand conversion. No new MIR operation, implicit narrowing, or call-ranking
+rule is introduced.
 
 `SemanticVisitor::visitLayoutQueryExpr` is the sole authority for source
 `sizeof(type)` and `alignof(type)`. It resolves aliases, recursively derives

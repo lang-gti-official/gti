@@ -305,13 +305,21 @@ The binary equality, relational, arithmetic, modulo, and bitwise operators add
 one narrow operand context for integer literals. When exactly one operand is
 an integer literal, optionally parenthesized and optionally preceded by one
 unary `+` or `-`, and the other operand has a built-in integer type or a
-type-parameter type whose constraints imply `std::integral`, the complete
-literal expression adopts that exact type. Its mathematical value, including
-the sign, must fit a concrete adopted type; generic declarations defer that
-range check until concrete instance reanalysis. Shift counts are excluded
-because their type is independent of the shifted value. Non-literal mixed
-operands receive no such conversion and continue to require the operator's
-exact type contract.
+type-parameter type whose constraints imply `std::numeric`, the complete
+literal expression adopts that exact type during checking. Its mathematical
+value, including the sign, must fit a concrete adopted type; generic
+declarations defer that range check until concrete instance reanalysis. A
+floating-point instance uses the ordinary integer-to-floating operand
+conversion instead of retyping an
+integer constant as a floating constant. Thus `value == 0` and `value / 2`
+work uniformly in numeric generics; integer promotions and explicit narrowing
+of arithmetic results remain unchanged. The rule does not contextualize two
+literal operands, floating literals, named constants, or arbitrary expression
+trees, and does not participate in call or constructor overload selection.
+Shift counts are excluded because their type is independent of the shifted
+value. Non-literal operands receive no literal context: concrete built-in
+operands use the existing numeric common-type rules, while mixed generic
+operands must satisfy the operator's exact type contract.
 
 `float` is IEEE-754 binary32 and `double` is IEEE-754 binary64. An unsuffixed
 floating literal has type `float`; `d` or `D` selects `double`. A built-in

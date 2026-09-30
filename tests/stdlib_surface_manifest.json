@@ -21,7 +21,7 @@
     "stdlib/std/map.gti": "39a314ff20943e99786f0165a77baca5d9276a73c6b31d253d8a5967647d706b",
     "stdlib/std/memory.gti": "4d900f169374e1979a93db2f0c0ee9d7296883e6cd6f0fda46b1cf4c9364a29c",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
-    "stdlib/std/numeric.gti": "3870d075ff7dfdbbe7b7704ec80b1bbb2d79491d2f5a21e974ab3c3b39eaf336",
+    "stdlib/std/numeric.gti": "5eef3aba02b84cc5dcb0c86727013d95b29e14f7aebad40d7f301b2229821b35",
     "stdlib/std/optional.gti": "9b038467204b82f5675326e67254bee896b2d6a5648f47bb22f325bbb202b8d8",
     "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",

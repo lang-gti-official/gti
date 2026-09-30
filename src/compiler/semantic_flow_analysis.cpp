@@ -6336,7 +6336,14 @@ auto SemanticVisitor::Impl::isContextualIntegerLiteral(const Expr *expression)
 
 auto SemanticVisitor::Impl::analyzeContextualIntegerOperand(
     const ExprPtr &expression, SemanticType target) -> SemanticType {
-  if (!isIntegral(target)) {
+  // A numeric generic needs the same literal-operand contract as an
+  // integral generic during symbolic checking (notably for equality).
+  // Concrete floating operations retain their ordinary integer-to-float
+  // conversion: do not relabel an integer literal as a floating constant.
+  // Concrete instance reanalysis applies the existing integer range check
+  // or floating conversion, without changing promotions or call matching.
+  if (!isIntegral(target) &&
+      !(target.kind == SemanticType::TypeParameter && isNumeric(target))) {
     return analyze(expression);
   }
 

@@ -358,24 +358,23 @@ namespace std {
   T midpoint<std::numeric T>(T left, T right) {
     // This ordinary constant condition keeps explicit midpoint<T> valid for
     // every numeric T without requiring type reflection or specialization.
-    if (T(T(1) / T(2)) == T(0)) {
-      T left_half = T(left / T(2));
-      T right_half = T(right / T(2));
-      T remainder = T((left - left_half * T(2)) +
-                      (right - right_half * T(2)));
-      T remainder_half = T(remainder / T(2));
+    if (T(T(1) / 2) == 0) {
+      T left_half = T(left / 2);
+      T right_half = T(right / 2);
+      T remainder = T((left - left_half * 2) + (right - right_half * 2));
+      T remainder_half = T(remainder / 2);
       T result = T(left_half + right_half + remainder_half);
-      T odd = T(remainder - remainder_half * T(2));
-      if (odd > T(0) && left > right) { return T(result + T(1)); }
-      if (odd < T(0) && left < right) { return T(result - T(1)); }
+      T odd = T(remainder - remainder_half * 2);
+      if (odd > 0 && left > right) { return T(result + 1); }
+      if (odd < 0 && left < right) { return T(result - 1); }
       return result;
     }
     // A finite sum can be halved directly, preserving subnormal accuracy.
     // If addition overflows, halving each finite input is exact. Floating
     // status flags are not observable GTI state; no integer uses this branch.
     T sum = T(left + right);
-    if (T(sum - sum) == T(0)) { return T(sum / T(2)); }
-    return T(left / T(2) + right / T(2));
+    if (T(sum - sum) == 0) { return T(sum / 2); }
+    return T(left / 2 + right / 2);
   }
 
 }
