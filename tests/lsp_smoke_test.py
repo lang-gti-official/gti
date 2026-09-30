@@ -6628,6 +6628,43 @@ def test_contextual_signed_integer_diagnostic(executable, root):
             "start": lsp_position(source, digit),
             "end": lsp_position(source, digit + 1),
         }, diagnostic
+        # The same compiler-owned rule applies to broad numeric constraints.
+        # Changing only the concrete instance clears the range error; changing
+        # the literal then admits the unsigned instance in a fresh generation.
+        for version, literal, argument, rejected in (
+            (2, "-1", "uint8_t(0)", True),
+            (3, "-1", "-1.0d", False),
+            (4, "0", "uint8_t(0)", False),
+        ):
+            updated = (
+                "// numeric literal context 😀\n"
+                f"bool equal<std::numeric T>(T value) {{ return value == ({literal}); }}\n"
+                f"int main() {{ if (equal({argument})) {{ return 0; }} return 1; }}\n"
+            )
+            session.send({
+                "jsonrpc": "2.0", "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": version},
+                    "contentChanges": [{"text": updated}],
+                },
+            })
+            changed = session.receive_until(
+                lambda message: message.get("method") == "textDocument/publishDiagnostics"
+                and message["params"]["uri"] == uri
+                and message["params"].get("version") == version
+            )["params"]
+            errors = [item for item in changed["diagnostics"]
+                      if item.get("severity", 1) == 1]
+            if rejected:
+                assert len(errors) == 1, changed
+                assert errors[0]["code"] == "GTI-S2004", changed
+                start = updated.index("(-1)") + 2
+                assert errors[0]["range"] == {
+                    "start": lsp_position(updated, start),
+                    "end": lsp_position(updated, start + 1),
+                }, changed
+            else:
+                assert not errors, changed
     finally:
         session.close()
 

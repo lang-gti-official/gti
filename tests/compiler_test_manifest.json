@@ -126,6 +126,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testContextualNumericLiterals",
+      "suite": "declarations"
+    },
+    {
       "name": "testConstrainedGenerics",
       "suite": "declarations"
     },

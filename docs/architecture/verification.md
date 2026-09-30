@@ -868,6 +868,17 @@ archives.
 
 ## Cross-Phase Feature Coverage
 
+`testContextualNumericLiterals` checks broad and composed numeric constraints,
+signed/grouped literals, concrete HIR literal domains, checked range diagnostics,
+and independent negatives for mixed variables, unconstrained types, call
+matching, narrow arithmetic results, and integral-only operations. The
+`contextual_numeric_literals_runtime` matrix exercises every primitive numeric
+width, constant evaluation, and midpoint boundaries through verified MIR at
+C++20/C++23 O0/O1/O3, no-elide, and ASan/UBSan. The contextual-literal LSP test
+checks an unsigned instance's diagnostic and clearing after floating-instance
+and representable-literal edits. Syntax, integer promotions, and narrowing
+contracts are unchanged.
+
 `collection_initialization_pipeline`, `collection_initialization_runtime`, and
 `collection_initialization_lsp` cover the public owned collection protocol:
 custom containers, nested designated command schemas, empty/nested vectors,

@@ -3057,6 +3057,105 @@ int main() { return 0; }
          "should diagnose and recover to later declarations");
 }
 
+void testContextualNumericLiterals() {
+  const auto valid =
+      lang::Frontend().analyze("contextual-numeric-literals.gti", R"(
+concept number<T> = std::numeric<T>;
+bool zero<number T>(T value) { return value == (0); }
+bool positive<std::numeric T>(T value) { return (+0) < value; }
+T half<std::numeric T>(T value) { return T(value / 2); }
+bool negative<std::signed_numeric T>(T value) { return value == (-1); }
+bool floating<std::floating_point T>(T value) { return (-2) <= value; }
+int main() {
+  bool a = zero(uint64_t(0));
+  bool b = zero(0.0);
+  bool c = zero(0.0d);
+  bool d = positive(uint8_t(1));
+  bool e = positive(1.0d);
+  bool f = negative(int8_t(-1));
+  bool g = negative(-1.0);
+  bool h = floating(-1.0d);
+  uint8_t small = half(uint8_t(4));
+  float decimal = half(4.0);
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(valid.canGenerateCode(),
+         "integer literals should work with composed numeric, signed, and "
+         "floating constraints, on either side and with grouping/signs");
+  bool sawIntegerContext = false;
+  bool sawFloatingConversionSource = false;
+  for (const auto &instance : valid.hir.functionInstances()) {
+    if (instance.source == nullptr || instance.source->name().lexeme != "zero")
+      continue;
+    for (const auto &value : instance.body.values) {
+      if (!value.literal)
+        continue;
+      const auto *magnitude = std::get_if<std::uint64_t>(&*value.literal);
+      if (magnitude == nullptr || *magnitude != 0)
+        continue;
+      sawIntegerContext |= value.info.type == lang::SemanticType::UInt64;
+      sawFloatingConversionSource |=
+          value.info.type == lang::SemanticType::Int32;
+    }
+  }
+  expect(sawIntegerContext && sawFloatingConversionSource,
+         "concrete HIR should preserve integer contextual typing and the "
+         "ordinary integer source of a floating comparison");
+  if (valid.canGenerateCode())
+    expect(!gti_test::emitCppText(valid).empty(),
+           "numeric literal instances must pass verified MIR emission");
+
+  const std::string outOfRangeSource = R"(
+bool invalid<std::numeric T>(T value) { return value == (-1); }
+int main() { if (invalid(uint8_t(0))) { return 1; } return 0; }
+)";
+  const auto outOfRange =
+      lang::Frontend().analyze("numeric-literal-range.gti", outOfRangeSource,
+                               {standardLibraryPrelude()});
+  expect(!outOfRange.canGenerateCode() &&
+             countDiagnosticCode(outOfRange.diagnostics, "GTI-S2004") == 1,
+         "numeric instances must reject negative literals for unsigned "
+         "operands before backend entry");
+  for (const auto &diagnostic : outOfRange.diagnostics) {
+    if (diagnostic.code != "GTI-S2004")
+      continue;
+    expect(diagnostic.primary.start == outOfRangeSource.find("-1") + 1 &&
+               diagnostic.primary.end == outOfRangeSource.find("-1") + 2 &&
+               !diagnostic.related.empty() && !diagnostic.hints.empty() &&
+               diagnostic.fixes.empty(),
+           "range rejection should retain digit span, instance context, "
+           "hint, and no unsafe automatic conversion");
+  }
+
+  const std::string rejectedSources[] = {
+      "bool mixed<std::numeric T>(T value, int other) { return value == other; "
+      "}",
+      "bool unconstrained<T>(T value) { return value == 0; }",
+      "void exact(uint8_t value) {} int main() { exact(1); return 0; }",
+      "T narrow<std::numeric T>(T value) { return value / 2; } "
+      "int main() { uint8_t result = narrow(uint8_t(4)); return 0; }",
+      "T invalid<std::numeric T>(T value) { return T(value % 2); }",
+      "bool invalid<std::numeric T>(T value) { return value == 256; } "
+      "int main() { if (invalid(uint8_t(0))) { return 1; } return 0; }",
+  };
+  for (const auto &source : rejectedSources) {
+    const auto invalid = lang::Frontend().analyze(
+        "numeric-literal-boundaries.gti", source, {standardLibraryPrelude()});
+    expect(!invalid.canGenerateCode() &&
+               std::any_of(invalid.diagnostics.begin(),
+                           invalid.diagnostics.end(),
+                           [](const auto &diagnostic) {
+                             return diagnostic.phase ==
+                                    lang::DiagnosticPhase::Semantics;
+                           }),
+           "literal context must independently preserve each semantic "
+           "boundary: " +
+               source);
+  }
+}
+
 void testConstrainedGenerics() {
   const std::string source = R"(
 T minimum<std::ordered T>(T left, T right) {
@@ -9792,6 +9891,7 @@ constexpr NamedTest kTests[] = {
      testDependentCarrierRepresentationClosure},
     {"testExactQualifiedClassSpecializations",
      testExactQualifiedClassSpecializations},
+    {"testContextualNumericLiterals", testContextualNumericLiterals},
     {"testConstrainedGenerics", testConstrainedGenerics},
     {"testConcurrencyTypeCapabilities", testConcurrencyTypeCapabilities},
     {"testSourceDefinedConcepts", testSourceDefinedConcepts},
