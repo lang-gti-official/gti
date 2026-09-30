@@ -388,8 +388,12 @@ static C collection_insert(C collection, T element);
 ```
 
 Both functions must have GTI bodies, return exactly `C`, and have no
-method-local generic parameters, default arguments, constraints, or unsafe
-contract. The containing class may be generic. The second insertion parameter
+method-local generic parameters, default arguments, or unsafe contract. The
+containing class may be generic. Ordinary `requires` constraints are checked
+after substituting its concrete arguments, using the same rules as explicit
+calls. Both hooks must satisfy their constraints, even for an empty list;
+an unsatisfied unused hook does not forbid other explicit construction of the
+container. The second insertion parameter
 defines the exact contextual element type `T`. The collection must be movable;
 collection and element values cannot carry stored borrow dependencies.
 Reference and fixed-array element parameters are excluded from this slice.

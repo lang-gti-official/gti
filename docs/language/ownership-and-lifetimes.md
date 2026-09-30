@@ -1603,6 +1603,13 @@ Mutable, multiple-origin, nested, and reassignable view graphs remain
 deliberately unsupported. These restrictions are semantic and survive through
 HIR and verified MIR; emitted C++ does not decide the lifetime.
 
+An owning wrapper may relay a field's text accessor, for example
+`return this.text.view();`. The summary names the enclosing receiver (or one
+read-only reference parameter for a free relay); body analysis must validate
+that the selected call actually returns a borrow from that source. Merely
+calling a method on an owner does not prove this. Local owners, by-value owning
+parameters, and fresh temporary owners cannot supply an escaping view.
+
 `std::string::c_string()` and `std::string::try_c_string()` use the same
 single-owner dependency model for the compiler-owned `c_string` boundary type.
 The unchecked spelling always returns the string's non-null terminated storage

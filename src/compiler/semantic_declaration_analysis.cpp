@@ -4944,6 +4944,27 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
   if (call == nullptr) {
     return {};
   }
+  if (const auto *member = exprAs<Get>(call->callee().get())) {
+    // Predeclare a receiver-rooted relay contract, not a proof that an
+    // arbitrary member call borrows its receiver. Body analysis checks the
+    // selected call's actual dependency against this contract before HIR.
+    // This also handles nested owning fields without recognizing a wrapper.
+    auto source = predeclaredTextBorrowSource(member->object(), function);
+    if (source.origin == BorrowOriginKind::Argument) {
+      if (source.parameter >= function.parameterTypes.size()) {
+        return {};
+      }
+      const auto &parameter = function.parameterTypes[source.parameter];
+      const bool externalOwner =
+          parameter.kind == SemanticType::Reference &&
+          parameter.referenceAccess == AccessMode::ReadOnly;
+      if (!externalOwner && parameter.kind != SemanticType::StringView &&
+          parameter.kind != SemanticType::CString) {
+        return {};
+      }
+    }
+    return source;
+  }
   const std::optional<CallableCandidate> intrinsic =
       intrinsicCandidate(call->callee());
   if (!intrinsic || call->arguments().size() != 1 ||

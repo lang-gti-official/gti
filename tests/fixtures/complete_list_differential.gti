@@ -1,0 +1,55 @@
+#include <std/list>
+#include <std/vector>
+int main() {
+  mut std::list<int> linked{};
+  mut std::vector<int> model{};
+  mut int seed = 73;
+  for (mut int turn = 0; turn < 700; turn++) {
+    seed = (seed * 31 + 17) % 32749;
+    int operation = seed % 7;
+    if (operation < 3 || model.empty()) {
+      std::size_t index = std::size_t(seed) % (model.size() + 1);
+      linked.insert(index, seed);
+      model.insert(index, seed);
+    } else if (operation == 3) {
+      std::size_t index = std::size_t(seed) % model.size();
+      linked.erase(index);
+      model.erase(index);
+    } else if (operation == 4) {
+      linked.pop_front();
+      model.erase(std::size_t(0));
+    } else if (operation == 5) {
+      linked.pop_back();
+      model.pop_back();
+    } else {
+      linked.reverse();
+      for (mut std::size_t i = 0; i < model.size() / 2; i++) {
+        int left = model[i];
+        model[i] = model[model.size() - 1 - i];
+        model[model.size() - 1 - i] = left;
+      }
+    }
+    if (linked.size() != model.size()) { return 1; }
+    mut std::size_t i = 0;
+    for (auto& value : linked) {
+      if (value != model[i]) { return 2; }
+      i++;
+    }
+  }
+  linked.sort();
+  mut int previous = -1;
+  mut std::size_t count = 0;
+  for (auto& value : linked) {
+    if (value < previous) { return 3; }
+    previous = value;
+    count++;
+  }
+  if (count != model.size()) { return 4; }
+  linked.clear();
+  for (mut int i = 1000; i > 0; i--) { linked.push_back(i % 71); }
+  linked.sort();
+  if (linked.unique() != 929 || linked.size() != 71) { return 5; }
+  mut int next = 0;
+  for (auto& value : linked) { if (value != next) { return 6; } next++; }
+  return 0;
+}

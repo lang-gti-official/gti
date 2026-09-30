@@ -19,6 +19,17 @@ target_include_directories(
 target_compile_features("gti_runtime_failure_tests" PRIVATE cxx_std_23)
 target_link_libraries("gti_runtime_failure_tests" PRIVATE gti_runtime)
 add_test(NAME runtime_failure_boundary COMMAND gti_runtime_failure_tests)
+add_executable(gti_runtime_filesystem_tests runtime_filesystem_tests.cpp)
+target_compile_features(gti_runtime_filesystem_tests PRIVATE cxx_std_20)
+target_link_libraries(gti_runtime_filesystem_tests PRIVATE gti_runtime)
+add_test(NAME filesystem_runtime_boundary COMMAND gti_runtime_filesystem_tests)
+add_executable(gti_runtime_charconv_tests runtime_charconv_tests.cpp)
+target_compile_features(gti_runtime_charconv_tests PRIVATE cxx_std_20)
+target_link_libraries(gti_runtime_charconv_tests PRIVATE gti_runtime)
+add_test(NAME charconv_runtime_boundary COMMAND gti_runtime_charconv_tests)
+add_executable(gti_mir_full_expression_tests mir_full_expression_tests.cpp)
+target_link_libraries(gti_mir_full_expression_tests PRIVATE gti_compiler)
+add_test(NAME mir_full_expression COMMAND gti_mir_full_expression_tests)
 
 add_executable("gti_runtime_thread_tests" "${PROJECT_SOURCE_DIR}/tests/runtime_thread_tests.cpp")
 target_include_directories(
@@ -1498,6 +1509,35 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(string_ordering_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME string_operations_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/string_operations_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(string_operations_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME string_operations_errors
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/string_operations_errors_test.py" "$<TARGET_FILE:gti>")
+  set_tests_properties(string_operations_errors PROPERTIES TIMEOUT 300)
+  add_test(NAME expected_filesystem_prerequisites_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/expected_filesystem_prerequisites_runtime_test.py" "$<TARGET_FILE:gti>")
+  set_tests_properties(expected_filesystem_prerequisites_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME charconv_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/charconv_runtime_test.py" "$<TARGET_FILE:gti>")
+  set_tests_properties(charconv_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME complete_containers
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/complete_containers_test.py" "$<TARGET_FILE:gti>")
+  set_tests_properties(complete_containers PROPERTIES TIMEOUT 900)
+  add_test(NAME complete_containers_collection
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/complete_containers_collection_test.py" "$<TARGET_FILE:gti>")
+  set_tests_properties(complete_containers_collection PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME filesystem_operations_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/filesystem_operations_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(filesystem_operations_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME encoding_runtime
     COMMAND "${Python3_EXECUTABLE}"

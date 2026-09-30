@@ -1,0 +1,40 @@
+#include <std/set>
+#include <std/unordered_set>
+int main() {
+  mut std::set<int> ordered{};
+  [[discard]] ordered.insert(3);
+  [[discard]] ordered.insert(1);
+  {
+    auto result = ordered.insert(2);
+    if (!result.second || *result.first != 2) { return 1; }
+  }
+  {
+    auto duplicate = ordered.insert(2);
+    if (duplicate.second || *duplicate.first != 2) { return 2; }
+  }
+  mut int next_value = 1;
+  for (auto& value : ordered) {
+    if (value != next_value) { return 3; }
+    next_value++;
+  }
+  int two = 2;
+  if (*ordered.lower_bound(two) != 2 || *ordered.upper_bound(two) != 3) { return 4; }
+  if (ordered.erase(two) != 1 || ordered.contains(two)) { return 5; }
+  mut std::unordered_set<int> hashed{};
+  hashed.reserve(std::size_t(100));
+  for (mut int index = 0; index < 100; index++) { [[discard]] hashed.insert(index); }
+  {
+    auto duplicate = hashed.insert(2);
+    if (duplicate.second || *duplicate.first != 2) { return 6; }
+  }
+  mut int sum = 0;
+  for (auto& value : hashed) { sum += value; }
+  if (sum != 4950 || hashed.size() != 100) { return 7; }
+  hashed.rehash(std::size_t(256));
+  if (!hashed.contains(two) || *hashed.find(two) != 2) { return 8; }
+  if (hashed.erase(two) != 1 || hashed.count(two) != 0) { return 9; }
+  ordered.clear();
+  hashed.clear();
+  if (!ordered.empty() || !hashed.empty()) { return 10; }
+  return 0;
+}

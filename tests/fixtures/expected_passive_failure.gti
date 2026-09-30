@@ -1,0 +1,21 @@
+enum class inspect_error { failed };
+class Record {
+  int value;
+public:
+  Record(int value) : value(value) {}
+};
+class Guard {
+public:
+  ~Guard() { std::println("caller cleaned"); }
+};
+expected<Record, inspect_error> inspect(int divisor) {
+  return Record(12 / divisor);
+}
+expected<Record, inspect_error> relay(int divisor) {
+  return inspect(divisor);
+}
+int main() {
+  Guard guard = Guard();
+  auto result = relay(0);
+  return result.has_value() ? 0 : 1;
+}

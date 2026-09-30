@@ -1,0 +1,73 @@
+#include <std/charconv>
+#include <std/string>
+
+int main() {
+  mut double value = 7.0;
+  auto parsed = std::from_chars("-1.25e2tail", value);
+  if (parsed.ec != std::parse_errc::none || parsed.position != 7 || value != -125.0) { return 1; }
+  auto invalid = std::from_chars("+2", value);
+  if (invalid.ec != std::parse_errc::invalid_argument || invalid.position != 0 || value != -125.0) { return 2; }
+  auto large = std::from_chars("1e999!", value);
+  if (large.ec != std::parse_errc::result_out_of_range || large.position != 5 || value != -125.0) { return 3; }
+  auto small = std::from_chars("1e-999!", value);
+  if (small.ec != std::parse_errc::result_out_of_range || small.position != 6 || value != -125.0) { return 4; }
+  auto fixed = std::from_chars("1.5e2", value, std::chars_format::fixed);
+  if (fixed.position != 3 || value != 1.5) { return 5; }
+  auto sci = std::from_chars("1.5", value, std::chars_format::scientific);
+  if (sci.ec != std::parse_errc::invalid_argument || value != 1.5) { return 6; }
+  auto hex = std::from_chars("1.8p2!", value, std::chars_format::hex);
+  if (hex.ec != std::parse_errc::none || hex.position != 5 || value != 6.0) { return 7; }
+  mut float narrow = 0.0;
+  auto single = std::from_chars("0.1", narrow);
+  if (single.ec != std::parse_errc::none || narrow != 0.1) { return 8; }
+  auto zero = std::from_chars("-0", narrow);
+  if (zero.ec != std::parse_errc::none || 1.0 / narrow >= 0.0) { return 9; }
+  auto nan = std::from_chars("nan", value);
+  if (nan.ec != std::parse_errc::none || value == value) { return 10; }
+  auto nul = std::from_chars("12\0.5", value);
+  if (nul.ec != std::parse_errc::none || nul.position != 2 || value != 12.0) { return 11; }
+  mut std::size_t position = 99;
+  auto relaxed = std::stod(" \t-0x1.8p2!", position);
+  if (!relaxed.has_value() || relaxed.value() != -6.0 || position != 10) { return 12; }
+  auto decimal = std::stof(" +1.25!", position);
+  if (!decimal.has_value() || decimal.value() != 1.25 || position != 6) { return 13; }
+  auto failed = std::stod(" --1", position);
+  if (failed.has_value() || failed.error() != std::parse_errc::invalid_argument || position != 6) { return 14; }
+  auto range = std::stof("1e99", position);
+  if (range.has_value() || range.error() != std::parse_errc::result_out_of_range || position != 6) { return 15; }
+  auto only_zero = std::stod("0x", position);
+  if (!only_zero.has_value() || only_zero.value() != 0.0 || position != 1) { return 16; }
+  auto negative_zero = std::stod("-0");
+  if (!negative_zero.has_value() || double(1.0) / negative_zero.value() >= double(0.0)) { return 17; }
+  auto infinity = std::from_chars("INFINITY!", value);
+  if (infinity.ec != std::parse_errc::none || infinity.position != 8 ||
+      value <= double(0.0) || double(1.0) / value != double(0.0)) { return 18; }
+  auto negative_infinity = std::from_chars("-inf!", value);
+  if (negative_infinity.ec != std::parse_errc::none || negative_infinity.position != 4 ||
+      value >= double(0.0) || double(1.0) / value != double(0.0)) { return 19; }
+  auto payload_nan = std::from_chars("NaN(payload_7)!", value);
+  if (payload_nan.ec != std::parse_errc::none || payload_nan.position != 14 || value == value) { return 20; }
+  auto strict_hex_prefix = std::from_chars("0x1p2", value, std::chars_format::hex);
+  if (strict_hex_prefix.ec != std::parse_errc::none || strict_hex_prefix.position != 1 || value != double(0.0)) { return 21; }
+  auto hex_fraction = std::stod(" -0x.8p1!", position);
+  if (!hex_fraction.has_value() || hex_fraction.value() != double(-1.0) || position != 8) { return 22; }
+  auto decimal_fraction = std::stod("-.8!", position);
+  double expected_fraction = double(-4) / double(5);
+  if (!decimal_fraction.has_value() || decimal_fraction.value() != expected_fraction || position != 3) { return 23; }
+  auto short_exponent = std::from_chars("1e+", value);
+  if (short_exponent.ec != std::parse_errc::none || short_exponent.position != 1 || value != double(1.0)) { return 24; }
+  // Explicit views make ownership and the non-retained counted input clear.
+  mut std::string owner{"2.5tail"};
+  auto owned = std::from_chars(owner.view(), value);
+  owner.clear();
+  if (owned.ec != std::parse_errc::none || owned.position != 3 || value != double(2.5) || !owner.empty()) { return 25; }
+  auto temporary = std::from_chars(std::string("-1.25!").view(), narrow);
+  if (temporary.ec != std::parse_errc::none || temporary.position != 5 || narrow != -1.25) { return 26; }
+  owner.append(" +3.5!");
+  auto convenience = std::stod(owner.view(), position);
+  owner.clear();
+  if (!convenience.has_value() || convenience.value() != double(3.5) || position != 5) { return 27; }
+  auto temporary_convenience = std::stof(std::string(" +0x1.8p1!").view());
+  if (!temporary_convenience.has_value() || temporary_convenience.value() != 3.0) { return 28; }
+  return 0;
+}

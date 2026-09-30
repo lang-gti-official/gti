@@ -34,7 +34,8 @@ def main():
                 "textDocument": {"uri": uri, "version": version}, "contentChanges": [{"text": text}]}})
 
         try:
-            request("initialize", {"capabilities": {}})
+            request("initialize", {"capabilities": {
+                "textDocument": {"publishDiagnostics": {"relatedInformation": True}}}})
             session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
             session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
                 "textDocument": {"uri": uri, "languageId": "gti", "version": 1, "text": source}}})
@@ -71,6 +72,25 @@ def main():
             (pathlib.Path(root) / ".gti-format").write_text("IndentWidth: 2\n")
             configured = request("textDocument/formatting", formatting_params)[0]["newText"]
             assert "  Command root = {\n    .children = {\n      {\n" in configured, configured
+            constrained = (
+                'class Batch<T> { public: Batch() {}\n'
+                'static Batch<T> collection_init(uint64_t count) { return Batch<T>(); }\n'
+                'static Batch<T> collection_insert(Batch<T> value, T element) '
+                'requires std::integral<T> { return std::move(value); }\n'
+                '};\nint main() { Batch<int> values = {1}; return 0; }\n')
+            change(6, constrained)
+            assert not diagnostics(6)
+            invalid = constrained.replace('Batch<int> values = {1}', 'Batch<float> values = {}')
+            change(7, invalid)
+            errors = diagnostics(7)
+            constraint = next((d for d in errors if d.get('code') == 'GTI-S2029'), None)
+            assert constraint is not None, errors
+            assert constraint['range']['start'] == {
+                'line': 4, 'character': invalid.splitlines()[4].index('{}')}, constraint
+            assert any('collection initialization hook' in item['message']
+                       for item in constraint.get('relatedInformation', [])), constraint
+            change(8, constrained)
+            assert not diagnostics(8)
         finally:
             session.close()
 

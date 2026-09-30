@@ -262,6 +262,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testBodyOrderedPassivePolicyConstructor",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testMoveOnlyClassResultReceiverFieldTransfer",
       "suite": "lifecycle"
     },

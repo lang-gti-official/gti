@@ -1,0 +1,112 @@
+#include <std/filesystem>
+#include <std/string>
+#include <std/vector>
+#include <std/cstdio>
+#include <std/memory>
+
+namespace fs = std::filesystem;
+
+expected<int, fs::errc> exercise() {
+  // The test harness runs this program in its own temporary directory. Fail
+  // before touching any preexisting path, then remove only what we created.
+  if (?fs::exists("fs-work") || ?fs::exists("fs-keep")) { return 1; }
+  if (!?fs::create_directory("fs-work")) { return 2; }
+  if (?fs::create_directory("fs-work")) { return 3; }
+  if (!?fs::create_directories("fs-work/a/b")) { return 4; }
+  if (?fs::create_directories("fs-work/a/b")) { return 5; }
+  if (!?fs::create_directory("fs-keep")) { return 6; }
+  {
+    mut auto file = std::fopen("fs-work/source.txt", std::file_mode::write);
+    if (!file.has_value()) { return 7; }
+    auto written = std::fwrite("filesystem bytes\n", *file.value());
+    if (!written.has_value() || written.value() != std::size_t(17)) { return 8; }
+  }
+  fs::path source = fs::path("fs-work/source.txt");
+  fs::path copied = fs::path("fs-work/a/b/copied.txt");
+  if (!?fs::is_regular_file(source) || ?fs::file_size(source) != uint64_t(17)) { return 9; }
+  if (?fs::is_empty(source) || !?fs::is_directory("fs-work/a")) { return 10; }
+  if (!?fs::copy_file(source, copied)) { return 11; }
+  auto conflict = fs::copy_file(source, copied);
+  if (conflict.has_value() || conflict.error() != fs::errc::already_exists) { return 12; }
+  if (?fs::copy_file(source, copied, fs::copy_options::skip_existing)) { return 13; }
+  if (!?fs::copy_file(source, copied, fs::copy_options::overwrite_existing)) { return 14; }
+  ?fs::rename("fs-work/a/b/copied.txt", "fs-work/a/b/renamed.txt");
+  if (?fs::exists(copied) || !?fs::exists("fs-work/a/b/renamed.txt")) { return 15; }
+  ?fs::create_hard_link("fs-work/source.txt", "fs-work/hard.txt");
+  if (!?fs::equivalent("fs-work/source.txt", "fs-work/hard.txt")) { return 16; }
+  ?fs::create_symlink("source.txt", "fs-work/link.txt");
+  if (!?fs::is_symlink("fs-work/link.txt") || !?fs::is_regular_file("fs-work/link.txt")) { return 17; }
+  fs::path target = ?fs::read_symlink("fs-work/link.txt");
+  if (target != "source.txt") { return 18; }
+  ?fs::create_symlink("missing.txt", "fs-work/dangling.txt");
+  if (?fs::exists("fs-work/dangling.txt") || !?fs::is_symlink("fs-work/dangling.txt")) { return 19; }
+  auto link_status = fs::symlink_status("fs-work/dangling.txt");
+  if (!link_status.has_value() || link_status.value().type() != fs::file_type::symlink) { return 20; }
+  ?fs::create_directory_symlink("../fs-keep", "fs-work/outside");
+  fs::path canonical = ?fs::canonical("fs-work/link.txt");
+  fs::path source_canonical = ?fs::canonical(source);
+  if (canonical != source_canonical || !canonical.is_absolute()) { return 21; }
+  fs::path absolute = ?fs::absolute(source);
+  if (!absolute.is_absolute()) { return 22; }
+  fs::path weak = ?fs::weakly_canonical("fs-work/a/../absent/leaf");
+  if (!weak.is_absolute() || weak.filename() != "leaf") { return 23; }
+  fs::path temporary = ?fs::temp_directory_path();
+  if (!?fs::is_directory(temporary)) { return 24; }
+  fs::path original = ?fs::current_path();
+  ?fs::current_path("fs-work/a/b");
+  if (!?fs::exists("renamed.txt")) { return 25; }
+  ?fs::current_path(original);
+  mut fs::directory_iterator stream = ?fs::directory_iterator::open("fs-work");
+  if (stream.entry_path().has_value()) { return 26; }
+  mut int count = 0;
+  mut bool saw_source = false;
+  for (;;) {
+    bool available = ?stream.next();
+    if (!available) { break; }
+    fs::path entry = ?stream.entry_path();
+    if (entry.filename() == "source.txt") { saw_source = true; }
+    count++;
+  }
+  if (!saw_source || count != 6 || ?stream.next() || stream.entry_path().has_value()) { return 27; }
+  std::vector<fs::path> entries = ?fs::directory_entries("fs-work/a/b");
+  if (entries.size() != std::size_t(1) || entries[std::size_t(0)].filename() != "renamed.txt") { return 28; }
+  if (?fs::remove("fs-work/missing") || ?fs::remove_all("fs-work/missing") != uint64_t(0)) { return 29; }
+  auto nonempty = fs::remove("fs-work/a");
+  if (nonempty.has_value() || nonempty.error() != fs::errc::directory_not_empty) { return 30; }
+  auto missing_canonical = fs::canonical("fs-work/missing");
+  if (missing_canonical.has_value() || missing_canonical.error() != fs::errc::not_found) { return 31; }
+  auto bad = fs::exists("");
+  if (bad.has_value() || bad.error() != fs::errc::invalid_argument) { return 32; }
+  auto zero = fs::remove_all("fs-work\0/truncated");
+  if (zero.has_value() || zero.error() != fs::errc::invalid_argument) { return 33; }
+  auto not_directory = fs::directory_iterator::open(source);
+  if (not_directory.has_value() || not_directory.error() != fs::errc::not_directory) { return 34; }
+  if (!?fs::remove("fs-work/link.txt")) { return 35; }
+  if (!?fs::exists(source)) { return 36; }
+  auto absent_size = fs::file_size("fs-work/missing");
+  if (absent_size.has_value() || absent_size.error() != fs::errc::not_found) { return 40; }
+  auto directory_over_file = fs::create_directory(source);
+  if (directory_over_file.has_value() || directory_over_file.error() != fs::errc::already_exists) { return 41; }
+  ?fs::create_symlink("cycle-b", "fs-work/cycle-a");
+  ?fs::create_symlink("cycle-a", "fs-work/cycle-b");
+  auto cycle = fs::status("fs-work/cycle-a");
+  if (cycle.has_value() || cycle.error() != fs::errc::too_many_symlinks) { return 42; }
+  if (!?fs::remove("fs-work/cycle-a") || !?fs::remove("fs-work/cycle-b")) { return 43; }
+  if (!?fs::copy_file("fs-work/source.txt", "fs-work/a/b/odd \n π.txt")) { return 44; }
+  std::vector<fs::path> unusual = ?fs::directory_entries("fs-work/a/b");
+  mut bool saw_unusual = false;
+  for (mut std::size_t index = 0; index < unusual.size(); index++) {
+    if (unusual[index].filename() == "odd \n π.txt") { saw_unusual = true; }
+  }
+  if (!saw_unusual || !?fs::remove("fs-work/a/b/odd \n π.txt")) { return 45; }
+  if (?fs::remove_all("fs-work") != uint64_t(8)) { return 37; }
+  if (!?fs::is_directory("fs-keep") || !?fs::is_empty("fs-keep")) { return 38; }
+  if (!?fs::remove("fs-keep")) { return 39; }
+  return 0;
+}
+
+int main() {
+  auto result = exercise();
+  if (!result.has_value()) { return 99; }
+  return result.value();
+}

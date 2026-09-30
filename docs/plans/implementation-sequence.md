@@ -4741,6 +4741,17 @@ consumer, and release refreshes remain outstanding for the full campaign.
 
 ### L-TEXT-01: Formatting, Parsing, And Text Policy
 
+- **Library completion campaign (0.355.0):** owning-string search/slicing/editing,
+  checked integer and binary32/binary64 parsing, real filesystem operations,
+  and executable `list`, `deque`, `set`, `unordered_set`, and `queue` are
+  implemented and locally verified. General prerequisites include nested-owner
+  text-view relays, constrained collection hooks through ordinary semantic
+  requirement checking, and consistent mixed generic field-initializer catalogs;
+  unrelated user-type regressions cover the compiler rules. All 335 production
+  gates have passing evidence: 334 in the integrated run and the sandbox-blocked
+  HTTP gate in a socket-enabled rerun. The refreshed 93-case stdlib sweep,
+  both 86-example corpus gates, editor checks, eleven installed consumers, and
+  staged archive smoke checks pass. Broader formatting work below remains open.
 - **State/role:** in progress. Canonical base-10 conversion and direct stdout
   output are implemented for every fixed-width integer. Bounded sequential
   `{}` replacement is implemented in ordinary GTI for heterogeneous booleans,

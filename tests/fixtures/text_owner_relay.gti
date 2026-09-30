@@ -1,0 +1,35 @@
+#include <std/string>
+
+class Label {
+  mut std::string text;
+public:
+  Label(std::string value) : text(std::move(value)) {}
+  std::string_view view() { return this.text.view(); }
+  c_string c_text() { return this.text.c_string(); }
+  void append() mut { this.text.push_back('!'); }
+};
+
+class Envelope {
+  Label label;
+public:
+  Envelope(std::string value) : label(Label(std::move(value))) {}
+  std::string_view view() { return this.label.view(); }
+};
+
+std::string_view relay(Label& label) { return label.view(); }
+
+int main() {
+  mut Label label{std::string("abc")};
+  {
+    auto view = label.view();
+    auto other = relay(label);
+    if (view.size() != 3 || other[1] != 'b') { return 1; }
+  }
+  label.append();
+  auto final = label.view();
+  if (final.size() != 4 || final[3] != '!') { return 2; }
+  Envelope nested{std::string("nested")};
+  auto text = nested.view();
+  if (text.size() != 6 || text[0] != 'n') { return 3; }
+  return 0;
+}

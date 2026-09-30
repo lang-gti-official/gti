@@ -1,0 +1,57 @@
+#include <std/string>
+#include <std/charconv>
+#include <std/filesystem>
+#include <std/list>
+#include <std/deque>
+#include <std/queue>
+#include <std/set>
+#include <std/unordered_set>
+
+// Parse an option, schedule work, and retain a deduplicated execution history.
+// Filesystem observation is fallible; this example does not modify any files.
+int main() {
+  std::string option{"--jobs=3"};
+  if (!option.starts_with("--jobs=")) { return 1; }
+  auto digits = option.substr(option.find('=') + std::size_t(1));
+  auto count = std::stoi(digits);
+  if (!count.has_value() || count.value() < 1) { return 2; }
+
+  auto working_directory = std::filesystem::current_path();
+  if (!working_directory.has_value()) { return 3; }
+  auto directory_exists = std::filesystem::is_directory(working_directory.value());
+  if (!directory_exists.has_value() || !directory_exists.value()) { return 4; }
+
+  mut std::queue<std::string> pending = {
+    std::string("build"), std::string("test"), std::string("build")
+  };
+  mut std::set<std::string> seen{};
+  mut std::unordered_set<int> completed{};
+  mut std::list<std::string> history{};
+  mut int next_id = 1;
+  while (!pending.empty()) {
+    auto job = pending.front().clone();
+    pending.pop();
+    if (!seen.contains(job)) {
+      // Discarding an insertion result ends its exclusive loan at this ';'.
+      [[discard]] seen.insert(job.clone());
+      [[discard]] completed.insert(next_id);
+      next_id++;
+      history.push_back(std::move(job));
+    }
+  }
+
+  mut std::deque<int> priorities{};
+  priorities.push_back(1);
+  priorities.push_back(3);
+  priorities.insert(std::size_t(1), 2);
+  priorities.erase(std::size_t(2));
+  if (priorities.back() != 2 || completed.size() != std::size_t(2)) { return 5; }
+
+  for (auto& job : history) {
+    mut auto line = job.clone();
+    line.insert(std::size_t(0), "done: ");
+    line.replace(std::size_t(0), std::size_t(4), "finished");
+    std::println(line);
+  }
+  return 0;
+}

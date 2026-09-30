@@ -1,0 +1,83 @@
+#include <std/list>
+#include <std/deque>
+#include <std/queue>
+#include <std/set>
+#include <std/unordered_set>
+#include <std/memory>
+
+mut int constructed = 0;
+mut int destroyed = 0;
+mut int sequence = 0;
+class Key {
+  std::unique_ptr<int> number;
+public:
+  Key(int value) : number(std::make_unique<int>(value)) {
+    constructed++;
+    sequence = sequence * 10 + value;
+  }
+  Key(Key& other) = delete;
+  Key(Key&& other) = default;
+  ~Key() { destroyed++; }
+  int value() { return *this.number; }
+};
+class Order {
+public:
+  bool operator()(Key& left, Key& right) { return left.value() < right.value(); }
+};
+class Hash {
+public:
+  std::size_t operator()(Key& value) { return std::size_t(value.value()); }
+};
+class Equal {
+public:
+  bool operator()(Key& left, Key& right) { return left.value() == right.value(); }
+};
+
+int main() {
+  std::list<int> empty_list = {};
+  std::deque<int> empty_deque = {};
+  std::queue<int> empty_queue = {};
+  std::set<int> empty_set = {};
+  std::unordered_set<int> empty_hash = {};
+  if (!empty_list.empty() || !empty_deque.empty() || !empty_queue.empty() ||
+      !empty_set.empty() || !empty_hash.empty()) { return 1; }
+  {
+    std::list<Key> values = {Key(3), Key(1), Key(2)};
+    if (sequence != 312 || values.size() != 3) { return 2; }
+    mut int order = 0;
+    for (auto& key : values) { order = order * 10 + key.value(); }
+    if (order != 312) { return 3; }
+  }
+  sequence = 0;
+  {
+    Key named = Key(3);
+    std::deque<Key> values = {std::move(named), Key(1), Key(2)};
+    if (sequence != 312 || values.size() != 3 || values[std::size_t(1)].value() != 1) { return 4; }
+  }
+  sequence = 0;
+  {
+    mut std::queue<Key> values = {Key(3), Key(1), Key(2)};
+    mut int order = 0;
+    while (!values.empty()) { order = order * 10 + values.front().value(); values.pop(); }
+    if (sequence != 312 || order != 312) { return 5; }
+  }
+  sequence = 0;
+  {
+    std::set<Key, Order> values = {Key(3), Key(1), Key(3), Key(2)};
+    mut int order = 0;
+    for (auto& key : values) { order = order * 10 + key.value(); }
+    if (sequence != 3132 || values.size() != 3 || order != 123) { return 6; }
+  }
+  sequence = 0;
+  {
+    std::unordered_set<Key, Hash, Equal> values = {Key(3), Key(1), Key(3), Key(2)};
+    mut int total = 0;
+    for (auto& key : values) { total += key.value(); }
+    if (sequence != 3132 || values.size() != 3 || total != 6) { return 7; }
+  }
+  if (constructed != 17 || destroyed != 17) { return 8; }
+  std::deque<std::list<int>> nested = {{1, 2}, {}, {3}};
+  if (nested.size() != 3 || nested.front().back() != 2 ||
+      !nested[std::size_t(1)].empty() || nested.back().front() != 3) { return 9; }
+  return 0;
+}

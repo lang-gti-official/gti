@@ -3483,7 +3483,7 @@ auto SemanticVisitor::Impl::analyzeCollectionInitializer(
         candidate.record().requiresUnsafe ||
         candidate.record().intrinsic != IntrinsicKind::None ||
         !candidate.record().genericParameters.empty() ||
-        candidate.record().parameterPack || !candidate.requirements.empty() ||
+        candidate.record().parameterPack ||
         candidate.requiredParameterCount != candidate.parameterTypes.size() ||
         candidate.returnType != target) {
       return std::nullopt;
@@ -3500,14 +3500,26 @@ auto SemanticVisitor::Impl::analyzeCollectionInitializer(
       insert->parameterTypes.back().kind == SemanticType::Reference ||
       insert->parameterTypes.back().kind == SemanticType::Array ||
       typeTraits(target).containsBorrowedState || !typeTraits(target).movable) {
-    reject(
-        expr.brace(),
-        "Collection initialization requires public, non-overloaded static "
-        "functions 'C collection_init(uint64_t count)' and "
-        "'C collection_insert(C collection, T element)' with owned value "
-        "parameters and no method-local generics, defaults, or constraints.");
+    reject(expr.brace(),
+           "Collection initialization requires public, non-overloaded static "
+           "functions 'C collection_init(uint64_t count)' and "
+           "'C collection_insert(C collection, T element)' with owned value "
+           "parameters and no method-local generics or defaults.");
     currentType = SemanticType::Unknown;
     return;
+  }
+  // These are ordinary statically selected calls. Substitute owner arguments
+  // above, then use the same constraint authority as an explicit call; an
+  // unused constrained hook must not disable explicit container construction.
+  for (const CallableCandidate *hook : {&*initialize, &*insert}) {
+    if (const auto failure = firstRequirementFailure(hook->requirements)) {
+      reportConstraintFailure(expr.brace(), *failure);
+      diagnostics.back().related.push_back(
+          {tokenSpan(hook->declaration->name()),
+           "This collection initialization hook requires the constraint."});
+      currentType = SemanticType::Unknown;
+      return;
+    }
   }
   const SemanticType elementType = insert->parameterTypes.back();
   if (elementType == SemanticType::Void ||
@@ -3640,6 +3652,7 @@ auto SemanticVisitor::Impl::visitArrayInitializerExpr(
 
 auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
   const auto [leftType, rightType] = analyzeBinaryOperands(expr);
+  validateSequencedTransientLoans(expr.left(), expr.right(), expr.oper());
 
   if ((expr.oper().kind == TokenKind::PLUS ||
        expr.oper().kind == TokenKind::MINUS) &&
@@ -6214,6 +6227,9 @@ auto SemanticVisitor::Impl::visitLogicalExpr(const Logical &expr) -> void {
   const bool requiresRight =
       left && ((expr.oper().kind == TokenKind::AND && *left) ||
                (expr.oper().kind == TokenKind::OR && !*left));
+  if (!skipsRight) {
+    validateSequencedTransientLoans(expr.left(), expr.right(), expr.oper());
+  }
   ScopeStack loanScopes = afterRight;
   ScopeStack moveScopes = afterRight;
   if (skipsRight) {

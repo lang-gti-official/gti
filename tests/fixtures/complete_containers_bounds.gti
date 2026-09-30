@@ -1,0 +1,52 @@
+#include <std/list>
+#include <std/deque>
+#include <std/queue>
+#include <std/set>
+#include <std/unordered_set>
+#include <std/vector>
+#include <std/string>
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { std::println(99); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  if (argc == 1) {
+    std::list<int> values{};
+    return values.front();
+  }
+  if (argc == 2) {
+    mut std::list<int> values{};
+    values.erase(std::size_t(0));
+  }
+  if (argc == 3) {
+    std::deque<int> values{};
+    return values.back();
+  }
+  if (argc == 4) {
+    mut std::deque<int> values{};
+    values.push_front(1);
+    return values.at(std::size_t(1));
+  }
+  if (argc == 5) {
+    std::queue<int> values{};
+    return values.front();
+  }
+  if (argc == 6) {
+    std::set<int> values{};
+    return *values.begin();
+  }
+  if (argc == 8) {
+    mut std::deque<int> values{};
+    values.insert(std::size_t(1), 7);
+  }
+  if (argc == 9) {
+    mut std::deque<int> values{};
+    values.erase(std::size_t(0));
+  }
+  std::unordered_set<int> values{};
+  mut auto cursor = values.begin();
+  ++cursor;
+  return 0;
+}
