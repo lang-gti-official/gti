@@ -78,9 +78,10 @@ The current implemented foundation includes:
   base upcast, plus the ordinary generic `std::make_unique<T>` for class/struct
   construction or exact-value/default scalar initialization, and consuming
   `std::upcast_unique<Base, Derived>` functions; and
-- `std::array<T, N>` over checked fixed-array storage, including front/back
-  access and copyable-element fill; and
-- `std::string` as a move-only owner over private character storage, including
+- `<std/array>` `std::array<T, N>` over checked fixed-array storage, including
+  front/back access and copyable-element fill; and
+- `<std/string>` `std::string` as a move-only owner over private character
+  storage, including
   construction from an exact input iterator/sentinel pair whose dereference
   referent is `char`, indexed half-open range copying, front/back and mutable
   checked access, resize, owner-tied `c_string()` and checked
@@ -92,15 +93,16 @@ The current implemented foundation includes:
   integer, plus `print`/`println` traversal through either a read-only borrow
   of a named owner or direct ownership transfer from a fresh string result;
   and
-- `std::vector<T>` as a move-only dynamic owner with checked indexed access,
+- `<std/vector>` `std::vector<T>` as a move-only dynamic owner with checked
+  indexed access,
   reserve, resize, shrink-to-fit, clear, push/pop, indexed insertion/erasure,
   read-only traversal, in-place emplacement, explicit copyable-element
   cloning, and construction from one contextual fixed-array value such as
   `std::vector<int>({1, 2, 3})`; this constructor copies elements from its
   owned array parameter and therefore requires copyable `T` when used; and
-- `std::forward_list<T>` as a move-only linked owner with constant-time front
-  access/push/pop, iterative clear, resize, reverse, stable merge/sort, removal,
-  and adjacent uniqueness; and
+- `<std/forward_list>` `std::forward_list<T>` as a move-only linked owner with
+  constant-time front access/push/pop, iterative clear, resize, reverse, stable
+  merge/sort, removal, and adjacent uniqueness; and
 - `<std/map>` `std::map<K, V, Compare = std::less<K>>` and
   `<std/unordered_map>` `std::unordered_map<K, V, Hash = std::hash<K>,
   KeyEqual = std::equal_to<K>>` as move-only owning dictionaries with checked
@@ -530,8 +532,8 @@ iteration carries one mutable element child loan. The mutable iterator remains
 non-copyable. Container-specific invalidation precision remains outside this
 slice.
 
-`std::span<T>` is an ordinary source-defined, checked, read-only view over one
-contiguous owner. `std::vector<T>::as_span()` and
+`<std/span>` provides `std::span<T>`, an ordinary source-defined, checked,
+read-only view over one contiguous owner. `std::vector<T>::as_span()` and
 `std::string::as_span()` are its public owner factories; `first`, `last`, and
 `subspan` preserve the same owner dependency without exposing a pointer-length
 pair. Local copies, moves, exact factory/relay returns, empty views, checked
@@ -570,10 +572,12 @@ both inputs sorted; equal elements from the receiving list come first.
 default-constructs or copies only added elements, and destroys a truncated
 suffix. Clear and ordinary destruction drain the chain iteratively.
 
-The declaration-only iterator is explicitly move-only and read-only.
+The `<std/forward_list>` declaration-only iterator is explicitly move-only and
+read-only.
 Nullable owner-tied traversal and invalidation remain unavailable; iterator
-operations and generic emplacement are still bodyless. The separate
-list scaffold has no node representation because a compliant constant-time
+operations are still bodyless, and generic emplacement remains scaffolded
+without executable conformance evidence. The separate `<std/list>` scaffold
+has no node representation because a compliant constant-time
 back operation requires a
 safe non-owning link that GTI cannot yet retain. The declaration-only span is
 replaced by the executable read-only single-owner `std::span<T>` surface above;
@@ -625,8 +629,9 @@ are written.
 
 Wrong-state `expected.value()` and `expected.error()` access is the checked
 `GTI-R0009` failure. Infallible allocation uses `GTI-R0011`; recoverable
-`std::allocator::try_storage` and future `try_make_*` factories return
-`expected` without invoking the failure observer.
+`std::allocator::try_storage`, `std::try_make_arena`, and
+`std::try_make_pool` return `expected` without invoking the failure observer;
+future recoverable allocation factories use the same error-channel policy.
 Best-effort resource cleanup, such as destruction-time close, may discard a
 host error only when the component contract explicitly says so and an explicit
 recoverable close operation exists.
@@ -671,7 +676,8 @@ applicable.
 The following component families remain planned or incomplete:
 
 - shared and weak ownership;
-- optional and general sum types;
+- copyable or assignable optional values and general sum types beyond the
+  bounded payload-enum family;
 - mutable, nested, reseatable, and multi-owner borrowed views;
 - complete vector copy, allocator, iterator reassignment, and precise iterator
   invalidation support;
@@ -681,8 +687,9 @@ The following component families remain planned or incomplete:
   customization, buffered streams, explicit text decoding, and structured I/O;
 - general filesystem operations, calendar/time-zone breadth, random distributions and engine
   breadth, connected networking, traffic buffers, atomic wait/notify, pointer
-  atomics and fences, condition variables, recursive/read-write mutexes, stop tokens,
-  detached/scoped tasks, typed argument packs, and broader threading;
+  atomics and fences, safe scoped condition variables, safe recursive mutexes,
+  read/write mutexes, stop tokens, detached/scoped tasks, typed argument packs,
+  and broader threading;
 - stateful allocator policy, allocator-aware growing containers,
   generation-bearing pool handles, and heterogeneous arenas;
 - broader native interoperability beyond the current bounded records, opaque

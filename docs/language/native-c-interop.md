@@ -24,10 +24,11 @@ supports fixed-width values, passive `[[c_abi]]` records, nominal pointer-only
 `[[c_opaque]]` handles, bounded one-level raw pointers, NUL-terminated
 `c_string` values, and annotated native pointer-plus-count returns behind
 lexical `unsafe`. It also supports named exact native callback types and
-same-thread adapters for eligible GTI free functions. It does not expose
-native variables, variadic calls, C++ linkage, annotated ownership transfer,
-foreign-thread GTI callback entry, or a stable binary ABI for ordinary
-GTI-defined types.
+same-thread adapters for eligible GTI free functions, plus the exact registered
+worker and once-initializer adapters owned by `<std/cthread>`. It does not
+expose native variables, variadic calls, C++ linkage, annotated ownership
+transfer, general foreign-thread GTI callback entry, or a stable binary ABI for
+ordinary GTI-defined types.
 
 The compiler can emit one native bridge header for this bounded surface. The
 header is valid C17 and C++20/C++23: C sees deterministic C record names, while
