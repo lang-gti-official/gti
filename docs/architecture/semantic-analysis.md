@@ -300,6 +300,9 @@ compiler IDs. Important facts include:
 - class bases, override roots, abstract/polymorphic state, and destruction;
 - array extents, switch constants, lambdas, target selections, moves, loans,
   unsafe operations, selected execution profile, and completion context;
+- concrete implicit-return movement for an exact whole move-only local or
+  by-value parameter, including its borrow transport access; the fact is
+  instance-local because copyability may change after generic substitution;
 - static-assertion pass/fail/deferred state and concrete generic evaluation;
 - the semantic analysis seal, exact program-initialization plan, exact
   program-constant substitutions, and the selected hosted-entry plan.
@@ -746,14 +749,30 @@ Resolved ordinary method calls and class `operator()` calls retain a
 `CallReceiverMode` alongside the exact selected target. The mode distinguishes
 read-only and mutable source places, reusable values, consuming receivers, and
 read-only or mutable borrows of a fresh temporary. Semantics alone classifies
-freshness: it requires a direct ordinary construction or by-value GTI call, a
-concrete class/struct value without tracked borrowed state, and a supported
-non-static, non-virtual target whose result cannot carry borrowed state.
-Transparent grouping is ignored, while an explicit move from named storage is
-not fresh. Concrete generic reanalysis repeats these checks using substituted
+freshness: ordinary construction, by-value GTI calls, and value-producing GTI
+operators qualify for the bounded ephemeral-borrow contract. Receiver-only
+materialization also accepts owned movable class values from conditional
+expressions, lambda calls, copy/move construction, and consuming Expected
+extraction; this does not broaden ephemeral argument borrowing. Reusable
+targets remain non-static and non-virtual with non-borrowing results, apart
+from the existing nonescaping read-observation exception. Transparent grouping
+is ignored, while an explicit move from named storage is not fresh. Concrete
+generic reanalysis repeats these checks using substituted
 type and lifecycle traits. Expression value category and access remain
 unchanged, preventing the receiver-only capability from authorizing general
 mutable-place operations.
+
+Ordinary methods and arithmetic/bitwise value operators can declare a
+consuming receiver with trailing `&&`. Overload selection prefers this exact
+capability for an owned movable value or explicit `std::move` receiver, never
+for a named place or reference. Otherwise-exact reusable overloads remain
+eligible. Consuming calls retain their full-expression owner and cannot return
+a reference or tracked borrowed state; concrete generic instances repeat the
+check. Virtual/interface signatures preserve the receiver qualifier.
+`std::move(this)` is an explicit whole-receiver transfer inside a consuming
+method: semantics records the exact receiver place and rejects overlapping
+live loans, partial moves, and subsequent reads, writes, or implicit calls.
+Implicit return movement does not infer this transfer from `return this;`.
 
 `ResolvedCallInfo::ephemeralBorrowArguments` separately records the exact
 written argument indices that use the bounded call-only read-borrow fallback.

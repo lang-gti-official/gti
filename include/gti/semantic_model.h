@@ -1295,6 +1295,11 @@ struct SemanticFullExpression {
   std::vector<const Expr *> roots;
 };
 
+struct ImplicitReturnMoveInfo {
+  BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
+  AccessMode borrowAccess = AccessMode::ReadOnly;
+};
+
 enum class StaticAssertResult {
   Passed,
   Failed,
@@ -1335,6 +1340,9 @@ public:
 
   [[nodiscard]] const OwnershipEvent *
   findOwnershipEvent(const Expr &expression) const;
+
+  [[nodiscard]] const ImplicitReturnMoveInfo *
+  findImplicitReturnMove(const Expr &expression) const;
 
   [[nodiscard]] std::optional<LambdaCaptureMode>
   lambdaCaptureMode(SymbolId symbol) const;
@@ -1618,6 +1626,9 @@ private:
 
   void recordOwnershipEvent(const Expr &expression, OwnershipEvent event);
 
+  void recordImplicitReturnMove(const Expr &expression,
+                                ImplicitReturnMoveInfo info);
+
   void recordLambdaCaptureMode(SymbolId symbol, LambdaCaptureMode mode);
 
   void markOwnershipEventsUnreachableFrom(std::size_t first);
@@ -1804,6 +1815,7 @@ private:
   std::unordered_set<const Expr *> programConstantSubstitutions;
   std::unordered_map<const Expr *, PlaceKey> places;
   std::unordered_map<const Expr *, OwnershipEvent> ownershipEvents;
+  std::unordered_map<const Expr *, ImplicitReturnMoveInfo> implicitReturnMoves;
   std::unordered_map<SymbolId, LambdaCaptureMode> lambdaCaptureModes;
   std::vector<const Expr *> ownershipEventOrder;
   std::unordered_map<const Expr *, std::size_t> placeSelections;

@@ -474,6 +474,14 @@ SemanticModel::findOwnershipEvent(const Expr &expression) const {
   return base == nullptr ? nullptr : base->findOwnershipEvent(expression);
 }
 
+[[nodiscard]] const ImplicitReturnMoveInfo *
+SemanticModel::findImplicitReturnMove(const Expr &expression) const {
+  const auto found = implicitReturnMoves.find(&expression);
+  // This decision depends on concrete copy/move traits. An instance delta's
+  // absence must therefore shadow, rather than inherit, a symbolic base fact.
+  return found == implicitReturnMoves.end() ? nullptr : &found->second;
+}
+
 [[nodiscard]] std::optional<LambdaCaptureMode>
 SemanticModel::lambdaCaptureMode(SymbolId symbol) const {
   const auto found = lambdaCaptureModes.find(symbol);
@@ -1269,6 +1277,7 @@ void SemanticModel::clear() {
   programConstantSubstitutions.clear();
   places.clear();
   ownershipEvents.clear();
+  implicitReturnMoves.clear();
   ownershipEventOrder.clear();
   placeSelections.clear();
   compilerCapabilityTypes.clear();
@@ -1506,6 +1515,11 @@ void SemanticModel::recordOwnershipEvent(const Expr &expression,
     ownershipEventOrder.push_back(&expression);
   }
   ownershipEvents.insert_or_assign(&expression, std::move(event));
+}
+
+void SemanticModel::recordImplicitReturnMove(const Expr &expression,
+                                             ImplicitReturnMoveInfo info) {
+  implicitReturnMoves.insert_or_assign(&expression, std::move(info));
 }
 
 void SemanticModel::recordLambdaCaptureMode(SymbolId symbol,

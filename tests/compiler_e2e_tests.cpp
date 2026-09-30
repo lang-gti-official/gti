@@ -3719,16 +3719,14 @@ int main() {
              !invalid.hirValid,
          "invalid ownership in a concrete generic instance should fail in "
          "HIR lowering");
-  expect(
-      hasDiagnosticCode(invalid.diagnostics, "GTI-S2003") &&
-          hasDiagnostic(invalid.diagnostics, "Cannot return 'value' by copy") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "Cannot initialize field 'value' by copying "
-                        "move-only type") &&
-          hasRelatedDiagnostic(invalid.diagnostics,
-                               "Concrete generic instance requested here"),
-      "HIR diagnostics should report the generic body and instantiation "
-      "site");
+  expect(hasDiagnosticCode(invalid.diagnostics, "GTI-S2003") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Cannot initialize field 'value' by copying "
+                           "move-only type") &&
+             hasRelatedDiagnostic(invalid.diagnostics,
+                                  "Concrete generic instance requested here"),
+         "HIR diagnostics should accept the generic exact return while "
+         "reporting the invalid field copy and instantiation site");
 }
 
 void testCompletePipeline() {

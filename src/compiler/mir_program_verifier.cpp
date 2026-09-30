@@ -1224,6 +1224,21 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
                           const MirFunctionInstance *caller = nullptr) {
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind == MirInstructionKind::Move &&
+          instruction.operands.size() == 1) {
+        const MirPlace *source =
+            body.findPlace(instruction.operands.front().place);
+        if (source != nullptr && source->root == MirPlaceRootKind::This &&
+            source->projections.empty() &&
+            (caller == nullptr || !caller->owner || caller->staticMember ||
+             caller->receiverMutability != ReceiverMutability::Consuming ||
+             !source->traits.movable || source->traits.containsBorrowedState)) {
+          return verificationFailure(body, owner,
+                                     "whole receiver move requires a consuming "
+                                     "method with movable owned storage",
+                                     block.id, instruction.id);
+        }
+      }
       if (instruction.kind == MirInstructionKind::CallInput &&
           instruction.callInputKind == HirCallInputKind::RetainedReceiver) {
         const auto &uses = body.usesOf(instruction.result.value_or(0));
@@ -1259,6 +1274,16 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
           instruction.lambdaTarget
               ? program.findLambda(*instruction.lambdaTarget)
               : nullptr;
+      if (functionTarget != nullptr &&
+          functionTarget->receiverMutability == ReceiverMutability::Consuming &&
+          (functionTarget->returnType.kind == SemanticType::Reference ||
+           functionTarget->returnBorrowOrigin != BorrowOriginKind::None ||
+           instruction.info.traits.containsBorrowedState)) {
+        return verificationFailure(body, owner,
+                                   "consuming receiver invocation cannot "
+                                   "publish tracked borrowed state",
+                                   block.id, instruction.id);
+      }
       const MirInstruction *receiverInput =
           instruction.receiver &&
                   instruction.receiver->kind == MirOperandKind::Value
@@ -1309,8 +1334,8 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
                                   HirCallInputKind::MutableTemporaryBorrow;
         const bool exactReceiverQualifier =
             functionTarget != nullptr &&
-            ((mutableInput && functionTarget->receiverMutability ==
-                                  ReceiverMutability::Mutable) ||
+            ((mutableInput &&
+              receiverAllowsMutation(functionTarget->receiverMutability)) ||
              (!mutableInput && functionTarget->receiverMutability ==
                                    ReceiverMutability::ReadOnly));
         const std::size_t receiverObligations =
@@ -1325,8 +1350,14 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
                                obligation.place == receiverPlace->id;
                       }));
         bool exactProducer = false;
-        if (producer != nullptr &&
-            producer->kind == MirInstructionKind::Construct) {
+        if (producer != nullptr && receiverPlace != nullptr &&
+            receiverPlace->root == MirPlaceRootKind::Temporary &&
+            (producer->kind == MirInstructionKind::Load ||
+             producer->kind == MirInstructionKind::Move)) {
+          exactProducer = true; // Exact join identity was checked by
+                                // materialization lookup.
+        } else if (producer != nullptr &&
+                   producer->kind == MirInstructionKind::Construct) {
           const MirConstructorInstance *target =
               producer->constructorTarget ? program.findConstructorInstance(
                                                 *producer->constructorTarget)
@@ -1338,6 +1369,15 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
               target != nullptr && producerOwner != nullptr &&
               producerOwner->type == receiverPlace->type &&
               producer->constructorKind == ConstructorKind::Ordinary;
+          if (!producer->constructorTarget && ownerClass != nullptr &&
+              ownerClass->type == receiverPlace->type) {
+            exactProducer =
+                (producer->constructorKind == ConstructorKind::Copy &&
+                 ownerClass->copyConstructor ==
+                     SpecialMemberStatus::Generated) ||
+                (producer->constructorKind == ConstructorKind::Move &&
+                 ownerClass->moveConstructor == SpecialMemberStatus::Generated);
+          }
         } else if (producer != nullptr &&
                    producer->kind == MirInstructionKind::Call) {
           const MirFunctionInstance *target =
@@ -1348,6 +1388,25 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
                           target->linkage == LanguageLinkage::Gti &&
                           target->returnType == receiverPlace->type &&
                           target->returnBorrowOrigin == BorrowOriginKind::None;
+          if (producer->lambdaTarget && !producer->functionTarget) {
+            const MirLambdaInstance *lambda =
+                program.findLambda(*producer->lambdaTarget);
+            exactProducer = lambda != nullptr &&
+                            lambda->returnType == receiverPlace->type &&
+                            !producer->info.traits.containsBorrowedState;
+          }
+          if (!producer->functionTarget && ownerClass != nullptr &&
+              (producer->intrinsic == IntrinsicKind::ExpectedValue ||
+               producer->intrinsic == IntrinsicKind::ExpectedError) &&
+              producer->receiver &&
+              producer->receiver->kind == MirOperandKind::Value &&
+              producer->receiver->type.kind == SemanticType::Expected &&
+              producer->receiver->type.arguments.size() == 2) {
+            const std::size_t alternative =
+                producer->intrinsic == IntrinsicKind::ExpectedValue ? 0 : 1;
+            exactProducer = producer->receiver->type.arguments[alternative] ==
+                            receiverPlace->type;
+          }
           if (!producer->functionTarget && ownerClass != nullptr &&
               ownerClass->defaultConstructor ==
                   SpecialMemberStatus::Generated &&
@@ -1375,9 +1434,14 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
             !instruction.info.traits.containsBorrowedState;
         if (functionTarget == nullptr || receiverPlace == nullptr ||
             ownerClass == nullptr || functionTarget->staticMember ||
-            functionTarget->virtualMethod ||
+            (functionTarget->virtualMethod &&
+             functionTarget->receiverMutability !=
+                 ReceiverMutability::Consuming) ||
             functionTarget->linkage != LanguageLinkage::Gti ||
-            instruction.dispatch != CallDispatch::Static ||
+            (instruction.dispatch != CallDispatch::Static &&
+             !(instruction.dispatch == CallDispatch::Virtual &&
+               functionTarget->receiverMutability ==
+                   ReceiverMutability::Consuming)) ||
             ownerClass->type != receiverPlace->type ||
             !exactReceiverQualifier || !exactProducer ||
             receiverObligations != 1 || (!readObservation && !ownedResult)) {
@@ -1487,7 +1551,15 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
         }
       }
       const bool exactFunctionCallable =
-          isCallOperatorTarget(functionTarget) && !instruction.lambdaTarget;
+          functionTarget != nullptr && !instruction.lambdaTarget &&
+          (isCallOperatorTarget(functionTarget) ||
+           (functionTarget->owner && !functionTarget->staticMember &&
+            (functionTarget->receiverMutability ==
+                 ReceiverMutability::Consuming ||
+             (receiverInput != nullptr &&
+              receiverInput->kind == MirInstructionKind::CallInput &&
+              receiverInput->callInputRole == MirCallInputRole::Receiver &&
+              receiverInput->callInputKind == HirCallInputKind::MoveValue))));
       const bool exactLambdaCallable =
           lambdaTarget != nullptr && !instruction.functionTarget;
       const bool exactCallableTarget =
@@ -1497,7 +1569,7 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
         return verificationFailure(
             body, owner,
             "callable invocation capability does not match an "
-            "exact lambda or operator() target",
+            "exact lambda, call operator, or consuming receiver target",
             block.id, instruction.id);
       }
       if (instruction.callableInvocation) {

@@ -478,7 +478,7 @@ destructor-declaration = "~" IDENTIFIER "(" ")"
 method-declaration     = [ "virtual" ] [ "static" ] [ "constexpr" ]
                          [ "mut" ] type IDENTIFIER
                          [ generic-parameter-clause ]
-                         parameter-clause [ "mut" ] [ requires-clause ]
+                         parameter-clause [ call-receiver-qualifier ] [ requires-clause ]
                          [ "override" ]
                          method-terminator ;
 
@@ -488,7 +488,7 @@ operator-declaration   = [ "virtual" ] [ "constexpr" ] [ "mut" ] type "operator"
                          [ "override" ] method-terminator
                        | [ "virtual" ] [ "constexpr" ] [ "mut" ] type "operator"
                          non-call-overloadable-operator parameter-clause
-                         [ "mut" ] [ requires-clause ] [ "override" ]
+                         [ call-receiver-qualifier ] [ requires-clause ] [ "override" ]
                          method-terminator
                        | [ "virtual" ] "operator" "bool" parameter-clause
                          [ "mut" ] [ requires-clause ] [ "override" ]
@@ -613,9 +613,10 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
 
    Methods have read-only receivers by default. A trailing `mut` permits writes
    to mutable fields and requires a mutable object at the call site. The exact
-   trailing `&&` receiver qualifier is reserved for `operator()` and consumes
-   its receiver; it is not a general rvalue-reference type or a qualifier for
-   ordinary methods. A leading `mut` is valid only for a reference return from
+   trailing `&&` receiver qualifier consumes an owned temporary or explicitly
+   moved receiver. It is available on ordinary instance methods, `operator()`,
+   and value-producing arithmetic/bitwise operators, not on free/static
+   functions or as a general rvalue-reference type. A leading `mut` is valid only for a reference return from
    a mutable method. It makes the returned receiver-derived place writable.
    Inside a method or destructor, `this` names the current non-null object and
    uses ordinary `.` member access; it is not a source-level raw pointer. `self`
@@ -654,8 +655,8 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    parameters. Binary `operator+`, `operator-`, `operator*`, `operator/`,
    `operator%`, `operator&`, `operator|`, `operator^`, `operator<<`, and
    `operator>>` take one exact-match parameter. These value-producing
-   operators use a read-only receiver and return an owned non-void value, not
-   a reference or receiver-tied borrowed state.
+   operators use a read-only or trailing-`&&` consuming receiver and return an
+   owned non-void value, not a reference or receiver-tied borrowed state.
 
    `operator=`, `operator[]`, the compound operators `+=`, `-=`, `*=`, `/=`,
    `%=`, `&=`, `|=`, `^=`, `<<=`, and `>>=`, and comparisons `==`, `!=`, `<`,
@@ -668,11 +669,12 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    `operator()` takes any number of exact-match parameters and may return any
    otherwise-valid function return type. In addition to the
    ordinary read-only and trailing-`mut` forms, it may use trailing `&&` to
-   declare a consuming once-callable receiver. That form is invoked only from
-   an explicitly moved named local, by-value parameter, supported writable
-   field, or constant-index fixed-array element. A consuming form cannot return
-   a reference or tracked borrowed state and cannot be virtual, pure,
-   overriding, or an interface requirement.
+   declare a consuming once-callable receiver. That form is invoked from an
+   owned movable temporary or an explicitly moved named local, by-value
+   parameter, supported writable field, or constant-index fixed-array element.
+   A consuming form cannot return a reference or tracked borrowed state.
+   Consuming methods and call operators may be virtual, pure, overriding, or
+   interface requirements; overrides preserve the exact receiver qualifier.
    Comparisons and contextual `operator bool` return bool and use a read-only
    receiver.
    `operator->`
@@ -684,15 +686,15 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    provided.
    Read-only, mutable, and consuming `operator()` overloads may coexist when
    their exact signatures and receiver qualifiers distinguish them. Other
-   operators retain only their admitted read-only or mutable forms. *)
+   value-producing operators may pair read-only and consuming forms. *)
 
 (* Functions and methods may share a name when their normalized parameter type
    lists differ. Return types, parameter names, and by-value parameter
    mutability do not distinguish overloads. An ordinary method may pair
-   read-only and trailing-`mut` overloads with the same parameter types. A
-   read-only receiver can select only the read-only member; a mutable receiver
-   prefers the mutable member when both match. For `operator()`, an explicit
-   `std::move(value)()` receiver prefers an otherwise exact consuming overload;
+   read-only, trailing-`mut`, and trailing-`&&` overloads with the same parameter
+   types. A read-only receiver can select only the read-only member; a mutable receiver
+   prefers the mutable member when both match. An owned temporary or explicit
+   `std::move(value)` receiver prefers an otherwise exact consuming overload;
    invoking that overload consumes the source under ordinary path-sensitive
    move-state rules. Calls require one unique exact
    parameter match after generic substitution, apart from the bounded raw-

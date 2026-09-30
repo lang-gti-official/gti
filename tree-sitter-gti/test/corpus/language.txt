@@ -3508,7 +3508,7 @@ float legacy = 0.5;
           (float_literal))))))
 
 ==================
-Consuming qualifier recovery outside operator()
+Consuming receiver qualifiers (operator restrictions checked semantically)
 ==================
 
 class Invalid {
@@ -3528,13 +3528,11 @@ public:
         (type)
         (identifier)
         (parameter_clause)
-        (ERROR)
         (block))
       (operator_declaration
         (type
           (primitive_type))
         (parameter_clause)
-        (ERROR)
         (block
           (return_statement
             (initializer_expression

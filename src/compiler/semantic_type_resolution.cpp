@@ -6016,13 +6016,15 @@ auto SemanticVisitor::Impl::validateOperatorDeclaration(
   const SemanticType returnType =
       typeOf(function.returnType(), function.returnMutability());
   if (function.receiverMutability() == ReceiverMutability::Consuming) {
-    if (name.kind != OverloadedOperator::Call) {
-      fail("A consuming receiver is supported only by operator().");
+    if (name.kind != OverloadedOperator::Call && !valueOperator) {
+      fail("A consuming receiver is supported only by value-producing "
+           "operators and operator().");
     }
     if (returnType.kind == SemanticType::Reference ||
         typeTraits(returnType).containsBorrowedState) {
-      fail("operator() && cannot return borrowed state from its consumed "
-           "receiver.");
+      fail(
+          "A consuming operator cannot return borrowed state from its consumed "
+          "receiver.");
     }
   }
   if ((comparisonOperator || name.kind == OverloadedOperator::ContextualBool) &&
@@ -6055,9 +6057,11 @@ auto SemanticVisitor::Impl::validateOperatorDeclaration(
          "receiver-tied borrowed state.");
   }
   if (valueOperator &&
-      function.receiverMutability() != ReceiverMutability::ReadOnly) {
+      function.receiverMutability() != ReceiverMutability::ReadOnly &&
+      function.receiverMutability() != ReceiverMutability::Consuming) {
     fail(std::string(operatorSourceSpelling(name.kind)) +
-         " must use a read-only receiver because it produces a value.");
+         " must use a read-only or consuming receiver because it produces a "
+         "value.");
   }
   if (mutationOperator && returnType != SemanticType::Void) {
     fail(std::string(operatorSourceSpelling(name.kind)) +

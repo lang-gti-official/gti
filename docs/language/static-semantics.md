@@ -34,11 +34,12 @@ instance fields inside `mut { ... }`; each enclosed field is semantically the
 same ordinary mutable field as if it had its own leading `mut`. The group does
 not change binding or receiver mutability, access, type identity, layout,
 lifecycle, initialization order, or the immutable default outside its braces.
-Methods have read-only receivers unless their
-declaration has a trailing `mut` qualifier. The bounded trailing `&&` receiver
-qualifier is available only on `operator()` and denotes consuming access, not a
-general rvalue-reference type. A consuming call operator may mutate its
-receiver while consuming it.
+Methods have read-only receivers unless their declaration has a trailing `mut`
+or `&&` qualifier. Trailing `&&` denotes consuming access, not a general
+rvalue-reference type. It is available on ordinary instance methods,
+`operator()`, and arithmetic/bitwise value operators. A consuming member may
+mutate its writable fields while consuming its receiver; free and static
+functions have no receiver and cannot use this qualifier.
 
 An explicit `mut` on an ordinary local value that is never required for a
 write, mutable-reference argument, mutable raw address, or mutable receiver is
@@ -574,26 +575,34 @@ can supply the context explicitly when selection otherwise remains ambiguous.
 
 Receiver mutability may distinguish method overloads. A read-only receiver can
 select only a read-only method; a mutable receiver prefers the otherwise exact
-mutable overload when both exist. `operator()` additionally admits a consuming
-overload with trailing `&&`. It is available only through an explicitly moved
-receiver, and an otherwise exact consuming overload is preferred for that
-form. Read-only, mutable, and consuming call-operator overloads may coexist.
+mutable overload when both exist. Ordinary methods and `operator()` also admit
+a consuming overload with trailing `&&`. It is available through an owned
+movable temporary or an explicitly moved receiver, and an otherwise exact
+consuming overload is preferred for those forms. A named value is never
+implicitly consumed. Read-only, mutable, and consuming overloads may coexist;
+arithmetic/bitwise value operators admit read-only and consuming forms.
 
 A concrete self-contained class or struct value produced directly by an
 ordinary constructor or by-value GTI function call is a fresh temporary
 receiver. For one direct ordinary non-static, non-virtual method call, including
 reusable `operator()`, it may be borrowed read-only or mutably; transparent
 parentheses do not change that classification. A fresh receiver prefers an
-otherwise exact trailing-`mut` overload. This permission is receiver-only: the
+otherwise exact consuming overload, then a trailing-`mut` overload when no
+consuming overload matches. Receiver-only materialization additionally admits
+owned movable conditional and operator results, lambda results, copy/move
+construction, and owned Expected extraction. This permission is receiver-only: the
 value does not become a general mutable place, and cannot bind a mutable
 reference, have its address taken, or be assigned through as storage.
 `std::move(named)` is existing storage rather than a fresh receiver. The
 selected method must return `void`, an ordinary scalar, or an owned value with
-no tracked borrowed state; receiver-tied references and borrowed-state results
-remain ill-formed.
+no tracked borrowed state, except that a read-only member may provide a
+nonescaping receiver-tied read observation through a read-only reference or
+string view. Such a borrow cannot outlive the temporary's full expression.
+Consuming members cannot return any reference or tracked borrowed state.
 
-For an ordinary GTI function or non-operator method call, the same direct fresh
-value may initialize an exact read-only `T&` parameter for that invocation
+For an ordinary GTI function or non-operator method call, a direct fresh
+construction, GTI function call, or GTI value-operator result may initialize an
+exact read-only `T&` parameter for that invocation
 only.
 Overload selection first considers every otherwise-exact candidate that needs
 no temporary argument borrow. Only when that tier is empty does it consider
@@ -606,7 +615,7 @@ targets, compound producers, borrowed-state values, and results that could
 retain the argument loan remain ill-formed. Transparent parentheses do not
 change eligibility.
 
-A consuming call operator may be virtual or an interface requirement. An
+A consuming method or call operator may be virtual or an interface requirement. An
 override must preserve its exact `&&` receiver capability, parameters, and
 result. Its result cannot be a reference or contain tracked
 borrowed state. Invocation consumes the exact source place under the ordinary
@@ -1069,6 +1078,16 @@ unavailable alternative transport.
 Every reachable path through a non-`void` function, method, operator, or lambda
 returns an appropriate value. The permitted top-level `main` definition may
 reach its closing brace, which returns zero.
+
+A by-value `return name;`, including transparent parentheses around `name`,
+implicitly selects move transport only when `name` denotes a whole local or
+by-value parameter, the source and result types are exact, and the concrete
+type is movable but not copyable. The source becomes unavailable on that path.
+A copyable source still selects copy transport. Return conversions and fields,
+indexed or dereferenced places, globals, references, captures, temporaries, and
+immovable values do not gain implicit movement; their existing copy,
+conversion, or explicit `std::move` requirements remain in force. Concrete
+generic reanalysis makes this decision from the substituted type traits.
 
 A void-returning function, method, operator, or lambda accepts a bare `return`
 or `return expression;` with an exactly void-typed expression. Non-void values

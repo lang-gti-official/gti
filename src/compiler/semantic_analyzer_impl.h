@@ -1258,6 +1258,17 @@ private:
 
   [[nodiscard]] static const Variable *movedVariable(const ExprPtr &expression);
 
+  enum class ImplicitReturnMoveStatus {
+    NotEligible,
+    Moved,
+    Invalid,
+  };
+
+  [[nodiscard]] ImplicitReturnMoveStatus
+  analyzeImplicitReturnMove(const ExprPtr &expression,
+                            const SemanticType &returnType,
+                            const SemanticType &valueType);
+
   [[nodiscard]] const ExprPtr *
   operatorBorrowSource(const ExprPtr &expression,
                        const ResolvedOperatorInfo &resolved) const;
@@ -3328,6 +3339,7 @@ private:
   [[nodiscard]] CallReceiverMode receiverModeForObject(
       const ExprPtr &receiver, const CallableCandidate &function,
       bool allowFreshTemporary, bool consumingReceiver = false) const;
+  [[nodiscard]] bool consumingReceiverValue(const ExprPtr &receiver) const;
 
   [[nodiscard]] CallReceiverMode
   callReceiverMode(const ExprPtr &callee,

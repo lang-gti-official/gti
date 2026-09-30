@@ -312,7 +312,17 @@ findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
                  instruction.result == candidate.id &&
                  instruction.hirValue == sourceValue &&
                  (instruction.kind == MirInstructionKind::Call ||
-                  instruction.kind == MirInstructionKind::Construct);
+                  instruction.kind == MirInstructionKind::Construct ||
+                  (place.root == MirPlaceRootKind::Temporary &&
+                   (instruction.kind == MirInstructionKind::Move ||
+                    instruction.kind == MirInstructionKind::Load) &&
+                   instruction.operands.size() == 1 &&
+                   instruction.operands.front().place == place.id &&
+                   instruction.operands.front().kind ==
+                       (instruction.kind == MirInstructionKind::Move
+                            ? MirOperandKind::Move
+                            : MirOperandKind::Copy) &&
+                   !instruction.ownership && instruction.lifecycle.empty()));
         });
     if (definition == block->instructions.end()) {
       continue;
@@ -3511,8 +3521,25 @@ namespace {
   }
 
   const MirInstruction *definition = linearValueDefinition(body, operand.value);
-  if (definition == nullptr || definition->operands.size() != 1) {
+  if (definition == nullptr) {
     return false;
+  }
+  if (definition->operands.size() != 1)
+    return false;
+  // Fresh owned receivers already have a full-expression materialization.
+  // Invocation aliases that exact slot; it does not fabricate another Move.
+  // CallInput verification owns its producer, loan, and cleanup schedule.
+  if (definition->kind == MirInstructionKind::CallInput &&
+      definition->callInputRole == MirCallInputRole::Receiver &&
+      definition->callInputKind == HirCallInputKind::MutableTemporaryBorrow) {
+    const MirPlace *place = body.findPlace(definition->operands.front().place);
+    return expectedUseKind == MirValueUseKind::InstructionReceiver &&
+           place != nullptr && !place->initiallyAvailable &&
+           place->type.kind == SemanticType::Class && place->traits.movable &&
+           !place->traits.containsBorrowedState &&
+           definition->operands.front().kind == MirOperandKind::BorrowWrite &&
+           findMirTemporaryMaterialization(body, *place, definition->hirValue)
+                   .producer != nullptr;
   }
   if (definition->kind == MirInstructionKind::Move) {
     return definition->operands.front().kind == MirOperandKind::Move &&
@@ -6742,6 +6769,28 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           producer != nullptr && producer->kind == MirInstructionKind::Call &&
           producer->functionTarget && !producer->constructorTarget &&
           !producer->lambdaTarget && producer->intrinsic == IntrinsicKind::None;
+      const bool lambdaCall =
+          producer != nullptr && producer->kind == MirInstructionKind::Call &&
+          producer->lambdaTarget && !producer->functionTarget &&
+          !producer->constructorTarget &&
+          producer->intrinsic == IntrinsicKind::None;
+      const bool specialConstruction =
+          producer != nullptr &&
+          producer->kind == MirInstructionKind::Construct &&
+          producer->constructorKind != ConstructorKind::Ordinary &&
+          !producer->constructorTarget && !producer->functionTarget &&
+          !producer->lambdaTarget && producer->intrinsic == IntrinsicKind::None;
+      const bool expectedExtraction =
+          producer != nullptr && producer->kind == MirInstructionKind::Call &&
+          (producer->intrinsic == IntrinsicKind::ExpectedValue ||
+           producer->intrinsic == IntrinsicKind::ExpectedError) &&
+          !producer->functionTarget && !producer->lambdaTarget &&
+          !producer->constructorTarget;
+      const bool joinedTemporary =
+          producer != nullptr && place != nullptr &&
+          place->root == MirPlaceRootKind::Temporary &&
+          (producer->kind == MirInstructionKind::Load ||
+           producer->kind == MirInstructionKind::Move);
       // A generated zero-argument class construction has no source
       // constructor instance. The program verifier additionally requires
       // the exact concrete owner's generated default-constructor status.
@@ -6767,7 +6816,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           producer->info.type != input.info.type ||
           producer->info.category != ValueCategory::Value ||
           !sameCallInputTraits(producer->info.traits, input.info.traits) ||
-          (!ordinaryConstruction && !ordinaryCall && !generatedDefault)) {
+          (!ordinaryConstruction && !ordinaryCall && !lambdaCall &&
+           !expectedExtraction && !specialConstruction && !generatedDefault &&
+           !joinedTemporary)) {
         return false;
       }
 
@@ -6786,7 +6837,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         return false;
       }
       const MirDropObligationId obligation = obligations.front()->id;
-      return producer->successResultDrop == obligation ||
+      // The join temporary is initialized on its incoming edges. Ordinary
+      // initialization and lifecycle dataflow prove it live at this stage.
+      return joinedTemporary || producer->successResultDrop == obligation ||
              std::any_of(
                  producer->lifecycle.begin(), producer->lifecycle.end(),
                  [&](const MirLifecycleEvent &event) {
@@ -9869,7 +9922,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              receiver.callInputKind == HirCallInputKind::MutableTemporaryBorrow;
     }
     const bool exactMovedReceiver =
-        ((receiver.callInputKind == HirCallInputKind::RetainedReceiver ||
+        ((receiver.callInputKind == HirCallInputKind::MutableTemporaryBorrow ||
+          receiver.callInputKind == HirCallInputKind::RetainedReceiver ||
           receiver.callInputKind == HirCallInputKind::MoveValue) &&
          invocation.receiver &&
          consumedCallableReceiver(body, *invocation.receiver,

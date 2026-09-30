@@ -1,0 +1,16 @@
+#include <std/functional>
+
+class Increment {
+public:
+  int operator()(int value) && { return value + 1; }
+};
+
+std::function<int(int) &&> make_operation() {
+  return std::function<int(int) &&>(Increment());
+}
+
+int main() {
+  if (make_operation()(4) != 5) { return 1; }
+  if (std::function<int(int) &&>(Increment())(5) != 6) { return 2; }
+  return 0;
+}

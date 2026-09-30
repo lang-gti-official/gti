@@ -3479,7 +3479,7 @@ private:
     // A conditional result's lifetime is rooted in its join temporary. Its
     // final Move is a transport identity, not a second materialization.
     const bool conditionalResult =
-        allowExpected && temporary->kind == HirValueKind::Conditional &&
+        temporary->kind == HirValueKind::Conditional &&
         materialized != nullptr &&
         materialized->root == MirPlaceRootKind::Temporary &&
         std::any_of(
@@ -3488,7 +3488,8 @@ private:
               return std::any_of(
                   block.instructions.begin(), block.instructions.end(),
                   [&](const MirInstruction &instruction) {
-                    return instruction.kind == MirInstructionKind::Move &&
+                    return (instruction.kind == MirInstructionKind::Move ||
+                            instruction.kind == MirInstructionKind::Load) &&
                            instruction.result == produced.value &&
                            instruction.operands.size() == 1 &&
                            instruction.operands.front().place == place &&

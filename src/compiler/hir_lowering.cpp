@@ -2179,6 +2179,53 @@ private:
     return id;
   }
 
+  [[nodiscard]] std::optional<HirValueId> lowerReturnExpression(
+      const ExprPtr &expression, const SemanticModel &model,
+      const std::vector<SemanticType> &classArguments,
+      const std::vector<CompileTimeValue> &classValueArguments, HirBody &body) {
+    const std::optional<HirValueId> source = lowerExpression(
+        expression, model, classArguments, classValueArguments, body);
+    if (!source || !expression) {
+      return source;
+    }
+    const ImplicitReturnMoveInfo *implicitMove =
+        model.findImplicitReturnMove(*expression);
+    if (implicitMove == nullptr) {
+      return source;
+    }
+
+    const auto found = std::find_if(
+        body.values.begin(), body.values.end(),
+        [&](const HirValue &value) { return value.id == *source; });
+    if (found == body.values.end() || !found->ownership ||
+        found->ownership->kind != OwnershipEventKind::Move) {
+      lifecycleValid = false;
+      return source;
+    }
+
+    ExpressionInfo info = found->info;
+    info.category = ValueCategory::Value;
+    info.access = AccessMode::ReadOnly;
+    const OwnershipEvent ownership = *found->ownership;
+    found->ownership.reset();
+
+    HirValue move{.id = nextValueId++,
+                  .kind = HirValueKind::Move,
+                  .source = expression.get(),
+                  .info = std::move(info),
+                  .operands = {*source},
+                  .intrinsic = IntrinsicKind::Move,
+                  .borrowOrigin = implicitMove->borrowOrigin,
+                  .borrowArgument = 0,
+                  .borrowAccess = implicitMove->borrowAccess,
+                  .place = ownership.place,
+                  .ownership = ownership};
+    const HirValueId moveId = move.id;
+    body.values.push_back(std::move(move));
+    output.program.sourceValueIds[expression.get()].push_back(moveId);
+    return moveId;
+  }
+
   [[nodiscard]] std::vector<HirStatementId>
   lowerStatements(const StmtList &statements, const SemanticModel &model,
                   const std::vector<SemanticType> &classArguments,
@@ -2394,12 +2441,12 @@ private:
           body);
     }
     if (const auto *returnStatement = stmtAs<ReturnStmt>(statement)) {
-      return appendStatement(
-          {.kind = HirStatementKind::Return,
-           .source = statement,
-           .value = lowerExpression(returnStatement->value(), model,
-                                    classArguments, classValueArguments, body)},
-          body);
+      return appendStatement({.kind = HirStatementKind::Return,
+                              .source = statement,
+                              .value = lowerReturnExpression(
+                                  returnStatement->value(), model,
+                                  classArguments, classValueArguments, body)},
+                             body);
     }
     if (const auto *switchStatement = stmtAs<SwitchStmt>(statement)) {
       const std::optional<HirValueId> subject =
@@ -2922,9 +2969,18 @@ private:
           input->info.traits.containsBorrowedState) {
         return std::nullopt;
       }
+      while (input->kind == HirValueKind::Grouping &&
+             input->operands.size() == 1) {
+        source = input->operands.front();
+        input = body.findValue(source);
+        if (input == nullptr)
+          return std::nullopt;
+      }
       kind = input->retainedReceiverProjection
                  ? HirCallInputKind::RetainedReceiver
-                 : HirCallInputKind::MoveValue;
+             : input->kind == HirValueKind::Move
+                 ? HirCallInputKind::MoveValue
+                 : HirCallInputKind::MutableTemporaryBorrow;
     } else if (!temporaryReceiver &&
                input->info.category == ValueCategory::Place) {
       kind = receiverMode == CallReceiverMode::MutablePlace
@@ -2988,6 +3044,8 @@ private:
     value.borrowArgument = resolved.borrowArgument;
     value.borrowAccess = resolved.borrowAccess;
     value.callableBoundary = resolved.boundary;
+    if (resolved.receiverMode == CallReceiverMode::Consuming)
+      value.callableInvocation = resolved.capability;
     value.definedFailure.propagation =
         resolved.dispatch == CallDispatch::Virtual
             ? FailurePropagationKind::VirtualCall
@@ -4378,8 +4436,18 @@ private:
         // The callee is an explicit receiver even when a final pack prevents
         // formation of the fixed-arity call plan. MIR stages it before the
         // expanded arguments rather than losing the closure environment.
-        if (value.operands.size() == call->arguments().size() + 1)
+        if (value.operands.size() == call->arguments().size() + 1) {
+          // Grouping has no evaluation or ownership effect. Preserve the
+          // exact callable producer rather than creating a second closure
+          // value merely to invoke a parenthesized lambda literal.
+          const HirValue *callee = body.findValue(value.operands.front());
+          while (callee != nullptr && callee->kind == HirValueKind::Grouping &&
+                 callee->operands.size() == 1) {
+            value.operands.front() = callee->operands.front();
+            callee = body.findValue(value.operands.front());
+          }
           value.receiver = value.operands.front();
+        }
         value.callableBoundary = resolved->boundary;
         value.callableInvocation = resolved->capability;
         if (const auto target = lambdaTargets.find(resolved->lambda);
@@ -4501,7 +4569,8 @@ private:
       value.dispatch = resolved->dispatch;
       value.dispatchOwner = resolved->dispatchOwner;
       value.callableBoundary = resolved->boundary;
-      if (resolved->kind == OverloadedOperator::Call) {
+      if (resolved->kind == OverloadedOperator::Call ||
+          resolved->receiverMode == CallReceiverMode::Consuming) {
         value.callableInvocation = resolved->capability;
       }
       value.borrowOrigin = resolved->borrowOrigin;
@@ -4626,6 +4695,12 @@ private:
       ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
       CallReceiverMode receiverMode = CallReceiverMode::None;
       bool supportedReceiver = true;
+      if (resolvedTarget != nullptr && resolved != nullptr &&
+          resolved->declaration != nullptr &&
+          resolved->receiverMode == CallReceiverMode::Consuming) {
+        value.callableInvocation = callableInvocationCapability(
+            resolved->declaration->receiverMutability());
+      }
       if (resolvedOperator != nullptr) {
         callReceiver = value.receiver;
         receiverMutability = resolvedOperator->receiverMutability;
@@ -4711,7 +4786,9 @@ private:
       const bool freshReceiver =
           resolved != nullptr &&
           (resolved->receiverMode == CallReceiverMode::FreshTemporaryRead ||
-           resolved->receiverMode == CallReceiverMode::FreshTemporaryMutable);
+           resolved->receiverMode == CallReceiverMode::FreshTemporaryMutable ||
+           (resolved->receiverMode == CallReceiverMode::Consuming &&
+            resolved->kind != OverloadedOperator::Call));
       const HirValue *receiver = body.findValue(value.operands.front());
       const bool borrowedValueReceiver =
           resolved != nullptr &&

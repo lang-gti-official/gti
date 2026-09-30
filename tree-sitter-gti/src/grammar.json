@@ -2846,12 +2846,25 @@
           "type": "CHOICE",
           "members": [
             {
-              "type": "FIELD",
-              "name": "mutable",
-              "content": {
-                "type": "STRING",
-                "value": "mut"
-              }
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "FIELD",
+                  "name": "mutable",
+                  "content": {
+                    "type": "STRING",
+                    "value": "mut"
+                  }
+                },
+                {
+                  "type": "FIELD",
+                  "name": "consuming",
+                  "content": {
+                    "type": "STRING",
+                    "value": "&&"
+                  }
+                }
+              ]
             },
             {
               "type": "BLANK"
@@ -3385,12 +3398,25 @@
               "type": "CHOICE",
               "members": [
                 {
-                  "type": "FIELD",
-                  "name": "mutable",
-                  "content": {
-                    "type": "STRING",
-                    "value": "mut"
-                  }
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "FIELD",
+                      "name": "mutable",
+                      "content": {
+                        "type": "STRING",
+                        "value": "mut"
+                      }
+                    },
+                    {
+                      "type": "FIELD",
+                      "name": "consuming",
+                      "content": {
+                        "type": "STRING",
+                        "value": "&&"
+                      }
+                    }
+                  ]
                 },
                 {
                   "type": "BLANK"

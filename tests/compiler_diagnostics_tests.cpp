@@ -174,22 +174,9 @@ std::string return_named(std::string result) {
       {standardLibraryRoot()});
   const lang::Diagnostic *returnCopy =
       findDiagnosticByCode(returned.diagnostics, "GTI-S2003");
-  const std::size_t returnedName =
-      returnSource.find("return result") + std::string("return ").size();
-  expect(
-      !returned.canGenerateCode() && returnCopy != nullptr &&
-          returnCopy->primary.start == returnedName &&
-          returnCopy->primary.end == returnedName + 6 &&
-          returnCopy->message ==
-              "Cannot return 'result' by copy because type 'std::string' "
-              "is move-only." &&
-          returnCopy->hints ==
-              std::vector<std::string>{
-                  "Use 'return std::move(result);' to transfer ownership."} &&
-          returnCopy->fixes.empty(),
-      "a named move-only return should identify the attempted copy and "
-      "spell the exact ownership transfer without offering an "
-      "intent-changing edit");
+  expect(returned.canGenerateCode() && returnCopy == nullptr,
+         "an exact named move-only return should move implicitly without "
+         "publishing the former copy diagnostic");
 
   const std::string expectedReturnSource = R"(
 #include <std/string>

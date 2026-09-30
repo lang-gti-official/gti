@@ -1540,6 +1540,14 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(return_result_cleanup_runtime PROPERTIES TIMEOUT 180)
   add_test(
+    NAME implicit_return_move_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/implicit_return_move_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/implicit_return_move.gti"
+  )
+  set_tests_properties(implicit_return_move_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME polymorphic_owner_cleanup_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/polymorphic_owner_cleanup_runtime_test.py"
@@ -1567,6 +1575,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(consuming_receiver_runtime PROPERTIES TIMEOUT 480)
+  add_test(
+    NAME consuming_methods_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/consuming_methods_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(consuming_methods_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME consuming_lambda_runtime
     COMMAND "${Python3_EXECUTABLE}"

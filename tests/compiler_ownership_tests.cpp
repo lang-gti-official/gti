@@ -333,6 +333,227 @@ int main() {
       "immutable storage");
 }
 
+void testImplicitReturnMoves() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("implicit-return-moves.gti", R"(
+class Owner {
+public:
+  Owner() {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  ~Owner() {}
+};
+
+struct Copyable {
+  int value = 7;
+};
+
+Owner return_parameter(Owner value) {
+  return value;
+}
+
+Owner return_local() {
+  Owner value{};
+  return (value);
+}
+
+Copyable return_copy(Copyable value) {
+  return value;
+}
+
+T return_generic<T>(T value) {
+  return value;
+}
+
+int main() {
+  Owner owner = return_generic(Owner());
+  Copyable copy = return_generic(Copyable());
+  return copy.value;
+}
+)",
+                               {standardLibraryPrelude()});
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected implicit-return-move diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "whole move-only locals and by-value parameters should move "
+         "implicitly at an exact return boundary");
+
+  const lang::FunctionDecl *parameterFunction =
+      findTopLevelFunction(frontend.program, "return_parameter");
+  const lang::FunctionDecl *localFunction =
+      findTopLevelFunction(frontend.program, "return_local");
+  const lang::FunctionDecl *copyFunction =
+      findTopLevelFunction(frontend.program, "return_copy");
+  const lang::FunctionDecl *genericFunction =
+      findTopLevelFunction(frontend.program, "return_generic");
+  const auto returnStatement =
+      [](const lang::FunctionDecl *function) -> const lang::ReturnStmt * {
+    if (function == nullptr || function->body() == nullptr) {
+      return nullptr;
+    }
+    for (const lang::StmtPtr &statement : function->body()->statements()) {
+      if (const auto *returned =
+              dynamic_cast<const lang::ReturnStmt *>(statement.get())) {
+        return returned;
+      }
+    }
+    return nullptr;
+  };
+  const lang::ReturnStmt *parameterReturn = returnStatement(parameterFunction);
+  const lang::ReturnStmt *localReturn = returnStatement(localFunction);
+  const lang::ReturnStmt *copyReturn = returnStatement(copyFunction);
+  expect(parameterReturn != nullptr && localReturn != nullptr &&
+             copyReturn != nullptr && parameterReturn->value() != nullptr &&
+             localReturn->value() != nullptr && copyReturn->value() != nullptr,
+         "the implicit-return fixture should retain all three return values");
+  if (parameterReturn == nullptr || localReturn == nullptr ||
+      copyReturn == nullptr || !parameterReturn->value() ||
+      !localReturn->value() || !copyReturn->value()) {
+    return;
+  }
+
+  const lang::ImplicitReturnMoveInfo *parameterMove =
+      frontend.semantics.findImplicitReturnMove(*parameterReturn->value());
+  const lang::ImplicitReturnMoveInfo *localMove =
+      frontend.semantics.findImplicitReturnMove(*localReturn->value());
+  expect(parameterMove != nullptr && localMove != nullptr &&
+             frontend.semantics.findImplicitReturnMove(*copyReturn->value()) ==
+                 nullptr,
+         "semantics should record implicit movement only for exact "
+         "noncopyable returns");
+
+  const lang::VariableDecl *local = nullptr;
+  if (localFunction != nullptr && localFunction->body() != nullptr &&
+      !localFunction->body()->statements().empty()) {
+    local = dynamic_cast<const lang::VariableDecl *>(
+        localFunction->body()->statements().front().get());
+  }
+  const lang::BindingInfo *parameterBinding =
+      parameterFunction == nullptr
+          ? nullptr
+          : frontend.semantics.findBinding(
+                parameterFunction->parameters().front());
+  const lang::BindingInfo *localBinding =
+      local == nullptr ? nullptr : frontend.semantics.findBinding(*local);
+  expect(parameterBinding != nullptr && parameterBinding->explicitlyMoved &&
+             localBinding != nullptr && localBinding->explicitlyMoved,
+         "implicitly returned owners should request physically movable "
+         "native storage for their source bindings");
+
+  const auto hasExactHirMove = [&](const lang::FunctionDecl *function,
+                                   const lang::Expr *source) {
+    const lang::FunctionInfo *info =
+        function == nullptr ? nullptr
+                            : frontend.semantics.findFunction(*function);
+    if (info == nullptr || source == nullptr) {
+      return false;
+    }
+    for (const lang::HirFunctionInstance &instance :
+         frontend.hir.functionInstances()) {
+      if (instance.declaration != info->id) {
+        continue;
+      }
+      for (const lang::HirValue &value : instance.body.values) {
+        if (value.source == source && value.kind == lang::HirValueKind::Move &&
+            value.intrinsic == lang::IntrinsicKind::Move &&
+            value.operands.size() == 1 && value.ownership &&
+            value.ownership->kind == lang::OwnershipEventKind::Move) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  expect(hasExactHirMove(parameterFunction, parameterReturn->value().get()) &&
+             hasExactHirMove(localFunction, localReturn->value().get()) &&
+             !hasExactHirMove(copyFunction, copyReturn->value().get()),
+         "HIR should materialize each implicit return as the same unary Move "
+         "used by explicit std::move while preserving copyable returns");
+
+  const lang::FunctionInfo *genericInfo =
+      genericFunction == nullptr
+          ? nullptr
+          : frontend.semantics.findFunction(*genericFunction);
+  std::size_t genericInstances = 0;
+  std::size_t genericMoveInstances = 0;
+  if (genericInfo != nullptr) {
+    for (const lang::HirFunctionInstance &instance :
+         frontend.hir.functionInstances()) {
+      if (instance.declaration != genericInfo->id) {
+        continue;
+      }
+      ++genericInstances;
+      genericMoveInstances +=
+          std::any_of(instance.body.values.begin(), instance.body.values.end(),
+                      [](const lang::HirValue &value) {
+                        return value.kind == lang::HirValueKind::Move;
+                      })
+              ? 1
+              : 0;
+    }
+  }
+  expect(genericInstances == 2 && genericMoveInstances == 1,
+         "concrete generic reanalysis should move the noncopyable instance "
+         "and leave the copyable instance as a copy");
+
+  const lang::FrontendResult excluded =
+      lang::Frontend().analyze("excluded-implicit-return-moves.gti", R"(
+class Owner {
+public:
+  Owner() {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  ~Owner() {}
+};
+
+class Holder {
+  Owner value;
+public:
+  Holder() : value(Owner()) {}
+  Owner take() mut { return this.value; }
+};
+
+struct Pair {
+  Owner value;
+  int marker;
+
+  Pair(Owner input) : value(std::move(input)), marker(0) {}
+};
+
+Owner return_binding() {
+  auto [value, marker] = Pair(Owner());
+  return value;
+}
+
+class Pinned {
+public:
+  Pinned() {}
+  Pinned(Pinned& other) = delete;
+  Pinned(Pinned&& other) = delete;
+};
+
+Pinned return_immovable(Pinned value) { return value; }
+int main() { return 0; }
+)",
+                               {standardLibraryPrelude()});
+  expect(!excluded.canGenerateCode() &&
+             countDiagnosticCode(excluded.diagnostics, "GTI-S2003") == 2 &&
+             hasDiagnosticCode(excluded.diagnostics, "GTI-S2018") &&
+             hasDiagnostic(excluded.diagnostics,
+                           "Returning this value would copy move-only type") &&
+             hasDiagnostic(excluded.diagnostics,
+                           "cannot partially move structured binding") &&
+             hasDiagnostic(excluded.diagnostics,
+                           "Cannot return a value of type 'Pinned'"),
+         "implicit return movement should exclude fields, structured-binding "
+         "projections, and immovable values rather than weakening their "
+         "diagnostics");
+}
+
 void testEdgeSensitiveMoveFlow() {
   const lang::FrontendResult loopBackedges =
       lang::Frontend().analyze("loop-backedge-moves.gti", R"(
@@ -9581,10 +9802,7 @@ int main() {
          "fail");
   expect(
       hasDiagnostic(invalid.diagnostics,
-                    "Cannot return 'widget' by copy because type "
-                    "'std::unique_ptr") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "Unique owners can only be local bindings") &&
+                    "Unique owners can only be local bindings") &&
           hasDiagnostic(invalid.diagnostics, "would copy a unique owner") &&
           hasDiagnostic(invalid.diagnostics, "already been moved") &&
           hasDiagnostic(invalid.diagnostics,
@@ -11044,15 +11262,12 @@ int main() {
          "copying or reusing move-only aggregates should fail semantically");
   expect(
       hasDiagnosticCode(invalid.diagnostics, "GTI-S2018") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "Cannot return 'value' by copy because type 'Buffer' "
-                        "is move-only") &&
           hasDiagnostic(invalid.diagnostics, "Cannot initialize 'copied'") &&
           hasDiagnostic(invalid.diagnostics, "would copy a unique owner") &&
           hasDiagnostic(invalid.diagnostics, "has already been moved") &&
           hasDiagnostic(invalid.diagnostics, "Cannot initialize 'nested_copy'"),
-      "aggregate diagnostics should cover return, call, copy, nesting, and "
-      "use after move");
+      "aggregate diagnostics should cover calls, copies, nesting, and use "
+      "after move while accepting the exact named return");
 }
 
 void testDefaultedDefaultLifecycle() {
@@ -11741,8 +11956,9 @@ int main() { return 0; }
                            "operator[] expects 1 parameter") &&
              hasDiagnostic(invalidContracts.diagnostics,
                            "operator< must return bool") &&
-             hasDiagnostic(invalidContracts.diagnostics,
-                           "operator+ must use a read-only receiver") &&
+             hasDiagnostic(
+                 invalidContracts.diagnostics,
+                 "operator+ must use a read-only or consuming receiver") &&
              hasDiagnostic(invalidContracts.diagnostics,
                            "operator- must return an owned value") &&
              hasDiagnostic(invalidContracts.diagnostics,
@@ -12399,14 +12615,16 @@ int main() {
 }
 )",
                                {standardLibraryPrelude()});
-  expect(!invalid.canGenerateCode() &&
-             hasDiagnostic(invalid.diagnostics,
-                           "requires an explicitly consumed receiver") &&
-             (hasDiagnostic(invalid.diagnostics, "has already been moved") ||
-              hasDiagnostic(invalid.diagnostics,
-                            "may have been moved on another")),
-         "once-callable lvalue and repeated invocation should fail through "
-         "receiver and path-sensitive move diagnostics");
+  expect(
+      !invalid.canGenerateCode() &&
+          hasDiagnostic(
+              invalid.diagnostics,
+              "requires an owned temporary or an explicitly moved receiver") &&
+          (hasDiagnostic(invalid.diagnostics, "has already been moved") ||
+           hasDiagnostic(invalid.diagnostics,
+                         "may have been moved on another")),
+      "once-callable lvalue and repeated invocation should fail through "
+      "receiver and path-sensitive move diagnostics");
 
   const lang::FrontendResult implicitForwarding =
       lang::Frontend().analyze("implicit-once-forwarding.gti", R"(
@@ -12563,11 +12781,208 @@ int main() { return 0; }
   invalidParser.parse();
   expect(invalidParser.hadError() &&
              hasDiagnostic(invalidParser.errors(),
-                           "supported only on operator()") &&
-             hasDiagnostic(invalidParser.errors(),
                            "cannot combine trailing 'mut' and '&&'"),
-         "the parser should confine trailing && to an unambiguous consuming "
-         "call operator");
+         "the parser should reject combined mutable and consuming qualifiers");
+}
+
+void testConsumingMethodsAndValueOperators() {
+  const std::string source = R"(
+class Builder {
+public:
+  mut int value = 0;
+  Builder(int n) : value(n) {}
+  Builder(Builder& other) = delete;
+  Builder(Builder&& other) = default;
+  int finish() { return this.value; }
+  int finish() mut { return this.value + 10; }
+  int finish() && { return this.value + 20; }
+  Builder append(int n) && { this.value += n; return std::move(this); }
+  Builder operator/(int n) { return Builder(this.value + n); }
+  Builder operator/(int n) && { this.value += n; return std::move(this); }
+};
+Builder make() { return Builder(1); }
+int main() {
+  Builder base = Builder(1);
+  mut Builder writable = Builder(2);
+  int read = base.finish();
+  int changed = writable.finish();
+  int fresh = make().append(2).finish();
+  int chain = (base / 3 / 4).finish();
+  int moved = std::move(writable).append(3).finish();
+  int conditional = (read == 1 ? make() : Builder(4)).finish();
+  return read + changed + fresh + chain + moved + conditional + base.finish() - 111;
+}
+)";
+  const auto frontend = lang::Frontend().analyze(
+      "consuming-methods.gti", source, {standardLibraryPrelude()});
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << "Consuming methods: " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(), "ordinary methods and value operators "
+                                     "should select consuming owned receivers");
+  const auto formatted = lang::Formatter().format(source);
+  expect(formatted.find("append(int n) &&") != std::string::npos &&
+             formatted.find("operator/(int n) &&") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "consuming methods and operators must format without losing their "
+         "qualifiers");
+  if (frontend.canGenerateCode()) {
+    const lang::LanguageQueries queries;
+    const auto hover = queries.hover(frontend, frontend.sourceGraph.entryUnit(),
+                                     source.find("append(int") + 2);
+    expect(hover && hover->signature.find("&&") != std::string::npos,
+           "method hover must preserve consuming receiver qualification");
+    for (int mutation = 0; mutation < 4; ++mutation) {
+      lang::MirProgram forged = frontend.mir;
+      auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+          forged.functionInstances());
+      bool changed = false;
+      for (auto &function : functions) {
+        if (changed)
+          break;
+        for (auto &block : function.body.blocks) {
+          if (changed)
+            break;
+          for (auto &instruction : block.instructions) {
+            if (mutation == 3 &&
+                instruction.kind == lang::MirInstructionKind::Initialize &&
+                instruction.destination) {
+              const auto *place =
+                  function.body.findPlace(*instruction.destination);
+              if (place && place->root == lang::MirPlaceRootKind::Temporary &&
+                  place->type.kind == lang::SemanticType::Class) {
+                instruction = lang::makeMirInstructionTombstone(instruction);
+                changed = true;
+              }
+            }
+            if (mutation == 0 && instruction.callableInvocation ==
+                                     lang::CallableInvocationCapability::Once) {
+              instruction.callableInvocation.reset();
+              changed = true;
+            } else if (mutation == 1 &&
+                       instruction.callInputKind ==
+                           lang::HirCallInputKind::MutableTemporaryBorrow) {
+              instruction.callInputKind =
+                  lang::HirCallInputKind::ReadTemporaryBorrow;
+              instruction.operands.front().kind =
+                  lang::MirOperandKind::BorrowRead;
+              changed = true;
+            } else if (mutation == 2 &&
+                       instruction.kind == lang::MirInstructionKind::Move &&
+                       instruction.operands.size() == 1) {
+              const auto *place =
+                  function.body.findPlace(instruction.operands.front().place);
+              if (place && place->root == lang::MirPlaceRootKind::This &&
+                  place->projections.empty()) {
+                function.receiverMutability =
+                    lang::ReceiverMutability::ReadOnly;
+                changed = true;
+              }
+            }
+            if (changed)
+              break;
+          }
+        }
+      }
+      expect(
+          changed && !lang::verifyMirProgram(forged).valid(),
+          "MIR must independently reject forged consuming receiver authority");
+    }
+  }
+
+  const std::vector<std::pair<std::string, std::string>> invalid = {
+      {"class C { public: void take() && {} }; int main() { C c{}; c.take(); "
+       "return 0; }",
+       "requires an owned temporary"},
+      {"class C { public: int x = 1; void take() && {} }; int main() { C c{}; "
+       "std::move(c).take(); return c.x; }",
+       "already been moved"},
+      {"class C { public: C take() { return std::move(this); } }; int main() { "
+       "return 0; }",
+       "std::move(this) requires a consuming receiver"},
+      {"class C { public: ~C() {} C take() && { return this; } }; int main() { "
+       "return 0; }",
+       "Returning this value would copy move-only type"},
+      {"class C { public: int x = 1; int take() && { auto owned = "
+       "std::move(this); return this.x; } }; int main() { return 0; }",
+       "already been moved"},
+      {"class C { public: C take() && { auto owned = std::move(this); return "
+       "std::move(this); } }; int main() { return 0; }",
+       "already been moved"},
+      {"class C { public: mut int x = 1; C take() && { int old = "
+       "std::move(this.x); return std::move(this); } }; int main() { return 0; "
+       "}",
+       "already been moved"},
+      {"class C { public: int x = 1; int& take() && { return this.x; } }; int "
+       "main() { return 0; }",
+       "consuming method cannot return"},
+      {"class C { public: bool operator==(C& other) && { return true; } }; int "
+       "main() { return 0; }",
+       "value-producing operators"},
+      {"class C { public: void operator+=(int n) && {} }; int main() { return "
+       "0; }",
+       "value-producing operators"},
+      {"class C { public: int x = 1; void take() && {} }; int main() { C c{}; "
+       "int& alias = c.x; std::move(c).take(); return alias; }",
+       "borrow"},
+      {"class C { public: int x = 1; C take() && { int& alias = this.x; auto c "
+       "= std::move(this); int observed = alias; return std::move(c); } }; int "
+       "main() { return 0; }",
+       "borrow"},
+      {"class C { public: int x = 1; int read() { return this.x; } int take() "
+       "&& { auto c = std::move(this); return read(); } }; int main() { return "
+       "0; }",
+       "already been moved"},
+      {"class C { public: int x = 1; int take(bool condition) && { if "
+       "(condition) { auto c = std::move(this); } return this.x; } }; int "
+       "main() { return 0; }",
+       "may have been moved"},
+      {"class C { public: mut int x = 1; void take() && { auto c = "
+       "std::move(this); this.x = 2; } }; int main() { return 0; }",
+       "already been moved"},
+      {"class C { public: int x = 1; void take() && { while (true) { auto c = "
+       "std::move(this); } } }; int main() { return 0; }",
+       "not available at a reachable loop backedge"},
+      {"class C { public: void take() && {} }; void run(C& borrowed) { "
+       "borrowed.take(); } int main() { return 0; }",
+       "requires an owned temporary"},
+      {"interface I { int& take() &&; }; int main() { return 0; }",
+       "consuming method cannot return"},
+      {"class C<T> { public: T take(T value) && { return value; } }; int "
+       "main() { C<std::string_view> c{}; auto value = "
+       "std::move(c).take(\"\"); return 0; }",
+       "consuming method cannot return"},
+  };
+  for (const auto &[text, fragment] : invalid) {
+    const auto result = lang::Frontend().analyze(
+        "invalid-consuming-method.gti", text, {standardLibraryPrelude()});
+    if (!hasDiagnostic(result.diagnostics, fragment)) {
+      std::cerr << "Missing diagnostic " << fragment << " for " << text << '\n';
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.message << '\n';
+    }
+    expect(!result.canGenerateCode() &&
+               hasDiagnostic(result.diagnostics, fragment) &&
+               !hasDiagnosticCode(result.diagnostics, "GTI-B0001"),
+           "invalid consuming method use must fail in the frontend");
+  }
+  const auto generic =
+      lang::Frontend().analyze("generic-consuming-method.gti", R"(
+class Box<T> {
+public:
+  mut T value;
+  Box(T value) : value(std::move(value)) {}
+  T take() && { return std::move(this.value); }
+  Box<T> identity<U>(U ignored) && { return std::move(this); }
+};
+int main() { return Box<int>(4).identity<int>(0).take() - 4; }
+)",
+                               {standardLibraryPrelude()});
+  if (!generic.canGenerateCode())
+    for (const auto &diagnostic : generic.diagnostics)
+      std::cerr << "Generic consuming: " << diagnostic.message << '\n';
+  expect(generic.canGenerateCode(),
+         "generic methods and generic owner instances must preserve consuming "
+         "receivers");
 }
 
 void testRangeBasedForAndIteratorProtocol() {
@@ -17793,11 +18208,7 @@ int main() {
       !invalid.semanticValid &&
           hasDiagnostic(invalid.diagnostics,
                         "Mutable method requires a mutable receiver") &&
-          countDiagnosticCode(invalid.diagnostics, "GTI-S2081") == 4 &&
-          hasDiagnostic(invalid.diagnostics,
-                        "explicit move from existing storage") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "not produced directly by an ordinary constructor") &&
+          countDiagnosticCode(invalid.diagnostics, "GTI-S2081") == 2 &&
           hasDiagnostic(invalid.diagnostics,
                         "cannot produce a reference or value") &&
           hasDiagnostic(invalid.diagnostics,
@@ -18915,6 +19326,7 @@ int main() {
 constexpr NamedTest kTests[] = {
     {"testOwnershipSemanticFoundation", testOwnershipSemanticFoundation},
     {"testExplicitValueMoves", testExplicitValueMoves},
+    {"testImplicitReturnMoves", testImplicitReturnMoves},
     {"testEdgeSensitiveMoveFlow", testEdgeSensitiveMoveFlow},
     {"testProjectedFieldMoves", testProjectedFieldMoves},
     {"testIndexedPlaceMovesAndInitialization",
@@ -18960,6 +19372,8 @@ constexpr NamedTest kTests[] = {
     {"testRestrictedMemberOperators", testRestrictedMemberOperators},
     {"testCallableMemberOperators", testCallableMemberOperators},
     {"testConsumingCallableOperators", testConsumingCallableOperators},
+    {"testConsumingMethodsAndValueOperators",
+     testConsumingMethodsAndValueOperators},
     {"testRangeBasedForAndIteratorProtocol",
      testRangeBasedForAndIteratorProtocol},
     {"testReadOnlyRangeLoans", testReadOnlyRangeLoans},

@@ -5204,6 +5204,20 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
       return result;
     }
   }
+  if (const ResolvedOperatorInfo *resolved =
+          semanticModel.findOperator(*producer);
+      resolved != nullptr && resolved->function != 0 &&
+      resolved->returnType == info->type &&
+      resolved->borrowOrigin == BorrowOriginKind::None) {
+    const FunctionInfo *target = semanticModel.findFunction(resolved->function);
+    if (target == nullptr && instanceBaseModel != nullptr)
+      target = instanceBaseModel->findFunction(resolved->function);
+    if (target != nullptr && target->linkage == LanguageLinkage::Gti) {
+      result.eligible = true;
+      result.failure = FreshTemporaryValueFailure::None;
+      return result;
+    }
+  }
   if (const auto *call = exprAs<Call>(producer)) {
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
     const FunctionInfo *target =
@@ -5255,6 +5269,15 @@ auto SemanticVisitor::Impl::freshTemporaryMethodSupported(
           !typeTraits(function.returnType).containsBorrowedState);
 }
 
+auto SemanticVisitor::Impl::consumingReceiverValue(
+    const ExprPtr &receiver) const -> bool {
+  const ExpressionInfo *info =
+      receiver ? semanticModel.findExpression(*receiver) : nullptr;
+  return info != nullptr && info->category == ValueCategory::Value &&
+         info->type.kind == SemanticType::Class && info->traits.movable &&
+         !info->traits.containsBorrowedState;
+}
+
 auto SemanticVisitor::Impl::receiverModeForObject(
     const ExprPtr &receiver, const CallableCandidate &function,
     bool allowFreshTemporary, bool consumingReceiver) const
@@ -5282,7 +5305,8 @@ auto SemanticVisitor::Impl::receiverModeForObject(
     return CallReceiverMode::MutablePlace;
   }
   if (allowFreshTemporary && freshTemporaryMethodSupported(function) &&
-      freshTemporaryValue(receiver).eligible) {
+      (freshTemporaryValue(receiver).eligible ||
+       consumingReceiverValue(receiver))) {
     return function.receiverMutability == ReceiverMutability::Mutable
                ? CallReceiverMode::FreshTemporaryMutable
                : CallReceiverMode::FreshTemporaryRead;
@@ -5303,7 +5327,11 @@ auto SemanticVisitor::Impl::callReceiverMode(
                  ? CallReceiverMode::MutablePlace
                  : CallReceiverMode::ReadOnlyPlace;
     }
-    return receiverModeForObject(member->object(), function, true);
+    return receiverModeForObject(
+        member->object(), function, true,
+        consumingReceiverValue(member->object()) &&
+            (function.receiverMutability == ReceiverMutability::Consuming ||
+             isExplicitMoveReceiver(member->object())));
   }
   return function.receiverMutability == ReceiverMutability::Mutable &&
                  receiverAllowsMutation(currentReceiverMutability)
@@ -5314,7 +5342,8 @@ auto SemanticVisitor::Impl::callReceiverMode(
 auto SemanticVisitor::Impl::receiverModeAllowsMutation(CallReceiverMode mode)
     -> bool {
   return mode == CallReceiverMode::MutablePlace ||
-         mode == CallReceiverMode::FreshTemporaryMutable;
+         mode == CallReceiverMode::FreshTemporaryMutable ||
+         mode == CallReceiverMode::Consuming;
 }
 
 auto SemanticVisitor::Impl::reportMutableReceiverFailure(
@@ -5817,7 +5846,7 @@ auto SemanticVisitor::Impl::movedSourcePlace(const ExprPtr &expression)
 
 auto SemanticVisitor::Impl::setProjectedValueState(const SemanticPlace &place,
                                                    ValueState state) -> void {
-  if (place.root == nullptr || place.projections.empty()) {
+  if (place.root == nullptr || (place.projections.empty() && !place.receiver)) {
     return;
   }
   auto found = std::find_if(place.root->projectedValueStates.begin(),

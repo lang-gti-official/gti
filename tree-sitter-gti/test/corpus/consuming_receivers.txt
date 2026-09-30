@@ -1,0 +1,27 @@
+==================
+Consuming instance methods and value operators
+==================
+class Builder {
+  Builder append(int n) && {}
+  Builder operator/(int n) && {}
+  int finish() &&;
+};
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (class_body
+      (method_declaration
+        (type (user_type (identifier)))
+        (identifier)
+        (parameter_clause (parameter (type (primitive_type)) (identifier)))
+        (block))
+      (operator_declaration
+        (type (user_type (identifier)))
+        (parameter_clause (parameter (type (primitive_type)) (identifier)))
+        (block))
+      (method_declaration
+        (type (primitive_type))
+        (identifier)
+        (parameter_clause)))))
