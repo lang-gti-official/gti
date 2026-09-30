@@ -150,9 +150,11 @@ dereference operation.
 The default executable profile is single-threaded. GTI also implements the
 ownership facts, process-wide storage policy, owned managed threads, and
 ordered scalar atomics with sequentially consistent defaults in its opt-in
-concurrent profile.
-Mutex-protected borrows, scoped threads, detach, and foreign-thread entry
-remain unavailable.
+concurrent profile. Owner-tied `std::mutex<T>` guards provide scoped
+mutex-protected borrows. The unsafe `<std/cthread>` surface separately provides
+registered manual workers, once initialization, manual mutexes, and manual
+condition variables. Scoped cross-thread borrows, detach, thread-specific
+storage, and arbitrary foreign-thread entry remain unavailable.
 
 For a concrete type `T`:
 
@@ -232,8 +234,8 @@ The adopted initial rules are:
 `mut` grants mutation through one local access path. It does not mean atomic,
 volatile, synchronized, transfer-capable, share-capable, or safe for concurrent
 use. Concurrent mutation must be mediated by an operation with an explicit
-synchronization contract, such as the implemented `std::atomic<T>` or a future
-mutex guard.
+synchronization contract, such as the implemented `std::atomic<T>` or
+`std::mutex<T>` guard.
 
 The executable managed-thread model consumes one exact owned `void()` task
 through `std::thread` or one exact owned `Result()` task through
@@ -249,13 +251,16 @@ completion.
 In the concurrent profile, namespace globals and static fields must be
 immutable and share-capable. Ordinary mutable globals/static fields are
 ill-formed; synchronized mutation uses an immutable global atomic or future
-mutex value. Borrowed-state and raw-pointer globals do not qualify merely by
-being immutable, and cleanup-owning process-wide values wait for a complete
-shutdown/foreign-thread contract. These restrictions do not change current
-single-threaded mutable globals. The reference compiler reports `GTI-S2060`
-at the process-wide binding when concurrent selection rejects mutability or a
-non-share-capable concrete type. Structural aliases and concrete generic
-instances use the same resolved type fact; explicit nominal opt-outs are
+process-wide mutex value with a complete shutdown contract. The implemented
+`std::mutex<T>` remains a local cleanup-owning owner and therefore does not
+fill that global role. Borrowed-state and raw-pointer globals do not qualify
+merely by being immutable, and cleanup-owning process-wide values wait for a
+complete shutdown/foreign-thread contract. These restrictions do not change
+current single-threaded mutable globals. The reference compiler reports
+`GTI-S2060` at the process-wide binding when concurrent selection rejects
+mutability or a non-share-capable concrete type. Structural aliases and
+concrete generic instances use the same resolved type fact; explicit nominal
+opt-outs are
 reported as related causes when available. The profile-independent `GTI-S2061`
 cleanup restriction runs first, so a cleanup-owning global/static does not also
 receive a concurrent-profile diagnostic.

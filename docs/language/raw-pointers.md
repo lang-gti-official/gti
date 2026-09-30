@@ -192,10 +192,12 @@ an unsafe function cannot convert to a native callback or a safe function item,
 including an algorithm argument or managed-thread task, even inside `unsafe`.
 A safe wrapper is appropriate only when it establishes the precondition itself.
 
-For a future C-style thread wrapper that retains a raw context, the obligation
-extends until the native consumer has finished, not just until the initiating
-call returns. This attribute does not itself enable concurrent native callbacks,
-runtime attachment, or any additional C-thread operation.
+`std::thrd_create` is the current C-style case that retains a raw context. When
+creation succeeds, the unsafe caller keeps that context and everything
+reachable through it live and appropriately synchronized until successful
+join, not merely until `thrd_create` returns. The `[[unsafe]]` attribute does
+not itself enable concurrent native callbacks, runtime attachment, or any
+C-thread operation outside the exact registered `<std/cthread>` contract.
 
 ## Native C ABI
 
