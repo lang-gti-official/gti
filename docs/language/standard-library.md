@@ -215,6 +215,12 @@ The current implemented foundation includes:
 - `<std/cstdio>` counted stdout/stderr, bounded stdin reads, and unbuffered file
   open/read/write/seek/tell/close through recoverable source-defined wrappers
   and a move-only `std::FILE` owner; and
+- `<std/encoding>` strict source-defined binary-to-text conversion. Standard
+  padded RFC 4648 Base64 and lowercase hexadecimal encoders preserve all
+  counted input bytes, including embedded zeroes. Their decoders return
+  `expected<std::string, std::encoding::decode_errc>` and reject malformed,
+  non-canonical, or policy-ambiguous input; see
+  [Binary-to-text encoding](encoding.md); and
 - `<std/chrono>` exact signed `std::chrono::nanoseconds`, distinct monotonic and
   Unix-wall-clock time points, recoverable clock reads, checked elapsed
   subtraction, and normalized pre-epoch Unix second/subsecond decomposition;

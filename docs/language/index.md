@@ -27,7 +27,8 @@ Focused current contracts add detail for
 [concepts](concepts.md), [expected values](expected.md),
 [ranges](ranges.md), [raw pointers](raw-pointers.md),
 [native C interoperation](native-c-interop.md),
-[concurrency and atomics](concurrency.md), [I/O](io.md), and
+[concurrency and atomics](concurrency.md), [I/O](io.md),
+[binary-to-text encoding](encoding.md), and
 [TCP ownership](tcp.md).
 
 ## Authority

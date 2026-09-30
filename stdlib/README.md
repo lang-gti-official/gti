@@ -265,6 +265,15 @@ Front/back, mutable `at`, resize, shrink-to-fit, pop-back, and constant-time
 storage `swap` are implemented. Swap also exchanges size and capacity without
 copying characters or allocating.
 
+`<std/encoding>` provides source-defined binary-to-text codecs over counted
+`std::string_view` input. `std::encoding::base64` emits and accepts strict
+standard-alphabet RFC 4648 text with canonical `=` padding;
+`std::encoding::hex` emits lowercase and accepts either letter case. Decoders
+return `expected<std::string, std::encoding::decode_errc>` and do not ignore
+whitespace, separators, prefixes, or malformed padding. Both codecs preserve
+embedded zeroes and arbitrary byte values. They are representations, not
+encryption, authentication, or Unicode transforms.
+
 `std::vector<T>` is implemented in `std/vector.gti` as an ordinary source-defined
 class over `gti_internal::prefix_storage<T>` and imported with
 `#include <std/vector>`. `T` must satisfy `std::movable`, and the vector itself is

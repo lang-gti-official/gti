@@ -1491,6 +1491,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(string_ordering_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME encoding_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/encoding_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(encoding_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME function_item_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/function_item_runtime_test.py"

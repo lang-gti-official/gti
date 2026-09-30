@@ -1,0 +1,112 @@
+#include <std/encoding>
+#include <std/string>
+
+bool bytes_equal(std::string& value, uint8_t first, uint8_t second,
+                 uint8_t third) {
+  return value.size() == std::size_t(3) &&
+         uint8_t(value[std::size_t(0)]) == first &&
+         uint8_t(value[std::size_t(1)]) == second &&
+         uint8_t(value[std::size_t(2)]) == third;
+}
+
+int main() {
+  if (std::encoding::base64::encode("") != "" ||
+      std::encoding::base64::encode("f") != "Zg==" ||
+      std::encoding::base64::encode("fo") != "Zm8=" ||
+      std::encoding::base64::encode("foo") != "Zm9v" ||
+      std::encoding::base64::encode("foobar") != "Zm9vYmFy") {
+    return 1;
+  }
+
+  mut std::string binary{};
+  binary.push_back(char(uint8_t(0)));
+  binary.push_back(char(uint8_t(255)));
+  binary.push_back(char(uint8_t(16)));
+  if (std::encoding::base64::encode(binary.view()) != "AP8Q" ||
+      std::encoding::hex::encode(binary.view()) != "00ff10") {
+    return 2;
+  }
+
+  mut std::string every_byte{};
+  for (mut int32_t value = int32_t(0); value < int32_t(256); value++) {
+    every_byte.push_back(char(uint8_t(value)));
+  }
+  std::string every_byte_base64 =
+      std::encoding::base64::encode(every_byte.view());
+  mut auto every_byte_from_base64 =
+      std::encoding::base64::decode(every_byte_base64.view());
+  std::string every_byte_hex =
+      std::encoding::hex::encode(every_byte.view());
+  mut auto every_byte_from_hex =
+      std::encoding::hex::decode(every_byte_hex.view());
+  if (!every_byte_from_base64 || !every_byte_from_hex ||
+      every_byte_from_base64.value() != every_byte ||
+      every_byte_from_hex.value() != every_byte) {
+    return 6;
+  }
+
+  mut auto empty64 = std::encoding::base64::decode("");
+  mut auto one = std::encoding::base64::decode("Zg==");
+  mut auto two = std::encoding::base64::decode("Zm8=");
+  mut auto three = std::encoding::base64::decode("Zm9v");
+  mut auto decoded_binary = std::encoding::base64::decode("AP8Q");
+  if (!empty64 || !empty64.value().empty() || !one || one.value() != "f" ||
+      !two || two.value() != "fo" || !three || three.value() != "foo" ||
+      !decoded_binary ||
+      !bytes_equal(decoded_binary.value(), uint8_t(0), uint8_t(255),
+                   uint8_t(16))) {
+    return 3;
+  }
+
+  mut auto invalid_length = std::encoding::base64::decode("A");
+  mut auto invalid_character = std::encoding::base64::decode("AA*A");
+  mut auto invalid_padding = std::encoding::base64::decode("AA=A");
+  mut auto early_padding = std::encoding::base64::decode("AA==AAAA");
+  mut auto first_padding = std::encoding::base64::decode("=AAA");
+  mut auto second_padding = std::encoding::base64::decode("A=AA");
+  mut auto whitespace = std::encoding::base64::decode("AA A");
+  mut auto noncanonical_two = std::encoding::base64::decode("AB==");
+  mut auto noncanonical_three = std::encoding::base64::decode("AAB=");
+  if (invalid_length ||
+      invalid_length.error() !=
+          std::encoding::decode_errc::invalid_length ||
+      invalid_character ||
+      invalid_character.error() !=
+          std::encoding::decode_errc::invalid_character ||
+      invalid_padding ||
+      invalid_padding.error() !=
+          std::encoding::decode_errc::invalid_padding ||
+      early_padding ||
+      early_padding.error() != std::encoding::decode_errc::invalid_padding ||
+      first_padding ||
+      first_padding.error() != std::encoding::decode_errc::invalid_padding ||
+      second_padding ||
+      second_padding.error() != std::encoding::decode_errc::invalid_padding ||
+      whitespace ||
+      whitespace.error() !=
+          std::encoding::decode_errc::invalid_character ||
+      noncanonical_two ||
+      noncanonical_two.error() !=
+          std::encoding::decode_errc::non_canonical_input ||
+      noncanonical_three ||
+      noncanonical_three.error() !=
+          std::encoding::decode_errc::non_canonical_input) {
+    return 4;
+  }
+
+  mut auto decoded_hex = std::encoding::hex::decode("00Ff10");
+  mut auto empty_hex = std::encoding::hex::decode("");
+  mut auto odd_hex = std::encoding::hex::decode("0");
+  mut auto invalid_hex = std::encoding::hex::decode("0g");
+  if (!decoded_hex ||
+      !bytes_equal(decoded_hex.value(), uint8_t(0), uint8_t(255),
+                   uint8_t(16)) ||
+      !empty_hex || !empty_hex.value().empty() || odd_hex ||
+      odd_hex.error() != std::encoding::decode_errc::invalid_length ||
+      invalid_hex ||
+      invalid_hex.error() != std::encoding::decode_errc::invalid_character) {
+    return 5;
+  }
+
+  return 0;
+}
