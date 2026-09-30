@@ -49,6 +49,12 @@ only exact ordered calls over a pack; it does not recognize any public
 formatting or string name or parse a format string. Counted literal writes and
 scalar dynamic-code-unit writes are the only host operations.
 
+`<std/encoding>` is another entirely source-defined boundary. Base64 and
+hexadecimal operate over counted string views and construct owning strings;
+their alphabets, padding rules, canonical-bit validation, and recoverable
+`decode_errc` results are ordinary GTI. No codec name, lookup table, or native
+encoding operation is recognized by the compiler or runtime.
+
 The hosted program-entry signature is one deliberately narrow exception to
 name-independent library evolution: semantics validates the canonical
 installed `std::vector<std::string>` declaration identities as the exact

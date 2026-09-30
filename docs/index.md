@@ -59,7 +59,8 @@ for the current implementation when a document is stale or ambiguous.
 - [Concepts](language/concepts.md), [ranges](language/ranges.md),
   [expected values](language/expected.md), and
   [concurrency](language/concurrency.md) — focused feature contracts.
-- [I/O](language/io.md), [clocks and durations](language/chrono.md),
+- [I/O](language/io.md), [binary-to-text encoding](language/encoding.md),
+  [clocks and durations](language/chrono.md),
   [child processes](language/process.md), [TCP](language/tcp.md),
   [HTTP/HTTPS](language/http.md), [JSON](language/json.md), and
   [standard library](language/standard-library.md) — current library-facing

@@ -10,6 +10,7 @@
     "stdlib/std/cmath.gti": "b8dcd896a4e7f3708d88c1f1ac5d8dc1f69aba3145c9fc1c5f9000e6a8097369",
     "stdlib/std/cstdio.gti": "4fdc4c99e067c1870d6dadd7b3dc14f8ae8ad817abdd082d2e54c583754ea13d",
     "stdlib/std/cthread.gti": "4b583b04dd052f5f05d0af2444718360eb12c2da546d4c6f1eddc05a39e8858f",
+    "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
     "stdlib/std/filesystem.gti": "114f4b841c6878ddaebfdcdab4e25b478bced44f3eb6f0e5be3c5cc7359c9874",
     "stdlib/std/format.gti": "0a6d4cb63ad0e661bf47f8fa8782317dc3c298b87903c497bcf982e36b0ce28b",
     "stdlib/std/forward_list.gti": "2152aab44209cfa14a3b1709f6250c3ef85db78e1e665d5bc8299f3cb353a4bf",
@@ -297,6 +298,13 @@
       "mode": "run",
       "source": "tests/fixtures/cthread_sleep_concurrent.gti",
       "execution_profile": "concurrent",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "encoding",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_encoding.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -929,6 +937,30 @@
       "case_ids": ["cthread", "cthread-concurrent", "cthread-create-join", "cthread-identity", "cthread-identity-concurrent", "cthread-mutex", "cthread-mutex-concurrent", "cthread-condition", "cthread-condition-concurrent", "cthread-once", "cthread-sleep", "cthread-sleep-concurrent"],
       "required_instantiations": ["initial and managed yield; stable initial/managed/manual identity and total equality; relative sleep with value/reference and unsafe pointer overloads; single-threaded and concurrent profiles; manual registered worker and once-only integer-result join; plain/recursive/timed mutexes, typed native-context data publication, and explicit destruction; condition signal/broadcast, wait/timedwait predicate loops, timeout reacquisition, and manual lifetime"],
       "evidence": ["stdlib/std/cthread.gti", "tests/cthread_runtime_test.py", "tests/cthread_sleep_test.py", "tests/cthread_mutex_test.py", "tests/cthread_condition_test.py", "tests/cthread_once_test.py", "tests/cthread_create_join_test.py", "tests/cthread_tests.cpp", "tests/fixtures/cthread_yield_call_count.cpp", "docs/language/concurrency.md"]
+    },
+    {
+      "id": "encoding.executable",
+      "source": "stdlib/std/encoding.gti",
+      "status": "executable",
+      "operations": [
+        "std::encoding::base64::decode",
+        "std::encoding::base64::encode",
+        "std::encoding::decode_errc",
+        "std::encoding::hex::decode",
+        "std::encoding::hex::encode"
+      ],
+      "case_ids": ["encoding"],
+      "required_instantiations": [
+        "RFC 4648 empty and one/two/three-byte tails",
+        "all 256 byte values through Base64 and hexadecimal round trips",
+        "strict invalid length, character, padding, and canonical-bit errors"
+      ],
+      "evidence": [
+        "docs/language/encoding.md",
+        "stdlib/std/encoding.gti",
+        "tests/encoding_runtime_test.py",
+        "tests/fixtures/stdlib_surface_encoding.gti"
+      ]
     },
     {
       "id": "filesystem.executable",
