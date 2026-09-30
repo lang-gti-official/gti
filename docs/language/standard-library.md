@@ -94,6 +94,17 @@ The current implemented foundation includes:
   shrink-to-fit, pop-back, equality and lexicographic relational comparisons
   against strings or counted string views (unsigned code-unit order, including
   embedded NULs; no locale or Unicode collation), and
+  counted-byte `find`/`rfind` (string, view or character, optional starting position),
+  `contains`, `starts_with`, `ends_with`, and `compare`. Missing search results
+  are `string::npos`; an empty needle matches at any valid position. `substr`
+  returns an independent owner. Indexed `insert`, `erase`, and `replace` are
+  mutating, linear-time operations returning `void`, not borrowed fluent
+  receivers. Insert and replace accept a string or counted view without copying
+  the source into another owner. Slice/erase/replace lengths clamp to the available remainder;
+  positions beyond `size()` raise `GTI-R0007`. Mutation retains capacity when
+  sufficient and excludes any live view into the destination, including a
+  replacement argument that aliases it. These operations count bytes, not
+  Unicode characters. This unit also provides
   source-defined base-10 `std::to_string` conversion for every fixed-width
   integer, plus `print`/`println` traversal through either a read-only borrow
   of a named owner or direct ownership transfer from a fresh string result;
@@ -295,8 +306,11 @@ The current implemented foundation includes:
   `remove_filename`, `replace_filename`, `replace_extension`, and `swap`
   modifiers, `assign`/`append`/`concat`, directory joining through `/` and
   `/=`, element-wise `compare` with the ordering and equality operators, and
-  `lexically_normal`. The unit performs no filesystem access: it is pure
-  pathname manipulation. Three departures from C++ are deliberate — a
+  `lexically_normal`. These path members are lexical; separate free operations
+  access the filesystem through recoverable `expected` results. They include
+  status/size queries, directories and streaming enumeration, copy/rename/remove,
+  links, working-directory access, and canonical resolution; see
+  [Filesystem](filesystem.md). Three path departures from C++ are deliberate — a
   pathname is stored exactly as supplied rather than normalized at
   construction, `operator+=` has not yet been added to this source-defined
   class, and `begin`/`end` are absent because a C++ path iterator walks elements
@@ -311,8 +325,8 @@ into per-component specification sections.
 Some implemented units also carry explicitly documented bodyless declarations
 for a reviewed next API slice. Such a declaration allows frontend checking but
 is not an implemented library operation: using it in a native build fails to
-link until its GTI body is supplied. Array swap, forward-list
-iteration and emplacement, and the list scaffold remain in that
+link until its GTI body is supplied. Array swap and forward-list
+iteration and emplacement remain in that
 category.
 
 The owned program-entry form names the canonical installed
@@ -385,6 +399,50 @@ a payload guarantee. Inferred and explicit generic calls share this contract.
 
 The existing `std::MAX_UINT64` constant is exactly 18446744073709551615, not
 the signed 64-bit maximum.
+
+### Numeric Input
+
+`<std/charconv>` defines `from_chars(text, output[, base])` for each fixed-width
+integer and `from_chars(text, output[, format])` for `float` and `double`.
+`text` is a counted `string_view` (use `owner.view()` for an owning string);
+`output` is a mutable exact-type reference.
+The returned `from_chars_result` contains `position`, the first unconsumed byte
+offset, and `ec`, one of `parse_errc::none`, `invalid_argument`, or
+`result_out_of_range`. Failure never changes the output. Invalid input consumes
+zero bytes; an out-of-range number consumes its complete valid numeric prefix.
+The conversion is locale independent and does not allocate or skip whitespace.
+An embedded NUL is a nonnumeric byte, not the end of the counted input.
+
+Integer bases are 2 through 36 (default 10), digits above nine are ASCII
+case-insensitive letters, and no radix prefix or leading plus is skipped.
+A leading minus is accepted only for signed destinations. Invalid bases return
+`invalid_argument`. Every width admits its exact extrema, including the signed
+minimum. The source-defined parser uses the same checked integer capabilities
+as the fixed-width arithmetic API, without adding overlapping overloads or
+changing exact overload selection.
+
+`chars_format` is a scoped enum with `general` (default), `fixed`, `scientific`,
+and `hex`, not a bitmask. Floating conversion accepts a leading minus, but no
+leading plus. General decimal form permits an exponent; fixed form stops
+before one; scientific form requires one. Hex form uses a binary `p` exponent
+and does not consume a `0x` prefix. Floating conversion rounds directly to the
+destination width, preserves signed zero and representable subnormals, accepts
+infinity/NaN spellings, and reports overflow or underflow-to-zero as out of
+range. NaN payload identity is not promised.
+
+`<std/string>` supplies `stoi`, `stol`, `stoll`, `stoul`, `stoull`, `stof`, and
+`stod` convenience functions accepting either `string_view` or `string&`,
+without copying the input. These return `expected<T, parse_errc>` instead
+of throwing. `stoi` produces `int32_t`; `stol`/`stoll` produce `int64_t` on
+every target; `stoul`/`stoull` produce `uint64_t`; `stof`/`stod` produce binary32/
+binary64. ASCII leading whitespace and a plus or minus sign are accepted,
+except unsigned conversion rejects minus rather than wrapping. Integer base
+defaults to ten; explicit zero enables leading-zero octal and `0x` hex detection.
+Floating convenience functions recognize decimal and `0x` hexadecimal input.
+An optional mutable `size_t&` position argument receives the consumed offset
+only on success and remains unchanged on failure. Integer overloads take an
+optional explicit base after that position, or as the second argument when
+position is not requested. There is no long-double type or `stold` overload.
 
 ## 7.4 Allocation And Containers
 
@@ -598,12 +656,52 @@ The `<std/forward_list>` declaration-only iterator is explicitly move-only and
 read-only.
 Nullable owner-tied traversal and invalidation remain unavailable; iterator
 operations are still bodyless, and generic emplacement remains scaffolded
-without executable conformance evidence. The separate `<std/list>` scaffold
-has no node representation because a compliant constant-time
-back operation requires a
-safe non-owning link that GTI cannot yet retain. The declaration-only span is
+without executable conformance evidence. The declaration-only span is
 replaced by the executable read-only single-owner `std::span<T>` surface above;
 mutable access and raw address exposure remain absent.
+
+`<std/list>` is an executable doubly-linked sequence. Each element has one
+exclusive node owner; private checked slot indexes represent previous/next
+links and a free-slot chain, never public retained handles. End insertion is
+amortized O(1), end removal and front/back access are O(1), and logical-index
+insertion/erasure are O(n). It supports read-only bidirectional traversal,
+mutable accessors, emplacement, resize, clear, swap, reverse, remove, unique,
+stable sort, and merge. Sorting uses O(n) index workspace and O(n log n)
+comparisons. Nodes retain element addresses while links/order change. Merge
+consumes the source's nodes, leaving it empty; clear and destruction are
+iterative, not recursive down a node chain.
+
+`<std/deque>` is a circular directory of exclusive per-element owners. Indexed
+access and end removal are O(1); insertion at either end is amortized O(1).
+Growth moves handles rather than elements, at the cost of a separate allocation
+per element. It supports checked indexing, mutable front/back/index access,
+end emplacement, indexed insert/emplace/erase, resize, clear, swap, and read-only
+bidirectional traversal. Middle edits shift suffix owner handles in O(n-index)
+time without relocating elements; insertion accepts the end index, while erasure
+requires an existing element.
+`<std/queue>` supplies FIFO front/back, push/emplace/pop, size/empty, clear and
+swap over that deque. These are move-only containers; explicit cloning or
+value algorithms require the corresponding element capabilities.
+
+`<std/set>` and `<std/unordered_set>` project immutable keys from the existing
+AVL and hash dictionaries. They support lookup, insert/emplace, erase, clear,
+size/empty, swap and read traversal. Ordered sets expose bounds; unordered sets
+expose reserve, rehash and load-factor policy. Custom comparators/hash/equality
+objects are ordinary source values and swap with the container. Insertion
+returns a `pair<iterator, bool>` whose checked exclusive owner loan lasts for
+the result's lifetime; its iterator still cannot mutate keys. Ordinary
+traversal holds a shared owner loan. As with existing containers, any live loan
+prevents whole-owner mutation; stable native element addresses do not relax
+that safety rule. Iterator-position mutation, list splice, and complete C++
+container API parity are not claimed.
+
+`list`, `deque`, `queue`, `set`, and `unordered_set` implement ordinary owned
+collection initialization (`C values = {element, ...}`). Sequence elements
+retain source order; sets apply their usual duplicate-key policy. Elements
+must be movable, and set policies must support default construction for this
+syntax. Explicit policy-taking constructors remain usable when those policies
+are not default-constructible. The hooks use ordinary checked `requires`
+clauses rather than compiler recognition of these container names.
 
 The standard library currently has no stable public raw allocator, weak owner,
 or general unsafe memory API. The typed
@@ -709,7 +807,7 @@ The following component families remain planned or incomplete:
   accumulation, and hash generic-capability families;
 - indexed/named/specifier-based and binary64 formatting, formatter
   customization, buffered streams, explicit text decoding, and structured I/O;
-- general filesystem operations, calendar/time-zone breadth, random distributions and engine
+- recursive filesystem copy/iteration and permission editing, calendar/time-zone breadth, random distributions and engine
   breadth, connected networking, traffic buffers, atomic wait/notify, pointer
   atomics and fences, safe scoped condition variables, safe recursive mutexes,
   read/write mutexes, stop tokens, detached/scoped tasks, typed argument packs,

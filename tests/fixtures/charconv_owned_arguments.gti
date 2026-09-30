@@ -1,0 +1,106 @@
+#include <std/string>
+
+int main() {
+  mut std::string input{"17!"};
+  mut std::size_t position = 99;
+  {
+    auto parsed = std::stoi(input);
+    if (!parsed.has_value() || parsed.value() != 17) { return 1; }
+  }
+  {
+    auto parsed = std::stoi(input, 16);
+    if (!parsed.has_value() || parsed.value() != 23) { return 2; }
+  }
+  {
+    auto parsed = std::stoi(input, position);
+    if (!parsed.has_value() || parsed.value() != 17 || position != 2) { return 3; }
+  }
+  {
+    auto parsed = std::stoi(input, position, 16);
+    if (!parsed.has_value() || parsed.value() != 23 || position != 2) { return 4; }
+  }
+  {
+    auto parsed = std::stol(input);
+    if (!parsed.has_value() || parsed.value() != 17) { return 5; }
+  }
+  {
+    auto parsed = std::stol(input, 16);
+    if (!parsed.has_value() || parsed.value() != 23) { return 6; }
+  }
+  {
+    auto parsed = std::stol(input, position);
+    if (!parsed.has_value() || parsed.value() != 17 || position != 2) { return 7; }
+  }
+  {
+    auto parsed = std::stol(input, position, 16);
+    if (!parsed.has_value() || parsed.value() != 23 || position != 2) { return 8; }
+  }
+  {
+    auto parsed = std::stoll(input);
+    if (!parsed.has_value() || parsed.value() != 17) { return 9; }
+  }
+  {
+    auto parsed = std::stoll(input, 16);
+    if (!parsed.has_value() || parsed.value() != 23) { return 10; }
+  }
+  {
+    auto parsed = std::stoll(input, position);
+    if (!parsed.has_value() || parsed.value() != 17 || position != 2) { return 11; }
+  }
+  {
+    auto parsed = std::stoll(input, position, 16);
+    if (!parsed.has_value() || parsed.value() != 23 || position != 2) { return 12; }
+  }
+  {
+    auto parsed = std::stoul(input);
+    if (!parsed.has_value() || parsed.value() != 17) { return 13; }
+  }
+  {
+    auto parsed = std::stoul(input, 16);
+    if (!parsed.has_value() || parsed.value() != 23) { return 14; }
+  }
+  {
+    auto parsed = std::stoul(input, position);
+    if (!parsed.has_value() || parsed.value() != 17 || position != 2) { return 15; }
+  }
+  {
+    auto parsed = std::stoul(input, position, 16);
+    if (!parsed.has_value() || parsed.value() != 23 || position != 2) { return 16; }
+  }
+  {
+    auto parsed = std::stoull(input);
+    if (!parsed.has_value() || parsed.value() != 17) { return 17; }
+  }
+  {
+    auto parsed = std::stoull(input, 16);
+    if (!parsed.has_value() || parsed.value() != 23) { return 18; }
+  }
+  {
+    auto parsed = std::stoull(input, position);
+    if (!parsed.has_value() || parsed.value() != 17 || position != 2) { return 19; }
+  }
+  {
+    auto parsed = std::stoull(input, position, 16);
+    if (!parsed.has_value() || parsed.value() != 23 || position != 2) { return 20; }
+  }
+  {
+    auto parsed = std::stof(input);
+    if (!parsed.has_value() || parsed.value() != 17.0) { return 21; }
+  }
+  {
+    auto parsed = std::stof(input, position);
+    if (!parsed.has_value() || parsed.value() != 17.0) { return 22; }
+  }
+  {
+    auto parsed = std::stod(input);
+    if (!parsed.has_value() || parsed.value() != 17.0) { return 23; }
+  }
+  {
+    auto parsed = std::stod(input, position);
+    if (!parsed.has_value() || parsed.value() != 17.0) { return 24; }
+  }
+  auto temporary = std::stoi(std::string("42"));
+  input.clear();
+  if (!temporary.has_value() || temporary.value() != 42) { return 25; }
+  return 0;
+}

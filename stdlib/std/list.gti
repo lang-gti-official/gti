@@ -1,83 +1,295 @@
-// C++-familiar API scaffold for <std/list>.
-//
-// This defines the intended public shape only. Calling a bodyless method will
-// fail during native linking until node storage and iterator bodies exist.
-// The iterator is deliberately a move-only, read-only input iterator. Iterator
-// mutation APIs remain omitted until GTI can model their owner loans and
-// invalidation precisely.
+#include <std/vector>
+#include <std/memory>
 
 namespace std {
-  namespace detail {
-    class list_sentinel<T> {};
+namespace detail {
+enum class list_in_place { value };
+struct list_node<T> {
+  mut T value;
+  mut size_t previous = 0;
+  mut size_t next = 0;
+  list_node(T value) : value(std::move(value)) {}
+  list_node<Args...>(list_in_place tag, Args... args) : value(T(args...)) {}
+};
+struct list_slot<T> {
+  mut unique_ptr<list_node<T>> node = unique_ptr<list_node<T>>();
+  mut size_t next_free = 0;
+  list_slot() {}
+  size_t previous() { return this.node->previous; }
+  size_t next() { return this.node->next; }
+  void previous(size_t value) mut { this.node->previous = value; }
+  void next(size_t value) mut { this.node->next = value; }
+  void put(unique_ptr<list_node<T>> value) mut { this.node = std::move(value); }
+  T& get() { return this.node->value; }
+  T& read() { return this.node->value; }
+  mut T& get() mut { return this.node->value; }
+  unique_ptr<list_node<T>> take() mut {
+    auto previous = std::move(this.node);
+    this.node = unique_ptr<list_node<T>>();
+    return std::move(previous);
+  }
+};
+class list_sentinel<T> {};
+class list_iterator<T> {
+  vector<list_slot<T>>& slots;
+  size_t tail;
+  mut size_t position;
+public:
+  list_iterator(vector<list_slot<T>>& slots, size_t tail, size_t position)
+      : slots(slots), tail(tail), position(position) {}
+  T& operator*() {
+    gti_internal::require_container_argument(this.position != 0);
+    return this.slots[this.position - 1].get();
+  }
+  T& operator->() { return *this; }
+  void operator++() mut {
+    gti_internal::require_container_argument(this.position != 0);
+    this.position = this.slots[this.position - 1].next();
+  }
+  void operator--() mut {
+    if (this.position == 0) { this.position = this.tail; }
+    else { this.position = this.slots[this.position - 1].previous(); }
+    gti_internal::require_container_argument(this.position != 0);
+  }
+  bool operator!=(list_sentinel<T>& end) { return this.position != 0; }
+  bool operator==(list_sentinel<T>& end) { return this.position == 0; }
+};
+}
 
-    class list_iterator<T> {
-    public:
-      list_iterator(list_iterator<T>& other) = delete;
-      list_iterator(list_iterator<T>&& other) = default;
+/// A doubly linked owning sequence with checked internal slot-index links.
+/// Nodes never own their neighbors, so destruction is iterative.
+class list<T> {
+  mut vector<detail::list_slot<T>> slots{};
+  mut size_t head = 0;
+  mut size_t tail = 0;
+  mut size_t free = 0;
+  mut size_t length = 0;
 
-      T& operator*();
-      void operator++() mut;
-      bool operator!=(list_sentinel<T>& sentinel);
-    };
+  T& read_node(size_t node) { return this.slots[node - 1].get(); }
+
+  size_t locate(size_t position) {
+    gti_internal::index_bounds_check(position, this.length);
+    if (position < this.length / 2) {
+      mut size_t node = this.head;
+      for (mut size_t index = 0; index < position; index++) {
+        node = this.slots[node - 1].next();
+      }
+      return node;
+    }
+    mut size_t node = this.tail;
+    for (mut size_t index = this.length - 1; index > position; index--) {
+      node = this.slots[node - 1].previous();
+    }
+    return node;
   }
 
-  class list<T> {
-  public:
-    list() {}
+  size_t install(mut unique_ptr<detail::list_node<T>> owned, size_t before) mut {
+    mut size_t slot = this.free;
+    if (slot == 0) {
+      this.slots.push_back(detail::list_slot<T>());
+      slot = this.slots.size();
+    } else { this.free = this.slots[slot - 1].next_free; }
+    mut size_t previous = this.tail;
+    if (before != 0) { previous = this.slots[before - 1].previous(); }
+    owned->previous = previous;
+    owned->next = before;
+    this.slots[slot - 1].put(std::move(owned));
+    if (previous == 0) { this.head = slot; }
+    else { this.slots[previous - 1].next(slot); }
+    if (before == 0) { this.tail = slot; }
+    else { this.slots[before - 1].previous(slot); }
+    this.length++;
+    return slot;
+  }
 
-    // GTI containers are initially move-only owners.
-    list(list<T>& other) = delete;
-    list(list<T>&& other) = default;
+  unique_ptr<detail::list_node<T>> detach(size_t node) mut {
+    size_t previous = this.slots[node - 1].previous();
+    size_t next = this.slots[node - 1].next();
+    if (previous == 0) { this.head = next; }
+    else { this.slots[previous - 1].next(next); }
+    if (next == 0) { this.tail = previous; }
+    else { this.slots[next - 1].previous(previous); }
+    this.slots[node - 1].next_free = this.free;
+    this.free = node;
+    this.length--;
+    return this.slots[node - 1].take();
+  }
 
-    // Placeholder cleanup body until node destruction is implemented.
-    ~list() {}
-
-    bool empty();
-    size_t size();
-
-    T& front();
-    mut T& front() mut;
-
-    T& back();
-    mut T& back() mut;
-
-    void clear() mut;
-
-    void push_front(T value) mut
-      requires std::movable<T>;
-    void push_back(T value) mut
-      requires std::movable<T>;
-
-    void pop_front() mut;
-    void pop_back() mut;
-
-    mut T& emplace_front<Args...>(Args... args) mut;
-    mut T& emplace_back<Args...>(Args... args) mut;
-
-    void resize(size_t requested) mut
-      requires std::default_initializable<T>;
-    void resize(size_t requested, T value) mut
-      requires std::copyable<T>;
-
-    void swap(mut list<T>& other) mut;
-
-    // GTI consumes the other move-only owner by value; callers pass an
-    // explicit std::move rather than a general C++ rvalue reference.
-    void merge(list<T> other) mut
-      requires std::totally_ordered<T>;
-
-    size_t remove(T& value) mut
-      requires std::equality_comparable<T>;
-    size_t unique() mut
-      requires std::equality_comparable<T>;
-
-    void sort() mut
-      requires std::totally_ordered<T>;
-    void reverse() mut;
-
-    // Initial iteration is read-only because mutable owner-tied iterators are
-    // not supported safely yet.
-    detail::list_iterator<T> begin();
-    detail::list_sentinel<T> end();
-  };
+public:
+  list() {}
+  static list<T> collection_init(uint64_t count) { return list<T>(); }
+  static list<T> collection_insert(mut list<T> collection, T element) requires std::movable<T> {
+    collection.push_back(std::move(element));
+    return std::move(collection);
+  }
+  list(list<T>& other) = delete;
+  list(list<T>&& other) = default;
+  bool empty() { return this.length == 0; }
+  size_t size() { return this.length; }
+  T& front() {
+    gti_internal::index_bounds_check(size_t(0), this.length);
+    return this.slots[this.head - 1].get();
+  }
+  mut T& front() mut {
+    gti_internal::index_bounds_check(size_t(0), this.length);
+    return this.slots[this.head - 1].get();
+  }
+  T& back() {
+    gti_internal::index_bounds_check(size_t(0), this.length);
+    return this.slots[this.tail - 1].get();
+  }
+  mut T& back() mut {
+    gti_internal::index_bounds_check(size_t(0), this.length);
+    return this.slots[this.tail - 1].get();
+  }
+  void push_front(T value) mut requires std::movable<T> {
+    [[discard]] this.install(std::make_unique<detail::list_node<T>>(std::move(value)), this.head);
+  }
+  void push_back(T value) mut requires std::movable<T> {
+    [[discard]] this.install(std::make_unique<detail::list_node<T>>(std::move(value)), size_t(0));
+  }
+  mut T& emplace_front<Args...>(Args... args) mut {
+    size_t node = this.install(std::make_unique<detail::list_node<T>>(
+        detail::list_in_place::value, args...), this.head);
+    return this.slots[node - 1].get();
+  }
+  mut T& emplace_back<Args...>(Args... args) mut {
+    size_t node = this.install(std::make_unique<detail::list_node<T>>(
+        detail::list_in_place::value, args...), size_t(0));
+    return this.slots[node - 1].get();
+  }
+  void pop_front() mut {
+    if (!this.empty()) { [[discard]] this.detach(this.head); }
+  }
+  void pop_back() mut {
+    if (!this.empty()) { [[discard]] this.detach(this.tail); }
+  }
+  /// Positions are current logical offsets, never persistent node handles.
+  void insert(size_t position, T value) mut requires std::movable<T> {
+    if (position == this.length) { this.push_back(std::move(value)); return; }
+    size_t before = this.locate(position);
+    [[discard]] this.install(std::make_unique<detail::list_node<T>>(std::move(value)), before);
+  }
+  void erase(size_t position) mut {
+    size_t node = this.locate(position);
+    [[discard]] this.detach(node);
+  }
+  void clear() mut { while (!this.empty()) { this.pop_front(); } }
+  void resize(size_t requested) mut requires std::default_initializable<T> {
+    while (this.length > requested) { this.pop_back(); }
+    while (this.length < requested) { [[discard]] this.emplace_back(); }
+  }
+  void resize(size_t requested, T value) mut requires std::copyable<T> {
+    while (this.length > requested) { this.pop_back(); }
+    while (this.length < requested) { this.push_back(value); }
+  }
+  void swap(mut list<T>& other) mut {
+    this.slots.swap(other.slots);
+    size_t head = this.head;
+    size_t tail = this.tail;
+    size_t free = this.free;
+    size_t length = this.length;
+    this.head = other.head;
+    this.tail = other.tail;
+    this.free = other.free;
+    this.length = other.length;
+    other.head = head;
+    other.tail = tail;
+    other.free = free;
+    other.length = length;
+  }
+  void reverse() mut {
+    mut size_t node = this.head;
+    while (node != 0) {
+      size_t next = this.slots[node - 1].next();
+      size_t previous = this.slots[node - 1].previous();
+      this.slots[node - 1].next(previous);
+      this.slots[node - 1].previous(next);
+      node = next;
+    }
+    size_t head = this.head;
+    this.head = this.tail;
+    this.tail = head;
+  }
+  size_t remove(T& value) mut requires std::equality_comparable<T> {
+    mut size_t node = this.head;
+    mut size_t removed = 0;
+    while (node != 0) {
+      size_t next = this.slots[node - 1].next();
+      if (this.read_node(node) == value) {
+        [[discard]] this.detach(node);
+        removed++;
+      }
+      node = next;
+    }
+    return removed;
+  }
+  size_t unique() mut requires std::equality_comparable<T> {
+    if (this.empty()) { return 0; }
+    mut size_t previous = this.head;
+    mut size_t node = this.slots[previous - 1].next();
+    mut size_t removed = 0;
+    while (node != 0) {
+      size_t next = this.slots[node - 1].next();
+      if (this.read_node(previous) == this.read_node(node)) {
+        [[discard]] this.detach(node);
+        removed++;
+      } else { previous = node; }
+      node = next;
+    }
+    return removed;
+  }
+  void merge(mut list<T> other) mut requires std::totally_ordered<T> {
+    mut size_t before = this.head;
+    while (!other.empty()) {
+      while (before != 0 && !(other.front() < this.read_node(before))) {
+        before = this.slots[before - 1].next();
+      }
+      [[discard]] this.install(other.detach(other.head), before);
+    }
+  }
+  /// Stable mergesort of indexes: O(n log n), O(n) auxiliary indexes, no T moves.
+  void sort() mut requires std::totally_ordered<T> {
+    if (this.length < 2) { return; }
+    mut vector<size_t> order{};
+    order.reserve(this.length);
+    mut size_t node = this.head;
+    while (node != 0) {
+      order.push_back(node);
+      node = this.slots[node - 1].next();
+    }
+    mut vector<size_t> work = vector<size_t>(this.length);
+    for (mut size_t width = 1; width < this.length; width *= 2) {
+      for (mut size_t start = 0; start < this.length; start += width * 2) {
+        mut size_t middle = start + width;
+        if (middle > this.length) { middle = this.length; }
+        mut size_t end = middle + width;
+        if (end > this.length) { end = this.length; }
+        mut size_t left = start;
+        mut size_t right = middle;
+        for (mut size_t output = start; output < end; output++) {
+          if (right < end && (left == middle ||
+              this.read_node(order[right]) < this.read_node(order[left]))) {
+            work[output] = order[right];
+            right++;
+          } else { work[output] = order[left]; left++; }
+        }
+      }
+      order.swap(work);
+    }
+    this.head = order.front();
+    this.tail = order.back();
+    for (mut size_t index = 0; index < this.length; index++) {
+      size_t slot = order[index];
+      if (index == 0) { this.slots[slot - 1].previous(size_t(0)); }
+      else { this.slots[slot - 1].previous(order[index - 1]); }
+      if (index + 1 == this.length) { this.slots[slot - 1].next(size_t(0)); }
+      else { this.slots[slot - 1].next(order[index + 1]); }
+    }
+  }
+  detail::list_iterator<T> begin() {
+    return detail::list_iterator<T>(this.slots, this.tail, this.head);
+  }
+  detail::list_sentinel<T> end() { return detail::list_sentinel<T>(); }
+};
 }

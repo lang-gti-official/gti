@@ -2392,8 +2392,8 @@ auto SemanticVisitor::Impl::transientBorrowProduction(const ExprPtr &expression)
   }
 
   const auto fromSource =
-      [&](const ExprPtr &source, AccessMode resultAccess,
-          bool producerMutable) -> std::optional<TransientBorrowProduction> {
+      [&](const ExprPtr &source, AccessMode resultAccess, bool producerMutable,
+          bool valueCarrier) -> std::optional<TransientBorrowProduction> {
     std::optional<TransientBorrowProduction> nested =
         transientBorrowProduction(source);
     SemanticLoanPlace place =
@@ -2414,7 +2414,9 @@ auto SemanticVisitor::Impl::transientBorrowProduction(const ExprPtr &expression)
                           (nested && nested->access == AccessMode::Mutable)
                       ? AccessMode::Mutable
                       : AccessMode::ReadOnly,
-        .globalStorage = globalStorage};
+        .globalStorage = globalStorage,
+        .retainsValueCarrier =
+            valueCarrier || (nested && nested->retainsValueCarrier)};
   };
 
   if (const ResolvedOperatorInfo *resolved =
@@ -2435,7 +2437,8 @@ auto SemanticVisitor::Impl::transientBorrowProduction(const ExprPtr &expression)
              SemanticType::Reference &&
          resolved->parameterTypes[resolved->borrowArgument].referenceAccess ==
              AccessMode::Mutable);
-    return fromSource(*source, resolved->borrowAccess, mutableProducer);
+    return fromSource(*source, resolved->borrowAccess, mutableProducer,
+                      resolved->returnType.kind != SemanticType::Reference);
   }
   if (const ResolvedConstructionInfo *resolved =
           semanticModel.findConstruction(*expression);
@@ -2461,7 +2464,7 @@ auto SemanticVisitor::Impl::transientBorrowProduction(const ExprPtr &expression)
             SemanticType::Reference &&
         resolved->parameterTypes[resolved->borrowArgument].referenceAccess ==
             AccessMode::Mutable;
-    return fromSource(*source, resolved->borrowAccess, mutableProducer);
+    return fromSource(*source, resolved->borrowAccess, mutableProducer, true);
   }
   if (const auto *call = exprAs<Call>(expression.get())) {
     if (const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
@@ -2476,7 +2479,8 @@ auto SemanticVisitor::Impl::transientBorrowProduction(const ExprPtr &expression)
             resolved->parameterTypes[resolved->borrowArgument]
                     .referenceAccess == AccessMode::Mutable;
         return fromSource(call->arguments()[resolved->borrowArgument],
-                          resolved->borrowAccess, mutableProducer);
+                          resolved->borrowAccess, mutableProducer,
+                          resolved->returnType.kind != SemanticType::Reference);
       }
       if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
         const bool mutableProducer =
@@ -2484,8 +2488,9 @@ auto SemanticVisitor::Impl::transientBorrowProduction(const ExprPtr &expression)
             resolved->declaration->receiverMutability() ==
                 ReceiverMutability::Mutable;
         if (const auto *member = exprAs<Get>(call->callee().get())) {
-          return fromSource(member->object(), resolved->borrowAccess,
-                            mutableProducer);
+          return fromSource(
+              member->object(), resolved->borrowAccess, mutableProducer,
+              resolved->returnType.kind != SemanticType::Reference);
         }
         if (currentClass) {
           SemanticLoanPlace place = loanPlace(
@@ -2496,16 +2501,20 @@ auto SemanticVisitor::Impl::transientBorrowProduction(const ExprPtr &expression)
                 .access = mutableProducer ||
                                   resolved->borrowAccess == AccessMode::Mutable
                               ? AccessMode::Mutable
-                              : AccessMode::ReadOnly};
+                              : AccessMode::ReadOnly,
+                .retainsValueCarrier =
+                    resolved->returnType.kind != SemanticType::Reference};
           }
         }
       }
       if (resolved->borrowOrigin == BorrowOriginKind::Global &&
           resolved->borrowPlace) {
-        return TransientBorrowProduction{.place =
-                                             loanPlace(*resolved->borrowPlace),
-                                         .access = resolved->borrowAccess,
-                                         .globalStorage = true};
+        return TransientBorrowProduction{
+            .place = loanPlace(*resolved->borrowPlace),
+            .access = resolved->borrowAccess,
+            .globalStorage = true,
+            .retainsValueCarrier =
+                resolved->returnType.kind != SemanticType::Reference};
       }
     }
   }
@@ -2775,7 +2784,9 @@ auto SemanticVisitor::Impl::appendTransientReadPlaces(
       std::none_of(productions.begin(), productions.end(),
                    [&](const TransientBorrowProduction &existing) {
                      return existing.place == production->place &&
-                            existing.access == production->access;
+                            existing.access == production->access &&
+                            existing.retainsValueCarrier ==
+                                production->retainsValueCarrier;
                    })) {
     productions.push_back(std::move(*production));
   }
@@ -2797,6 +2808,11 @@ auto SemanticVisitor::Impl::appendTransientReadPlaces(
     if (const auto *member = exprAs<Get>(expression.get())) {
       if (!stablePlace) {
         appendTransientReadPlaces(member->object(), places, productions);
+      } else {
+        // The projection itself is the only place read, but a call producing
+        // its carrier can still retain a loan through the full expression.
+        std::vector<SemanticLoanPlace> ignoredReads;
+        appendTransientReadPlaces(member->object(), ignoredReads, productions);
       }
       return;
     }
@@ -2926,6 +2942,48 @@ auto SemanticVisitor::Impl::reportCommaTransientConflict(
   return false;
 }
 
+auto SemanticVisitor::Impl::validateSequencedTransientLoans(
+    const ExprPtr &left, const ExprPtr &right, const Token &location) -> void {
+  std::vector<SemanticLoanPlace> leftReads;
+  std::vector<TransientBorrowProduction> productions;
+  appendTransientReadPlaces(left, leftReads, productions);
+  if (productions.empty()) {
+    return;
+  }
+  std::vector<SemanticLoanPlace> rightReads;
+  std::vector<TransientBorrowProduction> rightProductions;
+  appendTransientReadPlaces(right, rightReads, rightProductions);
+  std::vector<SemanticLoanPlace> rightMutations;
+  appendTransientMutationPlaces(right, rightMutations);
+  for (const auto &production : productions) {
+    // A scalar read through a temporary reference ends that read's loan.
+    // A returned carrier, even after projecting a copied scalar from it,
+    // survives until the enclosing full-expression cleanup boundary.
+    if (!production.retainsValueCarrier) {
+      continue;
+    }
+    const auto overlaps = [&](const SemanticLoanPlace &place) {
+      return loanPlacesOverlap(production.place, place);
+    };
+    if (std::any_of(rightMutations.begin(), rightMutations.end(), overlaps) ||
+        (production.access == AccessMode::Mutable &&
+         std::any_of(rightReads.begin(), rightReads.end(), overlaps))) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2017", DiagnosticPhase::Semantics, location,
+          "A later operand accesses storage that is still borrowed by an "
+          "earlier operand of the same full expression.");
+      diagnostic.related.push_back({tokenSpan(expressionToken(left)),
+                                    "This operand produces a borrow retained "
+                                    "until the full expression ends."});
+      diagnostic.hints.emplace_back(
+          "Finish the first operation in a separate statement before "
+          "accessing the owner again.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      return;
+    }
+  }
+}
+
 auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
     std::span<const SemanticType> parameterTypes,
     std::span<const ExprPtr *> arguments, const Token &location,
@@ -2952,8 +3010,13 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
       mutations.emplace_back(index, std::move(place));
     }
     const bool referenceParameter = parameter.kind == SemanticType::Reference;
+    const ExpressionInfo *argumentInfo =
+        *arguments[index] ? semanticModel.findExpression(**arguments[index])
+                          : nullptr;
     const bool borrowedCarrierParameter =
-        !referenceParameter && typeTraits(parameter).containsBorrowedState;
+        !referenceParameter && (typeTraits(parameter).containsBorrowedState ||
+                                (argumentInfo != nullptr &&
+                                 argumentInfo->traits.containsBorrowedState));
     if (!referenceParameter && !borrowedCarrierParameter) {
       continue;
     }

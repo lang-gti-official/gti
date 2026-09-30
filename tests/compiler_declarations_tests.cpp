@@ -194,6 +194,54 @@ int main() {
          "moving a string while its dynamic string_view is live should be "
          "rejected");
 
+  const std::string textOwner = R"(
+#include <std/string>
+class Label {
+  mut std::string text = std::string("abc");
+public:
+  std::string_view view() { return this.text.view(); }
+  void edit() mut { this.text.clear(); }
+};
+)";
+  const auto ownerRelay = lang::Frontend().analyze(
+      "nested-owner-view.gti", textOwner + R"(
+std::string_view relay(Label& value) { return value.view(); }
+int main() {
+  Label value{};
+  auto view = relay(value);
+  return int(view.size());
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(ownerRelay.canGenerateCode(),
+         "a text view can relay a checked nested owner dependency");
+  for (const std::string &body :
+       {std::string("int main() { mut Label value{}; auto view = value.view(); "
+                    "value.edit(); return int(view.size()); }"),
+        std::string(
+            "std::string_view bad() { Label value{}; return value.view(); }"),
+        std::string(
+            "std::string_view bad(Label value) { return value.view(); }"),
+        std::string("int main() { auto view = Label().view(); return "
+                    "int(view.size()); }")}) {
+    const auto rejected = lang::Frontend().analyze(
+        "invalid-nested-owner-view.gti", textOwner + body,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    if (rejected.canGenerateCode() ||
+        (!hasDiagnosticCode(rejected.diagnostics, "GTI-S2017") &&
+         !hasDiagnosticCode(rejected.diagnostics, "GTI-S2045"))) {
+      std::cerr << "Unexpected nested-owner result for: " << body << '\n';
+      for (const auto &diagnostic : rejected.diagnostics) {
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      }
+    }
+    expect(!rejected.canGenerateCode() &&
+               (hasDiagnosticCode(rejected.diagnostics, "GTI-S2017") ||
+                hasDiagnosticCode(rejected.diagnostics, "GTI-S2045")),
+           "nested text-owner relays must reject invalidation, local escape, "
+           "by-value ownership escape, and temporary owners");
+  }
+
   const lang::FrontendResult escapedTextView = lang::Frontend().analyze(
       "escaped-string-view.gti",
       "#include <std/string>\n"

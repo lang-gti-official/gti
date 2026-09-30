@@ -522,6 +522,29 @@ propagation. A fallible destructor's paired cleanup-failure edge retains the
 original and secondary failure records. This is the same MIR parameter lifetime,
 not native argument evaluation or special recognition of `make_pair`.
 
+When an exact temporary-place extraction moves into prepared parameter storage,
+its MIR Reparent ends the source temporary's lifetime. The native lifetime-slot
+carrier is retired after movement so a loop can execute the same temporary
+again; generated movement has already disarmed source user cleanup. Named
+binding carriers do not take this early-retirement route. A stable unprojected
+local receiver may remain staged across an expected propagation branch only
+when the branch is the exact `ExpectedHasValue` observation and its unique
+success edge proves extraction of that same carrier.
+
+A cleanup-free direct result may forward into caller storage without inventing
+a result-drop obligation when it has one exact return use and only inert
+boundary/EndBorrow records intervene. Passive expected payload construction
+similarly permits its completed input loans to end before return. These
+representation choices preserve the verified Invoke and cleanup schedule.
+
+A temporary expected class result observed only through `has_value()` uses
+the same proved lifetime slot as propagation, without requiring payload
+extraction. Short-circuit evaluation may instead give it a conditional
+temporary place. That route requires exact producer/result-drop/source-value
+identity, initially unavailable storage, success-edge activation, one state
+test, and the verified conditional full-expression drop. It does not admit
+arbitrary temporary storage or infer lifetime from the native Expected type.
+
 A moved nominal callable receiver uses a different contract from a by-value
 argument. Its exact MIR Move initializes a Value-rooted lifetime slot, the
 receiver CallInput aliases that slot, and invocation retains its obligation.
@@ -1034,6 +1057,15 @@ in declaration order, followed by their exact parameter-cleanup schedule.
 MIR independently proves when a moved parameter's shell retirement cannot
 invoke a source destructor; the backend does not infer this from C++ moves.
 
+When earlier initializer work can fail, a later owned parameter move stays in
+the verified constructor body instead of being pulled into native initializer
+order. The same body-staged publication proof accepts cleanup-free generated
+class moves with passive scalar/enum fields: the exact parameter Move, field
+Initialize, and full-expression boundary remain mandatory, while value and
+construction-rollback obligations must be absent. Its inert parameter shell
+drop remains recorded. Custom lifecycle, borrowed state, and active cleanup
+do not use this passive route.
+
 An exact by-value parameter copy may also publish one field through the native
 member-initializer list when the copied class has generated copy/destruction,
 only passive scalar or enum state, no state-bearing base, and no active cleanup.
@@ -1126,6 +1158,14 @@ defaults only after proving every concrete source constructor covers each
 default exactly once. Explicit overrides suppress the corresponding default;
 failure unwinds completed fields before constructor parameters and caller
 values, without beginning the enclosing object's lifetime.
+
+A type-only concrete instance with no selected constructor and no generated
+default-construction route has no executable declaration-default consumer.
+Its catalog defaults are suppressed as well, so an unused generic sibling
+cannot impose conflicting native defaults on the same retained template.
+Every selected constructor still requires the full field-order, exact-type,
+and once-only coverage proof; absence of a constructor is not permission to
+omit a default from an executable construction.
 
 Generated/defaulted construction still uses the separate declaration schedule.
 Fallible ordinary class-value calls on that route remain `GTI-B0003`: generated

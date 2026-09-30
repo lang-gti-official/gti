@@ -128,9 +128,80 @@ int main() { Bag values = {Item(1), Item(2)}; return 0; }
   }
   expect(mutated, "regression exercises a multi-block moved-from cleanup tail");
 }
+
+void constrainedHooks() {
+  const std::string declarations = R"(
+class Batch<T> {
+public:
+  mut int count = 0;
+  Batch(int seed) : count(seed) {}
+  static Batch<T> collection_init(uint64_t count)
+      requires std::default_initializable<T> { return Batch<T>(0); }
+  static Batch<T> collection_insert(mut Batch<T> batch, T element)
+      requires std::integral<T> {
+    batch.count++;
+    return std::move(batch);
+  }
+};
+class NoDefault { public: NoDefault(int value) {} };
+Batch<T> wrap<std::integral T>(T element) {
+  Batch<T> result = {element};
+  return result;
+}
+)";
+  const auto valid = analyze("collection-constraints.gti", declarations + R"(
+int main() {
+  Batch<int> values = {1, 2};
+  Batch<int> empty = {};
+  auto generic = wrap<int>(3);
+  Batch<NoDefault> explicit_only{4};
+  return values.count + generic.count + explicit_only.count;
+}
+)");
+  expect(
+      valid.canGenerateCode(),
+      "constrained hooks compose with generic calls and explicit construction");
+  if (valid.canGenerateCode()) {
+    expect(lang::verifyMirProgram(valid.mir).valid() &&
+               !gti_test::emitCppText(valid).empty(),
+           "constrained collection calls execute through verified MIR");
+  } else {
+    for (const auto &diagnostic : valid.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  for (const std::string type : {"float", "NoDefault"}) {
+    const std::string source = declarations + "int main() { Batch<" + type +
+                               "> values = {}; return 0; }";
+    const auto invalid = analyze("collection-constraint-invalid.gti", source);
+    expect(!invalid.canGenerateCode(),
+           "both hook constraints apply to empty braces");
+    const auto found = std::find_if(
+        invalid.diagnostics.begin(), invalid.diagnostics.end(),
+        [](const auto &diagnostic) { return diagnostic.code == "GTI-S2029"; });
+    expect(found != invalid.diagnostics.end(),
+           "constraint failure stays semantic");
+    if (found != invalid.diagnostics.end()) {
+      expect(found->primary.source.ends_with(
+                 "/collection-constraint-invalid.gti") &&
+                 found->primary.start == source.rfind("{}") &&
+                 found->primary.end == found->primary.start + 1 &&
+                 found->fixes.empty(),
+             "constraint diagnostic identifies exact brace and offers no "
+             "unsafe fix");
+      expect(std::any_of(found->related.begin(), found->related.end(),
+                         [](const auto &related) {
+                           return related.message.find(
+                                      "collection initialization hook") !=
+                                  std::string::npos;
+                         }),
+             "constraint diagnostic relates the required hook");
+    }
+  }
+}
 } // namespace
 
 int main() {
+  constrainedHooks();
   returnCleanupTail();
   const auto generic = analyze("generic-collection.gti", R"(
 #include <std/vector>

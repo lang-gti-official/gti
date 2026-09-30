@@ -158,6 +158,18 @@ the checked helper scans the logical prefix and returns null on an embedded
 terminator. Public `std::string` methods remain ordinary source wrappers over
 those narrow capabilities.
 
+Numeric input in `<std/charconv>` keeps integer grammar, radix selection,
+overflow checking, consumed-byte offsets, and output publication in ordinary
+GTI. Integer accumulation uses the exact-width checked arithmetic capabilities;
+negative accumulation admits the signed minimum without overflowing its
+positive magnitude. Binary32 and binary64 conversion use the bounded
+`gti_rt_parse_f32_v1`/`gti_rt_parse_f64_v1` C ABI over a non-retained counted
+input, offset, format selector, and scalar output slots. Host `from_chars`
+provides locale-independent rounding without an intermediate floating width.
+The `<std/string>` convenience functions own whitespace/sign/radix-prefix
+policy in GTI and return recoverable errors instead of exposing native
+exceptions or errno. No public parsing function receives compiler recognition.
+
 The first public typed-allocation slice is the ordinary source-defined
 `std::unique_ptr<T>`, `std::make_unique`, `std::upcast_unique`,
 `std::allocator`, `std::storage<T>`, `std::alignment`, and `std::alloc_errc`

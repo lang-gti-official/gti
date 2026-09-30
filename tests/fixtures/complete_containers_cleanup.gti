@@ -1,0 +1,62 @@
+#include <std/list>
+#include <std/deque>
+#include <std/queue>
+#include <std/set>
+#include <std/unordered_set>
+#include <std/memory>
+#include <std/vector>
+#include <std/string>
+
+class Tracked {
+  std::unique_ptr<int> value;
+public:
+  Tracked(int value, int divisor) : value(std::make_unique<int>(value / divisor)) {}
+  Tracked(Tracked& other) = delete;
+  Tracked(Tracked&& other) = default;
+  ~Tracked() { std::println(*this.value); }
+  int get() { return *this.value; }
+};
+class Order {
+public:
+  bool operator()(Tracked& left, Tracked& right) { return left.get() < right.get(); }
+};
+class Hash {
+public:
+  std::size_t operator()(Tracked& key) { return std::size_t(key.get()); }
+};
+class Equal {
+public:
+  bool operator()(Tracked& left, Tracked& right) { return left.get() == right.get(); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  mut std::list<Tracked> linked{};
+  [[discard]] linked.emplace_back(1, 1);
+  [[discard]] linked.emplace_front(2, 1);
+  mut std::deque<Tracked> indexed{};
+  [[discard]] indexed.emplace_back(3, 1);
+  [[discard]] indexed.emplace(std::size_t(0), 4, 1);
+  mut std::queue<Tracked> fifo{};
+  [[discard]] fifo.emplace(5, 1);
+  [[discard]] fifo.emplace(6, 1);
+  mut std::set<Tracked, Order> ordered{};
+  [[discard]] ordered.emplace(7, 1);
+  [[discard]] ordered.emplace(8, 1);
+  mut std::unordered_set<Tracked, Hash, Equal> hashed{};
+  [[discard]] hashed.emplace(9, 1);
+  [[discard]] hashed.emplace(10, 1);
+  if (argc > 2) {
+    [[discard]] indexed.emplace(std::size_t(1), 11, 0);
+  }
+  if (argc == 2) {
+    [[discard]] linked.emplace_back(11, 0);
+  }
+  linked.pop_front();
+  linked.clear();
+  indexed.erase(std::size_t(1));
+  indexed.clear();
+  fifo.pop();
+  fifo.clear();
+  ordered.clear();
+  hashed.clear();
+  return 0;
+}

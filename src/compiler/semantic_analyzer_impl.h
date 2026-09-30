@@ -1350,6 +1350,7 @@ private:
     SemanticLoanPlace place;
     AccessMode access = AccessMode::ReadOnly;
     bool globalStorage = false;
+    bool retainsValueCarrier = false;
   };
 
   [[nodiscard]] std::optional<TransientBorrowProduction>
@@ -1373,6 +1374,10 @@ private:
 
   [[nodiscard]] bool reportCommaTransientConflict(const ExprPtr &expression,
                                                   const Token &location);
+
+  void validateSequencedTransientLoans(const ExprPtr &left,
+                                       const ExprPtr &right,
+                                       const Token &location);
 
   void validateCallPlaceExclusivityImpl(
       std::span<const SemanticType> parameterTypes,

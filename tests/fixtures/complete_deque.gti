@@ -1,0 +1,70 @@
+#include <std/deque>
+#include <std/queue>
+#include <std/memory>
+int main() {
+  mut std::deque<int> values{};
+  for (mut int i = 0; i < 40; i++) { values.push_back(i); }
+  for (mut int i = 0; i < 35; i++) { values.pop_front(); }
+  for (mut int i = 40; i < 100; i++) { values.push_back(i); }
+  for (mut int i = 34; i >= 0; i--) { values.push_front(i); }
+  mut int next_value = 0;
+  for (auto& value : values) {
+    if (value != next_value) { return 1; }
+    next_value++;
+  }
+  if (next_value != 100 || values.back() != 99) { return 2; }
+  values[std::size_t(50)] = 500;
+  if (values.at(std::size_t(50)) != 500) { return 3; }
+  mut std::deque<int> other{};
+  other.push_back(-1);
+  values.swap(other);
+  if (values.size() != 1 || values.front() != -1 || other.size() != 100) { return 4; }
+  values.clear();
+  values.pop_back();
+  values.pop_front();
+  [[discard]] values.emplace_front(7);
+  [[discard]] values.emplace_back(8);
+  if (values.front() != 7 || values.back() != 8) { return 5; }
+  values.resize(std::size_t(5), 9);
+  values.resize(std::size_t(7));
+  if (values.size() != 7 || values[std::size_t(4)] != 9 || values.back() != 0) { return 8; }
+  values.resize(std::size_t(2));
+  values.insert(std::size_t(0), 6);
+  values.insert(values.size(), 10);
+  [[discard]] values.emplace(std::size_t(3), 9);
+  for (mut std::size_t i = 0; i < values.size(); i++) {
+    if (values[i] != int(i) + 6) { return 9; }
+  }
+  values.erase(std::size_t(0));
+  values.erase(std::size_t(1));
+  values.erase(values.size() - 1);
+  if (values.size() != 2 || values.front() != 7 || values.back() != 9) { return 10; }
+  mut std::deque<int> wrapped{};
+  for (mut int i = 0; i < 8; i++) { wrapped.push_back(i); }
+  for (mut int i = 0; i < 5; i++) { wrapped.pop_front(); }
+  for (mut int i = 8; i < 13; i++) { wrapped.push_back(i); }
+  wrapped.pop_back();
+  wrapped.pop_back();
+  wrapped.insert(std::size_t(2), 99);
+  if (wrapped[std::size_t(2)] != 99 || wrapped.back() != 10) { return 14; }
+  wrapped.erase(std::size_t(2));
+  wrapped.push_back(11);
+  wrapped.push_back(12);
+  wrapped.insert(std::size_t(3), 100);
+  wrapped.erase(std::size_t(4));
+  if (wrapped.size() != 8 || wrapped[std::size_t(3)] != 100 || wrapped[std::size_t(4)] != 9) { return 11; }
+  mut std::deque<std::unique_ptr<int>> owners{};
+  owners.insert(std::size_t(0), std::make_unique<int>(1));
+  owners.insert(std::size_t(0), std::make_unique<int>(2));
+  owners.erase(std::size_t(1));
+  if (*owners.front() != 2 || owners.size() != 1) { return 12; }
+  mut std::queue<std::unique_ptr<int>> pending{};
+  for (mut int i = 0; i < 40; i++) { pending.push(std::make_unique<int>(i)); }
+  if (pending.size() != 40 || *pending.back() != 39) { return 13; }
+  for (mut int i = 0; i < 40; i++) {
+    if (*pending.front() != i) { return 6; }
+    pending.pop();
+  }
+  if (!pending.empty()) { return 7; }
+  return 0;
+}

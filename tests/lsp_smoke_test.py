@@ -5203,7 +5203,8 @@ def test_advisory_diagnostics_and_actions(executable, root):
 def test_missing_standard_library_include_code_action(
     executable, root, symbol="vector", argument="int", header="std/vector"
 ):
-    source = f"// 🙂\nusing values = std::{symbol}<{argument}>;\n"
+    suffix = f"<{argument}>" if argument is not None else ""
+    source = f"// 🙂\nusing values = std::{symbol}{suffix};\n"
     include = f"#include <{header}>\n"
     corrected_source = include + source
     path = root / "missing-standard-include.gti"
@@ -9548,6 +9549,14 @@ def main():
     test_managed_thread_tooling(sys.argv[1], root)
     test_diagnostic_capability_negotiation(sys.argv[1], root)
     test_missing_standard_library_include_code_action(sys.argv[1], root)
+    for symbol in ("deque", "queue", "set", "unordered_set"):
+        test_missing_standard_library_include_code_action(
+            sys.argv[1], root, symbol, "int", f"std/{symbol}"
+        )
+    for symbol in ("parse_errc", "chars_format", "from_chars_result"):
+        test_missing_standard_library_include_code_action(
+            sys.argv[1], root, symbol, None, "std/charconv"
+        )
     for symbol in ("function", "move_only_function"):
         test_missing_standard_library_include_code_action(
             sys.argv[1], root, symbol, "void()", "std/functional"

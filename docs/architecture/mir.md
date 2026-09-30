@@ -1360,6 +1360,12 @@ predecessor states that cannot justify an event's conditionality. Lifecycle
 instructions and boundary markers are observable effects and cannot be erased
 merely because they produce no SSA result.
 
+Boundary mutual-exclusion reachability is scoped to one dynamic evaluation.
+It does not cross a natural backedge whose header dominates the originating
+marker: the next iteration may propagate an argument error before the outer
+call/root executes. An inner loop that does not enclose that marker is not
+ignored. Duplicate markers reachable within the same iteration still reject.
+
 Concrete owning pack parameters use one entry-active Binding obligation per
 lexical-drop element, each at its exact `PackElement` place. Those lifetime
 places are canonical across expansions and folds. Program verification checks
@@ -1907,8 +1913,10 @@ cleanup-free nominal call result, or the exact cleanup-owning result obligation
 of an eligible ordinary call. A nominal call needs its failure edge in nested
 argument positions as well as at a full-expression root, even without a result
 drop identity: the consumer's prepared slot is initialized only after the
-producer succeeds. A fresh class constructor used as a prepared by-value
-argument has the same requirement, including when the class has no active
+producer succeeds. Calls returning `expected` with a nominal
+success or error alternative also retain their required failure edge, even
+when neither alternative has active cleanup. A fresh class constructor used as
+a prepared by-value argument has the same requirement, including when the class has no active
 cleanup. Fixed source expressions before a pack expansion use the same
 evaluation context as ordinary arguments. The verifier independently derives
 that context from the exact indexed `CallInput`; earlier prepared owners remain

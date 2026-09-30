@@ -288,9 +288,12 @@ int main() { return 0; }
         "applying the callback include fix should resolve the signature type");
   }
 
-  for (const std::string name : {"map", "unordered_map"}) {
+  for (const std::string name :
+       {"map", "unordered_map", "set", "unordered_set", "deque", "queue"}) {
     const std::string source =
-        "using dictionary = std::" + name + "<int, int>;\n";
+        "using dictionary = std::" + name +
+        (name == "map" || name == "unordered_map" ? "<int, int>;\n"
+                                                  : "<int>;\n");
     const auto missingMap = lang::Frontend().analyze(
         "missing-associative-include.gti", source, {standardLibraryPrelude()},
         {}, {standardLibraryRoot()});
@@ -313,6 +316,73 @@ int main() { return 0; }
     expect(corrected.canGenerateCode(),
            "applying an associative include fix should resolve the type");
   }
+
+  const std::string compoundBorrow = R"(
+#include <std/unordered_set>
+int main() {
+  mut std::unordered_set<int> values{};
+  int key = 7;
+  if (values.insert(7).second || !values.contains(key)) { return 1; }
+  return 0;
+}
+)";
+  const auto compound = lang::Frontend().analyze(
+      "compound-result-loan.gti", compoundBorrow, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
+  const auto *conflict =
+      findDiagnosticByCode(compound.diagnostics, "GTI-S2017");
+  expect(!compound.semanticValid && conflict != nullptr &&
+             conflict->primary.start == compoundBorrow.find("||") &&
+             conflict->primary.end == compoundBorrow.find("||") + 2 &&
+             !conflict->related.empty() && !conflict->hints.empty() &&
+             conflict->fixes.empty() &&
+             !hasDiagnosticCode(compound.diagnostics, "GTI-B0001"),
+         "a copied field of a temporary borrowed carrier keeps its loan until "
+         "the full expression ends and receives a source diagnostic");
+
+  const std::string scalarReads = R"(
+#include <std/string>
+int main() {
+  mut std::string text = std::string("ab");
+  text.push_back('c');
+  return text[0] != text[1] && text[1] != text[2] ? 0 : 1;
+}
+)";
+  const auto reads = lang::Frontend().analyze(
+      "scalar-reference-reads.gti", scalarReads, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  expect(reads.canGenerateCode(), "copied scalar reads must not acquire a "
+                                  "carrier's full-expression lifetime");
+
+  const std::string userCarrier = R"(
+class Lease {
+  mut int& value;
+public:
+  bool success = true;
+  Lease(mut int& value) : value(value) {}
+};
+Lease acquire(mut int& value) { return Lease(value); }
+int main() {
+  mut int value = 7;
+  if (acquire(value).success && value == 7) { return 1; }
+  return 0;
+}
+)";
+  const auto userConflict = lang::Frontend().analyze(
+      "user-carrier-operands.gti", userCarrier, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  const auto *userDiagnostic =
+      findDiagnosticByCode(userConflict.diagnostics, "GTI-S2017");
+  expect(!userConflict.semanticValid && userDiagnostic != nullptr &&
+             userDiagnostic->primary.source ==
+                 std::filesystem::weakly_canonical("user-carrier-operands.gti")
+                     .string() &&
+             userDiagnostic->primary.start == userCarrier.find("&&") &&
+             userDiagnostic->primary.end == userCarrier.find("&&") + 2 &&
+             !userDiagnostic->related.empty() &&
+             !userDiagnostic->hints.empty() && userDiagnostic->fixes.empty(),
+         "full-expression carrier exclusion is structural, not a container "
+         "name exception");
 
   const lang::FrontendResult indirect = lang::Frontend().analyze(
       "indirect-memory-include.gti",

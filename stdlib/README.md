@@ -168,8 +168,8 @@ All three concurrency modules require
 `--execution-profile concurrent`; project profiles use
 `execution-profile = "concurrent"`.
 
-`<std/filesystem>` provides `std::filesystem::path` as pure pathname
-manipulation with no filesystem access. It carries C++'s decomposition and
+`<std/filesystem>` provides `std::filesystem::path` for lexical pathname
+manipulation alongside recoverable host filesystem operations. The path carries C++'s decomposition and
 `has_*` query set, the modifiers, `assign`/`append`/`concat`, directory joining
 through `/` and `/=`, element-wise `compare` with ordering and equality
 operators, and `lexically_normal`.
@@ -179,6 +179,10 @@ final element. A pathname is stored exactly as supplied; normalization happens
 only in `lexically_normal`. Copying is explicit through `clone()`, and the
 converting `path(std::string_view)` constructor is implemented through the
 ordinary verified class-construction route.
+Free operations include status queries, directory creation and enumeration,
+copying, renaming, removal, links, working-directory access, and canonical
+resolution. They return `expected` values; see
+[the filesystem contract](../docs/language/filesystem.md).
 
 Optional facilities live under `stdlib/std/` and are imported through logical
 standard-library paths such as `#include <std/array>`. These imports resolve
@@ -508,7 +512,9 @@ is recognized by the backend.
 | `<std/forward_list>` | Implemented front operations, iterative cleanup, resize, reverse, stable merge/sort, remove, unique, and swap; iteration and emplacement remain declarations |
 | `<std/functional>` | Public exact callable/predicate/operation/comparator concepts, consuming `invoke_once`, comparison function objects, and source-defined read-only, mutable, and consuming `function` / `move_only_function`; declaration-only `hash` |
 | `<std/iterator>` | Structural input-iterator/sentinel/exact-dereference concepts, source-composed `forward_iterator`, and implemented forward-only `advance`, `distance`, and `next`, plus a deliberately unconstrained `prev` placeholder |
-| `<std/list>` | Move-only owner shape, capability-gated value algorithms, and a move-only read-only iterator/sentinel pair; node storage and bodies remain absent |
+| `<std/list>` | Executable doubly-linked slot-owned nodes, checked indexed mutation, ends, emplacement, read traversal, reverse, remove, unique, merge, sort, and iterative cleanup |
+| `<std/deque>` / `<std/queue>` | Circular per-element-owned double-ended storage and its FIFO adapter, with checked access and deterministic cleanup |
+| `<std/set>` / `<std/unordered_set>` | Unique immutable keys over AVL/hash dictionaries, checked insertion results and traversal, lookup/erase, bounds or hash capacity controls |
 | `<std/memory>` | Implemented `unique_ptr`, `make_unique`, `upcast_unique`, explicit-clone `shared_ptr` and `make_shared`, typed `allocator`, `storage<T>`, `alignment`, `alloc_errc`, fixed-capacity `arena<T>`/`pool<T>`, and recoverable storage factories; declaration-only `weak_ptr` |
 | `<std/numeric>` | Implemented exact fixed-width `wrapping_add/sub/mul`, `saturating_add/sub/mul`, `checked_add/sub/mul`, default and operation-based `accumulate`, homogeneous default and operation-based `inner_product`, unary `transform_reduce`, `gcd`, `lcm`, and `midpoint` |
 | `<std/span>` | Executable checked read-only single-owner spans with vector/string factories, local copy/move, subviews, empty ranges, iteration, and no raw-address `data()` API; mutable and multi-owner views remain unsupported |

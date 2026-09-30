@@ -60,6 +60,7 @@ for the current implementation when a document is stale or ambiguous.
   [expected values](language/expected.md), and
   [concurrency](language/concurrency.md) — focused feature contracts.
 - [I/O](language/io.md), [binary-to-text encoding](language/encoding.md),
+  [filesystem operations](language/filesystem.md),
   [clocks and durations](language/chrono.md),
   [child processes](language/process.md), [TCP](language/tcp.md),
   [HTTP/HTTPS](language/http.md), [JSON](language/json.md), and

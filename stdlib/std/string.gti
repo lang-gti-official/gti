@@ -5,8 +5,140 @@
 // read-only views are implemented.
 #include <std/functional>
 #include <std/numeric>
+#include <std/charconv>
 
 namespace std {
+  namespace detail {
+    struct float_prefix {
+      size_t offset;
+      bool negative;
+      chars_format format;
+      float_prefix(size_t start, bool sign, chars_format style)
+          : offset(start), negative(sign), format(style) {}
+    };
+
+    float_prefix string_float_prefix(string_view input) {
+      mut size_t index = 0;
+      while (index < input.size() && numeric_space(input[index])) { index++; }
+      mut bool negative = false;
+      if (index < input.size() && (input[index] == '-' || input[index] == '+')) {
+        negative = input[index] == '-';
+        index++;
+      }
+      mut chars_format format = chars_format::general;
+      if (input.size() - index >= 3 && input[index] == '0' &&
+          (input[index + 1] == 'x' || input[index + 1] == 'X')) {
+        mut size_t first_digit = index + 2;
+        if (input[first_digit] == '.') { first_digit++; }
+        if (first_digit < input.size() && digit_value(input[first_digit]) >= 0 &&
+            digit_value(input[first_digit]) < 16) {
+          index += size_t(2);
+          format = chars_format::hex;
+        }
+      }
+      return float_prefix(index, negative, format);
+    }
+
+    expected<T, parse_errc> parse_string_integer<std::integral T>(
+        string_view input, mut size_t& position, int base) {
+      mut T value = T(0);
+      auto parsed = std::detail::parse_integer(input, value, base, true);
+      if (parsed.ec != parse_errc::none) { return unexpected(parsed.ec); }
+      position = parsed.position;
+      return value;
+    }
+  }
+
+  expected<float, parse_errc> stof(string_view input, mut size_t& position) {
+    auto prefix = detail::string_float_prefix(input);
+    if (prefix.offset < input.size() && (input[prefix.offset] == '-' || input[prefix.offset] == '+')) {
+      return unexpected(parse_errc::invalid_argument);
+    }
+    mut float value = 0.0;
+    auto parsed = detail::parse_float(input, prefix.offset, value, prefix.format);
+    if (parsed.ec != parse_errc::none) { return unexpected(parsed.ec); }
+    position = parsed.position;
+    if (prefix.negative) { return -value; }
+    return value;
+  }
+  expected<float, parse_errc> stof(string_view input) {
+    mut size_t position = 0;
+    return std::stof(input, position);
+  }
+
+  expected<double, parse_errc> stod(string_view input, mut size_t& position) {
+    auto prefix = detail::string_float_prefix(input);
+    if (prefix.offset < input.size() && (input[prefix.offset] == '-' || input[prefix.offset] == '+')) {
+      return unexpected(parse_errc::invalid_argument);
+    }
+    mut double value = 0.0;
+    auto parsed = detail::parse_float(input, prefix.offset, value, prefix.format);
+    if (parsed.ec != parse_errc::none) { return unexpected(parsed.ec); }
+    position = parsed.position;
+    if (prefix.negative) { return -value; }
+    return value;
+  }
+  expected<double, parse_errc> stod(string_view input) {
+    mut size_t position = 0;
+    return std::stod(input, position);
+  }
+
+  /// ASCII whitespace and a leading sign are accepted. Base zero recognizes
+  /// decimal, leading-zero octal, and 0x hexadecimal. Errors are recoverable.
+  expected<int32_t, parse_errc> stoi(string_view input, mut size_t& position, int base) {
+    return detail::parse_string_integer<int32_t>(input, position, base);
+  }
+  expected<int32_t, parse_errc> stoi(string_view input, mut size_t& position) {
+    return std::stoi(input, position, 10);
+  }
+  expected<int32_t, parse_errc> stoi(string_view input, int base) {
+    mut size_t position = 0;
+    return std::stoi(input, position, base);
+  }
+  expected<int32_t, parse_errc> stoi(string_view input) { return std::stoi(input, 10); }
+
+  expected<int64_t, parse_errc> stoll(string_view input, mut size_t& position, int base) {
+    return detail::parse_string_integer<int64_t>(input, position, base);
+  }
+  expected<int64_t, parse_errc> stoll(string_view input, mut size_t& position) {
+    return std::stoll(input, position, 10);
+  }
+  expected<int64_t, parse_errc> stoll(string_view input, int base) {
+    mut size_t position = 0;
+    return std::stoll(input, position, base);
+  }
+  expected<int64_t, parse_errc> stoll(string_view input) { return std::stoll(input, 10); }
+
+  expected<int64_t, parse_errc> stol(string_view input, mut size_t& position, int base) {
+    return std::stoll(input, position, base);
+  }
+  expected<int64_t, parse_errc> stol(string_view input, mut size_t& position) {
+    return std::stoll(input, position);
+  }
+  expected<int64_t, parse_errc> stol(string_view input, int base) { return std::stoll(input, base); }
+  expected<int64_t, parse_errc> stol(string_view input) { return std::stoll(input); }
+
+  expected<uint64_t, parse_errc> stoull(string_view input, mut size_t& position, int base) {
+    return detail::parse_string_integer<uint64_t>(input, position, base);
+  }
+  expected<uint64_t, parse_errc> stoull(string_view input, mut size_t& position) {
+    return std::stoull(input, position, 10);
+  }
+  expected<uint64_t, parse_errc> stoull(string_view input, int base) {
+    mut size_t position = 0;
+    return std::stoull(input, position, base);
+  }
+  expected<uint64_t, parse_errc> stoull(string_view input) { return std::stoull(input, 10); }
+
+  expected<uint64_t, parse_errc> stoul(string_view input, mut size_t& position, int base) {
+    return std::stoull(input, position, base);
+  }
+  expected<uint64_t, parse_errc> stoul(string_view input, mut size_t& position) {
+    return std::stoull(input, position);
+  }
+  expected<uint64_t, parse_errc> stoul(string_view input, int base) { return std::stoull(input, base); }
+  expected<uint64_t, parse_errc> stoul(string_view input) { return std::stoull(input); }
+
   namespace detail {
     class storage_sentinel {
       size_t final_position;
@@ -95,7 +227,25 @@ namespace std {
       return 0;
     }
 
+    bool matches_at(size_t position, string_view value) {
+      if (position > this.count || value.size() > this.count - position) {
+        return false;
+      }
+      for (mut size_t offset = 0; offset < value.size(); offset++) {
+        if (this[position + offset] != value[offset]) { return false; }
+      }
+      return true;
+    }
+
+    void check_position(size_t position) {
+      if (position > this.count) {
+        gti_internal::index_bounds_check(position, this.count);
+      }
+    }
+
   public:
+    static constexpr size_t npos = uint64_t(18446744073709551615);
+
     string() : data(gti_internal::allocate_prefix_storage<char>(uint64_t(0))) {}
 
     string(string_view value) : data(gti_internal::allocate_prefix_storage<char>(value.size())), reserved(value.size()) {
@@ -153,6 +303,95 @@ namespace std {
     bool empty() {
       return this.count == 0;
     }
+
+    /// Search counted code units; empty needles match at any valid position.
+    size_t find(string_view needle, size_t position) {
+      if (position > this.count || needle.size() > this.count - position) {
+        return string::npos;
+      }
+      size_t last = this.count - needle.size();
+      mut size_t index = position;
+      while (true) {
+        if (this.matches_at(index, needle)) { return index; }
+        if (index == last) { return string::npos; }
+        index++;
+      }
+    }
+
+    size_t find(string_view needle) { return this.find(needle, size_t(0)); }
+
+    size_t find(char needle, size_t position) {
+      for (mut size_t index = position; index < this.count; index++) {
+        if (this[index] == needle) { return index; }
+      }
+      return string::npos;
+    }
+
+    size_t find(char needle) { return this.find(needle, size_t(0)); }
+
+    /// Position is the latest allowed starting offset, not an end offset.
+    size_t rfind(string_view needle, size_t position) {
+      if (needle.size() > this.count) { return string::npos; }
+      mut size_t index = this.count - needle.size();
+      if (position < index) { index = position; }
+      while (true) {
+        if (this.matches_at(index, needle)) { return index; }
+        if (index == 0) { return string::npos; }
+        index--;
+      }
+    }
+
+    size_t rfind(string_view needle) { return this.rfind(needle, string::npos); }
+
+    size_t rfind(char needle, size_t position) {
+      if (this.count == 0) { return string::npos; }
+      mut size_t index = this.count - 1;
+      if (position < index) { index = position; }
+      while (true) {
+        if (this[index] == needle) { return index; }
+        if (index == 0) { return string::npos; }
+        index--;
+      }
+    }
+
+    size_t rfind(char needle) { return this.rfind(needle, string::npos); }
+    bool contains(string_view needle) { return this.find(needle) != string::npos; }
+    bool contains(char needle) { return this.find(needle) != string::npos; }
+    bool starts_with(string_view prefix) { return this.matches_at(size_t(0), prefix); }
+    bool starts_with(char prefix) { return this.count != 0 && this[0] == prefix; }
+
+    bool ends_with(string_view suffix) {
+      if (suffix.size() > this.count) { return false; }
+      return this.matches_at(this.count - suffix.size(), suffix);
+    }
+
+    bool ends_with(char suffix) {
+      return this.count != 0 && this[this.count - 1] == suffix;
+    }
+
+    int compare(string_view other) { return this.compare_bytes(other); }
+
+    // Borrow an owning input without allocating another string.
+    size_t find(string& needle, size_t position) { return this.find(needle.view(), position); }
+    size_t find(string& needle) { return this.find(needle.view()); }
+    size_t rfind(string& needle, size_t position) { return this.rfind(needle.view(), position); }
+    size_t rfind(string& needle) { return this.rfind(needle.view()); }
+    bool contains(string& needle) { return this.contains(needle.view()); }
+    bool starts_with(string& prefix) { return this.starts_with(prefix.view()); }
+    bool ends_with(string& suffix) { return this.ends_with(suffix.view()); }
+    int compare(string& other) { return this.compare_bytes(other.view()); }
+
+    /// Returns an independent owner. The length is clamped to the remainder;
+    /// a position past size() raises GTI-R0007, even for an empty slice.
+    string substr(size_t position, size_t length) {
+      this.check_position(position);
+      mut size_t copied = this.count - position;
+      if (length < copied) { copied = length; }
+      return string(position, position + copied, this);
+    }
+
+    string substr(size_t position) { return this.substr(position, string::npos); }
+    string substr() { return this.substr(size_t(0), string::npos); }
 
     char& front() {
       gti_internal::index_bounds_check(size_t(0), this.count);
@@ -309,6 +548,54 @@ namespace std {
         this.count++;
       }
     }
+
+    /// Replaces a clamped range in linear time, retaining capacity where
+    /// possible. Ordinary exclusive-receiver rules forbid an aliased view.
+    void replace(size_t position, size_t length, string_view value) mut {
+      this.check_position(position);
+      mut size_t removed = this.count - position;
+      if (length < removed) { removed = length; }
+      size_t old_count = this.count;
+      size_t retained = old_count - removed;
+      // Reject an impossible length before addition or mutation.
+      gti_internal::require_container_argument(value.size() <= string::npos - retained);
+      size_t new_count = retained + value.size();
+      size_t tail_start = position + removed;
+      if (value.size() > removed) {
+        this.resize(new_count);
+        mut size_t source = old_count;
+        while (source > tail_start) {
+          source--;
+          char copied = this[source];
+          this[source + (value.size() - removed)] = copied;
+        }
+      } else {
+        for (mut size_t source = tail_start; source < old_count; source++) {
+          char copied = this[source];
+          this[source - (removed - value.size())] = copied;
+        }
+        this.resize(new_count);
+      }
+      for (mut size_t index = 0; index < value.size(); index++) {
+        this[position + index] = value[index];
+      }
+    }
+
+    void insert(size_t position, string_view value) mut {
+      this.replace(position, size_t(0), value);
+    }
+
+    void insert(size_t position, string& value) mut { this.insert(position, value.view()); }
+    void replace(size_t position, size_t length, string& value) mut {
+      this.replace(position, length, value.view());
+    }
+
+    void erase(size_t position, size_t length) mut {
+      this.replace(position, length, "");
+    }
+
+    void erase(size_t position) mut { this.erase(position, string::npos); }
+    void erase() mut { this.clear(); }
 
     void clear() mut {
       while (this.count > 0) {
@@ -664,3 +951,79 @@ public:
     return detail::fnv_64_1a_hasher(value);
   }
 };
+
+namespace std {
+  // Convenience parsing borrows an owner only for the duration of the call.
+  expected<int32_t, parse_errc> stoi(string& input) {
+    return std::stoi(input.view());
+  }
+  expected<int32_t, parse_errc> stoi(string& input, int base) {
+    return std::stoi(input.view(), base);
+  }
+  expected<int32_t, parse_errc> stoi(string& input, mut size_t& position) {
+    return std::stoi(input.view(), position);
+  }
+  expected<int32_t, parse_errc> stoi(string& input, mut size_t& position, int base) {
+    return std::stoi(input.view(), position, base);
+  }
+  expected<int64_t, parse_errc> stol(string& input) {
+    return std::stol(input.view());
+  }
+  expected<int64_t, parse_errc> stol(string& input, int base) {
+    return std::stol(input.view(), base);
+  }
+  expected<int64_t, parse_errc> stol(string& input, mut size_t& position) {
+    return std::stol(input.view(), position);
+  }
+  expected<int64_t, parse_errc> stol(string& input, mut size_t& position, int base) {
+    return std::stol(input.view(), position, base);
+  }
+  expected<int64_t, parse_errc> stoll(string& input) {
+    return std::stoll(input.view());
+  }
+  expected<int64_t, parse_errc> stoll(string& input, int base) {
+    return std::stoll(input.view(), base);
+  }
+  expected<int64_t, parse_errc> stoll(string& input, mut size_t& position) {
+    return std::stoll(input.view(), position);
+  }
+  expected<int64_t, parse_errc> stoll(string& input, mut size_t& position, int base) {
+    return std::stoll(input.view(), position, base);
+  }
+  expected<uint64_t, parse_errc> stoul(string& input) {
+    return std::stoul(input.view());
+  }
+  expected<uint64_t, parse_errc> stoul(string& input, int base) {
+    return std::stoul(input.view(), base);
+  }
+  expected<uint64_t, parse_errc> stoul(string& input, mut size_t& position) {
+    return std::stoul(input.view(), position);
+  }
+  expected<uint64_t, parse_errc> stoul(string& input, mut size_t& position, int base) {
+    return std::stoul(input.view(), position, base);
+  }
+  expected<uint64_t, parse_errc> stoull(string& input) {
+    return std::stoull(input.view());
+  }
+  expected<uint64_t, parse_errc> stoull(string& input, int base) {
+    return std::stoull(input.view(), base);
+  }
+  expected<uint64_t, parse_errc> stoull(string& input, mut size_t& position) {
+    return std::stoull(input.view(), position);
+  }
+  expected<uint64_t, parse_errc> stoull(string& input, mut size_t& position, int base) {
+    return std::stoull(input.view(), position, base);
+  }
+  expected<float, parse_errc> stof(string& input) {
+    return std::stof(input.view());
+  }
+  expected<float, parse_errc> stof(string& input, mut size_t& position) {
+    return std::stof(input.view(), position);
+  }
+  expected<double, parse_errc> stod(string& input) {
+    return std::stod(input.view());
+  }
+  expected<double, parse_errc> stod(string& input, mut size_t& position) {
+    return std::stod(input.view(), position);
+  }
+}

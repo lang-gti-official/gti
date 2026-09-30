@@ -4514,8 +4514,9 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
       instruction.info.traits.drop == DropKind::Lexical) {
     return true;
   }
-  // A class-valued call can lack a result-drop identity when it returns
-  // directly or produces a cleanup-free value for a later consumer. Failure
+  // A class-valued call (including an Expected with a class alternative) can
+  // lack a result-drop identity when it returns directly or produces a
+  // cleanup-free value for a later consumer. Failure
   // still needs an Invoke in either position: no result exists until success,
   // and existing parameters/scopes must unwind before propagation. Storage
   // publication is independently owned by the result's consumer/obligation;
@@ -4527,7 +4528,14 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
   if ((instruction.kind == MirInstructionKind::Call ||
        (instruction.kind == MirInstructionKind::Construct &&
         position == MirFailureControlFlowPosition::PreparedCallArgumentRoot)) &&
-      instruction.result && instruction.info.type.kind == SemanticType::Class &&
+      instruction.result &&
+      (instruction.info.type.kind == SemanticType::Class ||
+       (instruction.kind == MirInstructionKind::Call &&
+        instruction.info.type.kind == SemanticType::Expected &&
+        instruction.info.type.arguments.size() == 2 &&
+        (instruction.info.type.arguments.front().kind == SemanticType::Class ||
+         instruction.info.type.arguments.back().kind ==
+             SemanticType::Class))) &&
       instruction.info.traits.drop == DropKind::Lexical) {
     return true;
   }
@@ -10424,10 +10432,21 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     };
     std::queue<MirBlockId> pendingBlocks;
     std::unordered_set<MirBlockId> visitedBlocks;
+    const auto entersNextIteration = [&](MirBlockId predecessor,
+                                         MirBlockId successor) {
+      // A source full expression cannot straddle an enclosing loop's
+      // backedge. In the next iteration, an argument may propagate an error
+      // before the expression's outer call/root instruction executes. Root
+      // identity alone therefore cannot distinguish those two evaluations.
+      return dominance->dominates(successor, predecessor) &&
+             dominance->dominates(successor, fromBlock);
+    };
     const MirBlock *origin = body.findBlock(fromBlock);
     if (origin != nullptr) {
       for (const MirBlockId successor : successors(origin->terminator)) {
-        pendingBlocks.push(successor);
+        if (!entersNextIteration(fromBlock, successor)) {
+          pendingBlocks.push(successor);
+        }
       }
     }
     while (!pendingBlocks.empty()) {
@@ -10444,7 +10463,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         return true;
       }
       for (const MirBlockId successor : successors(block->terminator)) {
-        pendingBlocks.push(successor);
+        if (!entersNextIteration(candidate, successor)) {
+          pendingBlocks.push(successor);
+        }
       }
     }
     return false;

@@ -126,6 +126,12 @@ failed call and relates the generic pack declaration when deduction has no
 more specific conflict. Repeated-pattern conflicts anchor the incompatible
 argument. No fix-it guesses which signature or supplied pack should change.
 
+`GTI-S2029` also reports unsatisfied collection-hook requirements after owner
+type substitution. The primary span is the initialization brace and related
+information identifies the hook; no automatic edit can choose an appropriate
+policy or element capability. The shared constraint evaluator remains the
+authority, including in generic bodies and LSP snapshots.
+
 `GTI-S2092` owns an invalid contextual collection protocol or element. Protocol
 errors point at the opening brace; an incompatible/copied move-only element
 points at that element and relates the insertion parameter declaring its
@@ -189,6 +195,14 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   cause. Do not offer a fix-it because ownership transfer, storage duration,
   and API shape require intent. An exact eligible read-only call-only borrow is
   accepted and emits no diagnostic; local and stored bindings remain invalid.
+  For conflicting sequenced binary/logical operands, point at the operator,
+  relate the earlier operand that retains the borrow, and suggest completing
+  that operation in a separate statement. Projecting a copied scalar from a
+  temporary borrowed carrier does not retire the carrier's full-expression
+  loan. An immediate scalar read through a reference does not acquire that
+  longer lifetime. Mutable calls whose view argument aliases their receiver
+  use the same code; expression-level text dependencies count even when the
+  parameter type alone does not encode an owner.
 - `GTI-S2045` owns unsupported stored-reference carrier shapes and incoherent
   borrowed-value return dependencies. One read-only or mutable reference field,
   optionally nested through nominal carrier fields, is accepted when every

@@ -1,0 +1,28 @@
+#include <std/deque>
+
+namespace std {
+/// Owning FIFO adapter with amortized constant-time push and constant-time pop.
+class queue<T> {
+  mut deque<T> values{};
+public:
+  queue() {}
+  static queue<T> collection_init(uint64_t count) { return queue<T>(); }
+  static queue<T> collection_insert(mut queue<T> collection, T element) requires std::movable<T> {
+    collection.push(std::move(element));
+    return std::move(collection);
+  }
+  queue(queue<T>& other) = delete;
+  queue(queue<T>&& other) = default;
+  size_t size() { return this.values.size(); }
+  bool empty() { return this.values.empty(); }
+  T& front() { return this.values.front(); }
+  mut T& front() mut { return this.values.front(); }
+  T& back() { return this.values.back(); }
+  mut T& back() mut { return this.values.back(); }
+  void push(T value) mut requires std::movable<T> { this.values.push_back(std::move(value)); }
+  mut T& emplace<Args...>(Args... args) mut { return this.values.emplace_back(args...); }
+  void pop() mut { this.values.pop_front(); }
+  void clear() mut { this.values.clear(); }
+  void swap(mut queue<T>& other) mut { this.values.swap(other.values); }
+};
+}

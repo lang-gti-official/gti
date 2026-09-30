@@ -1,0 +1,20 @@
+#include <std/string>
+#include <std/vector>
+
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() { std::println(99); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Cleanup cleanup{};
+  mut std::string text{"abc"};
+  std::size_t invalid = text.size() + 1;
+  if (argc == 1) { [[discard]] text.substr(invalid); }
+  if (argc == 2) { text.insert(invalid, "x"); }
+  if (argc == 3) { text.erase(invalid, std::size_t(0)); }
+  if (argc == 4) { text.replace(invalid, std::size_t(0), ""); }
+  if (argc == 5) { [[discard]] text.substr(std::string::npos, std::size_t(0)); }
+  return 1;
+}

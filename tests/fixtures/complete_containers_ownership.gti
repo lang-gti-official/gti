@@ -1,0 +1,146 @@
+#include <std/list>
+#include <std/deque>
+#include <std/queue>
+#include <std/set>
+#include <std/unordered_set>
+#include <std/memory>
+
+mut int constructed = 0;
+mut int destroyed = 0;
+class Element {
+public:
+  int key;
+  int identity;
+  mut const int* address = nullptr;
+  Element(int key, int identity) : key(key), identity(identity) {
+    constructed++;
+    unsafe { this.address = &this.key; }
+  }
+  Element(Element& other) = delete;
+  Element(Element&& other) = delete;
+  ~Element() { destroyed++; }
+  bool stable() { unsafe { return this.address == &this.key; } }
+  bool operator==(Element& other) { return this.key == other.key; }
+  bool operator!=(Element& other) { return this.key != other.key; }
+  bool operator<(Element& other) { return this.key < other.key; }
+  bool operator<=(Element& other) { return this.key <= other.key; }
+  bool operator>(Element& other) { return this.key > other.key; }
+  bool operator>=(Element& other) { return this.key >= other.key; }
+};
+class Key {
+  std::unique_ptr<int> value;
+public:
+  Key(int value) : value(std::make_unique<int>(value)) {}
+  Key(Key& other) = delete;
+  Key(Key&& other) = default;
+  int get() { return *this.value; }
+};
+class Compare {
+  bool reversed;
+public:
+  Compare(bool reversed) : reversed(reversed) {}
+  bool operator()(Key& left, Key& right) {
+    if (this.reversed) { return left.get() > right.get(); }
+    return left.get() < right.get();
+  }
+};
+class Hash {
+  int bucket_value;
+public:
+  Hash(int bucket_value) : bucket_value(bucket_value) {}
+  std::size_t operator()(Key& key) { return std::size_t(this.bucket_value); }
+};
+class Equal {
+public:
+  bool operator()(Key& left, Key& right) { return left.get() == right.get(); }
+};
+
+int main() {
+  {
+    mut std::list<Element> values{};
+    [[discard]] values.emplace_back(2, 1);
+    [[discard]] values.emplace_front(1, 2);
+    [[discard]] values.emplace_back(2, 3);
+    [[discard]] values.emplace_back(1, 4);
+    values.sort();
+    int identities[4] = {2, 4, 1, 3};
+    mut std::size_t index = 0;
+    for (auto& value : values) {
+      if (value.identity != identities[index] || !value.stable()) { return 1; }
+      index++;
+    }
+    mut std::list<Element> extra{};
+    [[discard]] extra.emplace_back(1, 5);
+    [[discard]] extra.emplace_back(3, 6);
+    values.merge(std::move(extra));
+    if (constructed != 6 || destroyed != 0 || values.size() != 6) { return 2; }
+    values.reverse();
+    values.pop_back();
+    values.pop_front();
+    if (destroyed != 2) { return 3; }
+    mut auto moved = std::move(values);
+    for (auto& value : moved) { if (!value.stable()) { return 4; } }
+    moved.clear();
+    if (destroyed != 6) { return 5; }
+  }
+  {
+    mut std::deque<Element> values{};
+    for (mut int i = 0; i < 70; i++) { [[discard]] values.emplace_back(i, i); }
+    for (mut int i = 0; i < 50; i++) { values.pop_front(); }
+    for (mut int i = 0; i < 70; i++) { [[discard]] values.emplace_front(i, i); }
+    [[discard]] values.emplace(std::size_t(17), 999, 999);
+    if (!values[std::size_t(17)].stable()) { return 19; }
+    values.erase(std::size_t(17));
+    for (auto& value : values) { if (!value.stable()) { return 6; } }
+    mut auto moved = std::move(values);
+    if (moved.size() != 90 || moved.front().identity != 69) { return 7; }
+  }
+  {
+    mut std::queue<Element> pending{};
+    [[discard]] pending.emplace(1, 1);
+    [[discard]] pending.emplace(2, 2);
+    if (!pending.front().stable() || !pending.back().stable()) { return 8; }
+    mut std::queue<Element> swapped{};
+    pending.swap(swapped);
+    swapped.pop();
+    if (!pending.empty() || swapped.front().identity != 2) { return 9; }
+    swapped.clear();
+  }
+  if (constructed != destroyed) { return 10; }
+  {
+    mut std::set<Key, Compare> values = std::set<Key, Compare>(Compare(true));
+    [[discard]] values.emplace(1);
+    [[discard]] values.emplace(3);
+    [[discard]] values.emplace(2);
+    mut int next = 3;
+    for (auto& key : values) { if (key.get() != next) { return 11; } next--; }
+    mut std::set<Key, Compare> swapped = std::set<Key, Compare>(Compare(false));
+    values.swap(swapped);
+    [[discard]] swapped.emplace(4);
+    if ((*swapped.begin()).get() != 4) { return 12; }
+    Key key = Key(2);
+    if (!swapped.contains(key) || swapped.erase(key) != 1) { return 13; }
+    mut auto moved = std::move(swapped);
+    if (moved.size() != 3) { return 14; }
+  }
+  {
+    mut std::unordered_set<Key, Hash, Equal> values =
+        std::unordered_set<Key, Hash, Equal>(Hash(5), Equal());
+    for (mut int i = 0; i < 80; i++) { [[discard]] values.emplace(i); }
+    Key key = Key(7);
+    bool inserted = values.insert(Key(7)).second;
+    if (inserted || !values.contains(key)) { return 15; }
+    values.max_load_factor(0.5);
+    values.reserve(std::size_t(160));
+    values.rehash(std::size_t(400));
+    if (values.bucket_size(values.bucket(key)) != 80 || values.load_factor() > 0.5) { return 16; }
+    if (values.erase(key) != 1) { return 17; }
+    mut std::unordered_set<Key, Hash, Equal> swapped =
+        std::unordered_set<Key, Hash, Equal>(Hash(7), Equal());
+    values.swap(swapped);
+    if (!values.empty() || swapped.size() != 79 || swapped.bucket(key) != 5) { return 18; }
+    mut auto moved = std::move(swapped);
+    moved.clear();
+  }
+  return 0;
+}

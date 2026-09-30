@@ -9,6 +9,16 @@ project(gti_installed_library_smoke LANGUAGES C CXX)
 include(CTest)
 find_package(GTI CONFIG REQUIRED)
 
+add_executable(gti_installed_charconv_smoke ../runtime_charconv_tests.cpp)
+target_link_libraries(gti_installed_charconv_smoke PRIVATE GTI::runtime)
+target_compile_features(gti_installed_charconv_smoke PRIVATE cxx_std_20)
+add_test(NAME installed_charconv_boundary COMMAND gti_installed_charconv_smoke)
+
+add_executable(gti_installed_filesystem_smoke ../runtime_filesystem_tests.cpp)
+target_link_libraries(gti_installed_filesystem_smoke PRIVATE GTI::runtime)
+target_compile_features(gti_installed_filesystem_smoke PRIVATE cxx_std_20)
+add_test(NAME installed_filesystem_boundary COMMAND gti_installed_filesystem_smoke)
+
 add_executable(gti_installed_cthread_smoke ../cthread_library_smoke.c)
 target_compile_features(gti_installed_cthread_smoke PRIVATE c_std_11)
 target_link_libraries(gti_installed_cthread_smoke PRIVATE GTI::runtime)

@@ -6,19 +6,21 @@
     "stdlib/std/array.gti": "eff214cb420565f2fe12e02cdee5e2a3cce6407d41f766633c04bbee3d0f69c2",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
+    "stdlib/std/charconv.gti": "925dbda69d2eacd4d70525cae5261c46174660e4245eb5a2489e45a7e5af5809",
     "stdlib/std/chrono.gti": "49cbaca555eed6f825680a28366c3528f39cfdfc9a39f4c60e5b154b9cb88309",
     "stdlib/std/cmath.gti": "b8dcd896a4e7f3708d88c1f1ac5d8dc1f69aba3145c9fc1c5f9000e6a8097369",
     "stdlib/std/cstdio.gti": "4fdc4c99e067c1870d6dadd7b3dc14f8ae8ad817abdd082d2e54c583754ea13d",
     "stdlib/std/cthread.gti": "4b583b04dd052f5f05d0af2444718360eb12c2da546d4c6f1eddc05a39e8858f",
+    "stdlib/std/deque.gti": "5f413b147a82312175e9c3aa9a258885bca6b892e51e2fd8308a19bd7ac6cae4",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
-    "stdlib/std/filesystem.gti": "114f4b841c6878ddaebfdcdab4e25b478bced44f3eb6f0e5be3c5cc7359c9874",
+    "stdlib/std/filesystem.gti": "1018e88ac78adb603b80f0e83427a431c7c6225e00f39b0924721edcc4820687",
     "stdlib/std/format.gti": "0a6d4cb63ad0e661bf47f8fa8782317dc3c298b87903c497bcf982e36b0ce28b",
     "stdlib/std/forward_list.gti": "2152aab44209cfa14a3b1709f6250c3ef85db78e1e665d5bc8299f3cb353a4bf",
     "stdlib/std/functional.gti": "2fa13a7b511a42cb3cd87d6ca1a6550e77c77109320b5457f5292bb3e5333540",
     "stdlib/std/http.gti": "3a99fd4a109627769f86d89b16348dbd25431960163e7b9aa016ce72c127954d",
     "stdlib/std/iterator.gti": "2c67bfceaaaa2c79ce474434d5e9962ce15bd08127ce175c97efe8b05ebcd1f1",
     "stdlib/std/json.gti": "c73b68761f0194bd11596403c3ef70f56f2d5db8be6e311fb98ba23c79f6239a",
-    "stdlib/std/list.gti": "b90968de7e8f71110d7e6d897ff7a1bca3da55e210ae85d48de316b6ea252648",
+    "stdlib/std/list.gti": "f4a02413728943132c0803383b02b1891689c3857aa74564416940e2337bf720",
     "stdlib/std/map.gti": "39a314ff20943e99786f0165a77baca5d9276a73c6b31d253d8a5967647d706b",
     "stdlib/std/memory.gti": "94965dbe672b0426995f2e99e93b1066a66356a5909941acda0cff4c8e4e786a",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
@@ -26,12 +28,15 @@
     "stdlib/std/optional.gti": "9b038467204b82f5675326e67254bee896b2d6a5648f47bb22f325bbb202b8d8",
     "stdlib/std/paired_span.gti": "3657f5994dd7880c8de9796e1c6c08bba5f507b492406eb685d529c1c6b0e3ae",
     "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
+    "stdlib/std/queue.gti": "e7181505d8e12e151310ac46075b33cdc8095b4f727457c11603de1887e4c2ff",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
+    "stdlib/std/set.gti": "a85d7bf5cca909111153b396fed4ac7c0ce7790dc728289495290587b08994bf",
     "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
-    "stdlib/std/string.gti": "34766e98891441bfdc0d3e7439ba12f4e1394dd6c0bd6b9e5d7f8894ef0c670a",
+    "stdlib/std/string.gti": "71d3cfa382f0565520822636b70bac8b8ac0176958d0c76db609eab720a529c6",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
     "stdlib/std/unordered_map.gti": "dd9a09af61807b6482123f37f4875608c7eb6a5e83129ae7f498586b174e8aa7",
+    "stdlib/std/unordered_set.gti": "5abd95498a11451027534f26a50ba7e4468490bc44910543510dd6059880a205",
     "stdlib/std/utility.gti": "54a3fc018daa437f139c6f39ac2140b81f3d62b43f347a09fdf70c9ff9c4dab0",
     "stdlib/std/vector.gti": "e2b034609bc1135425c99846888d8926f3f90c4a784925e958604ba4b076dbd1"
   },
@@ -174,6 +179,41 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "charconv-float",
+      "mode": "run",
+      "source": "tests/fixtures/charconv_float.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "charconv-integer",
+      "mode": "run",
+      "source": "tests/fixtures/charconv_integer.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "charconv-owned-arguments",
+      "mode": "run",
+      "source": "tests/fixtures/charconv_owned_arguments.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "chrono",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_chrono.gti",
@@ -186,6 +226,83 @@
       "source": "tests/fixtures/stdlib_surface_cmath.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "complete-containers-collection",
+      "mode": "run",
+      "source": "tests/fixtures/complete_containers_collection.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "complete-containers-ownership",
+      "mode": "run",
+      "source": "tests/fixtures/complete_containers_ownership.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "complete-deque",
+      "mode": "run",
+      "source": "tests/fixtures/complete_deque.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "complete-list",
+      "mode": "run",
+      "source": "tests/fixtures/complete_list.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "complete-list-differential",
+      "mode": "run",
+      "source": "tests/fixtures/complete_list_differential.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "complete-sets",
+      "mode": "run",
+      "source": "tests/fixtures/complete_sets.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "container-swap",
@@ -325,6 +442,20 @@
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_filesystem_constructor.gti",
       "optimizations": ["O0", "O3"],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "filesystem-operations",
+      "mode": "run",
+      "source": "tests/fixtures/filesystem_operations.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
       "expected": {
         "exit_code": 0,
         "stdout": "",
@@ -587,6 +718,20 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "string-operations",
+      "mode": "run",
+      "source": "tests/fixtures/string_operations.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "string-ordering",
       "mode": "run",
       "source": "tests/fixtures/string_ordering.gti",
@@ -600,6 +745,20 @@
       "native_sources": ["tests/fixtures/stdlib_surface_tcp_stub.cpp"],
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "text-owner-relay",
+      "mode": "run",
+      "source": "tests/fixtures/text_owner_relay.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "thread",
@@ -850,6 +1009,30 @@
       "evidence": ["tests/fixtures/stdlib_surface_build.gti", "tests/project_cli_smoke_test.py", "stdlib/std/build.gti", "runtime/src/process.cpp"]
     },
     {
+      "id": "charconv.executable",
+      "source": "stdlib/std/charconv.gti",
+      "status": "executable",
+      "operations": [
+        "std::chars_format",
+        "std::from_chars",
+        "std::from_chars_result",
+        "std::parse_errc"
+      ],
+      "case_ids": [
+        "charconv-integer",
+        "charconv-float"
+      ],
+      "required_instantiations": [
+        "all fixed-width integers",
+        "float",
+        "double"
+      ],
+      "evidence": [
+        "tests/charconv_runtime_test.py",
+        "tests/runtime_charconv_tests.cpp"
+      ]
+    },
+    {
       "id": "chrono.executable",
       "source": "stdlib/std/chrono.gti",
       "status": "executable",
@@ -961,6 +1144,50 @@
       "evidence": ["stdlib/std/cthread.gti", "tests/cthread_runtime_test.py", "tests/cthread_sleep_test.py", "tests/cthread_mutex_test.py", "tests/cthread_condition_test.py", "tests/cthread_once_test.py", "tests/cthread_create_join_test.py", "tests/cthread_tests.cpp", "tests/fixtures/cthread_yield_call_count.cpp", "docs/language/concurrency.md"]
     },
     {
+      "id": "deque.executable",
+      "source": "stdlib/std/deque.gti",
+      "status": "executable",
+      "operations": [
+        "std::deque::at",
+        "std::deque::back",
+        "std::deque::begin",
+        "std::deque::clear",
+        "std::deque::collection_init",
+        "std::deque::collection_insert",
+        "std::deque::deque",
+        "std::deque::emplace",
+        "std::deque::emplace_back",
+        "std::deque::emplace_front",
+        "std::deque::empty",
+        "std::deque::end",
+        "std::deque::erase",
+        "std::deque::front",
+        "std::deque::insert",
+        "std::deque::operator[]",
+        "std::deque::pop_back",
+        "std::deque::pop_front",
+        "std::deque::push_back",
+        "std::deque::push_front",
+        "std::deque::resize",
+        "std::deque::size",
+        "std::deque::swap"
+      ],
+      "case_ids": [
+        "complete-containers-collection",
+        "complete-deque",
+        "complete-containers-ownership"
+      ],
+      "required_instantiations": [
+        "int",
+        "immovable Element",
+        "unique_ptr<int>"
+      ],
+      "evidence": [
+        "tests/complete_containers_test.py",
+        "tests/fixtures/complete_containers_ownership.gti"
+      ]
+    },
+    {
       "id": "encoding.executable",
       "source": "stdlib/std/encoding.gti",
       "status": "executable",
@@ -1036,6 +1263,57 @@
         "tests/fixtures/filesystem_path.gti",
         "tests/fixtures/stdlib_surface_filesystem_constructor.gti",
         "stdlib/std/filesystem.gti"
+      ]
+    },
+    {
+      "id": "filesystem.host-operations",
+      "source": "stdlib/std/filesystem.gti",
+      "status": "executable",
+      "operations": [
+        "std::filesystem::absolute",
+        "std::filesystem::canonical",
+        "std::filesystem::copy_file",
+        "std::filesystem::copy_options",
+        "std::filesystem::create_directories",
+        "std::filesystem::create_directory",
+        "std::filesystem::create_directory_symlink",
+        "std::filesystem::create_hard_link",
+        "std::filesystem::create_symlink",
+        "std::filesystem::current_path",
+        "std::filesystem::directory_entries",
+        "std::filesystem::directory_iterator::entry_path",
+        "std::filesystem::directory_iterator::next",
+        "std::filesystem::directory_iterator::open",
+        "std::filesystem::equivalent",
+        "std::filesystem::errc",
+        "std::filesystem::exists",
+        "std::filesystem::file_size",
+        "std::filesystem::file_status::type",
+        "std::filesystem::file_type",
+        "std::filesystem::is_directory",
+        "std::filesystem::is_empty",
+        "std::filesystem::is_regular_file",
+        "std::filesystem::is_symlink",
+        "std::filesystem::read_symlink",
+        "std::filesystem::remove",
+        "std::filesystem::remove_all",
+        "std::filesystem::rename",
+        "std::filesystem::status",
+        "std::filesystem::symlink_status",
+        "std::filesystem::temp_directory_path",
+        "std::filesystem::weakly_canonical"
+      ],
+      "case_ids": [
+        "filesystem-operations"
+      ],
+      "required_instantiations": [
+        "views and owning paths",
+        "directory stream and vector<path>"
+      ],
+      "evidence": [
+        "tests/filesystem_operations_runtime_test.py",
+        "tests/runtime_filesystem_tests.cpp",
+        "docs/language/filesystem.md"
       ]
     },
     {
@@ -1238,12 +1516,51 @@
       ]
     },
     {
-      "id": "list.scaffold",
+      "id": "list.executable",
       "source": "stdlib/std/list.gti",
-      "status": "scaffold",
-      "operations": ["std::list public surface"],
-      "reason": "The move-only shape is present, but node storage and operation bodies are absent.",
-      "evidence": ["stdlib/std/list.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+      "status": "executable",
+      "operations": [
+        "std::list::back",
+        "std::list::begin",
+        "std::list::clear",
+        "std::list::collection_init",
+        "std::list::collection_insert",
+        "std::list::emplace_back",
+        "std::list::emplace_front",
+        "std::list::empty",
+        "std::list::end",
+        "std::list::erase",
+        "std::list::front",
+        "std::list::insert",
+        "std::list::list",
+        "std::list::merge",
+        "std::list::pop_back",
+        "std::list::pop_front",
+        "std::list::push_back",
+        "std::list::push_front",
+        "std::list::remove",
+        "std::list::resize",
+        "std::list::reverse",
+        "std::list::size",
+        "std::list::sort",
+        "std::list::swap",
+        "std::list::unique"
+      ],
+      "case_ids": [
+        "complete-containers-collection",
+        "complete-list",
+        "complete-list-differential",
+        "complete-containers-ownership"
+      ],
+      "required_instantiations": [
+        "int",
+        "unique_ptr<int>",
+        "immovable Element"
+      ],
+      "evidence": [
+        "tests/complete_containers_test.py",
+        "tests/fixtures/complete_containers_ownership.gti"
+      ]
     },
     {
       "id": "map.executable",
@@ -1521,6 +1838,38 @@
       ]
     },
     {
+      "id": "queue.executable",
+      "source": "stdlib/std/queue.gti",
+      "status": "executable",
+      "operations": [
+        "std::queue::back",
+        "std::queue::clear",
+        "std::queue::collection_init",
+        "std::queue::collection_insert",
+        "std::queue::emplace",
+        "std::queue::empty",
+        "std::queue::front",
+        "std::queue::pop",
+        "std::queue::push",
+        "std::queue::queue",
+        "std::queue::size",
+        "std::queue::swap"
+      ],
+      "case_ids": [
+        "complete-containers-collection",
+        "complete-deque",
+        "complete-containers-ownership"
+      ],
+      "required_instantiations": [
+        "unique_ptr<int>",
+        "immovable Element"
+      ],
+      "evidence": [
+        "tests/complete_containers_test.py",
+        "tests/fixtures/complete_containers_ownership.gti"
+      ]
+    },
+    {
       "id": "random.executable",
       "source": "stdlib/std/random.gti",
       "status": "executable",
@@ -1528,6 +1877,43 @@
       "case_ids": ["random"],
       "required_instantiations": [],
       "evidence": ["tests/fixtures/random_engine.gti", "stdlib/std/random.gti"]
+    },
+    {
+      "id": "set.executable",
+      "source": "stdlib/std/set.gti",
+      "status": "executable",
+      "operations": [
+        "std::set::begin",
+        "std::set::clear",
+        "std::set::collection_init",
+        "std::set::collection_insert",
+        "std::set::contains",
+        "std::set::count",
+        "std::set::emplace",
+        "std::set::empty",
+        "std::set::end",
+        "std::set::erase",
+        "std::set::find",
+        "std::set::insert",
+        "std::set::lower_bound",
+        "std::set::set",
+        "std::set::size",
+        "std::set::swap",
+        "std::set::upper_bound"
+      ],
+      "case_ids": [
+        "complete-containers-collection",
+        "complete-sets",
+        "complete-containers-ownership"
+      ],
+      "required_instantiations": [
+        "int",
+        "move-only Key and stateful Compare"
+      ],
+      "evidence": [
+        "tests/complete_containers_test.py",
+        "tests/fixtures/complete_containers_ownership.gti"
+      ]
     },
     {
       "id": "span.executable",
@@ -1561,6 +1947,65 @@
         "std::to_string(float)"
       ],
       "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_string.gti", "tests/fixtures/string_index_range.gti", "tests/string_index_range_runtime_test.py", "tests/fixtures/string_c_string.gti", "tests/fixtures/string_c_string.cpp", "tests/string_c_string_runtime_test.py", "tests/fixtures/string_ordering.gti", "tests/string_ordering_runtime_test.py", "tests/fixtures/associative_hash_contracts.gti", "stdlib/std/string.gti"]
+    },
+    {
+      "id": "string.manipulation",
+      "source": "stdlib/std/string.gti",
+      "status": "executable",
+      "operations": [
+        "std::string::compare",
+        "std::string::contains",
+        "std::string::ends_with",
+        "std::string::erase",
+        "std::string::find",
+        "std::string::insert",
+        "std::string::npos",
+        "std::string::replace",
+        "std::string::rfind",
+        "std::string::starts_with",
+        "std::string::substr"
+      ],
+      "case_ids": [
+        "string-operations",
+        "text-owner-relay"
+      ],
+      "required_instantiations": [
+        "embedded NUL",
+        "nested owner relay"
+      ],
+      "evidence": [
+        "tests/string_operations_runtime_test.py",
+        "tests/string_operations_errors_test.py",
+        "tests/compiler_declarations_tests.cpp"
+      ]
+    },
+    {
+      "id": "string.numeric-input",
+      "source": "stdlib/std/string.gti",
+      "status": "executable",
+      "operations": [
+        "std::stod",
+        "std::stof",
+        "std::stoi",
+        "std::stol",
+        "std::stoll",
+        "std::stoul",
+        "std::stoull"
+      ],
+      "case_ids": [
+        "charconv-integer",
+        "charconv-float",
+        "charconv-owned-arguments"
+      ],
+      "required_instantiations": [
+        "optional consumed position",
+        "base zero or2..36",
+        "decimal and hexadecimal floats"
+      ],
+      "evidence": [
+        "tests/charconv_runtime_test.py",
+        "docs/language/standard-library.md"
+      ]
     },
     {
       "id": "string.swap",
@@ -1648,6 +2093,48 @@
         "tests/unordered_map_test.py",
         "tests/container_contract_failure_test.py",
         "docs/language/standard-library.md"
+      ]
+    },
+    {
+      "id": "unordered_set.executable",
+      "source": "stdlib/std/unordered_set.gti",
+      "status": "executable",
+      "operations": [
+        "std::unordered_set::begin",
+        "std::unordered_set::bucket",
+        "std::unordered_set::bucket_count",
+        "std::unordered_set::bucket_size",
+        "std::unordered_set::clear",
+        "std::unordered_set::collection_init",
+        "std::unordered_set::collection_insert",
+        "std::unordered_set::contains",
+        "std::unordered_set::count",
+        "std::unordered_set::emplace",
+        "std::unordered_set::empty",
+        "std::unordered_set::end",
+        "std::unordered_set::erase",
+        "std::unordered_set::find",
+        "std::unordered_set::insert",
+        "std::unordered_set::load_factor",
+        "std::unordered_set::max_load_factor",
+        "std::unordered_set::rehash",
+        "std::unordered_set::reserve",
+        "std::unordered_set::size",
+        "std::unordered_set::swap",
+        "std::unordered_set::unordered_set"
+      ],
+      "case_ids": [
+        "complete-containers-collection",
+        "complete-sets",
+        "complete-containers-ownership"
+      ],
+      "required_instantiations": [
+        "int",
+        "move-only Key with collision-heavy Hash and Equal"
+      ],
+      "evidence": [
+        "tests/complete_containers_test.py",
+        "tests/fixtures/complete_containers_ownership.gti"
       ]
     },
     {

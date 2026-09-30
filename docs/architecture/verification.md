@@ -8,6 +8,54 @@ assertions.
 
 ## Primary Targets
 
+The library-completion gates cover the following public workflows:
+
+- `string_operations_runtime` exercises counted search, independent slices,
+  capacity-preserving and reallocating edits, embedded NULs, bounds failure,
+  and nested owner-to-view relays. `string_operations_errors` rejects aliased
+  mutation and mutation/movement with a live view before backend entry.
+- `charconv_runtime` covers fixed-width integer boundaries, bases, malformed
+  prefixes, binary32/binary64 parsing, preserved outputs on failure, and
+  owning-string convenience overloads. `charconv_runtime_boundary` checks
+  the counted C ABI directly, including target-width rounding and invalid
+  descriptors.
+- `complete_containers` exercises linked and circular sequences, ordered and
+  hashed sets, FIFO adaptation, move-only values, policy state, live loans,
+  bounds, and deterministic cleanup. Native runtime matrices include both
+  supported C++ standards, optimization endpoints, no-elide, and sanitizers.
+- `filesystem_operations_runtime` runs real host operations in an isolated
+  temporary directory; `filesystem_runtime_boundary` independently exercises
+  the C ABI. `expected_filesystem_prerequisites_runtime` covers ordinary user
+  Expected results, forwarding, loop reuse, and temporary state observers.
+  `mir_full_expression` and the lifecycle emitter suite reject malformed
+  lifetime, publication, failure-edge, and full-expression records behind
+  those executions.
+
+These focused gates supplement, rather than replace, the full production
+CTest run, standard-library surface sweep, corpus oracles, editor checks, and
+installed-consumer validation required at completion.
+
+The 0.355.0 library-completion run exercises all 335 registered gates with an
+optimized Release compiler. The integrated run passes 334; `http_runtime`
+cannot bind its loopback test server inside the sandbox and passes when rerun
+with local socket access. The 93-case stdlib O0/O3 sweep and both 86-example
+corpus gates pass, covering 7,380 reviewed MIR bodies and 7,447 emitted bodies.
+Tree-sitter corpus, queries, source-text checks, and all 142 shipped sources
+pass. These are local macOS results, not Linux/Windows release evidence.
+
+The staged 0.355.0 library toolchain passes all eleven installed C++ consumer
+checks and runs the combined parsing/filesystem/container example outside the
+checkout without resource overrides. Its archive passes the Neovim installer,
+parser, LSP and formatting smoke check with isolated temporary state outside
+the sandbox; sandboxed runs encounter a host file-watcher `EMFILE` error.
+These checks do not modify the user's active toolchain or editor configuration.
+
+The library campaign's optional audit passes 23 contract probes, 24 typed
+differential cases, four composition cases, 100 malformed-source mutations,
+and the 86-example/four-variant matrix. Its final comparison step cannot run
+because `examples/gti-vs-cpp/verify.py` is absent. That non-gating audit is not
+reported as a full pass; it is separate from the mandatory completion suite.
+
 The 0.354.0 shared-ownership/borrowing-composition run uses an optimized
 Release build and exercises all 325 registered CTest gates. The integrated
 run passes 322; two obsolete implicit-copyable `shared_ptr` test inputs and
