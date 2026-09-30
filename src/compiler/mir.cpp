@@ -7509,6 +7509,62 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               type.arguments.size() == 1 &&
               type.arguments.front() == body.returnType.arguments.back())));
   };
+  // Conditional and propagated owning values are materialized in a join
+  // temporary, then transported by one exact Move SSA result. Their pending
+  // return lifetime still owns that same physical place during callee cleanup.
+  // Bind publication to the transport result without replacing its place or
+  // accepting an arbitrary Temporary-rooted return obligation.
+  const auto returnCarrierValue =
+      [&](const MirDropObligation &obligation) -> MirValueId {
+    const MirPlace *place = body.findPlace(obligation.place);
+    if (place == nullptr || !place->projections.empty() ||
+        place->sourceValue != obligation.value ||
+        place->type != obligation.dropType.type) {
+      return 0;
+    }
+    if (place->root == MirPlaceRootKind::Value) {
+      const MirValue *value = body.findValue(place->value);
+      return value != nullptr && value->sourceValue == obligation.value
+                 ? value->id
+                 : 0;
+    }
+    if (place->root != MirPlaceRootKind::Temporary || place->temporary == 0 ||
+        place->value != 0) {
+      return 0;
+    }
+    MirValueId result = 0;
+    for (const MirValue &value : body.values) {
+      if (value.sourceValue != obligation.value ||
+          value.info.type != obligation.dropType.type ||
+          value.info.category != ValueCategory::Value) {
+        continue;
+      }
+      const MirBlock *block = body.findBlock(value.definitionBlock);
+      if (block == nullptr)
+        continue;
+      const auto transport = std::find_if(
+          block->instructions.begin(), block->instructions.end(),
+          [&](const MirInstruction &instruction) {
+            return instruction.id == value.definition &&
+                   instruction.result == value.id &&
+                   instruction.hirValue == obligation.value &&
+                   instruction.kind == MirInstructionKind::Move &&
+                   instruction.operation == MirOperation::None &&
+                   instruction.intrinsic == IntrinsicKind::None &&
+                   instruction.operands.size() == 1 &&
+                   instruction.operands.front().kind == MirOperandKind::Move &&
+                   instruction.operands.front().place == place->id &&
+                   instruction.operands.front().type == place->type &&
+                   instruction.lifecycle.empty();
+          });
+      if (transport == block->instructions.end())
+        continue;
+      if (result != 0)
+        return 0;
+      result = value.id;
+    }
+    return result;
+  };
   std::unordered_set<HirDropObligationId> hirDropObligations;
   for (std::size_t index = 0; index < body.dropObligations.size(); ++index) {
     const MirDropObligation &obligation = body.dropObligations[index];
@@ -7577,13 +7633,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           !place->projections.empty())) ||
         (rollbackKind && body.kind != MirBodyKind::Constructor &&
          body.kind != MirBodyKind::FieldInitializers) ||
-        (returnKind &&
-         (place->root != MirPlaceRootKind::Value ||
-          body.findValue(place->value) == nullptr ||
-          body.findValue(place->value)->sourceValue != obligation.value ||
-          !place->projections.empty() ||
-          place->sourceValue != obligation.value ||
-          !isReturnCarrierType(obligation.dropType.type))) ||
+        (returnKind && (returnCarrierValue(obligation) == 0 ||
+                        !isReturnCarrierType(obligation.dropType.type))) ||
         ((preparedKind || allocationKind) &&
          (place->root != MirPlaceRootKind::Temporary || place->temporary == 0 ||
           place->sourceValue == 0)) ||
@@ -8311,8 +8362,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                 block.terminator.kind == MirTerminatorKind::Return &&
                 block.terminator.value &&
                 block.terminator.value->kind == MirOperandKind::Value &&
-                block.terminator.value->value ==
-                    body.findPlace(source->place)->value &&
+                block.terminator.value->value == returnCarrierValue(*source) &&
                 !event.conditional && !event.failureCleanup) ||
                // Normal constructor completion retires each armed rollback
                // subobject by transferring it to the caller through one

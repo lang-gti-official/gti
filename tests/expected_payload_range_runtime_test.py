@@ -95,6 +95,25 @@ int main() {
 """
 
 
+FAILURE_PARAMETER_SOURCE = r"""
+#include <std/string>
+
+expected<std::string, int32_t> make_error() {
+  return unexpected(int32_t(7));
+}
+
+int count(expected<std::string, int32_t> text) {
+  for (auto& byte : text.value()) { return 1; }
+  return 2;
+}
+
+int main() {
+  mut auto text = make_error();
+  return count(std::move(text));
+}
+"""
+
+
 CSTDIO_SOURCE = r"""
 #include <std/cstdio>
 
@@ -164,9 +183,11 @@ def main() -> int:
         root = pathlib.Path(temp)
         success_source = root / "expected-payload-range-success.gti"
         failure_source = root / "expected-payload-range-failure.gti"
+        failure_parameter_source = root / "expected-payload-range-parameter-failure.gti"
         cstdio_source = root / "expected-payload-range-cstdio.gti"
         success_source.write_text(SUCCESS_SOURCE, encoding="utf8")
         failure_source.write_text(FAILURE_SOURCE, encoding="utf8")
+        failure_parameter_source.write_text(FAILURE_PARAMETER_SOURCE, encoding="utf8")
         cstdio_source.write_text(CSTDIO_SOURCE, encoding="utf8")
 
         for standard in ("c++20", "c++23"):
@@ -190,28 +211,29 @@ def main() -> int:
                 if executed.returncode != 0:
                     return fail(f"run success {suffix}", executed)
 
-                failure = root / f"failure-{suffix}"
-                built = run(
-                    [
-                        str(compiler),
-                        str(failure_source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
-                        "-o",
-                        str(failure),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(f"build failure {suffix}", built)
-                executed = run([str(failure)])
-                if (
-                    executed.returncode != 70
-                    or executed.stdout != ""
-                    or "GTI-R0009" not in executed.stderr
-                    or "value_on_error" not in executed.stderr
-                ):
-                    return fail(f"run failure {suffix}", executed)
+                for source in (failure_source, failure_parameter_source):
+                    failure = root / f"{source.stem}-{suffix}"
+                    built = run(
+                        [
+                            str(compiler),
+                            str(source),
+                            "--std",
+                            standard,
+                            f"-{optimization}",
+                            "-o",
+                            str(failure),
+                        ]
+                    )
+                    if built.returncode != 0:
+                        return fail(f"build {source.stem} {suffix}", built)
+                    executed = run([str(failure)])
+                    if (
+                        executed.returncode != 70
+                        or executed.stdout != ""
+                        or "GTI-R0009" not in executed.stderr
+                        or "value_on_error" not in executed.stderr
+                    ):
+                        return fail(f"run {source.stem} {suffix}", executed)
 
                 cstdio = root / f"cstdio-{suffix}"
                 built = run(
@@ -229,6 +251,7 @@ def main() -> int:
                     return fail(f"build cstdio {suffix}", built)
                 executed = subprocess.run(
                     [str(cstdio)],
+                    cwd=root,
                     text=True,
                     input="Qsecret\ntoken|tail",
                     capture_output=True,

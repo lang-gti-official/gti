@@ -829,6 +829,16 @@ struct ResolvedCallInfo {
   std::vector<CallableArgumentBoundary> callableArguments;
 };
 
+// One exact consuming expected<T, E>::transform_error mapper. Expected is a
+// language type, but the mapped error is still computed by an ordinary GTI
+// function whose declaration identity remains authoritative through lowering.
+struct ExpectedTransformErrorInfo {
+  SemanticType sourceType = SemanticType::Unknown;
+  SemanticType resultType = SemanticType::Unknown;
+  SemanticType mapperType = SemanticType::Unknown;
+  FunctionId mapper = 0;
+};
+
 // Contextual collection braces select ordinary static GTI functions. The
 // compiler owns sequencing/transfer; the selected library owns storage policy.
 struct ResolvedCollectionInfo {
@@ -1456,6 +1466,8 @@ public:
   findPayloadPattern(const Expr &expression) const;
 
   [[nodiscard]] const ResolvedCallInfo *findCall(const Call &call) const;
+  [[nodiscard]] const ExpectedTransformErrorInfo *
+  findExpectedTransformError(const Call &call) const;
   [[nodiscard]] const ResolvedCollectionInfo *
   findCollection(const ArrayInitializer &initializer) const;
 
@@ -1684,6 +1696,8 @@ private:
                             ResolvedPayloadPatternInfo info);
 
   void record(const Call &call, ResolvedCallInfo info);
+  void recordExpectedTransformError(const Call &call,
+                                    ExpectedTransformErrorInfo info);
   void recordCollection(const ArrayInitializer &initializer,
                         ResolvedCollectionInfo info);
 
@@ -1836,6 +1850,8 @@ private:
       payloadConstructions;
   std::unordered_map<const Expr *, ResolvedPayloadPatternInfo> payloadPatterns;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
+  std::unordered_map<const Call *, ExpectedTransformErrorInfo>
+      expectedTransformErrors;
   std::unordered_map<const Expr *, NativeFunctionConversionInfo>
       nativeFunctionConversions;
   std::unordered_map<const Expr *, FunctionItemSelectionInfo>

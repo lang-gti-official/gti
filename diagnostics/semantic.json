@@ -34,5 +34,14 @@
     "group": "unused-mut",
     "format": "Mutable binding '{0}' is never used mutably.",
     "arguments": 1
+  },
+  {
+    "id": "InvalidExpectedErrorTransform",
+    "code": "GTI-S2097",
+    "phase": "Semantics",
+    "severity": "Error",
+    "group": "expected",
+    "format": "expected::transform_error requires one exact mapper from '{0}' to an owned non-void error type.",
+    "arguments": 1
   }
 ]

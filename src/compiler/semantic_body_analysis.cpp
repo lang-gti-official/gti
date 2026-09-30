@@ -5183,7 +5183,8 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
   }
   if (objectType.kind == SemanticType::Expected) {
     if (expr.name().lexeme == "has_value" || expr.name().lexeme == "value" ||
-        expr.name().lexeme == "error" || expr.name().lexeme == "value_or") {
+        expr.name().lexeme == "error" || expr.name().lexeme == "value_or" ||
+        expr.name().lexeme == "transform_error") {
       if (!analyzingCallCallee) {
         report(expr.name(),
                "Function names must be called; function values are not "
