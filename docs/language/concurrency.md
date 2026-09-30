@@ -1,13 +1,12 @@
 # Concurrency And Atomic Values
 
-Status: Current language contract for the bounded production concurrent
-profile: owned managed threads, ordered scalar atomics, and scoped mutex
-guards.
+Status: Current language contract for the bounded production safe concurrent
+profile and the separate unsafe C-style threading surface.
 
 Rationale is recorded in
-[ADR 008](../decisions/008-safe-concurrency-memory-model.md). Remaining
-condition-variable, scoped-thread, and foreign-entry work is tracked in the
-[concurrency plan](../plans/concurrency-memory-model.md).
+[ADR 008](../decisions/008-safe-concurrency-memory-model.md). Remaining safe
+condition-variable, scoped-thread, and arbitrary foreign-entry work is tracked
+in the [concurrency plan](../plans/concurrency-memory-model.md).
 
 ## Profiles And Availability
 
@@ -29,6 +28,12 @@ thread-capable concurrency support. Merely importing `<std/thread>`,
 values remains valid in the default profile and does not select native
 synchronization support. An executable use fails in semantics with
 `GTI-S2084` when either requirement is absent.
+
+The `<std/cthread>` create/join, once-initialization, manual-mutex, and
+condition-variable operations have the same profile and target requirements
+and additionally require lexical `unsafe`. Its scheduling hint, relative
+sleep, and identity observation/comparison operations remain available in
+either profile as specified below.
 
 ## Data-Race Freedom
 
@@ -582,11 +587,14 @@ facility as part of safe GTI.
 
 ## Current Omissions
 
-The current surface deliberately excludes weak compare/exchange, spurious
-failure, wait/notify, atomic references, pointer atomics, and fences.
-Condition variables, public manual unlock, recursive/read-write mutexes,
-scoped cross-thread borrows, detach, thread locals, and foreign-created-thread
-entry are also not implemented.
+The safe surface deliberately excludes weak compare/exchange, spurious
+failure, wait/notify, atomic references, pointer atomics, and fences. It also
+has no safe scoped condition-variable wrapper, safe public manual-unlock API,
+or safe recursive/read-write mutex family. The unsafe `<std/cthread>` surface
+does provide manual unlock, recursive mutexes, and manual condition variables.
+Across both surfaces, scoped cross-thread borrows, detach, C-style thread exit,
+thread-specific storage, read/write mutexes, and arbitrary
+foreign-created-thread entry are not implemented.
 
 The absence of these APIs is not permission to call similarly named native
 facilities and treat their behavior as GTI synchronization.
