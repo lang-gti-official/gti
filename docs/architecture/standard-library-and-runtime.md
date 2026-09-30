@@ -103,7 +103,7 @@ Semantic analysis grants intrinsic behavior by exact trusted declaration
 identity. The shared private `prefix_storage<T>`, `text_view`, and `c_string`
 type declarations receive compiler-capability identities only when the exact
 trusted prelude declarations are selected. Module-specific capabilities bind
-to one exact installed standard-library unit: `unique_owner<T>` and
+to one exact installed standard-library unit: `unique_owner<T>`, `shared_owner<T>`, and
 `storage<T>` to `<std/memory>`, `optional_storage<T>` to `<std/optional>`,
 managed threads to `<std/thread>`, atomics to `<std/atomic>`, mutexes to
 `<std/mutex>`, and defined integer arithmetic to `<std/numeric>`. Iterator and
@@ -113,6 +113,30 @@ declaration or qualified spelling in application source creates no capability.
 HIR/MIR retain selected intrinsic identity, and the backend queries semantic
 capability facts rather than recognizing a source name before choosing its
 representation.
+
+`shared_owner<T>` is a nominal move-only strong token, not the legacy implicit
+shared-pointer type. Its private operations create an empty token, consume an
+existing unique owner, explicitly retain, borrow read-only, observe emptiness
+or count, and swap. The public `shared_ptr` policy remains ordinary GTI.
+MIR verifies each exact capability/operand/result, its loan anchor, failure
+outcome, and invocation handoff. A shared drop recipe contains one unprojected
+unique-owner recipe, executed only on final release; passive pointees still
+have allocation cleanup. Release is a synchronization and unknown-memory
+barrier, including through aggregate and callable effect summaries.
+
+The native control block uses an atomic count and a move-only inert shell.
+Native destruction of an unreleased strong token fails rather than silently
+substituting C++ cleanup for MIR. Promotion allocates before detaching the
+consumed unique input and owns its rollback on allocation failure. Managed
+thread adapters likewise execute the exact verified task/result cleanup
+recipe before destroying the native box; active task/result types without
+such a recipe are rejected by MIR verification. Native exception unwinding
+does not choose GTI cleanup or reference-count ownership policy.
+The runtime exposes the pending failure kind only during its task-cleanup
+phase. Adapters pass an existing ordinary failure into the recipe as unwinding;
+a secondary failure records the emergency and stops further capture/result
+cleanup without destroying still-active native shells. This also applies when
+cleanup itself has already produced an emergency before returning to the adapter.
 
 Capabilities expose only irreducible representation invariants. Public logical
 size, growth, allocation policy, and container behavior belong in ordinary GTI

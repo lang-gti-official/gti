@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Shared allocation rollback and final-release failure obey MIR cleanup."""
+
+import argparse
+from pathlib import Path
+import tempfile
+
+from unique_class_allocation_runtime_test import run
+
+
+def main():
+    modes = [(f"{std}-{opt}", ["--std", std, f"-{opt}"], [])
+             for std in ("c++20", "c++23") for opt in ("O0", "O1", "O3")]
+    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
+              ("sanitized", ["--std", "c++23", "-O1"],
+               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("compiler", type=Path)
+    parser.add_argument("--mode", action="append", choices=[mode[0] for mode in modes])
+    arguments = parser.parse_args()
+    compiler = arguments.compiler.resolve()
+    fixtures = Path(__file__).resolve().parent / "fixtures"
+    source = fixtures / "shared_ownership_failure.gti"
+    if arguments.mode:
+        modes = [mode for mode in modes if mode[0] in arguments.mode]
+    with tempfile.TemporaryDirectory(prefix="gti-shared-failure-") as temporary:
+        for name, flags, native in modes:
+            binary = Path(temporary) / name
+            built = run([str(compiler), str(source), *flags, "-o", str(binary),
+                         "--", str(fixtures / "unique_scalar_allocation_fault.cpp"), *native])
+            assert built.returncode == 0, (name, built.stdout, built.stderr)
+            cases = [
+                (70, "99\n", "empty_owner_access in dereference"),
+                (70, "1\n7\n12\n99\n", "allocation_failure in shared_owner"),
+                (70, "1\n7\n", "failure_during_cleanup"),
+                (70, "1\n2\n7\n99\n", "division_by_zero"),
+                (0, "1\n2\n7\n12\n99\n", ""),
+            ]
+            for phase, (status, output, diagnostic) in enumerate(cases):
+                result = run([str(binary), *(["phase"] * phase)])
+                assert result.returncode == status and result.stdout == output, (
+                    name, phase, result.returncode, result.stdout, result.stderr)
+                assert diagnostic in result.stderr, (name, phase, result.stderr)
+                code = ("GTI-R0008", "GTI-R0011", "GTI-R0014", "GTI-R0002", "")[phase]
+                if code:
+                    assert f"runtime error[{code}]" in result.stderr, (name, phase, result.stderr)
+                if phase == 2:
+                    assert "primary [GTI-R0011]" in result.stderr, result.stderr
+                    assert "secondary [GTI-R0002]" in result.stderr, result.stderr
+                if not diagnostic:
+                    assert not result.stderr, (name, phase, result.stderr)
+            print(f"shared ownership failure: {name} passed", flush=True)
+            thread_binary = Path(temporary) / f"thread-{name}"
+            built = run([str(compiler), str(fixtures / "shared_ownership_thread_cleanup_failure.gti"),
+                         *flags, "--execution-profile", "concurrent", "-o", str(thread_binary),
+                         "--", *native])
+            assert built.returncode == 0, (name, built.stdout, built.stderr)
+            result = run([str(thread_binary)])
+            assert result.returncode == 70 and result.stdout == "7\n", (
+                name, result.returncode, result.stdout, result.stderr)
+            assert "runtime error[GTI-R0014]" in result.stderr, result.stderr
+            assert "primary [GTI-R0003]" in result.stderr, result.stderr
+            assert "secondary [GTI-R0002]" in result.stderr, result.stderr
+            print(f"shared ownership thread cleanup: {name} passed", flush=True)
+
+
+if __name__ == "__main__":
+    main()

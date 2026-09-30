@@ -5594,6 +5594,10 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       .borrowOrigin = returnBorrowOrigin,
       .borrowArgument = returnBorrowParameter,
       .borrowAccess = returnBorrowAccess,
+      .borrowArguments = declarationOwnsBorrow
+                             ? declarationInfo->returnBorrowParameters
+                         : candidateOwnsBorrow ? function.returnBorrowParameters
+                                               : concreteBorrow.parameters,
       .borrowPlace = returnBorrowPlace,
       .dispatch =
           function.virtualMethod ? CallDispatch::Virtual : CallDispatch::Static,

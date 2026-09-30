@@ -292,6 +292,9 @@ analyzeMirPlaceAliasEscape(const MirProgram &program, MirBodyAddress address) {
     if (loan.escapes) {
       addReason(result.escapes, loan.source,
                 MirPlaceEscapeReason::RetainedBorrow);
+      for (const MirPlaceId source : loan.additionalSources) {
+        addReason(result.escapes, source, MirPlaceEscapeReason::RetainedBorrow);
+      }
     }
   }
   for (const MirBlock &block : body->blocks) {

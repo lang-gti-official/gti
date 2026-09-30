@@ -22,10 +22,12 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "Binding",
       "Base",
       "Capability",
+      "Cleanup",
       "Callable",
       "Count",
       "Derived",
       "Error",
+      "Extent",
       "Index",
       "Left",
       "Parameters",
@@ -60,6 +62,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "bitwise_and_assign",
       "bitwise_or_assign",
       "bitwise_xor_assign",
+      "block",
       "bits",
       "bytes",
       "callable",
@@ -74,6 +77,11 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "checked_initialized_index",
       "checked_mul",
       "checked_sub",
+      "cleanup",
+      "cleanup_task",
+      "cleanup_result",
+      "element",
+      "clone_into",
       "construct",
       "count",
       "data_",
@@ -91,6 +99,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "function_item",
       "expected_result",
       "forward_pack_argument",
+      "fresh",
       "gti_internal",
       "integer_domain_error",
       "index",
@@ -146,6 +155,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "pre_decrement",
       "pre_increment",
       "previous",
+      "promote",
       "promoted",
       "promoted_left",
       "promoted_right",
@@ -155,6 +165,8 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "read_mut",
       "read_only_receiver",
       "release",
+      "release_with_failure",
+      "released",
       "relocate_to",
       "remainder_assign",
       "retag_call",
@@ -166,6 +178,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "saturating_mul",
       "saturating_sub",
       "selected",
+      "shared_owner",
       "shift_count",
       "shift_left",
       "shift_left_assign",
@@ -174,6 +187,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "shifted",
       "slot",
       "status",
+      "state_",
       "storage",
       "storage_capacity",
       "storage_construct",
@@ -190,6 +204,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "storage_try_allocate",
       "string_view_at",
       "string_view_bounds_error",
+      "strong",
       "subtract",
       "subtract_assign",
       "source",
@@ -202,6 +217,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "unique_owner_is_null",
       "unique_owner_upcast",
       "unsigned_count",
+      "use_count",
       "upper",
       "unchecked_read",
       "unchecked_read_mut",
@@ -292,6 +308,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "this",
       "trunc",
       "try",
+      "tuple_size_v",
       "typename",
       "uint32_t",
       "uint64_t",
@@ -571,6 +588,22 @@ private:
   bool success_ = true;
   ::gti_failure_record_v1 secondary_{};
 };
+
+// The verified array recipe visits immediate elements in reverse order. It
+// retires semantic resources only; the enclosing lifetime operation ends the
+// now-inert array representation after successful (or primary-failure) cleanup.
+template <std::size_t Extent, typename Array, typename Cleanup>
+[[nodiscard]] bool mir_array_cleanup_with_failure_v1(
+    Array &array, ::gti_failure_record_v1 *record, bool unwinding,
+    const ::gti_failure_artifact_descriptor_v1 *artifact, Cleanup cleanup) {
+  static_assert(std::tuple_size_v<std::remove_cvref_t<Array>> == Extent);
+  mir_cleanup_sequence_v1 sequence(record, unwinding, artifact);
+  for (std::size_t index = Extent; index != 0; --index) {
+    if (!sequence.step(cleanup(array[index - 1], sequence.record(), sequence.unwinding())))
+      return false;
+  }
+  return sequence.success();
+}
 
 template <std::size_t Instance, typename T>
 [[nodiscard]] bool mir_unique_aggregate_owner_drop_with_failure_v1(
@@ -1903,9 +1936,82 @@ unique_owner_upcast(std::unique_ptr<Derived> &&owner) noexcept {
   return std::unique_ptr<Base>(std::move(owner));
 }
 
+// Dormant source templates may name this dependent representation without
+// instantiating a shared capability (and therefore without requiring atomics).
+template <typename T> class shared_owner;
+
 )";
   if (usesAtomics) {
     output << R"(
+
+// A strong token has no implicit retain or source-language destructor. MIR
+// releases its one obligation explicitly, supplying the verified pointee
+// recipe on the last release. Native shells must be inert when destroyed.
+template <typename T> class shared_owner final {
+  struct block {
+    std::atomic<std::uint64_t> strong{1};
+    std::unique_ptr<T> value;
+  };
+  block *state_ = nullptr;
+public:
+  shared_owner() noexcept = default;
+  shared_owner(const shared_owner &) = delete;
+  shared_owner &operator=(const shared_owner &) = delete;
+  shared_owner(shared_owner &&other) noexcept
+      : state_(std::exchange(other.state_, nullptr)) {}
+  shared_owner &operator=(shared_owner &&other) noexcept {
+    if (this == &other) return *this;
+    if (state_ != nullptr) std::abort();
+    state_ = std::exchange(other.state_, nullptr);
+    return *this;
+  }
+  ~shared_owner() { if (state_ != nullptr) std::abort(); }
+  explicit operator bool() const noexcept { return state_ != nullptr; }
+  const T *get() const noexcept { return state_ == nullptr ? nullptr : state_->value.get(); }
+  std::uint64_t use_count() const noexcept {
+    return state_ == nullptr ? 0 : state_->strong.load(std::memory_order_relaxed);
+  }
+  void swap(shared_owner &other) noexcept { std::swap(state_, other.state_); }
+  // Failure leaves the consumed input intact for the caller's MIR failure
+  // rollback. Allocation succeeds before ownership is detached from it.
+  static bool promote(std::unique_ptr<T> &source,
+                      shared_owner &destination) noexcept {
+    if (destination.state_ != nullptr) std::abort();
+    if (!source) return true;
+    block *fresh = new (std::nothrow) block;
+    if (fresh == nullptr) return false;
+    fresh->value = std::move(source);
+    destination.state_ = fresh;
+    return true;
+  }
+  bool clone_into(shared_owner &destination) const noexcept {
+    if (destination.state_ != nullptr) std::abort();
+    if (state_ == nullptr) return true;
+    auto count = state_->strong.load(std::memory_order_relaxed);
+    do {
+      if (count == std::numeric_limits<std::uint64_t>::max())
+        return false;
+    } while (!state_->strong.compare_exchange_weak(
+        count, count + 1, std::memory_order_relaxed, std::memory_order_relaxed));
+    destination.state_ = state_;
+    return true;
+  }
+  template <typename Cleanup>
+  bool release_with_failure(::gti_failure_record_v1 *record, bool unwinding,
+                            Cleanup cleanup) {
+    block *released = std::exchange(state_, nullptr);
+    if (released == nullptr ||
+        released->strong.fetch_sub(1, std::memory_order_acq_rel) != 1)
+      return true;
+    const bool success = cleanup(released->value, record, unwinding);
+    // A secondary failure terminates at the explicit MIR edge: do not let
+    // native deletion run remaining subobjects before that terminal edge.
+    if (!success && unwinding) return false;
+    if (released->value) std::abort();
+    delete released;
+    return success;
+  }
+};
 
 template <typename T> class atomic_value final {
 public:

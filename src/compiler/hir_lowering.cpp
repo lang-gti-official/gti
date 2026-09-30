@@ -206,25 +206,8 @@ private:
     }
     const ClassLifecycleInfo *lifecycle =
         baseModel->findClassLifecycle(*declaration->declaration);
-    const bool lifecycleBoundBorrowCarrier = [&] {
-      if (declaration->namespaceScope != std::vector<std::string>{"std"} ||
-          declaration->declaration->name().lexeme != "mutex_guard" ||
-          !declaration->storedReference ||
-          declaration->storedReference->type.kind != SemanticType::Reference ||
-          declaration->storedReference->type.arguments.size() != 1) {
-        return false;
-      }
-      const SemanticType &storageType =
-          declaration->storedReference->type.arguments.front();
-      const ClassTypeInfo *storage =
-          storageType.kind == SemanticType::Class
-              ? baseModel->findClassType(storageType.classId)
-              : nullptr;
-      return storage != nullptr &&
-             storage->sourceUnit == declaration->sourceUnit &&
-             storage->compilerCapability ==
-                 CompilerCapabilityTypeKind::MutexStorage;
-    }();
+    const bool lifecycleBoundBorrowCarrier =
+        declaration->lifecycleBoundBorrowCarrier;
     const HirClassInstanceId id = output.program.classes.size() + 1;
     SemanticTypeTraits instanceTraits =
         instanceProvider->traitsFor(resolvedType);
@@ -352,6 +335,7 @@ private:
          .returnBorrowOrigin = declaration.returnBorrowOrigin,
          .returnBorrowParameter = declaration.returnBorrowParameter,
          .returnBorrowAccess = declaration.returnBorrowAccess,
+         .returnBorrowParameters = declaration.returnBorrowParameters,
          .returnBorrowPlace = declaration.returnBorrowPlace,
          .ownedPointeeProjection = declaration.ownedPointeeProjection,
          .instantiationSite = std::move(site),
@@ -451,6 +435,7 @@ private:
       if (construction.borrowOrigin != BorrowOriginKind::None) {
         instance.borrowOrigin = construction.borrowOrigin;
         instance.borrowParameter = construction.borrowArgument;
+        instance.borrowParameters = construction.borrowArguments;
         instance.borrowAccess = construction.borrowAccess;
       }
       return instance.id;
@@ -468,6 +453,7 @@ private:
          .borrowOrigin = construction.borrowOrigin,
          .borrowParameter = construction.borrowArgument,
          .borrowAccess = construction.borrowAccess,
+         .borrowParameters = construction.borrowArguments,
          .instantiationSite = std::move(site)});
     instanceIndex.recordConstructor(construction.constructor, *owner,
                                     construction.typeArguments,
@@ -1264,6 +1250,8 @@ private:
           concrete->returnBorrowOrigin;
       output.program.functions[index].returnBorrowParameter =
           concrete->returnBorrowParameter;
+      output.program.functions[index].returnBorrowParameters =
+          concrete->returnBorrowParameters;
       output.program.functions[index].returnBorrowAccess =
           concrete->returnBorrowAccess;
       output.program.functions[index].returnBorrowPlace =
@@ -1792,8 +1780,12 @@ private:
                       .place = qualifyPlace(loan.place, body.placeDomain),
                       .access = loan.access,
                       .designatedFields = loan.designatedFields,
+                      .additionalDependencies = loan.additionalDependencies,
                       .lifecycleBound = loan.lifecycleBound,
                       .entry = loan.entry};
+      for (auto &dependency : lowered.additionalDependencies) {
+        dependency.place = qualifyPlace(dependency.place, body.placeDomain);
+      }
       for (const SymbolId carrier : loan.carriers) {
         const auto found = bindings.find(carrier);
         if (found != bindings.end() &&
@@ -3216,6 +3208,7 @@ private:
         .borrowOrigin = construction.borrowOrigin,
         .borrowArgument = construction.borrowArgument,
         .borrowAccess = construction.borrowAccess,
+        .borrowArguments = construction.borrowArguments,
         .constructorKind = construction.kind,
     };
 
@@ -4278,6 +4271,7 @@ private:
         value.parameterTypes = resolved->parameterTypes;
         value.borrowOrigin = resolved->borrowOrigin;
         value.borrowArgument = resolved->borrowArgument;
+        value.borrowArguments = resolved->borrowArguments;
         value.borrowAccess = resolved->borrowAccess;
         value.borrowPlace = resolved->borrowPlace;
         if (value.borrowOrigin == BorrowOriginKind::Global &&
@@ -4519,6 +4513,7 @@ private:
       }
       value.borrowOrigin = construction->borrowOrigin;
       value.borrowArgument = construction->borrowArgument;
+      value.borrowArguments = construction->borrowArguments;
       value.borrowAccess = construction->borrowAccess;
       value.constructorKind = construction->kind;
       std::optional<SourceSpan> site;

@@ -1301,7 +1301,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v66\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v67\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -3294,7 +3294,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v76 ") &&
+  expect(mirDump.starts_with("mir-v77 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -5780,9 +5780,9 @@ public:
 
 class TwoReferences {
   int& left;
-  int& right;
+  mut int& right;
 public:
-  TwoReferences(int& first, int& second) : left(first), right(second) {}
+  TwoReferences(int& first, mut int& second) : left(first), right(second) {}
 };
 
 class MissingBinding {
@@ -5834,7 +5834,8 @@ int main() {
                                {standardLibraryPrelude()});
   expect(
       !invalid.canGenerateCode() &&
-          hasDiagnostic(invalid.diagnostics, "may store only one reference") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "requires read-only dependencies") &&
           hasDiagnostic(invalid.diagnostics,
                         "Every constructor of a stored-reference class") &&
           hasDiagnostic(invalid.diagnostics, "cannot declare a destructor") &&
@@ -14462,7 +14463,11 @@ int main() {
 
   const lang::FrontendResult nestedGeneric = lang::Frontend().analyze(
       "nested-generic-lambdas.gti", R"(
-#include <std/memory>
+struct CopyableCapture {
+  int value = 7;
+  CopyableCapture() {}
+  CopyableCapture(CopyableCapture& other) = default;
+};
 
 int nest<T>(T value) {
   auto outer = [value]() -> int { return 1; };
@@ -14471,7 +14476,7 @@ int nest<T>(T value) {
 }
 
 int main() {
-  return nest(1) + nest(std::shared_ptr<int>()) - 2;
+  return nest(1) + nest(CopyableCapture()) - 2;
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
@@ -15555,7 +15560,11 @@ int main() {
 
   const lang::FrontendResult genericCapturedCallables =
       lang::Frontend().analyze("generic-captured-callables.gti", R"(
-#include <std/memory>
+struct CopyableCapture {
+  int value = 7;
+  CopyableCapture() {}
+  CopyableCapture(CopyableCapture& other) = default;
+};
 
 int invoke<Operation>(Operation operation) { return operation(); }
 
@@ -15566,7 +15575,7 @@ int capture_and_invoke<T>(T value) {
 
 int main() {
   int first = capture_and_invoke(1);
-  int second = capture_and_invoke(std::shared_ptr<int>());
+  int second = capture_and_invoke(CopyableCapture());
   return first + second - 2;
 }
 )",
@@ -16343,7 +16352,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v76 ") &&
+             mirDump.starts_with("mir-v77 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=

@@ -1,0 +1,40 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+extern "C" { void gti_test_fail_scalar_allocation(int32_t enabled); }
+
+class Caller {
+public:
+  ~Caller() { std::println(99); }
+};
+
+class Item {
+  int divisor;
+public:
+  Item(int fail_allocation, int divisor) : divisor(divisor) {
+    // The pointee has already been allocated; fail only control-block creation.
+    unsafe { gti_test_fail_scalar_allocation(fail_allocation); }
+    std::println(1);
+  }
+  ~Item() {
+    std::println(7);
+    std::println(12 / this.divisor);
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Caller caller{};
+  if (argc == 1) {
+    std::shared_ptr<int> empty{};
+    return *empty;
+  }
+  int fail_allocation = argc == 2 || argc == 3 ? 1 : 0;
+  int divisor = argc == 3 || argc == 4 ? 0 : 1;
+  mut auto first = std::make_shared<Item>(fail_allocation, divisor);
+  mut auto second = first.clone();
+  first.reset();
+  std::println(2);
+  second.reset();
+  return 0;
+}

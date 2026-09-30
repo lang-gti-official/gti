@@ -602,9 +602,11 @@ rest of the function.
 
 One deliberately confined stored-reference form is available for owner-tied
 values such as iterators, views, and guard-shaped capabilities. A class or
-struct may contain one direct `T&` or `mut T&` field, or one nominal field
-whose type recursively contains that single reference. The complete object
-must have exactly one reference-bearing field path. A direct reference must
+struct may contain direct `T&` fields or nominal fields whose types recursively
+contain shared references. Each independent owner remains part of the carrier's
+checked dependency set; two fields may also refer to the same owner. Exclusive
+carriers remain limited to exactly one `mut T&` reference-bearing field path;
+mixing shared and exclusive paths is not supported. A direct reference must
 bind from one exact reference parameter with the same access mode. A nested
 carrier field must initialize directly from one exact carrier parameter,
 using an explicit move for an exclusive dependency. Neither form supports
@@ -618,8 +620,10 @@ adds an alias to the same shared owner dependency. A mutable carrier is
 move-constructible but not copy-constructible: its one exclusive dependency is
 transferred, never duplicated. An instance method may return a carrier whose
 dependency is derived from `this`; a free function or static method may return
-one when exactly one compatible reference or carrier parameter supplies
-the origin:
+one when compatible reference or carrier parameters supply its checked origin
+set. Multi-origin returns must preserve all summarized parameter dependencies;
+they cannot substitute local storage or select a different dependency set on
+another return path:
 
 ```gti
 class Iterator<T> {
@@ -663,10 +667,21 @@ but cannot return a reference to its own shell or an ordinary owned field.
 A read-only method may expose a shared reference through a mutable reference
 field without granting the caller mutable access.
 
-Multiple reference fields (even if they refer to the same owner), inherited
-borrowed state, arrays of borrowed carriers, user-defined
-destructors, global/static or captured borrowed storage, multi-origin and
-dependency-changing returns, and assignment that would replace a carrier's
+Composed shared carriers conservatively retain their complete dependency set
+when a method exposes a reference or a subview. Such a projection does not yet
+release an unrelated owner independently. `std::paired_span<L, R>` is an ordinary
+source-defined client: it holds two spans, uses the shorter input length, and
+offers indexed `first`, `second`, and `subspan` operations. It has no special
+compiler recognition or independent iterator/proxy protocol.
+Whole-carrier by-value forwarding is supported. The separately escaping
+reference-return rule for a by-value carrier parameter still requires its one
+exact reference path; selecting an individual path from a multi-path by-value
+parameter is not part of this slice. Receiver-based accessors remain available
+and conservatively retain the receiver's complete owner set.
+
+Multiple exclusive paths, mixed shared/exclusive paths, inherited borrowed
+state, arrays of borrowed carriers, user-defined destructors, global/static or
+captured borrowed storage, dependency-changing returns, and assignment that would replace a carrier's
 dependency remain rejected. Mutable dependencies are limited to an exact
 stable local, parameter, receiver, or existing-loan origin. They do not admit
 raw or opaque origins, dynamic-index identity, arbitrary lifetime parameters,
@@ -981,10 +996,37 @@ types describe invocation arguments, not stored borrowed state. The existing
 managed-thread boundary retains its once-task contract. None of this exposes a
 native address or allows an unsafe function to become a safe callable.
 
-The planned `std::shared_ptr<T>` surface will be copyable and movable. Copying
-will add an owner; moving will transfer one handle. Shared ownership does not
-solve cycles, so GTI also needs a non-owning weak observation type before shared
-cyclic object graphs can be supported responsibly.
+### Shared Ownership
+
+`std::shared_ptr<T>` uses explicit `clone()` to add a strong owner of the same
+object and compiler-controlled movement to transfer one handle. It is not
+implicitly copyable and does not require custom copy/move constructor bodies.
+Default/null construction produces an empty handle. Reset, null assignment,
+move assignment, and swap change a mutable handle, not the shared object.
+Dereference and member access return read-only borrows, even from a mutable
+handle. Such a borrow protects the specific handle that supplied it; resetting
+a different alias is allowed because the borrowed handle still owns the
+object. `use_count()` is an observational snapshot, not exclusive-access proof.
+
+`std::make_shared<T>(args...)` uses the existing unique-allocation family:
+classes, structs, and scalars without stored borrowed state. Direct arrays,
+Expected values, and payload enums are not in this allocation family. The
+current representation allocates the object and its control block separately.
+Failure to allocate the
+block destroys the completed object before reporting `allocation_failure` in
+`shared_owner`; it does not leak or invoke the destructor twice. Last-owner
+release executes the ordinary verified cleanup recipe, including defined
+failure propagation. Empty dereference/member access raises `empty_owner_access`.
+
+Shared handles can cross threads only when `T` is both transfer-capable and
+share-capable: another thread can perform the last release. Atomic reference
+counts do not make the pointee's ordinary mutable methods safe. Synchronized
+read-receiver APIs such as `atomic<T>` retain their own checked permission.
+The current non-transferable mutex storage does not gain cross-thread transfer
+permission merely by being allocated behind a shared handle.
+
+Shared ownership does not solve cycles. Weak observation remains incomplete;
+strong ownership cycles must be avoided.
 
 ## Nullability And Allocation Failure
 
@@ -1157,10 +1199,12 @@ transfers an active-drop state: moved-from values still destroy their fields but
 skip the source cleanup body. Move assignment first runs cleanup for the active
 target, then replaces its fields and transfers active state. This avoids C++'s
 rule-of-five and moved-from destructor traps while preserving explicit GTI
-transfer semantics. Custom copy and move lifecycle bodies remain unavailable
-because the initial field-place slice does not yet model arbitrary
-constructor-time partial state, indexed places, or failure-aware active-drop
-rollback through a user-defined lifecycle body.
+transfer semantics. Custom copy and move constructor bodies remain unsupported.
+Movement is a compiler-controlled ownership transfer, not a user-code hook.
+Use explicit `clone()` methods for user-defined duplication and consuming
+methods or factories for custom transformations. The custom-copy experiment
+was withdrawn from the active campaign for further design consideration;
+neither form of custom constructor body is required by shared ownership.
 
 A type requires active cleanup when its own declared cleanup runs or a base,
 field, or fixed-array element owns a resource/active cleanup obligation. Such a

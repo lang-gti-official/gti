@@ -14,6 +14,11 @@ class worker_failure_handoff final {};
 
 [[nodiscard]] bool managed_worker_active() noexcept;
 
+// Only the runtime-owned task cleanup phase exposes its pending failure.
+// Generated cleanup uses it to stop immediately on a secondary failure.
+[[nodiscard]] gti_thread_worker_failure_kind_v1
+managed_task_cleanup_failure_kind() noexcept;
+
 [[noreturn]] void handoff_managed_worker_failure(
     const gti_failure_record_v1 &record,
     const gti_failure_artifact_descriptor_v1 *artifact);

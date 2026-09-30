@@ -76,6 +76,9 @@ string_view host();
 bool has_explicit_port();
 uint16_t port();
 void push_path_segment(string_view value) mut;
+void operator/=(string_view value) mut;
+url operator/(string_view value);
+url operator/(string_view value) &&;
 void add_query_parameter(string_view name, string_view value) mut;
 void set_query_parameter(string_view name, string_view value) mut;
 void clear_query() mut;
@@ -95,6 +98,18 @@ this abstraction.
 default, 80 or 443. `has_explicit_port()` distinguishes those cases. `view()`
 is a receiver-tied view and `string()` makes an independent owned copy.
 `clone()` makes an independently mutable URL.
+
+`base / "api" / "v1"` preserves a named `base`: the first `/` clones it,
+then consuming `/` overloads reuse the owned intermediate. A fresh URL or
+`std::move(base) / "api"` selects the consuming overload immediately. Moving
+`base` makes it unavailable afterward and is rejected while a live view borrows
+it. `base /= "api"` appends in place and requires a mutable receiver.
+
+These operators append one raw path segment, exactly like
+`push_path_segment`; they do not resolve relative URLs or combine authorities.
+Pass a `string_view`, not another `url`. Query text and the authority survive
+unchanged. Consuming chains avoid whole-URL clones, but each append still
+rebuilds the rendered URL and may allocate.
 
 Builder inputs are raw components. Every byte outside ASCII unreserved text is
 written as an uppercase percent escape: a space becomes `%20`, `+` becomes

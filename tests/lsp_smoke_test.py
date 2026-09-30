@@ -10868,9 +10868,17 @@ def test_mutable_stored_dependency_tooling(executable, root):
             item
             for item in invalid["diagnostics"]
             if item.get("code") == "GTI-S2045"
-            and "only one stored-reference" in item.get("message", "")
+            and item.get("message") == (
+                "A composed borrowed value requires read-only dependencies; "
+                "multiple or mixed exclusive dependencies are not supported."
+            )
         )
         assert nested["data"]["phase"] == "semantics", nested
+        nested_line = invalid_source.splitlines().index("class Nested {")
+        assert nested["range"] == {
+            "start": {"line": nested_line, "character": 6},
+            "end": {"line": nested_line, "character": 12},
+        }, nested
 
         session.send(
             {

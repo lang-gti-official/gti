@@ -136,6 +136,7 @@ struct HirLoan {
   SemanticLoanPlace place;
   AccessMode access = AccessMode::ReadOnly;
   std::vector<SymbolId> designatedFields;
+  std::vector<SemanticLoanDependency> additionalDependencies;
   bool lifecycleBound = false;
   std::vector<HirBindingId> carriers;
   bool entry = false;
@@ -217,6 +218,8 @@ struct HirValue {
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  // Exact argument origins retained for composed owner-dependent values.
+  std::vector<std::size_t> borrowArguments;
   std::optional<BorrowOriginPlace> borrowPlace;
   bool storedReferenceAccess = false;
   bool retainedReceiverProjection = false;
@@ -497,6 +500,7 @@ struct HirFunctionInstance {
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+  std::vector<std::size_t> returnBorrowParameters;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
   std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   HirBody body;
@@ -566,6 +570,7 @@ struct HirConstructorInstance {
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowParameter = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  std::vector<std::size_t> borrowParameters;
   std::vector<HirConstructorInitializer> initializers;
   std::vector<HirValueId> initializerValues;
   HirBody body;

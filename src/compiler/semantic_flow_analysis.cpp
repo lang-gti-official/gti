@@ -1739,6 +1739,13 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
           addFailureOutcome(operation, DefinedFailureCode::AllocationFailure,
                             DefinedFailureDetail::UniqueOwner);
           break;
+        case IntrinsicKind::SharedOwnerFromUnique:
+        case IntrinsicKind::SharedOwnerClone:
+          anchor(token);
+          addFailureOutcome(operation, DefinedFailureCode::AllocationFailure,
+                            DefinedFailureDetail::SharedOwner);
+          break;
+        case IntrinsicKind::SharedOwnerBorrow:
         case IntrinsicKind::UniqueOwnerBorrow:
         case IntrinsicKind::UniqueOwnerBorrowMut:
           anchor(token);
@@ -1912,6 +1919,10 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::Move:
         case IntrinsicKind::UniqueOwnerIsNull:
         case IntrinsicKind::UniqueOwnerUpcast:
+        case IntrinsicKind::SharedOwnerEmpty:
+        case IntrinsicKind::SharedOwnerIsNull:
+        case IntrinsicKind::SharedOwnerUseCount:
+        case IntrinsicKind::SharedOwnerSwap:
         case IntrinsicKind::IntegerWrappingAdd:
         case IntrinsicKind::IntegerWrappingSubtract:
         case IntrinsicKind::IntegerWrappingMultiply:
@@ -2486,16 +2497,38 @@ auto SemanticVisitor::Impl::isDefaultLibraryStorageBorrowCarrier(
 auto SemanticVisitor::Impl::isDefaultLibraryMutexGuardCarrier(
     const ClassInfo &owner) const -> bool {
   if (!isMutexLibraryUnit(owner.sourceUnit) || !owner.storedReference ||
-      owner.namespaceScope != std::vector<std::string>{"std"} ||
-      owner.name.lexeme != "mutex_guard" ||
+      owner.fields.size() != 2 ||
       owner.storedReference->type.kind != SemanticType::Reference ||
+      owner.storedReference->type.referenceAccess != AccessMode::ReadOnly ||
       owner.storedReference->type.arguments.size() != 1) {
     return false;
   }
   const ClassInfo *storage =
       classInfo(owner.storedReference->type.arguments.front());
-  return storage != nullptr && storage->compilerCapability ==
-                                   CompilerCapabilityTypeKind::MutexStorage;
+  if (storage == nullptr ||
+      storage->compilerCapability != CompilerCapabilityTypeKind::MutexStorage ||
+      storage->sourceUnit != owner.sourceUnit) {
+    return false;
+  }
+  for (const FieldInfo &field : owner.fields) {
+    if (field.declaration == nullptr ||
+        field.declaration == owner.storedReference->field) {
+      continue;
+    }
+    const auto member = owner.members.find(field.declaration->name().lexeme);
+    if (member == owner.members.end()) {
+      continue;
+    }
+    const ClassInfo *token = classInfo(member->second.symbol.type);
+    if (token != nullptr && token->sourceUnit == owner.sourceUnit &&
+        token->compilerCapability ==
+            CompilerCapabilityTypeKind::MutexLockToken &&
+        member->second.symbol.type.arguments ==
+            owner.storedReference->type.arguments.front().arguments) {
+      return true;
+    }
+  }
+  return false;
 }
 
 auto SemanticVisitor::Impl::isDefaultLibraryStorageBorrowParameter(

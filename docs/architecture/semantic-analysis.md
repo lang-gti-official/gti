@@ -921,6 +921,17 @@ field. HIR and MIR carry that fact directionally so MIR verification can bind a
 returned runtime place or carrier value to the same formal dependency; later
 phases do not infer the field from its type or emitted representation.
 
+Shared stored carriers generalize this to a set of reference-bearing field
+paths and checked owner places. `SemanticLoanInfo.additionalDependencies`
+retains the remaining places, access modes, storage protection, and entry
+field paths alongside the original primary dependency. Every constructor
+binds each borrowed field from an exact parameter; resolved construction/call
+records preserve the complete supplying-parameter set. Every owner participates
+in conflicts, argument exclusivity, escape validation, and the common carrier
+endpoint. Copies alias the whole set and moves transfer the shell. Shared
+projections retain the full set conservatively. This rule applies equally to
+unrelated source-defined carriers and the source library's paired span.
+
 The same representation covers one direct mutable stored reference.
 Declaration analysis requires every constructor to bind the field from one
 exact mutable reference parameter. Lifecycle traits make the carrier movable,
@@ -929,9 +940,10 @@ reference or direct mutable-carrier parameter only for a mutable return and
 rejects multiple compatible origins. Ownership analysis records construction
 as an exclusive stored child of that origin, transfers its carrier identity on
 move, keeps the parent unavailable while the child is live, and reactivates it
-only after the final child and carrier endpoint. Nested borrowed fields,
-custom destruction, globals/captures, dependency reseating, dynamic origins,
-and multi-origin returns remain outside this bounded graph.
+only after the final child and carrier endpoint. A nominal wrapper may retain
+that one exclusive path. Custom destruction, globals/captures, dependency
+reseating, dynamic origins, mixed shared/exclusive paths, and multiple exclusive
+origins remain outside this bounded graph.
 
 Addressable namespace bindings and non-generic static data members use the
 same symbol-rooted place whether their source spelling is qualified or

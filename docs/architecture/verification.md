@@ -8,6 +8,24 @@ assertions.
 
 ## Primary Targets
 
+The 0.354.0 shared-ownership/borrowing-composition run uses an optimized
+Release build and exercises all 325 registered CTest gates. The integrated
+run passes 322; two obsolete implicit-copyable `shared_ptr` test inputs and
+the new manifest entry ordering are corrected, then all three affected gates
+pass, including the full stdlib O0/O3 surface sweep. The new shared ownership,
+allocation/cleanup failure, cross-thread ownership, and consuming URL-chain
+matrices cover C++20/C++23 O0/O1/O3, no-elide, and ASan/UBSan. Installed-library
+consumers pass 9/9; staged shared/paired-view programs, failure/worker-result
+probes, URL chaining, and borrowing LSP checks pass outside the checkout.
+These are local macOS results, not Linux/Windows release evidence.
+
+The same run's optional audit passes 23 contract probes, 24 typed differential
+cases, four composition cases, 100 malformed-source mutations, and the
+85-example/four-variant matrix. Its final comparison step fails because the
+checkout no longer contains `examples/gti-vs-cpp/verify.py`. That missing
+non-gating showcase is separate from the passing mandatory gates; the full
+optional audit is not claimed to pass.
+
 The associative-container integration on 2026-09-29 exercised all 310 registered
 gates in the optimized Release/Ninja configuration. Three stale test-inventory
 expectations were corrected (compiler registration order, emitter registration

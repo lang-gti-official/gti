@@ -145,10 +145,11 @@ constexpr std::string_view kFailureDetails[] = {
     "mutex_lock",
     "key_lookup",
     "container_argument",
+    "shared_owner",
 };
 
 static_assert(std::size(kFailureCategories) == 17);
-static_assert(std::size(kFailureDetails) == 36);
+static_assert(std::size(kFailureDetails) == 37);
 
 struct ReportOutput {
   WriteFunction write = nullptr;
@@ -223,6 +224,7 @@ struct ResolvedFailure {
            detail <= GTI_FAILURE_DETAIL_OCCUPIED_RELOCATION_DESTINATION_V1;
   case GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1:
     return detail == GTI_FAILURE_DETAIL_UNIQUE_OWNER_V1 ||
+           detail == GTI_FAILURE_DETAIL_SHARED_OWNER_V1 ||
            detail == GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1 ||
            detail == GTI_FAILURE_DETAIL_ELEMENT_CONSTRUCTION_V1 ||
            detail == GTI_FAILURE_DETAIL_HOSTED_ARGUMENTS_V1;

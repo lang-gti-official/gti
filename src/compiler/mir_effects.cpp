@@ -358,8 +358,35 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     // MutexLockFailure: enters the defined-failure runtime path.
     MirEffectTraits{.invokesRuntime = true, .mayTrap = true},
     MirEffectTraits{}, // ExactTypeParameterConstruction: scalar identity.
-    MirEffectTraits{.mayTrap = true}, // RequireKey
-    MirEffectTraits{.mayTrap = true}, // RequireContainerArgument
+    MirEffectTraits{.mayTrap = true},          // RequireKey
+    MirEffectTraits{.mayTrap = true},          // RequireContainerArgument
+    MirEffectTraits{.initializesValue = true}, // SharedOwnerEmpty
+    // Promotion consumes the unique owner. Allocation rollback may execute
+    // the pointee's source cleanup through the explicit failure channel.
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .allocates = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .movesValue = true,
+                    .initializesValue = true,
+                    .dropsValue = true,
+                    .invokesUserCode = true}, // SharedOwnerFromUnique
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .initializesValue = true,
+                    .maySynchronize = true}, // SharedOwnerClone
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .mayTrap = true,
+                    .startsLoan = true}, // SharedOwnerBorrow
+    MirEffectTraits{.readsPlace = true}, // SharedOwnerIsNull
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .maySynchronize = true}, // SharedOwnerUseCount
+    MirEffectTraits{.readsPlace = true,
+                    .writesPlace = true,
+                    .movesValue = true}, // SharedOwnerSwap
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -566,6 +593,13 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "exact-type-parameter-construction",
     "require-key",
     "require-container-argument",
+    "shared-owner-empty",
+    "shared-owner-from-unique",
+    "shared-owner-clone",
+    "shared-owner-borrow",
+    "shared-owner-is-null",
+    "shared-owner-use-count",
+    "shared-owner-swap",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({
@@ -879,8 +913,35 @@ summaryForAddress(const MirProgram &program, MirBodyAddress address) {
 struct ExactTargets {
   bool boundary = false;
   bool nativeCleanup = false;
+  bool synchronizingCleanup = false;
   std::vector<MirBodyAddress> addresses;
 };
+
+[[nodiscard]] bool sharedCleanup(const MirProgram &program,
+                                 const MirDropType &drop) {
+  if (drop.classInstance) {
+    const auto *owner = program.findClassInstance(*drop.classInstance);
+    if (owner &&
+        owner->compilerCapability == CompilerCapabilityTypeKind::SharedOwner)
+      return true;
+  }
+  return std::any_of(
+      drop.aggregate.begin(), drop.aggregate.end(),
+      [&](const auto &child) { return sharedCleanup(program, child); });
+}
+
+[[nodiscard]] MirEffectTraits cleanupEffects(MirEffectTraits traits,
+                                             const ExactTargets &targets) {
+  if (targets.synchronizingCleanup) {
+    traits.readsUnknownMemory = true;
+    traits.writesUnknownMemory = true;
+    traits.maySynchronize = true;
+    traits.speculatable = false;
+    traits.removableWhenUnused = false;
+    traits.reorderable = false;
+  }
+  return traits;
+}
 
 [[nodiscard]] ExactTargets exactTargets(const MirProgram &program,
                                         const MirBody &body,
@@ -889,6 +950,8 @@ struct ExactTargets {
   if (instruction.kind == MirInstructionKind::CleanupBeforeAssign &&
       instruction.replacementCleanup) {
     result.nativeCleanup = true;
+    result.synchronizingCleanup =
+        sharedCleanup(program, *instruction.replacementCleanup);
     result.boundary =
         mirDropHasPolymorphicCleanup(*instruction.replacementCleanup);
     for (const auto destructor :
@@ -899,6 +962,8 @@ struct ExactTargets {
   } else if (instruction.kind == MirInstructionKind::Call &&
              instruction.elementCleanup) {
     result.nativeCleanup = true;
+    result.synchronizingCleanup =
+        sharedCleanup(program, *instruction.elementCleanup);
     result.boundary = mirDropHasPolymorphicCleanup(*instruction.elementCleanup);
     for (const auto destructor :
          mirDropDestructorTargets(*instruction.elementCleanup)) {
@@ -960,6 +1025,8 @@ struct ExactTargets {
       result.nativeCleanup |=
           obligation.dropType.uniquePointeeClass.has_value() ||
           !obligation.dropType.aggregate.empty();
+      result.synchronizingCleanup |=
+          sharedCleanup(program, obligation.dropType);
       result.boundary |= mirDropHasPolymorphicCleanup(obligation.dropType);
       for (const auto destructor :
            mirDropDestructorTargets(obligation.dropType)) {
@@ -1085,6 +1152,50 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
   const auto derive =
       [&](const auto &self,
           const SemanticType &selected) -> std::optional<MirDropType> {
+    if (selected.kind == SemanticType::Array) {
+      if (selected.arguments.size() != 1 || selected.arrayLength == 0 ||
+          selected.arrayLengthParameterId != 0)
+        return std::nullopt;
+      auto child = self(self, selected.arguments.front());
+      if (!child || !child->requiresActiveCleanup)
+        return std::nullopt;
+      SemanticType leaf = selected;
+      MirFixedArrayDropSchedule schedule;
+      while (leaf.kind == SemanticType::Array) {
+        if (leaf.arguments.size() != 1 || leaf.arrayLength == 0 ||
+            leaf.arrayLengthParameterId != 0)
+          return std::nullopt;
+        schedule.extents.push_back(leaf.arrayLength);
+        leaf = SemanticType(leaf.arguments.front());
+      }
+      schedule.leafType = leaf;
+      const auto *owner =
+          leaf.kind == SemanticType::Class ? classFor(leaf) : nullptr;
+      if (owner)
+        schedule.leafClassInstance = owner->id;
+      return MirDropType{.type = selected,
+                         .destructor = owner ? owner->destructor : std::nullopt,
+                         .fixedArray = std::move(schedule),
+                         .aggregate = {*child},
+                         .requiresActiveCleanup = true};
+    }
+    if (const auto *owner =
+            selected.kind == SemanticType::Class ? classFor(selected) : nullptr;
+        owner != nullptr &&
+        owner->compilerCapability == CompilerCapabilityTypeKind::SharedOwner) {
+      if (selected.arguments.size() != 1)
+        return std::nullopt;
+      // Each token releases one strong reference. Only the final release
+      // executes this exact existing allocation/pointee cleanup recipe.
+      auto pointee =
+          self(self, SemanticType::uniqueOwnerOf(selected.arguments.front()));
+      if (!pointee)
+        return std::nullopt;
+      return MirDropType{.type = selected,
+                         .classInstance = owner->id,
+                         .aggregate = {*pointee},
+                         .requiresActiveCleanup = true};
+    }
     if (selected.kind == SemanticType::Enum) {
       const auto *enumeration = program.findPayloadEnum(selected.enumId);
       if (enumeration == nullptr)
@@ -1207,6 +1318,10 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
         return MirDropType{.type = selected,
                            .uniquePointeeClass = pointee->id,
                            .polymorphicCleanup = true,
+                           .requiresActiveCleanup = true};
+      if (!pointee->requiresActiveCleanup)
+        return MirDropType{.type = selected,
+                           .uniquePointeeClass = pointee->id,
                            .requiresActiveCleanup = true};
       if (pointee->destructor && pointee->requiresActiveDropState &&
           pointee->bases.empty() &&
@@ -1448,14 +1563,14 @@ MirEffectTraits effects(const MirProgram &program,
   }
   const ExactTargets targets = exactTargets(program, *body, instruction);
   if (targets.boundary || targets.addresses.empty()) {
-    return effects(instruction);
+    return cleanupEffects(effects(instruction), targets);
   }
   MirEffectTraits result =
       exactInvocationShell(instruction, targets.nativeCleanup);
   for (const MirBodyAddress target : targets.addresses) {
     result = merge(result, summaryForAddress(program, target)->traits);
   }
-  return result;
+  return cleanupEffects(result, targets);
 }
 
 std::optional<MirEffectSummary>
@@ -1491,6 +1606,8 @@ exactMirInvocationSummary(const MirProgram &program, const MirBody &body,
   }
   if (result && targets.nativeCleanup)
     result->traits.invokesRuntime = true;
+  if (result)
+    result->traits = cleanupEffects(result->traits, targets);
   return result;
 }
 
@@ -1553,11 +1670,14 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
         node.local.receiverEscapes =
             function->returnBorrowOrigin == BorrowOriginKind::Receiver;
         if (function->returnBorrowOrigin == BorrowOriginKind::Argument &&
-            function->returnBorrowParameter != 0 &&
-            function->returnBorrowParameter <=
+            function->returnBorrowParameter <
                 node.local.argumentsEscape.size()) {
-          node.local.argumentsEscape[function->returnBorrowParameter - 1] =
-              true;
+          node.local.argumentsEscape[function->returnBorrowParameter] = true;
+          for (const auto parameter : function->returnBorrowParameters) {
+            if (parameter < node.local.argumentsEscape.size()) {
+              node.local.argumentsEscape[parameter] = true;
+            }
+          }
         }
       }
     } else if (node.address.kind == MirBodyKind::Constructor) {
@@ -1567,53 +1687,64 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
         node.local.receiverEscapes =
             constructor->borrowOrigin == BorrowOriginKind::Receiver;
         if (constructor->borrowOrigin == BorrowOriginKind::Argument &&
-            constructor->borrowParameter != 0 &&
-            constructor->borrowParameter <= node.local.argumentsEscape.size()) {
-          node.local.argumentsEscape[constructor->borrowParameter - 1] = true;
+            constructor->borrowParameter < node.local.argumentsEscape.size()) {
+          node.local.argumentsEscape[constructor->borrowParameter] = true;
+          for (const auto parameter : constructor->borrowParameters) {
+            if (parameter < node.local.argumentsEscape.size()) {
+              node.local.argumentsEscape[parameter] = true;
+            }
+          }
         }
       }
     }
 
     for (const MirLoan &loan : node.body->loans) {
-      if (!loan.escapes || loan.source == 0 ||
-          loan.source > node.body->places.size()) {
+      if (!loan.escapes) {
         continue;
       }
-      const MirPlace &source = node.body->places[loan.source - 1];
-      if (source.root == MirPlaceRootKind::This) {
-        node.local.receiverEscapes = true;
-      }
-      const auto parameter =
-          std::find_if(node.body->places.begin(), node.body->places.end(),
-                       [&](const MirPlace &place) {
-                         return place.id == loan.source && place.binding != 0;
-                       });
-      if (parameter == node.body->places.end()) {
-        continue;
-      }
-      const auto markParameter = [&](const auto &instance) {
-        const auto found =
-            std::find(instance.parameterBindings.begin(),
-                      instance.parameterBindings.end(), parameter->binding);
-        if (found != instance.parameterBindings.end()) {
-          node.local.argumentsEscape[static_cast<std::size_t>(
-              std::distance(instance.parameterBindings.begin(), found))] = true;
+      auto origins = loan.additionalSources;
+      origins.insert(origins.begin(), loan.source);
+      for (const MirPlaceId origin : origins) {
+        const MirPlace *sourcePlace = node.body->findPlace(origin);
+        if (sourcePlace == nullptr) {
+          continue;
         }
-      };
-      if (node.address.kind == MirBodyKind::Function) {
-        if (const MirFunctionInstance *function =
-                program.findFunctionInstance(node.address.owner)) {
-          markParameter(*function);
+        const MirPlace &source = *sourcePlace;
+        if (source.root == MirPlaceRootKind::This) {
+          node.local.receiverEscapes = true;
         }
-      } else if (node.address.kind == MirBodyKind::Constructor) {
-        if (const MirConstructorInstance *constructor =
-                program.findConstructorInstance(node.address.owner)) {
-          markParameter(*constructor);
+        const auto parameter =
+            std::find_if(node.body->places.begin(), node.body->places.end(),
+                         [&](const MirPlace &place) {
+                           return place.id == origin && place.binding != 0;
+                         });
+        if (parameter == node.body->places.end()) {
+          continue;
         }
-      } else if (node.address.kind == MirBodyKind::Lambda) {
-        if (const MirLambdaInstance *lambda =
-                program.findLambda(node.address.owner)) {
-          markParameter(*lambda);
+        const auto markParameter = [&](const auto &instance) {
+          const auto found =
+              std::find(instance.parameterBindings.begin(),
+                        instance.parameterBindings.end(), parameter->binding);
+          if (found != instance.parameterBindings.end()) {
+            node.local.argumentsEscape[static_cast<std::size_t>(std::distance(
+                instance.parameterBindings.begin(), found))] = true;
+          }
+        };
+        if (node.address.kind == MirBodyKind::Function) {
+          if (const MirFunctionInstance *function =
+                  program.findFunctionInstance(node.address.owner)) {
+            markParameter(*function);
+          }
+        } else if (node.address.kind == MirBodyKind::Constructor) {
+          if (const MirConstructorInstance *constructor =
+                  program.findConstructorInstance(node.address.owner)) {
+            markParameter(*constructor);
+          }
+        } else if (node.address.kind == MirBodyKind::Lambda) {
+          if (const MirLambdaInstance *lambda =
+                  program.findLambda(node.address.owner)) {
+            markParameter(*lambda);
+          }
         }
       }
     }
@@ -1626,7 +1757,9 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
             !targets.boundary) {
           node.local.traits =
               merge(node.local.traits,
-                    exactInvocationShell(instruction, targets.nativeCleanup));
+                    cleanupEffects(exactInvocationShell(instruction,
+                                                        targets.nativeCleanup),
+                                   targets));
           for (const MirBodyAddress target : targets.addresses) {
             const std::optional<std::size_t> targetNode =
                 findNode(nodes, target);
@@ -1637,7 +1770,8 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
             node.callees.push_back(*targetNode);
           }
         } else {
-          const MirEffectTraits instructionEffects = effects(instruction);
+          const MirEffectTraits instructionEffects =
+              cleanupEffects(effects(instruction), targets);
           node.local.traits = merge(node.local.traits, instructionEffects);
           if (isInvocation(instruction) &&
               (targets.boundary || targets.addresses.empty()) &&

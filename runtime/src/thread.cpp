@@ -184,6 +184,15 @@ bool managed_worker_active() noexcept {
   throw worker_failure_handoff{};
 }
 
+gti_thread_worker_failure_kind_v1 managed_task_cleanup_failure_kind() noexcept {
+  gti_thread_state_v1 *state = activeWorker;
+  if (state == nullptr || !activeTaskObjectCleanup) {
+    return GTI_THREAD_WORKER_FAILURE_NONE_V1;
+  }
+  const std::lock_guard lock(state->failureMutex);
+  return state->failureKind;
+}
+
 bool record_managed_task_cleanup_failure(
     const gti_failure_record_v1 &record,
     const gti_failure_artifact_descriptor_v1 *artifact) noexcept {

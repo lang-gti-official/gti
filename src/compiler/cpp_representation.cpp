@@ -661,6 +661,14 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
              spell(type.arguments.front()) + ">";
     }
     if (classInfo->compilerCapability ==
+        CompilerCapabilityTypeKind::SharedOwner) {
+      if (type.arguments.size() != 1) {
+        return "void";
+      }
+      return "::gti_internal::backend::shared_owner<" +
+             spell(type.arguments.front()) + ">";
+    }
+    if (classInfo->compilerCapability ==
         CompilerCapabilityTypeKind::OptionalStorage) {
       if (type.arguments.size() != 1) {
         return "void";

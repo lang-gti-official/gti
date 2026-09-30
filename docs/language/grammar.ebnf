@@ -596,9 +596,10 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    `Type(Type&&) = default|delete;` declaration. `T&&` is confined to that move
    policy and is not a general reference or forwarding-reference type.
    Defaulting cannot make a structurally unavailable operation available.
-   Custom copy/move bodies remain unavailable until constructor-wide definite
-   initialization and active-drop transitions are represented. Copy/move
-   assignment remains an independently derived operation.
+   Custom copy and move bodies are unsupported. Movement remains a
+   compiler-controlled ownership transfer; explicit clone methods express
+   user-defined duplication. Copy/move assignment remains an independently
+   derived operation.
 
    A class or struct may declare one public destructor, either a `~Type()` body
    or `~Type() = default;`. A defaulted destructor selects structural

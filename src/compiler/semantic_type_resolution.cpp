@@ -1300,10 +1300,10 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   const GenericSubstitution substitution = classSubstitution(selectedClass);
   const SemanticType constructedType = selectedClass;
   if (typeTraits(constructedType).containsBorrowedState &&
-      !storedReferencePath(constructedType)) {
+      storedReferencePaths(constructedType).empty()) {
     report(paren,
-           "A borrowed aggregate must contain exactly one stored-reference "
-           "path through ordinary nominal fields and cannot declare a "
+           "A borrowed aggregate must contain checked stored-reference "
+           "paths through ordinary nominal fields and cannot declare a "
            "custom destructor.",
            "GTI-S2045");
     currentType = constructedType;
@@ -1852,13 +1852,18 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   AccessMode storedAccess = selected.constructor == nullptr
                                 ? AccessMode::ReadOnly
                                 : selected.constructor->borrowAccess;
-  if (const auto path = storedReferencePath(constructedType);
-      path && selected.kind == ConstructorKind::Ordinary) {
-    storedParameter = selected.constructor == nullptr
-                          ? std::nullopt
-                          : storedCarrierConstructorParameter(
-                                constructedType, *selected.constructor,
-                                selected.parameterTypes);
+  std::vector<std::size_t> storedParameters;
+  if (const auto paths = storedReferencePaths(constructedType);
+      !paths.empty() && selected.kind == ConstructorKind::Ordinary) {
+    storedParameters = selected.constructor == nullptr
+                           ? std::vector<std::size_t>{}
+                           : storedCarrierConstructorParameters(
+                                 constructedType, *selected.constructor,
+                                 selected.parameterTypes);
+    storedParameter =
+        storedParameters.empty()
+            ? std::nullopt
+            : std::optional<std::size_t>(storedParameters.front());
     storedAccess = borrowAccess(constructedType);
     if (!storedParameter) {
       report(paren,
@@ -1868,6 +1873,9 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
       currentType = constructedType;
       return;
     }
+  }
+  if (storedReferencePaths(constructedType).size() <= 1) {
+    storedParameters.clear();
   }
   semanticModel.record(
       construction,
@@ -1892,6 +1900,7 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
                          : BorrowOriginKind::None),
           .borrowArgument = storedParameter.value_or(0),
           .borrowAccess = storedAccess,
+          .borrowArguments = std::move(storedParameters),
           .generatedDefault = selected.generatedDefault,
           .kind = selected.kind});
   if (const auto *call = exprAs<Call>(&construction)) {
@@ -2983,6 +2992,28 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
     }
     return;
   }
+  if (compilerCapability == CompilerCapabilityTypeKind::SharedOwner) {
+    if (type.arguments.size() != 1 ||
+        type.arguments.front().genericArgumentSyntax ==
+            GenericArgumentSyntax::Value) {
+      report(type.name.last(),
+             "Compiler-private shared ownership requires one object type.",
+             "GTI-S2018");
+      return;
+    }
+    validateType(type.arguments.front());
+    const SemanticType element = typeOf(type.arguments.front());
+    if (element.kind != SemanticType::TypeParameter &&
+        ((!isAllocatedScalarType(element) &&
+          element.kind != SemanticType::Class) ||
+         typeTraits(element).containsBorrowedState)) {
+      report(type.arguments.front().name.last(),
+             "Shared ownership currently requires a class, struct, or scalar "
+             "object type without borrowed state.",
+             "GTI-S2018");
+    }
+    return;
+  }
   if (compilerCapability == CompilerCapabilityTypeKind::Storage) {
     if (type.arguments.size() != 1) {
       report(type.name.last(),
@@ -3650,6 +3681,30 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
   }
   const bool fallibleBorrowFromCall =
       isFallibleBorrowType(type) && transientBorrowProduction(initializer);
+  if (storedReferencePaths(type).size() > 1) {
+    const auto dependencies = storedBorrowDependencies(initializer);
+    if (dependencies.empty()) {
+      report(expressionToken(initializer),
+             "A composed borrowed value requires a checked owner for every "
+             "stored dependency.",
+             "GTI-S2045");
+      return;
+    }
+    // A known entry carrier protects caller storage without treating its own
+    // by-value shell as an owner; therefore protectsStorage is not itself a
+    // validity test. Every dependency must still have a stable named root.
+    if (std::any_of(dependencies.begin(), dependencies.end(),
+                    [](const SemanticLoanDependency &dependency) {
+                      return dependency.place.root == 0 &&
+                             !dependency.place.receiver;
+                    })) {
+      report(expressionToken(initializer),
+             "A composed borrowed value cannot retain temporary owner "
+             "storage.",
+             "GTI-S2045");
+      return;
+    }
+  }
   if (!hasStableBorrowStorage(initializer) && !fallibleBorrowFromCall) {
     report(expressionToken(initializer),
            "Stored-reference value is derived from temporary storage that "
@@ -3876,6 +3931,64 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
       value == nullptr ? nullptr : semanticModel.findExpression(*value);
   if (valueInfo == nullptr || valueInfo->type == SemanticType::Unknown) {
     return;
+  }
+  if (storedReferencePaths(valueInfo->type).size() > 1) {
+    const auto dependencies = storedBorrowDependencies(value);
+    const SymbolId parameterSymbol =
+        function->declaration != nullptr &&
+                function->returnBorrowParameter <
+                    function->declaration->parameters().size()
+            ? symbolForDeclaration(
+                  function->declaration
+                      ->parameters()[function->returnBorrowParameter]
+                      .name)
+            : 0;
+    std::vector<SymbolId> parameterSymbols{parameterSymbol};
+    if (function->declaration != nullptr) {
+      for (const auto parameter : function->returnBorrowParameters) {
+        if (parameter < function->declaration->parameters().size()) {
+          parameterSymbols.push_back(symbolForDeclaration(
+              function->declaration->parameters()[parameter].name));
+        }
+      }
+    }
+    const bool validOrigins =
+        !dependencies.empty() &&
+        std::all_of(dependencies.begin(), dependencies.end(),
+                    [&](const SemanticLoanDependency &dependency) {
+                      return function->returnBorrowOrigin ==
+                                     BorrowOriginKind::Receiver
+                                 ? dependency.place.receiver
+                                 : function->returnBorrowOrigin ==
+                                           BorrowOriginKind::Argument &&
+                                       std::find(parameterSymbols.begin(),
+                                                 parameterSymbols.end(),
+                                                 dependency.place.root) !=
+                                           parameterSymbols.end();
+                    });
+    if (!validOrigins) {
+      report(expressionToken(value),
+             "Every returned borrowed field must derive from its declared "
+             "owner dependency; local or unrelated storage cannot escape.",
+             "GTI-S2045");
+      return;
+    }
+    if (!function->returnBorrowParameters.empty()) {
+      if (std::any_of(parameterSymbols.begin(), parameterSymbols.end(),
+                      [&](SymbolId parameter) {
+                        return std::none_of(
+                            dependencies.begin(), dependencies.end(),
+                            [&](const SemanticLoanDependency &dependency) {
+                              return dependency.place.root == parameter;
+                            });
+                      })) {
+        report(expressionToken(value),
+               "A composed borrowed return must preserve every summarized "
+               "parameter dependency.",
+               "GTI-S2045");
+      }
+      return;
+    }
   }
   if (function->returnBorrowOrigin == BorrowOriginKind::Receiver) {
     if (!isReceiverDerivedBorrow(value)) {
@@ -4112,6 +4225,11 @@ auto SemanticVisitor::Impl::validateStoredCarrierReturnSource(
   std::unordered_set<const Expr *> visiting;
   const StoredCarrierReturnProvenance actual =
       storedCarrierReturnProvenance(value, source, visiting);
+  if (sourceType == function.returnType &&
+      storedReferencePaths(sourceType).size() > 1 &&
+      actual == StoredCarrierReturnProvenance::CarrierValue) {
+    return;
+  }
   if (sourceReferent && resultReferent && *sourceReferent == *resultReferent &&
       actual == required) {
     return;

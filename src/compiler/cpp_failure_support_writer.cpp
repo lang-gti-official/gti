@@ -132,6 +132,8 @@ public:
       return "GTI_FAILURE_DETAIL_KEY_LOOKUP_V1";
     case DefinedFailureDetail::ContainerArgument:
       return "GTI_FAILURE_DETAIL_CONTAINER_ARGUMENT_V1";
+    case DefinedFailureDetail::SharedOwner:
+      return "GTI_FAILURE_DETAIL_SHARED_OWNER_V1";
     case DefinedFailureDetail::None:
     case DefinedFailureDetail::Count:
       break;
