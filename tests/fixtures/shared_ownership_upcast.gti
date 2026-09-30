@@ -1,0 +1,39 @@
+#include <std/memory>
+
+interface Sink {
+  int value();
+};
+
+class ConcreteSink : public Sink {
+  int identity;
+public:
+  ConcreteSink(int value) : identity(value) {}
+  ~ConcreteSink() { std::println(this.identity); }
+  int value() override { return this.identity; }
+};
+
+int main() {
+  // A base-typed handle may become the last owner.
+  {
+    mut auto concrete = std::make_shared<ConcreteSink>(7);
+    mut auto concrete_alias = concrete.clone();
+    std::shared_ptr<Sink> base =
+        std::upcast_shared<Sink, ConcreteSink>(std::move(concrete));
+    if (base->value() != 7 || base.use_count() != 2 ||
+        concrete_alias.use_count() != 2) {
+      return 1;
+    }
+    concrete_alias.reset();
+    if (base.use_count() != 1) { return 2; }
+  }
+
+  // A concrete-typed handle may remain after its base alias is released.
+  {
+    auto concrete = std::make_shared<ConcreteSink>(8);
+    mut std::shared_ptr<Sink> base =
+        std::upcast_shared<Sink, ConcreteSink>(concrete.clone());
+    base.reset();
+    if (concrete.use_count() != 1 || concrete->value() != 8) { return 3; }
+  }
+  return 0;
+}

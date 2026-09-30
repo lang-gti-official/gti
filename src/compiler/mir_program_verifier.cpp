@@ -6543,7 +6543,7 @@ exactSharedOwnerIntrinsicContract(const MirProgram &program,
                                   const MirInstruction &instruction) {
   const auto intrinsic = instruction.intrinsic;
   if (intrinsic < IntrinsicKind::SharedOwnerEmpty ||
-      intrinsic > IntrinsicKind::SharedOwnerSwap) {
+      intrinsic > IntrinsicKind::SharedOwnerUpcast) {
     return true;
   }
   const bool empty = intrinsic == IntrinsicKind::SharedOwnerEmpty;
@@ -6551,7 +6551,8 @@ exactSharedOwnerIntrinsicContract(const MirProgram &program,
   const bool clone = intrinsic == IntrinsicKind::SharedOwnerClone;
   const bool borrow = intrinsic == IntrinsicKind::SharedOwnerBorrow;
   const bool swap = intrinsic == IntrinsicKind::SharedOwnerSwap;
-  const bool creates = empty || promote || clone;
+  const bool upcast = intrinsic == IntrinsicKind::SharedOwnerUpcast;
+  const bool creates = empty || promote || clone || upcast;
   if (instruction.kind != MirInstructionKind::Call ||
       instruction.operation != MirOperation::None || instruction.receiver ||
       instruction.functionTarget || instruction.constructorTarget ||
@@ -6580,6 +6581,62 @@ exactSharedOwnerIntrinsicContract(const MirProgram &program,
       return false;
     }
   }
+  const auto exactTransfer = [&](const MirOperand &operand) {
+    const MirDropObligation *transferred = nullptr;
+    for (const auto &event : instruction.lifecycle) {
+      if (event.kind != MirLifecycleEventKind::TransferOut) {
+        continue;
+      }
+      const auto *drop = body.findDropObligation(event.source);
+      const auto *place = drop == nullptr ? nullptr : body.findPlace(drop->place);
+      if (transferred != nullptr || drop == nullptr || place == nullptr ||
+          drop->dropType.type != operand.type || event.target != 0 ||
+          event.conditional || event.failureCleanup ||
+          place->root != MirPlaceRootKind::Value ||
+          place->value != operand.value || !place->projections.empty()) {
+        return false;
+      }
+      transferred = drop;
+    }
+    return transferred != nullptr;
+  };
+  const auto publicBase = [&](const SemanticType &derived,
+                              const SemanticType &base) {
+    const MirClassInstance *source = nullptr;
+    for (const auto &instance : program.classInstances()) {
+      if (instance.type == derived) {
+        if (source != nullptr) {
+          return false;
+        }
+        source = &instance;
+      }
+    }
+    if (source == nullptr) {
+      return false;
+    }
+    std::unordered_set<HirClassInstanceId> visited;
+    const auto visit = [&](const auto &self,
+                           const MirClassInstance &current) -> bool {
+      if (!visited.insert(current.id).second) {
+        return false;
+      }
+      for (const HirBaseInstance &candidate : current.structuralBases) {
+        if (candidate.type == base) {
+          return true;
+        }
+        const MirClassInstance *next =
+            program.findClassInstance(candidate.instance);
+        if (next == nullptr || next->type != candidate.type) {
+          return false;
+        }
+        if (self(self, *next)) {
+          return true;
+        }
+      }
+      return false;
+    };
+    return visit(visit, *source);
+  };
   MirPlaceId borrowedSource = 0;
   for (std::size_t index = 0; index < instruction.operands.size(); ++index) {
     const MirOperand &operand = instruction.operands[index];
@@ -6594,24 +6651,33 @@ exactSharedOwnerIntrinsicContract(const MirProgram &program,
           !mirUniqueCleanupType(program, operand.type)) {
         return false;
       }
-      const MirDropObligation *transferred = nullptr;
-      for (const auto &event : instruction.lifecycle) {
-        if (event.kind != MirLifecycleEventKind::TransferOut) {
-          continue;
-        }
-        const auto *drop = body.findDropObligation(event.source);
-        const auto *place =
-            drop == nullptr ? nullptr : body.findPlace(drop->place);
-        if (transferred != nullptr || drop == nullptr || place == nullptr ||
-            drop->dropType.type != operand.type || event.target != 0 ||
-            event.conditional || event.failureCleanup ||
-            place->root != MirPlaceRootKind::Value ||
-            place->value != operand.value || !place->projections.empty()) {
-          return false;
-        }
-        transferred = drop;
+      if (!exactTransfer(operand)) {
+        return false;
       }
-      if (transferred == nullptr) {
+      continue;
+    }
+    if (upcast) {
+      const MirClassInstance *sourceOwner = exactMirCapabilityClass(
+          program, operand.type, CompilerCapabilityTypeKind::SharedOwner);
+      if (operand.kind != MirOperandKind::Value || operand.value == 0 ||
+          operand.place != 0 || operand.loan != 0 || operand.literal ||
+          sourceOwner == nullptr || owner == nullptr ||
+          sourceOwner->type.arguments.size() != 1 ||
+          owner->type.arguments.size() != 1 ||
+          !publicBase(sourceOwner->type.arguments.front(),
+                      owner->type.arguments.front())) {
+        return false;
+      }
+      const MirClassInstance *base = nullptr;
+      for (const auto &instance : program.classInstances()) {
+        if (instance.type == owner->type.arguments.front()) {
+          if (base != nullptr) {
+            return false;
+          }
+          base = &instance;
+        }
+      }
+      if (base == nullptr || !base->polymorphic || !exactTransfer(operand)) {
         return false;
       }
       continue;
@@ -6688,7 +6754,7 @@ exactSharedOwnerIntrinsicContract(const MirProgram &program,
   if (!promote && !creates && !instruction.lifecycle.empty()) {
     return false;
   }
-  if (!(promote || clone || borrow)) {
+  if (upcast || !(promote || clone || borrow)) {
     return instruction.definedFailure.empty() &&
            instruction.localFailureSites.empty();
   }

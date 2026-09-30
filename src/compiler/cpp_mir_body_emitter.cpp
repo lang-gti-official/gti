@@ -10427,7 +10427,8 @@ optionalStorageOwnerEmptyState(const MirProgram &program,
   return instruction.kind == MirInstructionKind::Call && instruction.result &&
          (instruction.intrinsic == IntrinsicKind::SharedOwnerEmpty ||
           instruction.intrinsic == IntrinsicKind::SharedOwnerFromUnique ||
-          instruction.intrinsic == IntrinsicKind::SharedOwnerClone);
+          instruction.intrinsic == IntrinsicKind::SharedOwnerClone ||
+          instruction.intrinsic == IntrinsicKind::SharedOwnerUpcast);
 }
 
 [[nodiscard]] bool dropContainsSharedOwner(const MirProgram &program,
@@ -10473,7 +10474,14 @@ sharedOwnerValueDrop(const MirProgram &program, const MirBody &body,
 
 [[nodiscard]] bool sharedOwnerIntrinsic(IntrinsicKind intrinsic) {
   return intrinsic >= IntrinsicKind::SharedOwnerEmpty &&
-         intrinsic <= IntrinsicKind::SharedOwnerSwap;
+         intrinsic <= IntrinsicKind::SharedOwnerUpcast;
+}
+
+[[nodiscard]] bool sourceLocationIntrinsic(IntrinsicKind intrinsic) {
+  return intrinsic == IntrinsicKind::SourceFileName ||
+         intrinsic == IntrinsicKind::SourceFunctionName ||
+         intrinsic == IntrinsicKind::SourceLine ||
+         intrinsic == IntrinsicKind::SourceColumn;
 }
 
 // A public owner may consume one active-cleanup parameter into its private
@@ -30514,6 +30522,8 @@ private:
           instruction.intrinsic == IntrinsicKind::SharedOwnerClone;
       const bool borrow =
           instruction.intrinsic == IntrinsicKind::SharedOwnerBorrow;
+      const bool upcast =
+          instruction.intrinsic == IntrinsicKind::SharedOwnerUpcast;
       if (instruction.intrinsic == IntrinsicKind::SharedOwnerEmpty) {
         output << "// empty strong token " << *instruction.result << "\n";
         return;
@@ -30580,6 +30590,18 @@ private:
         }
         return;
       }
+      if (upcast) {
+        if (!instruction.result || instruction.operands.size() != 1) {
+          throw std::logic_error(
+              "verified shared-owner upcast lost its exact shape");
+        }
+        output << "__gti_mir_v_" << *instruction.result << " = "
+               << typeSpelling(instruction.info.type)
+               << "::upcast_from(std::move(";
+        emitOperand(instruction.operands.front());
+        output << "));\n";
+        return;
+      }
       if (borrow) {
         output << "__gti_mir_failure_status_" << instruction.id << " = ";
         emitCallArgument(instruction.operands.front(), false, false);
@@ -30607,6 +30629,34 @@ private:
       emitCallArgument(instruction.operands.front(), false, false);
       if (instruction.intrinsic == IntrinsicKind::SharedOwnerUseCount)
         output << ".use_count()";
+      output << ";\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
+        sourceLocationIntrinsic(instruction.intrinsic)) {
+      if (!instruction.result || !instruction.sourceLocation) {
+        throw std::logic_error(
+            "verified source-location intrinsic lost its resolved call site");
+      }
+      const SourceLocationLiteral &location = *instruction.sourceLocation;
+      output << "__gti_mir_v_" << *instruction.result << " = ";
+      switch (instruction.intrinsic) {
+      case IntrinsicKind::SourceFileName:
+        output << cppMirStringViewLiteralSpelling(location.file);
+        break;
+      case IntrinsicKind::SourceFunctionName:
+        output << cppMirStringViewLiteralSpelling(location.function);
+        break;
+      case IntrinsicKind::SourceLine:
+        output << "std::uint32_t{" << location.line << '}';
+        break;
+      case IntrinsicKind::SourceColumn:
+        output << "std::uint32_t{" << location.column << '}';
+        break;
+      default:
+        throw std::logic_error(
+            "verified source-location intrinsic has an invalid identity");
+      }
       output << ";\n";
       return;
     }
@@ -42852,6 +42902,29 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             if (sharedOwnerResult(instruction) &&
                 !sharedOwnerType(program_, instruction.info.type))
               return false;
+            continue;
+          }
+          if (sourceLocationIntrinsic(instruction.intrinsic)) {
+            const bool text =
+                instruction.intrinsic == IntrinsicKind::SourceFileName ||
+                instruction.intrinsic == IntrinsicKind::SourceFunctionName;
+            const SemanticType expected =
+                text ? SemanticType::StringView : SemanticType::UInt32;
+            if (instruction.receiver || instruction.functionTarget ||
+                instruction.constructorTarget || instruction.bodyTarget ||
+                instruction.lambdaTarget || instruction.callableInvocation ||
+                !instruction.result || !instruction.operands.empty() ||
+                !instruction.parameterTypes.empty() ||
+                instruction.info.type != expected ||
+                !instruction.sourceLocation ||
+                !instruction.localFailureSites.empty() ||
+                !instruction.definedFailure.empty() ||
+                !instruction.lifecycle.empty() ||
+                instruction.synchronization.kind !=
+                    SynchronizationOperationKind::None ||
+                !typeRow(instruction.info.type)) {
+              return false;
+            }
             continue;
           }
           if (instruction.intrinsic == IntrinsicKind::ThreadHandleEmpty) {

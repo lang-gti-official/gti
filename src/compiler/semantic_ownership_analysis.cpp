@@ -1605,6 +1605,9 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "shared_owner_swap") {
       return IntrinsicKind::SharedOwnerSwap;
     }
+    if (name == "shared_owner_upcast") {
+      return IntrinsicKind::SharedOwnerUpcast;
+    }
     if (name == "allocate_storage") {
       return IntrinsicKind::AllocateStorage;
     }
@@ -1658,6 +1661,24 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     }
     if (name == "optional_storage_reset") {
       return IntrinsicKind::OptionalStorageReset;
+    }
+    return IntrinsicKind::None;
+  }
+  if (isSourceLocationLibraryUnit(sourceUnit)) {
+    if (scope.front() != "gti_internal") {
+      return IntrinsicKind::None;
+    }
+    if (name == "source_file_name") {
+      return IntrinsicKind::SourceFileName;
+    }
+    if (name == "source_function_name") {
+      return IntrinsicKind::SourceFunctionName;
+    }
+    if (name == "source_line") {
+      return IntrinsicKind::SourceLine;
+    }
+    if (name == "source_column") {
+      return IntrinsicKind::SourceColumn;
     }
     return IntrinsicKind::None;
   }
@@ -5136,11 +5157,44 @@ auto SemanticVisitor::Impl::analyzeMutexIntrinsicCall(
                              .borrowAccess = readAccess});
 }
 
+auto SemanticVisitor::Impl::analyzeSourceLocationIntrinsicCall(
+    const Call &expr, const CallableCandidate &declaration) -> void {
+  for (const TypeRef &argument : expr.typeArguments()) {
+    validateType(argument);
+  }
+  for (const ExprPtr &argument : expr.arguments()) {
+    (void)analyze(argument);
+  }
+  const IntrinsicKind intrinsic = declaration.record().intrinsic;
+  const bool text = intrinsic == IntrinsicKind::SourceFileName ||
+                    intrinsic == IntrinsicKind::SourceFunctionName;
+  const SemanticType result = text ? SemanticType::StringView
+                                   : SemanticType::UInt32;
+  if (!expr.typeArguments().empty() || !expr.arguments().empty() ||
+      declaration.returnType != result || !declaration.parameterTypes.empty()) {
+    report(expr.paren(),
+           "A source-location capability takes no arguments and must retain "
+           "its exact standard-library result type.",
+           "GTI-S2019");
+  }
+  currentType = result;
+  semanticModel.record(expr, ResolvedCallInfo{.returnType = result,
+                                               .intrinsic = intrinsic});
+}
+
 auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     const Call &expr, const CallableCandidate &declaration) -> void {
   const IntrinsicKind intrinsic = declaration.record().intrinsic;
+  if (intrinsic == IntrinsicKind::SourceFileName ||
+      intrinsic == IntrinsicKind::SourceFunctionName ||
+      intrinsic == IntrinsicKind::SourceLine ||
+      intrinsic == IntrinsicKind::SourceColumn) {
+    analyzeSourceLocationIntrinsicCall(expr, declaration);
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
   if (intrinsic >= IntrinsicKind::SharedOwnerEmpty &&
-      intrinsic <= IntrinsicKind::SharedOwnerSwap) {
+      intrinsic <= IntrinsicKind::SharedOwnerUpcast) {
     analyzeSharedOwnerIntrinsicCall(expr, declaration);
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
@@ -6218,6 +6272,89 @@ auto SemanticVisitor::Impl::analyzeSharedOwnerIntrinsicCall(
   }
   for (const TypeRef &argument : expr.typeArguments()) {
     validateType(argument);
+  }
+  if (intrinsic == IntrinsicKind::SharedOwnerUpcast) {
+    if (expr.typeArguments().size() != 1) {
+      report(expr.paren(),
+             "gti_internal::shared_owner_upcast<Base> requires exactly one "
+             "target base type.",
+             "GTI-S2018");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (arguments.size() != 1) {
+      report(expr.paren(),
+             "shared_owner_upcast expects exactly one consumed "
+             "gti_internal::shared_owner<Derived> value.",
+             "GTI-S2018");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    const ClassInfo *sourceOwner = classInfo(arguments.front());
+    if (sourceOwner == nullptr ||
+        sourceOwner->compilerCapability !=
+            CompilerCapabilityTypeKind::SharedOwner ||
+        arguments.front().arguments.size() != 1) {
+      report(expr.paren(),
+             "shared_owner_upcast requires the exact trusted "
+             "shared_owner<Derived> capability.",
+             "GTI-S2018");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    const auto *argumentInfo =
+        semanticModel.findExpression(*expr.arguments().front());
+    if (argumentInfo == nullptr || argumentInfo->category == ValueCategory::Place) {
+      report(expr.paren(),
+             "Shared-owner upcast consumes its source handle; use std::move "
+             "for a named handle.",
+             "GTI-S2018");
+    }
+
+    const SemanticType targetType = typeOf(expr.typeArguments().front());
+    const SemanticType sourceType = arguments.front().arguments.front();
+    if (targetType.kind != SemanticType::Class &&
+        targetType.kind != SemanticType::TypeParameter) {
+      report(expr.typeArguments().front().name.last(),
+             "A shared owner can only be upcast to a class or interface "
+             "base type.",
+             "GTI-S2018");
+    } else if (sourceType.kind != SemanticType::TypeParameter &&
+               targetType.kind != SemanticType::TypeParameter) {
+      if (!isPublicBaseConversion(sourceType, targetType)) {
+        report(expr.paren(),
+               "Cannot upcast shared ownership from '" +
+                   typeSpelling(sourceType) + "' to '" +
+                   typeSpelling(targetType) +
+                   "'; the target must be a public base.",
+               "GTI-S2018");
+      } else if (const ClassInfo *target = classInfo(targetType);
+                 target == nullptr || !target->polymorphic) {
+        report(expr.typeArguments().front().name.last(),
+               "Shared-owner upcast target '" + typeSpelling(targetType) +
+                   "' must have polymorphic destruction.",
+               "GTI-S2018");
+      }
+    }
+
+    currentType = declaration.record().returnType;
+    const ClassInfo *targetOwner = classInfo(currentType);
+    if (targetOwner == nullptr ||
+        targetOwner->compilerCapability !=
+            CompilerCapabilityTypeKind::SharedOwner) {
+      report(expr.paren(),
+             "Shared-owner upcast requires a trusted shared-owner result.",
+             "GTI-S2018");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    currentType.arguments = {targetType};
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = currentType,
+                               .parameterTypes = std::move(arguments),
+                               .typeArguments = {targetType, sourceType},
+                               .intrinsic = intrinsic});
+    return;
   }
   const bool empty = intrinsic == IntrinsicKind::SharedOwnerEmpty;
   const bool promote = intrinsic == IntrinsicKind::SharedOwnerFromUnique;

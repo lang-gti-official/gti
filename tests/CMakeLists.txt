@@ -1560,6 +1560,14 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(encoding_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME source_location_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/source_location_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/stdlib_surface_source_location.gti"
+  )
+  set_tests_properties(source_location_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME function_item_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/function_item_runtime_test.py"

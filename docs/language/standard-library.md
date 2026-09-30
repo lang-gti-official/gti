@@ -80,7 +80,12 @@ The current implemented foundation includes:
   `std::upcast_unique<Base, Derived>` functions; and
 - `<std/memory>` `std::shared_ptr<T>` and `std::make_shared<T>` for explicit
   shared ownership: move-only handles with `clone()`, read-only dereference,
-  null/default construction, null comparison, `use_count()`, reset, and swap.
+  null/default construction, null comparison, `use_count()`, reset, swap, and
+  explicit consuming conversion to a public polymorphic base through
+  `shared_ptr<T>::upcast<Base>()` or
+  `std::upcast_shared<Base, Derived>(owner)`.
+  An upcast preserves the existing control block and every concrete-typed
+  alias; it does not allocate, clone the pointee, or change the strong count.
   Last-owner release performs checked cleanup; reference-count synchronization
   does not grant mutable access to the object; and
 - `<std/array>` `std::array<T, N>` over checked fixed-array storage, including
@@ -269,6 +274,12 @@ The current implemented foundation includes:
   mapping. Its source-defined surface executes through verified MIR and native
   C++ emission, including move-only owning error alternatives;
   see [JSON](json.md); and
+- `<std/source_location>` immutable, owned call-site snapshots containing the
+  source file, qualified function name, one-based line, and a column value.
+  `std::source_location::current()` and defaults that call it are expanded at
+  the external caller. The current frontend reports column zero because exact
+  source columns are not yet retained through HIR; file and function strings
+  remain valid independently of compiler storage; and
 - `<std/format>` sequential heterogeneous replacement for booleans,
   characters, fixed-width integers, binary32 floats, string views, and
   transferred owning strings through source-defined `std::format`,

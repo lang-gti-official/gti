@@ -4244,6 +4244,7 @@ private:
                                             value.id, value.info)}
                                       : resultFor(value),
                         .intrinsic = value.intrinsic,
+                        .sourceLocation = value.sourceLocation,
                         .synchronization = value.synchronization,
                         .definedFailure = std::move(failure),
                         .dispatch = value.dispatch,

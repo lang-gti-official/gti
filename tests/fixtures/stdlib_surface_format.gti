@@ -84,5 +84,50 @@ int main() {
   if (!first || !second || third or !fourth) {
     return 10;
   }
+
+  mut auto indexed =
+      std::format("{1:*^7s}|{0:+#010x}|{1:.3s}", uint32_t(42), "abcdef");
+  if (!indexed || indexed.value() != "abcdef*|+0x000002a|abc") {
+    return 13;
+  }
+  mut auto numeric = std::format("{:08x}|{:#8b}|{:<5d}|{:c}",
+                                 uint16_t(42), uint8_t(5), int32_t(-7),
+                                 uint8_t(65));
+  if (!numeric || numeric.value() != "0000002a|   0b101|-7   |A") {
+    return 14;
+  }
+  mut auto centered = std::format("{:^9.4s}|{:>12.6f}", "truncate", 1.25);
+  if (!centered || centered.value() != "  trun   |    1.250000") {
+    return 15;
+  }
+
+  mut std::string destination = std::string("prefix:");
+  auto appended = std::format_to(destination, " {}", int32_t(7));
+  if (!appended || destination != "prefix: 7") {
+    return 16;
+  }
+  auto rejected =
+      std::format_to(destination, " leak {}", unsupported_format_value());
+  if (rejected ||
+      rejected.error() != std::format_errc::unsupported_argument ||
+      destination != "prefix: 7") {
+    return 17;
+  }
+
+  auto mixed_indexing = std::format("{0} {}", int32_t(1), int32_t(2));
+  if (mixed_indexing ||
+      mixed_indexing.error() != std::format_errc::invalid_format) {
+    return 18;
+  }
+  auto bad_index = std::format("{2}", int32_t(1), int32_t(2));
+  if (bad_index ||
+      bad_index.error() != std::format_errc::argument_count_mismatch) {
+    return 19;
+  }
+  auto bad_specifier = std::format("{:+s}", "text");
+  if (bad_specifier ||
+      bad_specifier.error() != std::format_errc::invalid_format) {
+    return 20;
+  }
   return 0;
 }

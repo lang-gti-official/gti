@@ -1536,6 +1536,9 @@ private:
   void analyzeMutexIntrinsicCall(const Call &expr,
                                  const CallableCandidate &declaration);
 
+  void analyzeSourceLocationIntrinsicCall(
+      const Call &expr, const CallableCandidate &declaration);
+
   void analyzeIntrinsicCall(const Call &expr,
                             const CallableCandidate &declaration);
   void analyzeMoveCall(const Call &expr,
@@ -3058,6 +3061,8 @@ private:
 
   [[nodiscard]] bool isMemoryLibraryUnit(SourceUnitId sourceUnit) const;
   [[nodiscard]] bool isOptionalLibraryUnit(SourceUnitId sourceUnit) const;
+
+  [[nodiscard]] bool isSourceLocationLibraryUnit(SourceUnitId sourceUnit) const;
 
   [[nodiscard]] bool isNumericLibraryUnit(SourceUnitId sourceUnit) const;
 

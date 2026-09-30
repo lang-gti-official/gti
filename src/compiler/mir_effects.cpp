@@ -387,6 +387,12 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.readsPlace = true,
                     .writesPlace = true,
                     .movesValue = true}, // SharedOwnerSwap
+    MirEffectTraits{.movesValue = true,
+                    .initializesValue = true}, // SharedOwnerUpcast
+    harmless(), // SourceFileName
+    harmless(), // SourceFunctionName
+    harmless(), // SourceLine
+    harmless(), // SourceColumn
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -600,6 +606,11 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "shared-owner-is-null",
     "shared-owner-use-count",
     "shared-owner-swap",
+    "shared-owner-upcast",
+    "source-file-name",
+    "source-function-name",
+    "source-line",
+    "source-column",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({

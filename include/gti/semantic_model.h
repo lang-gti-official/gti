@@ -327,7 +327,26 @@ enum class IntrinsicKind {
   SharedOwnerIsNull,
   SharedOwnerUseCount,
   SharedOwnerSwap,
+  SharedOwnerUpcast,
+  SourceFileName,
+  SourceFunctionName,
+  SourceLine,
+  SourceColumn,
   Count,
+};
+
+// A compiler-resolved source call site. These facts are language meaning, not
+// a backend spelling: HIR captures them while expanding caller-side defaults,
+// MIR preserves and verifies them, and each backend only chooses a concrete
+// representation for the already-resolved values.
+struct SourceLocationLiteral {
+  std::string file;
+  std::string function;
+  std::uint32_t line = 0;
+  std::uint32_t column = 0;
+
+  friend bool operator==(const SourceLocationLiteral &,
+                         const SourceLocationLiteral &) = default;
 };
 
 struct IntegerArithmeticIntrinsic {

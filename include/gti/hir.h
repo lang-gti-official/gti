@@ -213,6 +213,7 @@ struct HirValue {
   std::optional<ConstantValue> constant;
   bool programConstantSubstitution = false;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  std::optional<SourceLocationLiteral> sourceLocation;
   SynchronizationOperation synchronization;
   DefinedFailureOperation definedFailure;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;

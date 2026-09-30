@@ -1923,6 +1923,11 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::SharedOwnerIsNull:
         case IntrinsicKind::SharedOwnerUseCount:
         case IntrinsicKind::SharedOwnerSwap:
+        case IntrinsicKind::SharedOwnerUpcast:
+        case IntrinsicKind::SourceFileName:
+        case IntrinsicKind::SourceFunctionName:
+        case IntrinsicKind::SourceLine:
+        case IntrinsicKind::SourceColumn:
         case IntrinsicKind::IntegerWrappingAdd:
         case IntrinsicKind::IntegerWrappingSubtract:
         case IntrinsicKind::IntegerWrappingMultiply:
@@ -2450,6 +2455,16 @@ auto SemanticVisitor::Impl::isOptionalLibraryUnit(SourceUnitId sourceUnit) const
   const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
   return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
          unit->standardLibraryName == "std/optional";
+}
+
+auto SemanticVisitor::Impl::isSourceLocationLibraryUnit(
+    SourceUnitId sourceUnit) const -> bool {
+  if (sourceGraph == nullptr) {
+    return false;
+  }
+  const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
+  return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
+         unit->standardLibraryName == "std/source_location";
 }
 
 auto SemanticVisitor::Impl::isNumericLibraryUnit(SourceUnitId sourceUnit) const

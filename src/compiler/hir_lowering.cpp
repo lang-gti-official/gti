@@ -36,6 +36,8 @@ public:
     functionAnalyses.clear();
     constructorAnalyses.clear();
     activeDefaultArguments.clear();
+    activeDefaultSourceLocation.reset();
+    currentSourceFunctionName.clear();
     collectionResults.clear();
 
     seedDeclarations(source.declarations(), std::nullopt);
@@ -1210,6 +1212,8 @@ private:
     }
     const SemanticType enclosingReceiverType = currentReceiverType;
     const AccessMode enclosingReceiverAccess = currentReceiverAccess;
+    const std::string enclosingSourceFunctionName = currentSourceFunctionName;
+    currentSourceFunctionName = declaration->qualifiedName;
     if (snapshot.owner) {
       currentReceiverType = output.program.classes[*snapshot.owner - 1].type;
       currentReceiverAccess =
@@ -1238,6 +1242,7 @@ private:
         lifecycleValid = false;
         currentReceiverType = enclosingReceiverType;
         currentReceiverAccess = enclosingReceiverAccess;
+        currentSourceFunctionName = enclosingSourceFunctionName;
         return;
       }
       model = &analysis->model;
@@ -1390,6 +1395,7 @@ private:
         std::move(callableParameters);
     currentReceiverType = enclosingReceiverType;
     currentReceiverAccess = enclosingReceiverAccess;
+    currentSourceFunctionName = enclosingSourceFunctionName;
   }
 
   void processConstructor(std::size_t index) {
@@ -1400,6 +1406,11 @@ private:
         owner.valueArguments;
     const SemanticType enclosingReceiverType = currentReceiverType;
     const AccessMode enclosingReceiverAccess = currentReceiverAccess;
+    const std::string enclosingSourceFunctionName = currentSourceFunctionName;
+    const ClassTypeInfo *ownerInfo = baseModel->findClassType(owner.declaration);
+    currentSourceFunctionName =
+        (ownerInfo == nullptr ? std::string{} : ownerInfo->qualifiedName) +
+        "::" + snapshot.source->name().lexeme;
     currentReceiverType = owner.type;
     currentReceiverAccess = AccessMode::Mutable;
     SemanticInstanceAnalysis *analysis = ensureConstructorAnalysis(snapshot.id);
@@ -1407,6 +1418,7 @@ private:
       lifecycleValid = false;
       currentReceiverType = enclosingReceiverType;
       currentReceiverAccess = enclosingReceiverAccess;
+      currentSourceFunctionName = enclosingSourceFunctionName;
       return;
     }
 
@@ -1633,6 +1645,7 @@ private:
     output.program.constructors[index].body = std::move(body);
     currentReceiverType = enclosingReceiverType;
     currentReceiverAccess = enclosingReceiverAccess;
+    currentSourceFunctionName = enclosingSourceFunctionName;
   }
 
   void processDestructor(std::size_t index) {
@@ -1640,6 +1653,11 @@ private:
     const HirClassInstance &owner = output.program.classes[snapshot.owner - 1];
     const SemanticType enclosingReceiverType = currentReceiverType;
     const AccessMode enclosingReceiverAccess = currentReceiverAccess;
+    const std::string enclosingSourceFunctionName = currentSourceFunctionName;
+    const ClassTypeInfo *ownerInfo = baseModel->findClassType(owner.declaration);
+    currentSourceFunctionName =
+        (ownerInfo == nullptr ? std::string{} : ownerInfo->qualifiedName) +
+        "::~" + snapshot.source->name().lexeme;
     currentReceiverType = owner.type;
     currentReceiverAccess = AccessMode::Mutable;
     SemanticInstanceAnalysis analysis;
@@ -1662,6 +1680,7 @@ private:
     output.program.destructors[index].body = std::move(body);
     currentReceiverType = enclosingReceiverType;
     currentReceiverAccess = enclosingReceiverAccess;
+    currentSourceFunctionName = enclosingSourceFunctionName;
   }
 
   [[nodiscard]] HirValueId lowerImplicitReceiver(HirBody &body) {
@@ -2700,6 +2719,10 @@ private:
     }
 
     HirBody body;
+    const std::string enclosingSourceFunctionName = currentSourceFunctionName;
+    currentSourceFunctionName = enclosingSourceFunctionName.empty()
+                                    ? "<lambda>"
+                                    : enclosingSourceFunctionName + "::<lambda>";
     std::vector<HirBindingId> parameterBindings;
     parameterBindings.reserve(lambda.parameters().size());
     for (const Parameter &parameter : lambda.parameters()) {
@@ -2707,6 +2730,7 @@ private:
     }
     body.roots = lowerStatements(lambda.body(), model, classArguments,
                                  classValueArguments, body);
+    currentSourceFunctionName = enclosingSourceFunctionName;
     finalizeLifetimes(body, model, true);
     lowerLoans(model, body);
     std::vector<bool> captureRequiresActiveCleanup;
@@ -3165,11 +3189,37 @@ private:
     return projectionId;
   }
 
+  [[nodiscard]] static bool
+  sourceLocationIntrinsic(IntrinsicKind intrinsic) {
+    return intrinsic == IntrinsicKind::SourceFileName ||
+           intrinsic == IntrinsicKind::SourceFunctionName ||
+           intrinsic == IntrinsicKind::SourceLine ||
+           intrinsic == IntrinsicKind::SourceColumn;
+  }
+
+  [[nodiscard]] SourceLocationLiteral
+  sourceLocationAt(const Token &token) const {
+    return {.file = token.source,
+            .function = currentSourceFunctionName,
+            .line = static_cast<std::uint32_t>(std::max(token.line, 0)),
+            // Token offsets are retained, but HIR does not own source text or
+            // line starts. Zero is the standard unavailable-column value.
+            .column = 0};
+  }
+
+  [[nodiscard]] SourceLocationLiteral
+  sourceLocationAt(const Call &call) const {
+    return sourceLocationAt(call.leftParen() ? *call.leftParen()
+                                             : call.paren());
+  }
+
   [[nodiscard]] std::optional<HirValueId>
   lowerDefaultArgument(const Expr *expression, const SemanticModel &model,
                        const std::vector<SemanticType> &classArguments,
                        const std::vector<CompileTimeValue> &classValueArguments,
-                       HirBody &body) {
+                       HirBody &body,
+                       std::optional<SourceLocationLiteral> caller =
+                           std::nullopt) {
     if (expression == nullptr) {
       return std::nullopt;
     }
@@ -3177,8 +3227,14 @@ private:
       lifecycleValid = false;
       return std::nullopt;
     }
+    const std::optional<SourceLocationLiteral> enclosing =
+        activeDefaultSourceLocation;
+    if (!activeDefaultSourceLocation && caller) {
+      activeDefaultSourceLocation = std::move(caller);
+    }
     const std::optional<HirValueId> result = lowerExpression(
         *expression, model, classArguments, classValueArguments, body);
+    activeDefaultSourceLocation = enclosing;
     activeDefaultArguments.erase(expression);
     return result;
   }
@@ -4254,6 +4310,12 @@ private:
     if (const auto *call = exprAs<Call>(raw)) {
       if (const ResolvedCallInfo *resolved = model.findCall(*call)) {
         value.intrinsic = resolved->intrinsic;
+        if (sourceLocationIntrinsic(value.intrinsic)) {
+          value.sourceLocation = activeDefaultSourceLocation
+                                     ? activeDefaultSourceLocation
+                                     : std::optional<SourceLocationLiteral>(
+                                           sourceLocationAt(*call));
+        }
         value.retainedReceiverProjection = resolved->retainedReceiverProjection;
         if (resolved->retainedReceiverOwner != nullptr) {
           const auto anchor = std::find_if(
@@ -4418,7 +4480,8 @@ private:
           for (const Expr *defaultArgument : resolved->defaultArguments) {
             if (const std::optional<HirValueId> lowered = lowerDefaultArgument(
                     defaultArgument, defaultModel, targetClassArguments,
-                    targetClassValueArguments, body)) {
+                    targetClassValueArguments, body,
+                    sourceLocationAt(*call))) {
               value.operands.push_back(*lowered);
             }
           }
@@ -4890,6 +4953,7 @@ private:
   std::size_t processedDestructors = 0;
   SemanticType currentReceiverType = SemanticType::Unknown;
   AccessMode currentReceiverAccess = AccessMode::ReadOnly;
+  std::string currentSourceFunctionName;
   std::unordered_map<LambdaId, HirLambdaId> lambdaTargets;
   std::unordered_map<const VariableDecl *, LoweredProgramStorage>
       loweredProgramStorage;
@@ -4900,6 +4964,7 @@ private:
                      std::unique_ptr<SemanticInstanceAnalysis>>
       constructorAnalyses;
   std::unordered_set<const Expr *> activeDefaultArguments;
+  std::optional<SourceLocationLiteral> activeDefaultSourceLocation;
   std::unordered_set<HirValueId> collectionResults;
 };
 

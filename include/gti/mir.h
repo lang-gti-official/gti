@@ -662,6 +662,7 @@ struct MirInstruction {
   std::optional<std::size_t> enumVariant;
   std::optional<std::size_t> payloadIndex;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  std::optional<SourceLocationLiteral> sourceLocation;
   SynchronizationOperation synchronization;
   DefinedFailureOperation definedFailure;
   // Exact contained element cleanup for explicit sparse-slot destruction and

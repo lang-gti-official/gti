@@ -117,14 +117,18 @@ representation.
 `shared_owner<T>` is a nominal move-only strong token, not the legacy implicit
 shared-pointer type. Its private operations create an empty token, consume an
 existing unique owner, explicitly retain, borrow read-only, observe emptiness
-or count, and swap. The public `shared_ptr` policy remains ordinary GTI.
+or count, swap, and explicitly consume one token into a public polymorphic-base
+view. The public `shared_ptr` policy remains ordinary GTI.
 MIR verifies each exact capability/operand/result, its loan anchor, failure
 outcome, and invocation handoff. A shared drop recipe contains one unprojected
 unique-owner recipe, executed only on final release; passive pointees still
 have allocation cleanup. Release is a synchronization and unknown-memory
 barrier, including through aggregate and callable effect summaries.
 
-The native control block uses an atomic count and a move-only inert shell.
+The native control block uses an atomic count shared by typed move-only inert
+shells. A verified upcast changes only the consuming shell's view pointer; it
+retains the same block, does not change the count, and relies on the existing
+dynamic GTI cleanup binding when a base-typed shell performs final release.
 Native destruction of an unreleased strong token fails rather than silently
 substituting C++ cleanup for MIR. Promotion allocates before detaching the
 consumed unique input and owns its rollback on allocation failure. Managed

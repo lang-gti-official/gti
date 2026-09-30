@@ -1413,7 +1413,18 @@ private:
     output << " payload-index=";
     optional(value.payloadIndex);
     output << " intrinsic=" << name(value.intrinsic)
-           << " synchronization=" << name(value.synchronization.kind)
+           << " source-location=";
+    if (value.sourceLocation) {
+      output << value.sourceLocation->file.size() << ':'
+             << value.sourceLocation->file << ','
+             << value.sourceLocation->function.size() << ':'
+             << value.sourceLocation->function << ','
+             << value.sourceLocation->line << ':'
+             << value.sourceLocation->column;
+    } else {
+      output << '-';
+    }
+    output << " synchronization=" << name(value.synchronization.kind)
            << " atomic-order=";
     if (value.synchronization.order) {
       output << name(*value.synchronization.order);
