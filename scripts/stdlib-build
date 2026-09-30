@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/stdlib-build [--with-tests]
+
+Build the checkout-local optimized GTI compiler, language server, runtime, and
+Tree-sitter parser without installing anything globally.
+
+Environment:
+  GTI_STDLIB_BUILD_DIR  Build directory (default: out/stdlib-dev)
+  GTI_STDLIB_JOBS       Parallel job count (default: detected CPU count)
+  LLVM_DIR              Directory containing LLVMConfig.cmake
+EOF
+}
+
+build_testing=OFF
+case "${1:-}" in
+  "") ;;
+  --with-tests)
+    build_testing=ON
+    shift
+    ;;
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
+if (( $# != 0 )); then
+  usage >&2
+  exit 2
+fi
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+repo_root="$(cd -- "$script_dir/.." && pwd -P)"
+build_dir="${GTI_STDLIB_BUILD_DIR:-$repo_root/out/stdlib-dev}"
+mkdir -p -- "$build_dir"
+build_dir="$(cd -- "$build_dir" && pwd -P)"
+
+if [[ -n "${GTI_STDLIB_JOBS:-}" ]]; then
+  jobs="$GTI_STDLIB_JOBS"
+elif command -v sysctl >/dev/null 2>&1; then
+  jobs="$(sysctl -n hw.logicalcpu 2>/dev/null || true)"
+elif command -v nproc >/dev/null 2>&1; then
+  jobs="$(nproc)"
+else
+  jobs=1
+fi
+if [[ ! "$jobs" =~ ^[1-9][0-9]*$ ]]; then
+  echo "GTI_STDLIB_JOBS must be a positive integer" >&2
+  exit 2
+fi
+
+llvm_dir="${LLVM_DIR:-}"
+if [[ -n "$llvm_dir" && ! -f "$llvm_dir/LLVMConfig.cmake" ]]; then
+  echo "LLVM_DIR must contain LLVMConfig.cmake: $llvm_dir" >&2
+  exit 2
+fi
+if [[ -z "$llvm_dir" && ! -f "$build_dir/CMakeCache.txt" ]] && command -v brew >/dev/null 2>&1; then
+  for formula in llvm llvm@22 llvm@21 llvm@20 llvm@19 llvm@18; do
+    prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
+    candidate="$prefix/lib/cmake/llvm"
+    if [[ -n "$prefix" && -f "$candidate/LLVMConfig.cmake" ]]; then
+      llvm_dir="$candidate"
+      break
+    fi
+  done
+fi
+
+configure=(
+  cmake -S "$repo_root" -B "$build_dir"
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo
+  -DGTI_BUILD_LSP=ON
+  -DBUILD_TESTING="$build_testing"
+  -DGTI_RELEASE_BUILD=OFF
+  -DGTI_BUNDLE_LLVM=OFF
+)
+
+if [[ -f "$build_dir/CMakeCache.txt" ]]; then
+  configured_root="$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$build_dir/CMakeCache.txt")"
+  configured_type="$(sed -n 's/^CMAKE_BUILD_TYPE:STRING=//p' "$build_dir/CMakeCache.txt")"
+  if [[ "$configured_root" != "$repo_root" ]]; then
+    echo "Build directory belongs to a different source checkout: $configured_root" >&2
+    exit 2
+  fi
+  if [[ "$configured_type" != "RelWithDebInfo" ]]; then
+    echo "Existing build is $configured_type; use a fresh GTI_STDLIB_BUILD_DIR" >&2
+    exit 2
+  fi
+else
+  if ! command -v ninja >/dev/null 2>&1; then
+    echo "Ninja is required for a fresh stdlib development build" >&2
+    exit 2
+  fi
+  configure+=( -G Ninja )
+fi
+
+if [[ -n "$llvm_dir" ]]; then
+  configure+=( "-DLLVM_DIR=$llvm_dir" )
+fi
+
+echo "Source: $repo_root"
+echo "Build:  $build_dir"
+echo "Jobs:   $jobs"
+"${configure[@]}"
+cmake --build "$build_dir" --parallel "$jobs" \
+  --target gti gti_lsp gti_tree_sitter
+
+echo
+echo "Local GTI is ready:"
+echo "  $repo_root/scripts/stdlib-gti --version"
+echo "  $repo_root/scripts/stdlib-nvim"

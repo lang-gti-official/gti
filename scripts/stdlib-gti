@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+repo_root="$(cd -- "$script_dir/.." && pwd -P)"
+build_dir="${GTI_STDLIB_BUILD_DIR:-$repo_root/out/stdlib-dev}"
+compiler="$build_dir/gti"
+runtime_library="$build_dir/libgti_runtime.a"
+
+if [[ ! -x "$compiler" || ! -f "$runtime_library" ]]; then
+  echo "The isolated GTI toolchain has not been built." >&2
+  echo "Run: $repo_root/scripts/stdlib-build" >&2
+  exit 1
+fi
+
+export GTI_STDLIB_PATH="$repo_root/stdlib"
+export GTI_RUNTIME_INCLUDE="$repo_root/runtime/include"
+export GTI_RUNTIME_LIBRARY="$runtime_library"
+export GTI_VENDOR_INCLUDE="$repo_root/vendor/expected_lite/include"
+export PATH="$build_dir:$PATH"
+
+exec "$compiler" "$@"

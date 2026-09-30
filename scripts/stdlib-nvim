@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+repo_root="$(cd -- "$script_dir/.." && pwd -P)"
+build_dir="${GTI_STDLIB_BUILD_DIR:-$repo_root/out/stdlib-dev}"
+
+for required in "$build_dir/gti" "$build_dir/gti_lsp" "$build_dir/gti.so" \
+                "$build_dir/libgti_runtime.a"; do
+  if [[ ! -e "$required" ]]; then
+    echo "The isolated GTI toolchain is incomplete: $required" >&2
+    echo "Run: $repo_root/scripts/stdlib-build" >&2
+    exit 1
+  fi
+done
+if ! command -v nvim >/dev/null 2>&1; then
+  echo "Neovim is not available on PATH" >&2
+  exit 1
+fi
+
+export GTI_DEV_ROOT="$repo_root"
+export GTI_STDLIB_BUILD_DIR="$build_dir"
+export GTI_STDLIB_PATH="$repo_root/stdlib"
+export GTI_RUNTIME_INCLUDE="$repo_root/runtime/include"
+export GTI_RUNTIME_LIBRARY="$build_dir/libgti_runtime.a"
+export GTI_VENDOR_INCLUDE="$repo_root/vendor/expected_lite/include"
+export GTI_PATH="$build_dir/gti"
+export GTI_LSP_PATH="$build_dir/gti_lsp"
+export GTI_TREE_SITTER_PATH="$build_dir/gti.so"
+export PATH="$build_dir:$PATH"
+
+if (( $# == 0 )); then
+  set -- "$repo_root"
+fi
+exec nvim -u "$repo_root/scripts/stdlib-nvim-init.lua" "$@"
