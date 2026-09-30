@@ -1,0 +1,56 @@
+#include <std/string>
+namespace std {
+  namespace detail {
+    constexpr std::string_view char_set = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  }
+  namespace encoding {
+    namespace base64 {
+      std::string encode(std::string_view bytes) {
+        mut std::string res{};
+
+        mut std::size_t index = 0;
+        while (index + 2 < bytes.size()) {
+          mut uint8_t a = uint8_t(bytes[index]);
+          mut uint8_t b = uint8_t(bytes[index + 1]);
+          mut uint8_t c = uint8_t(bytes[index + 2]);
+
+          mut auto i0 = a << 2;
+          mut auto i1 = ((a & uint8_t(0x03)) << 4) | (b >> 4);
+          mut auto i2 = ((b & uint8_t(0x0F)) << 2) | (c >> 6);
+          mut auto i3 = c & uint8_t(0x3F);
+
+          res.push_back(detail::char_set[i0]);
+          res.push_back(detail::char_set[i1]);
+          res.push_back(detail::char_set[i2]);
+          res.push_back(detail::char_set[i3]);
+
+          index += 3;
+        }
+
+        std::size_t remainder = bytes.size() - index;
+        if (remainder == 1) {
+          uint8_t a = uint8_t(bytes[index]);
+          mut auto i0 = a >> 2;
+          mut auto i1 = (a & uint8_t(0x03)) << 4;
+
+          res.push_back(detail::char_set[i0]);
+          res.push_back(detail::char_set[i1]);
+          res.push_back('=');
+          res.push_back('=');
+        } else if (remainder == 2) {
+          mut auto a = uint8_t(bytes[index]);
+          mut auto b = uint8_t(bytes[index + 1]);
+
+          int32_t i0 = a >> 2;
+          mut auto i1 = ((a & uint8_t(0x03)) << 4) | (b >> 4);
+          mut auto i2 = (b & uint8_t(0x0F)) << 2;
+
+          res.push_back(detail::char_set[i0]);
+          res.push_back(detail::char_set[i1]);
+          res.push_back(detail::char_set[i2]);
+          res.push_back('=');
+        }
+      }
+    }
+  }
+}
