@@ -14,7 +14,7 @@ namespace std {
           mut uint8_t b = uint8_t(bytes[index + 1]);
           mut uint8_t c = uint8_t(bytes[index + 2]);
 
-          mut auto i0 = a << 2;
+          mut auto i0 = a >> 2;
           mut auto i1 = ((a & uint8_t(0x03)) << 4) | (b >> 4);
           mut auto i2 = ((b & uint8_t(0x0F)) << 2) | (c >> 6);
           mut auto i3 = c & uint8_t(0x3F);
@@ -50,6 +50,8 @@ namespace std {
           res.push_back(detail::char_set[i2]);
           res.push_back('=');
         }
+
+        return res;
       }
     }
   }
