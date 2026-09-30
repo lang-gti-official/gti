@@ -706,22 +706,27 @@ GTI has an adopted concurrency and memory-model boundary, with rationale in
 exposes owned managed threads through `<std/thread>`, scalar atomics with a
 sequentially consistent default plus explicit legal orders through
 `<std/atomic>`, and owner-tied scoped mutex guards through `<std/mutex>`.
-Condition variables and foreign-thread entry remain unavailable. The
-single-threaded profile remains the default
-executable profile. The focused current source contract is in
-[Concurrency And Atomic Values](concurrency.md).
+The separate unsafe `<std/cthread>` surface provides exact registered manual
+workers, once initialization, manual mutexes, and manual condition variables.
+A safe scoped condition-variable wrapper and arbitrary foreign-thread entry
+remain unavailable. The single-threaded profile remains the default executable
+profile. The focused current source contract is in [Concurrency And Atomic
+Values](concurrency.md).
 
-The compiler now has backend-independent HIR/MIR identities for thread
-spawn/join, atomic load/store/read-modify-write/compare-exchange, and mutex
+The compiler now has backend-independent HIR/MIR identities for managed and
+C-style thread spawn/join, C-style once, manual-mutex and condition operations,
+atomic load/store/read-modify-write/compare-exchange, and scoped-mutex
 lock/unlock. Atomic records retain operation-specific memory orders and MIR
 rejects illegal order combinations. In the single-threaded profile it rejects
 executable synchronization records while permitting only exact private thread,
-atomic, or mutex intrinsics in lowering-marked dormant standard-library
-wrapper bodies. This is why source may import `<std/thread>`, `<std/atomic>`,
-or `<std/mutex>` without using it; calling or constructing any concurrent
-surface still fails semantically before MIR publication. These internal
-records are not source operations. Public wrappers reach them through exact
-trusted private capabilities.
+atomic, mutex, or condition intrinsics in lowering-marked dormant
+standard-library wrapper bodies. This is why source may import `<std/thread>`,
+`<std/atomic>`, `<std/mutex>`, or `<std/cthread>` without using a
+concurrent-only operation; calling or constructing such an operation still
+fails semantically before MIR publication. The profile-independent C-style
+scheduling, sleep, and identity operations create no synchronization edge.
+These internal records are not source operations. Public wrappers reach them
+through exact trusted private capabilities.
 `std::thread` is the normal public managed-thread type. Unlike C++'s class with
 the same spelling, it always joins and exposes no detach operation.
 
@@ -733,8 +738,10 @@ profile spells it `execution-profile = "concurrent"`. The exact
 link flags, host-library behavior, backend code, and incidental use of a host
 thread never infer the selection. Selecting the profile applies the
 transfer/share and global rules below. Implemented managed-thread, atomic, and
-mutex operations also require the selected target/runtime `threads` capability;
-profile selection does not make any other unimplemented operation available.
+scoped-mutex operations, plus unsafe C-style create/join, once, manual-mutex,
+and condition operations, also require the selected target/runtime `threads`
+capability; profile selection does not make any other unimplemented operation
+available.
 
 One **memory location** is a live scalar object or non-overlapping scalar
 subobject. Two accesses conflict when they touch the same location or
@@ -752,20 +759,30 @@ whose contract says so. **Happens-before** is the transitive closure of those
 relations. A compiler effect such as `maySynchronize` is a conservative
 optimization barrier, not proof of a synchronizes-with edge.
 
-The implemented managed-thread, atomic, and mutex subsets provide these
-edges:
+The implemented concurrency subsets provide these edges:
 
 - every evaluation sequenced before successful spawn happens-before task
   entry;
 - task completion happens-before successful explicit or automatic join
   returns or continues cleanup;
+- every evaluation sequenced before successful C-style `thrd_create`
+  happens-before its registered worker entry, and worker completion
+  happens-before successful `thrd_join` continuation;
+- successful `call_once` initialization synchronizes with every normally
+  returning waiter on that flag;
 - release/acquire observations create the synchronization edges specified in
   [the atomic contract](concurrency.md#explicit-memory-orders), every atomic
   operation participates in its object's modification order, and every
   sequentially consistent operation also participates in one program-wide
   sequentially consistent order; and
-- a mutex unlock synchronizes-with the corresponding later successful
-  acquisition of the same mutex.
+- a final manual or scoped mutex unlock synchronizes-with the corresponding
+  later successful acquisition of the same mutex.
+
+A condition wait atomically enrolls the waiter and releases its held manual
+mutex, then reacquires that mutex before returning. Notification alone creates
+no publication edge; shared-data publication occurs through the mutex
+release/acquisition pair. C-style yield, sleep, identity observation, and
+identity comparison create no synchronizes-with edge.
 
 The implemented atomic value domains are fixed-width integers and `bool`.
 Construction, load, store, exchange, strong compare/exchange, and fixed-width
@@ -815,9 +832,10 @@ such a failure during other failure cleanup takes the `GTI-R0014` emergency
 path. The quarantine cannot detach or resume execution.
 
 The model guarantees no fairness. Deadlock, livelock, starvation, priority
-inversion, and permitted blocking are not memory undefined behavior. Native
-threads may enter GTI only through a generated callback boundary after runtime
-attachment, and native operations are not presumed thread-safe from their
+inversion, and permitted blocking are not memory undefined behavior. A native
+worker may enter GTI only through the exact adapter registered for a successful
+`std::thrd_create` operation. Arbitrary foreign-thread attachment and entry are
+not available, and native operations are not presumed thread-safe from their
 signature alone.
 
 ## 4.10 Defined Runtime Failure
@@ -992,7 +1010,7 @@ re-site those records or emit `hosted_arguments` unless a future adapter-owned
 allocation operation is specified.
 
 Only a local checked-failure origin selects a code, detail, and site. A direct
-or virtual GTI call, constructor call, future task join, or callback-forwarding
+or virtual GTI call, constructor call, managed-task join, or callback-forwarding
 edge may propagate an already formed ordinary record, but it preserves every
 field byte-for-byte and does not add a caller site or transitive category set.
 
@@ -1051,16 +1069,26 @@ There are three containment policies:
   error. Detach is absent from the first task model and requires its own later
   observation/escalation rule.
 
-The current generated callback entered from C under the single-threaded
+The current general generated callback entered from C under the single-threaded
 profile is a terminating containment boundary. It completes the selected GTI
 target's verified cleanup and passes an original defined-failure record to the
 runtime terminal boundary with no callback-local observer; it never returns
 failure through C. Its `noexcept` adapter catches a native exception and
-terminates rather than translating it into a GTI record. An ordinary outbound
-`extern "C"` call is not a containment boundary. Foreign/native-thread callback
-entry and a host/task callback policy remain future concurrent-profile work.
-Native long-jump, abort, or contract violation does not become a GTI
-defined-failure record.
+terminates rather than translating it into a GTI record.
+
+The concurrent `<std/cthread>` worker and once-initializer adapters are exact
+registered exceptions to that single-threaded callback surface. A worker may
+enter only on the native thread registered for its successful `thrd_create`,
+and an initializer may enter only during its exact `call_once` invocation on
+an existing GTI execution thread. A defined failure completes verified cleanup
+and terminates through the runtime boundary; it is not stored for
+`thrd_join`, converted to a join status, or retried by `call_once`. Arbitrary
+foreign/native-thread callback entry and a general host/task callback policy
+remain future concurrent-profile work.
+
+An ordinary outbound `extern "C"` call is not a containment boundary. Native
+long-jump, abort, or contract violation does not become a GTI defined-failure
+record.
 
 An execution environment may select one observer plus host context before an
 invocation. That pair is captured immutably for the invocation and the host
@@ -1117,16 +1145,16 @@ immediate status-70 termination.
 `expected<T, E>` is the ordinary recoverable path. Environmental or resource
 conditions that callers can reasonably handle use an API returning
 `expected`: file/socket operations, managed-thread creation and recoverable
-join, and future `try_make_*` allocation are examples. A checked language
-operation or documented type-level-infallible API instead raises defined
-failure. An infallible host convenience API shall map its native error to
-`GTI-R0012`, not discard it, and should have a recoverable sibling when callers
-need control.
+join, `std::allocator::try_storage`, `std::try_make_arena`, and
+`std::try_make_pool` are examples. A checked language operation or documented
+type-level-infallible API instead raises defined failure. An infallible host
+convenience API shall map its native error to `GTI-R0012`, not discard it, and
+should have a recoverable sibling when callers need control.
 
 Consequently wrong-state `expected.value()` and `expected.error()` access uses
 `GTI-R0009`; it never inherits native `bad_expected_access`, assertion, or
 undefined behavior. `make_unique` and private storage map exhaustion to
-`GTI-R0011`, while future recoverable factories return `expected`.
+`GTI-R0011`, while recoverable allocation factories return `expected`.
 
 Compile-time diagnostics, compiler resource exhaustion, IEEE-754 nontrapping
 results, explicit `expected` errors, native error/sentinel values,

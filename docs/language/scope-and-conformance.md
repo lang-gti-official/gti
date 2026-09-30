@@ -20,9 +20,14 @@ analysis. Together with an independently advertised target/runtime `threads`
 capability, that selection exposes the bounded production source-defined
 `std::thread`, `std::thread_result<Result>`, ordered scalar `std::atomic<T>`
 (including fixed-width integer fetch operations), and scoped
-`std::mutex<T>`/`std::mutex_guard<T>` surfaces. It does not expose detach,
-condition variables, scoped cross-thread borrows, or foreign-thread entry;
-those facilities retain separate runtime and conformance gates.
+`std::mutex<T>`/`std::mutex_guard<T>` surfaces. Separately,
+`<std/cthread>` provides scheduling, sleep, and identity operations in either
+profile and, in the concurrent profile with the `threads` capability, unsafe
+manual create/join, once-initialization, mutex, and condition-variable
+operations. Neither surface exposes detach, a safe scoped condition-variable
+wrapper, scoped cross-thread borrows, thread-specific storage, or arbitrary
+foreign-thread entry; those facilities retain separate runtime and
+conformance gates.
 
 ## 1.2 Conforming Programs
 
@@ -104,8 +109,8 @@ Optimization may change execution only when observable behaviour is preserved.
   checked failure condition is encountered. It performs specified
   cleanup to an explicit containment boundary, which terminates the hosted
   program, returns a structured record through a future generated embedding
-  boundary, or captures a future task record for re-raise at join. It is not a
-  source exception or an `expected` error.
+  boundary, or captures a managed-task record for re-raise at join. It is not
+  a source exception or an `expected` error.
 - A **compiler intrinsic** is a semantically identified operation whose
   behaviour cannot yet be expressed as ordinary GTI source. It is not thereby
   a public application API.
