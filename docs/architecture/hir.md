@@ -43,6 +43,16 @@ obligations, not HIR declarations or executable values.
 
 IDs are stable only inside one `HirProgram`; zero means no identity.
 
+Consuming `expected<T, E>::transform_error` receives the exact mapper identity
+and `expected<T, F>` result from semantics. HIR expands it into one state test,
+mutually exclusive active-alternative extraction/move paths, an ordinary
+ordered call to the selected `F(E)` function on the error path, an Unexpected
+wrapper, and an Expected-valued conditional join. The mapper's ordinary
+defined-failure edge and the existing full-expression lifecycle pass govern
+cleanup. `void` success constructs the empty success alternative without a
+payload extraction. Synthetic values retain stable IDs; lowering does not keep
+pointers into the values vector across appends.
+
 When an owner has no generated-default construction route, each concrete source
 constructor selects its omitted declaration field defaults into its own HIR
 body. Explicit initializers override defaults; the combined schedule remains

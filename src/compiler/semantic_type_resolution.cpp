@@ -2030,6 +2030,131 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
     }
     currentType = expected.arguments[0];
     recordIntrinsic(IntrinsicKind::ExpectedValueOr);
+    return;
+  }
+  if (member.name().lexeme == "transform_error") {
+    const SemanticType errorType = expected.arguments[1];
+    const auto invalidMapper = [&](const Token &location,
+                                   std::string hint = {}) {
+      Diagnostic diagnostic =
+          makeDiagnostic(DiagnosticId::InvalidExpectedErrorTransform, location,
+                         {typeSpelling(errorType)});
+      if (!hint.empty()) {
+        diagnostic.hints.emplace_back(std::move(hint));
+      }
+      diagnostics.emplace_back(std::move(diagnostic));
+    };
+    if (call.arguments().size() != 1) {
+      invalidMapper(member.name(),
+                    "Pass one namespace function with signature F(E), where "
+                    "F is the application error type.");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (isFallibleBorrowType(expected)) {
+      invalidMapper(member.name(),
+                    "Fallible borrows cannot be transformed until their "
+                    "referent dependency can be preserved across mapping.");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    const ExpressionInfo *receiver =
+        semanticModel.findExpression(*member.object());
+    if (receiver == nullptr || receiver->category != ValueCategory::Value) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2018", DiagnosticPhase::Semantics, member.name(),
+          "transform_error consumes its expected receiver; a named expected "
+          "cannot be consumed implicitly.");
+      diagnostic.hints.emplace_back(
+          "Write std::move(result).transform_error(mapper) when ownership "
+          "should transfer here.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    const ExprPtr &mapperExpression = call.arguments().front();
+    const std::optional<Symbol> mapperSymbol =
+        resolveExpressionSymbol(mapperExpression);
+    std::vector<const CallableCandidate *> matches;
+    if (mapperSymbol) {
+      for (const CallableCandidate &candidate : mapperSymbol->overloads) {
+        if (functionItemCandidateIsEligible(candidate) &&
+            candidate.parameterTypes.size() == 1 &&
+            candidate.parameterTypes.front() == errorType) {
+          matches.push_back(&candidate);
+        }
+      }
+    }
+    if (matches.size() != 1) {
+      Diagnostic diagnostic = makeDiagnostic(
+          DiagnosticId::InvalidExpectedErrorTransform,
+          expressionToken(mapperExpression), {typeSpelling(errorType)});
+      diagnostic.hints.emplace_back(
+          matches.empty()
+              ? "Use a non-generic namespace function with one exact by-value "
+                "parameter matching the expected error type."
+              : "Use a uniquely named mapper so one exact function item is "
+                "selected.");
+      if (mapperSymbol) {
+        for (const CallableCandidate &candidate : mapperSymbol->overloads) {
+          if (candidate.declaration != nullptr) {
+            diagnostic.related.push_back(
+                {tokenSpan(candidate.declaration->name()),
+                 "Candidate: " + functionSignatureSpelling(candidate)});
+          }
+        }
+      }
+      diagnostics.emplace_back(std::move(diagnostic));
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    const CallableCandidate &mapper = *matches.front();
+    const SemanticType mappedError = mapper.returnType;
+    const SemanticTypeTraits sourceValueTraits =
+        typeTraits(expected.arguments[0]);
+    const SemanticTypeTraits sourceErrorTraits = typeTraits(errorType);
+    const SemanticTypeTraits mappedErrorTraits = typeTraits(mappedError);
+    if (mappedError == SemanticType::Void ||
+        mappedError.kind == SemanticType::Reference ||
+        mappedErrorTraits.containsBorrowedState ||
+        containsLambdaType(mappedError) || !mappedErrorTraits.movable ||
+        (expected.arguments[0] != SemanticType::Void &&
+         !sourceValueTraits.movable) ||
+        !sourceErrorTraits.movable) {
+      invalidMapper(
+          expressionToken(mapperExpression),
+          "The source alternatives and mapped error must be movable owned "
+          "values; references, borrowed state, lambdas, and void errors are "
+          "not supported.");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    const SemanticType mapperType = SemanticType::functionItemType(
+        mapper.id, mapper.returnType, mapper.parameterTypes);
+    const SemanticType selectedMapper =
+        analyzeInitializer(mapperExpression, mapperType);
+    if (selectedMapper != mapperType) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    currentType = SemanticType(SemanticType::Expected,
+                               {expected.arguments[0], mappedError});
+    ResolvedCallInfo resolved{.returnType = currentType,
+                              .parameterTypes = {mapperType},
+                              .dispatchOwner = expected,
+                              .receiverMode = CallReceiverMode::Consuming};
+    semanticModel.record(call, resolved);
+    semanticModel.recordExpectedTransformError(
+        call, ExpectedTransformErrorInfo{.sourceType = expected,
+                                         .resultType = currentType,
+                                         .mapperType = mapperType,
+                                         .mapper = mapper.id});
+    recordSelectedCallOccurrence(call, std::move(resolved));
+    return;
   }
 }
 

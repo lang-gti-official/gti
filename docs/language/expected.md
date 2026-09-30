@@ -139,6 +139,50 @@ the callable immediately returns `unexpected(error)` after cleaning up the
 live full-expression and lexical obligations on that path. Propagation never
 performs an implicit error conversion.
 
+## Mapping an owned error
+
+`transform_error` explicitly changes an owned expected's error type without
+changing its success type:
+
+```gti
+enum class io_error { unavailable };
+enum class app_error { cannot_load };
+
+app_error map_error(io_error error) { return app_error::cannot_load; }
+
+expected<int, io_error> read(bool fail) {
+  if (fail) { return unexpected(io_error::unavailable); }
+  return 42;
+}
+
+expected<int, app_error> load(bool fail) {
+  return ?read(fail).transform_error(map_error);
+}
+```
+
+For `expected<T, E>`, a mapper with exact signature `F(E)` produces
+`expected<T, F>`. The receiver is evaluated once and consumed. On success the
+value is moved and the mapper is not called; on error the error is moved into
+the mapper exactly once. `T` may be `void`. Named receivers require explicit
+`std::move(result).transform_error(mapper)`; there is no implicit consumption.
+The resulting expected can be stored, returned, passed onward, mapped again,
+or propagated with the ordinary prefix `?`. There is no separate `?.` operator.
+
+The current mapper surface accepts one unambiguous, safe, non-generic
+namespace-scope GTI function with a body. Its parameter must be exactly the
+by-value `E`, without an implicit conversion. The source alternatives and `F`
+must be movable; `F` must be a non-void owned value without borrowed state or
+lambda components. Lambda mappers, member functions, C function pointers,
+reference parameters/results, and `expected<T&, E>` receivers are not part of
+this initial surface. No additional include is required.
+
+Mapping does not catch defined runtime failures. A failure in the producer,
+mapper, or subsequent expression follows the ordinary MIR cleanup protocol.
+Consumed payloads retain one owner, and remaining receiver resources live
+through the enclosing full expression.
+
+## Propagation ownership
+
 Here `T` is an owned value or `void`; the checked-borrow specialization above
 is diagnosed until propagation can preserve its loan without materializing or
 copying the referent.

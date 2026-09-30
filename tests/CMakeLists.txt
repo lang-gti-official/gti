@@ -504,6 +504,9 @@ add_test(NAME temporary_owner_borrow COMMAND gti_temporary_owner_borrow_tests)
 add_executable(gti_owned_expected_error_tests owned_expected_error_tests.cpp)
 target_link_libraries(gti_owned_expected_error_tests PRIVATE gti_cpp_backend)
 add_test(NAME owned_expected_error COMMAND gti_owned_expected_error_tests)
+add_executable(gti_expected_transform_error_tests expected_transform_error_tests.cpp)
+target_link_libraries(gti_expected_transform_error_tests PRIVATE gti_cpp_backend)
+add_test(NAME expected_transform_error COMMAND gti_expected_transform_error_tests)
 add_executable(gti_owned_unexpected_pending_cleanup_tests owned_unexpected_pending_cleanup_tests.cpp)
 target_link_libraries(gti_owned_unexpected_pending_cleanup_tests PRIVATE gti_cpp_backend)
 add_test(NAME owned_unexpected_pending_cleanup COMMAND gti_owned_unexpected_pending_cleanup_tests)
@@ -1140,6 +1143,13 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/expected_propagation_runtime_test.py"
             "$<TARGET_FILE:gti>"
   )
+  add_test(
+    NAME expected_transform_error_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/expected_transform_error_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(expected_transform_error_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME expected_payload_range_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -2171,6 +2181,12 @@ if(Python3_Interpreter_FOUND)
       NAME expected_payload_range_lsp
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"
               "$<TARGET_FILE:gti_lsp>" expected-payload-range
+    )
+    add_test(
+      NAME expected_transform_error_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/expected_transform_error_lsp_test.py"
+              "$<TARGET_FILE:gti_lsp>"
     )
     add_test(
       NAME borrowed_payload_pattern_lsp

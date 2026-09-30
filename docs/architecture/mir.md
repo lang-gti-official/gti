@@ -150,6 +150,15 @@ return lifetime. A failure-only drop of that exact result is not a second
 successful use; reparenting alone is insufficient without its final matching
 publication. Body lifecycle verification still owns activation and failure
 paths, including rejection of missing publication and incorrect cleanup phase.
+An owning conditional or propagated success can retain its pending return in
+the existing Temporary-rooted join rather than inventing a second value slot.
+Verification requires one exact same-typed, source-identified Move transport
+from that temporary, and binds final publication to that SSA result. Prefix
+`?` error returns use the same pending-return protocol as explicit returns.
+Failure cleanup without lifecycle-bound loans drains temporary, lexical, and
+pending-return obligations together in reverse construction order; those
+lifetimes can interleave when an initializer publishes a binding before its
+older full-expression temporaries are retired.
 Program v71/body v61 retain zero-based capture projections in aggregate
 cleanup recipes. A closure recipe contains each active capture exactly once
 in reverse capture order; its source-destructor targets contribute to normal
@@ -1435,6 +1444,16 @@ derive these recipes independently from the concrete types. Failure effects
 include potentially active alternative destructors, while execution cleans
 only the actual active alternative. Secondary cleanup failure preserves the
 original failure record. A `void` success never requires payload access.
+
+Error mapping uses the existing branch, state-proven extraction, Move,
+ordinary function Call/Invoke, Unexpected, and Initialize vocabulary. Its
+Expected-valued join has one temporary storage identity, not a default-active
+payload followed by assignment. The C++ backend uses uninitialized lifetime
+storage for that join and for non-default-constructible Expected call results.
+Passive class payloads still require representation storage, even without a
+semantic destructor; these slots retire only the native representation.
+Owning slots follow MIR's transfer and cleanup events, including mapper failure
+and pending return rollback. No AST/HIR expression walker executes the mapping.
 
 A concrete fixed-array obligation retains one aggregate schedule rather than
 inventing a backend-visible drop for every element. Its extent sequence and

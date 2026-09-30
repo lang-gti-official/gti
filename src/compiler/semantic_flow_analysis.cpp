@@ -559,6 +559,23 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
         expression, "a deferred callable invocation has no closed target set");
     return;
   }
+  if (const ExpectedTransformErrorInfo *transform =
+          semanticModel.findExpectedTransformError(*call)) {
+    const FunctionInfo *target = semanticModel.findFunction(transform->mapper);
+    if (target == nullptr || target->linkage != LanguageLinkage::Gti ||
+        target->declaration == nullptr ||
+        target->declaration->body() == nullptr ||
+        !target->genericParameters.empty()) {
+      addUnknownProgramEffect(
+          expression,
+          "an expected error mapper has no closed static GTI target");
+    } else {
+      addProgramEffectEdge(
+          {.kind = ProgramEffectOwnerKind::Function, .id = target->id},
+          expression);
+    }
+    return;
+  }
   const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
   if (resolved == nullptr || resolved->intrinsic != IntrinsicKind::None) {
     return;
@@ -1674,6 +1691,10 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
 
   if (kind == ExprKind::Call) {
     const auto *call = static_cast<const Call *>(&expr);
+    if (semanticModel.findExpectedTransformError(*call) != nullptr) {
+      operation.propagation = FailurePropagationKind::DirectCall;
+      return operation;
+    }
     if (call->callee() && call->callee()->exprKind() == ExprKind::Get) {
       const auto *member = static_cast<const Get *>(call->callee().get());
       const SemanticType objectType = semanticModel.typeOf(*member->object());
@@ -3858,6 +3879,47 @@ auto SemanticVisitor::Impl::captureMemberCompletion(
          .qualifiedName = "empty",
          .detail = "bool empty()",
          .scopeDistance = 0});
+  } else if (objectType.kind == SemanticType::Expected &&
+             objectType.arguments.size() == 2) {
+    const SemanticType &value = objectType.arguments[0];
+    const SemanticType &error = objectType.arguments[1];
+    context.candidates.push_back(
+        {.kind = SemanticCompletionCandidateKind::Method,
+         .name = "has_value",
+         .qualifiedName = "has_value",
+         .detail = "bool has_value()",
+         .scopeDistance = 0});
+    context.candidates.push_back(
+        {.kind = SemanticCompletionCandidateKind::Method,
+         .name = "value",
+         .qualifiedName = "value",
+         .detail = typeSpelling(value) + " value()",
+         .scopeDistance = 0});
+    context.candidates.push_back(
+        {.kind = SemanticCompletionCandidateKind::Method,
+         .name = "error",
+         .qualifiedName = "error",
+         .detail = typeSpelling(error) + " error()",
+         .scopeDistance = 0});
+    if (value != SemanticType::Void && !isFallibleBorrowType(objectType)) {
+      context.candidates.push_back(
+          {.kind = SemanticCompletionCandidateKind::Method,
+           .name = "value_or",
+           .qualifiedName = "value_or",
+           .detail = typeSpelling(value) + " value_or(" + typeSpelling(value) +
+                     " fallback)",
+           .scopeDistance = 0});
+    }
+    if (!isFallibleBorrowType(objectType)) {
+      context.candidates.push_back(
+          {.kind = SemanticCompletionCandidateKind::Method,
+           .name = "transform_error",
+           .qualifiedName = "transform_error",
+           .detail = "expected<" + typeSpelling(value) +
+                     ", F> transform_error(F(" + typeSpelling(error) +
+                     ") mapper) &&",
+           .scopeDistance = 0});
+    }
   }
   semanticModel.recordCompletion(std::move(context));
 }

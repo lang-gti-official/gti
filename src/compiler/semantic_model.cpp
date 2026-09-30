@@ -955,6 +955,18 @@ SemanticModel::findCall(const Call &call) const {
   return base == nullptr ? nullptr : base->findCall(call);
 }
 
+[[nodiscard]] const ExpectedTransformErrorInfo *
+SemanticModel::findExpectedTransformError(const Call &call) const {
+  const auto found = expectedTransformErrors.find(&call);
+  if (found != expectedTransformErrors.end()) {
+    return &found->second;
+  }
+  if (suppressedInheritedCalls.contains(&call)) {
+    return nullptr;
+  }
+  return base == nullptr ? nullptr : base->findExpectedTransformError(call);
+}
+
 [[nodiscard]] const NativeFunctionConversionInfo *
 SemanticModel::findNativeFunctionConversion(const Expr &expression) const {
   const auto found = nativeFunctionConversions.find(&expression);
@@ -1288,6 +1300,7 @@ void SemanticModel::clear() {
   payloadConstructions.clear();
   payloadPatterns.clear();
   calls.clear();
+  expectedTransformErrors.clear();
   suppressedInheritedCalls.clear();
   packFolds.clear();
   lambdaCalls.clear();
@@ -1750,6 +1763,12 @@ void SemanticModel::record(const Call &call, ResolvedCallInfo info) {
   calls.insert_or_assign(&call, std::move(info));
 }
 
+void SemanticModel::recordExpectedTransformError(
+    const Call &call, ExpectedTransformErrorInfo info) {
+  suppressedInheritedCalls.erase(&call);
+  expectedTransformErrors.insert_or_assign(&call, std::move(info));
+}
+
 void SemanticModel::recordNativeFunctionConversion(
     const Expr &expression, NativeFunctionConversionInfo info) {
   nativeFunctionConversions.insert_or_assign(&expression, std::move(info));
@@ -1762,6 +1781,7 @@ void SemanticModel::recordFunctionItemSelection(
 
 void SemanticModel::suppressInheritedCall(const Call &call) {
   calls.erase(&call);
+  expectedTransformErrors.erase(&call);
   suppressedInheritedCalls.insert(&call);
 }
 

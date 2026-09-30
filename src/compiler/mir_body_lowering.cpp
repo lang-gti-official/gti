@@ -1723,9 +1723,17 @@ private:
           {.kind = MirInstructionKind::EndBorrow, .loan = loan});
       failureEndedLoans.push_back(loan);
     }
+    const bool hasLifecycleLoans =
+        std::any_of(scopes.begin(), scopes.end(), [&](const Scope &scope) {
+          return std::any_of(scope.loans.begin(), scope.loans.end(),
+                             [&](MirLoanId id) {
+                               const MirLoan *loan = output.findLoan(id);
+                               return loan != nullptr && loan->lifecycleBound;
+                             });
+        });
     if (output.kind == MirBodyKind::Constructor ||
-        output.kind == MirBodyKind::FieldInitializers) {
-      emitConstructorFailureDrain(consumedDrops, failureEndedLoans);
+        output.kind == MirBodyKind::FieldInitializers || !hasLifecycleLoans) {
+      emitOrderedFailureDrain(consumedDrops, failureEndedLoans);
     } else {
       const auto retained = retainedReborrowAncestors();
       for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
@@ -1779,10 +1787,13 @@ private:
   // obligations are armed mid-prologue, so they interleave between the
   // parameter bindings seeded before them and the temporaries created after
   // them; a phase-ordered drain cannot satisfy the primary-chain global
-  // ordering rule.
-  void emitConstructorFailureDrain(
-      const std::vector<MirDropObligationId> &consumedDrops,
-      const std::vector<MirLoanId> &endedLoans) {
+  // ordering rule. Owning ordinary bodies without lifecycle-bound loans need
+  // the same ordering when a lexical result is initialized before cleanup of
+  // its initializer's older temporaries. Borrowed carriers retain their
+  // established scope/loan schedule above.
+  void
+  emitOrderedFailureDrain(const std::vector<MirDropObligationId> &consumedDrops,
+                          const std::vector<MirLoanId> &endedLoans) {
     for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
       for (auto loan = scope->loans.rbegin(); loan != scope->loans.rend();
            ++loan) {
@@ -1804,6 +1815,10 @@ private:
       if (!containsDrop(consumedDrops, temporary.obligation)) {
         entries.push_back({temporary.obligation, temporary.conditional});
       }
+    }
+    if (pendingReturnDrop != 0 &&
+        !containsDrop(consumedDrops, pendingReturnDrop)) {
+      entries.push_back({pendingReturnDrop, false});
     }
     for (const Scope &scope : scopes) {
       for (const MirPlaceId placeId : scope.drops) {
@@ -3461,9 +3476,29 @@ private:
       }
     }
     const MirPlace *materialized = output.findPlace(place);
+    // A conditional result's lifetime is rooted in its join temporary. Its
+    // final Move is a transport identity, not a second materialization.
+    const bool conditionalResult =
+        allowExpected && temporary->kind == HirValueKind::Conditional &&
+        materialized != nullptr &&
+        materialized->root == MirPlaceRootKind::Temporary &&
+        std::any_of(
+            output.blocks.begin(), output.blocks.end(),
+            [&](const MirBlock &block) {
+              return std::any_of(
+                  block.instructions.begin(), block.instructions.end(),
+                  [&](const MirInstruction &instruction) {
+                    return instruction.kind == MirInstructionKind::Move &&
+                           instruction.result == produced.value &&
+                           instruction.operands.size() == 1 &&
+                           instruction.operands.front().place == place &&
+                           instruction.info.type == temporary->info.type &&
+                           instruction.lifecycle.empty();
+                  });
+            });
     if (materialized == nullptr ||
-        materialized->root != MirPlaceRootKind::Value ||
-        materialized->value != produced.value ||
+        (!conditionalResult && (materialized->root != MirPlaceRootKind::Value ||
+                                materialized->value != produced.value)) ||
         materialized->type != temporary->info.type ||
         materialized->access != AccessMode::Mutable ||
         materialized->sourceValue != temporary->id ||
@@ -4244,7 +4279,8 @@ private:
         return;
       }
       const bool expectedTemporaryExtraction =
-          isExpectedPropagationExtraction(value.id) &&
+          (isExpectedPropagationExtraction(value.id) ||
+           (value.source == nullptr && value.definedFailure.empty())) &&
           receiverSource != nullptr &&
           receiverSource->info.category == ValueCategory::Value &&
           receiverSource->info.type.kind == SemanticType::Expected &&
@@ -5783,10 +5819,13 @@ private:
     scopes = evaluatedScopes;
     temporaryDrops = evaluatedTemporaryDrops;
     const MirOperand propagatedError = valueOperand(plan.unexpected);
-    emitTemporaryTransfer(plan.unexpected);
+    const MirDropObligationId enclosingPendingReturnDrop = pendingReturnDrop;
+    prepareReturnOwnership(plan.unexpected, propagatedError);
     endReturnExpressionLoans(scopeBaseline->second);
     emitTemporaryDrops(temporaryBaseline->second, value.id, 0, 0, true);
     emitScopeExit(0);
+    publishReturnOwnership(plan.unexpected);
+    pendingReturnDrop = enclosingPendingReturnDrop;
     terminate({.kind = MirTerminatorKind::Return,
                .hirValue = value.id,
                .value = propagatedError});
@@ -8566,51 +8605,10 @@ private:
       }
     }
     const MirDropObligationId enclosingPendingReturnDrop = pendingReturnDrop;
-    if (statement.value && output.returnType.kind != SemanticType::Reference &&
+    if (statement.value && result &&
+        output.returnType.kind != SemanticType::Reference &&
         output.returnType.kind != SemanticType::Void) {
-      const MirDropObligationId sourceDrop =
-          dropObligationForValue(*statement.value);
-      const bool fallibleReturnCleanup =
-          std::any_of(temporaryDrops.begin(), temporaryDrops.end(),
-                      [&](const auto &drop) {
-                        return drop.obligation != sourceDrop &&
-                               normalizedDestructorPropagation(
-                                   drop.obligation) ==
-                                   FailurePropagationKind::Destructor;
-                      }) ||
-          std::any_of(scopes.begin(), scopes.end(), [&](const auto &scope) {
-            return std::any_of(
-                scope.drops.begin(), scope.drops.end(), [&](const auto place) {
-                  return normalizedDestructorPropagation(
-                             dropObligationForLocalPlace(output.findPlace(
-                                 place))) == FailurePropagationKind::Destructor;
-                });
-          });
-      if (temporaryIsActive(sourceDrop) && result &&
-          result->kind == MirOperandKind::Value && fallibleReturnCleanup) {
-        const MirDropObligation source = *output.findDropObligation(sourceDrop);
-        pendingReturnDrop = output.dropObligations.size() + 1;
-        output.dropObligations.push_back(
-            {.id = pendingReturnDrop,
-             .constructionOrder = pendingReturnDrop,
-             .kind = MirDropObligationKind::ReturnResult,
-             .place = source.place,
-             .value = source.value,
-             .dropType = source.dropType});
-        (void)appendInstruction(
-            {.kind = MirInstructionKind::Lifecycle,
-             .hirValue = *statement.value,
-             .hirStatement = statement.id,
-             .lifecycle = {{.kind = MirLifecycleEventKind::Reparent,
-                            .source = sourceDrop,
-                            .target = pendingReturnDrop}}});
-        (void)removeTemporary(sourceDrop);
-      } else {
-        // Without a potentially failing continuation no rollback lifetime is
-        // needed: transfer and final publication cannot be separated by
-        // failure.
-        emitTemporaryTransfer(*statement.value, statement.id);
-      }
+      prepareReturnOwnership(*statement.value, *result, statement.id);
     }
     endReturnExpressionLoans(incomingScopes);
     const MirLoanId enclosingPendingReturnLoan = pendingReturnLoan;
@@ -8619,19 +8617,68 @@ private:
                        statement.id);
     emitScopeExit(0);
     pendingReturnLoan = enclosingPendingReturnLoan;
-    if (pendingReturnDrop != 0) {
-      (void)appendInstruction(
-          {.kind = MirInstructionKind::Lifecycle,
-           .hirValue = statement.value.value_or(0),
-           .hirStatement = statement.id,
-           .lifecycle = {{.kind = MirLifecycleEventKind::TransferOut,
-                          .source = pendingReturnDrop}}});
-    }
+    publishReturnOwnership(statement.value.value_or(0), statement.id);
     pendingReturnDrop = enclosingPendingReturnDrop;
     terminate({.kind = MirTerminatorKind::Return,
                .hirStatement = statement.id,
                .value = std::move(result),
                .returnLoan = returnLoan});
+  }
+
+  void prepareReturnOwnership(HirValueId value, const MirOperand &result,
+                              HirStatementId statement = 0) {
+    const MirDropObligationId sourceDrop = dropObligationForValue(value);
+    const bool fallibleReturnCleanup =
+        std::any_of(temporaryDrops.begin(), temporaryDrops.end(),
+                    [&](const auto &drop) {
+                      return drop.obligation != sourceDrop &&
+                             normalizedDestructorPropagation(drop.obligation) ==
+                                 FailurePropagationKind::Destructor;
+                    }) ||
+        std::any_of(scopes.begin(), scopes.end(), [&](const auto &scope) {
+          return std::any_of(
+              scope.drops.begin(), scope.drops.end(), [&](const auto place) {
+                return normalizedDestructorPropagation(
+                           dropObligationForLocalPlace(output.findPlace(
+                               place))) == FailurePropagationKind::Destructor;
+              });
+        });
+    if (temporaryIsActive(sourceDrop) && result.kind == MirOperandKind::Value &&
+        fallibleReturnCleanup) {
+      const MirDropObligation source = *output.findDropObligation(sourceDrop);
+      pendingReturnDrop = output.dropObligations.size() + 1;
+      output.dropObligations.push_back(
+          {.id = pendingReturnDrop,
+           .constructionOrder = pendingReturnDrop,
+           .kind = MirDropObligationKind::ReturnResult,
+           .place = source.place,
+           .value = source.value,
+           .dropType = source.dropType});
+      (void)appendInstruction(
+          {.kind = MirInstructionKind::Lifecycle,
+           .hirValue = value,
+           .hirStatement = statement,
+           .lifecycle = {{.kind = MirLifecycleEventKind::Reparent,
+                          .source = sourceDrop,
+                          .target = pendingReturnDrop}}});
+      (void)removeTemporary(sourceDrop);
+    } else {
+      // Without a potentially failing continuation no rollback lifetime is
+      // needed: transfer and final publication cannot be separated by
+      // failure.
+      emitTemporaryTransfer(value, statement);
+    }
+  }
+
+  void publishReturnOwnership(HirValueId value, HirStatementId statement = 0) {
+    if (pendingReturnDrop != 0) {
+      (void)appendInstruction(
+          {.kind = MirInstructionKind::Lifecycle,
+           .hirValue = value,
+           .hirStatement = statement,
+           .lifecycle = {{.kind = MirLifecycleEventKind::TransferOut,
+                          .source = pendingReturnDrop}}});
+    }
   }
 
   [[nodiscard]] bool validateSourceProvenance() const {
