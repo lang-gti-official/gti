@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 
 
-def main(names=None, cases=None):
+def main(names=None, cases=None, execution_profile=None):
     fixtures = pathlib.Path(__file__).parent / "fixtures"
     if names is None:
         names = ("lambda_pack_invocation", "stored_callable_signature",
@@ -35,6 +35,8 @@ def main(names=None, cases=None):
                 source = fixtures / f"{name}.gti"
                 binary = pathlib.Path(temporary) / f"{name}-{label}"
                 command = [str(compiler), str(source), *flags, "-o", str(binary)]
+                if execution_profile is not None:
+                    command += ["--execution-profile", execution_profile]
                 if native:
                     command += ["--", *native]
                 built = subprocess.run(command, capture_output=True, text=True,

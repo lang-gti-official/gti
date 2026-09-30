@@ -78,6 +78,11 @@ The current implemented foundation includes:
   base upcast, plus the ordinary generic `std::make_unique<T>` for class/struct
   construction or exact-value/default scalar initialization, and consuming
   `std::upcast_unique<Base, Derived>` functions; and
+- `<std/memory>` `std::shared_ptr<T>` and `std::make_shared<T>` for explicit
+  shared ownership: move-only handles with `clone()`, read-only dereference,
+  null/default construction, null comparison, `use_count()`, reset, and swap.
+  Last-owner release performs checked cleanup; reference-count synchronization
+  does not grant mutable access to the object; and
 - `<std/array>` `std::array<T, N>` over checked fixed-array storage, including
   front/back access and copyable-element fill; and
 - `<std/string>` `std::string` as a move-only owner over private character
@@ -547,6 +552,17 @@ indexing, and iteration retain that dependency. Moving, destroying, or
 invalidating the owner while any retained view is live is rejected, and
 dropping the final view releases the owner for later mutation.
 
+`<std/paired_span>` provides an ordinary source-defined
+`std::paired_span<L, R>` over two read-only spans, including different element
+types. Its constructor takes the two spans by value; `size()` is the smaller
+input length, `empty()` tests that length, and `first(index)`/`second(index)`
+return checked references into the corresponding buffer. `subspan(offset,
+count)` returns a paired subview after validating against the common length.
+Copies, moves, and factory returns retain both checked owners. References and
+subviews conservatively keep the complete dependency set; independently
+releasing the unused side is not yet supported. There is no implicit ownership,
+allocation, or zip-iterator proxy protocol.
+
 `std::string::view()` returns the same bounded single-owner dependency through
 the existing `std::string_view` value type. Literal views remain ownerless
 references to static storage; dynamic views retain their source string through
@@ -589,8 +605,8 @@ safe non-owning link that GTI cannot yet retain. The declaration-only span is
 replaced by the executable read-only single-owner `std::span<T>` surface above;
 mutable access and raw address exposure remain absent.
 
-The standard library currently has no stable public raw allocator, shared
-owner, weak owner, or general unsafe memory API. The typed
+The standard library currently has no stable public raw allocator, weak owner,
+or general unsafe memory API. The typed
 `std::allocator`/`std::storage<T>` pair is intentionally not a raw-memory escape
 hatch.
 
@@ -681,10 +697,12 @@ applicable.
 
 The following component families remain planned or incomplete:
 
-- shared and weak ownership;
+- weak ownership, shared aliasing/base conversion, and recoverable shared
+  allocation factories;
 - copyable or assignable optional values and general sum types beyond the
   bounded payload-enum family;
-- mutable, nested, reseatable, and multi-owner borrowed views;
+- mutable or reseatable views, independently shortened projection borrows,
+  and general stored borrowing graphs;
 - complete vector copy, allocator, iterator reassignment, and precise iterator
   invalidation support;
 - the remaining callable, output/random-access complete-range, heterogeneous

@@ -174,6 +174,14 @@ add_test(NAME collection_initialization_lsp
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/collection_initialization_lsp_test.py" $<TARGET_FILE:gti_lsp>)
 add_test(NAME nested_borrow_fields_lsp
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_borrow_fields_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+add_test(NAME borrowing_composition_lsp
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/borrowing_composition_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+add_executable(gti_borrowing_composition_tests borrowing_composition_tests.cpp)
+target_link_libraries(gti_borrowing_composition_tests PRIVATE gti_cpp_backend)
+add_test(NAME borrowing_composition_pipeline COMMAND gti_borrowing_composition_tests)
+add_executable(gti_shared_ownership_tests shared_ownership_tests.cpp)
+target_link_libraries(gti_shared_ownership_tests PRIVATE gti_compiler)
+add_test(NAME shared_ownership_pipeline COMMAND gti_shared_ownership_tests)
 
 set(GTI_COMPILER_TEST_SUITES
     frontend
@@ -1474,7 +1482,7 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(associative_hash_contracts PROPERTIES TIMEOUT 300)
   foreach(associative_suite IN ITEMS associative_map unordered_map
       associative_ownership_runtime associative_constructor_runtime
-      nested_borrow_fields container_contract_failure)
+      nested_borrow_fields borrowing_composition container_contract_failure)
     add_test(
       NAME "${associative_suite}"
       COMMAND "${Python3_EXECUTABLE}"
@@ -1610,6 +1618,34 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(owned_pointee_projection_runtime PROPERTIES TIMEOUT 240)
+  add_test(
+    NAME shared_ownership_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/shared_ownership_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(shared_ownership_runtime PROPERTIES TIMEOUT 480)
+  add_test(
+    NAME shared_ownership_failure
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/shared_ownership_failure_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(shared_ownership_failure PROPERTIES TIMEOUT 480)
+  add_test(
+    NAME shared_ownership_threads
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/shared_ownership_threads_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(shared_ownership_threads PROPERTIES TIMEOUT 480)
+  add_test(
+    NAME http_url_operators
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/http_url_operators_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(http_url_operators PROPERTIES TIMEOUT 480)
   add_test(
     NAME consuming_owned_pointee_runtime
     COMMAND "${Python3_EXECUTABLE}"

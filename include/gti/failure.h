@@ -67,6 +67,7 @@ enum class DefinedFailureDetail : std::uint8_t {
   MutexLock,
   KeyLookup,
   ContainerArgument,
+  SharedOwner,
   Count,
 };
 
@@ -169,6 +170,7 @@ validDefinedFailureOutcome(DefinedFailureOutcome outcome) {
                DefinedFailureDetail::OccupiedRelocationDestination;
   case DefinedFailureCode::AllocationFailure:
     return outcome.detail == DefinedFailureDetail::UniqueOwner ||
+           outcome.detail == DefinedFailureDetail::SharedOwner ||
            outcome.detail == DefinedFailureDetail::PrivateStorage ||
            outcome.detail == DefinedFailureDetail::ElementConstruction ||
            outcome.detail == DefinedFailureDetail::HostedArguments;
@@ -300,6 +302,8 @@ definedFailureDetailName(DefinedFailureDetail detail) {
     return "key_lookup";
   case DefinedFailureDetail::ContainerArgument:
     return "container_argument";
+  case DefinedFailureDetail::SharedOwner:
+    return "shared_owner";
   case DefinedFailureDetail::NegativeArgumentCount:
     return "negative_argument_count";
   case DefinedFailureDetail::RecursiveThreadLocalInitialization:

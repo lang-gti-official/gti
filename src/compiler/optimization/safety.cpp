@@ -3221,7 +3221,9 @@ operandMayAliasPlace(const MirBody &body,
   }
   if (operand.loan != 0) {
     const MirLoan *loan = body.findLoan(operand.loan);
-    if (loan == nullptr || aliasesTracked(loan->source)) {
+    if (loan == nullptr || aliasesTracked(loan->source) ||
+        std::any_of(loan->additionalSources.begin(),
+                    loan->additionalSources.end(), aliasesTracked)) {
       return true;
     }
   }
@@ -3241,7 +3243,9 @@ operandMayAliasPlace(const MirBody &body,
   }
   if (definition->loan != 0) {
     const MirLoan *loan = body.findLoan(*definition->loan);
-    if (loan == nullptr || aliasesTracked(loan->source)) {
+    if (loan == nullptr || aliasesTracked(loan->source) ||
+        std::any_of(loan->additionalSources.begin(),
+                    loan->additionalSources.end(), aliasesTracked)) {
       return true;
     }
   }
@@ -4244,7 +4248,7 @@ indexedAggregateAccess(const MirProgram *program, const MirBody &body,
   const bool directCarrier = carrierLoan != nullptr && carrierLoan == loan;
   if (loan == nullptr || loan->kind != MirLoanKind::CallResult ||
       loan->source == 0 || loan->producedBy == 0 || loan->entry ||
-      loan->escapes || element == nullptr ||
+      !loan->additionalSources.empty() || loan->escapes || element == nullptr ||
       (place->root == MirPlaceRootKind::Loan && !loan->carriers.empty()) ||
       (loan->parent != 0 &&
        (parentLoan == nullptr || parentLoan->kind != MirLoanKind::Parameter ||

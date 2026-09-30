@@ -263,7 +263,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v76 valid=" << program.valid() << '\n';
+    output << "mir-v77 valid=" << program.valid() << '\n';
     for (const MirNativeCallbackAdapter &adapter :
          program.nativeCallbackAdapters()) {
       output << "native-callback @" << adapter.id
@@ -502,7 +502,14 @@ public:
       }
       output << "] return-borrow=" << number(instance.returnBorrowOrigin) << ':'
              << instance.returnBorrowParameter << ':'
-             << number(instance.returnBorrowAccess) << " return-borrow-place=";
+             << number(instance.returnBorrowAccess)
+             << " return-borrow-parameters=[";
+      for (std::size_t index = 0;
+           index < instance.returnBorrowParameters.size(); ++index) {
+        separator(index);
+        output << instance.returnBorrowParameters[index];
+      }
+      output << "] return-borrow-place=";
       borrowOriginPlace(instance.returnBorrowPlace);
       output << " owned-pointee=";
       if (instance.ownedPointeeProjection) {
@@ -590,7 +597,13 @@ public:
       }
       output << "] borrow=" << number(instance.borrowOrigin) << ':'
              << instance.borrowParameter << ':' << number(instance.borrowAccess)
-             << " definition=";
+             << " borrow-parameters=[";
+      for (std::size_t index = 0; index < instance.borrowParameters.size();
+           ++index) {
+        separator(index);
+        output << instance.borrowParameters[index];
+      }
+      output << "] definition=";
       switch (instance.definitionKind) {
       case MirDefinitionKind::Source:
         output << "source";
@@ -687,7 +700,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v66\n";
+    output << "mir-body-v67\n";
     body(value, 0);
     return output.str();
   }
@@ -1234,7 +1247,25 @@ private:
       output << value.designatedFields[index];
     }
     output << "] lifecycle-bound=" << value.lifecycleBound
-           << " two-phase=" << value.twoPhase << " entry=" << value.entry
+           << " additional-sources=[";
+    for (std::size_t index = 0; index < value.additionalSources.size();
+         ++index) {
+      separator(index);
+      output << 'p' << value.additionalSources[index];
+    }
+    output << "] additional-designated-fields=[";
+    for (std::size_t index = 0; index < value.additionalDesignatedFields.size();
+         ++index) {
+      separator(index);
+      output << '[';
+      for (std::size_t field = 0;
+           field < value.additionalDesignatedFields[index].size(); ++field) {
+        separator(field);
+        output << value.additionalDesignatedFields[index][field];
+      }
+      output << ']';
+    }
+    output << ']' << " two-phase=" << value.twoPhase << " entry=" << value.entry
            << " escapes=" << value.escapes << '\n';
   }
 
@@ -1323,7 +1354,12 @@ private:
     output << " borrow-origin=" << number(value.borrowOrigin)
            << " borrow-argument=" << value.borrowArgument
            << " borrow-access=" << number(value.borrowAccess)
-           << " borrow-place=";
+           << " borrow-arguments=[";
+    for (std::size_t index = 0; index < value.borrowArguments.size(); ++index) {
+      separator(index);
+      output << value.borrowArguments[index];
+    }
+    output << "] borrow-place=";
     borrowOriginPlace(value.borrowPlace);
     output << " operation=" << name(value.operation) << " literal=";
     literal(value.literal);

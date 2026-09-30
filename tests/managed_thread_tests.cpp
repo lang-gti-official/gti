@@ -807,6 +807,34 @@ void testVerifierMutations() {
     return;
   }
 
+  lang::MirProgram missingCleanup = frontend.mir;
+  bool corruptedActiveCapture = false;
+  for (const auto &adapter : missingCleanup.threadTaskAdapters()) {
+    if (!adapter.lambdaTarget)
+      continue;
+    auto *lambda = const_cast<lang::MirLambdaInstance *>(
+        missingCleanup.findLambda(*adapter.lambdaTarget));
+    if (!lambda || lambda->captureTypes.empty() ||
+        !std::any_of(lambda->captureRequiresActiveCleanup.begin(),
+                     lambda->captureRequiresActiveCleanup.end(),
+                     [](bool active) { return active; }))
+      continue;
+    lambda->captureTypes.front() = lang::SemanticType::Unknown;
+    corruptedActiveCapture = true;
+    break;
+  }
+  const auto cleanupVerification = lang::verifyMirProgram(missingCleanup);
+  expect(corruptedActiveCapture &&
+             std::any_of(cleanupVerification.errors.begin(),
+                         cleanupVerification.errors.end(),
+                         [](const auto &error) {
+                           return error.message ==
+                                  "managed thread active task or result has no "
+                                  "exact MIR cleanup recipe";
+                         }),
+         "MIR task adapter must reject active captures without an exact "
+         "cleanup recipe");
+
   lang::MirProgram missing = frontend.mir;
   const_cast<std::vector<lang::MirThreadTaskAdapter> &>(
       missing.threadTaskAdapters())

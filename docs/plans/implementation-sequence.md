@@ -4598,15 +4598,101 @@ consumer, and release refreshes remain outstanding for the full campaign.
 
 ### L-OWN-01: Shared And Weak Ownership
 
-- **State/role:** blocked on `M-FAIL-01`; `M-LIFE-01`, `D-MEM-02`, and
-  `I-CAP-01` are done; systems-readiness standard-library work.
+- **State/role:** the requested strong-ownership and borrowing-composition
+  slice is implemented in 0.354.0 (2026-09-30), with explicit cloning and
+  read-only shared access. Custom copy and move constructor bodies remain
+  out of scope by user decision. Weak ownership and recoverable shared
+  allocation remain open in this broader row.
 - **Scope:** Implement source-defined `shared_ptr` and `weak_ptr` policy over
   narrow trusted control-block operations, and provide the selected
   recoverable unique/shared allocation factories. Make copy, move, observation,
   locking, drop, cycle limitations, and allocation failure explicit.
-- **Initial boundary:** the first implementation is single-threaded. Making the
-  control block cross-thread shareable is a distinct follow-up blocked on the
-  adopted memory model and atomic implementation.
+- **Accepted shared-access rule:** pointee access is read-only. A mutable
+  handle permits reset and swap, not exclusive access to an aliased pointee.
+  Shared mutation uses checked synchronization such as `mutex<T>` or
+  `atomic<T>`. Reference-count synchronization must not be confused with
+  synchronization of the pointee. Cross-thread transfer/sharing must follow
+  the implemented capability rules and protect both access and last-owner
+  cleanup; control-block atomics alone do not grant either capability.
+- **Duplication policy (2026-09-30):** the user withdrew custom copy constructor
+  bodies for further design consideration. Preserve compiler-derived copy
+  behavior and the existing copy/move `= default` / `= delete` declarations.
+  Shared handles duplicate through explicit `clone()`, not an implicit
+  user-code copy hook or public-type compiler exception.
+- **Accepted movement policy (2026-09-30):** after reviewing the ownership and
+  optimization implications, the user withdrew custom move constructor bodies
+  from this campaign. Movement remains compiler-controlled ownership transfer;
+  `Type(Type&&) = default` / `= delete` remain policy declarations, not user
+  hooks. Custom transformations belong in explicit consuming methods or
+  factories. Shared ownership uses generated movement of its private handle,
+  not a public `std::shared_ptr` name exception. Do not reintroduce custom move
+  bodies as a prerequisite of custom copying or shared ownership.
+- **Archived copy research (not active implementation):** local branch
+  `codex/archive-custom-copy-constructors`, checkpoint `4cdec2ed`, preserves
+  the experiment and its borrowing-composition baseline for possible reuse.
+  Explicit/implicit copy, capture, nested-wrapper, and rollback fixtures had
+  focused native-matrix evidence. Conditional-result work was unfinished;
+  array/base and broader composition remained unresolved. This is a WIP
+  snapshot, not a validated feature or release. Its copy-only compiler changes
+  and tests have been removed from the active tree.
+- **Rollback checkpoint:** a fresh Release rebuild passes all 42 declaration
+  cases, both custom-body rejection probes (`GTI-S2020`), the five borrowing
+  pipeline/runtime/LSP gates, and focused stored/nested/owner-return checks.
+  This establishes separation of the experiments, not shared-owner delivery.
+- **Shared-owner implementation slice:** represent a private move-only strong-owner
+  capability by trusted declaration identity, not a public wrapper name or
+  the legacy implicitly copyable shared-pointer type. Ordinary GTI owns
+  explicit cloning and handle policy. A read-only pointee borrow protects the
+  particular strong handle; other handles may alias its allocation. Clone
+  and release have control-block effects, and distinct handle roots must not
+  imply disjoint pointees. Last-owner release must run the exact verified MIR
+  cleanup recipe and propagate defined failure before freeing storage.
+  Constructor failure must reclaim unpublished allocation state. Start with
+  conservative cross-thread capabilities requiring both pointee sharing and
+  transfer permission; address-stable synchronization objects may require a
+  separate general allocation/remote-cleanup distinction, not a mutex-name
+  exception.
+- **Implemented slice:** the private nominal capability,
+  ordinary source wrapper/factory, semantic ownership and concurrency traits,
+  MIR operation/failure contracts, and recursive cleanup recipes are present.
+  Focused optimized tests reject implicit copying, writable pointee access,
+  live-borrow reset, use-after-move, escaping references, and borrowed payloads;
+  malformed MIR tests cover handoff, traits, failure edges, and capability shape.
+  The eight-mode native failure matrix passes empty dereference, control-block
+  allocation rollback, primary final-release failure, and secondary cleanup
+  failure. Passive/recursive/container/fixed-array and managed-thread integration
+  passes focused tests, including owned worker results and immediate stop at a
+  secondary capture-cleanup failure. Legacy cleanup regressions found in the
+  first broad run were corrected. All 325 registered gates have passing
+  results after the three final test/manifest corrections were rerun; clean
+  installed-library consumers pass 9/9, and installed shared ownership,
+  paired-span, failure, thread-result, URL-chain, and LSP probes pass outside
+  the checkout. The initial pointee family matches unique allocation: classes,
+  structs, and scalars without borrowed state, not direct Expected or payload
+  enum allocations.
+- **Parallel borrowing client:** source-defined `std::paired_span<L, R>` over
+  independently typed contiguous buffers drives
+  multiple independent read-only stored dependencies, including checked
+  per-field constructor paths, complete call/return origin sets, alias copies,
+  move forwarding, and owner invalidation. Projections conservatively retain
+  the complete owner set; independently shortening unrelated projection loans
+  and reference extraction from a multi-path by-value parameter remain explicit
+  precision boundaries. Preserve the implemented single exclusive-dependency
+  contract. Do not represent two independent owners as one synthetic owner or
+  infer their lifetimes in the backend.
+- **Delivery evidence:** positive and negative semantic cases; explicit
+  selected-constructor and dependency identities in HIR/MIR; independent
+  verifier mutations; once-only values and cleanup through construction/body/
+  later-argument failures; generic and container composition; C++20/C++23
+  O0/O1/O3, no-elide and sanitizers; LSP diagnostics and navigation; source
+  library examples and installed consumers; full optimized completion suite.
+  Both coordinated implementations were reviewed together. The optional audit
+  passed contracts, 24 typed differential cases, four composition cases,
+  100 malformed-source mutations, and 85 examples in four variants; its final
+  comparison showcase could not run because `examples/gti-vs-cpp/verify.py`
+  is absent. This is not a complete optional-audit pass.
+  Weak ownership remains in the broader row's scope; it is not silently
+  counted as delivered by completing the requested shared-owner campaign.
 - **Exit gate:** exactly-once object/control-block destruction, weak expiration,
   cycles documented as a limitation, allocation failure, and HIR/MIR lifecycle
   tests.

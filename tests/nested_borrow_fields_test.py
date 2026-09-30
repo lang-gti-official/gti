@@ -45,17 +45,6 @@ int main() {
   value = 2;
   return result.first.read();
 }""",
-        "two-borrows": """int main() {
-  int a = 1;
-  int b = 2;
-  [[discard]] std::pair<ReadView, ReadView>(ReadView(a), ReadView(b));
-  return 0;
-}""",
-        "same-owner-two-fields": """int main() {
-  int value = 1;
-  [[discard]] std::pair<ReadView, ReadView>(ReadView(value), ReadView(value));
-  return 0;
-}""",
         "local-owner-return": """std::pair<ReadView, bool> bad() {
   int value = 1;
   return std::pair<ReadView, bool>(ReadView(value), true);
@@ -117,8 +106,6 @@ int main() { mut int value = 1; Bad bad{value}; bad.write(); return 0; }
         "nested-lifecycle-guard": "GTI-S2045",
         "owned-sibling-copy": "GTI-S2003",
         "owner-mutation": "GTI-S2017",
-        "two-borrows": "GTI-S2045",
-        "same-owner-two-fields": "GTI-S2045",
         "local-owner-return": "GTI-S2045",
         "exclusive-copy": "GTI-S2003",
         "exclusive-extraction-copy": "GTI-S2003",

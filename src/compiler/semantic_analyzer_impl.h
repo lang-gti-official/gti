@@ -400,6 +400,7 @@ private:
     BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
     std::size_t returnBorrowParameter = 0;
     AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+    std::vector<std::size_t> returnBorrowParameters;
     std::optional<BorrowOriginPlace> returnBorrowPlace;
     std::vector<FunctionId> virtualRoots;
     bool compilerPrivate = false;
@@ -427,6 +428,7 @@ private:
     BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
     std::size_t returnBorrowParameter = 0;
     AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+    std::vector<std::size_t> returnBorrowParameters;
     std::optional<BorrowOriginPlace> returnBorrowPlace;
     std::vector<FunctionId> virtualRoots;
     SemanticType dispatchOwner = SemanticType::Unknown;
@@ -470,6 +472,7 @@ private:
     BorrowOriginKind origin = BorrowOriginKind::None;
     std::size_t parameter = 0;
     AccessMode access = AccessMode::ReadOnly;
+    std::vector<std::size_t> parameters;
     std::optional<BorrowOriginPlace> place;
     std::size_t eligibleParameters = 0;
     bool hasMutableCandidate = false;
@@ -1198,6 +1201,11 @@ private:
     SemanticType reference = SemanticType::Unknown;
   };
 
+  // Enumerate every independently checked dependency in declaration order.
+  // An empty result means either no reference or an unsupported carrier shape.
+  [[nodiscard]] std::vector<StoredReferencePath>
+  storedReferencePaths(const SemanticType &type) const;
+
   // A concrete carrier may wrap its one direct reference in ordinary nominal
   // fields. The complete declaration path is the dependency identity; an
   // aggregate with two paths is not a one-owner carrier.
@@ -1205,6 +1213,10 @@ private:
   storedReferencePath(const SemanticType &type) const;
 
   [[nodiscard]] std::optional<std::size_t> storedCarrierConstructorParameter(
+      const SemanticType &type, const ConstructorInfo &constructor,
+      std::span<const SemanticType> parameterTypes) const;
+
+  [[nodiscard]] std::vector<std::size_t> storedCarrierConstructorParameters(
       const SemanticType &type, const ConstructorInfo &constructor,
       std::span<const SemanticType> parameterTypes) const;
 
@@ -1275,6 +1287,9 @@ private:
 
   [[nodiscard]] const ExprPtr *
   storedBorrowSource(const ExprPtr &expression) const;
+
+  [[nodiscard]] std::vector<SemanticLoanDependency>
+  storedBorrowDependencies(const ExprPtr &expression);
 
   [[nodiscard]] const Variable *
   borrowedOwnerVariable(const ExprPtr &expression) const;
@@ -1529,6 +1544,8 @@ private:
 
   void analyzeUniqueOwnerIntrinsicCall(const Call &expr,
                                        IntrinsicKind intrinsic);
+  void analyzeSharedOwnerIntrinsicCall(const Call &expr,
+                                       const CallableCandidate &declaration);
 
   // The prefix-initialized storage family (P-STORAGE-01): the live
   // elements always form the prefix [0, length). Construction appends
@@ -1551,6 +1568,7 @@ private:
                                 const std::vector<SemanticType> &argumentTypes);
 
   [[nodiscard]] static bool isStorageElementType(const SemanticType &type);
+  [[nodiscard]] bool isAllocatedScalarType(const SemanticType &type) const;
 
   void requireMutableStorage(const ExprPtr &argument,
                              std::string_view operation);

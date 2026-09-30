@@ -39,6 +39,19 @@ using SemanticLoanPlaceProjectionKind = PlaceProjectionKind;
 using SemanticLoanPlaceProjection = PlaceProjection;
 using SemanticLoanPlace = PlaceKey;
 
+// One field of a composed borrowed value protects its own independent owner.
+// The first dependency remains in the scalar loan fields for the ordinary
+// one-owner reference path; these records contain the additional dependencies.
+struct SemanticLoanDependency {
+  SemanticLoanPlace place;
+  std::vector<SymbolId> designatedFields;
+  AccessMode access = AccessMode::ReadOnly;
+  bool protectsStorage = false;
+
+  friend bool operator==(const SemanticLoanDependency &,
+                         const SemanticLoanDependency &) = default;
+};
+
 struct SemanticLoanInfo {
   SemanticLoanId id = 0;
   SemanticLoanKind kind = SemanticLoanKind::Reference;
@@ -58,6 +71,7 @@ struct SemanticLoanInfo {
   // For a StoredValue parameter loan, this exact nominal field path ends at
   // the reference designating its external referent. Empty for other loans.
   std::vector<SymbolId> designatedFields;
+  std::vector<SemanticLoanDependency> additionalDependencies;
   std::vector<SymbolId> carriers;
   std::vector<SemanticLoanEndpoint> endpoints;
 };
@@ -306,6 +320,13 @@ enum class IntrinsicKind {
   ExactTypeParameterConstruction,
   RequireKey,
   RequireContainerArgument,
+  SharedOwnerEmpty,
+  SharedOwnerFromUnique,
+  SharedOwnerClone,
+  SharedOwnerBorrow,
+  SharedOwnerIsNull,
+  SharedOwnerUseCount,
+  SharedOwnerSwap,
   Count,
 };
 
@@ -331,6 +352,7 @@ enum class CompilerCapabilityTypeKind {
   AtomicStorage,
   MutexStorage,
   MutexLockToken,
+  SharedOwner,
 };
 
 enum class ProgramEntryKind {
@@ -477,6 +499,7 @@ struct FunctionInfo {
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+  std::vector<std::size_t> returnBorrowParameters;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
   std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   std::vector<FunctionId> virtualRoots;
@@ -588,6 +611,7 @@ struct ClassTypeInfo {
   std::vector<ClassFieldTypeInfo> fields;
   std::vector<ClassFieldTypeInfo> staticFields;
   std::optional<StoredReferenceInfo> storedReference;
+  bool lifecycleBoundBorrowCarrier = false;
   ClassKind kind = ClassKind::Class;
   std::vector<ClassBaseTypeInfo> bases;
   bool abstract = false;
@@ -710,6 +734,9 @@ struct ConstructorInfo {
   std::vector<std::size_t> defaultArgumentEffectOwners;
   std::optional<std::size_t> borrowParameter;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  // Distinct formal inputs retained by a composed read-only carrier. Includes
+  // the primary borrowParameter when there is more than one input.
+  std::vector<std::size_t> borrowParameters;
   bool constexprConstructor = false;
   bool compilerPrivate = false;
   bool parameterPack = false;
@@ -754,6 +781,7 @@ struct ResolvedConstructionInfo {
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  std::vector<std::size_t> borrowArguments;
   bool generatedDefault = false;
   ConstructorKind kind = ConstructorKind::Ordinary;
 };
@@ -814,6 +842,7 @@ struct ResolvedCallInfo {
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  std::vector<std::size_t> borrowArguments;
   std::optional<BorrowOriginPlace> borrowPlace;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;

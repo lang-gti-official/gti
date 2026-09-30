@@ -314,6 +314,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
          .returnBorrowOrigin = instance.returnBorrowOrigin,
          .returnBorrowParameter = instance.returnBorrowParameter,
          .returnBorrowAccess = instance.returnBorrowAccess,
+         .returnBorrowParameters = instance.returnBorrowParameters,
          .returnBorrowPlace = instance.returnBorrowPlace,
          .ownedPointeeProjection = instance.ownedPointeeProjection,
          .linkage = instance.linkage,
@@ -393,6 +394,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
          .borrowOrigin = instance.borrowOrigin,
          .borrowParameter = instance.borrowParameter,
          .borrowAccess = instance.borrowAccess,
+         .borrowParameters = instance.borrowParameters,
          .definitionKind =
              instance.source != nullptr && instance.source->body() != nullptr
                  ? MirDefinitionKind::Source

@@ -100,7 +100,10 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v76`/`mir-body-v66`.
+The deterministic serialization is currently `mir-v77`/`mir-body-v67`.
+Program v77/body v67 preserve complete shared-carrier dependency sets and
+the strong-owner intrinsic/cleanup contracts, including exact recursive
+array cleanup recipes.
 Program v76/body v66 replace a stored carrier's single designated field symbol
 with its ordered `designated-fields` path. The complete concrete nominal path
 retains one external dependency through nested carrier construction and return.
@@ -552,7 +555,15 @@ carrier parameter one body-local entry `Stored` loan whose unprojected formal-
 binding source is the opaque identity of the external dependency proven by
 semantics, and the loan retains the exact ordered designated field path down
 to the reference leaf. Each step is checked against the concrete class fields;
-the whole carrier must have exactly one such dependency path.
+the exclusive carrier must have exactly one such dependency path. A shared
+carrier may have several paths. Its entry loan retains all designated paths;
+at a call boundary its result loan retains each independent caller source in
+`source` plus `additionalSources`. Constructor and function summaries retain
+the complete formal-origin set. These are checked dependencies, not fabricated
+storage under a single merged owner. Loan conflicts, scalar-promotion admission,
+and alias/escape analysis inspect the entire set. Shared reference/subview
+projections conservatively preserve that complete set rather than independently
+shortening one owner's endpoint.
 Returning the carrier or its exact stored referent publishes a fresh escaping
 `Return` loan through one `Borrow` operand that names that entry loan. A carrier
 return also names the exact SSA value loaded or moved from one of that loan's
@@ -1483,6 +1494,12 @@ still occupies one lifecycle position, while execution visits every leaf in
 reverse index order and routes a failure-capable leaf destructor through the
 ordinary MIR failure edge. This representation scales to nested fixed arrays
 without making the backend rediscover element order or destructor identity.
+When elements have an exact recursive cleanup recipe, the array also retains
+one immediate-element recipe, recursively for each dimension. This includes
+non-failing active cleanup, such as shared-owner release: the backend executes
+the verified reverse-order recipe before retiring the inert native array
+shell. Arrays embedded in allocated objects use the same recipe. Native array
+destruction is not a substitute for releasing checked ownership resources.
 
 ## Controlled Optimization Edits
 

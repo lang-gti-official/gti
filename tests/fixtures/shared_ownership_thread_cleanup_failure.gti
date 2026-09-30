@@ -1,0 +1,32 @@
+#include <std/memory>
+#include <std/thread>
+
+[[unsafe_transfer, unsafe_share]] class Sentinel {
+public:
+  ~Sentinel() { std::println(99); }
+};
+
+[[unsafe_transfer, unsafe_share]] class Failing {
+public:
+  ~Failing() {
+    std::println(7);
+    int32_t zero = 0;
+    int32_t secondary = 1 / zero;
+  }
+};
+
+int main() {
+  auto first = std::make_shared<Sentinel>();
+  auto second = std::make_shared<Failing>();
+  // Reverse capture cleanup encounters Failing first. Once that is secondary
+  // to the worker's failure, Sentinel must not run and no native shell may drop.
+  auto task = [sentinel = std::move(first), failing = std::move(second)]() -> void {
+    int32_t zero = 0;
+    int32_t primary = 1 % zero;
+  };
+  auto started = std::thread::start(std::move(task));
+  if (!started.has_value()) { return 1; }
+  mut auto worker = std::move(started).value();
+  [[discard]] worker.join();
+  return 0;
+}

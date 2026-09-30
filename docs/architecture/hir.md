@@ -518,6 +518,14 @@ value's concrete type. HIR does not turn a shell field or projection into that
 stored dependency; MIR lowering must transfer the entry loan explicitly, and
 MIR verification rechecks the transfer.
 
+For shared multi-path carriers, `HirLoan.additionalDependencies` preserves
+every semantic owner place or opaque parameter field path in the same concrete
+place domain. Constructor instances retain `borrowParameters`; call values
+retain `borrowArguments`; function instances retain `returnBorrowParameters`.
+These complete origin sets supplement the primary origin without fabricating
+a merged storage root. MIR independently checks their publications and all
+owner conflicts; neither HIR nor the backend infers a public wrapper's meaning.
+
 Global-origin call values likewise carry the exact semantic place and access.
 The semantic full-expression or retained-loan endpoint remains authoritative;
 HIR neither treats static storage as a receiver nor replaces its symbol with a

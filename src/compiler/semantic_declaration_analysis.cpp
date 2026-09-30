@@ -2119,6 +2119,8 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
           !classDecl->genericParameters().front().pack) {
         if (classDecl->name().lexeme == "unique_owner") {
           compilerCapability = CompilerCapabilityTypeKind::UniqueOwner;
+        } else if (classDecl->name().lexeme == "shared_owner") {
+          compilerCapability = CompilerCapabilityTypeKind::SharedOwner;
         } else if (classDecl->name().lexeme == "storage") {
           compilerCapability = CompilerCapabilityTypeKind::Storage;
         }
@@ -4585,28 +4587,61 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
       }
 
       const SemanticType &fieldType = member->second.symbol.type;
-      if (owner.storedReference) {
-        report(field.declaration->name(),
-               "A class or struct may store only one reference in the "
-               "current lifetime model.",
-               "GTI-S2045");
-        continue;
-      }
-      owner.storedReference =
-          StoredReferenceInfo{.field = field.declaration,
-                              .type = fieldType,
-                              .access = fieldType.referenceAccess};
       if (field.declaration->initializer()) {
         report(field.declaration->name(),
                "A stored reference field must be bound explicitly by every "
                "constructor.",
                "GTI-S2045");
       }
+      if (owner.storedReference) {
+        continue;
+      }
+      owner.storedReference =
+          StoredReferenceInfo{.field = field.declaration,
+                              .type = fieldType,
+                              .access = fieldType.referenceAccess};
     }
   }
 
   for (ClassInfo &owner : classes) {
     if (owner.kind == ClassKind::Union) {
+      continue;
+    }
+    const auto dependencies =
+        storedReferencePaths(SemanticType::classType(owner.id));
+    if (dependencies.size() > 1) {
+      if (std::any_of(dependencies.begin(), dependencies.end(),
+                      [](const StoredReferencePath &path) {
+                        return path.reference.referenceAccess !=
+                               AccessMode::ReadOnly;
+                      })) {
+        report(owner.name,
+               "A composed borrowed value requires read-only dependencies; "
+               "multiple or mixed exclusive dependencies are not supported.",
+               "GTI-S2045");
+        continue;
+      }
+      if (owner.constructors.empty()) {
+        report(owner.name,
+               "A composed borrowed value requires a declared constructor "
+               "that explicitly binds every borrowed field.",
+               "GTI-S2045");
+      }
+      for (ConstructorInfo &constructor : owner.constructors) {
+        constructor.borrowParameters = storedCarrierConstructorParameters(
+            SemanticType::classType(owner.id), constructor,
+            constructor.parameterTypes);
+        if (constructor.borrowParameters.empty()) {
+          report(constructor.declaration->name(),
+                 "Every constructor of a composed borrowed value must bind "
+                 "each borrowed field directly from an exact reference or "
+                 "carrier parameter.",
+                 "GTI-S2045");
+        } else {
+          constructor.borrowParameter = constructor.borrowParameters.front();
+          constructor.borrowAccess = AccessMode::ReadOnly;
+        }
+      }
       continue;
     }
     for (const ClassBaseTypeInfo &base : owner.bases) {
@@ -4790,6 +4825,7 @@ auto SemanticVisitor::Impl::publishFunctionBorrowSummary(
       declaration->returnBorrowOrigin = function.returnBorrowOrigin;
       declaration->returnBorrowParameter = function.returnBorrowParameter;
       declaration->returnBorrowAccess = function.returnBorrowAccess;
+      declaration->returnBorrowParameters = function.returnBorrowParameters;
       declaration->returnBorrowPlace = function.returnBorrowPlace;
     }
   }
@@ -4804,6 +4840,7 @@ auto SemanticVisitor::Impl::publishFunctionBorrowSummary(
     candidate->returnBorrowOrigin = function.returnBorrowOrigin;
     candidate->returnBorrowParameter = function.returnBorrowParameter;
     candidate->returnBorrowAccess = function.returnBorrowAccess;
+    candidate->returnBorrowParameters = function.returnBorrowParameters;
     candidate->returnBorrowPlace = function.returnBorrowPlace;
   }
 }
@@ -5154,6 +5191,7 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
     updated.returnBorrowOrigin = summary.origin;
     updated.returnBorrowParameter = summary.parameter;
     updated.returnBorrowAccess = summary.access;
+    updated.returnBorrowParameters = summary.parameters;
     updated.returnBorrowPlace = summary.place;
     updated.ownedPointeeProjection = ownedPointeeReturnProjection(updated);
     semanticModel.record(*declaration, updated);
@@ -5928,6 +5966,7 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .returnBorrowOrigin = declaration.returnBorrowOrigin,
       .returnBorrowParameter = declaration.returnBorrowParameter,
       .returnBorrowAccess = declaration.returnBorrowAccess,
+      .returnBorrowParameters = declaration.returnBorrowParameters,
       .returnBorrowPlace = declaration.returnBorrowPlace,
       .virtualRoots = declaration.virtualRoots,
       .compilerPrivate = declaration.compilerPrivate};
@@ -5973,6 +6012,9 @@ auto SemanticVisitor::Impl::publishCallableDeclaration(
                                         : concreteBorrow.access;
   declaration->returnBorrowPlace =
       candidateOwnsBorrow ? candidate.returnBorrowPlace : concreteBorrow.place;
+  declaration->returnBorrowParameters = candidateOwnsBorrow
+                                            ? candidate.returnBorrowParameters
+                                            : concreteBorrow.parameters;
   declaration->virtualRoots = candidate.virtualRoots;
   declaration->compilerPrivate = candidate.compilerPrivate;
   const SourceUnit *unit = sourceGraph == nullptr
@@ -6224,6 +6266,8 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
             .fields = std::move(fields),
             .staticFields = std::move(staticFields),
             .storedReference = owner.storedReference,
+            .lifecycleBoundBorrowCarrier =
+                isDefaultLibraryMutexGuardCarrier(owner),
             .kind = owner.kind,
             .bases = owner.bases,
             .abstract = owner.abstract,

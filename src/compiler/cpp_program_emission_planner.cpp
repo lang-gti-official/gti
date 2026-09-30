@@ -289,7 +289,9 @@ public:
     if (std::any_of(mir.classInstances().begin(), mir.classInstances().end(),
                     [](const MirClassInstance &instance) {
                       return instance.compilerCapability ==
-                             CompilerCapabilityTypeKind::AtomicStorage;
+                                 CompilerCapabilityTypeKind::AtomicStorage ||
+                             instance.compilerCapability ==
+                                 CompilerCapabilityTypeKind::SharedOwner;
                     })) {
       return true;
     }
@@ -6558,6 +6560,50 @@ public:
       output << "template <>\n"
                 "struct managed_thread_task_adapter<"
              << adapter.id << "> final {\n";
+      const auto emitCleanupHelper = [&](std::string_view name,
+                                         const SemanticType &type, bool slot) {
+        const auto cleanup = mirUniqueCleanupType(mir, type);
+        output << "  template <typename Value>\n  static bool " << name
+               << "(Value &value) noexcept {\n"
+                  "    const auto pending = ::gti_runtime_detail::"
+                  "managed_task_cleanup_failure_kind();\n"
+                  "    if (pending == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1) "
+                  "return false;\n";
+        if (cleanup && cleanup->requiresActiveCleanup) {
+          output << "    const bool unwinding = pending == "
+                    "GTI_THREAD_WORKER_FAILURE_ORDINARY_V1;\n"
+                    "    ::gti_failure_record_v1 failure{};\n    const bool "
+                    "success = ";
+          if (slot)
+            output << "value.destroy_cleanup_with_failure(&failure, true, "
+                      "unwinding, "
+                      "[](auto &element, ::gti_failure_record_v1 *record, bool "
+                      "unwinding) { return "
+                   << cppMirCleanupValueExpression(mir, *cleanup, "element",
+                                                   "record", "unwinding")
+                   << "; });\n";
+          else
+            output << cppMirCleanupValueExpression(mir, *cleanup, "value",
+                                                   "&failure", "unwinding")
+                   << ";\n";
+          output
+              << "    if (!success && "
+                 "!::gti_runtime_detail::record_managed_task_cleanup_failure(\n"
+                 "        failure, &__gti_failure_artifact_descriptor_v1)) {\n"
+                 "      ::gti_rt_failure_terminate_v1(&failure, "
+                 "&__gti_failure_artifact_descriptor_v1, nullptr, nullptr);\n"
+                 "    }\n";
+        } else if (slot) {
+          output << "    value.destroy_if_engaged();\n";
+        }
+        output << "    return ::gti_runtime_detail::"
+                  "managed_task_cleanup_failure_kind() != "
+                  "GTI_THREAD_WORKER_FAILURE_CLEANUP_V1;\n"
+                  "  }\n\n";
+      };
+      emitCleanupHelper("cleanup_task", adapter.taskType, valueBearing);
+      if (valueBearing)
+        emitCleanupHelper("cleanup_result", adapter.resultType, true);
       if (valueBearing) {
         output << "  template <typename Task, typename Result>\n"
                   "  static void entry_value(void *raw) noexcept {\n"
@@ -6615,7 +6661,7 @@ public:
     auto *box =
         static_cast<managed_thread_value_box<Task, Result> *>(raw);
     ::gti_runtime_detail::run_managed_task_adapter(
-        [&] { box->task.destroy(); });
+        [&] { cleanup_task(box->task); });
     return box;
   }
 
@@ -6624,8 +6670,8 @@ public:
     auto *box =
         static_cast<managed_thread_value_box<Task, Result> *>(raw);
     ::gti_runtime_detail::run_managed_task_adapter([&] {
-      box->result.destroy_if_engaged();
-      box->task.destroy_if_engaged();
+      if (!cleanup_result(box->result)) return;
+      if (!cleanup_task(box->task)) return;
       delete box;
     });
   }
@@ -6637,7 +6683,7 @@ public:
     ::gti_runtime_detail::run_managed_task_adapter([&] {
       std::construct_at(static_cast<Result *>(destination),
                         std::move(box->result.get()));
-      box->result.destroy();
+      if (!cleanup_result(box->result)) return;
       delete box;
     });
   }
@@ -6647,7 +6693,7 @@ public:
     auto *box =
         static_cast<managed_thread_value_box<Task, Result> *>(raw);
     ::gti_runtime_detail::run_managed_task_adapter([&] {
-      box->result.destroy();
+      if (!cleanup_result(box->result)) return;
       delete box;
     });
   }
@@ -6656,8 +6702,10 @@ public:
         output << "  template <typename Task>\n"
                   "  static void destroy(void *raw) noexcept {\n"
                   "    ::gti_runtime_detail::run_managed_task_adapter([&] {\n"
-                  "      delete static_cast<managed_thread_task_box<Task> "
+                  "      auto *box = static_cast<managed_thread_task_box<Task> "
                   "*>(raw);\n"
+                  "      if (!cleanup_task(box->task)) return;\n"
+                  "      delete box;\n"
                   "    });\n"
                   "  }\n";
       }

@@ -1,0 +1,49 @@
+struct BorrowedPair {
+  int& left;
+  int& right;
+
+  BorrowedPair(int& first, int& second) : left(first), right(second) {}
+
+  int sum() { return left + right; }
+};
+
+struct DuplicatedView {
+  int& first;
+  int& second;
+  DuplicatedView(int& value) : first(value), second(value) {}
+  int sum() { return first + second; }
+};
+
+BorrowedPair make_view(int& first, int& second) {
+  return BorrowedPair(first, second);
+}
+
+BorrowedPair forward_view(BorrowedPair view) {
+  return view;
+}
+
+BorrowedPair reversed_view(int& first, int& second) {
+  return BorrowedPair(second, first);
+}
+
+int main() {
+  mut int first = 20;
+  mut int second = 22;
+  BorrowedPair pair{first, second};
+  BorrowedPair copied = pair;
+  if (copied.sum() != 42) { return 1; }
+  // Both independent owner dependencies end after the last use of all copies.
+  first = 30;
+  second = 12;
+  BorrowedPair same_owner{first, first};
+  if (same_owner.sum() != 60) { return 2; }
+  DuplicatedView duplicated{first};
+  if (duplicated.sum() != 60) { return 6; }
+  BorrowedPair final_pair{first, second};
+  if (final_pair.sum() != 42) { return 3; }
+  auto factory = make_view(first, second);
+  auto forwarded = forward_view(factory);
+  if (reversed_view(first, second).sum() != 42) { return 5; }
+  auto moved = forward_view(std::move(forwarded));
+  return moved.sum() == 42 ? 0 : 4;
+}

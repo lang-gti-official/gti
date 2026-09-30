@@ -331,6 +331,9 @@ struct MirLoan {
   MirLoanId parent = 0;
   MirLoanKind kind = MirLoanKind::Local;
   MirPlaceId source = 0;
+  // Independent protected owners for a composed read-only carrier. These
+  // places are verified and participate in loan conflicts, not emitted C++.
+  std::vector<MirPlaceId> additionalSources;
   AccessMode access = AccessMode::ReadOnly;
   HirValueId producedBy = 0;
   std::vector<HirBindingId> carriers;
@@ -340,6 +343,7 @@ struct MirLoan {
   // metadata for a by-value carrier dependency and has no backend
   // representation.
   std::vector<SymbolId> designatedFields;
+  std::vector<std::vector<SymbolId>> additionalDesignatedFields;
   // True only for a stored exclusive dependency whose carrier destructor
   // releases the protected resource. Cleanup must Drop that carrier before
   // ending this loan on every normal and failure edge.
@@ -646,6 +650,8 @@ struct MirInstruction {
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  // Preserve the frontend-selected origins; emission must not infer them.
+  std::vector<std::size_t> borrowArguments;
   std::optional<BorrowOriginPlace> borrowPlace;
   MirOperation operation = MirOperation::None;
   std::optional<Literal> literal;
@@ -1161,6 +1167,7 @@ struct MirFunctionInstance {
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+  std::vector<std::size_t> returnBorrowParameters;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
   std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   LanguageLinkage linkage = LanguageLinkage::Gti;
@@ -1254,6 +1261,7 @@ struct MirConstructorInstance {
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowParameter = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  std::vector<std::size_t> borrowParameters;
   MirDefinitionKind definitionKind = MirDefinitionKind::Declaration;
   bool mayRaiseDefinedFailure = true;
   MirEffectSummary effectSummary;

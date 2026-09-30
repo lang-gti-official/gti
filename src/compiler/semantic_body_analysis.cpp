@@ -333,6 +333,7 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
     concreteFunction.returnBorrowOrigin = borrow.origin;
     concreteFunction.returnBorrowParameter = borrow.parameter;
     concreteFunction.returnBorrowAccess = borrow.access;
+    concreteFunction.returnBorrowParameters = borrow.parameters;
     concreteFunction.returnBorrowPlace = borrow.place;
   }
   semanticModel.record(*function->declaration, std::move(concreteFunction));
@@ -2958,7 +2959,8 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   } else if (instanceField && declaredType.kind != SemanticType::Reference &&
              typeTraits(declaredType).containsBorrowedState &&
              (!currentClass ||
-              !storedReferencePath(SemanticType::classType(*currentClass)))) {
+              storedReferencePaths(SemanticType::classType(*currentClass))
+                  .empty())) {
     report(stmt.name(),
            "A class or struct may contain only one stored-reference "
            "dependency, through direct or nested nominal fields.",

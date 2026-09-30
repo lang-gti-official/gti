@@ -690,6 +690,37 @@ private:
   [[nodiscard]] std::optional<MirDropType>
   uniqueCleanupType(const SemanticType &type,
                     std::unordered_set<HirClassInstanceId> &visiting) const {
+    if (type.kind == SemanticType::Array) {
+      if (type.arguments.size() != 1 || type.arrayLength == 0 ||
+          type.arrayLengthParameterId != 0)
+        return std::nullopt;
+      auto child = uniqueCleanupType(type.arguments.front(), visiting);
+      if (!child || !child->requiresActiveCleanup)
+        return std::nullopt;
+      SemanticType leaf = type;
+      MirFixedArrayDropSchedule schedule;
+      while (leaf.kind == SemanticType::Array) {
+        if (leaf.arguments.size() != 1 || leaf.arrayLength == 0 ||
+            leaf.arrayLengthParameterId != 0)
+          return std::nullopt;
+        schedule.extents.push_back(leaf.arrayLength);
+        leaf = SemanticType(leaf.arguments.front());
+      }
+      schedule.leafType = leaf;
+      const auto owner = std::find_if(
+          program.classInstances().begin(), program.classInstances().end(),
+          [&](const auto &candidate) { return candidate.type == leaf; });
+      std::optional<HirDestructorInstanceId> destructor;
+      if (owner != program.classInstances().end()) {
+        schedule.leafClassInstance = owner->id;
+        destructor = owner->destructor;
+      }
+      return MirDropType{.type = type,
+                         .destructor = destructor,
+                         .fixedArray = std::move(schedule),
+                         .aggregate = {*child},
+                         .requiresActiveCleanup = true};
+    }
     if (type.kind == SemanticType::Enum) {
       const auto enumeration = std::find_if(
           program.enumDeclarations().begin(), program.enumDeclarations().end(),
@@ -837,6 +868,10 @@ private:
       }
       if (pointee == program.classInstances().end())
         return std::nullopt;
+      if (!pointee->requiresActiveCleanup)
+        return MirDropType{.type = type,
+                           .uniquePointeeClass = pointee->id,
+                           .requiresActiveCleanup = true};
       auto child = uniqueCleanupType(pointee->type, visiting);
       if (!child)
         return std::nullopt;
@@ -852,6 +887,19 @@ private:
                                     [&](const HirClassInstance &candidate) {
                                       return candidate.type == type;
                                     });
+    if (owner != program.classInstances().end() &&
+        owner->compilerCapability == CompilerCapabilityTypeKind::SharedOwner) {
+      if (type.arguments.size() != 1)
+        return std::nullopt;
+      auto pointee = uniqueCleanupType(
+          SemanticType::uniqueOwnerOf(type.arguments.front()), visiting);
+      if (!pointee)
+        return std::nullopt;
+      return MirDropType{.type = type,
+                         .classInstance = owner->id,
+                         .aggregate = {*pointee},
+                         .requiresActiveCleanup = true};
+    }
     if (owner != program.classInstances().end() && owner->destructor &&
         owner->requiresActiveDropState && owner->bases.empty() &&
         std::none_of(owner->fields.begin(), owner->fields.end(),
@@ -2588,6 +2636,13 @@ private:
       return;
     }
     lowered.designatedFields = loan.designatedFields;
+    lowered.additionalDesignatedFields.clear();
+    for (const auto &dependency : loan.additionalDependencies) {
+      if (!dependency.designatedFields.empty()) {
+        lowered.additionalDesignatedFields.push_back(
+            dependency.designatedFields);
+      }
+    }
     if (lowered.access == AccessMode::ReadOnly &&
         loan.access == AccessMode::Mutable) {
       valid = false;
@@ -4713,6 +4768,7 @@ private:
     call.borrowOrigin = value.borrowOrigin;
     call.borrowArgument = value.borrowArgument;
     call.borrowAccess = value.borrowAccess;
+    call.borrowArguments = value.borrowArguments;
     call.borrowPlace = value.borrowPlace;
     if (value.borrowOrigin != BorrowOriginKind::None && origin != 0) {
       const MirLoanKind kind = value.info.traits.containsBorrowedState
@@ -4738,6 +4794,41 @@ private:
                             originPlace->root != MirPlaceRootKind::Symbol;
       const MirLoanId loan = createLoan(kind, origin, value.borrowAccess,
                                         value.id, 0, 0, parent, twoPhase);
+      const MirLoanId dependencyLoan =
+          originLoan != 0 ? originLoan
+          : value.borrowOrigin == BorrowOriginKind::Argument &&
+                  value.borrowArgument < arguments.size()
+              ? loanForValue(arguments[value.borrowArgument])
+              : 0;
+      if (dependencyLoan != 0 && dependencyLoan <= output.loans.size()) {
+        output.loans[loan - 1].additionalSources =
+            output.loans[dependencyLoan - 1].additionalSources;
+      }
+      for (const std::size_t parameter : value.borrowArguments) {
+        if (parameter >= originCall.operands.size()) {
+          valid = false;
+          continue;
+        }
+        HirValue dependency = value;
+        dependency.borrowArgument = parameter;
+        const MirPlaceId source = borrowOriginPlace(dependency, originCall);
+        if (source != 0 && source != origin) {
+          output.loans[loan - 1].additionalSources.push_back(source);
+        }
+        const MirLoanId inherited = operandLoan(originCall.operands[parameter]);
+        if (inherited != 0 && inherited <= output.loans.size()) {
+          const auto inheritedSources =
+              output.loans[inherited - 1].additionalSources;
+          for (const MirPlaceId additional : inheritedSources) {
+            auto &sources = output.loans[loan - 1].additionalSources;
+            if (additional != origin &&
+                std::find(sources.begin(), sources.end(), additional) ==
+                    sources.end()) {
+              sources.push_back(additional);
+            }
+          }
+        }
+      }
       call.loan = loan;
       valueLoans.insert_or_assign(value.id, loan);
       if (!scopes.empty()) {
@@ -5056,6 +5147,7 @@ private:
     construct.borrowOrigin = value.borrowOrigin;
     construct.borrowArgument = value.borrowArgument;
     construct.borrowAccess = value.borrowAccess;
+    construct.borrowArguments = value.borrowArguments;
     if (value.borrowOrigin != BorrowOriginKind::None && origin != 0) {
       MirLoanId parent = 0;
       if (originLoan != 0 && originLoan <= output.loans.size() &&
@@ -5066,6 +5158,38 @@ private:
       const MirLoanId loan =
           createLoan(MirLoanKind::Stored, origin, value.borrowAccess, value.id,
                      0, 0, parent);
+      std::vector<MirPlaceId> additionalSources;
+      const auto addSource = [&](MirPlaceId source) {
+        if (source != 0 && source != origin &&
+            std::find(additionalSources.begin(), additionalSources.end(),
+                      source) == additionalSources.end()) {
+          additionalSources.push_back(source);
+        }
+      };
+      if (originLoan != 0 && originLoan <= output.loans.size()) {
+        for (const MirPlaceId source :
+             output.loans[originLoan - 1].additionalSources) {
+          addSource(source);
+        }
+      }
+      for (const std::size_t parameter : value.borrowArguments) {
+        if (parameter >= originConstruct.operands.size()) {
+          valid = false;
+          continue;
+        }
+        HirValue dependency = value;
+        dependency.borrowArgument = parameter;
+        addSource(borrowOriginPlace(dependency, originConstruct));
+        const MirLoanId inherited =
+            operandLoan(originConstruct.operands[parameter]);
+        if (inherited != 0 && inherited <= output.loans.size()) {
+          for (const MirPlaceId source :
+               output.loans[inherited - 1].additionalSources) {
+            addSource(source);
+          }
+        }
+      }
+      output.loans[loan - 1].additionalSources = std::move(additionalSources);
       construct.loan = loan;
       valueLoans.insert_or_assign(value.id, loan);
       if (!scopes.empty()) {
@@ -8567,6 +8691,10 @@ private:
             const MirLoanId published =
                 createLoan(MirLoanKind::Return, retainedLoan.source,
                            retainedLoan.access, *statement.value);
+            output.loans[published - 1].additionalSources =
+                retainedLoan.additionalSources;
+            output.loans[published - 1].additionalDesignatedFields =
+                retainedLoan.additionalDesignatedFields;
             const MirValueId returnedValue =
                 result && result->kind == MirOperandKind::Value ? result->value
                                                                 : 0;

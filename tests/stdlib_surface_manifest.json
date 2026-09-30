@@ -15,15 +15,16 @@
     "stdlib/std/format.gti": "0a6d4cb63ad0e661bf47f8fa8782317dc3c298b87903c497bcf982e36b0ce28b",
     "stdlib/std/forward_list.gti": "2152aab44209cfa14a3b1709f6250c3ef85db78e1e665d5bc8299f3cb353a4bf",
     "stdlib/std/functional.gti": "2fa13a7b511a42cb3cd87d6ca1a6550e77c77109320b5457f5292bb3e5333540",
-    "stdlib/std/http.gti": "0e819904ed7735887138f79656732a5159f238443ef415df5e6cad11a70367b6",
+    "stdlib/std/http.gti": "3a99fd4a109627769f86d89b16348dbd25431960163e7b9aa016ce72c127954d",
     "stdlib/std/iterator.gti": "2c67bfceaaaa2c79ce474434d5e9962ce15bd08127ce175c97efe8b05ebcd1f1",
     "stdlib/std/json.gti": "c73b68761f0194bd11596403c3ef70f56f2d5db8be6e311fb98ba23c79f6239a",
     "stdlib/std/list.gti": "b90968de7e8f71110d7e6d897ff7a1bca3da55e210ae85d48de316b6ea252648",
     "stdlib/std/map.gti": "39a314ff20943e99786f0165a77baca5d9276a73c6b31d253d8a5967647d706b",
-    "stdlib/std/memory.gti": "4d900f169374e1979a93db2f0c0ee9d7296883e6cd6f0fda46b1cf4c9364a29c",
+    "stdlib/std/memory.gti": "94965dbe672b0426995f2e99e93b1066a66356a5909941acda0cff4c8e4e786a",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "5eef3aba02b84cc5dcb0c86727013d95b29e14f7aebad40d7f301b2229821b35",
     "stdlib/std/optional.gti": "9b038467204b82f5675326e67254bee896b2d6a5648f47bb22f325bbb202b8d8",
+    "stdlib/std/paired_span.gti": "3657f5994dd7880c8de9796e1c6c08bba5f507b492406eb685d529c1c6b0e3ae",
     "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
@@ -377,6 +378,13 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "http-url-operators",
+      "mode": "run",
+      "source": "tests/fixtures/http_url_operators.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "iterator",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_iterator.gti",
@@ -507,6 +515,13 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "paired-span",
+      "mode": "run",
+      "source": "tests/fixtures/paired_span.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "prelude-output",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_prelude_output.gti",
@@ -534,6 +549,13 @@
         "stdout": "random: all checks passed\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "shared-ptr",
+      "mode": "run",
+      "source": "tests/fixtures/shared_ownership.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "1\n7\n2\n8\n3\n9\n", "stderr": ""}
     },
     {
       "id": "span",
@@ -1158,6 +1180,8 @@
         "std::http::url::has_explicit_port",
         "std::http::url::host",
         "std::http::url::https",
+        "std::http::url::operator/",
+        "std::http::url::operator/=",
         "std::http::url::parse",
         "std::http::url::port",
         "std::http::url::push_path_segment",
@@ -1166,16 +1190,18 @@
         "std::http::url::string",
         "std::http::url::view"
       ],
-      "case_ids": ["http"],
+      "case_ids": ["http", "http-url-operators"],
       "required_instantiations": [
         "absolute HTTP/HTTPS URL parse, validation, cloning, rendering, path and query construction",
-        "string_view and owned-url request/client overloads"
+        "string_view and owned-url request/client overloads",
+        "read-only named URL cloning, consuming operator chains, mutable path append and borrow rejection"
       ],
       "evidence": [
         "docs/language/http.md",
         "stdlib/std/http.gti",
         "tests/fixtures/stdlib_surface_http.gti",
-        "tests/http_runtime_test.py"
+        "tests/http_runtime_test.py",
+        "tests/http_url_operators_test.py"
       ]
     },
     {
@@ -1340,9 +1366,17 @@
       "id": "memory.scaffold",
       "source": "stdlib/std/memory.gti",
       "status": "scaffold",
-      "operations": ["std::make_shared", "std::shared_ptr public surface", "std::weak_ptr public surface"],
-      "reason": "shared_ptr, weak_ptr, and make_shared are declaration-only.",
+      "operations": ["std::weak_ptr public surface"],
+      "reason": "weak_ptr remains declaration-only.",
       "evidence": ["stdlib/std/memory.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+    },
+    {
+      "id": "memory.shared-ptr",
+      "source": "stdlib/std/memory.gti",
+      "status": "executable",
+      "operations": ["std::make_shared", "std::shared_ptr public surface"],
+      "case_ids": ["shared-ptr"],
+      "evidence": ["tests/fixtures/shared_ownership.gti", "tests/shared_ownership_runtime_test.py", "tests/shared_ownership_failure_test.py", "tests/shared_ownership_threads_test.py"]
     },
     {
       "id": "memory.unique-ptr",
@@ -1434,6 +1468,15 @@
       "case_ids": ["optional"],
       "required_instantiations": ["std::optional<int32_t>", "std::optional<move_only>"],
       "evidence": ["tests/fixtures/optional_lifecycle.gti", "tests/fixtures/optional_value.gti", "tests/optional_compiler_tests.cpp", "tests/optional_runtime_test.py", "stdlib/std/optional.gti"]
+    },
+    {
+      "id": "paired-span.executable",
+      "source": "stdlib/std/paired_span.gti",
+      "status": "executable",
+      "operations": ["std::paired_span::empty", "std::paired_span::first", "std::paired_span::paired_span", "std::paired_span::second", "std::paired_span::size", "std::paired_span::subspan"],
+      "case_ids": ["paired-span"],
+      "required_instantiations": ["std::paired_span<int32_t, int32_t>", "std::paired_span<int32_t, double>"],
+      "evidence": ["tests/fixtures/paired_span.gti", "stdlib/std/paired_span.gti"]
     },
     {
       "id": "prelude.output",

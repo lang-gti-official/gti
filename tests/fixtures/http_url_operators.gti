@@ -1,0 +1,17 @@
+#include <std/http>
+
+int main() {
+  auto parsed = std::http::url::parse("https://example.com/base?token=1");
+  if (!parsed.has_value()) { return 1; }
+  auto base = std::move(parsed).value();
+  auto endpoint = base / "api" / "two /%";
+  if (base.view() != "https://example.com/base?token=1") { return 2; }
+  if (endpoint.view() != "https://example.com/base/api/two%20%2F%25?token=1") { return 3; }
+  mut auto consumed = std::move(endpoint) / "" / "tail";
+  if (consumed.view() != "https://example.com/base/api/two%20%2F%25/tail?token=1") { return 4; }
+  consumed /= "a?b#c";
+  if (consumed.view() != "https://example.com/base/api/two%20%2F%25/tail/a%3Fb%23c?token=1") { return 5; }
+  auto fresh = base.clone() / "fresh" / "path";
+  if (fresh.view() != "https://example.com/base/fresh/path?token=1") { return 6; }
+  return 0;
+}
