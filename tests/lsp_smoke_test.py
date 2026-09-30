@@ -1633,6 +1633,59 @@ def test_documentation_completion_and_signature_help(executable, root):
     run_session(markdown_capabilities=False)
 
 
+def test_consuming_methods(executable, root):
+    source = ("class Builder { public: int take() && { return 1; } };\n"
+              "int main() { return Builder().take() - 1; }\n")
+    path = root / "consuming-methods.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    session = LspSession(executable)
+    try:
+        session.send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                      "params": {"capabilities": {"textDocument": {
+                          "publishDiagnostics": {"relatedInformation": True}}}}})
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",
+                      "params": {"textDocument": {"uri": uri, "languageId": "gti",
+                                                   "version": 1, "text": source}}})
+
+        def diagnostics(version):
+            return session.receive_until(
+                lambda message: message.get("method") == "textDocument/publishDiagnostics"
+                and message["params"]["uri"] == uri
+                and message["params"].get("version") == version)["params"]
+
+        assert not has_error_diagnostics(diagnostics(1))
+        session.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover",
+                      "params": {"textDocument": {"uri": uri},
+                                 "position": {"line": 1, "character": source.splitlines()[1].index("take")}}})
+        hover = session.receive_until(lambda message: message.get("id") == 2)
+        assert "take() &&" in str(hover["result"]), hover
+        invalid = (source.splitlines()[0] + "\n"
+                   "int main() { Builder value{}; /* 🧭 */ return value.take(); }\n")
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
+                      "params": {"textDocument": {"uri": uri, "version": 2},
+                                 "contentChanges": [{"text": invalid}]}})
+        errors = diagnostics(2)["diagnostics"]
+        consuming = next(item for item in errors if item.get("code") == "GTI-S2022")
+        assert "explicitly moved receiver" in consuming["message"], consuming
+        line = invalid.splitlines()[1]
+        paren = line.index("take()") + len("take(")
+        character = len(line[:paren].encode("utf-16-le")) // 2
+        assert consuming["range"] == {
+            "start": {"line": 1, "character": character},
+            "end": {"line": 1, "character": character + 1},
+        }, consuming
+        assert consuming.get("relatedInformation"), consuming
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
+                      "params": {"textDocument": {"uri": uri, "version": 3},
+                                 "contentChanges": [{"text": source}]}})
+        assert not has_error_diagnostics(diagnostics(3))
+    finally:
+        session.close()
+
+
 def test_callable_contract_hover(executable, root):
     source = (
         "T map<T, Operation>(T value, Operation operation) {\n"
@@ -6001,6 +6054,7 @@ def test_expected_success_ownership_diagnostic(executable, root):
     source = (
         '#include <std/string>\n'
         'enum class error { failed };\n'
+        'std::string relay(std::string word) { return word; }\n'
         'expected<std::string, error> value() {\n'
         '  std::string text = std::string("tea");\n'
         '  /*😀*/ return text;\n'
@@ -6028,6 +6082,7 @@ def test_expected_success_ownership_diagnostic(executable, root):
                       "params": {"textDocument": {"uri": uri, "languageId": "gti",
                                                   "version": 1, "text": source}}})
         errors = publication(1)
+        assert sum(item.get("code") == "GTI-S2003" for item in errors) == 1, errors
         diagnostic = next((item for item in errors
                            if item.get("code") == "GTI-S2003"), None)
         assert diagnostic is not None, errors
@@ -9437,6 +9492,7 @@ def main():
     test_class_scoped_type_alias_tooling(sys.argv[1], root)
     test_documentation_hover(sys.argv[1], root)
     test_documentation_completion_and_signature_help(sys.argv[1], root)
+    test_consuming_methods(sys.argv[1], root)
     test_callable_contract_hover(sys.argv[1], root)
     test_requires_tooling(sys.argv[1], root)
     test_constructor_local_generic_tooling(sys.argv[1], root)
@@ -10362,13 +10418,12 @@ def test_mutable_temporary_receiver_tooling(executable, root):
         "class Probe {\n"
         "public:\n"
         "  Probe() {}\n"
-        "  void reset() mut {}\n"
+        "  virtual void reset() mut {}\n"
         "  int inspect() { return 1; }\n"
         "  int inspect() mut { return 2; }\n"
         "};\n"
         "int main() {\n"
-        "  mut Probe probe = Probe();\n"
-        "  std::move(probe).reset();\n"
+        "  Probe().reset();\n"
         "  return 0;\n"
         "}\n"
     )
@@ -10381,6 +10436,8 @@ def test_mutable_temporary_receiver_tooling(executable, root):
         "  int inspect() mut { return 2; }\n"
         "};\n"
         "int main() {\n"
+        "  Probe probe = Probe();\n"
+        "  std::move(probe).reset();\n"
         "  Probe().reset();\n"
         "  return Probe().inspect();\n"
         "}\n"

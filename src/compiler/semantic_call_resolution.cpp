@@ -3623,6 +3623,30 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
     const CallableCandidate &function, const ExprPtr &callee,
     const Token &paren, std::span<const ExprPtr> arguments,
     CallReceiverMode receiverMode) -> bool {
+  if (function.receiverMutability == ReceiverMutability::Consuming &&
+      (function.returnType.kind == SemanticType::Reference ||
+       function.returnBorrowOrigin != BorrowOriginKind::None ||
+       typeTraits(function.returnType).containsBorrowedState)) {
+    report(paren,
+           "A consuming method cannot return a reference or tracked borrowed "
+           "state.",
+           "GTI-S2022");
+    return false;
+  }
+  if (function.receiverMutability == ReceiverMutability::Consuming &&
+      receiverMode != CallReceiverMode::Consuming) {
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-S2022", DiagnosticPhase::Semantics, paren,
+                       "A consuming method requires an owned temporary or an "
+                       "explicitly moved receiver.");
+    diagnostic.hints.emplace_back("Use std::move(value).method(...) to "
+                                  "transfer ownership of a named value.");
+    if (function.declaration != nullptr)
+      diagnostic.related.push_back({tokenSpan(function.declaration->name()),
+                                    "Consuming method declared here."});
+    diagnostics.emplace_back(std::move(diagnostic));
+    return false;
+  }
   if (!isCompilerTrustedRequester(paren)) {
     const FunctionInfo *resolved = semanticModel.findFunction(function.id);
     if (resolved == nullptr && instanceBaseModel != nullptr) {
@@ -3674,6 +3698,13 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
 
   validateMutableCallArgumentLoans(function.parameterTypes, arguments, paren);
   const auto *member = exprAs<Get>(callee.get());
+  if (member == nullptr && function.ownerClass != 0 && !function.staticMember) {
+    SemanticPlace receiver{.root = receiverStateSymbol(), .receiver = true};
+    if (const auto *state = unavailableProjectedState(receiver)) {
+      reportUnavailablePlace(paren, *state, &receiver);
+      return false;
+    }
+  }
   const AccessMode selectedReceiverAccess =
       receiverAllowsMutation(function.receiverMutability)
           ? AccessMode::Mutable
@@ -4872,8 +4903,9 @@ auto SemanticVisitor::Impl::resolveOperator(
 
   const Symbol overloadSet =
       substituteSymbol(found->second.symbol, receiverType);
-  const bool consumingReceiver =
-      kind == OverloadedOperator::Call && isExplicitMoveReceiver(receiver);
+  const bool consumingReceiver = consumingReceiverValue(receiver) &&
+                                 (kind == OverloadedOperator::Call ||
+                                  isArithmeticOrBitwiseValueOperator(kind));
   bool rejectedMutableReceiver = false;
   std::optional<CallableCandidate> rejectedMutableFunction;
   bool rejectedConsumingReceiver = false;
@@ -4946,7 +4978,10 @@ auto SemanticVisitor::Impl::resolveOperator(
             ? (receiverState->mutableReceiver ? CallReceiverMode::MutablePlace
                                               : CallReceiverMode::ReadOnlyPlace)
             : receiverModeForObject(receiver, candidate, allowFreshTemporary,
-                                    consumingReceiver);
+                                    consumingReceiver &&
+                                        (candidate.receiverMutability ==
+                                             ReceiverMutability::Consuming ||
+                                         isExplicitMoveReceiver(receiver)));
     if (candidate.receiverMutability == ReceiverMutability::Mutable &&
         !receiverModeAllowsMutation(receiverMode) && !consumingReceiver) {
       rejectedMutableReceiver = true;
@@ -5008,12 +5043,12 @@ auto SemanticVisitor::Impl::resolveOperator(
         (void)validateCallableCapability(*call,
                                          CallableInvocationCapability::Once);
       } else {
-        Diagnostic diagnostic = makeDiagnostic(
-            "GTI-S2022", DiagnosticPhase::Semantics, token,
-            "operator() && requires an explicitly consumed receiver.");
-        diagnostic.hints.emplace_back(
-            "Invoke a named local or by-value parameter with "
-            "std::move(value)().");
+        Diagnostic diagnostic =
+            makeDiagnostic("GTI-S2022", DiagnosticPhase::Semantics, token,
+                           "A consuming operator requires an owned temporary "
+                           "or an explicitly moved receiver.");
+        diagnostic.hints.emplace_back("Use std::move(value) as the receiver to "
+                                      "transfer a named value's ownership.");
         diagnostics.emplace_back(std::move(diagnostic));
       }
     } else if (viable.empty() && rejectedMutableReceiver) {
@@ -5076,6 +5111,16 @@ auto SemanticVisitor::Impl::resolveOperator(
 
   const CallableCandidate &selected = viable.front().function;
   const CallReceiverMode selectedReceiverMode = viable.front().receiverMode;
+  if (selected.receiverMutability == ReceiverMutability::Consuming &&
+      (selected.returnType.kind == SemanticType::Reference ||
+       selected.returnBorrowOrigin != BorrowOriginKind::None ||
+       typeTraits(selected.returnType).containsBorrowedState)) {
+    report(token,
+           "A consuming operator cannot return a reference or tracked borrowed "
+           "state.",
+           "GTI-S2022");
+    return std::nullopt;
+  }
   if (contextualArguments && contextualArguments->hasDeferred()) {
     const auto *call = exprAs<Call>(&site);
     if (call == nullptr || !finishContextualCallArguments(

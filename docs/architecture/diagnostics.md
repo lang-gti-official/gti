@@ -222,10 +222,13 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   `GTI-S2003`, but states that copying the field type is unavailable and names
   the written source in an explicit-move hint. It has no fix-it because moving
   versus preserving the source requires programmer intent. A return of an
-  exact named local or parameter of the same move-only type names that binding,
-  identifies the rejected copy, and spells `return std::move(name);` in its
-  hint. Other same-type move-only return expressions state the copy requirement
-  without presenting identical source and destination types as a mismatch.
+  exact whole named local or by-value parameter of the same move-only type is
+  an implicit move and produces no diagnostic. A named move-only value that
+  instead requires a return conversion, such as construction of an
+  `expected<T, E>` success, still names the rejected copy and spells `return
+  std::move(name);` in its hint. Field projections and other same-type
+  move-only return expressions state the copy requirement without presenting
+  identical source and destination types as a mismatch.
 - `GTI-S2020` owns malformed or structurally unavailable default-constructor
   policy as well as copy/move construction policy. A valid ordinary form is
   exactly `Type() = default;`; point at `default`, relate the first field
@@ -555,9 +558,10 @@ at the argument, relates both source and target parameters, and suggests
 path-state diagnostics own repeated or maybe-repeated forwarding; malformed
 cardinality must not survive to an internal MIR error.
 
-`GTI-S2022` owns direct consuming-receiver selection. Calling a
-consuming-only `operator() &&` through an ordinary lvalue points at the call
-and suggests the exact `std::move(value)()` spelling. Once the receiver is
+`GTI-S2022` owns direct consuming-receiver selection. Calling a consuming-only
+method or operator through an ordinary lvalue points at the call and suggests
+explicit receiver movement (`std::move(value).method(...)` or
+`std::move(value)()` for a call operator). Once the receiver is
 explicitly moved, ordinary `GTI-S2018` availability diagnostics own later or
 possibly repeated use. A consuming call that overlaps a live borrow is
 reported as consuming access rather than being mislabeled read-only.

@@ -3262,6 +3262,16 @@
           }
         ]
       },
+      "consuming": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "&&",
+            "named": false
+          }
+        ]
+      },
       "mutable": {
         "multiple": false,
         "required": false,

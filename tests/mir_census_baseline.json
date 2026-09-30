@@ -83,7 +83,8 @@
     "84-optional-values.gti": 48,
     "85-payload-enum-fields.gti": 32,
     "86-owning-callbacks.gti": 206,
-    "87-associative-containers.gti": 393
+    "87-associative-containers.gti": 393,
+    "88-consuming-builders.gti": 239
   },
-  "total": 5380
+  "total": 5619
 }

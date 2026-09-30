@@ -554,6 +554,13 @@ across movement.
 and static control-flow requirements. `continue` in a structural range loop
 executes the selected iterator increment before the next condition test.
 
+An implicit exact named return move executes as the same ownership transfer as
+`return std::move(name);`: the source obligation moves into the result, the
+source is not cleaned up again, and the caller observes one successfully
+published value. Return-expression temporaries and remaining lexical owners
+still drain in reverse construction order before publication. A failure during
+that cleanup cannot publish or duplicate the pending result.
+
 A `switch` selects the exact matching case value or `default`. Adjacent labels
 share an arm. Arms do not fall through implicitly.
 

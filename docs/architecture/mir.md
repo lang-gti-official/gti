@@ -990,6 +990,14 @@ parameter cleanup, lowers prologue/construction values, lowers statements,
 synthesizes a legal terminal edge, rebuilds reachability and value uses, then
 verifies structure.
 
+An implicit named return arrives as an ordinary HIR `Move`, so MIR emits the
+same exact-place `Move` instruction and availability transition used for
+explicit transfer. Return lowering then uses the shared pending-result
+preparation, reverse cleanup, and publication path. MIR verification therefore
+does not trust source spelling or add a second return-only ownership mechanism:
+it requires the available-to-moved event, source obligation transfer, and one
+final `TransferOut` publication already required for an explicit move.
+
 Default expressions arrive as ordinary caller-side HIR values. MIR schedules
 their `CallInput` checkpoints after written arguments, preserves the default
 provenance bit, and verifies the trailing-suffix invariant against the complete
@@ -1368,6 +1376,19 @@ their existing prepared-parameter transfer contract. The C++ backend constructs
 one lifetime slot at the Move, invokes through that slot, and consumes the MIR
 normal/failure drops; it must not delegate the lifetime to a native argument.
 
+Ordinary consuming methods and value-producing operators use this same
+invocation capability and exact selected function identity. Fresh owned
+receivers stage `MutableTemporaryBorrow` from their full-expression slot with
+`Once` capability. Verification binds the stage to its unique producer,
+mutable owned storage, cleanup obligation, and single invocation use. A
+conditional receiver instead names its initialized join temporary through a
+transport-only Load/Move identity; initialization and lifecycle dataflow prove
+the slot live at the call. The backend must not reconstruct that slot into
+itself at the join. Fallible arm producers activate only on their Invoke
+success edges. Program verification independently rejects whole-This moves
+outside consuming instance methods and consuming calls that publish tracked
+borrowed state.
+
 `CallInput(Receiver, RetainedReceiver)` is the in-place forwarding counterpart.
 It carries a writable, field-only This place and a semantic `ConsumeReceiver`
 event (available to moved), but no Move instruction, prepared parameter,
@@ -1671,8 +1692,9 @@ bounded ordinary-invocation and concrete `operator()` slices, the verifier
 requires a function receiver when applicable, argument inputs in exact
 source/parameter order, and the final `Call` or `Construct` to form a strict
 dominance/order chain. A read or mutable callable receiver uses its exact
-borrow capability; an explicitly moved receiver or exact once-callable target
-requires a `MoveValue` receiver checkpoint and ownership transfer. This
+borrow capability; an explicitly moved receiver uses a `MoveValue` receiver
+checkpoint and ownership transfer, while a fresh consuming receiver uses
+`MutableTemporaryBorrow` with the exact once-callable capability. This
 preserves an enclosing once-callable contract when exact selection falls back
 to a read or mutable call operator. A scheduled constructor must have
 no receiver and must retain its exact ordinary constructor target.
@@ -1689,16 +1711,18 @@ Borrow-source, callable-source, ownership, and loan-flow checks trace through
 the checkpoint's one underlying operand.
 
 A `ReadTemporaryBorrow` or `MutableTemporaryBorrow` receiver input names one
-mutable materialization place produced by the exact ordinary construction or
-GTI call. A linear value uses its value-rooted place; a branch-only value uses
+mutable materialization place produced by exact construction, a GTI function
+or lambda call, or owned Expected extraction. A linear value uses its
+value-rooted place; a branch-only value uses
 the one hidden temporary slot already required to carry its conditional drop
 through a CFG merge. The shared MIR materialization query accepts only those
 two exact forms and resolves one producer/source identity for verification and
 backend consumption. The producer strictly precedes the input; the input
 strictly precedes all arguments and invocation. Exactly one matching value-drop
 obligation is activated by successful production and remains attached to the
-enclosing full expression. Verification also requires the selected non-static,
-non-virtual GTI target, concrete owner type, receiver qualifier, result
+enclosing full expression. Verification also requires the selected non-static
+GTI target (non-virtual for reusable receivers), concrete owner type, receiver
+qualifier, result
 non-escape traits, producer type, place type/access/source identity, and drop
 descriptor to agree. This is an explicit MIR borrow schedule, not a native
 rvalue convention.

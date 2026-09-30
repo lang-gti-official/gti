@@ -4247,11 +4247,19 @@ stagedClassResultForResult(const MirBody &body, MirValueId stagedId) {
     // produced by owning expected propagation; accepting a bare temporary
     // would otherwise make the writer call `.construct()` on an ordinary C++
     // local.
-    if (definition->lifecycle.size() != 1 ||
+    const bool activatesOnSuccess =
+        definition->successResultDrop && definition->lifecycle.empty() &&
+        invokeSuccessActivates(body, *definition,
+                               *definition->successResultDrop);
+    if ((!activatesOnSuccess && definition->lifecycle.size() != 1) ||
         initialize->lifecycle.size() != 1) {
       return nullptr;
     }
-    const MirLifecycleEvent &produced = definition->lifecycle.front();
+    const MirLifecycleEvent produced =
+        activatesOnSuccess
+            ? MirLifecycleEvent{.kind = MirLifecycleEventKind::Initialize,
+                                .target = *definition->successResultDrop}
+            : definition->lifecycle.front();
     const MirLifecycleEvent &reparented = initialize->lifecycle.front();
     const MirDropObligation *producedDrop =
         body.findDropObligation(produced.target);
@@ -4330,15 +4338,27 @@ directTemporaryBorrow(const MirBody &body, const MirInstruction &call,
   const MirInstruction *producer = materialization.producer;
   const bool ordinaryConstruction =
       producer != nullptr && producer->kind == MirInstructionKind::Construct &&
-      producer->constructorKind == ConstructorKind::Ordinary &&
-      producer->constructorTarget && !producer->receiver &&
-      producer->intrinsic == IntrinsicKind::None;
+      ((producer->constructorKind == ConstructorKind::Ordinary &&
+        producer->constructorTarget) ||
+       (producer->constructorKind != ConstructorKind::Ordinary &&
+        !producer->constructorTarget)) &&
+      !producer->receiver && producer->intrinsic == IntrinsicKind::None;
   const bool functionCall =
       producer != nullptr && producer->kind == MirInstructionKind::Call &&
-      producer->functionTarget && !producer->constructorTarget &&
-      !producer->lambdaTarget && !producer->bodyTarget &&
-      !producer->callableInvocation &&
+      (producer->functionTarget.has_value() !=
+       producer->lambdaTarget.has_value()) &&
+      !producer->constructorTarget && !producer->bodyTarget &&
       producer->intrinsic == IntrinsicKind::None;
+  const bool expectedExtraction =
+      producer != nullptr && producer->kind == MirInstructionKind::Call &&
+      (producer->intrinsic == IntrinsicKind::ExpectedValue ||
+       producer->intrinsic == IntrinsicKind::ExpectedError) &&
+      !producer->functionTarget && !producer->lambdaTarget &&
+      !producer->constructorTarget;
+  const bool joinedTemporary = producer != nullptr && slot != nullptr &&
+                               slot->root == MirPlaceRootKind::Temporary &&
+                               (producer->kind == MirInstructionKind::Load ||
+                                producer->kind == MirInstructionKind::Move);
   // The independent program verifier binds this targetless construction to
   // the exact owner's generated default constructor. Preserve its existing
   // explicit value-slot lifecycle just like a source-declared constructor.
@@ -4353,12 +4373,13 @@ directTemporaryBorrow(const MirBody &body, const MirInstruction &call,
       producer->intrinsic == IntrinsicKind::None;
   if (value == nullptr || producer == nullptr || slot == nullptr ||
       (borrowedValueStage && value->id != stage.operands.front().value) ||
-      (!ordinaryConstruction && !functionCall && !generatedDefault) ||
+      (!ordinaryConstruction && !functionCall && !generatedDefault &&
+       !expectedExtraction && !joinedTemporary) ||
       value->sourceValue != stage.hirValue || value->info.type != sourceType ||
       !producer->result || *producer->result != value->id ||
       producer->hirValue != stage.hirValue ||
       producer->info.type != value->info.type ||
-      !producer->localFailureSites.empty() ||
+      (!expectedExtraction && !producer->localFailureSites.empty()) ||
       (producer->successResultDestination &&
        *producer->successResultDestination != slot->id) ||
       (producer->destination && *producer->destination != slot->id) ||
@@ -4406,7 +4427,7 @@ directTemporaryBorrow(const MirBody &body, const MirInstruction &call,
   const bool activatesOnSuccess =
       producer->successResultDrop == drop->id &&
       invokeSuccessActivates(body, *producer, drop->id);
-  if (activatesDirectly == activatesOnSuccess) {
+  if (!joinedTemporary && activatesDirectly == activatesOnSuccess) {
     return {};
   }
 
@@ -8282,6 +8303,15 @@ fusedClosureUsesFailureCallableBoundary(const MirProgram &program,
                                         const MirInstruction &closure) {
   if (!closure.result) {
     return false;
+  }
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &call : block.instructions) {
+      if (callableValueInvocation(call) && call.receiver &&
+          closureChainDefinition(body, call.receiver->value) == &closure &&
+          invokePairedInstruction(body, call.id)) {
+        return true;
+      }
+    }
   }
   for (const MirValueUse &use : nonRootRecordUses(body, *closure.result)) {
     if (use.kind != MirValueUseKind::InstructionOperand) {
@@ -12592,15 +12622,17 @@ struct GeneratedSpecialMemberConstruction {
 [[nodiscard]] std::optional<GeneratedSpecialMemberConstruction>
 generatedSpecialMemberConstruction(const MirProgram &program,
                                    const MirBody &body,
-                                   const MirInstruction &construct) {
+                                   const MirInstruction &construct,
+                                   bool temporaryReceiver = false) {
   if (construct.kind != MirInstructionKind::Construct ||
       (construct.constructorKind != ConstructorKind::Copy &&
        construct.constructorKind != ConstructorKind::Move) ||
-      construct.callSite != 0 || !construct.result || construct.destination ||
-      construct.receiver || construct.operands.size() != 1 ||
-      construct.parameterTypes.size() != 1 || construct.functionTarget ||
-      construct.constructorTarget || construct.bodyTarget ||
-      construct.lambdaTarget || construct.callableInvocation ||
+      construct.callSite != 0 || !construct.result ||
+      (construct.destination && !temporaryReceiver) || construct.receiver ||
+      construct.operands.size() != 1 || construct.parameterTypes.size() != 1 ||
+      construct.functionTarget || construct.constructorTarget ||
+      construct.bodyTarget || construct.lambdaTarget ||
+      construct.callableInvocation ||
       construct.intrinsic != IntrinsicKind::None ||
       construct.info.type.kind != SemanticType::Class ||
       !construct.definedFailure.empty() ||
@@ -12682,6 +12714,19 @@ generatedSpecialMemberConstruction(const MirProgram &program,
          source->root == MirPlaceRootKind::Value)) ||
       !source->projections.empty() || source->type != classType) {
     return std::nullopt;
+  }
+
+  // A receiver temporary is constructed at this MIR instruction, not fused
+  // with a later lexical Initialize. Its exact slot and full-expression drop
+  // have already been proved by the temporary-receiver schedule.
+  if (temporaryReceiver) {
+    const auto temporary =
+        directTemporaryBorrowForValue(body, *construct.result);
+    if (temporary.producer != &construct || temporary.slot == source) {
+      return std::nullopt;
+    }
+    return GeneratedSpecialMemberConstruction{source, temporary.slot, nullptr,
+                                              moved};
   }
 
   const std::vector<MirValueUse> uses =
@@ -12860,8 +12905,12 @@ generatedSpecialMemberMoveStage(const MirProgram &program, const MirBody &body,
           candidate.operands.front().value != *move.result) {
         continue;
       }
-      const std::optional<GeneratedSpecialMemberConstruction> construction =
+      std::optional<GeneratedSpecialMemberConstruction> construction =
           generatedSpecialMemberConstruction(program, body, candidate);
+      if (!construction) {
+        construction =
+            generatedSpecialMemberConstruction(program, body, candidate, true);
+      }
       if (construction && construction->source != nullptr &&
           construction->source->root == MirPlaceRootKind::Value &&
           construction->source->value == *move.result) {
@@ -14276,6 +14325,11 @@ expectedOwnedClassExtractionDestination(const MirBody &body,
   const MirValue *value = producer.value;
   const MirInstruction *call = producer.call;
   const MirDropObligation *valueDrop = producer.valueDrop;
+
+  const auto temporary = directTemporaryBorrowForValue(body, valueId);
+  if (temporary.producer == call) {
+    return temporary.slot;
+  }
 
   // Consuming an error may feed an Unexpected publication rather than a
   // named binding. That wrapper's exact activation/transfer proof owns the
@@ -18565,7 +18619,8 @@ private:
     }
     if (instruction.kind == MirInstructionKind::Construct &&
         instruction.constructorKind != ConstructorKind::Ordinary &&
-        !generatedSpecialMemberConstruction(program, body, instruction)) {
+        !generatedSpecialMemberConstruction(program, body, instruction) &&
+        !generatedSpecialMemberConstruction(program, body, instruction, true)) {
       add(CppMirBodyEmissionIssueKind::MissingConstructionScheduleMir, block.id,
           instruction.id,
           "generated copy/move construction lacks the complete generic "
@@ -28183,6 +28238,20 @@ private:
     if (instruction.tombstone) {
       return;
     }
+    if (instruction.result && (instruction.kind == MirInstructionKind::Move ||
+                               instruction.kind == MirInstructionKind::Load)) {
+      const auto temporary =
+          directTemporaryBorrowForValue(facts.body, *instruction.result);
+      if (temporary.producer == &instruction && temporary.slot != nullptr &&
+          temporary.slot->root == MirPlaceRootKind::Temporary &&
+          instruction.operands.size() == 1 &&
+          instruction.operands.front().place == temporary.slot->id) {
+        // The branch already constructed this slot. The join result names it
+        // for receiver staging; it must not move-construct the slot into
+        // itself.
+        return;
+      }
+    }
     if (failureForm && instruction.result &&
         returnDefaultConstructionDefinition(facts.body, *instruction.result) ==
             &instruction &&
@@ -29047,10 +29116,20 @@ private:
         output << "__gti_mir_p_"
                << canonicalSlotPlaceId(facts.body, *temporary.slot)
                << ".construct(";
+        const auto special = generatedSpecialMemberConstruction(
+            program, facts.body, instruction, true);
         for (std::size_t index = 0; index < instruction.operands.size();
              ++index) {
           if (index != 0) {
             output << ", ";
+          }
+          if (special) {
+            if (special->moved)
+              output << "std::move(";
+            emitStoragePlaceValue(facts, *special->source);
+            if (special->moved)
+              output << ')';
+            continue;
           }
           if (const MirPlace *chainSource =
                   instruction.operands[index].kind == MirOperandKind::Value
@@ -30370,6 +30449,11 @@ private:
       return;
     }
     if (callableValueInvocation(instruction)) {
+      const MirPlace *temporaryResult =
+          instruction.result
+              ? directTemporaryBorrowForValue(facts.body, *instruction.result)
+                    .slot
+              : nullptr;
       if (failureForm) {
         const bool directPlacementReturn =
             instruction.result &&
@@ -30430,6 +30514,10 @@ private:
           }
           if (directPlacementReturn) {
             output << "__gti_mir_out_result";
+          } else if (temporaryResult != nullptr) {
+            output << "__gti_mir_p_"
+                   << canonicalSlotPlaceId(facts.body, *temporaryResult)
+                   << ".construction_address()";
           } else if (owningPayloadEnumPlacement) {
             if (instruction.result) {
               output << "__gti_mir_p_"
@@ -30454,6 +30542,13 @@ private:
           output << ", ";
         }
         output << "__gti_mir_failure_record);\n";
+        if (temporaryResult != nullptr) {
+          writeIndent();
+          output << "if (__gti_mir_call_success_" << instruction.id
+                 << ") __gti_mir_p_"
+                 << canonicalSlotPlaceId(facts.body, *temporaryResult)
+                 << ".mark_constructed();\n";
+        }
         if (owningPayloadEnumPlacement) {
           writeIndent();
           output << "if (__gti_mir_call_success_" << instruction.id << ") {\n";
@@ -30480,7 +30575,11 @@ private:
       // The success form spells the fused closure literal followed by its
       // ordinary argument list; every checked operation is terminally
       // contained only on this compatibility-shaped path.
-      if (instruction.result) {
+      if (temporaryResult != nullptr) {
+        output << "__gti_mir_p_"
+               << canonicalSlotPlaceId(facts.body, *temporaryResult)
+               << ".construct_from([&]() { return ";
+      } else if (instruction.result) {
         output << "__gti_mir_v_" << *instruction.result << " = ";
       }
       if (const MirPlace *materialized = materializedCallableReceiverPlace(
@@ -30520,7 +30619,7 @@ private:
           emitOperand(instruction.operands[index]);
         }
       }
-      output << ");\n";
+      output << (temporaryResult != nullptr ? "); });\n" : ");\n");
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
@@ -31518,6 +31617,7 @@ private:
       // exact overload as an lvalue on the same materialized receiver slot.
       receiverMoved =
           (receiverMoved ||
+           directTemporaryReceiver(facts.body, instruction).slot != nullptr ||
            (staged != nullptr &&
             staged->callInputKind == HirCallInputKind::RetainedReceiver)) &&
           target != nullptr &&
@@ -38917,7 +39017,6 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     const auto uses = nonRootRecordUses(body, id);
     if (value == nullptr || stage == nullptr ||
         stage->kind != MirInstructionKind::CallInput || place == nullptr ||
-        place->root != MirPlaceRootKind::Binding ||
         !place->projections.empty() ||
         (stage->operands.front().kind != MirOperandKind::BorrowRead &&
          stage->operands.front().kind != MirOperandKind::BorrowWrite) ||
@@ -38933,7 +39032,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         !dominance->dominates(value->definitionBlock, targetBlock)) {
       return false;
     }
-    // A bare local has a stable native address. Erasing its borrowed input
+    if (place->root != MirPlaceRootKind::Binding &&
+        directTemporaryBorrow(body, *consumer, *stage, place->type).slot !=
+            place) {
+      return false;
+    }
+    // A bare local or exact full-expression slot has a stable native address.
+    // Erasing its borrowed input
     // across an acyclic argument diamond is exact only when all normal paths
     // reach the one call and cannot mutate or end that local's lifetime.
     // Intervening scalar temporaries and exact nested read-call result
@@ -39378,6 +39483,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           continue;
         }
         if (generatedSpecialMemberConstruction(program_, body, instruction)) {
+          continue;
+        }
+        if (generatedSpecialMemberConstruction(program_, body, instruction,
+                                               true)) {
           continue;
         }
         if (classFreshAssignmentFusion(program_, body, instruction)) {
@@ -41426,9 +41535,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                (instruction.info.type.kind == SemanticType::Reference ||
                 (instruction.info.type.kind == SemanticType::Class &&
                  (!instruction.result ||
-                  placementDirectReturnCall(program_, representations_, body,
-                                            *instruction.result) !=
-                      &instruction)) ||
+                  (placementDirectReturnCall(program_, representations_, body,
+                                             *instruction.result) !=
+                       &instruction &&
+                   directTemporaryBorrowForValue(body, *instruction.result)
+                           .producer != &instruction))) ||
                 instruction.info.type.kind == SemanticType::Lambda)) ||
               !std::all_of(instruction.operands.begin(),
                            instruction.operands.end(), invocationOperand) ||
@@ -41651,6 +41762,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           const bool receiverMutabilityMatches =
               target != nullptr &&
               (target->receiverMutability == stagedMutability ||
+               (temporaryReceiver.slot != nullptr &&
+                stagedMutability == ReceiverMutability::Mutable &&
+                target->receiverMutability == ReceiverMutability::Consuming &&
+                instruction.callableInvocation ==
+                    CallableInvocationCapability::Once) ||
                (stagedMutability == ReceiverMutability::Consuming &&
                 instruction.callableInvocation &&
                 *instruction.callableInvocation ==

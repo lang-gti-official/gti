@@ -763,8 +763,14 @@ Checked field access through `operator->` is also supported. A directly owned
 fixed-array element is movable when its index is an in-range compile-time
 integer value and its containing local, parameter, or writable field has an
 exact ownership place. Move-only values require `std::move` at consuming calls,
-returns, initializers, and assignments; copyable values may also be moved
-explicitly so generic code does not need an ownership-specific spelling.
+initializers, and assignments. One bounded return rule is implicit: `return
+name;`, with optional grouping, consumes `name` when it is a whole local or
+by-value parameter, its type exactly equals the function result type, and that
+type is movable but not copyable. Copyable named returns remain copies.
+Conversions, fields and other projections, globals, references, captures,
+temporaries, and immovable values do not receive this rule. Copyable values may
+still be moved explicitly so generic code does not need an ownership-specific
+spelling.
 
 A move consumes the source binding. Any later read is a semantic error, even
 for a copyable type, rather than observing a C++-style unspecified moved-from
@@ -777,21 +783,46 @@ Immutable bindings may be consumed but cannot be reinitialized. Branches merge
 value and field state and report a later read when any reachable path consumed
 the place; loops conservatively account for zero or more iterations.
 
-The bounded consuming-call spelling is `std::move(value)(arguments)` when the
-selected nominal target is an exact `operator()(parameters) &&`. Trailing
-`&&` is a receiver capability only for
-`operator()`; it does not introduce a general `T&&` type. The receiver may
+Ordinary instance methods and value-producing arithmetic/bitwise operators
+may declare a consuming receiver with trailing `&&`, as may `operator()`.
+This is a receiver capability, not a general `T&&` type. Free and static
+functions have no receiver and cannot use this qualifier. Assignment,
+compound assignment, and increment/decrement retain their mutable contracts;
+comparisons and `operator bool` retain their read-only contracts. Dereference,
+arrow, and subscript do not gain consuming forms.
+
+A named value never selects a consuming member implicitly. An owned movable
+temporary, including a returned intermediate or conditional result, or an
+explicitly moved receiver prefers an otherwise-exact consuming overload.
+Examples are `make_builder().append(part)`, `base / first / second`, and
+`std::move(base).append(part)`. The first `/` on named `base` selects its
+read-only overload; later owned intermediates may select consuming `/`.
+If no consuming overload matches, ordinary receiver-qualified fallback remains
+available. Other arguments keep their existing copy/explicit-move rules.
+Receiver selection adds no implicit conversions or argument ranking.
+The [consuming builder example](../../examples/88-consuming-builders.gti)
+demonstrates preserving a named root while reusing owned path intermediates.
+
+The receiver may
 mutate or move from its fields because the whole exact receiver place is being
 consumed, and it may finish with moved fields rather than restoring a value
 that is no longer available. It cannot return a reference or tracked
 borrowed-state carrier. Mutually exclusive control-flow paths may each consume
 the callable, but any path permitting a second invocation or later use is
 rejected by the same availability analysis as an ordinary explicit move.
-Consuming call operators may be virtual, pure, or interface requirements.
+Inside a consuming method, `std::move(this)` explicitly transfers the whole
+receiver, for example in `return std::move(this);`. It requires the complete
+receiver to be available, movable, and free of tracked borrowed state or a
+conflicting live borrow. Subsequent use of `this`, its fields, or an implicit
+instance-method call is rejected. Moving only a field does not authorize
+transferring a partially moved whole receiver. Whole-receiver transfer is not
+an implicit return rule.
+
+Consuming methods and call operators may be virtual, pure, or interface requirements.
 An override must preserve the exact consuming receiver capability along with
 its parameter and result types; a read-only or mutable operator is not an
 override of an `&&` requirement. A concrete owned receiver may invoke the
-selected virtual operator after an explicit move. This does not grant ownership
+selected virtual member after an explicit move or on an owned temporary. This does not grant ownership
 to an interface reference or to a borrowed pointer dereference.
 An explicitly moved nominal receiver with active cleanup is materialized as a
 caller-owned temporary. Invocation aliases that value; it does not transfer it
@@ -803,7 +834,7 @@ the extracted value owns its cleanup and the receiver retains only its remaining
 fields. Read-only and mutable fallback overloads selected for an explicit move
 operate on this same materialized value.
 
-Inside a consuming `operator() &&`, immediate invocation of an owned nominal
+Inside a consuming method, immediate invocation of an owned nominal
 or stored-lambda field, `std::move(this.field)(arguments)`, instead operates in
 place. Its
 remaining resources stay in the outer receiver through that receiver's full
@@ -873,7 +904,7 @@ exact lexical lambda across either of these bounded ownership destinations:
 
 ```gti
 T relay<T>(T value) {
-  return std::move(value);
+  return value;
 }
 
 class callable_owner<T> {
@@ -888,8 +919,10 @@ callable_owner<T> own<T>(T value) {
 }
 ```
 
-The caller must also pass the lambda with `std::move`. The first form preserves
-the exact concrete lambda as the declared generic result. The second form
+The caller must still pass a named lambda with `std::move`. The first form uses
+the exact-return rule to consume the noncopyable concrete parameter and
+preserves the exact concrete lambda as the declared generic result. A copyable
+instantiation keeps ordinary copy-return behavior. The second form
 constructs a concrete generic owner whose sole field has that exact substituted
 type and whose constructor moves its matching parameter into the field. The
 closure's move-only captures and cleanup obligation move with it; the source is
@@ -916,8 +949,10 @@ class field, fixed-array element, or non-escaping local reference. A class or
 array containing it becomes move-only through structural field traits. Unique
 owners remain unavailable as globals. Fixed generic functions, methods,
 classes, and constructors may use move-only type arguments because typed HIR
-rechecks each concrete body after substitution. Copies remain errors and
-transfers still require `std::move`. Typed HIR also retains concrete variadic
+rechecks each concrete body after substitution. Copies remain errors; calls
+and initializations still require `std::move` for named move-only values,
+while exact whole locals and by-value parameters may move implicitly on
+return. Typed HIR also retains concrete variadic
 pack elements. A pack containing any move-only element is consumed as one unit
 by its first `values...` expansion, so forwarding it again is a use-after-move
 error. Copyable packs may still be forwarded repeatedly; individual pack

@@ -230,6 +230,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testImplicitReturnMoves",
+      "suite": "ownership"
+    },
+    {
       "name": "testEdgeSensitiveMoveFlow",
       "suite": "ownership"
     },
@@ -367,6 +371,10 @@
     },
     {
       "name": "testConsumingCallableOperators",
+      "suite": "ownership"
+    },
+    {
+      "name": "testConsumingMethodsAndValueOperators",
       "suite": "ownership"
     },
     {

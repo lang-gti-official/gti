@@ -326,6 +326,13 @@ not infer it from `std` wrapper names or ordinary call spelling. Generated
 range operations and constructor initialization use the same resolved call
 records as ordinary source.
 
+When semantics marks an exact named return as an implicit move, HIR preserves
+the source place value and adds one unary `HirValueKind::Move` as the return
+root. That value carries the same ownership event, exact place identity,
+borrow transport, and intrinsic identity as explicit `std::move`; HIR does not
+reinterpret the return spelling or infer last use. Copyable concrete generic
+instances retain their ordinary place value and therefore remain copies.
+
 For the bounded named-Expected payload range, `HirRangeIteration` carries
 `expectedPayloadProjection` in addition to its exact source value and range
 loan. Verification requires that marker to equal the semantic range fact, the
@@ -358,15 +365,22 @@ selected parameters after caller-side default expansion; no pack expansion is
 present; and every
 parameter is either a supported scalar/reference form, an exact class value
 without borrowed state, or the narrowly scheduled constructor input described
-below. Mutable temporary permission remains confined to
-ordinary methods and reusable `operator()`; existing non-borrowing read-only
+below. Reusable mutable temporary permission remains confined to
+ordinary methods and reusable `operator()`; consuming value operators also
+receive a temporary stage with exact `Once` capability. Non-borrowing read-only
 operators selected on an admitted fresh temporary also receive a plan so MIR
 does not reconstruct their receiver. Lambdas, unresolved deferred callables,
 and unsupported construction remain outside the slice. A concretely selected
 `operator()` uses the same exact target even when its
 generic source call still has a deferred-callable base record. Its receiver is
 a read or mutable borrow for a place, a value for a reusable value receiver, or
-a `MoveValue` for an explicitly moved receiver or exact trailing-`&&` target.
+a `MoveValue` for an explicitly moved receiver. Ordinary consuming methods
+and value operators retain the same exact invocation capability. A fresh
+owned receiver uses `MutableTemporaryBorrow` plus `Once` capability: it aliases
+the full-expression materialization instead of synthesizing an ownership move.
+Conditional receivers retain their existing join slot. `std::move(this)` has
+an ordinary Move value with an exact whole-This ownership event; HIR does not
+infer it from a returned name or from the selected backend.
 An exact immediate nominal or stored-lambda field invocation authorized by
 semantics inside consuming `this` instead uses `RetainedReceiver`. Its Move-shaped HIR value
 records `retainedReceiverProjection` and creates no new drop obligation;

@@ -1,0 +1,38 @@
+#include <std/string>
+
+class Builder {
+  mut std::string value;
+public:
+  Builder(std::string value) : value(std::move(value)) {}
+  std::string take() && { return std::move(this.value); }
+  bool empty() { return this.value.empty(); }
+  int touch() mut { return 9; }
+};
+
+struct Passive {
+  mut int value = 7;
+  int take() && { return this.value; }
+  int read() { return this.value; }
+  int touch() mut { this.value = 8; return this.value; }
+};
+
+int main() {
+  auto factory = []() -> Builder { return Builder(std::string("lambda")); };
+  std::string a = factory().take();
+  std::string b = factory().take();
+  std::string c = ([]() -> Builder { return Builder(std::string("literal")); })().take();
+  Passive original{};
+  int copy = Passive(original).take();
+  Builder owned{std::string("moved")};
+  std::string moved = Builder(std::move(owned)).take();
+  if (factory().empty() || factory().touch() != 9 ||
+      Passive(original).read() != 7 || Passive(original).touch() != 8) {
+    return 1;
+  }
+  std::println(a.view());
+  std::println(b.view());
+  std::println(c.view());
+  std::println(copy);
+  std::println(moved.view());
+  return 0;
+}

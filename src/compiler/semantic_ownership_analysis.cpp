@@ -4954,6 +4954,39 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
   const ExprPtr &argument = expr.arguments().front();
   const SemanticType valueType = analyzeProjectionBase(argument);
   SemanticPlace place = semanticPlace(argument);
+  if (place.receiver && place.root != nullptr && place.projections.empty()) {
+    if (currentReceiverMutability != ReceiverMutability::Consuming ||
+        !typeTraits(valueType).movable ||
+        typeTraits(valueType).containsBorrowedState) {
+      report(expressionToken(argument),
+             "std::move(this) requires a consuming receiver with a movable "
+             "owned type.",
+             "GTI-S2018");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (const auto *state = unavailableProjectedState(place, true)) {
+      reportUnavailablePlace(expressionToken(argument), *state, &place);
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    reportLoanPlaceConflict(
+        expressionToken(argument), place, AccessMode::Mutable,
+        "Cannot move this while an overlapping borrow may still be live.");
+    setProjectedValueState(place, ValueState::Moved);
+    semanticModel.recordOwnershipEvent(expr, {.kind = OwnershipEventKind::Move,
+                                              .place = placeKey(place),
+                                              .before = ValueState::Available,
+                                              .after = ValueState::Moved});
+    currentType = valueType;
+    semanticModel.record(expr,
+                         ResolvedCallInfo{.returnType = valueType,
+                                          .parameterTypes = {valueType},
+                                          .intrinsic = IntrinsicKind::Move});
+    if (declaration != nullptr)
+      bindIntrinsicCallDeclaration(expr, *declaration);
+    return;
+  }
   const Expr *retainedOwner = nullptr;
   if (immediateReceiver &&
       currentReceiverMutability == ReceiverMutability::Consuming &&
@@ -5252,6 +5285,82 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
                              .borrowAccess = borrowAccess(currentType)});
   if (declaration != nullptr)
     bindIntrinsicCallDeclaration(expr, *declaration);
+}
+
+auto SemanticVisitor::Impl::analyzeImplicitReturnMove(
+    const ExprPtr &expression, const SemanticType &returnType,
+    const SemanticType &valueType) -> ImplicitReturnMoveStatus {
+  if (!expression || returnType != valueType ||
+      !isMoveOnlyOwnerType(valueType)) {
+    return ImplicitReturnMoveStatus::NotEligible;
+  }
+
+  const Variable *variable = movedVariable(expression);
+  const Symbol *symbol =
+      variable == nullptr ? nullptr : resolve(variable->name());
+  if (symbol == nullptr ||
+      (symbol->bindingKind != SemanticBindingKind::LocalVariable &&
+       symbol->bindingKind != SemanticBindingKind::Parameter) ||
+      symbol->type.kind == SemanticType::Reference) {
+    return ImplicitReturnMoveStatus::NotEligible;
+  }
+  if (symbol->variableDeclaration != nullptr &&
+      structuredBindingElements.contains(symbol->variableDeclaration)) {
+    report(
+        variable->name(),
+        "An implicit return move cannot partially move structured binding '" +
+            variable->name().lexeme +
+            "' until place-aware partial initialization tracking is "
+            "available.",
+        "GTI-S2018");
+    return ImplicitReturnMoveStatus::Invalid;
+  }
+
+  SemanticPlace place = semanticPlace(expression);
+  if (place.root == nullptr || !place.projections.empty() || place.receiver) {
+    return ImplicitReturnMoveStatus::NotEligible;
+  }
+  if (symbol->valueState != ValueState::Available) {
+    return ImplicitReturnMoveStatus::Invalid;
+  }
+  if (unavailableProjectedState(place, true) != nullptr) {
+    report(expressionToken(expression),
+           "Cannot return a value while one of its owned places remains "
+           "moved.",
+           "GTI-S2018");
+    diagnostics.back().hints.emplace_back(
+        "Reinitialize the moved place before returning its owner.");
+    return ImplicitReturnMoveStatus::Invalid;
+  }
+
+  reportLoanPlaceConflict(
+      variable->name(), place, AccessMode::Mutable,
+      "Cannot move returned storage while an overlapping borrow may still "
+      "be live.");
+  Symbol *mutableSymbol = resolveMutable(variable->name());
+  if (mutableSymbol == nullptr) {
+    return ImplicitReturnMoveStatus::Invalid;
+  }
+
+  const ValueState before = mutableSymbol->valueState;
+  mutableSymbol->valueState = ValueState::Moved;
+  if (mutableSymbol->variableDeclaration != nullptr) {
+    semanticModel.recordExplicitMove(*mutableSymbol->variableDeclaration);
+  } else if (mutableSymbol->parameterDeclaration != nullptr) {
+    semanticModel.recordExplicitMove(*mutableSymbol->parameterDeclaration);
+  }
+  SemanticPlace movedPlace = placeForSymbol(*mutableSymbol);
+  semanticModel.recordOwnershipEvent(*expression,
+                                     {.kind = OwnershipEventKind::Move,
+                                      .place = placeKey(movedPlace),
+                                      .before = before,
+                                      .after = ValueState::Moved});
+  semanticModel.recordImplicitReturnMove(
+      *expression, {.borrowOrigin = typeTraits(valueType).containsBorrowedState
+                                        ? BorrowOriginKind::Argument
+                                        : BorrowOriginKind::None,
+                    .borrowAccess = borrowAccess(valueType)});
+  return ImplicitReturnMoveStatus::Moved;
 }
 
 auto SemanticVisitor::Impl::analyzeIntegerArithmeticIntrinsicCall(

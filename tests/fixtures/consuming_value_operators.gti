@@ -1,0 +1,42 @@
+struct Number {
+  mut int value;
+  Number(int value) : value(value) {}
+  Number operator+(int n) && { this.value += n; return std::move(this); }
+  Number operator-(int n) && { this.value -= n; return std::move(this); }
+  Number operator*(int n) && { this.value *= n; return std::move(this); }
+  Number operator/(int n) && { this.value /= n; return std::move(this); }
+  Number operator%(int n) && { this.value %= n; return std::move(this); }
+  Number operator&(int n) && { this.value &= n; return std::move(this); }
+  Number operator|(int n) && { this.value |= n; return std::move(this); }
+  Number operator^(int n) && { this.value ^= n; return std::move(this); }
+  Number operator<<(int n) && { this.value <<= n; return std::move(this); }
+  Number operator>>(int n) && { this.value >>= n; return std::move(this); }
+  Number operator+() && { return std::move(this); }
+  Number operator-() && { this.value = -this.value; return std::move(this); }
+  Number operator~() && { this.value = ~this.value; return std::move(this); }
+  int get() && { return this.value; }
+};
+
+class Fallback {
+  mut int value = 4;
+public:
+  int read() { return this.value; }
+  int update() mut { this.value++; return this.value; }
+  Fallback operator+(int n) { return Fallback(); }
+};
+
+int main() {
+  int a = (Number(1) + 3 - 2).get();
+  int b = ((Number(4) * 3) / 2 % 4).get();
+  int c = (((Number(7) & 3) | 8) ^ 1).get();
+  int d = (Number(4) << 2 >> 1).get();
+  int e = (+Number(4)).get();
+  int f = (-Number(4)).get();
+  int g = (~Number(4)).get();
+  Fallback read{};
+  Fallback update{};
+  int h = std::move(read).read();
+  int i = std::move(update).update();
+  int j = (Fallback() + 1 + 2).read();
+  return a + b + c + d + e + f + g + h + i + j - 30;
+}

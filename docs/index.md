@@ -110,6 +110,9 @@ for the current implementation when a document is stale or ambiguous.
   — adopts the direct `std::allocator`/`std::storage<T>` boundary, typed
   provenance and slot lifetimes, recoverable allocation, alignment and
   zero-size rules, and the arena/pool composition boundary.
+- [023: Bounded implicit return movement](decisions/023-implicit-return-movement.md)
+  — moves one exact whole noncopyable local or by-value parameter at return
+  while preserving copyable returns and explicit movement elsewhere.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.

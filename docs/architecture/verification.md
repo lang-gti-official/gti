@@ -378,6 +378,25 @@ lifetime and publication schedule. The lifecycle emitter suite also passes
 after fixing storage-return admission and wrapped-payload identity. These
 results do not establish polymorphic captured-value cleanup or public-wrapper
 completion.
+`implicit_return_move_runtime` checks whole local and by-value parameter
+returns across C++20/C++23 at O0/O3, native no-elide mode, and ASan/UBSan. It
+requires exact values and exactly-once cleanup after the implicit move. The
+focused ownership gate additionally proves semantic instance-local facts,
+unary HIR `Move` lowering, copyable generic-instance preservation, and
+rejection of field projections and immovable values. The LSP diagnostic gate
+keeps the explicit-move hint for a converting `expected` success return while
+publishing no diagnostic for an exact named move-only return in the same file.
+`consuming_methods_runtime` covers ordinary consuming methods and value
+operators with eleven fixtures across C++20/C++23 O0/O1/O3, disabled elision, and
+ASan/UBSan. It exercises owned builder chains, virtual dispatch, conditional
+receivers, lambda results, generated copy/move construction, Expected value/error
+extraction, reusable receiver fallbacks, and fresh owning callback wrappers.
+The joint return-composition
+fixture checks implicit local returns from consuming methods through successful
+cleanup, primary cleanup failure, and secondary cleanup failure. Ownership
+tests retain explicit-only whole-`this` movement and reject forged invocation
+capabilities and missing conditional-arm initialization. LSP checks cover
+consuming-signature hover and versioned diagnostic publication/clearing.
 The existing source-destructor runtime matrix also passes (259 executions).
 `polymorphic_owner_cleanup_runtime` passes 48 executions across C++20/C++23
 O0/O1/O3, no-elide, and ASan/UBSan. It checks a declared derived destructor,

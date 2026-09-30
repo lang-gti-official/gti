@@ -755,10 +755,6 @@ private:
             qualifier,
             "Only class and struct methods can have a consuming receiver.");
       }
-      if (!operatorName || operatorName->kind != OverloadedOperator::Call) {
-        throw error(qualifier, "Trailing '&&' is currently supported only on "
-                               "operator() declarations.");
-      }
       receiverMutability = ReceiverMutability::Consuming;
       if (check(TokenKind::MUT)) {
         throw error(peek(), "A receiver cannot combine trailing '&&' and 'mut' "

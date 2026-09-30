@@ -1839,6 +1839,20 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     updated.entryArgumentAppendFunction = appendFunction;
     semanticModel.record(stmt, std::move(updated));
   }
+  if (stmt.receiverMutability() == ReceiverMutability::Consuming) {
+    const SemanticType result =
+        typeOf(stmt.returnType(), stmt.returnMutability());
+    if (result.kind == SemanticType::Reference ||
+        typeTraits(result).containsBorrowedState ||
+        (functionInfo != nullptr &&
+         functionInfo->returnBorrowOrigin != BorrowOriginKind::None)) {
+      report(stmt.name(),
+             std::string("A consuming ") +
+                 (stmt.operatorName() ? "operator" : "method") +
+                 " cannot return a reference or tracked borrowed state.",
+             "GTI-S2022");
+    }
+  }
   if (!stmt.body() || !requirementsValid) {
     endRequirementScope();
     endTypeParameterScope();
@@ -2182,43 +2196,48 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     validateOwnerDependentTextReturn(valueType, stmt.value());
   }
   if (!isOwnershipAssignable(currentReturnType, valueType, stmt.value())) {
-    if (isMoveOnlyOwnerType(valueType) &&
-        isAssignable(currentReturnType, valueType, stmt.value().get())) {
-      const Variable *returned = movedVariable(stmt.value());
-      const Symbol *returnedSymbol =
-          returned == nullptr ? nullptr : resolve(returned->name());
-      const bool namedLocalOwner =
-          returnedSymbol != nullptr &&
-          (returnedSymbol->bindingKind == SemanticBindingKind::LocalVariable ||
-           returnedSymbol->bindingKind == SemanticBindingKind::Parameter);
-      if (namedLocalOwner) {
-        Diagnostic diagnostic =
-            makeDiagnostic("GTI-S2003", DiagnosticPhase::Semantics,
-                           expressionToken(stmt.value()),
-                           "Cannot return '" + returned->name().lexeme +
-                               "' by copy because type '" +
-                               typeSpelling(valueType) + "' is move-only.");
-        diagnostic.hints.emplace_back("Use 'return std::move(" +
-                                      returned->name().lexeme +
-                                      ");' to transfer ownership.");
-        diagnostics.emplace_back(std::move(diagnostic));
+    const ImplicitReturnMoveStatus implicitMove =
+        analyzeImplicitReturnMove(stmt.value(), currentReturnType, valueType);
+    if (implicitMove == ImplicitReturnMoveStatus::NotEligible) {
+      if (isMoveOnlyOwnerType(valueType) &&
+          isAssignable(currentReturnType, valueType, stmt.value().get())) {
+        const Variable *returned = movedVariable(stmt.value());
+        const Symbol *returnedSymbol =
+            returned == nullptr ? nullptr : resolve(returned->name());
+        const bool namedLocalOwner =
+            returnedSymbol != nullptr &&
+            (returnedSymbol->bindingKind ==
+                 SemanticBindingKind::LocalVariable ||
+             returnedSymbol->bindingKind == SemanticBindingKind::Parameter);
+        if (namedLocalOwner) {
+          Diagnostic diagnostic =
+              makeDiagnostic("GTI-S2003", DiagnosticPhase::Semantics,
+                             expressionToken(stmt.value()),
+                             "Cannot return '" + returned->name().lexeme +
+                                 "' by copy because type '" +
+                                 typeSpelling(valueType) + "' is move-only.");
+          diagnostic.hints.emplace_back("Use 'return std::move(" +
+                                        returned->name().lexeme +
+                                        ");' to transfer ownership.");
+          diagnostics.emplace_back(std::move(diagnostic));
+        } else {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2003", DiagnosticPhase::Semantics,
+              expressionToken(stmt.value()),
+              "Returning this value would copy move-only type '" +
+                  typeSpelling(valueType) + "'.");
+          diagnostic.hints.emplace_back(
+              "Return a fresh value or transfer an eligible owner explicitly "
+              "with std::move(...).");
+          diagnostics.emplace_back(std::move(diagnostic));
+        }
       } else {
-        Diagnostic diagnostic =
-            makeDiagnostic("GTI-S2003", DiagnosticPhase::Semantics,
-                           expressionToken(stmt.value()),
-                           "Returning this value would copy move-only type '" +
-                               typeSpelling(valueType) + "'.");
-        diagnostic.hints.emplace_back(
-            "Return a fresh value or transfer an eligible owner explicitly "
-            "with std::move(...).");
-        diagnostics.emplace_back(std::move(diagnostic));
+        report(expressionToken(stmt.value()),
+               "Cannot return a value of type '" + typeSpelling(valueType) +
+                   "' from a function returning '" +
+                   typeSpelling(currentReturnType) + "'.",
+               "GTI-S2003");
       }
-    } else {
-      report(expressionToken(stmt.value()),
-             "Cannot return a value of type '" + typeSpelling(valueType) +
-                 "' from a function returning '" +
-                 typeSpelling(currentReturnType) + "'.",
-             "GTI-S2003");
     }
   }
   requireInitializedReceiver(stmt.keyword());
@@ -4278,6 +4297,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   std::vector<ViableOverload> viable;
   std::vector<ConstraintFailure> constraintFailures;
   bool rejectedMutableReceiver = false;
+  bool rejectedConsumingReceiver = false;
   std::optional<CallableCandidate> rejectedMutableFunction;
   bool rejectedCompilerPrivate = false;
   for (const CallableCandidate &candidate : callee->overloads) {
@@ -4322,6 +4342,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     }
     const CallReceiverMode receiverMode =
         callReceiverMode(expr.callee(), resolved);
+    if (resolved.receiverMutability == ReceiverMutability::Consuming &&
+        receiverMode != CallReceiverMode::Consuming) {
+      rejectedConsumingReceiver = true;
+      continue;
+    }
     if (resolved.ownerClass != 0 && !resolved.staticMember &&
         resolved.receiverMutability == ReceiverMutability::Mutable &&
         !receiverModeAllowsMutation(receiverMode)) {
@@ -4348,6 +4373,17 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                   })) {
     std::erase_if(viable, [](const ViableOverload &candidate) {
       return !candidate.ephemeralBorrowArguments.empty();
+    });
+  }
+
+  if (std::any_of(viable.begin(), viable.end(),
+                  [](const ViableOverload &candidate) {
+                    return candidate.function.receiverMutability ==
+                           ReceiverMutability::Consuming;
+                  })) {
+    std::erase_if(viable, [](const ViableOverload &candidate) {
+      return candidate.function.receiverMutability !=
+             ReceiverMutability::Consuming;
     });
   }
 
@@ -4395,6 +4431,17 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     if (!hasUnknownArgument || argumentAnalysis.hasDeferred()) {
       if (viable.empty() && rejectedCompilerPrivate) {
         reportCompilerPrivateAccess(expr.paren(), "function overload");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      if (viable.empty() && rejectedConsumingReceiver) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2022", DiagnosticPhase::Semantics, expr.paren(),
+            "A consuming method requires an owned temporary or an explicitly "
+            "moved receiver.");
+        diagnostic.hints.emplace_back("Use std::move(value).method(...) to "
+                                      "transfer ownership of a named value.");
+        diagnostics.emplace_back(std::move(diagnostic));
         currentType = SemanticType::Unknown;
         return;
       }
