@@ -6,7 +6,9 @@ canonical selected workload is `workloads/interface-exact-dispatch`.
 
 Five candidates use the same 1,024-lane scalar recurrence, publishing **every
 final lane**. Callback, interface, owner, and cross-unit probes use 120,000
-ticks; SoA uses 240,000 so its fast C++ variant clears the duration floor.
+ticks; SoA uses 240,000 to reduce short-sample overhead. Some idiomatic C++
+variants can still fall below the investigation's duration floor; report those
+comparisons as directional rather than claiming precise speed ratios.
 Compare saved time per 1,024-lane tick, not raw durations across those scales.
 
 | Candidate | Source proxy and retained semantics |

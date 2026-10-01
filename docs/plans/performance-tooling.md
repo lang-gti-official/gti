@@ -5,7 +5,10 @@
 This follow-up starts at reconciled, clean `main` `72a8087a`, after
 `O-CONFORM-01`, not at the historical August campaign below. Publication is
 held. The Release/Ninja compiler uses AppleClang 21 and LLVM 22.1.8 on arm64
-macOS; native comparisons use `/usr/bin/clang++`, C++23, O3, strict FP flags.
+macOS 27.0 (26A428), Darwin 27.0.0, twelve logical CPUs, Python 3.14.6;
+native comparisons use `/usr/bin/clang++` 21.0.0 (`clang-2100.3.34.2`), C++23,
+O3, strict FP flags. The captured CPU model reports only `arm`; do not copy the
+different historical machine identity from the August campaign below.
 The preserved baseline compiler SHA-256 is
 `d75e177a1afc810e5422cbfd43d43ca2bd16b22026ce76e6685bd9a75c9dc8ed`.
 
@@ -42,10 +45,136 @@ helper ceiling would require additional interprocedural context propagation.
 This campaign does not claim a whole-game frame-rate improvement or a universal
 largest optimization outside these representative update-stage kernels.
 
-Implementation and focused replay/failure tests are present. Final scaled
-measurements, exact implementation-head identity, paired control/compile-time/
-size/memory evidence, and the broad validation result remain acceptance gates;
-`O-MEASURE-02` is not yet complete.
+### Scaled candidate ranking and decision
+
+The final retained screen is
+`/private/tmp/gti-runtime-candidates-accepted/report.json`. It uses the
+preserved baseline compiler, five warmups, twenty randomized/interleaved
+repetitions, seed 1001, and identical complete-state output within each family.
+Build records retain source/compiler/native/executable hashes, commands, MIR
+and optimization reports, emitted C++, native assembly, executable size, and
+peak-memory logs. Build-phase latency was measured concurrently and is not
+comparative compiler-time evidence.
+
+| Rank by legal proxy saving | GTI ms | GTI proxy ms | Semantic C++ ms | Idiomatic C++ ms | Saved ns per 1,024-lane tick |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1. Callback/accessor chain | 264.006 | 127.637 | 152.663 | 132.427 | 1136.4 |
+| 2. Interface helper | 260.877 | 126.167 | 152.209 | 119.145 | 1122.6 |
+| 3. Cross-unit ThinLTO | 151.851 | 113.449 | 136.799 | 144.498 | 320.0 |
+| 4. Two-vector SoA | 384.830 | 333.517 | 229.973 | 39.757* | 213.8 |
+| 5. Owning temporary | 2368.700 | 2367.743 | 2328.833 | 21.966* | 8.0 |
+
+The owner proxy's paired mean saving interval includes zero (-0.772 to
+3.331 ms); it does not justify an ownership transform. The SoA and owner
+idiomatic C++ medians marked `*` remain below the 50 ms investigation floor,
+so their exact speed ratios are directional only. All **GTI/proxy** pairs
+clear that floor; their rankings do not depend on those short C++ variants.
+No candidate variant exceeds 8% sample coefficient of variation. Source
+scaling and full outputs are retained, including the owning C++ variant's
+legal allocation elision, which is not legal optimization authority for GTI.
+
+Known call-target/context information is the leading opportunity. The callback
+proxy has a slightly higher ceiling than the interface-helper proxy, but
+realizing it needs additional callable-target/context proof infrastructure;
+the broader interface helper similarly needs interprocedural propagation.
+The chosen **single facility** is the bounded exact-receiver refinement that
+can use existing verified local object/loan/override facts. Its local client
+saves 103 ms per 120,000-tick run, versus about 38 ms for ThinLTO and 26 ms for
+SoA normalized to that scale. This is the measured, smallest useful local
+slice of the leading call-target opportunity, **not** a claim that it achieves
+the larger callback/helper proxy ceilings. No inliner, escape/SROA facility,
+alias annotation scheme, or PGO/LTO product feature is added. Callback-target
+and interprocedural receiver workloads remain explicit potential follow-ups,
+not silently reported as optimized.
+
+### Clean implementation and paired controls
+
+The implementation checkpoint is clean commit
+`2c8d4561baebfa6cdcddb248bd7cba17e4577a07`, with Release compiler SHA-256
+`55ffab13d6634c36eca60c10353148707852effaebbef173992c56cb1c9a62a7`.
+The runtime archive is unchanged between compilers, SHA-256
+`6bfe46386e247807af2dd78d1b203c28a694d9dad7b1d7e695ce05ba75793320`.
+The implementation-head canonical report is
+`/private/tmp/gti-measured-runtime-after/report.json`; its derived
+`exact_head_evidence.exact` is true and all six workload groups are conclusive.
+This documentation closure follows that measured implementation commit; it
+does not retroactively assign a later commit identity to the compiler.
+
+The canonical implementation run measures the selected workload at 118.334 ms,
+the legal GTI source proxy at 118.406 ms, semantic-checking C++ at 149.010 ms,
+and idiomatic C++ at 116.280 ms. GTI therefore reaches the measured legal proxy
+and is about 1.8% above idiomatic C++ for this particular update kernel.
+
+For change attribution, both preserved executables then ran in twenty paired,
+randomized/interleaved rounds after five warmups, with no concurrent builds or
+tests. The following are **paired-run** medians, not comparisons of separate
+historical benchmark sessions. The interval is a paired bootstrap 95% interval
+for mean milliseconds saved (10,000 resamples, fixed seed); positive means
+faster after the change.
+
+| Workload | Before ms | After ms | Mean saved, 95% interval ms |
+| --- | ---: | ---: | ---: |
+| Fixed-array loop proof | 123.449 | 122.485 | [-0.698, 2.118] |
+| Checked vector loop | 74.074 | 73.813 | [-0.214, 0.651] |
+| Scalar FP update | 129.251 | 129.712 | [-0.714, 0.690] |
+| Game update stage | 73.459 | 73.324 | [-0.132, 0.895] |
+| Managed threads, sequential | 912.915 | 905.527 | [-6.089, 7.031] |
+| Managed threads, four threads | 253.460 | 253.717 | [-1.574, 1.215] |
+| **Exact local interface dispatch** | **223.175** | **120.008** | **[101.973, 104.238]** |
+
+The selected workload saves **46.2% runtime (1.86x throughput)**. No control
+shows a statistically clear runtime change; all six control variants emit
+byte-identical C++ before and after. Executable byte sizes and measured peak
+runtime RSS are identical for every paired variant, including the selected
+workload (120,016 executable bytes; 1,769,472 bytes peak RSS). Its native
+`__text` section grows only 52 bytes, from 26,860 to 26,912; total file size
+does not grow. In the retained disassembly, the old hot loop loads a vtable
+entry and executes `blr x8`; the new hot loop contains the inlined scalar
+arithmetic and overflow branches, with no virtual call. This is attribution
+to dispatch refinement, not permission to remove required checks.
+
+Compiler controls use one warmup and five randomized/interleaved measurements
+per compiler, `-O3 --std c++23 --emit-cpp`, preserving each workload's execution
+profile. Times include frontend, MIR optimization/replay, and C++ emission, not
+native compilation. Single full-build timings are retained in the canonical
+reports but are not treated as statistically repeated compile-time evidence.
+
+| Compiler workload | Before ms | After ms | Change | Before/after median peak RSS MiB |
+| --- | ---: | ---: | ---: | ---: |
+| Fixed array | 1569.191 | 1570.422 | +0.08% | 348.61 / 340.94 |
+| Vector | 379.657 | 376.468 | -0.84% | 72.63 / 71.81 |
+| Scalar FP | 1475.222 | 1481.150 | +0.40% | 366.09 / 334.78 |
+| Game update | 2510.487 | 2504.899 | -0.22% | 100.97 / 102.00 |
+| Sequential thread control | 3600.953 | 3631.979 | +0.86% | 585.44 / 588.73 |
+| Four-thread control | 3993.965 | 4004.775 | +0.27% | 644.52 / 612.38 |
+| Exact local interface | 619.615 | 623.043 | +0.55% | 72.06 / 69.94 |
+
+No material compiler-latency or memory regression was observed in these
+controls. The small sample count and allocator/RSS variation do not establish
+a general compiler-memory improvement.
+
+Raw paired samples, sample order, commands, resource-counter logs, assembly,
+section sizes, compile controls, and the disposable reproduction helper are
+under `/private/tmp/gti-exact-receiver-evidence.lZi0Kb/` (`paired.json`,
+`compile-controls.json`, and `compare.py`). `parity.json` there records sixteen
+complete-state executions: both compilers at O0/O2/O3 under C++20/C++23, plus
+both C++ twins under both standards. All 1,024 output values match byte for
+byte, SHA-256
+`25ea121417e752a18bc9ef13af20af5247797d3306169c2d5576aa7e84953e6b`.
+Each GTI parity build retains source-bound build provenance, optimization
+evidence, before/after MIR, and emitted C++. Focused tests independently replay
+proofs and reject missing/forged claims; twelve additional executions preserve
+first-failure identity, argument partial effects, and caller cleanup.
+
+The functional closure is all 354 registered Release tests, with the sandbox
+HTTP permission and stale LSP executable resolved, followed by 16 final focused
+passes and formatting of 390 first-party C++ files. Details and platform
+limitations are in [verification](../architecture/verification.md).
+
+`O-MEASURE-02` is complete for this measured bounded facility. The evidence
+supports local arm64 macOS behavior and performance only; it neither proves
+an absolute best optimization for arbitrary programs nor substitutes for a
+future whole-engine workload. Publication and installation remain held.
 
 > **Plan status:** Non-canonical future tooling plan. Existing verification is
 > documented in [`docs/architecture/verification.md`](../architecture/verification.md).
