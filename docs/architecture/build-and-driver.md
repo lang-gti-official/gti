@@ -667,6 +667,39 @@ includes cannot cross an owning package boundary to bypass the manifest edge.
 Direct mode receives no package graph and therefore rejects package angle
 includes without consulting nearby manifests.
 
+### Source Module Registration
+
+Source packages can declare a public module map independently of file layout:
+
+```toml
+[modules]
+main = "src/api.gti"
+geometry = "src/geometry_api.gti"
+```
+
+Each key is one non-reserved GTI identifier. Each value is a package-relative
+path to an existing regular `.gti` interface. Canonical paths must remain inside
+the package, including through symlinks. Duplicate physical files, portable
+case-fold name collisions, invalid names/types and missing paths are rejected
+by manifest loading. The frontend additionally requires the file to begin with
+`export module` using the registered name. Paths need not be under `source-root`;
+that field continues to control legacy angle includes, not public module names.
+
+The owning package writes `import geometry;`. Consumers write
+`import dependency.geometry;`, using their declared dependency alias. The
+shorter `import dependency;` selects the dependency's `main` module. An
+unqualified local-name/dependency-alias collision is an error. Only direct
+dependency aliases resolve; re-exporting declarations never leaks aliases.
+Direct compilation remains manifest-independent and can write a relative
+quoted import instead.
+
+`ProjectPackage` and immutable `PackageSourceRoot` values carry these maps;
+`SourceLoader` owns language resolution. Registrations are part of project
+model identity, while interface bytes and import/re-export edges participate in
+source cache keys and build-report provenance. The LSP receives the same
+read-only facts and does not fetch or build module artifacts. This adds no
+binary modules, BMI files, stable ABI, or separate-compilation promise.
+
 Dependency packages compose their package-scope native inputs into every
 dependent build as isolated per-package groups. Structured contained inputs
 compose — include directories, C and C++ sources, the C standard, library

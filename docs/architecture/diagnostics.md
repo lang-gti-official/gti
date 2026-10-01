@@ -99,6 +99,17 @@ diagnostics or letting a backend message choose either identity.
 
 ## Production Rules
 
+`GTI-I0012` owns invalid source-module headers and imports: placement, syntax,
+missing registration, name mismatch, duplicate interfaces, package escapes,
+inconsistent shared legacy-unit configuration, and include/import bypasses.
+Point at the source directive; relate the interface declaration for name
+mismatches or duplicates. Source cycles retain `GTI-I0001`. `GTI-S2098` owns
+invalid declaration exports, including exports outside an interface and
+source-local static declarations. Visibility errors explain whether a
+declaration is private or its public interface was not imported; they must not
+offer an include fix that would bypass a module boundary. No fix guesses which
+declarations an author intends to export.
+
 `GTI-B1401` owns a selected Objective-C++ `.mm` native source for a non-macOS
 target. Point at the exact `cpp-sources` manifest array element and name the
 selected OS. Unselected platform fragments produce no diagnostic. No fix-it

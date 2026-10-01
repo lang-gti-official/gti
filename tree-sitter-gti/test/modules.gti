@@ -1,0 +1,7 @@
+export module geometry;
+import vectors;
+export import dep.math;
+import "helpers.gti";
+export namespace shape {
+  int answer() { return 42; }
+}

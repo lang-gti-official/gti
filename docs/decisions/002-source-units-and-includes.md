@@ -30,6 +30,12 @@ package aliases implicitly.
 
 ## Consequences
 
+[ADR 024](024-source-module-interfaces.md) proposes an explicit source-module
+interface and import/export vocabulary on top of this graph. It preserves the
+include contract above; interfaces must be imported rather than included, and
+only explicit re-exports add transitive visibility. It does not adopt C++ BMIs
+or introduce separate compilation.
+
 Include behavior belongs in `SourceLoader`/`SourceGraph`. The combined
 transitional AST does not imply global visibility. Standard-library paths
 resolve only through configured GTI roots, never native C++ include paths.

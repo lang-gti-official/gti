@@ -819,9 +819,15 @@ public:
     documentationMarkdown_ = std::move(documentation);
   }
 
+  [[nodiscard]] const std::optional<Token> &exportKeyword() const {
+    return exportKeyword_;
+  }
+  void setExportKeyword(Token keyword) { exportKeyword_ = std::move(keyword); }
+
 private:
   std::optional<SourceSpan> extent_;
   std::optional<std::string> documentationMarkdown_;
+  std::optional<Token> exportKeyword_;
 };
 
 template <StmtKind Kind> class StmtOfKind : public Stmt {

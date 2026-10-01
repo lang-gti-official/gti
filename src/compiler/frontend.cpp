@@ -24,6 +24,40 @@
 namespace lang {
 namespace {
 
+// These are syntax requests, not a second declaration catalog. Semantic
+// publication validates export eligibility and uses exact declaration names.
+bool collectExportRequests(const StmtList &statements, SourceUnit &unit,
+                           const TargetInfo &target, bool inherited = false) {
+  bool any = false;
+  for (const StmtPtr &statement : statements) {
+    if (!statement) {
+      continue;
+    }
+    const bool exported = inherited || statement->exportKeyword().has_value();
+    if (const auto *space = stmtAs<NamespaceDecl>(statement.get())) {
+      if (collectExportRequests(space->declarations(), unit, target,
+                                exported) ||
+          exported) {
+        unit.exportedNamespaces.push_back(tokenSpan(space->name()));
+        any = true;
+      }
+    } else if (const auto *conditional =
+                   stmtAs<ConditionalStmt>(statement.get())) {
+      if (const StmtList *branch = conditional->activeBranch(target)) {
+        any = collectExportRequests(*branch, unit, target, exported) || any;
+      }
+    } else if (const auto *linkage = stmtAs<ExternCDecl>(statement.get())) {
+      any = collectExportRequests(linkage->declarations(), unit, target,
+                                  exported) ||
+            any;
+    } else if (exported && statement->extent()) {
+      unit.exportedDeclarations.push_back(*statement->extent());
+      any = true;
+    }
+  }
+  return any;
+}
+
 std::string cacheContext(const FrontendOptions &options) {
   ConfigurationFlags flags = options.configurationFlags;
   normalizeConfigurationFlags(flags);
@@ -314,6 +348,9 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         }
       }
       unit->declarationCount = unitDeclarations.size();
+      unit->exportedDeclarations.clear();
+      unit->exportedNamespaces.clear();
+      collectExportRequests(unitDeclarations, *unit, options.target);
       declarations.insert(declarations.end(), unitDeclarations.begin(),
                           unitDeclarations.end());
     }

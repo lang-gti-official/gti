@@ -123,7 +123,8 @@ std::vector<PackageSourceRoot> ProjectWorkspace::packageSourceRoots() const {
     PackageSourceRoot root{.identity = package.identity(),
                            .name = package.manifest.package().name,
                            .packageRoot = package.manifest.packageRoot(),
-                           .sourceRoot = package.manifest.package().sourceRoot};
+                           .sourceRoot = package.manifest.package().sourceRoot,
+                           .modules = package.manifest.package().modules};
     root.dependencies.reserve(package.dependencies.size());
     for (const ResolvedProjectDependency &dependency : package.dependencies) {
       root.dependencies.push_back(
@@ -139,6 +140,11 @@ std::string ProjectWorkspace::modelIdentity() const {
   std::string identity = "gti-workspace-v1";
   for (const ResolvedProjectPackage &package : resolvedPackages) {
     identity += "\npackage:" + package.identity();
+    for (const auto &[name, path] : package.manifest.package().modules) {
+      identity += "\nmodule:" + package.identity() + ":" + name + "=" +
+                  path.lexically_relative(package.manifest.packageRoot())
+                      .generic_string();
+    }
     if (const std::optional<std::string> source = package.sourceIdentity()) {
       // A git-sourced package's exact acquisition identity participates so
       // two revisions of one name@version can never share build state.

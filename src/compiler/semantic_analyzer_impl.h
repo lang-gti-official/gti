@@ -2329,6 +2329,7 @@ private:
     SourceUnitId sourceUnit = 0;
     bool internalLinkage = false;
     std::string qualifiedName;
+    Token declaration;
   };
 
   struct GenericDefaultConstantUse {
@@ -2504,7 +2505,10 @@ private:
 
   [[nodiscard]] SourceUnitId sourceUnitFor(const Token &token) const;
 
-  [[nodiscard]] bool sourceVisible(SourceUnitId declaration) const;
+  [[nodiscard]] bool declarationVisible(SourceUnitId declaration,
+                                        const Token &name) const;
+  void validateModuleExports(const StmtList &statements,
+                             bool inherited = false);
 
   [[nodiscard]] bool isCompilerTrustedUnit(SourceUnitId sourceUnit) const;
 
@@ -2530,7 +2534,7 @@ private:
 
   template <typename Callback>
   void forEachSourceConsumer(SourceUnitId declaration, bool compilerPrivate,
-                             Callback callback) {
+                             std::size_t nameOffset, Callback callback) {
     if (sourceGraph == nullptr || declaration == 0) {
       return;
     }
@@ -2538,29 +2542,31 @@ private:
       return;
     }
     for (const SourceUnit &unit : sourceGraph->sourceUnits()) {
-      if (sourceGraph->isVisible(unit.id, declaration) &&
+      if (sourceGraph->isDeclarationVisible(unit.id, declaration, nameOffset) &&
           (!compilerPrivate || isCompilerTrustedUnit(unit.id))) {
         callback(unit.id);
       }
     }
   }
 
-  void publishNamespace(const std::string &name, SourceUnitId declaration);
+  void publishNamespace(const std::string &name, SourceUnitId declaration,
+                        const Token &token);
 
   void publishNamespaceAlias(const std::string &name,
-                             const NamespaceAliasInfo &alias);
+                             const NamespaceAliasInfo &alias,
+                             const Token &token);
 
   void publishTypeAlias(const std::string &name, TypeAliasId id,
                         SourceUnitId declaration, bool compilerPrivate = false);
 
   void publishConcept(const std::string &name, ConceptId id,
-                      SourceUnitId declaration);
+                      SourceUnitId declaration, const Token &token);
 
   void publishClass(const std::string &name, ClassId id,
-                    SourceUnitId declaration);
+                    SourceUnitId declaration, const Token &token);
 
-  void publishEnum(const std::string &name, EnumId id,
-                   SourceUnitId declaration);
+  void publishEnum(const std::string &name, EnumId id, SourceUnitId declaration,
+                   const Token &token);
 
   [[nodiscard]] std::unordered_map<std::string, Symbol> &
   activeNamespaceSymbols();

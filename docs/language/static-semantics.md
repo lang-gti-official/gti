@@ -163,6 +163,19 @@ intentional declarations or documentation.
 
 ## 3.4 Names, Scopes, And Visibility
 
+An explicit module interface publishes only its exported namespace-scope
+declarations and its explicit re-exports. Publication is per declaration and
+overload, not per spelling: exporting one overload does not export the others.
+Private implementation declarations and private imports remain usable while
+checking their defining bodies and concrete generic instances. Consumers cannot
+name a private declaration through qualification or an include bypass. A public
+function can return a private nominal type; an inferred value retains that exact
+type and ordinary member access, without making its private type name visible.
+Modules do not introduce namespaces or change existing program-wide
+qualified-name uniqueness, ownership, borrowing, or lifecycle rules. The
+[source syntax](lexical-and-syntax.md#explicit-module-interfaces) specifies
+import resolution and the initial single-interface boundary.
+
 Function-signature types use `R(Args...)` syntax, for example `void()` and
 `bool(int)`. They may be alias targets and generic type arguments, including
 components dependent on generic type parameters. Their exact result and ordered
