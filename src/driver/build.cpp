@@ -2354,6 +2354,23 @@ ExecutableBuildRequest::buildReport() const {
 ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   ExecutableBuildResult result;
   result.generatedSource = request.generatedSource();
+  const auto hasObjectiveCpp = [](const auto &sources) {
+    return std::any_of(sources.begin(), sources.end(), [](const auto &source) {
+      return source.extension() == ".mm";
+    });
+  };
+  if (request.compilation().target().os != "macos" &&
+      (hasObjectiveCpp(request.nativeInputs().cppSources) ||
+       std::any_of(request.nativeInputs().dependencyGroups.begin(),
+                   request.nativeInputs().dependencyGroups.end(),
+                   [&](const auto &group) {
+                     return hasObjectiveCpp(group.cppSources);
+                   }))) {
+    result.status = ExecutableBuildStatus::ToolchainConfigurationFailure;
+    result.driverDiagnostic =
+        "gti: Objective-C++ '.mm' sources require a macOS target";
+    return result;
+  }
   if (request.buildReport()) {
     const std::filesystem::path report =
         normalizedAbsolute(request.buildReport()->output);

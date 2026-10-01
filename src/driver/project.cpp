@@ -144,6 +144,19 @@ bool validateNativeFragment(const Fragment &fragment, const TargetInfo &target,
                 "C source");
   validatePaths(fragment.inputs.cppSources, fragment.cppSourceDeclarations,
                 false, "C++ source");
+  if (target.os != "macos") {
+    for (std::size_t index = 0; index < fragment.inputs.cppSources.size();
+         ++index) {
+      if (fragment.inputs.cppSources[index].extension() == ".mm") {
+        diagnostics.push_back(projectDiagnostic(
+            "GTI-B1401", spanAt(fragment.cppSourceDeclarations, index),
+            "Objective-C++ '.mm' sources require a target whose os is 'macos'; "
+            "selected os is '" +
+                target.os + "'."));
+        valid = false;
+      }
+    }
+  }
   validatePaths(fragment.inputs.libraryDirectories,
                 fragment.libraryDirectoryDeclarations, true, "directory");
   validatePaths(fragment.inputs.libraryFiles, fragment.libraryFileDeclarations,

@@ -34,6 +34,7 @@ enum class GenericConstraintKind : std::uint8_t {
 // and are carried separately through generic semantic analysis.
 enum class StructuralConstraintKind : std::uint8_t {
   None,
+  ReadMember,
   InputIterator,
   SentinelFor,
   DereferencesTo,

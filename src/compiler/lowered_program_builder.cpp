@@ -226,8 +226,13 @@ lowerRequirements(const std::vector<AppliedConceptRequirement> &requirements) {
   std::vector<LoweredConceptRequirement> result;
   result.reserve(requirements.size());
   for (const AppliedConceptRequirement &requirement : requirements) {
-    result.push_back({.conceptId = requirement.conceptId,
-                      .arguments = requirement.arguments});
+    result.push_back(
+        {.conceptId = requirement.conceptId,
+         .arguments = requirement.arguments,
+         .memberName =
+             requirement.syntax && requirement.syntax->memberRequirement
+                 ? requirement.syntax->memberRequirement->member().lexeme
+                 : std::string{}});
   }
   return result;
 }

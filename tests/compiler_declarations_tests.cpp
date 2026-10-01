@@ -4044,6 +4044,183 @@ int main() {
          "C++-familiar declaration placement");
 }
 
+void testMemberRequirementConcepts() {
+  const std::string source = R"(
+concept snapshot_as<T, R> = requires(T& item) { { item.snapshot() } -> R; };
+concept snapshot_value<T> = snapshot_as<T, T>;
+concept snapshot_and_copy<T> = snapshot_value<T> && std::copy_constructible<T>;
+struct Sample {
+  int value = 7;
+  Sample snapshot() { Sample result{.value = this.value + 1}; return result; }
+};
+T take_snapshot<T>(T& value) requires snapshot_value<T> {
+  return value.snapshot();
+}
+T forward_snapshot<T>(T& value) requires snapshot_and_copy<T> {
+  return take_snapshot(value);
+}
+T direct_snapshot<T>(T& value)
+  requires requires(T& x) { { x.snapshot() } -> T; } {
+  return value.snapshot();
+}
+int main() {
+  Sample value{};
+  auto first = forward_snapshot(value);
+  auto second = direct_snapshot(first);
+  static_assert(requires(Sample& x) { { x.snapshot() } -> Sample; });
+  static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+  return second.value - 9;
+}
+)";
+  const auto valid = lang::Frontend().analyze("member-requirements.gti", source,
+                                              {standardLibraryPrelude()});
+  for (const auto &diagnostic : valid.diagnostics) {
+    std::cerr << "Member requirement diagnostic: " << diagnostic.message
+              << '\n';
+  }
+  expect(valid.canGenerateCode(),
+         "named, relational, composed and direct member requirements must "
+         "supply symbolic call facts without executing their bodies");
+  const std::string formatted = lang::Formatter().format(source);
+  expect(lang::Formatter().format(formatted) == formatted,
+         "member requirements must format idempotently");
+  const auto reformatted =
+      lang::Frontend().analyze("member-requirements-formatted.gti", formatted,
+                               {standardLibraryPrelude()});
+  expect(reformatted.canGenerateCode(),
+         "formatting member requirements must preserve parsing and semantics");
+  if (valid.canGenerateCode()) {
+    expect(!gti_test::emitCppText(valid).empty(),
+           "direct unnamed requirements and unevaluated parameter metadata "
+           "must survive verified LoweredProgram publication");
+  }
+
+  const std::vector<std::string> rejected{
+      "struct Item {};",
+      "struct Item { int snapshot() { return 1; } };",
+      "struct Item { Item snapshot() mut { Item result{}; return result; } };",
+      "struct Item { Item snapshot() && { Item result{}; return result; } };",
+      "struct Item { static Item snapshot() { Item result{}; return result; } "
+      "};",
+      "class Item { Item snapshot() { Item result{}; return result; } };",
+      "struct Item { Item snapshot(int value) { Item result{}; return result; "
+      "} };",
+  };
+  for (const auto &definition : rejected) {
+    const auto invalid = lang::Frontend().analyze(
+        "member-requirement-rejected.gti",
+        "concept snapshots<T> = requires(T& x) { { x.snapshot() } -> T; };\n" +
+            definition +
+            "\nT read<T>(T& x) requires snapshots<T> { return x.snapshot(); }\n"
+            "int main() { Item item{}; auto copy = read(item); return 0; }",
+        {standardLibraryPrelude()});
+    expect(!invalid.canGenerateCode() &&
+               hasDiagnostic(invalid.diagnostics, "do not satisfy concept"),
+           "missing, mismatched, mutable, consuming, static and inaccessible "
+           "members must fail the declared concept");
+  }
+  const auto unsafeMember =
+      lang::Frontend().analyze("member-requirement-unsafe.gti",
+                               "struct Item { [[unsafe]] Item snapshot() { "
+                               "Item result{}; return result; "
+                               "} };",
+                               {standardLibraryPrelude()});
+  expect(!unsafeMember.canGenerateCode() &&
+             hasDiagnosticCode(unsafeMember.diagnostics, "GTI-P0001"),
+         "member requirements must not enable currently unsupported unsafe "
+         "method declarations");
+  const auto bounded =
+      lang::Frontend().analyze("member-requirement-boundaries.gti", R"(
+concept snapshots<T> = requires(T& x) { { x.snapshot() } -> T; };
+struct Recursive {
+  Recursive snapshot() requires snapshots<Recursive> {
+    Recursive result{};
+    return result;
+  }
+};
+struct Borrowed {
+  int value = 0;
+  int& snapshot() { return this.value; }
+};
+int main() {
+  static_assert(!(requires(Recursive& x) { { x.snapshot() } -> Recursive; }));
+  static_assert(!(requires(Borrowed& x) { { x.snapshot() } -> int&; }));
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(bounded.canGenerateCode(),
+         "recursive constraints must fail closed, and exact reference results "
+         "must not satisfy owned member requirements");
+  const auto disjunction =
+      lang::Frontend().analyze("member-requirement-disjunction.gti", R"(
+concept snapshots<T> = requires(T& x) { { x.snapshot() } -> T; };
+concept maybe_snapshot<T> = snapshots<T> || std::copy_constructible<T>;
+T invalid<T>(T& x) requires maybe_snapshot<T> { return x.snapshot(); }
+)",
+                               {standardLibraryPrelude()});
+  expect(
+      !disjunction.canGenerateCode(),
+      "a disjunction must not grant a member absent from another alternative");
+
+  const auto wrongName =
+      lang::Frontend().analyze("member-requirement-name.gti", R"(
+concept reads<T> = requires(T& x) { { x.read() } -> T; };
+concept writes<T> = requires(T& x) { { x.write() } -> T; };
+T write<T>(T& x) requires writes<T> { return x.write(); }
+T invalid<T>(T& x) requires reads<T> { return write(x); }
+)",
+                               {standardLibraryPrelude()});
+  expect(!wrongName.canGenerateCode(),
+         "structural implication must preserve the required member name");
+
+  const auto malformed = lang::Frontend().analyze(
+      "member-requirement-malformed.gti",
+      "concept bad<T> = requires(T& x) { { other.clone() } -> T; };",
+      {standardLibraryPrelude()});
+  expect(!malformed.canGenerateCode() &&
+             hasDiagnostic(malformed.diagnostics, "declared receiver"),
+         "requirement syntax must reject an undeclared synthetic receiver");
+  const auto consumingQuery = lang::Frontend().analyze(
+      "member-requirement-consuming-query.gti",
+      "concept bad<T> = requires(T&& x) { { x.clone() } -> T; };",
+      {standardLibraryPrelude()});
+  expect(!consumingQuery.canGenerateCode() &&
+             hasDiagnostic(consumingQuery.diagnostics, "read-only reference"),
+         "member queries must not silently treat consuming references as "
+         "read-only references");
+  const auto directFailure =
+      lang::Frontend().analyze("member-requirement-direct-failure.gti", R"(
+T snapshot<T>(T& x)
+    requires requires(T& item) { { item.snapshot() } -> T; } {
+  return x.snapshot();
+}
+int main() { int value = 1; return snapshot(value); }
+)",
+                               {standardLibraryPrelude()});
+  expect(!directFailure.canGenerateCode() &&
+             hasDiagnosticCode(directFailure.diagnostics, "GTI-S2029") &&
+             hasDiagnostic(directFailure.diagnostics,
+                           "required member 'snapshot()'"),
+         "direct member failures must identify the required member, not "
+         "invent a concept name");
+
+  const auto impossibleClone = lang::Frontend().analyze(
+      "noncloneable-owner.gti", R"(
+#include <std/memory>
+#include <std/vector>
+int main() {
+  std::vector<std::unique_ptr<int>> owners{};
+  auto copy = owners.clone();
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!impossibleClone.canGenerateCode() &&
+             hasDiagnosticCode(impossibleClone.diagnostics, "GTI-S2029"),
+         "cloning must not make exclusive owners implicitly copyable");
+}
+
 void testSourceDefinedConcepts() {
   const std::string source = R"(
 concept arithmetic_value<T> = std::numeric<T> && std::copyable<T>;
@@ -9943,6 +10120,7 @@ constexpr NamedTest kTests[] = {
     {"testConstrainedGenerics", testConstrainedGenerics},
     {"testConcurrencyTypeCapabilities", testConcurrencyTypeCapabilities},
     {"testSourceDefinedConcepts", testSourceDefinedConcepts},
+    {"testMemberRequirementConcepts", testMemberRequirementConcepts},
     {"testRequiresDisjunction", testRequiresDisjunction},
     {"testStructuralRequiresAndAccumulate",
      testStructuralRequiresAndAccumulate},

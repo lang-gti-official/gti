@@ -76,6 +76,10 @@
   parameter: (identifier) @type.parameter)
 (concept_application
   name: (identifier) @type)
+(member_requirement_expression
+  binding: (identifier) @variable.parameter
+  receiver: (identifier) @variable.parameter
+  member: (identifier) @function.method)
 (concept_application
   name: (scoped_identifier
     name: (identifier) @type))

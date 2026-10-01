@@ -562,8 +562,11 @@ private:
     output << ";requirements=[";
     for (std::size_t index = 0; index < value.requirements.size(); ++index) {
       separator(index);
-      output << "{concept=" << value.requirements[index].conceptId
-             << ";arguments=[";
+      output << "{concept=" << value.requirements[index].conceptId;
+      if (!value.requirements[index].memberName.empty())
+        output << ";member="
+               << std::quoted(value.requirements[index].memberName);
+      output << ";arguments=[";
       for (std::size_t argument = 0;
            argument < value.requirements[index].arguments.size(); ++argument) {
         separator(argument);
@@ -691,8 +694,11 @@ private:
     output << ";requirements=[";
     for (std::size_t index = 0; index < value.requirements.size(); ++index) {
       separator(index);
-      output << "{concept=" << value.requirements[index].conceptId
-             << ";arguments=[";
+      output << "{concept=" << value.requirements[index].conceptId;
+      if (!value.requirements[index].memberName.empty())
+        output << ";member="
+               << std::quoted(value.requirements[index].memberName);
+      output << ";arguments=[";
       for (std::size_t argument = 0;
            argument < value.requirements[index].arguments.size(); ++argument) {
         separator(argument);

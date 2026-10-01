@@ -1636,6 +1636,10 @@
         {
           "type": "constraint_expression",
           "named": true
+        },
+        {
+          "type": "member_requirement_expression",
+          "named": true
         }
       ]
     }
@@ -3229,6 +3233,62 @@
     }
   },
   {
+    "type": "member_requirement_expression",
+    "named": true,
+    "fields": {
+      "binding": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "member": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "receiver": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "receiver_type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type",
+            "named": true
+          }
+        ]
+      },
+      "result_type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "method_declaration",
     "named": true,
     "fields": {
@@ -4140,6 +4200,10 @@
         },
         {
           "type": "literal",
+          "named": true
+        },
+        {
+          "type": "member_requirement_expression",
           "named": true
         },
         {

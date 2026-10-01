@@ -1007,6 +1007,22 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
                .name = argumentToken.lexeme});
         }
       }
+      if (requirement.memberRequirement) {
+        recordMemberRequirementReceiver(*requirement.memberRequirement,
+                                        SemanticType::Unknown);
+        RegisteredConcept::StructuralPattern pattern;
+        pattern.kind = StructuralConstraintKind::ReadMember;
+        pattern.arguments = argumentMap;
+        pattern.memberName = requirement.memberRequirement->member().lexeme;
+        leafStructuralConstraints[requirementIndex].push_back(
+            std::move(pattern));
+        leafHasStructural[requirementIndex] = true;
+        conceptInfo.definitionRequirements.push_back(
+            {.syntax = &requirement,
+             .arguments = std::move(argumentMap),
+             .expressionApplication = requirementIndex});
+        continue;
+      }
       if (reportCompilerPrivatePath(requirement.name)) {
         valid = false;
         continue;
@@ -1090,6 +1106,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
            required.structuralConstraints) {
         RegisteredConcept::StructuralPattern mapped;
         mapped.kind = pattern.kind;
+        mapped.memberName = pattern.memberName;
         for (const RegisteredConcept::StructuralPattern::Argument &argument :
              pattern.arguments) {
           if (!argument.parameter) {

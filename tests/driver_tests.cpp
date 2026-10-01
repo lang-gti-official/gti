@@ -574,6 +574,29 @@ void testNativeCommandConstruction() {
          "native C++ source compilation should preserve the resolved standard, "
          "include, argument, source, and output policy");
 
+  const lang::driver::NativeCppCompileRequest objcRequest(
+      "selected-clang++", "Foundation bridge.mm", "bridge.o",
+      lang::CppStandard::Cpp20, lang::OptimizationLevel::O2, {"native include"},
+      {"-fobjc-arc"}, {.triple = "arm64-apple-macos", .sysroot = "SDK"});
+  expect(lang::driver::NativeToolchain().command(objcRequest) ==
+             std::vector<std::string>(
+                 {"selected-clang++", "-std=c++20", "-O2",
+                  "--target=arm64-apple-macos", "--sysroot=SDK",
+                  "-Inative include", "-fobjc-arc", "-x", "objective-c++", "-c",
+                  "Foundation bridge.mm", "-o", "bridge.o"}),
+         "Objective-C++ bridge compilation should preserve policy and select "
+         "its language without changing the final generated C++ language");
+  expect(lang::driver::NativeToolchain().preprocessCommand(objcRequest,
+                                                           "deps.d") ==
+             std::vector<std::string>(
+                 {"selected-clang++", "-std=c++20", "-O2",
+                  "--target=arm64-apple-macos", "--sysroot=SDK",
+                  "-Inative include", "-fobjc-arc", "-x", "objective-c++", "-E",
+                  "-MD", "-MF", "deps.d", "Foundation bridge.mm", "-o",
+                  "bridge.o"}),
+         "Objective-C++ cache dependency discovery must use the same language, "
+         "ARC, target, standard, and include policy as compilation");
+
   lang::driver::NativeInputs orderedInputs;
   orderedInputs.libraryDirectories = {"native lib"};
   orderedInputs.libraryFiles = {"ignored-file.a"};
@@ -758,6 +781,39 @@ void testNativeCCompilerFailure() {
 }
 
 void testNativeCppCompilerFailure() {
+  // Library callers can construct native inputs without manifest resolution.
+  // Reject both application and composed bridges before creating artifacts or
+  // invoking even an intentionally missing compiler.
+  for (bool dependency : {false, true}) {
+    TemporaryDirectory rejected;
+    lang::driver::NativeInputs inputs;
+    if (dependency) {
+      lang::driver::NativeDependencyGroup group;
+      group.packageIdentity = "bridge@1.0.0";
+      group.cppSources = {rejected.root() / "bridge.mm"};
+      inputs.dependencyGroups.push_back(std::move(group));
+    } else {
+      inputs.cppSources = {rejected.root() / "bridge.mm"};
+    }
+    const auto result =
+        lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
+            lang::driver::CompilationRequest(
+                rejected.root() / "missing.gti",
+                lang::standardLibraryLayout(rejected.root()),
+                {.os = "linux", .vendor = "unknown", .arch = "x86_64"},
+                lang::OptimizationLevel::O0, lang::CppStandard::Cpp23),
+            {.standardLibrary = lang::standardLibraryLayout(rejected.root())},
+            rejected.root() / "generated.cpp", rejected.root() / "program",
+            "missing-compiler", std::move(inputs), false, false, false));
+    expect(result.status == lang::driver::ExecutableBuildStatus::
+                                ToolchainConfigurationFailure &&
+               result.driverDiagnostic &&
+               result.driverDiagnostic->find("macOS") != std::string::npos &&
+               result.cppCompilations.empty() && result.nativeCommand.empty() &&
+               !std::filesystem::exists(rejected.root() / "generated.cpp"),
+           "direct driver clients must not bypass the macOS Objective-C++ "
+           "boundary");
+  }
   TemporaryDirectory temporary;
   const std::filesystem::path include = temporary.root() / "include";
   std::filesystem::create_directories(include / "gti");

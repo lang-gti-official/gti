@@ -1,0 +1,41 @@
+==================
+Named and boolean member requirements
+==================
+concept snapshot_as<T, R> = requires (T& value) { { value.snapshot() } -> R; };
+bool supported = requires (Widget& item) { { item.clone() } -> Widget; };
+---
+
+(source_file
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (identifier)
+    (constraint_expression
+      (member_requirement_expression
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)
+        (identifier)
+        (identifier)
+        (type
+          (user_type
+            (identifier))))))
+  (variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (member_requirement_expression
+          (type
+            (user_type
+              (identifier))
+            (reference_declarator))
+          (identifier)
+          (identifier)
+          (identifier)
+          (type
+            (user_type
+              (identifier))))))))

@@ -183,6 +183,8 @@ add_test(NAME collection_initialization_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/collection_initialization_runtime_test.py" $<TARGET_FILE:gti>)
 add_test(NAME collection_initialization_lsp
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/collection_initialization_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+add_test(NAME member_requirement_lsp
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/member_requirement_lsp_test.py" $<TARGET_FILE:gti_lsp>)
 add_test(NAME nested_borrow_fields_lsp
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_borrow_fields_lsp_test.py" $<TARGET_FILE:gti_lsp>)
 add_test(NAME borrowing_composition_lsp
@@ -1480,6 +1482,13 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(constructor_constructed_field_runtime
                          PROPERTIES TIMEOUT 240)
     add_test(
+      NAME generic_clone_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/generic_clone_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(generic_clone_runtime PROPERTIES TIMEOUT 240)
+    add_test(
       NAME issues_117_120_regressions
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/issues_117_120_regression_test.py"
@@ -2248,6 +2257,15 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/project_cli_smoke_test.py"
             "$<TARGET_FILE:gti>"
   )
+  add_test(
+    NAME objective_cpp_bridge
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/objective_cpp_bridge_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/examples/objective-cpp-bridge"
+  )
+  set_tests_properties(objective_cpp_bridge
+                       PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
   add_test(
     NAME benchmark_harness
     COMMAND "${Python3_EXECUTABLE}"

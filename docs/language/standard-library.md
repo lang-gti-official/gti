@@ -232,7 +232,12 @@ The current implemented foundation includes:
   `checked_add/sub/mul` functions returning
   `expected<T, std::arithmetic_errc>`, plus source-defined integral `gcd` and
   `lcm` and numeric `midpoint`; and
-- `<std/utility>` source-defined `std::pair` and `std::make_pair`; and
+- `<std/utility>` source-defined `std::pair`, `std::make_pair`, and explicit
+  `std::clone(value)`. Cloning prefers an exact read-only member `clone()` and
+  otherwise requires ordinary copy construction. The source concepts
+  `member_cloneable<T>` and `cloneable<T>` expose those contracts. Vector cloning
+  applies the helper to every element, supporting owned strings and nested
+  vectors; shared pointers retain sharing. See [concepts](concepts.md); and
 - `<std/optional>` source-defined move-only `std::optional<T>` for
   `std::movable T`. Empty construction performs no allocation; value
   construction, `emplace`, `reset`, `has_value`, contextual `bool`, checked

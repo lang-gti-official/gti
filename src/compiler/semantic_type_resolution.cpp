@@ -5458,6 +5458,22 @@ auto SemanticVisitor::Impl::resolveRequirements(
        applicationIndex < clause->requirements().size(); ++applicationIndex) {
     const ConceptApplication &application =
         clause->requirements()[applicationIndex];
+    if (application.memberRequirement) {
+      recordMemberRequirementReceiver(
+          *application.memberRequirement,
+          typeOf(application.memberRequirement->receiver(), scope));
+      AppliedConceptRequirement requirement{.syntax = &application,
+                                            .expression = &clause->expression,
+                                            .expressionApplication =
+                                                applicationIndex};
+      for (const auto &argument : application.arguments) {
+        validateType(argument);
+        recordTypeUse(argument);
+        requirement.arguments.push_back(typeOf(argument, scope));
+      }
+      result.push_back(std::move(requirement));
+      continue;
+    }
     if (reportCompilerPrivatePath(application.name)) {
       continue;
     }

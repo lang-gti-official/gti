@@ -28,6 +28,7 @@ struct SemanticConstraintFailure {
   const ConceptApplication *application = nullptr;
   const Token *disjunction = nullptr;
   std::vector<SemanticConstraintFailure> alternatives;
+  std::string memberName;
 };
 
 class SemanticDiagnosticReporter {

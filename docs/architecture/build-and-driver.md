@@ -351,6 +351,41 @@ the generated C++ for diagnosis. C compiler selection is `--cc`, then `GTI_CC`,
 then `CC`, then `cc`; C++ compilation and final linking use `--cxx`, then
 `GTI_CXX`, then `CXX`, then `c++`.
 
+### Objective-C++ bridges
+
+`cpp-sources` also accepts exact `.mm` paths for a selected macOS target.
+These are foreign Objective-C++ translation units: the same immutable
+`NativeCppCompileRequest` supplies the C++ standard, optimization, include
+scope, target/SDK policy and arguments, while both object compilation and
+dependency preprocessing explicitly select `-x objective-c++`. The generated
+GTI translation unit and final link stay ordinary C++. Manifest resolution
+rejects a selected `.mm` on another OS with `GTI-B1401` at its source path;
+unmatched platform fragments remain inactive. Approved build-script outputs
+accept the same extension and reject an unsupported target with `GTI-B2005`.
+The low-level executable build API checks root and dependency-group sources
+too, before frontend or filesystem work. The selected C++ driver must support
+Objective-C++ and the requested Apple SDK; GTI does not substitute another
+compiler or download SDKs.
+
+No separate Objective-C runtime/ownership model exists in GTI. The bridge
+exposes existing C-compatible `extern "C"` symbols and owns all Objective-C
+objects, autorelease pools, exceptions and retained-resource cleanup itself.
+Frameworks use ordinary structured `frameworks` link operands. ARC is not
+enabled implicitly: an application may explicitly supply `-fobjc-arc` through
+`compile-args`, which also reaches its ordinary C++/generated translation
+units (Clang accepts it without changing their language). Such opaque flags
+retain the existing conservative cache bypass and dependency-package argument
+restrictions. This first slice does not add `.m`, Objective-C type import,
+message syntax, ARC manifest policy, or non-Apple Objective-C runtimes.
+
+Without opaque flags, `.mm` participates in the existing exact source,
+preprocessed translation-unit, depfile/header and framework-link identity.
+Language selection is deterministic from the declared source extension and
+identical for discovery and compilation; a `.mm` cannot reuse a `.cpp` cache
+identity. Native compile failures retain the same prior-object/executable
+preservation guarantees. `objective_cpp_bridge`, `driver_pipeline`, and
+`project_model` cover the runtime, argument, cache and target boundaries.
+
 ### Cross Compilation
 
 `gti build`, `check`, `run`, and `test` accept `--target <triple>`. Omitting

@@ -160,7 +160,15 @@ constraint-disjunction
 constraint-conjunction = constraint-primary
                          { ( "&&" | "and" ) constraint-primary } ;
 constraint-primary     = concept-application
+                       | member-requirement
                        | "(" constraint-expression ")" ;
+
+member-requirement     = "requires" "(" type IDENTIFIER ")"
+                         "{" "{" IDENTIFIER "." IDENTIFIER "(" ")" "}"
+                         "->" type ";" "}" ;
+(* The receiver type is a read-only reference. The two receiver identifiers
+   must match. The result is an exact owned type, not a C++ result concept.
+   Member requirements are also boolean primary expressions. *)
 
 compiler-concept-declaration
                        = compiler-constraint-binding "concept" IDENTIFIER
@@ -175,8 +183,8 @@ compiler-constraint-binding
    declaration's type parameters or a closed exact type. An application
    supplies the referenced concept's exact arity and may map, reorder, or reuse
    the enclosing parameters. Concepts may be referenced
-   before their declaration; cycles are invalid. Negation, expression
-   requirements, concept specialization, and constraint-based
+   before their declaration; cycles are invalid. Negation, arbitrary expression
+   requirements beyond the member signature above, concept specialization, and constraint-based
    overload ranking are not part of this layer.
 
    `@compiler_constraint` is reserved syntax. Semantic analysis accepts it only
@@ -1459,6 +1467,7 @@ increment-suffix       = "++" | "--" ;
 primary-expression     = literal
                        | numeric-conversion
                        | layout-query-expression
+                       | member-requirement
                        | qualified-name
                        | lambda-expression
                        | unexpected-expression

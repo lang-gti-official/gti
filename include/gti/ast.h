@@ -376,9 +376,14 @@ struct CompilerConstraintBinding {
   std::string name;
 };
 
+class MemberRequirement;
+
+// A constraint leaf is either a named concept application or an exact member
+// requirement. The latter's arguments are the receiver referent and result.
 struct ConceptApplication {
   NamePath name;
   std::vector<TypeRef> arguments;
+  std::shared_ptr<const MemberRequirement> memberRequirement;
 };
 
 enum class ConstraintExpressionKind {
@@ -538,6 +543,7 @@ class Index;
 class IndexSet;
 class Lambda;
 class LayoutQuery;
+class MemberRequirement;
 class LiteralExpr;
 class Logical;
 class PackFold;
@@ -602,6 +608,7 @@ public:
   virtual void visitIndexSetExpr(const IndexSet &expr) = 0;
   virtual void visitLambdaExpr(const Lambda &expr) = 0;
   virtual void visitLayoutQueryExpr(const LayoutQuery &expr) = 0;
+  virtual void visitMemberRequirementExpr(const MemberRequirement &expr) = 0;
   virtual void visitLiteralExpr(const LiteralExpr &expr) = 0;
   virtual void visitLogicalExpr(const Logical &expr) = 0;
   virtual void visitPackFoldExpr(const PackFold &expr) = 0;
@@ -630,6 +637,7 @@ enum class ExprKind : std::uint8_t {
   IndexSet,
   Lambda,
   LayoutQuery,
+  MemberRequirement,
   LiteralExpr,
   Logical,
   PackFold,
@@ -1318,6 +1326,35 @@ public:
 private:
   Token keyword_;
   TypeRef type_;
+};
+
+// A bounded unevaluated exact nullary read-member signature query. Neither
+// the synthetic receiver nor the member invocation creates runtime storage.
+class MemberRequirement final : public ExprOfKind<ExprKind::MemberRequirement> {
+public:
+  MemberRequirement(Token keyword, TypeRef receiver, Token binding,
+                    Token receiverUse, Token member, TypeRef result)
+      : keyword_(std::move(keyword)), receiver_(std::move(receiver)),
+        binding_(std::move(binding)), receiverUse_(std::move(receiverUse)),
+        member_(std::move(member)), result_(std::move(result)) {}
+
+  void accept(ExprVisitor &visitor) const override {
+    visitor.visitMemberRequirementExpr(*this);
+  }
+  const Token &keyword() const { return keyword_; }
+  const TypeRef &receiver() const { return receiver_; }
+  const Token &binding() const { return binding_; }
+  const Token &receiverUse() const { return receiverUse_; }
+  const Token &member() const { return member_; }
+  const TypeRef &result() const { return result_; }
+
+private:
+  Token keyword_;
+  TypeRef receiver_;
+  Token binding_;
+  Token receiverUse_;
+  Token member_;
+  TypeRef result_;
 };
 
 class LiteralExpr final : public ExprOfKind<ExprKind::LiteralExpr> {

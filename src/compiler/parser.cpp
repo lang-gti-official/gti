@@ -356,6 +356,19 @@ private:
   }
 
   std::size_t constraintPrimary(ConstraintExpression &expression) {
+    if (match({TokenKind::REQUIRES})) {
+      auto requirement = memberRequirement(previous());
+      TypeRef receiver = requirement->receiver();
+      receiver.reference.reset();
+      const std::size_t application = expression.applications.size();
+      expression.applications.push_back(
+          {.name = NamePath{{requirement->member()}},
+           .arguments = {std::move(receiver), requirement->result()},
+           .memberRequirement = std::move(requirement)});
+      expression.nodes.push_back({.kind = ConstraintExpressionKind::Application,
+                                  .application = application});
+      return expression.nodes.size() - 1;
+    }
     if (match({TokenKind::LEFT_PAREN})) {
       const NestingGuard nesting = enterNesting(previous());
       const std::size_t nested = constraintDisjunction(expression);
@@ -2558,7 +2571,45 @@ private:
     return arguments;
   }
 
+  std::unique_ptr<MemberRequirement> memberRequirement(Token keyword) {
+    const NestingGuard nesting = enterNesting(keyword);
+    consume(TokenKind::LEFT_PAREN, "Expect '(' after member requirement.");
+    TypeRef receiver = parseType();
+    if (!receiver.reference ||
+        receiver.reference->kind != TokenKind::AMPERSAND) {
+      throw error(receiver.name.last(),
+                  "Member requirement receiver must be a read-only reference.");
+    }
+    Token binding =
+        consume(TokenKind::IDENTIFIER, "Expect requirement receiver name.");
+    consume(TokenKind::RIGHT_PAREN, "Expect ')' after requirement receiver.");
+    consume(TokenKind::LEFT_BRACE, "Expect '{' before member requirement.");
+    consume(TokenKind::LEFT_BRACE, "Expect '{' before required member call.");
+    Token use =
+        consume(TokenKind::IDENTIFIER, "Expect requirement receiver name.");
+    if (use.lexeme != binding.lexeme) {
+      throw error(use, "Member requirement must use its declared receiver.");
+    }
+    consume(TokenKind::DOT, "Expect '.' before required member name.");
+    Token member =
+        consume(TokenKind::IDENTIFIER, "Expect required member name.");
+    consume(TokenKind::LEFT_PAREN, "Expect '(' after required member name.");
+    consume(TokenKind::RIGHT_PAREN,
+            "Member requirements currently require a nullary call.");
+    consume(TokenKind::RIGHT_BRACE, "Expect '}' after required member call.");
+    consume(TokenKind::ARROW, "Expect '->' before exact required result type.");
+    TypeRef result = parseType();
+    consume(TokenKind::SEMICOLON, "Expect ';' after required result type.");
+    consume(TokenKind::RIGHT_BRACE, "Expect '}' after member requirement.");
+    return std::make_unique<MemberRequirement>(
+        std::move(keyword), std::move(receiver), std::move(binding),
+        std::move(use), std::move(member), std::move(result));
+  }
+
   ExprPtr primary() {
+    if (match({TokenKind::REQUIRES})) {
+      return memberRequirement(previous());
+    }
     if (match({TokenKind::LEFT_BRACKET})) {
       return lambdaExpression(previous());
     }

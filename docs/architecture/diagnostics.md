@@ -99,6 +99,13 @@ diagnostics or letting a backend message choose either identity.
 
 ## Production Rules
 
+`GTI-B1401` owns a selected Objective-C++ `.mm` native source for a non-macOS
+target. Point at the exact `cpp-sources` manifest array element and name the
+selected OS. Unselected platform fragments produce no diagnostic. No fix-it
+changes target selection or rewrites a source language. Approved build-script
+outputs use their existing `GTI-B2005` invalid-output family for this same
+target boundary.
+
 `GTI-S2094` owns an executable request without a resolved global `main`
 definition in its entry source unit. It is opt-in executable policy, checked
 after successful syntax and semantics and before HIR/backend work. Point at
@@ -568,6 +575,13 @@ target at a repeatable site therefore fail at call viability. Do not postpone
 these cases to a body-local `GTI-S2022` or `GTI-S2046`: concrete reanalysis
 must confirm the relation, not discover that its public contract was
 insufficient.
+
+Exact read-member requirements also use `GTI-S2029`. Named concepts retain
+their declared name; a direct requirement names the missing member and relates
+its written receiver/result signature rather than inventing a concept name.
+The hint requires a public, safe, read-only member with the exact owned result.
+Malformed requirement syntax, including a consuming `T&&` receiver, remains
+`GTI-P0001`; no fix-it changes ownership or adds a clone implementation.
 
 `GTI-S2046` owns the confined-callable boundary after public viability. It
 points at the callable

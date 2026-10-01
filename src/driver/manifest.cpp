@@ -534,14 +534,15 @@ void rejectNonCppSources(std::vector<std::filesystem::path> &sources,
                          std::vector<Diagnostic> &diagnostics) {
   for (std::size_t index = 0; index < sources.size();) {
     const std::filesystem::path extension = sources[index].extension();
-    if (extension == ".cpp" || extension == ".cc" || extension == ".cxx") {
+    if (extension == ".cpp" || extension == ".cc" || extension == ".cxx" ||
+        extension == ".mm") {
       ++index;
       continue;
     }
     diagnostics.push_back(buildDiagnostic(
         "GTI-B1005", declarations[index],
         "Native field 'cpp-sources' accepts only files with the '.cpp', "
-        "'.cc', or '.cxx' extension."));
+        "'.cc', '.cxx', or Objective-C++ '.mm' extension."));
     sources.erase(sources.begin() + static_cast<std::ptrdiff_t>(index));
     declarations.erase(declarations.begin() +
                        static_cast<std::ptrdiff_t>(index));

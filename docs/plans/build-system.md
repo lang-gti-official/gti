@@ -1182,6 +1182,21 @@ Acceptance criteria:
 - direct compilation and prebuilt native link inputs retain their existing
   behavior.
 
+### Post-Milestone 3 addition: Objective-C++ native bridges
+
+Status: complete
+
+`cpp-sources` accepts `.mm` for selected macOS targets, including composed
+dependency inputs and approved build-script outputs. Object compilation and
+cache dependency discovery share explicit Objective-C++ language selection;
+framework linking and ordinary C ABI declarations remain the existing paths.
+`objective_cpp_bridge` executes the Foundation bridge with default ownership
+and explicit ARC, C++20/C++23, header invalidation, cache reuse and native
+failure preservation. `project_model` and `driver_pipeline` cover target
+rejection, exact declaration spans and command construction. General Objective-C
+type import, `.m`, non-Apple runtimes and a dedicated ARC policy are not part
+of this slice.
+
 ### Milestone 4: whole-program incremental cache
 
 **Complete:**

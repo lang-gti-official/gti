@@ -579,6 +579,49 @@ representation. A C++ exception must never escape through an `extern "C"`
 function; the shim must catch it and translate it to a result allowed by the
 declared boundary. General C++ ABI calls remain outside the language contract.
 
+### Objective-C++ Apple API bridges
+
+On macOS, the same boundary can be implemented in a `.mm` Objective-C++
+translation unit. Declare it in the existing `cpp-sources` field and name its
+frameworks explicitly:
+
+```toml
+[[package.native.platforms]]
+os = "macos"
+cpp-sources = ["native/apple_bridge.mm"]
+frameworks = ["Foundation"]
+```
+
+The selected C++ compiler must support Objective-C++ (Apple Clang does).
+GTI compiles the bridge separately with the selected C++ standard and then
+links its object into the generated C++ executable. Other targets ignore this
+platform fragment; selected `.mm` inputs on a non-macOS target are rejected.
+Prebuilt bridge objects may instead use existing `link-files`. No Objective-C
+syntax, class representation, message dispatch, or object ownership enters
+GTI's type system, and `gti bindgen` does not import Objective-C APIs.
+
+Keep `NSString`, `NSObject`, autorelease pools and retained handles behind
+the bridge. Catch Objective-C exceptions with `@try`/`@catch` and any C++
+exceptions with `try`/`catch`, translating failures to the declared C result;
+neither may unwind through GTI. Do not return an `UTF8String` pointer after
+its owner or autorelease pool has expired. Prefer copying bytes into bounded
+caller-owned storage, or define an explicit owned opaque-handle/free contract.
+GTI cannot verify a foreign implementation's retention or bounds promises.
+Apple API thread-affinity requirements also remain the bridge/caller's
+responsibility; compiling a bridge does not make a main-thread-only API safe
+to call from arbitrary threads.
+
+The runnable [Foundation bridge example](../../examples/objective-cpp-bridge/)
+copies a deterministic Foundation string into a live GTI byte array, checks
+the returned length, then constructs an owning GTI string. The bridge retains
+no GTI address; its `@autoreleasepool` releases native temporary objects before
+return. Run `gti run` from that example directory on macOS; it prints
+`psych/foundation`. It works both with Clang's default manual Objective-C
+ownership and an explicit application `compile-args = ["-fobjc-arc"]`.
+That flag is shared with ordinary C++ compilation, where Clang accepts it
+without enabling Objective-C parsing. Opaque flags deliberately bypass the
+whole-program cache; dependency packages still cannot inject arbitrary flags.
+
 ## Pointer-Bearing Calls And Unsafe
 
 A declaration containing an allowed raw pointer is not itself unsafe. This
@@ -724,7 +767,7 @@ The fields accepted by each `native` table and matching platform fragment are:
 | `c-sources` | Existing package-contained `.c` files compiled before linking |
 | `c-standard` | C language mode: `c11`, `c17` (default), or `c23` |
 | `c-compile-args` | Ordered arguments used only while compiling declared C sources |
-| `cpp-sources` | Existing package-contained `.cpp`, `.cc`, or `.cxx` files compiled before linking |
+| `cpp-sources` | Existing package-contained `.cpp`, `.cc`, `.cxx`, or macOS-only Objective-C++ `.mm` files compiled before linking |
 | `library-dirs` | Existing native library search directories |
 | `link-files` | Existing regular object, archive, or other exact native link inputs |
 | `libraries` | Names emitted through the native toolchain's library option |
@@ -743,9 +786,9 @@ Structured paths are relative to `gti.toml`, canonicalized, and confined to the
 package even through symbolic links. Selected include/library paths must be
 existing directories; selected C sources, C++ sources, and link files must be
 existing regular files. C source paths must use the exact `.c` extension; C++
-source paths must use `.cpp`, `.cc`, or `.cxx`. Dependencies may widen this
-boundary only through a future declared package root; native fields do not
-grant arbitrary filesystem discovery.
+source paths must use `.cpp`, `.cc`, `.cxx`, or `.mm` (macOS only). A dependency
+contributes paths confined to its own declared package root; native fields do
+not grant arbitrary filesystem discovery.
 
 Lists concatenate rather than replacing lower scopes. C sources, C++ sources,
 search paths, and link operands resolve from target to profile to package so
@@ -797,11 +840,12 @@ objects are linked first, followed by C++ objects, the runtime, and declared
 native operands. C++ source objects use the same atomic publication and failure
 preservation contract as C objects. GTI does not parse either native language
 or verify that a definition matches its GTI prototype; that cross-language ABI
-agreement remains the programmer's responsibility. It therefore does not yet
-have a complete dependency graph for native included headers or preprocessing
-state. A build with declared C or C++ sources bypasses the whole-program
-executable cache and recompiles those sources. Pure GTI builds without native
-search paths or link operands remain cacheable.
+agreement remains the programmer's responsibility. Declared native sources,
+including Objective-C++ bridges, use the compiler's preprocessing output and
+dependency report for whole-program cache identity. An unchanged eligible
+build can reuse its executable; unavailable identities conservatively bypass
+the cache. The exact cache boundaries are described in
+[build and driver architecture](../architecture/build-and-driver.md#whole-program-project-cache).
 
 `gti build` and `gti run` pass the effective inputs through the same
 `ExecutableBuildRequest` as direct mode. `gti check` validates the selected

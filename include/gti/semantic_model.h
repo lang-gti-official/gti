@@ -1074,6 +1074,9 @@ enum class SymbolKind {
   TypeParameter,
   ValueParameter,
   LambdaCapture,
+  // A source-only name inside an unevaluated member requirement. It never
+  // denotes runtime storage and may have a concept-dependent type.
+  RequirementParameter,
 };
 
 enum class OccurrenceRole : std::uint32_t {

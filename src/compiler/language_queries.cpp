@@ -525,6 +525,15 @@ void SignaturePrinter::appendParameters(
 
 void SignaturePrinter::appendConceptApplication(
     std::string &result, const ConceptApplication &application) {
+  if (application.memberRequirement) {
+    const auto &query = *application.memberRequirement;
+    result += "requires (" +
+              semantic_spelling::typeRefSpelling(query.receiver()) + " " +
+              query.binding().lexeme + ") { { " + query.binding().lexeme + "." +
+              query.member().lexeme + "() } -> " +
+              semantic_spelling::typeRefSpelling(query.result()) + "; }";
+    return;
+  }
   result += path(application.name);
   result += '<';
   for (std::size_t index = 0; index < application.arguments.size(); ++index) {
@@ -557,6 +566,10 @@ void SignaturePrinter::appendRequirements(
   const std::vector<ConceptApplication> &syntax = expression.applications;
   const auto appendApplication = [&](std::size_t index) {
     if (index >= syntax.size()) {
+      return;
+    }
+    if (syntax[index].memberRequirement) {
+      appendConceptApplication(result, syntax[index]);
       return;
     }
     const AppliedConceptRequirement *resolvedRequirement = nullptr;
@@ -1412,6 +1425,7 @@ private:
     switch (kind) {
     case SymbolKind::LocalVariable:
     case SymbolKind::Parameter:
+    case SymbolKind::RequirementParameter:
     case SymbolKind::TypeParameter:
     case SymbolKind::ValueParameter:
     case SymbolKind::LambdaCapture:
