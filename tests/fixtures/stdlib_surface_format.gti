@@ -1,3 +1,4 @@
+#include <std/charconv>
 #include <std/format>
 #include <std/string>
 
@@ -135,6 +136,25 @@ int main() {
   if (!floating ||
       floating.value() != "1.25|1.250e+01|12.000|12.5|-000003.50") {
     return 21;
+  }
+  mut auto alternate_default =
+      std::format("{:#}|{:#}|{:#.6g}", 1.5d, 0.0d, 1.5d);
+  if (!alternate_default ||
+      alternate_default.value() != "1.5|0.|1.50000") {
+    return 23;
+  }
+  mut double infinity = 0.0d;
+  mut double not_a_number = 0.0d;
+  auto parsed_infinity = std::from_chars("inf", infinity);
+  auto parsed_nan = std::from_chars("nan", not_a_number);
+  if (parsed_infinity.ec != std::parse_errc::none ||
+      parsed_nan.ec != std::parse_errc::none) {
+    return 25;
+  }
+  mut auto special = std::format("{:08}|{:08}|{:08}", infinity, -infinity,
+                                 not_a_number);
+  if (!special || special.value() != "     inf|    -inf|     nan") {
+    return 24;
   }
   auto excessive_precision = std::format("{:.3000f}", 1.0d);
   if (excessive_precision ||

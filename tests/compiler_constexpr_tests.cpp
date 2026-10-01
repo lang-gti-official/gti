@@ -825,7 +825,7 @@ int main() {
              formattedGenerated.find("std::vformat") == std::string::npos &&
              formattedGenerated.find("count_format_argument") !=
                  std::string::npos &&
-             formattedGenerated.find("append_format_argument") !=
+             formattedGenerated.find("append_selected_format_argument") !=
                  std::string::npos,
          "formatting should lower as ordinary GTI library calls rather than a "
          "native C++ formatting shortcut");

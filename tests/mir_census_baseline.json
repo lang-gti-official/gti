@@ -56,7 +56,7 @@
     "55-owned-callable-transport.gti": 39,
     "56-sum-types.gti": 26,
     "57-contextual-array-arguments.gti": 37,
-    "58-formatted-output.gti": 407,
+    "58-formatted-output.gti": 427,
     "59-default-parameters.gti": 29,
     "60-configuration-and-comments.gti": 24,
     "61-global-borrow-returns.gti": 26,
@@ -88,5 +88,5 @@
     "89-library-workflow.gti": 790,
     "90-generic-algorithms.gti": 217
   },
-  "total": 7600
+  "total": 7620
 }

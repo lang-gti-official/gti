@@ -4,7 +4,7 @@
 the public shape of [spdlog](https://github.com/gabime/spdlog). It uses GTI's
 ownership, checked failures, standard formatting, source locations, atomics,
 and mutexes directly; it is not a C or C++ binding and has no native build
-phase.
+phase. It requires GTI 0.357.0 or newer.
 
 The initial package deliberately excludes asynchronous logging. It is suitable
 for console, basic-file, size-rotating-file, null, ring-buffer, multi-sink, and

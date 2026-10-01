@@ -3298,14 +3298,13 @@ def main():
             'mut auto heterogeneous = std::format("{}|{}|{}|{}|{}", '
             "true, 'X', int32_t(-7), 1.25, std::move(owned)); "
             'if (!heterogeneous or heterogeneous.value() != '
-            '"true|X|-7|1.250000|owned") { return 17; } '
+            '"true|X|-7|1.25|owned") { return 17; } '
             'mut auto unsupported = std::format("{}", '
             'unsupported_format_value()); '
             'if (unsupported or unsupported.error() != '
             'std::format_errc::unsupported_argument) { return 18; } '
             'mut auto binary64 = std::format("{}", 1.5d); '
-            'if (binary64 or binary64.error() != '
-            'std::format_errc::unsupported_argument) { return 19; } '
+            'if (!binary64 or binary64.value() != "1.5") { return 19; } '
             'mut auto unsupported_print = std::try_print("LEAK {}", '
             'unsupported_format_value()); '
             'if (unsupported_print or unsupported_print.error() != '
@@ -3361,7 +3360,7 @@ def main():
                 assert run([str(formatted_executable)]).stdout == (
                     "A\x00B|A\x007Bsigned=-9223372036854775808 "
                     "unsigned=18446744073709551615 braces={} mixed=-8 65535 "
-                    "host=gitea.example enabled=true code=X ratio=1.250000\n"
+                    "host=gitea.example enabled=true code=X ratio=1.25\n"
                 )
 
         invalid_float_print = root / "invalid-float-print.gti"

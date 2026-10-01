@@ -244,6 +244,10 @@ character conversion for both binary32 and binary64 values. Its default
 floating presentation is the shortest round-tripping decimal representation;
 checked width, alignment, sign, alternate, zero-padding, precision, and
 `f`/`e`/`g` presentation specifiers are available through replacement fields.
+Alternate default presentation preserves those shortest digits and adds a
+decimal point only when one is absent; explicit general precision retains
+significant trailing zeroes. Infinity and NaN ignore numeric zero-padding and
+use ordinary fill/alignment.
 Read-only `begin()`/`end()` iteration uses the language's
 structural range protocol and a source-defined iterator that retains a checked
 borrow of the backing storage. A read cursor can be copy-constructed into an
@@ -259,16 +263,18 @@ bytes are preserved and C observes the prefix before the first one.
 NUL. Both pointers retain a checked read-only dependency on the string until
 their last use, but native code that retains one beyond a call still requires a
 binding-specific lifetime contract.
-`<std/format>` implements sequential `{}` replacement for heterogeneous
-booleans, characters, fixed-width integers, binary32 floats, string views, and
-explicitly transferred owning strings, plus escaped `{{`/`}}` and exact field
-counts. It builds an owning `std::string`; malformed patterns, count
-mismatches, and unsupported argument types are returned through
-`std::format_errc` before output. Named strings use `.view()` for non-consuming
-formatting because current value packs have no reference-pack declarator.
-Binary64/specifier formatting and formatter customization remain later
-standard-library layers and must not make the compiler recognize the public
-`std::string` name.
+`<std/format>` implements heterogeneous automatic or numeric-indexed fields
+for booleans, characters, fixed-width integers, binary32/binary64 values,
+string views, and explicitly transferred owning strings, plus escaped
+`{{`/`}}`. Fields support fill/alignment, sign, alternate form, zero-padding,
+width, precision, integer `b`/`B`/`o`/`d`/`x`/`X`/`c`, floating
+`f`/`F`/`e`/`E`/`g`/`G`, and string `s` presentation. It builds an owning
+`std::string`; malformed patterns/specifiers, count mismatches, and unsupported
+argument types are returned through `std::format_errc` before output. Named
+strings use `.view()` for non-consuming formatting because current value packs
+have no reference-pack declarator. Named and dynamic fields, locale-aware
+formatting, and formatter customization remain later standard-library layers;
+none of this makes the compiler recognize the public `std::string` name.
 Front/back, mutable `at`, resize, shrink-to-fit, pop-back, and constant-time
 storage `swap` are implemented. Swap also exchanges size and capacity without
 copying characters or allocating.

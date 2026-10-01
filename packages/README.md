@@ -1,10 +1,11 @@
-# Native binding packages
+# Optional packages
 
 These are the compiler repository's development copies and integration fixtures
-for optional GTI native binding packages, separate from `stdlib`. They
-use existing GTI C ABI semantics, `gti bindgen`, package-scope native inputs,
-and—where upstream configuration is required—consumer-approved package build
-scripts. No compiler special cases or global library installation are involved.
+for optional GTI packages, separate from `stdlib`. Most are native bindings
+that use existing GTI C ABI semantics, `gti bindgen`, package-scope native
+inputs, and—where upstream configuration is required—consumer-approved package
+build scripts. `spdlog` is implemented directly in GTI and has no native build
+phase. No compiler special cases or global library installation are involved.
 
 ## Prepare and use
 
@@ -73,6 +74,7 @@ cimgui = { git = "https://git.internal.howetotech.dev/gti-lang/cimgui.git", rev 
 zlib = { git = "https://git.internal.howetotech.dev/gti-lang/zlib.git", rev = "20de7a934a6adb50e9f2fabde0b207322152802e" }
 libpng = { git = "https://git.internal.howetotech.dev/gti-lang/libpng.git", rev = "44948ff1d6e34fdf2304e3622d96fe7e08695a86" }
 cli11 = { git = "https://git.internal.howetotech.dev/gti-lang/cli11.git", rev = "f4f244a3effaded591056ca38df0805da9936c48" }
+spdlog = { git = "https://git.internal.howetotech.dev/gti-lang/spdlog.git", rev = "b8f1e91e45beb0b46e0de865a2e12587d982bf54" }
 ```
 
 Run `gti fetch`, commit the resulting `gti.lock`, and use `gti build --locked`
@@ -148,6 +150,7 @@ cannot select a subfolder of this compiler repository.
 | `assimp/assimp` | Assimp 6.0.5 | File/memory import, release/errors, mesh positions/normals/UVs/face indices, material indices, node hierarchy/local transforms and selected post-processing flags in namespace `assimp` |
 | `libgit2/libgit2` | libgit2 1.9.6 | Library lifecycle/errors, repository init/open/properties/status, HEAD commit metadata and OID formatting in namespace `git` |
 | `cli11/cli11` | CLI11 2.6.2 | Apps, subcommands, flags, positional/string and typed numeric options, parse/help/error capture and remaining arguments in namespace `cli11` |
+| `spdlog/spdlog` | GTI source implementation modelled after spdlog | Synchronous loggers, typed formatting failures, source locations, shared sinks, console/basic/rotating/ring-buffer/null sinks, backtrace history and an explicit registry in namespace `spdlog` |
 
 GLAD, cimgui, zlib, libpng, Assimp, libgit2 and CLI11 are deliberate initial API
 subsets, not claims of complete upstream coverage. GLAD exposes C
@@ -157,6 +160,12 @@ operations into ordinary C functions for bindgen. Cimgui's adapter normalizes
 C `bool` to `int32_t` and uses nonvariadic text functions. Libpng uses the
 simplified API so its error jumps stay entirely in C, never across GTI frames.
 Zlib's streaming and gzip-file APIs are not part of the initial package.
+
+The source-defined spdlog package is intentionally synchronous. It does not
+need preparation, a build-script approval, a C++ compiler, or an installed
+spdlog library. Its `_st` spellings alias the synchronized implementation;
+async logging and process-global logger state are deliberately excluded. See
+[`spdlog/README.md`](spdlog/README.md) for its full surface and safety model.
 
 Assimp's 24-function C adapter is generated into GTI by `gti bindgen`; it does
 not hand-write GTI declarations or expose the complete upstream API. The pinned

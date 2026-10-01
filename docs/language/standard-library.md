@@ -289,11 +289,16 @@ The current implemented foundation includes:
   compositions that the current C++ backend does not yet admit; this is a
   separate constructor-rollback coverage limit, not a fallback to the
   declaration location; and
-- `<std/format>` sequential heterogeneous replacement for booleans,
-  characters, fixed-width integers, binary32 floats, string views, and
-  transferred owning strings through source-defined `std::format`,
-  `std::try_print`, and `std::try_println`. The grammar is limited to `{}`,
-  `{{`, and `}}`; pattern, argument-count, and unsupported-type errors return
+- `<std/format>` heterogeneous automatic or numeric-indexed replacement for
+  booleans, characters, fixed-width integers, binary32/binary64 values, string
+  views, and transferred owning strings through source-defined `std::format`,
+  `std::format_to`, `std::try_print`, and `std::try_println`. Escaped braces and
+  fill/alignment, sign, alternate, zero-padding, width, precision, integer,
+  floating, and string presentation specifiers are supported. Default floating
+  presentation is the shortest round-tripping decimal; alternate default form
+  only forces a decimal point, explicit general precision retains significant
+  zeroes, and infinity/NaN ignore numeric zero-padding. Pattern, specifier,
+  argument-count, and unsupported-type errors return
   `expected<..., std::format_errc>` before output begins; and
 - `<std/random>` source-defined deterministic `std::random_engine` sequences
   from an explicit `uint64_t` seed, plus fallible `std::random_device` draws

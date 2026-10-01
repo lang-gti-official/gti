@@ -98,8 +98,21 @@ int main() {
          "scientific formatting can be uppercased");
   expect(formattedDouble(12.0, 0, 5, 2 | 4) == "12.000",
          "alternate general formatting retains significant trailing zeroes");
+  expect(formattedDouble(1.5, 0, -1, 2 | 4) == "1.5" &&
+             formattedDouble(0.0, 0, -1, 2 | 4) == "0.",
+         "alternate default formatting preserves the shortest digits and "
+         "adds only a required decimal point");
+  expect(formattedDouble(1.5, 0, 6, 2 | 4) == "1.50000",
+         "explicit alternate general precision retains significant zeroes");
   expect(formattedDouble(-3.5, 1, 2, 0, ' ', 0, '-', 1, 10) == "-000003.50",
          "zero padding follows the numeric sign");
+  expect(formattedDouble(std::numeric_limits<double>::infinity(), 0, -1, 4,
+                         ' ', 0, '-', 1, 8) == "     inf" &&
+             formattedDouble(-std::numeric_limits<double>::infinity(), 0, -1,
+                             4, ' ', 0, '-', 1, 8) == "    -inf" &&
+             formattedDouble(std::numeric_limits<double>::quiet_NaN(), 0, -1,
+                             4, ' ', 0, '-', 1, 8) == "     nan",
+         "infinity and NaN ignore numeric zero padding");
   expect(formattedDouble(7.0, 1, 1, 0, '*', '^', '-', 0, 7) == "**7.0**",
          "custom centered fill is balanced");
 

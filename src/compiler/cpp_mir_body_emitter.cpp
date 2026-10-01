@@ -10332,6 +10332,13 @@ failureConstructorEmptyDefaultFieldType(const MirProgram &program,
   return failureConstructorEmptyDefaultFieldType(program, type, visiting);
 }
 
+[[nodiscard]] bool optionalStorageType(const MirProgram &program,
+                                       const SemanticType &type);
+
+[[nodiscard]] bool
+optionalStorageOwnerEmptyState(const MirProgram &program,
+                               const MirClassInstance &owner);
+
 // A transformed constructor needs two related but distinct guarantees:
 // each destination field must accept publication from its verified MIR value,
 // while the enclosing object only needs an observation-free empty state in
@@ -10380,6 +10387,18 @@ failureConstructorEmptyStateConstructible(const MirProgram &program,
       instance.traits.containsBorrowedState) {
     return false;
   }
+  // The compiler-owned optional slot is not merely a cleanup-free lexical
+  // field. Its native empty state is established by one selected private
+  // constructor, so the enclosing owner must retain that constructor's exact
+  // instruction-free Return body. Do not let the recursive aggregate proof
+  // bypass the capability-specific constructor witness.
+  if (std::any_of(instance.declaredFields.begin(),
+                  instance.declaredFields.end(),
+                  [&](const MirClassFieldInfo &field) {
+                    return optionalStorageType(program, field.type);
+                  })) {
+    return optionalStorageOwnerEmptyState(program, instance);
+  }
   return std::all_of(
       instance.declaredFields.begin(), instance.declaredFields.end(),
       [&](const MirClassFieldInfo &field) {
@@ -10394,9 +10413,6 @@ failureConstructorEmptyStateConstructible(const MirProgram &program,
                failureConstructorEmptyDefaultFieldType(program, field.type);
       });
 }
-
-[[nodiscard]] bool optionalStorageType(const MirProgram &program,
-                                       const SemanticType &type);
 
 [[nodiscard]] const MirPlace *storageStagedPlace(const MirBody &body,
                                                  const MirOperand &operand);

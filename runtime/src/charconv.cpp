@@ -104,7 +104,7 @@ uint32_t formatValue(T value, uint32_t format, int32_t precision,
         digits.insert(exponent, 1, '.');
         ++exponent;
       }
-      if (general) {
+      if (general && precision >= 0) {
         std::size_t significantDigits = 0;
         bool significant = false;
         for (std::size_t index = 0; index < exponent; ++index) {
@@ -120,8 +120,7 @@ uint32_t formatValue(T value, uint32_t format, int32_t precision,
         if (!significant) {
           significantDigits = 1;
         }
-        const std::size_t desired =
-            precision < 0 ? 6U : static_cast<std::size_t>(precision);
+        const std::size_t desired = static_cast<std::size_t>(precision);
         while (significantDigits < desired) {
           digits.insert(exponent, 1, '0');
           ++exponent;
@@ -139,9 +138,13 @@ uint32_t formatValue(T value, uint32_t format, int32_t precision,
     const char fillCharacter = static_cast<char>(fill);
     const char effectiveAlignment =
         alignment == 0 ? '>' : static_cast<char>(alignment);
+    // C++ numeric zero padding does not apply to infinity or NaN. Those
+    // spellings retain ordinary right alignment with the active fill, while
+    // finite signed values keep zeros between the sign and magnitude.
+    const bool numericZeroPad = zeroPad != 0 && alignment == 0 && !special;
     uint64_t left = 0;
     uint64_t right = 0;
-    if (zeroPad != 0 && alignment == 0) {
+    if (numericZeroPad) {
       left = 0;
     } else if (effectiveAlignment == '<') {
       right = padding;
@@ -157,7 +160,7 @@ uint32_t formatValue(T value, uint32_t format, int32_t precision,
       output[position] = static_cast<uint8_t>(value);
       ++position;
     };
-    if (!(zeroPad != 0 && alignment == 0)) {
+    if (!numericZeroPad) {
       for (uint64_t index = 0; index < left; ++index) {
         append(fillCharacter);
       }
@@ -165,7 +168,7 @@ uint32_t formatValue(T value, uint32_t format, int32_t precision,
     if (prefix != '\0') {
       append(prefix);
     }
-    if (zeroPad != 0 && alignment == 0) {
+    if (numericZeroPad) {
       for (uint64_t index = 0; index < padding; ++index) {
         append('0');
       }
