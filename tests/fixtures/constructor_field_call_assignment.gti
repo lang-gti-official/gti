@@ -1,0 +1,30 @@
+#include <std/string>
+#include <std/vector>
+
+class Result {
+  mut std::string text{};
+public:
+  Result() {}
+  Result(std::string_view value) : text(std::string(value)) {}
+  ~Result() { std::println(text); }
+};
+
+Result parse(int divisor) {
+  std::println(12 / divisor);
+  return Result("new");
+}
+
+class Holder {
+  mut Result result{ "old" };
+public:
+  Holder(int divisor) {
+    result = parse(1);
+    this.result = parse(divisor);
+    std::println("done");
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Holder holder{2 - argc};
+  return 0;
+}

@@ -1861,6 +1861,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(pack_prefix_constructor_failure_runtime PROPERTIES TIMEOUT 600)
   add_test(
+    NAME constructor_field_publication_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constructor_field_publication_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(constructor_field_publication_runtime PROPERTIES TIMEOUT 600)
+  add_test(
     NAME fresh_callable_later_argument_failure_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/fresh_callable_later_argument_failure_test.py"
