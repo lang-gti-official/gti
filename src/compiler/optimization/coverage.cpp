@@ -525,6 +525,8 @@ MirOptimizationCoverage optimizationCoverage(MirTransformKind kind) {
   case MirTransformKind::DischargeSafetyCheck:
     return supported(
         "proof-only metadata; source replay before backend admission");
+  case MirTransformKind::DevirtualizeCall:
+    return supported("exact local receiver refinement and canonical replay");
   case MirTransformKind::Count:
     break;
   }
@@ -543,6 +545,7 @@ MirOptimizationCoverage optimizationCoverage(MirTransformProofKind kind) {
   case MirTransformProofKind::BoundsRange:
   case MirTransformProofKind::StorageInitialization:
   case MirTransformProofKind::ArithmeticRange:
+  case MirTransformProofKind::ExactReceiver:
     return supported(
         "independent typed proof replay from canonical source MIR");
   case MirTransformProofKind::Count:

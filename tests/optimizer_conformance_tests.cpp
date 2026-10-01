@@ -56,8 +56,8 @@ void testCensus() {
   census(AtomicMemoryOrder::SequentiallyConsistent);
   census(UnsafeOperationKind::DeclaredUnsafeCall);
   census(MirAnalysisKind::SparseConstants);
-  census(MirTransformKind::DischargeSafetyCheck);
-  census(MirTransformProofKind::ArithmeticRange);
+  census(MirTransformKind::DevirtualizeCall);
+  census(MirTransformProofKind::ExactReceiver);
   census(MirSafetyCheckFamily::ArithmeticDomain);
   expect(
       !optimizationCoverage(static_cast<DefinedFailureCode>(14)).classified(),

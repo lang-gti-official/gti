@@ -1,5 +1,6 @@
 #include "gti/mir_editor.h"
 #include "gti/mir_verifier.h"
+#include "gti/optimization/devirtualization.h"
 #include "gti/optimization/pass.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
@@ -222,9 +223,12 @@ MirEditResult MirEditor::applyWithSafetySnapshot(
   std::vector<SafetyDischarge> queuedSafetyDischarges =
       std::move(safetyDischarges);
   safetyDischarges.clear();
+  auto queuedExactReceivers = std::move(exactReceivers);
+  exactReceivers.clear();
   if (queued.empty() && queuedBranchFolds.empty() &&
       queuedScalarPromotions.empty() && queuedDeadInstructions.empty() &&
-      queuedUnreachableBlocks.empty() && queuedSafetyDischarges.empty()) {
+      queuedUnreachableBlocks.empty() && queuedSafetyDischarges.empty() &&
+      queuedExactReceivers.empty()) {
     return result;
   }
 
@@ -475,6 +479,19 @@ MirEditResult MirEditor::applyWithSafetySnapshot(
 
   MirProgram candidate = program;
   std::vector<MirBodyAddress> touched;
+  std::sort(queuedExactReceivers.begin(), queuedExactReceivers.end(), keyLess);
+  for (const auto &claim : queuedExactReceivers) {
+    auto record =
+        rewriteMirExactReceiver(candidate, claim.body, claim.instruction, pass);
+    if (!record) {
+      addError(result, claim.body, 0, claim.instruction,
+               "MIR exact receiver refinement lacks an independent proof");
+      return result;
+    }
+    result.transformations.push_back(std::move(*record));
+    if (std::find(touched.begin(), touched.end(), claim.body) == touched.end())
+      touched.push_back(claim.body);
+  }
   for (const LiteralReplacement &patch : queued) {
     MirBody *target = findMirBody(candidate, patch.target.body);
     InstructionLocation location =
@@ -757,10 +774,10 @@ MirEditResult MirEditor::applyWithSafetySnapshot(
       touched.push_back(cleanup.body);
     }
   }
-  const bool safetyMetadataOnly = queued.empty() && queuedBranchFolds.empty() &&
-                                  queuedScalarPromotions.empty() &&
-                                  queuedDeadInstructions.empty() &&
-                                  queuedUnreachableBlocks.empty();
+  const bool safetyMetadataOnly =
+      queued.empty() && queuedBranchFolds.empty() &&
+      queuedScalarPromotions.empty() && queuedDeadInstructions.empty() &&
+      queuedUnreachableBlocks.empty() && queuedExactReceivers.empty();
   std::optional<MirClosedCallSafetyAnalysis> ownedCandidateSafety;
   const MirClosedCallSafetyAnalysis *candidateSafety = sourceSafety;
   if (!queuedSafetyDischarges.empty() && !safetyMetadataOnly) {
@@ -846,7 +863,8 @@ MirEditResult MirEditor::applyWithSafetySnapshot(
   result.changed = true;
   result.appliedPatches =
       queued.size() + queuedBranchFolds.size() + queuedDeadInstructions.size() +
-      queuedUnreachableBlocks.size() + queuedSafetyDischarges.size();
+      queuedUnreachableBlocks.size() + queuedSafetyDischarges.size() +
+      queuedExactReceivers.size();
   for (const ScalarPromotion &promotion : queuedScalarPromotions) {
     (void)promotion;
     ++result.appliedPatches;

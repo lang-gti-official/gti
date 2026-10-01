@@ -118,14 +118,53 @@ following deterministic local pipeline:
 and cleanup:
 
 1. `sparse-conditional-constants`;
-2. `discharge-bounds-checks`;
-3. `discharge-storage-state-checks`; and
-4. `discharge-arithmetic-overflow-checks`; and
-5. `discharge-arithmetic-domain-checks`.
+2. `exact-receiver-dispatch`;
+3. `discharge-bounds-checks`;
+4. `discharge-storage-state-checks`;
+5. `discharge-arithmetic-overflow-checks`; and
+6. `discharge-arithmetic-domain-checks`.
 
 Both levels currently derive the same GTI proofs. They still select their
 corresponding native optimization levels. `-O0` and `-O1` do not attach safety
 discharges.
+
+### Bounded Exact-Receiver Dispatch
+
+The `interface-exact-dispatch` update workload is the first devirtualization
+client. `optimization/devirtualization` proves the concrete receiver from
+verified MIR places, confined local loans, initialization dominance, resolved
+inheritance/override identities, and authoritative function effects. It does
+not infer a closed world from the number of implementations or recognize
+public library names. Unrelated user-defined interfaces exercise the same rule.
+
+The admitted receiver is one immutable, complete, initialized local class
+object, optionally seen through one non-escaping read-only local interface
+loan. Its single direct base is a root interface. The exact source-defined,
+read-only override accepts and returns scalars and retains its defined-failure
+channel. The object requires no active/custom cleanup. Formal receivers,
+mutable or projected objects, multiple/escaping loans, complex inheritance,
+borrowed/callable arguments or results, native/recursive/unknown target
+effects, allocation, synchronization, and unsupported failure/cleanup shapes
+remain conservative. This is a deliberately bounded client, not a general
+devirtualizer or interprocedural specialization engine.
+
+`MirEditor::queueExactReceiver` re-derives the proof on a candidate snapshot,
+refines the existing receiver borrow to the concrete place, and changes only
+the selected target/dispatch and corresponding direct-call propagation fact.
+It retains the receiver value and instruction identities, argument evaluation,
+CFG/invoke edges, failure origin, allocations, and cleanup schedules. Stable
+instruction IDs are not used as a substitute for within-block order. Touched
+use facts are rebuilt, the candidate is verified atomically, and all affected
+analysis caches are invalidated. Independent optimization coherence replay
+re-derives the same `devirtualize-call` / `exact-receiver` record from canonical
+source MIR after scalar/branch folding and before safety-check proofs.
+
+The backend consumes the resulting static call and emits an explicitly
+qualified override; it does not discover or authorize devirtualization.
+O0/O1 do not run this pass. Deterministic missed remarks explain the rejected
+receiver, loan, target-effects, inheritance, cleanup, or failure-channel shape.
+Existing closed-call safety analysis stays conservative for virtual method
+declarations; static dispatch does not independently grant a safety discharge.
 
 The fold pass replaces admitted identity chains and exact non-trapping literal
 computations, then replaces branches whose dominating condition is a proved

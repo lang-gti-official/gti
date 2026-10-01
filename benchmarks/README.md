@@ -228,7 +228,11 @@ workloads rather than one aggregate score:
   proxy;
 - [`optimizer-level-control`](workloads/optimizer-level-control/README.md)
   replaces the former manual optimizer example with a descriptor-backed
-  fixed-native campaign.
+  fixed-native campaign;
+- [`interface-exact-dispatch`](workloads/interface-exact-dispatch/README.md)
+  exercises bounded exact local interface receivers, with a source proxy and
+  complete-state output mode. The five-family selection probes are retained
+  under [`probes/runtime-facilities`](probes/runtime-facilities/README.md).
 
 Run `optimizer-level-control` once for each GTI optimization level from `0`
 through `3` while holding `--native-optimization 3`. This keeps the native

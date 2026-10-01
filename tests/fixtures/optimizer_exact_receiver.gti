@@ -1,0 +1,36 @@
+interface Transform {
+  int run(int value, int bias);
+};
+
+class Offset : public Transform {
+public:
+  Offset() {}
+  int run(int value, int bias) override { return value + bias + this.adjustment; }
+private:
+  int adjustment = 0;
+};
+
+class Observer {
+public:
+  Observer() {}
+  ~Observer() { std::println("cleanup"); }
+};
+
+int argument() {
+  std::println("argument");
+#ifdef FAIL_RUNTIME
+  return 2147483647;
+#else
+  return 40;
+#endif
+}
+
+int bias() { std::println("bias"); return 2; }
+
+int main() {
+  Observer observer{};
+  Offset object{};
+  Transform& selected = object;
+  std::println(selected.run(argument(), bias()));
+  return 0;
+}

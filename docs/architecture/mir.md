@@ -1612,8 +1612,12 @@ instruction pointers across an edit.
 
 Current client-backed edits replace a computation with a local-fold or SCCP
 literal, replace a branch terminator, promote one scalar place, attach one
-safety discharge, tombstone one dead computation, or remove one unreachable
-block. All queued claims are checked before mutation and applied to a copy in
+safety discharge, refine one independently proved exact receiver call,
+tombstone one dead computation, or remove one unreachable block. Exact
+receiver edits preserve IDs, operand evaluation, invoke edges, failure origins,
+and cleanup while refining the receiver place/type and selected static target;
+canonical replay checks the complete evidence record. All queued claims are
+checked before mutation and applied to a copy in
 deterministic identity order. Touched bodies have required value-use/CFG facts
 repaired, then the complete candidate is verified before commit. The editor
 owns analysis invalidation: semantic edits invalidate the body cache, while a

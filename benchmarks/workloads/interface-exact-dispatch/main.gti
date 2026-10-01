@@ -1,0 +1,68 @@
+#include <std/vector>
+int32_t step(int32_t value, int32_t bias) {
+  return (value * 17 + bias) % 65521;
+}
+interface Update { int32_t run(int32_t value, int32_t bias); };
+class Linear : public Update {
+public:
+  Linear() {}
+  int32_t run(int32_t value, int32_t bias) override { return step(value, bias); }
+};
+void print_hex_digit(uint64_t digit) {
+  switch (digit) {
+  case uint64_t(0): std::print("0"); break;
+  case uint64_t(1): std::print("1"); break;
+  case uint64_t(2): std::print("2"); break;
+  case uint64_t(3): std::print("3"); break;
+  case uint64_t(4): std::print("4"); break;
+  case uint64_t(5): std::print("5"); break;
+  case uint64_t(6): std::print("6"); break;
+  case uint64_t(7): std::print("7"); break;
+  case uint64_t(8): std::print("8"); break;
+  case uint64_t(9): std::print("9"); break;
+  case uint64_t(10): std::print("a"); break;
+  case uint64_t(11): std::print("b"); break;
+  case uint64_t(12): std::print("c"); break;
+  case uint64_t(13): std::print("d"); break;
+  case uint64_t(14): std::print("e"); break;
+  case uint64_t(15): std::print("f"); break;
+  default: std::print("?"); break;
+  }
+}
+
+void print_digest(uint64_t digest) {
+  mut uint64_t divisor = 0x1000000000000000;
+  while (divisor > 0) {
+    print_hex_digit((digest / divisor) % uint64_t(16));
+    divisor /= uint64_t(16);
+  }
+}
+
+
+int main() {
+  mut std::vector<int32_t> state = std::vector<int32_t>(std::size_t(1024));
+  for (mut std::size_t i = 0; i < state.size(); i++) { state[i] = int32_t(i); }
+  Linear action{};
+  Update& selected = action;
+  for (mut int32_t tick = 0; tick < 120000; tick++) {
+    int32_t bias = tick % 127;
+    for (mut std::size_t i = 0; i < state.size(); i++) {
+      state[i] = selected.run(state[i], bias);
+    }
+  }
+  mut uint64_t digest = 0;
+  for (auto& value : state) {
+    if (value < 0 || value >= 65521) { return 1; }
+#ifdef FULL_STATE
+    std::println(value);
+#endif
+    digest = (digest * uint64_t(131) + uint64_t(value)) % uint64_t(1000000007);
+  }
+  if (digest != uint64_t(480748635)) { return 1; }
+#ifndef FULL_STATE
+  std::print("GTI-BENCH-1 digest:");
+  print_digest(digest);
+  std::println(" work-units:122880000");
+#endif
+  return 0;
+}
