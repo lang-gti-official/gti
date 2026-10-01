@@ -154,6 +154,10 @@ public:
   void queueSafetyDischarge(MirInstructionKey target,
                             MirSafetyDischarge discharge);
 
+  void queueExactReceiver(MirInstructionKey target) {
+    exactReceivers.push_back(target);
+  }
+
   [[nodiscard]] std::size_t pendingPatchCount() const { return patches.size(); }
   [[nodiscard]] std::size_t pendingBranchFoldCount() const {
     return branchFolds.size();
@@ -224,6 +228,7 @@ private:
   std::vector<MirInstructionKey> deadInstructions;
   std::vector<UnreachableBlock> unreachableBlocks;
   std::vector<SafetyDischarge> safetyDischarges;
+  std::vector<MirInstructionKey> exactReceivers;
 };
 
 } // namespace lang

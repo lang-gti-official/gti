@@ -1462,8 +1462,13 @@ another instance's field or nested-owner cleanup. Constructor comparison also
 ignores only the two known no-op publication comments, while retaining exact
 executable body, initializer-list, and cleanup-discriminator comparisons.
 
-A call resolved to a concrete override remains virtual in MIR; the C++ backend
-does not infer devirtualization. For a conservatively failure-capable virtual
+A call resolved to a concrete override initially remains virtual in MIR; the
+C++ backend does not infer devirtualization. The bounded optimizer
+`exact-receiver-dispatch` proof may refine it to a static source override,
+which backend admission accepts and emits with explicit qualification from
+the sealed MIR target. It preserves the existing failure/status contract,
+argument staging, and cleanup; native type analysis is not proof authority.
+For a conservatively failure-capable virtual
 call, the backend validates the exact contract roots and candidate owners, then
 classifies only the concrete dispatch owner's subtree. A complete subtree of
 failure-free source definitions uses the ordinary virtual call. If any valid

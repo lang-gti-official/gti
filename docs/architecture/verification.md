@@ -2,6 +2,26 @@
 
 Status: Current test and audit structure.
 
+## Exact-receiver optimization validation
+
+The local 2026-10-01 Release/Ninja run exercised all 354 registered tests:
+352 passed initially; `http_runtime` was blocked by the sandbox's loopback
+socket restriction and passed with permission, while `lsp_protocol` passed
+after rebuilding its stale executable following the version bump. The full
+run took 2,170.99 seconds and includes the standard-library surface, MIR and
+C++ corpus oracles, differential tests, driver/LSP checks, and thread controls.
+The isolated receiver tests additionally exercise a valid non-monotonic
+instruction-ID assignment, missing/late initialization, multiple interface
+bases, borrowed arguments, and a state-bearing receiver. Formatting checks
+390 first-party C++ files. Runtime performance acceptance is recorded separately
+in the performance plan; a passing functional suite is not a speedup claim.
+After the ordering/state-bearing fixtures and final optimized rebuild, all 16
+focused optimizer, growth, backend admission, compiler-pipeline, version, and
+LSP checks passed again (27.63 seconds).
+This is local arm64 macOS evidence, not Linux/Windows or alternate-toolchain
+coverage. The optional non-gating full language fuzz/audit was not rerun for
+this bounded MIR-only change; deterministic corpus and differential gates were.
+
 ## Constexpr staging
 
 The constexpr compiler suite verifies canonical MIR execution against ordinary
@@ -805,6 +825,8 @@ upstream code.
 
 | CTest target | Owns |
 | --- | --- |
+| `optimizer_devirtualization` | Exact local receiver proof, unrelated implementations and state, O0 identity, O2/O3 refinement, atomic editor rejection, conservative parameter/mutable/escaping/raw/synchronizing/native/recursive/cleanup boundaries, and missing/forged evidence rejection. |
+| `optimizer_devirtualization_runtime` | Exact evaluation order, overflow failure identity, partial effects and caller cleanup across O0/O2/O3 and C++20/C++23. |
 | `function_signature_types` | `R(Args...)` aliases and generic identity/substitution; metadata-only signature/nominal pack deduction, constraints, repeated/explicit agreement and ambiguity; class type-list and by-value method packs, exact calls and virtual dispatch; invalid components/storage and repeated move diagnostics; formatting and compiler queries; canonical concrete signatures and MIR body/interface-pack mutation rejection |
 | `function_signature_runtime` | concrete signature tags, class packs, ordinary/operator()/interface calls, empty forwarding, and exactly-once move-only argument cleanup under C++20/C++23 at O0/O1/O3; does not establish owning callback storage |
 | `signature_pack_deduction_runtime` | exact empty, multi-argument, reference, explicit, repeated, prefixed and value-pack deductions; symbolic forwarding and returned nominal metadata under C++20/C++23 at O0/O1/O3; separated from the ownership/dispatch fixture to keep focused native matrices bounded |

@@ -84,6 +84,7 @@ enum class MirTransformKind {
   RemoveBlock,
   PromotePlace,
   DischargeSafetyCheck,
+  DevirtualizeCall,
   Count,
 };
 
@@ -98,6 +99,7 @@ enum class MirTransformProofKind {
   BoundsRange,
   StorageInitialization,
   ArithmeticRange,
+  ExactReceiver,
   Count,
 };
 

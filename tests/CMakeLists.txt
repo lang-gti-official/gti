@@ -330,6 +330,17 @@ add_executable(gti_optimizer_conformance_tests
                "${PROJECT_SOURCE_DIR}/tests/optimizer_conformance_tests.cpp")
 target_link_libraries(gti_optimizer_conformance_tests PRIVATE gti_compiler)
 add_test(NAME optimizer_conformance COMMAND gti_optimizer_conformance_tests)
+add_executable(gti_optimizer_devirtualization_tests
+               "${PROJECT_SOURCE_DIR}/tests/optimizer_devirtualization_tests.cpp")
+target_link_libraries(gti_optimizer_devirtualization_tests PRIVATE gti_compiler)
+add_test(NAME optimizer_devirtualization COMMAND gti_optimizer_devirtualization_tests)
+add_test(NAME optimizer_devirtualization_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/optimizer_devirtualization_runtime_test.py"
+                 "$<TARGET_FILE:gti>"
+                 "${PROJECT_SOURCE_DIR}/tests/fixtures/optimizer_exact_receiver.gti"
+                 "${CMAKE_CXX_COMPILER}")
+set_tests_properties(optimizer_devirtualization_runtime PROPERTIES TIMEOUT 180)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU" AND NOT MSVC)
   add_test(NAME optimizer_coverage_growth
            COMMAND "${Python3_EXECUTABLE}"

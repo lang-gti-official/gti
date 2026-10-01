@@ -1,5 +1,52 @@
 # GTI Performance Measurement And Optimization Tooling Proposal
 
+## O-MEASURE-02: exact-head runtime facility campaign (2026-10-01)
+
+This follow-up starts at reconciled, clean `main` `72a8087a`, after
+`O-CONFORM-01`, not at the historical August campaign below. Publication is
+held. The Release/Ninja compiler uses AppleClang 21 and LLVM 22.1.8 on arm64
+macOS; native comparisons use `/usr/bin/clang++`, C++23, O3, strict FP flags.
+The preserved baseline compiler SHA-256 is
+`d75e177a1afc810e5422cbfd43d43ca2bd16b22026ce76e6685bd9a75c9dc8ed`.
+
+The initial exact-clean-head control report is
+`/private/tmp/gti-measured-runtime-baseline/report.json` (its mechanically
+derived `exact_head_evidence.exact` is true). Five warmups and twenty seeded
+interleaved samples establish these fresh medians in milliseconds:
+
+| Control | GTI | Semantic C++ | Idiomatic C++ |
+| --- | ---: | ---: | ---: |
+| Fixed-array loop proof | 120.138 | 119.600 | 130.329 |
+| Checked vector loop | 72.037 | 772.733 | 71.341 |
+| Scalar FP update | 129.980 | 122.349 | 122.190 |
+| Game update stage | 74.010 | 310.778 | 73.749 |
+| Managed threads, sequential | 901.095 | n/a | n/a |
+| Managed threads, four threads | 255.470 | n/a | n/a |
+
+The five candidate source probes are retained under
+`benchmarks/probes/runtime-facilities`. They compare callback/generic chains,
+interface helpers, owning temporaries, two-vector SoA, and cross-unit ThinLTO.
+Every variant publishes all 1,024 final values; each has a semantics-preserving
+GTI source/build proxy, C++ checking twin, and idiomatic C++ twin. Allocation
+elimination is not a legal proxy for ordinary checked GTI allocation: its
+defined failure is observable. The owner proxy therefore retains allocation
+and destruction and only bypasses the redundant scalar load.
+
+The preliminary 30,000-tick screen found the largest saved runtime in the
+interface helper and callback families, not bounds checks. Several fast
+samples were below the 50 ms floor, so those numbers are directional only.
+The scaled probes use 120,000 ticks (SoA: 240,000) and rank saved runtime per
+1,024-lane tick. The selected first vertical slice is exact **local** receiver
+dispatch, represented by `interface-exact-dispatch`; the broader interface
+helper ceiling would require additional interprocedural context propagation.
+This campaign does not claim a whole-game frame-rate improvement or a universal
+largest optimization outside these representative update-stage kernels.
+
+Implementation and focused replay/failure tests are present. Final scaled
+measurements, exact implementation-head identity, paired control/compile-time/
+size/memory evidence, and the broad validation result remain acceptance gates;
+`O-MEASURE-02` is not yet complete.
+
 > **Plan status:** Non-canonical future tooling plan. Existing verification is
 > documented in [`docs/architecture/verification.md`](../architecture/verification.md).
 

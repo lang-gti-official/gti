@@ -11,6 +11,14 @@ exclusive runtime-performance campaign and every follow-on optimizer row are
 sequenced only in
 [`implementation-sequence.md`](implementation-sequence.md).
 
+Implementation update (2026-10-01): the exhaustive optimizer language-growth
+gate is reconciled at `72a8087a`. The measured follow-up implements one bounded
+body-local exact-receiver dispatch refinement, with canonical replay and
+conservative loan/effect/cleanup boundaries. This does not implement general
+devirtualization, MIR inlining, interprocedural receiver specialization, or
+MemorySSA. Final campaign acceptance is tracked by `O-MEASURE-02`; do not
+infer completion from the implementation alone.
+
 Implementation update (2026-08-22): ADR 016 supersedes the migration mechanics
 in this proposal. `BackendInput`, HIR replacement-table emission, mixed AST/HIR
 body routes, and frontend-aware backend snapshots have been removed. The
@@ -97,9 +105,10 @@ continues to land only with a real client: the current analysis cache exists
 for scalar promotion, folding, unreachable cleanup, and dead computation
 removal, SCCP, safety analysis, and alias-aware safety invalidation. Loop/range
 and alias facts remain available for later measured performance rows, but they
-do not dictate a pass. General loop transforms, MemorySSA, devirtualization, an
-LLVM backend, and broad optimizer frameworks remain deferred until a measured
-bottleneck and the sole operational sequence require them.
+do not dictate a pass. General loop transforms, MemorySSA, general/contextual
+devirtualization, an LLVM backend, and broad optimizer frameworks remain
+deferred until a measured bottleneck and the sole operational sequence require
+them.
 
 This proposal defines how GTI grows from typed-HIR compatibility folding into
 a maintainable optimizer without making AST shape, the C++ emitter, or a
@@ -511,7 +520,7 @@ verbosity are also independent of semantic optimization level.
 | redundant load/store removal | analysis gates partly complete; transform absent | MIR places | place alias/escape; exact call effects; memory versions or a proved local substitute; lifetime boundaries |
 | bounds/check elimination | bounded read/storage/arithmetic families implemented | MIR checked operations | integer semantics; range/predicate analysis; explicit check identity; proof reporting |
 | loop optimization | analysis gate complete; transform absent | MIR loops and values | natural-loop forest; invariants/inductions; transform-specific legality and replay; cost evidence |
-| devirtualization | deferred | HIR instance graph plus MIR calls | closed-world reachability; exact receiver proof; override graph; lifecycle/layout compatibility |
+| devirtualization | bounded local exact-receiver slice implemented; general/contextual forms deferred | verified MIR calls, local loans, concrete instances and override identities | exact confined receiver, initialization dominance, authoritative effects, failure/cleanup compatibility, independent replay |
 | inlining/specialization | one candidate among the `O-PERF-02` choices; transform absent | HIR call graph plus MIR bodies | conservative call effects; recursion handling; cost model; provenance composition; cleanup and temporary lifetime correctness; exact profile/proxy evidence |
 
 Do not implement a pass when one of its gates is represented only by C++
@@ -879,11 +888,12 @@ Status: the first bounded contextual proof-summary client is complete under
   metadata attachment explicitly preserves the immutable result. Replay
   validates all claims against one source and one candidate snapshot rather
   than recomputing the whole program per claim.
-- Closed-world reachability as a removal authority, body cloning,
-  devirtualization, and inlining are not implemented.
-- Devirtualization remains deferred. Do not generalize the selected family
-  until temporary lifetime, cleanup, layout, closed-world, and cost-model
-  requirements are met and another workload measures value.
+- Closed-world reachability as a removal authority, body cloning, and inlining
+  are not implemented. The later `O-MEASURE-02` local exact-receiver slice is
+  body-local dispatch refinement, not an interprocedural transform.
+- General/contextual devirtualization remains deferred. Do not generalize the
+  local slice until temporary lifetime, cleanup, layout, and cost requirements
+  are met and another workload measures value; do not assume a closed world.
 
 Acceptance criteria:
 

@@ -383,6 +383,7 @@ add_library(
   "src/compiler/native_header.cpp"
   "src/compiler/optimization/alias.cpp"
   "src/compiler/optimization/coverage.cpp"
+  "src/compiler/optimization/devirtualization.cpp"
   "src/compiler/mir_effects.cpp"
   "src/compiler/optimization/loops.cpp"
   "src/compiler/optimization/pass.cpp"

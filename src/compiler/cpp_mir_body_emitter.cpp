@@ -42457,8 +42457,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           const bool ordinaryStaticTarget =
               target != nullptr &&
               instruction.dispatch == CallDispatch::Static &&
-              !target->virtualMethod && !target->pureVirtual &&
-              !target->overrideMethod &&
+              // Static dispatch is already proved by MIR, including an
+              // exact-receiver refinement of a virtual override. Explicit
+              // qualification below suppresses native virtual dispatch.
+              !target->pureVirtual &&
               target->definitionKind ==
                   MirFunctionInstance::DefinitionKind::Source;
           const bool receiverMutabilityMatches =
