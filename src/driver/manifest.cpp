@@ -861,7 +861,7 @@ void applyProfileFields(ProjectProfile &profile, const toml::table &table,
                         std::vector<Diagnostic> &diagnostics) {
   validateFields(table,
                  {"optimization", "cpp-standard", "execution-profile",
-                  "keep-cpp", "native"},
+                  "disabled-warnings", "keep-cpp", "native"},
                  "profile", sourceName, source, diagnostics);
 
   if (const toml::node *optimization = table.get("optimization")) {
@@ -912,6 +912,26 @@ void applyProfileFields(ProjectProfile &profile, const toml::table &table,
           "Profile execution profile must be 'single-threaded' or "
           "'concurrent'."));
     }
+  }
+
+  if (table.get("disabled-warnings") != nullptr) {
+    std::vector<SourceSpan> declarations;
+    std::vector<std::string> disabledWarnings =
+        stringArray(table, "disabled-warnings", "Profile", sourceName, source,
+                    diagnostics, &declarations);
+    std::vector<std::string> accepted;
+    accepted.reserve(disabledWarnings.size());
+    for (std::size_t index = 0; index < disabledWarnings.size(); ++index) {
+      if (!isKnownWarningGroup(disabledWarnings[index])) {
+        diagnostics.push_back(buildDiagnostic(
+            "GTI-B1005", declarations[index],
+            "Profile disabled-warnings contains unknown warning group '" +
+                disabledWarnings[index] + "'."));
+        continue;
+      }
+      accepted.push_back(std::move(disabledWarnings[index]));
+    }
+    profile.warningPolicy = WarningPolicy(std::move(accepted));
   }
 
   if (const toml::node *keepCpp = table.get("keep-cpp")) {

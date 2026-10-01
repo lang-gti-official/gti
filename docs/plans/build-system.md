@@ -442,11 +442,13 @@ root = "tests/unit.gti"
 [profiles.dev]
 optimization = 0
 cpp-standard = "c++23"
+disabled-warnings = []
 keep-cpp = false
 
 [profiles.release]
 optimization = 3
 cpp-standard = "c++23"
+disabled-warnings = ["unused-mut"]
 keep-cpp = false
 
 ```
@@ -946,7 +948,7 @@ diagnostics must not disguise C++ backend failures as GTI source errors.
 `gti metadata --format json` exposes the manifest schema version, canonical
 manifest and package paths, package identity, host target fields, sorted
 profiles, sorted executable/test targets with their kinds, and each
-target/profile output and generated-C++ path. Metadata schema version 11 reports
+target/profile output and generated-C++ path. Metadata schema version 12 reports
 every declared execution profile and effective GTI configuration flag set plus
 every effective native category, C source, C++ source, C standard, C argument,
 and ordered link operand, the
@@ -1166,7 +1168,7 @@ Status: complete
 - Compile each selected source to an atomically published managed intermediate
   object, then place C objects followed by C++ objects before runtime and
   manifest libraries in the existing final C++ link.
-- Report the resolved C and C++ inputs through metadata schema version 11 while
+- Report the resolved C and C++ inputs through metadata schema version 12 while
   keeping `check` compiler-free and output-free.
 
 Acceptance criteria:
@@ -1482,7 +1484,7 @@ need them.
    root. If resolution fails, it retains the recovery path for a broken
    manifest and validates/removes only the nearest literal
    `<package>/build/gti`. Both paths refuse symbolic-link boundaries.
-6. Metadata JSON schema version 11 is a read-only enumeration of every current
+6. Metadata JSON schema version 12 is a read-only enumeration of every current
    target/profile plan, including target kinds, declared execution profiles,
    effective GTI configuration flags, resolved native C and C++ sources, C
    policy, other native inputs, ordered link operands, and composed

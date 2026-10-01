@@ -61,7 +61,8 @@ public:
                      OptimizationLevel optimization, CppStandard cppStandard,
                      std::vector<PackageSourceRoot> packageSourceRoots = {},
                      ConfigurationFlags configurationFlags = {},
-                     OptimizationOutputRequest optimizationOutputs = {});
+                     OptimizationOutputRequest optimizationOutputs = {},
+                     WarningPolicy warningPolicy = {});
 
   [[nodiscard]] const std::filesystem::path &entry() const;
   [[nodiscard]] const StandardLibraryLayout &standardLibrary() const;
@@ -71,6 +72,7 @@ public:
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
   [[nodiscard]] const OptimizationOutputRequest &optimizationOutputs() const;
+  [[nodiscard]] const WarningPolicy &warnings() const;
   [[nodiscard]] bool requiresEntryPoint() const;
   [[nodiscard]] CompilationRequest forExecutable() const;
 
@@ -83,6 +85,7 @@ private:
   std::vector<PackageSourceRoot> packageSourceRootSet;
   ConfigurationFlags configuredFlags;
   OptimizationOutputRequest requestedOptimizationOutputs;
+  WarningPolicy warningPolicy;
   bool entryPointRequired = false;
 };
 

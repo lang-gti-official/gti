@@ -185,6 +185,7 @@ struct ProjectProfile {
   OptimizationLevel optimization = OptimizationLevel::O0;
   CppStandard cppStandard = CppStandard::Cpp23;
   ExecutionProfile executionProfile = ExecutionProfile::SingleThreaded;
+  WarningPolicy warningPolicy;
   bool keepCpp = false;
   SourceSpan declaration;
   ProjectNativeSettings native;

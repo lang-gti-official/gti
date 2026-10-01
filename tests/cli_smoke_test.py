@@ -3154,6 +3154,45 @@ def main():
         assert "1 | int main()" in rejected.stderr
         assert "note: Binding declared here." in rejected.stderr
         assert "help: Bindings are immutable by default" in rejected.stderr
+        assert re.fullmatch(
+            r"Diagnostics: [1-9][0-9]* errors?, [0-9]+ warnings?",
+            rejected.stdout.splitlines()[-1],
+        )
+
+        warning_source = root / "warning.gti"
+        warning_source.write_text(
+            "int main() { mut int result = 1; return result; }\n",
+            encoding="utf-8",
+        )
+        warning_cpp = root / "warning.cpp"
+        warned = run(
+            [gti, str(warning_source), "--emit-cpp", "-o", str(warning_cpp)]
+        )
+        assert "warning[GTI-S2096]" in warned.stderr
+        assert warned.stdout.splitlines()[-1] == "Diagnostics: 0 errors, 1 warning"
+
+        suppressed_cpp = root / "warning-suppressed.cpp"
+        suppressed = run(
+            [
+                gti,
+                str(warning_source),
+                "--emit-cpp",
+                "-Wno-unused-mut",
+                "-o",
+                str(suppressed_cpp),
+            ]
+        )
+        assert "GTI-S2096" not in suppressed.stderr
+        assert (
+            suppressed.stdout.splitlines()[-1]
+            == "Diagnostics: 0 errors, 0 warnings"
+        )
+        unknown_warning = run(
+            [gti, str(warning_source), "-Wno-unused-mutable-binding"], 64
+        )
+        assert "unknown warning group 'unused-mutable-binding'" in (
+            unknown_warning.stderr
+        )
 
         profile_global = root / "profile-global.gti"
         profile_global.write_text(
@@ -3709,6 +3748,7 @@ def main():
         help_output = run([gti, "--help"]).stdout
         assert "Usage: gti" in help_output
         assert "--build-report <path>" in help_output
+        assert "-Wno-unused-mut" in help_output
         run([gti], 64)
         run([gti, str(source), "--unknown"], 64)
         run([gti, str(source), "--emit-cpp", "--keep-cpp"], 64)

@@ -186,9 +186,12 @@ Externally supplied native entry points are not a GTI executable contract.
 Direct mode accepts one entry `.gti` source and remains manifest-independent.
 Its source graph produces one whole-program C++ artifact and one native compiler
 invocation. Repeatable `-D NAME` options seed valueless GTI configuration flags
-for the invocation. Accepted native arguments after `--` remain exact argv
-values; native `-DNAME[=VALUE]` operands there are compiler arguments and do
-not define GTI flags.
+for the invocation. Repeatable `-Wno-<group>` options (or the equivalent
+`--disable-warning <group>`) add validated warning groups to the immutable
+`CompilationRequest`; for example, `-Wno-unused-mut` suppresses `GTI-S2096`.
+Accepted native arguments after `--` remain exact argv values; native
+`-DNAME[=VALUE]` operands there are compiler arguments and do not define GTI
+flags.
 The shared native-argument policy rejects response files and recognized option
 families that replace driver-owned output, executable build mode,
 language/optimization, target, sysroot, or data layout. Raw Clang cc1/driver
@@ -299,7 +302,7 @@ An optional top-level `[build]` table accepts
 they are sorted and deduplicated. Repeatable project-command `-D NAME` values
 are added to the manifest set. The effective set is immutable in every
 `ProjectBuildPlan`, participates in its model identity, and is passed through
-the shared frontend request. Metadata schema 10 reports that effective `defines`
+the shared frontend request. Metadata schema 12 reports that effective `defines`
 array beside each target/profile output plan.
 
 `gti build --all` builds every declared executable and test target of the
@@ -1145,12 +1148,16 @@ Each manifest `[profiles.<name>]` table may set
 `execution-profile = "single-threaded"|"concurrent"`; the selected value is
 resolved through the shared analysis configuration into the plan's
 `TargetInfo`, and the command-line option is an explicit project override.
-Metadata schema 10 publishes the declared value for every profile plus the
-selected workspace and sorted package/dependency graph. This build profile
-field selects static language policy only; the independently selected runtime
-profile derives the target/runtime `threads` capability. Public managed-thread
-and atomic operations require both the concurrent execution profile and that
-capability.
+The same table may set `disabled-warnings = ["unused-mut", ...]`; validated
+command-line warning suppressions are unioned with that profile policy and
+carried through the resolved build plan. Warning policy does not change emitted
+program semantics, while the ordinary project model identity still
+conservatively covers manifest changes. Metadata schema 12 publishes both
+profile fields for every profile plus the selected workspace and sorted
+package/dependency graph. The execution profile selects static language policy
+only; the independently selected runtime profile derives the target/runtime
+`threads` capability. Public managed-thread and atomic operations require both
+the concurrent execution profile and that capability.
 
 Arguments after `gti run --` are passed as exact program arguments and become
 owned values when the target uses
@@ -1166,8 +1173,9 @@ executes only an already present regular executable inside the symlink-free
 managed `build/gti` subtree and fails with an I/O status when that artifact is
 missing or unsafe. Compiler, optimization, execution-profile, configuration,
 cache, keep-C++, and job overrides are rejected because they cannot describe or
-validate an existing artifact. The command makes no freshness claim; it is an
-explicit development escape hatch for running possibly stale output.
+validate an existing artifact. Warning-policy overrides are rejected for the
+same reason. The command makes no freshness claim; it is an explicit
+development escape hatch for running possibly stale output.
 
 ## Current Limits
 

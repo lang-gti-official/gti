@@ -18,6 +18,7 @@ struct ProjectBuildOverrides {
   std::optional<ExecutionProfile> executionProfile;
   std::optional<bool> keepCpp;
   ConfigurationFlags configurationFlags;
+  WarningPolicy warningPolicy;
 };
 
 // Native compiler selections supplied by the caller rather than the
@@ -149,6 +150,7 @@ public:
                    bool keepCpp, NativeInputs nativeInputs,
                    std::vector<PackageSourceRoot> packageSourceRoots,
                    ConfigurationFlags configurationFlags,
+                   WarningPolicy warningPolicy,
                    std::string projectModelIdentity,
                    std::vector<BindgenImportPlan> bindgenImports = {},
                    std::vector<BuildScriptPlan> buildScripts = {},
@@ -172,6 +174,7 @@ public:
   [[nodiscard]] const NativeInputs &nativeInputs() const;
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
+  [[nodiscard]] const WarningPolicy &warnings() const;
   [[nodiscard]] const std::string &projectModelIdentity() const;
   [[nodiscard]] const std::vector<BindgenImportPlan> &bindgenImports() const;
   [[nodiscard]] const std::vector<BuildScriptPlan> &buildScripts() const;
@@ -196,6 +199,7 @@ private:
   NativeInputs resolvedNativeInputs;
   std::vector<PackageSourceRoot> resolvedPackageSources;
   ConfigurationFlags resolvedConfigurationFlags;
+  WarningPolicy resolvedWarningPolicy;
   std::string resolvedProjectModelIdentity;
   std::vector<BindgenImportPlan> resolvedBindgenImports;
   std::vector<BuildScriptPlan> resolvedBuildScripts;

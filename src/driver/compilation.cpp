@@ -21,12 +21,17 @@ FrontendResult analyze(const CompilationRequest &request,
   // Compilation and `check` consume diagnostics, semantics, and symbols; only
   // editor position queries read the occurrence table, so it is not built on
   // this path.
-  return Frontend({.target = request.target(),
-                   .toolingOccurrences = false,
-                   .requireEntryPoint = request.requiresEntryPoint()})
-      .analyzeLoaded(request.entry(), std::move(inputs.sourceGraph),
-                     std::move(inputs.sources), std::move(inputs.diagnostics),
-                     inputs.sourceValid);
+  FrontendResult result =
+      Frontend({.target = request.target(),
+                .toolingOccurrences = false,
+                .requireEntryPoint = request.requiresEntryPoint()})
+          .analyzeLoaded(request.entry(), std::move(inputs.sourceGraph),
+                         std::move(inputs.sources),
+                         std::move(inputs.diagnostics), inputs.sourceValid);
+  std::erase_if(result.diagnostics, [&](const Diagnostic &diagnostic) {
+    return request.warnings().suppresses(diagnostic);
+  });
+  return result;
 }
 
 CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
@@ -177,14 +182,15 @@ CompilationRequest::CompilationRequest(
     TargetInfo target, OptimizationLevel optimization, CppStandard cppStandard,
     std::vector<PackageSourceRoot> packageSourceRoots,
     ConfigurationFlags configurationFlags,
-    OptimizationOutputRequest optimizationOutputs)
+    OptimizationOutputRequest optimizationOutputs, WarningPolicy warnings)
     : entryPath(std::move(entry)),
       standardLibraryLayout(std::move(standardLibrary)),
       targetInfo(std::move(target)), optimizationLevel(optimization),
       backendStandard(cppStandard),
       packageSourceRootSet(std::move(packageSourceRoots)),
       configuredFlags(std::move(configurationFlags)),
-      requestedOptimizationOutputs(optimizationOutputs) {
+      requestedOptimizationOutputs(optimizationOutputs),
+      warningPolicy(std::move(warnings)) {
   normalizeConfigurationFlags(configuredFlags);
 }
 
@@ -218,6 +224,10 @@ CompilationRequest::optimizationOutputs() const {
   return requestedOptimizationOutputs;
 }
 
+const WarningPolicy &CompilationRequest::warnings() const {
+  return warningPolicy;
+}
+
 bool CompilationRequest::requiresEntryPoint() const {
   return entryPointRequired;
 }
@@ -242,6 +252,9 @@ CompilationInputs loadCompilationInputs(const CompilationRequest &request) {
   inputs.sources = sourceLoader.sources();
   inputs.diagnostics = sourceLoader.errors();
   inputs.sourceValid = !sourceLoader.hadError();
+  std::erase_if(inputs.diagnostics, [&](const Diagnostic &diagnostic) {
+    return request.warnings().suppresses(diagnostic);
+  });
   return inputs;
 }
 

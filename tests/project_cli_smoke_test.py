@@ -249,6 +249,53 @@ def main():
             / ".gti-intermediate/intermediate.gti.cpp"
         ).is_file()
 
+        warning_project = root / "warning-project"
+        warning_source = warning_project / "src/main.gti"
+        warning_source.parent.mkdir(parents=True)
+        warning_source.write_text(
+            "int main() { mut int result = 0; return result; }\n",
+            encoding="utf-8",
+        )
+        warning_manifest = warning_project / "gti.toml"
+        warning_manifest.write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "warning_project"\n'
+            'version = "0.1.0"\n\n'
+            "[targets.warning_project]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n\n'
+            "[profiles.dev]\n"
+            'disabled-warnings = ["unused-mut"]\n',
+            encoding="utf-8",
+        )
+        warning_build = run([gti, "build", "--no-cache"], cwd=warning_project)
+        assert "GTI-S2096" not in warning_build.stderr
+        assert (
+            warning_build.stdout.splitlines()[-1]
+            == "Diagnostics: 0 errors, 0 warnings"
+        )
+        warning_manifest.write_text(
+            warning_manifest.read_text(encoding="utf-8").replace(
+                'disabled-warnings = ["unused-mut"]\n', ""
+            ),
+            encoding="utf-8",
+        )
+        warning_check = run([gti, "check"], cwd=warning_project)
+        assert "warning[GTI-S2096]" in warning_check.stderr
+        assert (
+            warning_check.stdout.splitlines()[-1]
+            == "Diagnostics: 0 errors, 1 warning"
+        )
+        warning_check_suppressed = run(
+            [gti, "check", "-Wno-unused-mut"], cwd=warning_project
+        )
+        assert "GTI-S2096" not in warning_check_suppressed.stderr
+        assert (
+            warning_check_suppressed.stdout.splitlines()[-1]
+            == "Diagnostics: 0 errors, 0 warnings"
+        )
+
         missing_new_path = run([gti, "new"], expected=64, cwd=root)
         assert "requires a destination path" in missing_new_path.stderr
         unknown_init_option = run(
@@ -346,7 +393,7 @@ def main():
         configuration_metadata = json.loads(
             run([gti, "metadata"], cwd=configuration_project).stdout
         )
-        assert configuration_metadata["schemaVersion"] == 11
+        assert configuration_metadata["schemaVersion"] == 12
         assert configuration_metadata["targets"][0]["outputs"][0][
             "defines"
         ] == ["MANIFEST_FLAG"]
@@ -522,13 +569,14 @@ def main():
                 'root = "main.gti"\n',
                 "\n[profiles.release]\n"
                 "optimization = 3\n"
-                'execution-profile = "concurrent"\n',
+                'execution-profile = "concurrent"\n'
+                'disabled-warnings = ["unused-mut"]\n',
             ),
             encoding="utf-8",
         )
         metadata = run([gti, "metadata"], cwd=check_project)
         metadata_document = json.loads(metadata.stdout)
-        assert metadata_document["schemaVersion"] == 11
+        assert metadata_document["schemaVersion"] == 12
         assert metadata_document["manifestVersion"] == 1
         assert metadata_document["package"]["name"] == "sample"
         assert metadata_document["profiles"] == [
@@ -537,6 +585,7 @@ def main():
                 "optimization": 0,
                 "cppStandard": "c++23",
                 "executionProfile": "single-threaded",
+                "disabledWarnings": [],
                 "keepCpp": False,
             },
             {
@@ -544,6 +593,7 @@ def main():
                 "optimization": 3,
                 "cppStandard": "c++23",
                 "executionProfile": "concurrent",
+                "disabledWarnings": ["unused-mut"],
                 "keepCpp": False,
             },
         ]
@@ -601,7 +651,7 @@ def main():
         test_metadata = json.loads(
             run([gti, "metadata"], cwd=test_project).stdout
         )
-        assert test_metadata["schemaVersion"] == 11
+        assert test_metadata["schemaVersion"] == 12
         assert [
             (target["name"], target["kind"])
             for target in test_metadata["targets"]
@@ -812,7 +862,7 @@ def main():
         assert repeated_native_metadata.stdout == native_metadata.stdout
         native_document = json.loads(native_metadata.stdout)
         native_inputs = native_document["targets"][0]["outputs"][0]["native"]
-        assert native_document["schemaVersion"] == 11
+        assert native_document["schemaVersion"] == 12
         assert native_inputs["cSources"] == [str(native_implementation.resolve())]
         assert native_inputs["cStandard"] == "c17"
         assert native_inputs["cCompileArguments"] == [
@@ -1136,7 +1186,7 @@ def main():
         workspace_metadata = json.loads(
             run([gti, "metadata", "--package", "app"], cwd=workspace).stdout
         )
-        assert workspace_metadata["schemaVersion"] == 11
+        assert workspace_metadata["schemaVersion"] == 12
         assert workspace_metadata["workspace"]["declared"] is True
         assert workspace_metadata["workspace"]["selectedPackage"] == "app"
         assert [
@@ -2406,7 +2456,7 @@ def main():
         scripted_metadata = json.loads(
             run([gti, "metadata"], cwd=scripted_app).stdout
         )
-        assert scripted_metadata["schemaVersion"] == 11
+        assert scripted_metadata["schemaVersion"] == 12
         assert scripted_metadata["build"]["allowBuildScripts"] == [
             "scripted-native@0.1.0"
         ]
@@ -2559,7 +2609,7 @@ def main():
         composed_native = composed_metadata["targets"][0]["outputs"][0][
             "native"
         ]
-        assert composed_metadata["schemaVersion"] == 11
+        assert composed_metadata["schemaVersion"] == 12
         assert [
             (group["package"], group["cMacroDefinitions"])
             for group in composed_native["dependencyNative"]
