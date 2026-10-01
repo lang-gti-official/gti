@@ -32,6 +32,12 @@ live with their public header. Optional units do not re-export their own
 dependencies, so application source names the canonical unit for every API it
 uses directly.
 
+Optional payload constructors execute in ordinary GTI before the completed
+value enters inline storage. The private publication capability takes exactly
+one element, not arbitrary constructor arguments; semantic checking and MIR
+verification reject a hidden source-constructor target. This preserves the
+normal constructor failure record, argument ordering, and partial cleanup.
+
 The compiler retains one declarative mapping from public nominal type names to
 their canonical optional unit solely for unresolved-type diagnostics and
 missing-include fix-its. That catalog grants no semantic behavior and does not

@@ -7092,7 +7092,14 @@ exactOptionalStorageIntrinsicContract(const MirProgram &program,
                        AccessMode::ReadOnly) &&
            noLoanResult() && noFailure();
   case IntrinsicKind::OptionalStorageConstruct:
-    return exactResult(SemanticType::Void, ValueCategory::Value,
+    // Publication transfers one already-completed value. Source constructor
+    // execution and its failure channel must be separate ordinary MIR; this
+    // capability cannot smuggle an arbitrary native construction through a
+    // variadic operand list or a retained source-constructor target.
+    return instruction.operands.size() == 2 &&
+           instruction.operands[1].type == elementType &&
+           !instruction.constructorTarget &&
+           exactResult(SemanticType::Void, ValueCategory::Value,
                        AccessMode::ReadOnly) &&
            noLoanResult() && exactConstructLifecycle() &&
            exactFailure(

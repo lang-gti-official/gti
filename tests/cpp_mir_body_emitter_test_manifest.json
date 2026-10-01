@@ -402,6 +402,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testCleanupFreeConstructorFieldFailure",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testPassiveConstructorFieldPublication",
       "suite": "lifecycle"
     },

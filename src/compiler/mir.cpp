@@ -4523,12 +4523,13 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
   // publication is independently owned by the result's consumer/obligation;
   // the failure edge must not depend on whether that consumer is a Return,
   // argument checkpoint, assignment, or discard.
-  // Prepared constructor arguments need the same failure-before-publication
-  // rule even when their class has no active cleanup. Other construction
-  // destinations keep their own direct-initialization/result-drop contracts.
+  // Construction needs the same failure-before-publication rule even when
+  // its class has no active cleanup. In particular, a constructor initializer
+  // can publish such a result into a field without a drop obligation; that
+  // does not make a failing constructor safe to invoke without an edge.
+  // The consumer still owns publication, exactly as for a class-valued call.
   if ((instruction.kind == MirInstructionKind::Call ||
-       (instruction.kind == MirInstructionKind::Construct &&
-        position == MirFailureControlFlowPosition::PreparedCallArgumentRoot)) &&
+       instruction.kind == MirInstructionKind::Construct) &&
       instruction.result &&
       (instruction.info.type.kind == SemanticType::Class ||
        (instruction.kind == MirInstructionKind::Call &&

@@ -417,9 +417,11 @@ dereference/arrow, `value_or`, reset, emplacement, move-only payloads, and move
 construction. Empty access reports the stable checked owner failure after
 ordinary cleanup. The representation performs no allocation for absence and
 drops every engaged payload exactly once. Allocation-free describes the slot,
-not construction of `T`: payload construction can report its ordinary
-`allocation_failure` / `element_construction` outcome, and failed emplacement
-leaves the slot empty. Copy construction and both assignment forms are
+not construction of `T`: emplacement resets the old value, constructs the new
+payload as ordinary GTI, then transfers the completed payload into the slot.
+Constructor failure retains its original record and partial cleanup, and
+failed emplacement leaves the slot empty. The private storage operation cannot
+dispatch a source constructor. Copy construction and both assignment forms are
 deliberately unavailable; replace a value through `reset` or `emplace` until
 GTI can express a source-defined conditional special-member assignment body.
 

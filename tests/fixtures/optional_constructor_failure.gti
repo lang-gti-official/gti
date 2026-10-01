@@ -1,0 +1,27 @@
+#include <std/optional>
+#include <std/string>
+#include <std/vector>
+
+class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) {}
+  ~Marker() { std::println(value); }
+};
+
+struct Payload {
+  Marker first;
+  int value;
+  Payload(int divisor) : first(Marker(3)), value(12 / divisor) {}
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Marker caller{9};
+  mut std::optional<Payload> slot{};
+  [[discard]] slot.emplace(1);
+  // Reset the old payload, construct the new one under ordinary MIR failure
+  // routing, then publish only the completed value into the empty slot.
+  [[discard]] slot.emplace(2 - argc);
+  std::println(slot.value().value);
+  return 0;
+}
