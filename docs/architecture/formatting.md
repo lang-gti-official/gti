@@ -232,6 +232,10 @@ Lambda capture lists use ordinary comma and assignment spacing. The supported
 owned form is written `[target = std::move(source)]`; formatting preserves the
 initializer expression and is idempotent, while semantic analysis—not the
 formatter—decides whether it is the exact permitted move capture.
+Statement boundaries inside a lambda body are relative to that body's opening
+delimiter, so a lambda used as a call argument receives ordinary one-statement-
+per-line layout even though the surrounding call still has an open parenthesis.
+Semicolons in nested `for` headers remain inline.
 
 ## Deliberate next phases
 

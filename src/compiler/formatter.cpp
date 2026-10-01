@@ -336,7 +336,7 @@ public:
         state.templateDepth = 0;
         state.trimSpaces();
         state.append(";");
-        if (state.parenthesisDepth == 0 &&
+        if ((state.parenthesisDepth == 0 || state.atBlockStatementLevel()) &&
             (next == nullptr || !isComment(next->kind))) {
           state.newline();
         } else {
@@ -508,6 +508,7 @@ private:
       bool switchBody = false;
       bool doBody = false;
       bool caseBodyIndented = false;
+      std::size_t parenthesisDepth = 0;
     };
 
     explicit State(const FormatOptions &options) : options(options) {}
@@ -746,11 +747,18 @@ private:
     }
 
     void pushBlock(bool switchBody, bool doBody) {
-      blocks.push_back({.switchBody = switchBody, .doBody = doBody});
+      blocks.push_back({.switchBody = switchBody,
+                        .doBody = doBody,
+                        .parenthesisDepth = parenthesisDepth});
     }
 
     [[nodiscard]] bool currentBlockIsDoBody() const {
       return !blocks.empty() && blocks.back().doBody;
+    }
+
+    [[nodiscard]] bool atBlockStatementLevel() const {
+      return !blocks.empty() &&
+             parenthesisDepth == blocks.back().parenthesisDepth;
     }
 
     void beginCaseLabel() {
