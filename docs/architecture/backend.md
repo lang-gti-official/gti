@@ -1133,7 +1133,7 @@ through containing classes. Constructor placement and rollback reconstruction
 may use a nonassignable field's observation-free empty representation; paths
 that emit an assignment still require the stronger assignable-field proof.
 Neither query bypasses the selected native capability constructor witness.
-A cleanup-free class field can also publish at an adjacent, exact
+A cleanup-free nonassignable class field can also publish at an adjacent, exact
 `Construct`/`Initialize` pair in the body, using placement construction rather
 than assignment. This requires a proved non-failing target and carries no
 invented cleanup obligations. Active fields retain their success-edge

@@ -12566,6 +12566,8 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
   // Cleanup-free class values have no Value/ConstructionRollback obligation.
   // Preserve their exact adjacent Construct -> Initialize schedule without
   // inventing a drop or requiring move assignment into the empty native field.
+  // Assignable classes retain their existing ordinary constructor route;
+  // selecting placement there would unnecessarily change caller admission.
   if (constructor != nullptr && owner != nullptr && commonProducer &&
       producer->kind == MirInstructionKind::Construct && !producer->receiver &&
       !producer->functionTarget &&
@@ -12576,6 +12578,7 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       constructedOwner->type == value->info.type &&
       value->info.category == ValueCategory::Value &&
       value->info.traits.drop == DropKind::Lexical &&
+      !constructedOwner->traits.moveAssignable &&
       !constructedOwner->requiresActiveCleanup &&
       !constructedOwner->requiresActiveDropState && valueDrop == nullptr &&
       !producer->successResultDrop && producer->lifecycle.empty() &&
