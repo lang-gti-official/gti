@@ -749,6 +749,18 @@ logical vector check; optimized MIR may discharge only the immediately related
 private prefix recheck under the exact proof described in
 [`optimization.md`](optimization.md).
 
+Sparse and prefix relocation consume semantic `RelocationKind` facts verified
+against concrete MIR type tables. Bitwise-eligible passive elements select a
+bulk candidate after the same complete capacity/liveness preflight. The C++
+support helper additionally requires a trivially copyable, trivially
+move-constructible and trivially destructible representation, permitting
+C++20 implicit lifetime creation by `memcpy`. All other representations retain
+generated elementwise transfer. These native traits only restrict lowering;
+they never decide a GTI concept. Source lifetimes end, destination lifetimes
+become live, and string terminators are repaired using the existing prefix
+policy. Resource owners are never byte-copied. Public `storage.relocate_to`
+is an ordinary GTI wrapper over the same verified private operation.
+
 **Current gap:** The generated C++ support prelude still contains terminal
 integrity and low-level capability helpers that call `std::abort()`. These are
 representation guards and legacy terminal operations, not an alternate source-

@@ -6648,6 +6648,10 @@ auto SemanticVisitor::Impl::constraintImplies(GenericConstraintSet actual,
   if (hasConstraint(actual, required)) {
     return true;
   }
+  if (required == GenericConstraintKind::Relocatable &&
+      hasConstraint(actual, GenericConstraintKind::BitwiseRelocatable)) {
+    return true;
+  }
   if (!hasConstraint(actual, GenericConstraintKind::AtomicScalar)) {
     return false;
   }
@@ -6655,6 +6659,8 @@ auto SemanticVisitor::Impl::constraintImplies(GenericConstraintSet actual,
   case GenericConstraintKind::CopyConstructible:
   case GenericConstraintKind::Copyable:
   case GenericConstraintKind::Movable:
+  case GenericConstraintKind::Relocatable:
+  case GenericConstraintKind::BitwiseRelocatable:
   case GenericConstraintKind::Transferable:
   case GenericConstraintKind::Shareable:
   case GenericConstraintKind::DefaultInitializable:

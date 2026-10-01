@@ -901,6 +901,10 @@ auto SemanticVisitor::Impl::satisfiesAtomicConstraint(
   }
   case GenericConstraintKind::Transferable:
     return typeTraits(argument).transferCapable;
+  case GenericConstraintKind::Relocatable:
+    return typeTraits(argument).relocation != RelocationKind::Unavailable;
+  case GenericConstraintKind::BitwiseRelocatable:
+    return typeTraits(argument).relocation == RelocationKind::Bitwise;
   case GenericConstraintKind::Shareable:
     return typeTraits(argument).shareCapable;
   case GenericConstraintKind::DefaultInitializable:

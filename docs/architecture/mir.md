@@ -178,12 +178,22 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v81`/`mir-body-v68`.
+The deterministic serialization is currently `mir-v81`/`mir-body-v69`.
 Program v81 adds the six identity-bound SIMD arithmetic/comparison intrinsic
 kinds. Their operands retain three exact immediate array borrows (read, read,
 write), with concrete matching float/double lane shape and a bool output only
 for comparisons. The verifier rejects stale extent/access/result facts and
 normal place/loan verification prevents overlapping read/write operands.
+Program v81/body v69 serialize structural relocation eligibility in type
+traits and preserve pointer-only native class identity. Class-table
+verification compares the semantic fact against exact generated movement,
+concrete bases, fields, borrowed state, and cleanup; interface bases contribute
+dispatch requirements, not stored value state. Production
+sparse/prefix-storage relocation selects its bulk candidate only from this
+verified proof. Existing intrinsic identities retain exclusive accesses,
+liveness/capacity failure sites, and source/destination lifetime behavior;
+there is no backend-only relocation operation. C++ representation traits may
+decline the bytewise candidate, never grant language eligibility.
 Program v80/body v68 also serialize the resolved caller literal on each private
 source-location intrinsic. MIR verification requires the exact zero-argument,
 effect-free call shape, matching scalar/text result, and attached literal;

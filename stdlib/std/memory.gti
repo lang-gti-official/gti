@@ -193,6 +193,16 @@ public:
     gti_internal::storage_destroy(this.data, index);
   }
 
+  /// Consumes the live prefix [0, count) into the same empty destination slots.
+  /// Both allocations are retained. All capacity and liveness checks finish
+  /// before the transfer begins; the source prefix becomes uninitialized.
+  /// Outstanding element loans forbid this exclusive operation. Replacement
+  /// of an already-live destination is deliberately not supported.
+  void relocate_to(mut storage<T>& destination, size_t count) mut
+      requires std::relocatable<T> {
+    gti_internal::storage_relocate(this.data, destination.data, count);
+  }
+
   /// Returns a checked read-only reference to a live slot.
   T& get(size_t index) {
     gti_internal::index_bounds_check(index, this.capacity());

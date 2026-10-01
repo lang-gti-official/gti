@@ -5690,8 +5690,6 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   std::unordered_set<std::string> capturedNames;
   std::vector<LambdaCaptureInfo> captures;
   Scope captureScope;
-  SemanticTypeTraits lambdaTraits;
-  lambdaTraits.drop = DropKind::Trivial;
   for (const LambdaCapture &capture : expr.captures()) {
     if (!capturedNames.insert(capture.name.lexeme).second) {
       report(capture.name,
@@ -5820,18 +5818,6 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
              "GTI-S2027");
     }
 
-    if (traits.ownership == OwnershipKind::Shared) {
-      lambdaTraits.ownership = OwnershipKind::Shared;
-    }
-    if (traits.drop == DropKind::Lexical) {
-      lambdaTraits.drop = DropKind::Lexical;
-    }
-    lambdaTraits.copyable = lambdaTraits.copyable && traits.copyable;
-    lambdaTraits.movable = lambdaTraits.movable && traits.movable;
-    lambdaTraits.transferCapable =
-        lambdaTraits.transferCapable && traits.transferCapable;
-    lambdaTraits.shareCapable =
-        lambdaTraits.shareCapable && traits.shareCapable;
     const SymbolId sourceSymbol = toolingSymbolFor(sourceBinding);
     const SymbolId bindingSymbol =
         recordBindingOccurrence(capture.name, sourceBinding.type, false,
@@ -5993,13 +5979,13 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   currentType = SemanticType::lambdaType(
       id, returnType, parameterTypes, captureTypes, classTypeArguments,
       functionTypeArguments, classValueArguments, functionValueArguments);
-  semanticModel.record(expr,
-                       LambdaInfo{.id = id,
-                                  .declaration = &expr,
-                                  .returnType = returnType,
-                                  .parameterTypes = std::move(parameterTypes),
-                                  .captures = std::move(captures),
-                                  .traits = lambdaTraits});
+  semanticModel.record(
+      expr, LambdaInfo{.id = id,
+                       .declaration = &expr,
+                       .returnType = returnType,
+                       .parameterTypes = std::move(parameterTypes),
+                       .captures = std::move(captures),
+                       .traits = lambdaTraitsForCaptures(captureTypes)});
 }
 
 auto SemanticVisitor::Impl::layoutScalarKind(const SemanticType &type)

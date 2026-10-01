@@ -49,6 +49,7 @@ auto SemanticVisitor::Impl::lambdaTraitsForCaptures(
     std::span<const SemanticType> captureTypes) const -> SemanticTypeTraits {
   SemanticTypeTraits result;
   result.drop = DropKind::Trivial;
+  result.relocation = RelocationKind::Structural;
   for (const SemanticType &captureType : captureTypes) {
     const SemanticTypeTraits capture = typeTraits(captureType);
     if (capture.ownership == OwnershipKind::Shared) {
@@ -59,6 +60,9 @@ auto SemanticVisitor::Impl::lambdaTraitsForCaptures(
     }
     result.copyable = result.copyable && capture.copyable;
     result.movable = result.movable && capture.movable;
+    if (capture.relocation == RelocationKind::Unavailable ||
+        capture.containsBorrowedState)
+      result.relocation = RelocationKind::Unavailable;
     result.transferCapable = result.transferCapable && capture.transferCapable;
     result.shareCapable = result.shareCapable && capture.shareCapable;
   }
@@ -493,6 +497,7 @@ auto SemanticVisitor::Impl::typeTraits(
     traits.copyAssignable = element.copyAssignable;
     traits.moveAssignable = element.moveAssignable;
     traits.containsBorrowedState = element.containsBorrowedState;
+    traits.relocation = element.relocation;
     return traits;
   }
 
@@ -507,6 +512,7 @@ auto SemanticVisitor::Impl::typeTraits(
   if (type.kind == SemanticType::Expected ||
       type.kind == SemanticType::Unexpected) {
     SemanticTypeTraits traits = semanticTraits(type);
+    traits.relocation = RelocationKind::Structural;
     for (std::size_t index = 0; index < type.arguments.size(); ++index) {
       const SemanticType &argument = type.arguments[index];
       if (type.kind == SemanticType::Expected && index == 0 &&
@@ -527,6 +533,8 @@ auto SemanticVisitor::Impl::typeTraits(
           traits.moveAssignable && argumentTraits.moveAssignable;
       traits.containsBorrowedState =
           traits.containsBorrowedState || argumentTraits.containsBorrowedState;
+      if (argumentTraits.relocation == RelocationKind::Unavailable)
+        traits.relocation = RelocationKind::Unavailable;
     }
     return traits;
   }
@@ -534,6 +542,7 @@ auto SemanticVisitor::Impl::typeTraits(
   if (type.kind == SemanticType::Enum && type.enumId != 0 &&
       type.enumId <= enums.size() && enums[type.enumId - 1].payload) {
     SemanticTypeTraits traits = semanticTraits(type);
+    traits.relocation = RelocationKind::Structural;
     ActiveCleanupQuery cleanupQuery;
     for (const auto &[_, enumerator] : enums[type.enumId - 1].enumerators) {
       for (const SemanticType &payload : enumerator.payloadTypes) {
@@ -554,6 +563,8 @@ auto SemanticVisitor::Impl::typeTraits(
             traits.moveAssignable && component.moveAssignable;
         traits.containsBorrowedState =
             traits.containsBorrowedState || component.containsBorrowedState;
+        if (component.relocation == RelocationKind::Unavailable)
+          traits.relocation = RelocationKind::Unavailable;
       }
     }
     return traits;
@@ -625,6 +636,10 @@ auto SemanticVisitor::Impl::typeTraits(
                               .shareCapable = true};
   }
   if (owner.compilerCapability == CompilerCapabilityTypeKind::OptionalStorage) {
+    const bool relocatable =
+        type.arguments.size() == 1 &&
+        typeTraits(type.arguments.front(), visiting).relocation !=
+            RelocationKind::Unavailable;
     visiting.pop_back();
     return SemanticTypeTraits{.ownership = OwnershipKind::Value,
                               .drop = DropKind::Lexical,
@@ -632,7 +647,10 @@ auto SemanticVisitor::Impl::typeTraits(
                               .movable = true,
                               .copyAssignable = false,
                               .moveAssignable = false,
-                              .containsBorrowedState = false};
+                              .containsBorrowedState = false,
+                              .relocation = relocatable
+                                                ? RelocationKind::Structural
+                                                : RelocationKind::Unavailable};
   }
   if (owner.compilerCapability == CompilerCapabilityTypeKind::SharedOwner) {
     visiting.pop_back();
@@ -642,7 +660,8 @@ auto SemanticVisitor::Impl::typeTraits(
                               .movable = true,
                               .copyAssignable = false,
                               .moveAssignable = true,
-                              .containsBorrowedState = false};
+                              .containsBorrowedState = false,
+                              .relocation = RelocationKind::Structural};
   }
   if (owner.compilerCapability == CompilerCapabilityTypeKind::MutexLockToken) {
     visiting.pop_back();
@@ -659,6 +678,7 @@ auto SemanticVisitor::Impl::typeTraits(
   if (owner.cAbiRecord || owner.kind == ClassKind::Union) {
     traits.drop = DropKind::Trivial;
   }
+  traits.relocation = RelocationKind::Bitwise;
   const GenericSubstitution substitution = classSubstitution(type);
   const auto mergeTraits = [&](const SemanticTypeTraits &component) {
     if (component.ownership == OwnershipKind::Unique ||
@@ -678,6 +698,11 @@ auto SemanticVisitor::Impl::typeTraits(
     traits.moveAssignable = traits.moveAssignable && component.moveAssignable;
     traits.containsBorrowedState =
         traits.containsBorrowedState || component.containsBorrowedState;
+    if (component.relocation == RelocationKind::Unavailable)
+      traits.relocation = RelocationKind::Unavailable;
+    else if (component.relocation == RelocationKind::Structural &&
+             traits.relocation == RelocationKind::Bitwise)
+      traits.relocation = RelocationKind::Structural;
   };
   if (const ClassBaseTypeInfo *base = concreteBase(owner)) {
     mergeTraits(typeTraits(substituteType(base->type, substitution), visiting));
@@ -698,6 +723,10 @@ auto SemanticVisitor::Impl::typeTraits(
     traits.copyable = false;
     traits.copyAssignable = false;
   }
+  if ((hasSourceDestructorBody(owner) || concreteBase(owner) != nullptr ||
+       owner.polymorphic || owner.kind == ClassKind::Union) &&
+      traits.relocation == RelocationKind::Bitwise)
+    traits.relocation = RelocationKind::Structural;
   if (owner.storedReference) {
     traits.ownership = traits.ownership == OwnershipKind::Value
                            ? OwnershipKind::Borrowed
@@ -724,6 +753,9 @@ auto SemanticVisitor::Impl::typeTraits(
       traits.movable = false;
     }
   }
+  if (!traits.movable || traits.containsBorrowedState || owner.abstract ||
+      owner.cOpaqueHandle)
+    traits.relocation = RelocationKind::Unavailable;
   visiting.pop_back();
   return traits;
 }

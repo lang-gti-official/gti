@@ -670,6 +670,15 @@ require a live slot and return references tied to the storage receiver;
 clears any remaining values and releases the allocation. Arbitrary in-slot
 constructor argument forwarding is not part of this first slice. The surface
 exposes no address, raw byte view, manual deallocation, `new`, or `delete`.
+
+`relocate_to(destination, count)` transfers the live prefix `[0, count)` to the
+same empty slots in another storage owner when `T` satisfies
+`std::relocatable`. It validates both capacities and every slot before any
+transfer, then marks the source slots uninitialized. Both allocations remain
+owned and reusable. Live borrows and self-aliasing are rejected; occupied
+destinations, incomplete source prefixes, and insufficient capacity are
+defined storage-state failures. It is not replacement or raw byte access.
+See [structural relocation](ownership-and-lifetimes.md#structural-relocation).
 ADR 022 defines its provenance and comparison with other systems-language
 models.
 

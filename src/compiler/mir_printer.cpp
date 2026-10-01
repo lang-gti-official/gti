@@ -364,7 +364,9 @@ public:
              << instance.lifecycleBoundBorrowCarrier
              << " abstract=" << instance.abstract
              << " polymorphic=" << instance.polymorphic
-             << " c-abi=" << instance.cAbiRecord << " special-members={default="
+             << " c-abi=" << instance.cAbiRecord
+             << " c-opaque=" << instance.cOpaqueHandle
+             << " special-members={default="
              << number(instance.defaultConstructor)
              << ",copy-constructor=" << number(instance.copyConstructor)
              << ",move-constructor=" << number(instance.moveConstructor)
@@ -701,7 +703,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v68\n";
+    output << "mir-body-v69\n";
     body(value, 0);
     return output.str();
   }
@@ -989,7 +991,7 @@ private:
            << ',' << value.copyable << ',' << value.movable << ','
            << value.copyAssignable << ',' << value.moveAssignable << ','
            << value.containsBorrowedState << ',' << value.transferCapable << ','
-           << value.shareCapable << ')';
+           << value.shareCapable << ',' << number(value.relocation) << ')';
   }
 
   void info(const ExpressionInfo &value) {

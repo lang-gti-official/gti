@@ -26,6 +26,19 @@ program/value-flow finalization compile respectively in the six
 operations compile in `semantic_model.cpp`; canonical type rendering compiles
 in `semantic_type_printer.cpp`.
 
+## Structural Relocation Facts
+
+Structural relocation is recorded in `SemanticTypeTraits::relocation` as
+`Unavailable`, `Structural`, or `Bitwise`. Semantics derives it from primitive
+capabilities, concrete bases/fields/captures, generated movement, declared
+cleanup, and borrowed-state restrictions, not from a public library spelling
+or emitted C++ traits. `std::relocatable` and `std::bitwise_relocatable` are
+ordinary source concepts over declaration-bound private constraints. HIR
+preserves the trait; MIR replays its structural proof before the backend may
+select a bulk relocation. It is independent of assignability, transfer/share,
+and the MIR defined-failure proof: an empty-destination transfer does not prove
+that replacing a live destination can skip cleanup.
+
 ## Analysis Order
 
 `SemanticVisitor::check(const Program&)` is staged because later facts depend

@@ -213,6 +213,13 @@ The current structural capability set is intentionally small:
 
 - `copy_constructible<T>` requires an ordinary GTI copy construction to be
   available; unlike `copyable<T>`, it does not require copy assignment;
+- `relocatable<T>` requires structurally movable, borrow-free state, excluding
+  address-stable private host state; it does not require assignment;
+- `bitwise_relocatable<T>` additionally requires passive scalar/array state or
+  a class with only eligible fields, no bases, polymorphism, or declared
+  cleanup. It implies `relocatable<T>`; backend representation checks may still
+  select generated elementwise transfer. See [structural
+  relocation](ownership-and-lifetimes.md#structural-relocation);
 - `input_iterator<I>` requires public read-only `operator*()` returning a
   checked reference and public `void operator++() mut`; transferring an
   iterator into an algorithm is checked separately by ordinary parameter

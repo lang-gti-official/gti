@@ -190,6 +190,14 @@ placement call.
 
 ### 5. Public policy remains ordinary GTI source
 
+The structural-relocation extension exposes `storage<T>::relocate_to` over
+the existing declaration-bound storage transfer. It moves a checked initialized
+prefix into empty slots in a distinct destination owner, retaining both
+allocations. This enables ordinary GTI growable typed-storage policy without
+raw addresses or manual lifetime reconstruction. It deliberately does not add
+replacement, overlap, or allocation failure to relocation itself. All state
+validation precedes transfer, and both owners remain exclusively borrowed.
+
 The public classes and methods in `<std/memory>` are ordinary source-defined
 GTI. No compiler or backend phase recognizes `std::allocator`,
 `std::storage<T>`, `std::alignment`, or `std::alloc_errc` by spelling.

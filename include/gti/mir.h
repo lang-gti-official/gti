@@ -1086,6 +1086,7 @@ struct MirClassInstance {
   bool abstract = false;
   bool polymorphic = false;
   bool cAbiRecord = false;
+  bool cOpaqueHandle = false;
   std::optional<MirCAbiRecordLayout> cAbiLayout;
   std::optional<MirUnionLayout> unionLayout;
   SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;

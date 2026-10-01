@@ -1,0 +1,114 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Particle {
+  int identity;
+  float weight;
+
+public:
+  Particle(int identity, float weight) : identity(identity), weight(weight) {}
+  int id() { return this.identity; }
+  float mass() { return this.weight; }
+};
+
+class Resource {
+  int identity;
+  std::string label;
+
+public:
+  Resource(int identity) : identity(identity), label(std::string("resource")) {}
+  ~Resource() { std::println(this.identity); }
+  int id() { return this.identity; }
+};
+
+class Fixed {
+public:
+  Fixed() {}
+  Fixed(Fixed&& source) = delete;
+};
+
+class Ticket {
+  int number;
+
+public:
+  Ticket(int number) : number(number) {}
+  Ticket(Ticket& source) = delete;
+  Ticket(Ticket&& source) = default;
+};
+
+void accepts_relocation<std::relocatable T>() {}
+void accepts_bits<std::bitwise_relocatable T>() {
+  accepts_relocation<T>();
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  accepts_bits<Particle>();
+  accepts_bits<Ticket>();
+  accepts_relocation<Resource>();
+  accepts_relocation<std::unique_ptr<Fixed>>();
+  std::allocator allocator{};
+  {
+    mut auto empty_a = allocator.try_storage<int>(std::size_t(0));
+    mut auto empty_b = allocator.try_storage<int>(std::size_t(0));
+    if (!empty_a || !empty_b) { return 11; }
+    mut auto empty_source = std::move(empty_a).value();
+    mut auto empty_destination = std::move(empty_b).value();
+    empty_source.relocate_to(empty_destination, std::size_t(0));
+  }
+  mut auto first = allocator.try_storage<Particle>(std::size_t(3));
+  mut auto second = allocator.try_storage<Particle>(std::size_t(5));
+  if (!first || !second) { return 1; }
+  mut auto source = std::move(first).value();
+  mut auto destination = std::move(second).value();
+  source.construct(std::size_t(0), Particle(10, 1.5));
+  source.construct(std::size_t(1), Particle(20, 2.5));
+  if (argc == 2) {
+    source.relocate_to(destination, std::size_t(4));
+  }
+  if (argc == 3) {
+    destination.construct(std::size_t(1), Particle(99, 9.5));
+    source.relocate_to(destination, std::size_t(2));
+  }
+  if (argc == 4) {
+    source.relocate_to(destination, std::size_t(3));
+  }
+  // A zero count must not dereference null or uninitialized storage.
+  source.relocate_to(destination, std::size_t(0));
+  source.relocate_to(destination, std::size_t(2));
+  if (argc == 5) { return source.get(std::size_t(0)).id(); }
+  if (source.initialized(std::size_t(0)) || source.initialized(std::size_t(1))) { return 2; }
+  if (destination.get(std::size_t(0)).id() != 10) { return 3; }
+  if (destination.get(std::size_t(1)).mass() != 2.5) { return 4; }
+  // The consumed slots can be initialized again; both allocations survive.
+  source.construct(std::size_t(0), Particle(30, 3.5));
+  if (source.get(std::size_t(0)).id() != 30) { return 5; }
+
+  {
+    mut auto old_result = allocator.try_storage<Resource>(std::size_t(1));
+    mut auto new_result = allocator.try_storage<Resource>(std::size_t(2));
+    if (!old_result || !new_result) { return 6; }
+    mut auto old_storage = std::move(old_result).value();
+    mut auto new_storage = std::move(new_result).value();
+    old_storage.construct(std::size_t(0), Resource(71));
+    old_storage.relocate_to(new_storage, std::size_t(1));
+    if (old_storage.initialized(std::size_t(0))) { return 7; }
+    if (new_storage.get(std::size_t(0)).id() != 71) { return 8; }
+  }
+  {
+    mut std::vector<Particle> particles{};
+    particles.push_back(Particle(11, 4.5));
+    particles.reserve(std::size_t(64));
+    particles.push_back(Particle(12, 5.5));
+    particles.shrink_to_fit();
+    if (particles[std::size_t(0)].id() != 11) { return 9; }
+    if (particles[std::size_t(1)].mass() != 5.5) { return 10; }
+    mut std::vector<Resource> owners{};
+    owners.push_back(Resource(81));
+    owners.reserve(std::size_t(64));
+    owners.push_back(Resource(82));
+    owners.shrink_to_fit();
+  }
+  std::println("relocation passed");
+  return 0;
+}

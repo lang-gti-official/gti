@@ -575,6 +575,9 @@ add_test(NAME private_constructor_placement COMMAND gti_private_constructor_plac
 add_executable(gti_nested_guarded_expected_tests nested_guarded_expected_tests.cpp)
 target_link_libraries(gti_nested_guarded_expected_tests PRIVATE gti_cpp_backend)
 add_test(NAME nested_guarded_expected COMMAND gti_nested_guarded_expected_tests)
+add_executable(gti_structural_relocation_tests structural_relocation_tests.cpp)
+target_link_libraries(gti_structural_relocation_tests PRIVATE gti_cpp_backend)
+add_test(NAME structural_relocation COMMAND gti_structural_relocation_tests)
 if(Python3_Interpreter_FOUND)
   add_test(
     NAME cpp_mir_body_emitter_census
@@ -1961,6 +1964,20 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(nested_guarded_expected_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME structural_relocation_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/structural_relocation_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(structural_relocation_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME structural_relocation_lsp
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/structural_relocation_lsp_test.py"
+            "$<TARGET_FILE:gti_lsp>"
+  )
+  set_tests_properties(structural_relocation_lsp PROPERTIES TIMEOUT 120)
   add_test(
     NAME owning_function_policy_failure_runtime
     COMMAND "${Python3_EXECUTABLE}"

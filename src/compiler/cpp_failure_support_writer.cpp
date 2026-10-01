@@ -695,7 +695,7 @@ mir_storage_destroy_v1(::gti_internal::backend::storage<T> &storage,
   return mir_failure_success_v1;
 }
 
-template <typename T>
+template <bool Bitwise = false, typename T>
 inline mir_failure_status_v1
 mir_storage_relocate_v1(::gti_internal::backend::storage<T> &source,
                         ::gti_internal::backend::storage<T> &destination,
@@ -714,7 +714,7 @@ mir_storage_relocate_v1(::gti_internal::backend::storage<T> &source,
               GTI_FAILURE_DETAIL_OCCUPIED_RELOCATION_DESTINATION_V1};
     }
   }
-  source.relocate_to(destination, count);
+  source.template relocate_to<Bitwise>(destination, count);
   return mir_failure_success_v1;
 }
 
@@ -918,7 +918,7 @@ mir_prefix_erase_v1(::gti_internal::backend::prefix_storage<T> &storage,
   return mir_failure_success_v1;
 }
 
-template <typename T>
+template <bool Bitwise = false, typename T>
 inline mir_failure_status_v1
 mir_prefix_relocate_v1(::gti_internal::backend::prefix_storage<T> &source,
                        ::gti_internal::backend::prefix_storage<T>
@@ -931,7 +931,7 @@ mir_prefix_relocate_v1(::gti_internal::backend::prefix_storage<T> &source,
     return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
             GTI_FAILURE_DETAIL_RELOCATION_CAPACITY_V1};
   }
-  source.relocate_to(destination);
+  source.template relocate_to<Bitwise>(destination);
   return mir_failure_success_v1;
 }
 

@@ -353,6 +353,7 @@ private:
          .abstract = declaration->abstract,
          .polymorphic = declaration->polymorphic,
          .cAbiRecord = declaration->cAbiRecord,
+         .cOpaqueHandle = declaration->cOpaqueHandle,
          .cAbiLayout = declaration->cAbiLayout,
          .unionLayout = declaration->unionLayout,
          .defaultConstructor = lifecycle == nullptr
