@@ -30,6 +30,26 @@ struct list_slot<T> {
   }
 };
 class list_sentinel<T> {};
+class list_mut_iterator<T> {
+  mut vector<list_slot<T>>& slots;
+  mut size_t position;
+public:
+  list_mut_iterator(mut vector<list_slot<T>>& slots, size_t position)
+      : slots(slots), position(position) {}
+  T& operator*() {
+    gti_internal::require_container_argument(this.position != 0);
+    return this.slots[this.position - 1].read();
+  }
+  mut T& operator*() mut {
+    gti_internal::require_container_argument(this.position != 0);
+    return this.slots[this.position - 1].get();
+  }
+  void operator++() mut {
+    gti_internal::require_container_argument(this.position != 0);
+    this.position = this.slots[this.position - 1].next();
+  }
+  bool operator!=(list_sentinel<T>& end) { return this.position != 0; }
+};
 class list_iterator<T> {
   vector<list_slot<T>>& slots;
   size_t tail;
@@ -53,6 +73,8 @@ public:
   }
   bool operator!=(list_sentinel<T>& end) { return this.position != 0; }
   bool operator==(list_sentinel<T>& end) { return this.position == 0; }
+  bool operator!=(list_iterator<T>& other) { return this.position != other.position; }
+  bool operator==(list_iterator<T>& other) { return this.position == other.position; }
 };
 }
 
@@ -291,5 +313,8 @@ public:
     return detail::list_iterator<T>(this.slots, this.tail, this.head);
   }
   detail::list_sentinel<T> end() { return detail::list_sentinel<T>(); }
+  detail::list_mut_iterator<T> begin_mut() mut {
+    return detail::list_mut_iterator<T>(this.slots, this.head);
+  }
 };
 }

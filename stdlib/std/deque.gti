@@ -49,6 +49,39 @@ public:
   void operator--() mut { this.position--; }
   bool operator!=(deque_sentinel& end) { return this.position != end.position(); }
   bool operator==(deque_sentinel& end) { return this.position == end.position(); }
+  bool operator!=(deque_iterator<T>& other) { return this.position != other.position; }
+  bool operator==(deque_iterator<T>& other) { return this.position == other.position; }
+  void operator+=(ptrdiff_t offset) mut {
+    this.position = size_t(ptrdiff_t(this.position) + offset);
+  }
+  void operator-=(ptrdiff_t offset) mut {
+    this.position = size_t(ptrdiff_t(this.position) - offset);
+  }
+  ptrdiff_t operator-(deque_sentinel& end) {
+    return ptrdiff_t(end.position()) - ptrdiff_t(this.position);
+  }
+};
+class deque_mut_iterator<T> {
+  mut vector<deque_slot<T>>& slots;
+  size_t head;
+  size_t length;
+  mut size_t position;
+public:
+  deque_mut_iterator(mut vector<deque_slot<T>>& slots, size_t head, size_t length)
+      : slots(slots), head(head), length(length), position(0) {}
+  T& operator*() {
+    gti_internal::index_bounds_check(this.position, this.length);
+    return this.slots[(this.head + this.position) % this.slots.size()].get();
+  }
+  mut T& operator*() mut {
+    gti_internal::index_bounds_check(this.position, this.length);
+    return this.slots[(this.head + this.position) % this.slots.size()].get();
+  }
+  void operator++() mut {
+    gti_internal::index_bounds_check(this.position, this.length);
+    this.position++;
+  }
+  bool operator!=(deque_sentinel& end) { return this.position != end.position(); }
 };
 }
 
@@ -207,5 +240,8 @@ public:
     return detail::deque_iterator<T>(this.slots, this.head, this.length, size_t(0));
   }
   detail::deque_sentinel end() { return detail::deque_sentinel(this.length); }
+  detail::deque_mut_iterator<T> begin_mut() mut {
+    return detail::deque_mut_iterator<T>(this.slots, this.head, this.length);
+  }
 };
 }

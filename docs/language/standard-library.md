@@ -84,7 +84,8 @@ The current implemented foundation includes:
   Last-owner release performs checked cleanup; reference-count synchronization
   does not grant mutable access to the object; and
 - `<std/array>` `std::array<T, N>` over checked fixed-array storage, including
-  front/back access and copyable-element fill; and
+  front/back access, copyable-element fill, read-only random-access cursors,
+  and confined mutable traversal; and
 - `<std/string>` `std::string` as a move-only owner over private character
   storage, including
   construction from an exact input iterator/sentinel pair whose dereference
@@ -131,9 +132,13 @@ The current implemented foundation includes:
 - `<std/algorithm>` value-returning `min`, `max`, and `clamp`, and structural
   input-iterator `all_of`, `any_of`, `none_of`, `find_if`, `find_if_not`, and
   `count_if`, exact-value `find` and `count`, and returned-callable `for_each`,
-  plus `binary_search` over an exact ordered forward-iterator subrange and
-  complete-`vector` predicate/operation overloads. Whole-vector copy, fill,
-  transform, reverse, ordered sort, and comparator sort are source-defined.
+  plus `binary_search`, bounds, subsequence and repeated-value search,
+  adjacent search, extrema, sortedness, bounded sequence comparison, and
+  prefix comparison. Structural whole-range predicates, `contains`, `count`,
+  `fill`, `replace`, and `replace_if` accept nominal ranges and fixed arrays.
+  Confined output `copy`, `copy_n`, `copy_if`, replacement-copy and removal-copy
+  families write existing elements without implicit movement. `transform`,
+  `reverse`, ordered sort, and comparator sort retain whole-vector forms.
   Iterator clients accept a distinct exact sentinel type. `find` returns its
   moved iterator while retaining the concrete borrowed-owner dependency, and
   both `for_each` forms return the exact moved callable after repeated confined

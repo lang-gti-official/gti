@@ -13,6 +13,8 @@ public:
   void operator++() mut { ++this.cursor; }
   bool operator!=(unordered_map_sentinel& end) { return this.cursor != end; }
   bool operator==(unordered_map_sentinel& end) { return this.cursor == end; }
+  bool operator!=(unordered_set_key_iterator<K>& other) { return this.cursor != other.cursor; }
+  bool operator==(unordered_set_key_iterator<K>& other) { return this.cursor == other.cursor; }
 };
 class unordered_set_insert_iterator<K> {
   mut unordered_map_mut_iterator<K, bool> cursor;

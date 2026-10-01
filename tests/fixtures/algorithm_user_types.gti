@@ -1,0 +1,89 @@
+#include <std/algorithm>
+#include <std/vector>
+#include <std/string>
+#include <std/list>
+#include <std/deque>
+#include <std/array>
+
+// Independent application-owned protocol, not a wrapper over a std cursor.
+class stop {
+  std::size_t length;
+public:
+  stop(std::size_t length) : length(length) {}
+  std::size_t position() { return this.length; }
+};
+class cursor {
+  series& owner;
+  mut std::size_t index;
+public:
+  cursor(series& owner, std::size_t index) : owner(owner), index(index) {}
+  int& operator*() { return this.owner.at(this.index); }
+  void operator++() mut { this.index++; }
+  bool operator!=(stop& end) { return this.index != end.position(); }
+  bool operator!=(cursor& other) { return this.index != other.index; }
+};
+class series {
+  int data[4] = {5, 1, 1, 3};
+public:
+  int& at(std::size_t index) { return this.data[index]; }
+  cursor begin() { return cursor(this, std::size_t(0)); }
+  stop end() { return stop(std::size_t(4)); }
+};
+
+mut int destroyed = 0;
+class owned {
+  int number;
+public:
+  owned(int number) : number(number) {}
+  owned(owned& other) = delete;
+  owned(owned&& other) = default;
+  ~owned() { destroyed++; }
+  bool operator==(owned& other) { return this.number == other.number; }
+  bool operator!=(owned& other) { return this.number != other.number; }
+  bool operator<(owned& other) { return this.number < other.number; }
+  int value() { return this.number; }
+};
+
+int main() {
+  series application{};
+  int one = 1;
+  if (!std::contains(application, one) || std::count(application, one) != 2) { return 1; }
+  auto minimum = std::min_element(application.begin(), application.end());
+  auto pair = std::adjacent_find(application.begin(), application.end());
+  if (*minimum != 1 || *pair != 1 || std::is_sorted(application.begin(), application.end())) { return 2; }
+  {
+    std::list<owned> objects = {owned(4), owned(2), owned(2)};
+    owned needle{2};
+    auto found = std::find(objects.begin(), objects.end(), needle);
+    auto least = std::min_element(objects.begin(), objects.end());
+    if ((*found).value() != 2 || (*least).value() != 2 || std::count(objects, needle) != 2) { return 3; }
+  }
+  if (destroyed != 4) { return 4; }
+  std::vector<std::string> words = {std::string("alpha"), std::string("beta")};
+  std::string needle{"beta"};
+  if (!std::contains(words, needle)) { return 5; }
+  auto selected = std::find_if(words.begin(), words.end(), [](std::string& word) -> bool { return word.starts_with("b"); });
+  if (*selected != "beta") { return 6; }
+  std::vector<int> input = {8, 9};
+  mut std::list<int> list = {0, 0};
+  mut std::deque<int> deque = {0, 0};
+  mut std::array<int, 2> array{};
+  std::copy_n(input.begin(), std::size_t(2), list.begin_mut());
+  std::copy_n(input.begin(), std::size_t(2), deque.begin_mut());
+  std::copy_n(input.begin(), std::size_t(2), array.begin_mut());
+  if (list.front() != 8 || list.back() != 9 || deque.back() != 9 || array.back() != 9) { return 7; }
+  mut std::array<int, 0> empty{};
+  int replacement = 1;
+  std::fill(empty, replacement);
+  if (std::contains(empty, replacement)) { return 8; }
+  {
+    mut std::list<std::string> owned_values = {std::string("old")};
+    mut auto position = owned_values.begin_mut();
+    std::string replacement_text{"moved"};
+    *position = std::move(replacement_text);
+    if (*position != "moved") { return 9; }
+    *position = std::string("fresh");
+    if (*position != "fresh") { return 10; }
+  }
+  return 0;
+}

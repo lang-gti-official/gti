@@ -6,6 +6,29 @@ Tests follow the layer that owns behavior. Documentation examples and emitted
 C++ are useful evidence, but they do not replace focused frontend or IR
 assertions.
 
+## Generic algorithm breadth
+
+`generic_algorithm_breadth` executes search/comparison/bounds, mutable
+traversal/replacement, filtered output, and independent user-defined cursor
+fixtures at C++20/C++23 O0/O1/O3, disabled copy elision, and ASan/UBSan. The
+small-sequence oracle enumerates lengths zero through five and patterns zero
+through three, checking first-match, first-extremum, empty, duplicate, absent,
+and unequal-length behavior independently by indexed reference calculations.
+Move-only searchable elements are observed without cloning. The owning suite
+also tests explicit move and fresh-owner assignment through a nominal cursor.
+`generic_algorithm_errors` rejects type, predicate, implicit-copy, owner-loan,
+and escaping-local-owner cases, then checks failure propagation and cleanup at
+O0/O3. These tests supplement `generic_algorithm_cluster`, container tests,
+and the reviewed standard-library surface matrix.
+
+The 0.356.0 completion run passed all 337 registered Release CTest gates on
+macOS arm64, all 11 clean installed-library consumers, 65 Tree-sitter corpus
+tests, source parsing for the changed library units and new fixtures, and the
+repository C/C++ formatting check. The installed toolchain also compiled and
+ran the new generic-algorithms example independently of the repository build.
+Both complete example corpus gates passed with the reviewed array-iterator
+declarations and new algorithm example reflected in their inventories.
+
 ## Primary Targets
 
 The library-completion gates cover the following public workflows:

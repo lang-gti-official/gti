@@ -1,0 +1,79 @@
+#include <std/algorithm>
+#include <std/iterator>
+#include <std/vector>
+#include <std/list>
+#include <std/deque>
+#include <std/array>
+#include <std/set>
+#include <std/unordered_set>
+#include <std/string>
+
+bool search_suite<I, S>(I first, S last)
+  requires std::forward_iterator<I> && std::sentinel_for<S, I> &&
+           std::dereferences_to<I, int> {
+  int two = 2;
+  int absent = 9;
+  if (!std::contains(first, last, two) || std::contains(first, last, absent)) { return false; }
+  if (std::count(first, last, two) != 2) { return false; }
+  auto found = std::find(first, last, two);
+  if (*found != 2) { return false; }
+  auto adjacent = std::adjacent_find(first, last);
+  if (*adjacent != 2) { return false; }
+  auto low = std::lower_bound(first, last, two);
+  auto high = std::upper_bound(first, last, two);
+  if (*low != 2 || *high != 4) { return false; }
+  auto missing = std::lower_bound(first, last, absent);
+  if (missing != last) { return false; }
+  auto minimum = std::min_element(first, last);
+  auto maximum = std::max_element(first, last);
+  if (*minimum != 1 || *maximum != 7) { return false; }
+  if (!std::is_sorted(first, last)) { return false; }
+  auto sorted_end = std::is_sorted_until(first, last);
+  if (sorted_end != last) { return false; }
+  auto run = std::search_n(first, last, std::size_t(2), two);
+  if (*run != 2) { return false; }
+  auto no_run = std::search_n(first, last, std::size_t(3), two);
+  if (no_run != last) { return false; }
+  std::vector<int> needle = {2, 4};
+  auto subsequence = std::search(first, last, needle.begin(), needle.end());
+  if (*subsequence != 2 || *std::next(subsequence) != 4) { return false; }
+  auto member = std::find_first_of(first, last, needle.begin(), needle.end());
+  if (*member != 2) { return false; }
+  std::vector<int> reference = {1, 2, 2, 4, 7};
+  if (!std::equal(first, last, reference.begin(), reference.end())) { return false; }
+  std::vector<int> prefix = {1, 2};
+  if (!std::starts_with(first, last, prefix.begin(), prefix.end())) { return false; }
+  if (!std::lexicographical_compare(prefix.begin(), prefix.end(), first, last)) { return false; }
+  return true;
+}
+
+int main() {
+  int two = 2;
+  int three = 3;
+  int four = 4;
+  int seven = 7;
+  char letter = 'd';
+  std::vector<int> vector = {1, 2, 2, 4, 7};
+  std::list<int> list = {1, 2, 2, 4, 7};
+  std::deque<int> deque = {1, 2, 2, 4, 7};
+  std::array<int, 5> array = std::array<int, 5>({1, 2, 2, 4, 7});
+  if (!search_suite(vector.begin(), vector.end())) { return 1; }
+  if (!search_suite(list.begin(), list.end())) { return 2; }
+  if (!search_suite(deque.begin(), deque.end())) { return 3; }
+  if (!search_suite(array.begin(), array.end())) { return 4; }
+  if (!std::contains(list, four) || std::count(deque, two) != 2 || !std::contains(array, seven)) { return 5; }
+  int raw[3] = {3, 4, 3};
+  if (!std::contains(raw, four) || std::count(raw, three) != 2) { return 6; }
+  std::set<int> ordered = {4, 1, 7};
+  std::unordered_set<int> hashed = {4, 1, 7};
+  auto low = std::min_element(ordered.begin(), ordered.end());
+  auto high = std::max_element(hashed.begin(), hashed.end());
+  if (*low != 1 || *high != 7 || !ordered.contains(four) || !hashed.contains(seven)) { return 7; }
+  std::string text{"abccdef"};
+  auto repeated = std::adjacent_find(text.begin(), text.end());
+  if (*repeated != 'c' || !std::contains(text, letter)) { return 8; }
+  auto previous = std::prev(std::next(list.begin(), std::size_t(2)));
+  auto jumped = std::next(deque.begin(), std::ptrdiff_t(3));
+  if (*previous != 2 || *jumped != 4) { return 9; }
+  return 0;
+}

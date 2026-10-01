@@ -227,7 +227,12 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   when applicable. Do not attach a fix-it: moving the value versus preserving
   it with an explicit allocating copy requires programmer intent.
 - `GTI-S2003` retains an ordinary assignment mismatch when a move-only type
-  does not provide move assignment. If the right-hand side is already an
+  cannot be copied through a dereference. Dereference writes use the same
+  copy/move-assignment policy as binding, field, and subscript writes; point at
+  the right-hand value and name unavailable copy or move assignment when its
+  type matches. Suggest explicit transfer only when move assignment exists,
+  without a fix-it that changes ownership intent. The same code is used when
+  a type does not provide move assignment. If the right-hand side is already an
   explicit `std::move`, its hint must identify unavailable move assignment and
   suggest initializing a new binding; it must not repeat the same
   `std::move(owner)` advice. No fix-it is safe because replacing an existing

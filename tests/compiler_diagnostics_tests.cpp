@@ -130,6 +130,46 @@ int main() {
 }
 
 void testOwnershipAndMissingIncludeDiagnostics() {
+  const std::string dereferencePrefix = R"(
+#include <std/string>
+class Slot {
+  mut std::string value = std::string("old");
+public:
+  mut std::string& operator*() mut { return value; }
+};
+int main() {
+  mut Slot slot{};
+  std::string source = std::string("new");
+  *slot = )";
+  const std::string copied = dereferencePrefix + "source; return 0; }";
+  const auto copyResult = lang::Frontend().analyze(
+      "dereference-owner-copy.gti", copied, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  const auto *copyError =
+      findDiagnosticByCode(copyResult.diagnostics, "GTI-S2003");
+  expect(
+      !copyResult.canGenerateCode() && copyError != nullptr &&
+          copyError->phase == lang::DiagnosticPhase::Semantics &&
+          copyError->primary.source ==
+              std::filesystem::weakly_canonical("dereference-owner-copy.gti")
+                  .string() &&
+          copyError->primary.start == dereferencePrefix.size() &&
+          copyError->primary.end == dereferencePrefix.size() + 6 &&
+          copyError->message.find("Cannot copy assign") != std::string::npos &&
+          !copyError->hints.empty() && copyError->fixes.empty() &&
+          !hasDiagnosticCode(copyResult.diagnostics, "GTI-B0001"),
+      "user-defined dereference assignment must reject implicit owner copies "
+      "at the RHS before lowering, without an ownership-changing fix-it");
+  for (const std::string &value : {std::string("std::move(source)"),
+                                   std::string("std::string(\"fresh\")")}) {
+    const auto valid = lang::Frontend().analyze(
+        "dereference-owner-move.gti",
+        dereferencePrefix + value + "; return 0; }", {standardLibraryPrelude()},
+        {}, {standardLibraryRoot()});
+    expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+           "owned RHS values should retain valid dereference move assignment");
+  }
+
   const std::string ownershipSource = R"(
 #include <std/string>
 #include <std/vector>
