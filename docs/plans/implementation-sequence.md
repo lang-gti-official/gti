@@ -4627,22 +4627,25 @@ consumer, and release refreshes remain outstanding for the full campaign.
   argument transfer, lexical parameter entry, direct result placement,
   success-only activation, and defined-failure cleanup remain explicit through
   HIR and verified MIR. The first aggregate containment slice is complete:
-  an ordinary non-generic, non-polymorphic class or struct may own the enum in a
+  an ordinary non-polymorphic class or struct may own the enum in a
   direct field, initialize it in-class or through a constructor, move it with
   the containing value, replace a mutable field, and preserve reverse-order
-  rollback after partial construction. Generic/polymorphic callable transport,
-  lambda capture, arrays and indirect/generic/recursive wrapper containment,
-  stored borrowed state, and active non-class/recursive carriers remain
-  diagnosed with `GTI-S2067`.
+  rollback after partial construction. Exact concrete generic functions,
+  methods, constructors, and owning fields reuse that contract, enabling
+  user-defined envelopes, vectors of owning events, and optional inline event
+  storage. Prepared-argument failure cleanup and consuming-method result
+  placement retain exact MIR obligations. Recursive finite owning sums and
+  borrowed patterns are also implemented. Polymorphic/native direct transport,
+  direct enum capture, fixed arrays of enums, direct enum result alternatives,
+  and stored borrowed payload state remain bounded separately.
 - **Implemented slice:** Nominal payload cases construct by exact case calls.
   `switch` accepts qualified case patterns, creates immutable copied bindings,
   and requires a `default` or every variant. Semantic variant identity and
   exhaustiveness survive through HIR/MIR; the C++ backend uses a replaceable
   `std::variant` wrapper without making that library type source semantics.
-- **Remaining scope:** Add lambda capture, consuming and borrowed payload
-  bindings, fixed-array and indirect/generic wrapper transport, recursive
-  active aggregates/nested payload enums with explicit partial state, generic
-  payloads, and deterministic layout in separately proven families.
+- **Remaining scope:** Add direct enum lambda capture, consuming payload
+  bindings, fixed-array and direct result-alternative transport, generic
+  payload declarations, and deterministic layout in separately proven families.
 - **Non-goals:** Implicit conversions, open variants, making `std::variant`
   compiler magic, or treating the separately implemented passive native union
   as a tagged sum or C ABI union.

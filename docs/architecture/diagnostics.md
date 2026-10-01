@@ -698,10 +698,13 @@ arguments; diagnostics must not substitute `unknown class` merely because
 complete member metadata is recorded later. A move-only payload binding names
 the non-consuming copied-pattern boundary and points users to the tag-only
 form; an active recursive/non-class carrier names the bounded owning-class
-boundary. The direct-local owning slice reports by-value function/method,
-constructor, and typed-lambda boundaries at their type declaration and
-suggests a checked reference; lambda capture and field/array/wrapper
-containment name the exact storage boundary before MIR. No fix-it is offered
+boundary. Ordinary concrete generic callables and class/struct owners admit
+owning enums using the same exact lifecycle facts as non-generic definitions;
+a type argument alone is not evidence of contained ownership. Unsupported
+polymorphic/native by-value boundaries point at their type declaration and
+suggest a checked reference. Direct enum captures, fixed arrays, restricted
+field owners, and direct result-carrier alternatives name their exact storage
+boundary before MIR. No fix-it is offered
 when choosing a payload type, binding, transport, or missing-arm behavior
 requires program intent.
 

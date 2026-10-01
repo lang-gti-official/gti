@@ -1236,7 +1236,7 @@ source obligation. In the bounded callable slice, the same obligation may move
 through ordered argument staging into an ordinary callable's lexical parameter
 slot and from its return into a caller-owned result slot. The result obligation
 is inactive until successful publication, so failure cleans parameters without
-dropping an uninitialized result. An ordinary non-generic, non-polymorphic
+dropping an uninitialized result. An ordinary non-polymorphic
 class or struct may also own the enum directly in a field. Construction
 rollback arms that field only after successful publication, generated movement
 transfers its obligation with the containing value, and replacement of a
@@ -1248,7 +1248,10 @@ not skip remaining sibling cleanup. Borrowed payload patterns introduce
 arm-scoped shared (`auto&`) or exclusive (`mut auto&`) loans into stable enum
 storage. Their conflict root is conservatively the whole enum, and a checked
 receiver-derived return retains its original owner dependency.
-Generic or polymorphic enum callable transport, lambda capture, direct array
+Concrete generic callable instances and owning wrappers retain the same
+obligations, including enum elements in storage-backed collections and inline
+optional storage. No ownership rule follows merely from a generic argument's
+spelling. Polymorphic enum callable transport, direct enum lambda capture, direct array
 payloads, stored-reference owners, compiler-private or native
 layout records, and polymorphic bases remain diagnosed rather than inventing
 indirect cleanup state.

@@ -306,8 +306,8 @@ private:
   int32_t value;
 };
 enum class holder { one(resource value), none };
-struct wrapper { holder value = holder::one(resource(7)); };
-int main() { wrapper value = wrapper(); return 0; }
+struct wrapper<T> { holder value = holder::one(resource(7)); };
+int main() { wrapper<int32_t> value = wrapper<int32_t>(); return 0; }
 )");
   expect(frontend.canGenerateCode(),
          "an ordinary direct owning payload-enum field should pass the "
@@ -563,12 +563,12 @@ public:
 
 enum class holder { one(resource value), none };
 
-class relay {
+class relay<T> {
 public:
   relay(holder value) {}
 };
 
-holder transfer(holder value, int32_t divisor) {
+T transfer<T>(T value, int32_t divisor) {
   int32_t checked = int32_t(1) / divisor;
   return std::move(value);
 }
@@ -586,7 +586,7 @@ holder direct_fresh_return() {
 }
 
 holder constructor_direct(holder value) {
-  relay service = relay(std::move(value));
+  relay<int32_t> service = relay<int32_t>(std::move(value));
   return holder::none;
 }
 
@@ -604,6 +604,14 @@ holder fresh_exact_lambda() {
     return std::move(inner);
   };
   return invoke(holder::one(resource()), 1);
+}
+
+holder later_argument_failure(int32_t divisor) {
+  return transfer(holder::one(resource()), int32_t(1) / divisor);
+}
+
+holder later_argument_move_failure(holder value, int32_t divisor) {
+  return transfer(std::move(value), int32_t(1) / divisor);
 }
 
 int main() { return 0; }
@@ -941,11 +949,11 @@ int main() { return 0; }
            "the named payload transport should retain its exact source "
            "function target");
     if (target != functions.end()) {
-      target->typeArguments.push_back(lang::SemanticType::Int32);
+      target->linkage = lang::LanguageLinkage::C;
     }
   }
   expectRejected(wrongConsumerKind, namedShape.function,
-                 "a payload-enum CallInput targeting a generic callable "
+                 "a payload-enum CallInput targeting a native callable "
                  "instance must fail admission");
 
   const lang::MirProgram wrongInputIndex =
@@ -1024,6 +1032,30 @@ int main() { return 0; }
   expectRejected(wrongPreparedPlace, freshShape.function,
                  "a prepared payload-enum drop detached from its destination "
                  "place must fail admission");
+
+  const lang::MirProgram conditionalPreparedCleanup =
+      forge(freshShape.function, [&](lang::MirBody &body) {
+        const auto *stage = findMutableInstruction(body, freshShape.stage);
+        bool changed = false;
+        if (stage != nullptr && stage->preparedParameterDrop) {
+          for (auto &block : body.blocks) {
+            for (auto &instruction : block.instructions) {
+              if (instruction.kind == lang::MirInstructionKind::Drop &&
+                  instruction.lifecycle.size() == 1 &&
+                  instruction.lifecycle.front().source ==
+                      *stage->preparedParameterDrop) {
+                instruction.lifecycle.front().conditional = true;
+                changed = true;
+              }
+            }
+          }
+        }
+        expect(changed,
+               "later argument failure must retain prepared enum cleanup");
+      });
+  expectRejected(conditionalPreparedCleanup, freshShape.function,
+                 "conditional prepared cleanup requires an independent "
+                 "engagement state and cannot alias the backing shell");
 
   const lang::MirProgram wrongResultPlace =
       forge(namedShape.function, [&](lang::MirBody &body) {
@@ -1156,11 +1188,11 @@ int main() { return 0; }
            "the direct constructor transport should retain its exact owner "
            "instance");
     if (owner != classes.end()) {
-      owner->type.arguments.push_back(lang::SemanticType::Int32);
+      owner->polymorphic = true;
     }
   }
   expectRejected(wrongConstructorOwner, directConstructorShape.function,
-                 "a payload-enum CallInput targeting a generic-owner "
+                 "a payload-enum CallInput targeting a polymorphic-owner "
                  "constructor must fail admission");
 
   const lang::MirProgram wrongDirectTransfer =

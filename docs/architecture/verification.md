@@ -964,7 +964,8 @@ upstream code.
 | `optional_compiler_contract` | exact declaration-bound optional capability identity; inline storage instance policy; semantic, HIR, MIR, lifecycle-transfer, and backend-intrinsic retention; move-only source unavailability; live-borrow rejection; private representation isolation; and fail-closed forged intrinsic and transfer evidence |
 | `optional_runtime` | empty, value, move, checked read, reset, emplacement, fallback, and move-only payload behavior; inline allocation-free representation; copy and assignment rejection; live-borrow protection; exact cleanup; and `GTI-R0008` wrong-state reporting at O0/O3 under C++20/C++23 |
 | `class_payload_enum_runtime` | passive and active-cleanup class alternatives; fresh/copy/move construction; tag inspection through a checked reference; same-tag replacement plus cross-tag move assignment; distinct cleanup of two same-type owning fields; unit and `std::string` alternatives; normal/control-flow/defined-failure exactly-once drop; and declaration-time rejection of move-only copied bindings and owning by-value call/return at O0/O3 under C++20/C++23 |
-| `payload_enum_containment_runtime` | ordinary non-generic class/struct direct fields; constructor and in-class initialization; containing-value move/call/return/assignment, including an immutable source and nested scope directly in the hosted entry; direct mutable-field replacement; return, break, and continue cleanup; partial-construction defined-failure rollback; C++ type-definition ordering and private disengaged representation; precise generic-owner, polymorphic-owner, and fixed-array `GTI-S2067` rejection; and O0/O3 under C++20/C++23 |
+| `payload_enum_containment_runtime` | ordinary class/struct direct fields; constructor and in-class initialization; containing-value move/call/return/assignment, including an immutable source and nested scope directly in the hosted entry; direct mutable-field replacement; return, break, and continue cleanup; partial-construction defined-failure rollback; C++ type-definition ordering and private disengaged representation; precise polymorphic-owner and fixed-array `GTI-S2067` rejection; and O0/O3 under C++20/C++23 |
+| `generic_payload_enum_runtime` | generic free-function and unrelated user-defined owner transport/capture, consuming extraction, vector reallocation/iteration, optional inline storage/reset, partial-owner rollback, later-argument and callee failure, failing and non-failing cleanup, implicit-copy/live-borrow/use-after-move diagnostics, C++20/C++23 O0/O1/O3 parity, disabled elision, and ASan/UBSan |
 | `returned_class_field_runtime` | free-function and method class results can be projected directly in initializers and larger expressions at O0/O3 under C++20/C++23 |
 | `global_class_storage_runtime` | runtime-initialized cleanup-free global class storage uses one shared lifetime-slot representation across declarations, module initialization, and exact member reads/writes at O0/O3 under C++20/C++23 |
 | `reference_parameter_range_runtime` | single, nested, and triple read-only traversal through a class reference parameter use shared MIR referent carriers; public-derived arguments bind to base/interface references; direct concrete virtual calls cover local, global, field, generic, returned-bound, and ordinary-base receivers; failure-capable descendants retain the status ABI; and the matrix runs at O0/O3 under C++20/C++23 |
@@ -1365,7 +1366,12 @@ runs the same one-evaluation construction/matching path under C++20 and C++23.
 initializer schedule and proves a forged obligation reparent target fails
 closed. `payload_enum_containment_runtime` owns the ordinary direct-field
 lifecycle matrix, including partial-construction failure and unsupported-shape
-diagnostics. The Tree-sitter corpus and capture tests own editor grammar and
+diagnostics. `generic_payload_enum_runtime` proves the same exact lifecycle
+through a user-defined `Envelope<T>`, vector, and optional. Its failure matrix
+checks cleanup of prepared arguments before the callee is entered, including
+retiring fresh representations and preserving a moved source's separately
+scheduled disarmed shell. Generic field and transport mutations retain the
+independent preflight gates. The Tree-sitter corpus and capture tests own editor grammar and
 highlighting.
 
 Recursive owning sums additionally use `recursive_payload_sum_runtime` for

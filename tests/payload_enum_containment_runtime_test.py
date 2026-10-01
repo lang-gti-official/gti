@@ -260,7 +260,7 @@ def main() -> int:
             or rejected_text.count(
                 "direct owning payload-enum field is supported only"
             )
-            != 2
+            != 1
             or "GTI-B0001" in rejected_text
         ):
             sys.stderr.write(

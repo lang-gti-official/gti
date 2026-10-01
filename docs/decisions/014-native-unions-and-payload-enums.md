@@ -62,9 +62,14 @@ Conflict checking conservatively uses the entire matched enum, so simultaneous
 sibling mutable payload borrows are rejected. These bindings do not permit
 enum declarations to store reference payloads.
 
-Generic enum callable transport (including generic-owner methods and constructors),
-polymorphic callable transport, lambda capture, direct array or non-class
-payloads, stored borrowed state, consuming patterns, and a stable source layout
+Concrete generic callable and owner instances reuse the same lifecycle contract,
+including source-defined wrappers, storage-backed collections, and inline
+optional storage. Generic argument identity is not ownership containment;
+concrete fields and declaration-bound storage capabilities supply the owning
+facts that HIR and MIR preserve and verify.
+
+Polymorphic callable transport, direct enum lambda capture, direct array or
+non-class payloads, stored borrowed state, consuming patterns, and a stable source layout
 remain outside this decision. The C++ backend may use `std::variant` plus a
 private disengaged representation state because all language decisions are
 complete before emission; that state is not a source alternative and a future

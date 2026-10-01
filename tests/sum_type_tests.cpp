@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -88,6 +89,14 @@ bool hasMirMessage(const lang::MirVerificationResult &result,
 
 lang::FrontendResult analyze(std::string_view name, std::string source) {
   return lang::Frontend().analyze(std::string(name), std::move(source));
+}
+
+lang::FrontendResult analyzeWithPrelude(std::string_view name,
+                                        std::string source) {
+  const std::filesystem::path library =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  return lang::Frontend().analyze(std::string(name), std::move(source),
+                                  {library / "prelude.gti"}, {}, {library});
 }
 
 const lang::ClassDecl *findClass(const lang::Program &program,
@@ -681,23 +690,26 @@ int main() {
          "value through verified MIR");
 
   const lang::FrontendResult genericCallableBoundary =
-      analyze("owning-payload-generic-callable-boundary.gti", R"(
+      analyzeWithPrelude("owning-payload-generic-callable-boundary.gti", R"(
 class resource {
 public:
   resource() {}
   ~resource() {}
 };
 enum class holder { one(resource value), none };
-holder transfer<T>(holder value) { return holder::none; }
-int main() { return 0; }
+holder transfer<T>(holder value) { return std::move(value); }
+int main() {
+  holder result = transfer<int32_t>(holder::one(resource()));
+  return 0;
+}
 )");
-  expect(hasCode(genericCallableBoundary, "GTI-S2067") &&
-             hasMessage(genericCallableBoundary,
-                        "by-value function parameter boundary") &&
-             hasMessage(genericCallableBoundary,
-                        "by-value function return boundary"),
-         "generic callable families should retain the stable early owning "
-         "payload-enum boundary diagnostic");
+  if (!genericCallableBoundary.canGenerateCode()) {
+    printDiagnostics(genericCallableBoundary);
+  }
+  expect(genericCallableBoundary.canGenerateCode() &&
+             lang::verifyMirProgram(genericCallableBoundary.mir).valid(),
+         "concrete generic callables should preserve owning payload-enum "
+         "argument and result obligations");
 
   const lang::FrontendResult polymorphicBoundary =
       analyze("owning-payload-polymorphic-boundary.gti", R"(
@@ -722,7 +734,7 @@ int main() { return 0; }
       "owning payload-enum boundary diagnostic");
 
   const lang::FrontendResult genericOwnerBoundary =
-      analyze("owning-payload-generic-owner-boundary.gti", R"(
+      analyzeWithPrelude("owning-payload-generic-owner-boundary.gti", R"(
 class resource {
 public:
   resource() {}
@@ -734,20 +746,22 @@ public:
   relay(holder value) {}
   holder pass(holder value) { return std::move(value); }
 };
-int main() { return 0; }
+int main() {
+  relay<int32_t> receiver = relay<int32_t>(holder::one(resource()));
+  holder result = receiver.pass(holder::one(resource()));
+  return 0;
+}
 )");
-  expect(
-      hasCode(genericOwnerBoundary, "GTI-S2067") &&
-          hasMessage(genericOwnerBoundary,
-                     "by-value constructor parameter boundary") &&
-          hasMessage(genericOwnerBoundary,
-                     "by-value function parameter boundary") &&
-          hasMessage(genericOwnerBoundary, "by-value function return boundary"),
-      "methods and constructors owned by a generic class should retain "
-      "the stable early owning payload-enum boundary diagnostic");
+  if (!genericOwnerBoundary.canGenerateCode()) {
+    printDiagnostics(genericOwnerBoundary);
+  }
+  expect(genericOwnerBoundary.canGenerateCode() &&
+             lang::verifyMirProgram(genericOwnerBoundary.mir).valid(),
+         "concrete generic owners should preserve owning payload-enum "
+         "constructor and method transport");
 
   const lang::FrontendResult aggregateContainment =
-      analyze("owning-payload-aggregate-containment.gti", R"(
+      analyzeWithPrelude("owning-payload-aggregate-containment.gti", R"(
 class resource {
 public:
   resource() {}
@@ -761,9 +775,15 @@ public:
 struct default_wrapper {
   holder value = holder::one(resource());
 };
+class generic_wrapper<T> {
+  T value;
+public:
+  generic_wrapper(T value) : value(std::move(value)) {}
+};
 int main() {
   wrapper first = wrapper();
   default_wrapper second = default_wrapper();
+  generic_wrapper<holder> third = generic_wrapper<holder>(holder::none);
   return 0;
 }
 )");
@@ -795,7 +815,7 @@ int main() {
   }
   expect(aggregateContainment.canGenerateCode() &&
              lang::verifyMirProgram(aggregateContainment.mir).valid() &&
-             activeOwners == 2 && exactActiveFieldRows,
+             activeOwners == 3 && exactActiveFieldRows,
          "ordinary class and struct fields should retain one exact active "
          "payload-enum cleanup row through verified MIR");
 
@@ -819,7 +839,8 @@ int main() {
   const auto forgedOwner =
       std::find_if(forgedClasses.begin(), forgedClasses.end(),
                    [](const lang::MirClassInstance &owner) {
-                     return !owner.declaredFields.empty() &&
+                     return !owner.type.arguments.empty() &&
+                            !owner.declaredFields.empty() &&
                             owner.declaredFields.front().type.kind ==
                                 lang::SemanticType::Enum &&
                             owner.declaredFields.front().requiresActiveCleanup;
@@ -870,12 +891,12 @@ public:
 };
 int main() { return 0; }
 )");
-  expect(countCode(unsupportedFieldOwners, "GTI-S2067") == 2 &&
+  expect(countCode(unsupportedFieldOwners, "GTI-S2067") == 1 &&
              hasHint(unsupportedFieldOwners,
                      "direct owning payload-enum field is supported only") &&
              hasMessage(unsupportedFieldOwners, "Instance field 'value'"),
-         "generic and polymorphic owners should retain a precise direct-field "
-         "containment diagnostic");
+         "only polymorphic owners retain the direct-field containment "
+         "diagnostic; concrete generic ownership is structural");
 
   const lang::FrontendResult wrapperContainment =
       analyze("owning-payload-wrapper-containment.gti", R"(
@@ -894,13 +915,45 @@ int main() {
   return 0;
 }
 )");
-  expect(
-      hasCode(wrapperContainment, "GTI-S2067") &&
-          hasMessage(wrapperContainment, "Binding 'wrapped'") &&
-          hasMessage(wrapperContainment, "wrapper type") &&
-          hasMessage(wrapperContainment, "nesting owning payload-enum state"),
-      "generic wrappers should reject nested owning payload-enum state "
-      "structurally even when the concrete wrapper has no field");
+  expect(wrapperContainment.canGenerateCode() &&
+             lang::verifyMirProgram(wrapperContainment.mir).valid(),
+         "a generic argument alone must not invent a stored ownership edge");
+
+  const lang::FrontendResult resultContainment =
+      analyzeWithPrelude("owning-payload-result-containment.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+int main() {
+  expected<holder, int32_t> result = holder::none;
+  return 0;
+}
+)");
+  expect(!resultContainment.canGenerateCode() &&
+             hasCode(resultContainment, "GTI-S2067") &&
+             hasMessage(resultContainment, "Binding 'result'") &&
+             hasMessage(resultContainment, "result carrier") &&
+             hasHint(resultContainment, "ordinary class or struct"),
+         "direct enum alternatives in result carriers retain a structural "
+         "source diagnostic, rather than reaching backend admission");
+  expect(std::any_of(resultContainment.diagnostics.begin(),
+                     resultContainment.diagnostics.end(),
+                     [](const lang::Diagnostic &diagnostic) {
+                       return diagnostic.code == "GTI-S2067" &&
+                              std::filesystem::path(diagnostic.primary.source)
+                                      .filename() ==
+                                  "owning-payload-result-containment.gti" &&
+                              diagnostic.primary.line == 9 &&
+                              diagnostic.primary.end -
+                                      diagnostic.primary.start ==
+                                  std::string_view("result").size() &&
+                              diagnostic.fixes.empty();
+                     }),
+         "unsupported result containment points to the binding and does not "
+         "offer a policy-changing automatic fix");
 
   const lang::FrontendResult lambdaCapture =
       analyze("owning-payload-lambda-capture.gti", R"(

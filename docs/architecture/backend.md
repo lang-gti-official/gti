@@ -946,9 +946,17 @@ the C++ representation therefore reserves a private `std::monostate`
 alternative. It is neither a source variant nor observable tag state. The
 joint class/enum definition scheduler emits every payload class before its enum
 and that enum before a class embedding it, rejecting a recursive by-value
-cycle. Generic owners, recursive or indirect wrappers, polymorphic dispatch,
-native layout, and captures remain outside backend vocabulary and are rejected
-semantically before MIR.
+cycle. Concrete generic owners/callables use the same exact lifecycle proofs;
+generic arguments are not a reason to bypass or reject those proofs. The
+declaration-bound inline optional capability contributes its payload as a
+native layout dependency, while pointer-backed storage does not. Exact static
+consuming methods retain their receiver capability alongside enum result
+placement. If a later argument fails, a prepared enum obligation still drops
+at its verified MIR point even when direct native parameter construction
+erases the prepared representation slot. The same exact transport proof maps
+that obligation to its backing object; a named source retains its disarmed
+shell for its own separately scheduled drop. Polymorphic enum dispatch, native layout, and direct enum captures
+remain outside this vocabulary and are rejected semantically before MIR.
 
 A class-typed fixed-array field uses that schedule only when MIR proves every
 element construction, aggregate transfer, array-result obligation, and

@@ -217,18 +217,18 @@ auto SemanticVisitor::Impl::containsOwningPayloadEnum(
   if (type.kind == SemanticType::Enum) {
     return requiresActiveCleanupFor(type);
   }
+  if (type.kind == SemanticType::Class) {
+    // Nominal values own their concrete fields through the ordinary class
+    // lifecycle contract. A generic argument is not a stored ownership edge:
+    // an empty tag, inline holder, and indirect collection may all name T.
+    // Direct enum fields are validated at their field declaration instead.
+    return false;
+  }
   if (type.kind == SemanticType::Reference ||
       type.kind == SemanticType::RawPointer) {
-    // A direct checked/raw indirection does not contain the enum's ownership
-    // state. An indirection to a wrapper still instantiates that unsupported
-    // wrapper type, so recurse unless the referent is the enum itself.
-    return type.arguments.size() != 1 ||
-                   type.arguments.front().kind != SemanticType::Enum
-               ? std::any_of(type.arguments.begin(), type.arguments.end(),
-                             [&](const SemanticType &argument) {
-                               return containsOwningPayloadEnum(argument);
-                             })
-               : false;
+    // An indirection does not transport the referent's ownership state.
+    // Referent construction and storage retain their own lifecycle checks.
+    return false;
   }
   return std::any_of(type.arguments.begin(), type.arguments.end(),
                      [&](const SemanticType &argument) {
@@ -242,29 +242,22 @@ auto SemanticVisitor::Impl::validateOwningPayloadEnumByValueBoundary(
   if (!containsOwningPayloadEnum(type)) {
     return;
   }
-  const bool byValue = type.kind != SemanticType::Reference &&
-                       type.kind != SemanticType::RawPointer;
-  if (directTransport && byValue && type.kind == SemanticType::Enum) {
+  if (directTransport && type.kind == SemanticType::Enum) {
     return;
   }
-  Diagnostic diagnostic = makeDiagnostic(
-      "GTI-S2067", DiagnosticPhase::Semantics, location,
-      byValue ? "Owning payload enum type '" + typeSpelling(type) +
-                    "' cannot cross a by-value " + std::string(boundary) +
-                    " boundary in this slice."
-              : "Indirect " + std::string(boundary) + " type '" +
-                    typeSpelling(type) +
-                    "' nests owning payload-enum state in an unsupported "
-                    "wrapper; only a direct enum indirection is admitted in "
-                    "this slice.");
+  Diagnostic diagnostic =
+      makeDiagnostic("GTI-S2067", DiagnosticPhase::Semantics, location,
+                     "Owning payload enum type '" + typeSpelling(type) +
+                         "' cannot cross a by-value " + std::string(boundary) +
+                         " boundary in this slice.");
   diagnostic.hints.emplace_back(
-      byValue && type.kind == SemanticType::Enum
+      type.kind == SemanticType::Enum
           ? "Use an ordinary non-polymorphic GTI callable definition for "
             "direct owning payload-enum transport, or pass it by checked "
             "reference."
-          : "Keep the owning payload enum as the direct value; aggregate, "
-            "wrapper, indirection-to-wrapper, and polymorphic transport "
-            "remain unsupported.");
+          : "Use an ordinary class or struct with a verified owning field "
+            "lifecycle, or pass the enum directly by checked reference; "
+            "this structural transport family is not yet supported.");
   diagnostics.emplace_back(std::move(diagnostic));
 }
 
@@ -759,9 +752,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   const ConstructorInfo *constructorInfo = semanticModel.findConstructor(stmt);
   const bool directOwningPayloadTransport =
       stmt.body() != nullptr && constructorInfo != nullptr &&
-      constructorInfo->kind == ConstructorKind::Ordinary &&
-      constructorInfo->genericParameters.empty() &&
-      owner.genericParameters.empty() && !owner.polymorphic;
+      constructorInfo->kind == ConstructorKind::Ordinary && !owner.polymorphic;
   bool requirementsValid = true;
   if (constructorInfo != nullptr) {
     beginTypeParameterScope(constructorInfo->genericParameters);
@@ -1652,8 +1643,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   const bool directOwningPayloadTransport =
       stmt.body() != nullptr && !intrinsicDeclaration &&
       !stmt.runtimeBinding() && !stmt.hasCLinkage() && !stmt.operatorName() &&
-      !polymorphic && genericParameters.empty() &&
-      (!currentClass || classInfo(*currentClass).genericParameters.empty());
+      !polymorphic;
   if ((stmt.isVirtual() || stmt.isOverride() || stmt.isPure()) &&
       !methodDeclaration) {
     const Token &location =
@@ -2848,13 +2838,11 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
         "Keep each owning payload enum in its own local binding until "
         "aggregate element lifecycle state is represented explicitly.");
     diagnostics.emplace_back(std::move(diagnostic));
-  } else if (instanceField && containsOwningPayloadEnum(declaredType) &&
-             !(declaredType.kind == SemanticType::Enum &&
-               fieldOwner != nullptr &&
+  } else if (instanceField && declaredType.kind == SemanticType::Enum &&
+             containsOwningPayloadEnum(declaredType) &&
+             !(fieldOwner != nullptr &&
                (fieldOwner->kind == ClassKind::Class ||
                 fieldOwner->kind == ClassKind::Struct) &&
-               fieldOwner->genericParameters.empty() &&
-               fieldOwner->exactSpecializationPrimary == 0 &&
                !fieldOwner->polymorphic && !fieldOwner->cAbiRecord &&
                !fieldOwner->cOpaqueHandle && !fieldOwner->storedReference &&
                !fieldOwner->compilerPrivate &&
@@ -2868,21 +2856,21 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
             "this owner in the bounded direct-field slice.");
     diagnostic.hints.emplace_back(
         "A direct owning payload-enum field is supported only in an ordinary "
-        "non-generic, non-polymorphic GTI class or struct; keep wrapper, "
-        "layout-constrained, and compiler-owned shapes in separate bindings.");
+        "non-polymorphic GTI class or struct; keep "
+        "layout-constrained and compiler-owned shapes in separate bindings.");
     diagnostics.emplace_back(std::move(diagnostic));
-  } else if (declaredType.kind != SemanticType::Enum &&
+  } else if ((declaredType.kind == SemanticType::Expected ||
+              declaredType.kind == SemanticType::Unexpected) &&
              containsOwningPayloadEnum(declaredType)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2067", DiagnosticPhase::Semantics, stmt.name(),
-        "Binding '" + stmt.name().lexeme + "' has wrapper type '" +
+        "Binding '" + stmt.name().lexeme + "' has type '" +
             typeSpelling(declaredType) +
-            "', but nesting owning payload-enum state in another value type "
-            "is not supported in this bounded containment slice.");
+            "', but direct owning payload-enum alternatives in a result "
+            "carrier are not supported in this containment slice.");
     diagnostic.hints.emplace_back(
-        "Keep the owning payload enum as a direct local binding and pass it "
-        "by checked reference until wrapper lifecycle state is represented "
-        "explicitly.");
+        "Store the enum in an ordinary class or struct so the containing "
+        "value has an explicit structural lifecycle.");
     diagnostics.emplace_back(std::move(diagnostic));
   }
   if (functionDepth > 0) {

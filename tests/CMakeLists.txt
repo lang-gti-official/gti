@@ -2094,6 +2094,13 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(payload_enum_containment_runtime
                          PROPERTIES TIMEOUT 240)
     add_test(
+      NAME generic_payload_enum_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/generic_payload_enum_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(generic_payload_enum_runtime PROPERTIES TIMEOUT 300)
+    add_test(
       NAME recursive_payload_sum_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/recursive_payload_sum_runtime_test.py"
