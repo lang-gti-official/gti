@@ -242,6 +242,26 @@ local ok, problem = xpcall(function()
   )
   vim.bo.syntax = active_syntax
 
+  local module_buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_call(module_buffer, function()
+    vim.api.nvim_buf_set_lines(module_buffer, 0, -1, false, {
+      "export module geometry;",
+      "import dependency.geometry;",
+    })
+    vim.bo.syntax = "gti"
+    for _, expected in ipairs({
+      { 1, 1, "gtiStorageClass" },
+      { 1, 8, "gtiNamespaceKeyword" },
+      { 2, 1, "gtiInclude" },
+    }) do
+      local group = vim.fn.synIDattr(vim.fn.synID(expected[1], expected[2], true), "name")
+      if group ~= expected[3] then
+        fail("module fallback syntax: expected " .. expected[3] .. ", found " .. group)
+      end
+    end
+  end)
+  vim.api.nvim_buf_delete(module_buffer, { force = true })
+
   local function require_capture(line_text, token, capture)
     for row, line in ipairs(source_lines) do
       if line == line_text then

@@ -114,6 +114,15 @@ private:
   }
 
   StmtPtr declarationWithoutExtent() {
+    if (match({TokenKind::EXPORT})) {
+      const Token keyword = previous();
+      StmtPtr result = declaration();
+      if (result->exportKeyword()) {
+        throw error(keyword, "A declaration cannot repeat 'export'.");
+      }
+      result->setExportKeyword(keyword);
+      return result;
+    }
     if (match({TokenKind::HASH_IF, TokenKind::HASH_IFDEF,
                TokenKind::HASH_IFNDEF})) {
       return conditionalCompilation(ItemContext::Declaration);

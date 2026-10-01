@@ -128,6 +128,12 @@ new explicit syntax under a compatible addition or later edition. It shall not
 reinterpret Edition 1 `#include` or silently make included declarations
 transitive.
 
+ADR 024's proposed source-module slice follows that separation. Its `import`
+and `module` spellings newly reserve identifiers, so it is a documented
+pre-1.0 minor-version draft change, not a claim of a source-compatible 1.x
+addition. Existing identifiers with those spellings need renaming; ordinary
+include programs retain their visibility and loading meaning.
+
 ## Required Implementation Gates
 
 Before a second edition can ship, the selector implementation must test:

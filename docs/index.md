@@ -115,6 +115,9 @@ for the current implementation when a document is stale or ambiguous.
 - [023: Bounded implicit return movement](decisions/023-implicit-return-movement.md)
   — moves one exact whole noncopyable local or by-value parameter at return
   while preserving copyable returns and explicit movement elsewhere.
+- [024: Explicit source module interfaces](decisions/024-source-module-interfaces.md)
+  — proposal for package-registered interfaces, private declarations, imports
+  and explicit re-exports while preserving legacy includes and whole-program compilation.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.

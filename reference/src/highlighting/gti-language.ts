@@ -62,17 +62,17 @@ export const gtiLanguage: LanguageRegistration = {
     },
     {
       match:
-        "\\b(?:class|concept|enum|interface|namespace|struct|union|using)\\b",
+        "\\b(?:class|concept|enum|interface|module|namespace|struct|union|using)\\b",
       name: "storage.type.gti",
     },
     {
       match:
-        "\\b(?:const|constexpr|extern|mut|override|private|public|static|virtual)\\b",
+        "\\b(?:const|constexpr|export|extern|mut|override|private|public|static|virtual)\\b",
       name: "storage.modifier.gti",
     },
     {
       match:
-        "\\b(?:break|case|continue|default|do|else|for|if|requires|return|switch|unexpected|unsafe|while)\\b",
+        "\\b(?:break|case|continue|default|do|else|for|if|import|requires|return|switch|unexpected|unsafe|while)\\b",
       name: "keyword.control.gti",
     },
     {

@@ -185,6 +185,10 @@ add_test(NAME collection_initialization_lsp
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/collection_initialization_lsp_test.py" $<TARGET_FILE:gti_lsp>)
 add_test(NAME member_requirement_lsp
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/member_requirement_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+add_test(NAME source_modules_lsp
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_modules_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+add_test(NAME source_modules_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_modules_runtime_test.py" $<TARGET_FILE:gti>)
 add_test(NAME nested_borrow_fields_lsp
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_borrow_fields_lsp_test.py" $<TARGET_FILE:gti_lsp>)
 add_test(NAME borrowing_composition_lsp
