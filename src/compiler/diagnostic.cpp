@@ -10,6 +10,31 @@
 
 namespace lang {
 
+WarningPolicy::WarningPolicy(std::vector<std::string> disabledGroups)
+    : disabledWarningGroups(std::move(disabledGroups)) {
+  std::ranges::sort(disabledWarningGroups);
+  const auto duplicate = std::ranges::unique(disabledWarningGroups).begin();
+  disabledWarningGroups.erase(duplicate, disabledWarningGroups.end());
+}
+
+const std::vector<std::string> &WarningPolicy::disabledGroups() const {
+  return disabledWarningGroups;
+}
+
+bool WarningPolicy::suppresses(const Diagnostic &diagnostic) const {
+  return diagnostic.severity == DiagnosticSeverity::Warning &&
+         !diagnostic.group.empty() &&
+         std::ranges::binary_search(disabledWarningGroups, diagnostic.group);
+}
+
+bool isKnownWarningGroup(std::string_view group) {
+  return std::ranges::any_of(
+      diagnosticDescriptors, [group](const DiagnosticDescriptor &descriptor) {
+        return descriptor.severity == DiagnosticSeverity::Warning &&
+               descriptor.group == group;
+      });
+}
+
 SourceSpan tokenSpan(const Token &token) {
   const std::size_t length = token.generated ? 1 : token.lexeme.size();
   return {token.source, token.position, token.position + length, token.line};

@@ -346,6 +346,8 @@ void writeProjectMetadata(std::ostream &stream,
     writeJsonString(stream, cppStandardName(profile.cppStandard));
     stream << ", \"executionProfile\": ";
     writeJsonString(stream, executionProfileName(profile.executionProfile));
+    stream << ", \"disabledWarnings\": ";
+    writeJsonStrings(stream, profile.warningPolicy.disabledGroups());
     stream << ", \"keepCpp\": " << (profile.keepCpp ? "true" : "false") << '}';
   }
   if (!manifest.profiles().empty()) {

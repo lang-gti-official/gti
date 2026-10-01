@@ -78,6 +78,25 @@ hasErrorDiagnostics(std::span<const Diagnostic> diagnostics) {
   return false;
 }
 
+// Immutable diagnostic presentation policy resolved by a driver adapter.
+// Warning groups are compiler-owned stable names such as `unused-mut`; only
+// diagnostics whose registered severity is Warning can be suppressed.
+class WarningPolicy final {
+public:
+  WarningPolicy() = default;
+  explicit WarningPolicy(std::vector<std::string> disabledGroups);
+
+  [[nodiscard]] const std::vector<std::string> &disabledGroups() const;
+  [[nodiscard]] bool suppresses(const Diagnostic &diagnostic) const;
+
+private:
+  std::vector<std::string> disabledWarningGroups;
+};
+
+// Warning names accepted by command-line and manifest adapters come from the
+// typed diagnostic registry rather than a second hand-maintained list.
+[[nodiscard]] bool isKnownWarningGroup(std::string_view group);
+
 SourceSpan tokenSpan(const Token &token);
 Diagnostic makeDiagnostic(std::string code, DiagnosticPhase phase,
                           SourceSpan primary, std::string message);

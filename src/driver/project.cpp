@@ -631,6 +631,12 @@ ProjectBuildPlan makeBuildPlan(
   configurationFlags.insert(configurationFlags.end(),
                             overrides.configurationFlags.begin(),
                             overrides.configurationFlags.end());
+  std::vector<std::string> disabledWarnings =
+      selectedProfile.warningPolicy.disabledGroups();
+  disabledWarnings.insert(disabledWarnings.end(),
+                          overrides.warningPolicy.disabledGroups().begin(),
+                          overrides.warningPolicy.disabledGroups().end());
+  WarningPolicy warningPolicy(std::move(disabledWarnings));
   const AnalysisConfiguration configuration(
       target,
       overrides.executionProfile.value_or(selectedProfile.executionProfile),
@@ -767,8 +773,9 @@ ProjectBuildPlan makeBuildPlan(
       selectedTarget.kind, selectedProfile.name, selectedTarget.root, output,
       generatedSource, resolvedTarget, optimization, cppStandard, keepCpp,
       std::move(nativeInputs), std::move(packageSourceRoots),
-      configuration.configurationFlags(), std::move(modelIdentity),
-      std::move(bindgenImports), std::move(buildScripts), std::move(toolchain));
+      configuration.configurationFlags(), std::move(warningPolicy),
+      std::move(modelIdentity), std::move(bindgenImports),
+      std::move(buildScripts), std::move(toolchain));
 }
 
 Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,
@@ -917,7 +924,8 @@ ProjectBuildPlan::ProjectBuildPlan(
     OptimizationLevel optimization, CppStandard cppStandard, bool keepCpp,
     NativeInputs nativeInputs,
     std::vector<PackageSourceRoot> packageSourceRoots,
-    ConfigurationFlags configurationFlags, std::string projectModelIdentity,
+    ConfigurationFlags configurationFlags, WarningPolicy warningPolicy,
+    std::string projectModelIdentity,
     std::vector<BindgenImportPlan> bindgenImports,
     std::vector<BuildScriptPlan> buildScripts,
     ResolvedProjectToolchain toolchain)
@@ -935,6 +943,7 @@ ProjectBuildPlan::ProjectBuildPlan(
       resolvedNativeInputs(std::move(nativeInputs)),
       resolvedPackageSources(std::move(packageSourceRoots)),
       resolvedConfigurationFlags(std::move(configurationFlags)),
+      resolvedWarningPolicy(std::move(warningPolicy)),
       resolvedProjectModelIdentity(std::move(projectModelIdentity)),
       resolvedBindgenImports(std::move(bindgenImports)),
       resolvedBuildScripts(std::move(buildScripts)),
@@ -1004,6 +1013,10 @@ const std::vector<PackageSourceRoot> &ProjectBuildPlan::packageSources() const {
 
 const ConfigurationFlags &ProjectBuildPlan::configurationFlags() const {
   return resolvedConfigurationFlags;
+}
+
+const WarningPolicy &ProjectBuildPlan::warnings() const {
+  return resolvedWarningPolicy;
 }
 
 const ResolvedProjectToolchain &ProjectBuildPlan::toolchain() const {

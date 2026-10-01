@@ -97,6 +97,7 @@ root = "src/main.gti"
          "optimization = 2\n"
          "cpp-standard = \"c++20\"\n"
          "execution-profile = \"concurrent\"\n"
+         "disabled-warnings = [\"unused-mut\"]\n"
          "keep-cpp = true\n";
 }
 
@@ -183,6 +184,8 @@ void testDiscoveryParsingAndResolution() {
                release->cppStandard == lang::CppStandard::Cpp20 &&
                release->executionProfile ==
                    lang::ExecutionProfile::Concurrent &&
+               release->warningPolicy.disabledGroups() ==
+                   std::vector<std::string>{"unused-mut"} &&
                release->keepCpp,
            "manifest profile fields should refine built-in defaults");
   }
@@ -192,6 +195,7 @@ void testDiscoveryParsingAndResolution() {
   overrides.cppStandard = lang::CppStandard::Cpp23;
   overrides.executionProfile = lang::ExecutionProfile::SingleThreaded;
   overrides.keepCpp = false;
+  overrides.warningPolicy = lang::WarningPolicy({"unreachable-code"});
   const lang::TargetInfo targetInfo{
       .os = "testos", .vendor = "testvendor", .arch = "testarch"};
   const lang::driver::ProjectResolutionResult resolution =
@@ -209,12 +213,15 @@ void testDiscoveryParsingAndResolution() {
                plan.generatedSource() ==
                    expectedDirectory / ".gti-intermediate/game.gti.cpp",
            "project artifacts should use the deterministic project layout");
-    expect(plan.optimization() == lang::OptimizationLevel::O3 &&
-               plan.cppStandard() == lang::CppStandard::Cpp23 &&
-               plan.target().executionProfile ==
-                   lang::ExecutionProfile::SingleThreaded &&
-               !plan.keepCpp(),
-           "explicit build overrides should win over profile settings");
+    expect(
+        plan.optimization() == lang::OptimizationLevel::O3 &&
+            plan.cppStandard() == lang::CppStandard::Cpp23 &&
+            plan.target().executionProfile ==
+                lang::ExecutionProfile::SingleThreaded &&
+            plan.warnings().disabledGroups() ==
+                (std::vector<std::string>{"unreachable-code", "unused-mut"}) &&
+            !plan.keepCpp(),
+        "explicit build overrides should win over profile settings");
   }
 
   const lang::driver::ProjectMetadataResult metadata =
@@ -308,6 +315,22 @@ void testManifestDiagnostics() {
              invalidProfile->message.find("concurrent") != std::string::npos,
          "manifest execution profiles should use the exact compiler-owned "
          "vocabulary");
+
+  std::string invalidWarning = validManifest();
+  invalidWarning.replace(invalidWarning.find("unused-mut"),
+                         std::string_view("unused-mut").size(),
+                         "unused-mutable-binding");
+  expect(writeFile(manifest, invalidWarning),
+         "the invalid warning-group fixture should be writable");
+  loaded = lang::driver::loadProjectManifest(manifest);
+  const lang::Diagnostic *unknownWarning =
+      findDiagnostic(loaded.diagnostics, "GTI-B1005");
+  expect(unknownWarning != nullptr &&
+             unknownWarning->message.find("unknown warning group") !=
+                 std::string::npos &&
+             loaded.sources.locate(unknownWarning->primary).line == 15,
+         "manifest warning suppression should reject unknown groups at the "
+         "array element");
 
   std::string invalidKind = validManifest();
   invalidKind.replace(invalidKind.find("executable"),

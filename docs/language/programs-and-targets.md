@@ -126,6 +126,26 @@ ill-formed only when it appears outside a conditional or in the selected
 branch. Its message is reported against the GTI directive; it is never
 forwarded to a native preprocessor.
 
+Compiler warnings have stable group names and may be disabled per invocation.
+For a standalone source, pass `-Wno-<group>` or `--disable-warning <group>`:
+
+```sh
+gti main.gti -Wno-unused-mut -o app
+```
+
+A project applies the same policy from its selected profile:
+
+```toml
+[profiles.dev]
+disabled-warnings = ["unused-mut"]
+```
+
+Command-line groups are additive to the profile list. Current warning groups
+are `configuration` (`GTI-S2075`), `unreachable-code` (`GTI-S2095`), and
+`unused-mut` (`GTI-S2096`). Unknown names are rejected, and errors cannot be
+suppressed through this mechanism. Successful and failed build/check commands
+end their status output with the remaining error and warning counts.
+
 The frontend, optimizer, and backend shall consume equivalent target facts.
 
 Target comparisons have exactly three case-sensitive properties:
