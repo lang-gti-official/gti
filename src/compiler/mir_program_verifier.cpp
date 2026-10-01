@@ -6371,6 +6371,211 @@ exactMirCapabilityClass(const MirProgram &program, const SemanticType &type,
              : nullptr;
 }
 
+[[nodiscard]] bool mirPublicBaseConversion(const MirProgram &program,
+                                           const SemanticType &derived,
+                                           const SemanticType &base) {
+  const MirClassInstance *source =
+      uniqueMirClassInstanceForType(program, derived);
+  if (source == nullptr) {
+    return false;
+  }
+  std::unordered_set<HirClassInstanceId> visited;
+  const auto visit = [&](const auto &self,
+                         const MirClassInstance &current) -> bool {
+    if (!visited.insert(current.id).second) {
+      return false;
+    }
+    for (const HirBaseInstance &candidate : current.structuralBases) {
+      if (candidate.type == base) {
+        return true;
+      }
+      const MirClassInstance *next =
+          program.findClassInstance(candidate.instance);
+      if (next == nullptr || next->type != candidate.type) {
+        return false;
+      }
+      if (self(self, *next)) {
+        return true;
+      }
+    }
+    return false;
+  };
+  return visit(visit, *source);
+}
+
+[[nodiscard]] std::optional<SemanticTypeTraits>
+mirOwnershipErasureTraits(const MirProgram &program,
+                          const SemanticType &owner) {
+  if (owner.kind == SemanticType::UniqueOwner && owner.arguments.size() == 1) {
+    const MirClassInstance *pointee =
+        uniqueMirClassInstanceForType(program, owner.arguments.front());
+    return pointee == nullptr
+               ? std::nullopt
+               : std::optional<SemanticTypeTraits>{pointee->traits};
+  }
+  const MirClassInstance *shared = exactMirCapabilityClass(
+      program, owner, CompilerCapabilityTypeKind::SharedOwner);
+  return shared == nullptr ? std::nullopt
+                           : std::optional<SemanticTypeTraits>{shared->traits};
+}
+
+[[nodiscard]] bool
+mirOwnershipErasurePreservesCapabilities(const MirProgram &program,
+                                         const SemanticType &sourceOwner,
+                                         const SemanticType &targetOwner) {
+  const auto source = mirOwnershipErasureTraits(program, sourceOwner);
+  const auto target = mirOwnershipErasureTraits(program, targetOwner);
+  return source && target &&
+         (!target->transferCapable || source->transferCapable) &&
+         (!target->shareCapable || source->shareCapable);
+}
+
+[[nodiscard]] bool exactOwnerErasureTransfer(const MirBody &body,
+                                             const MirInstruction &instruction,
+                                             const MirOperand &operand) {
+  const MirDropObligation *transferred = nullptr;
+  for (const MirLifecycleEvent &event : instruction.lifecycle) {
+    if (event.kind != MirLifecycleEventKind::TransferOut) {
+      continue;
+    }
+    const MirDropObligation *drop = body.findDropObligation(event.source);
+    const MirPlace *place =
+        drop == nullptr ? nullptr : body.findPlace(drop->place);
+    if (transferred != nullptr || drop == nullptr || place == nullptr ||
+        drop->dropType.type != operand.type || event.target != 0 ||
+        event.conditional || event.failureCleanup ||
+        place->root != MirPlaceRootKind::Value ||
+        place->value != operand.value || !place->projections.empty()) {
+      return false;
+    }
+    transferred = drop;
+  }
+  // Result activation and other independently verified lifecycle events may
+  // share the instruction.  The erasure authority itself is exactly one
+  // retirement of the consumed source token.
+  return transferred != nullptr;
+}
+
+[[nodiscard]] bool
+exactUniqueOwnerUpcastContract(const MirProgram &program, const MirBody &body,
+                               const MirInstruction &instruction) {
+  if (instruction.intrinsic != IntrinsicKind::UniqueOwnerUpcast) {
+    return true;
+  }
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.operation != MirOperation::None || instruction.receiver ||
+      instruction.functionTarget || instruction.constructorTarget ||
+      instruction.lambdaTarget || instruction.bodyTarget ||
+      instruction.callableInvocation ||
+      !instruction.callableArguments.empty() ||
+      instruction.synchronization.kind != SynchronizationOperationKind::None ||
+      !instruction.safetyDischarges.empty() || instruction.loan ||
+      instruction.borrowOrigin != BorrowOriginKind::None ||
+      instruction.borrowArgument != 0 ||
+      instruction.borrowAccess != AccessMode::ReadOnly ||
+      !instruction.borrowArguments.empty() || instruction.borrowPlace ||
+      !instruction.result || instruction.operands.size() != 1 ||
+      instruction.parameterTypes.size() != 1 ||
+      instruction.info.type.kind != SemanticType::UniqueOwner ||
+      instruction.info.type.arguments.size() != 1 ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly ||
+      instruction.operands.front().kind != MirOperandKind::Value ||
+      instruction.operands.front().value == 0 ||
+      instruction.operands.front().place != 0 ||
+      instruction.operands.front().loan != 0 ||
+      instruction.operands.front().literal ||
+      instruction.operands.front().type.kind != SemanticType::UniqueOwner ||
+      instruction.operands.front().type.arguments.size() != 1 ||
+      instruction.parameterTypes.front() != instruction.operands.front().type ||
+      !instruction.definedFailure.empty() ||
+      !instruction.localFailureSites.empty()) {
+    return false;
+  }
+  const SemanticType &sourceOwner = instruction.operands.front().type;
+  const SemanticType &targetOwner = instruction.info.type;
+  const SemanticType &derived = sourceOwner.arguments.front();
+  const SemanticType &base = targetOwner.arguments.front();
+  const MirClassInstance *baseInstance =
+      uniqueMirClassInstanceForType(program, base);
+  return baseInstance != nullptr && baseInstance->polymorphic &&
+         mirPublicBaseConversion(program, derived, base) &&
+         mirOwnershipErasurePreservesCapabilities(program, sourceOwner,
+                                                  targetOwner) &&
+         exactOwnerErasureTransfer(body, instruction,
+                                   instruction.operands.front());
+}
+
+[[nodiscard]] bool
+exactUniqueOwnerSwapContract(const MirBody &body,
+                             const MirInstruction &instruction) {
+  if (instruction.intrinsic != IntrinsicKind::UniqueOwnerSwap) {
+    return true;
+  }
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.operation != MirOperation::None || instruction.receiver ||
+      instruction.functionTarget || instruction.constructorTarget ||
+      instruction.lambdaTarget || instruction.bodyTarget ||
+      instruction.callableInvocation ||
+      !instruction.callableArguments.empty() || instruction.result ||
+      instruction.info.type != SemanticType::Void || instruction.loan ||
+      instruction.borrowOrigin != BorrowOriginKind::None ||
+      instruction.borrowArgument != 0 ||
+      instruction.borrowAccess != AccessMode::ReadOnly ||
+      !instruction.borrowArguments.empty() || instruction.borrowPlace ||
+      instruction.operands.size() != 2 ||
+      instruction.parameterTypes.size() != 2 ||
+      instruction.synchronization.kind != SynchronizationOperationKind::None ||
+      !instruction.definedFailure.empty() ||
+      !instruction.localFailureSites.empty() ||
+      !instruction.safetyDischarges.empty() || !instruction.lifecycle.empty()) {
+    return false;
+  }
+
+  SemanticType ownerType = SemanticType::Unknown;
+  for (std::size_t index = 0; index < instruction.operands.size(); ++index) {
+    const MirOperand &operand = instruction.operands[index];
+    if (instruction.parameterTypes[index] != operand.type ||
+        operand.type.kind != SemanticType::Reference ||
+        operand.type.referenceAccess != AccessMode::Mutable ||
+        operand.type.arguments.size() != 1 ||
+        operand.type.arguments.front().kind != SemanticType::UniqueOwner ||
+        operand.type.arguments.front().arguments.size() != 1 ||
+        operand.value != 0 || operand.literal) {
+      return false;
+    }
+    const SemanticType &candidate = operand.type.arguments.front();
+    if (index == 0) {
+      ownerType = candidate;
+    } else if (candidate != ownerType) {
+      return false;
+    }
+
+    MirPlaceId source = 0;
+    if (operand.kind == MirOperandKind::BorrowWrite) {
+      if (operand.place == 0 || operand.loan != 0) {
+        return false;
+      }
+      source = operand.place;
+    } else if (operand.kind == MirOperandKind::Loan) {
+      const MirLoan *loan = body.findLoan(operand.loan);
+      if (operand.place != 0 || loan == nullptr ||
+          loan->access != AccessMode::Mutable) {
+        return false;
+      }
+      source = loan->source;
+    } else {
+      return false;
+    }
+    const MirPlace *place = body.findPlace(source);
+    if (place == nullptr || place->type != ownerType ||
+        place->access != AccessMode::Mutable) {
+      return false;
+    }
+  }
+  return ownerType != SemanticType::Unknown;
+}
+
 [[nodiscard]] const SemanticType *
 exactCapabilityReferenceValue(const MirProgram &program,
                               const SemanticType &reference, AccessMode access,
@@ -6581,62 +6786,6 @@ exactSharedOwnerIntrinsicContract(const MirProgram &program,
       return false;
     }
   }
-  const auto exactTransfer = [&](const MirOperand &operand) {
-    const MirDropObligation *transferred = nullptr;
-    for (const auto &event : instruction.lifecycle) {
-      if (event.kind != MirLifecycleEventKind::TransferOut) {
-        continue;
-      }
-      const auto *drop = body.findDropObligation(event.source);
-      const auto *place = drop == nullptr ? nullptr : body.findPlace(drop->place);
-      if (transferred != nullptr || drop == nullptr || place == nullptr ||
-          drop->dropType.type != operand.type || event.target != 0 ||
-          event.conditional || event.failureCleanup ||
-          place->root != MirPlaceRootKind::Value ||
-          place->value != operand.value || !place->projections.empty()) {
-        return false;
-      }
-      transferred = drop;
-    }
-    return transferred != nullptr;
-  };
-  const auto publicBase = [&](const SemanticType &derived,
-                              const SemanticType &base) {
-    const MirClassInstance *source = nullptr;
-    for (const auto &instance : program.classInstances()) {
-      if (instance.type == derived) {
-        if (source != nullptr) {
-          return false;
-        }
-        source = &instance;
-      }
-    }
-    if (source == nullptr) {
-      return false;
-    }
-    std::unordered_set<HirClassInstanceId> visited;
-    const auto visit = [&](const auto &self,
-                           const MirClassInstance &current) -> bool {
-      if (!visited.insert(current.id).second) {
-        return false;
-      }
-      for (const HirBaseInstance &candidate : current.structuralBases) {
-        if (candidate.type == base) {
-          return true;
-        }
-        const MirClassInstance *next =
-            program.findClassInstance(candidate.instance);
-        if (next == nullptr || next->type != candidate.type) {
-          return false;
-        }
-        if (self(self, *next)) {
-          return true;
-        }
-      }
-      return false;
-    };
-    return visit(visit, *source);
-  };
   MirPlaceId borrowedSource = 0;
   for (std::size_t index = 0; index < instruction.operands.size(); ++index) {
     const MirOperand &operand = instruction.operands[index];
@@ -6651,7 +6800,7 @@ exactSharedOwnerIntrinsicContract(const MirProgram &program,
           !mirUniqueCleanupType(program, operand.type)) {
         return false;
       }
-      if (!exactTransfer(operand)) {
+      if (!exactOwnerErasureTransfer(body, instruction, operand)) {
         return false;
       }
       continue;
@@ -6664,8 +6813,10 @@ exactSharedOwnerIntrinsicContract(const MirProgram &program,
           sourceOwner == nullptr || owner == nullptr ||
           sourceOwner->type.arguments.size() != 1 ||
           owner->type.arguments.size() != 1 ||
-          !publicBase(sourceOwner->type.arguments.front(),
-                      owner->type.arguments.front())) {
+          !mirPublicBaseConversion(program, sourceOwner->type.arguments.front(),
+                                   owner->type.arguments.front()) ||
+          !mirOwnershipErasurePreservesCapabilities(program, operand.type,
+                                                    instruction.info.type)) {
         return false;
       }
       const MirClassInstance *base = nullptr;
@@ -6677,7 +6828,8 @@ exactSharedOwnerIntrinsicContract(const MirProgram &program,
           base = &instance;
         }
       }
-      if (base == nullptr || !base->polymorphic || !exactTransfer(operand)) {
+      if (base == nullptr || !base->polymorphic ||
+          !exactOwnerErasureTransfer(body, instruction, operand)) {
         return false;
       }
       continue;
@@ -7842,6 +7994,25 @@ verifyMirProgramContracts(const MirProgram &program) {
                .message =
                    "scalar unique allocation does not retain its exact "
                    "pointee, initializer, result, and failure contract"});
+        }
+        if (!exactUniqueOwnerUpcastContract(program, body, instruction)) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message = "unique-owner upcast does not retain its exact "
+                          "public-base, capability-preserving ownership "
+                          "transfer contract"});
+        }
+        if (!exactUniqueOwnerSwapContract(body, instruction)) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message = "unique-owner swap does not retain its exact "
+                          "matching mutable-owner contract"});
         }
         if ((instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
              instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut) &&

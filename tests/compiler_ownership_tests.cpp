@@ -1,4 +1,5 @@
 #include "compiler_test_fixture.h"
+#include "gti/mir_effects.h"
 
 namespace {
 
@@ -1301,7 +1302,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v67\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v68\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -3294,7 +3295,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v77 ") &&
+  expect(mirDump.starts_with("mir-v78 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -9909,10 +9910,123 @@ int main() {
          "idempotently");
 }
 
+void testUniqueOwnerSwap() {
+  const lang::FrontendResult frontend =
+      analyzeWithMemory("unique-owner-swap.gti", R"(
+struct Value {
+  int32_t number;
+  Value(int32_t initial) : number(initial) {}
+  int32_t read() { return this.number; }
+};
+
+int main() {
+  mut std::unique_ptr<Value> first = std::make_unique<Value>(1);
+  mut std::unique_ptr<Value> second = std::make_unique<Value>(2);
+  first.swap(second);
+  return first->read() == 2 and second->read() == 1 ? 0 : 1;
+}
+)");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected unique-owner swap diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mir.valid(),
+         "unique_ptr::swap should preserve two matching mutable owners");
+
+  lang::HirFunctionInstanceId functionId = 0;
+  lang::MirBlockId blockId = 0;
+  lang::MirInstructionId instructionId = 0;
+  lang::MirPlaceId secondPlace = 0;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.intrinsic != lang::IntrinsicKind::UniqueOwnerSwap ||
+            instruction.operands.size() != 2) {
+          continue;
+        }
+        functionId = function.id;
+        blockId = block.id;
+        instructionId = instruction.id;
+        secondPlace = instruction.operands[1].place;
+      }
+    }
+  }
+  expect(functionId != 0 && blockId != 0 && instructionId != 0 &&
+             secondPlace != 0,
+         "MIR should retain the exact two-place unique-owner swap");
+  expect(lang::effects(lang::IntrinsicKind::UniqueOwnerSwap).readsPlace &&
+             lang::effects(lang::IntrinsicKind::UniqueOwnerSwap).writesPlace &&
+             lang::effects(lang::IntrinsicKind::UniqueOwnerSwap).movesValue,
+         "unique-owner swap effects should retain its non-copying mutation");
+
+  for (int mutation = 0; mutation < 3; ++mutation) {
+    auto malformed = frontend.mir;
+    auto *function = const_cast<lang::MirFunctionInstance *>(
+        malformed.findFunctionInstance(functionId));
+    lang::MirBlock *block =
+        function == nullptr ? nullptr : function->body.findBlock(blockId);
+    auto instruction =
+        block == nullptr ? std::vector<lang::MirInstruction>::iterator{}
+                         : std::find_if(block->instructions.begin(),
+                                        block->instructions.end(),
+                                        [&](const auto &candidate) {
+                                          return candidate.id == instructionId;
+                                        });
+    expect(block != nullptr && instruction != block->instructions.end(),
+           "unique-owner swap mutation should find its MIR instruction");
+    if (block == nullptr || instruction == block->instructions.end()) {
+      continue;
+    }
+    if (mutation == 0) {
+      instruction->parameterTypes[1].referenceAccess =
+          lang::AccessMode::ReadOnly;
+    } else if (mutation == 1) {
+      instruction->result = 1;
+    } else {
+      lang::MirPlace *place =
+          const_cast<lang::MirPlace *>(function->body.findPlace(secondPlace));
+      expect(place != nullptr,
+             "unique-owner swap mutation should find its second place");
+      if (place != nullptr) {
+        place->access = lang::AccessMode::ReadOnly;
+      }
+    }
+    expect(!lang::verifyMirProgram(malformed).valid(),
+           "MIR should reject a read-only, value-producing, or immutable "
+           "unique-owner swap");
+  }
+
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir,
+                        lang::OptimizationPipeline().run(
+                            frontend.hir, lang::OptimizationLevel::O0));
+  expect(artifact.contents.find(".swap(") != std::string::npos,
+         "the backend should lower unique-owner swap to native unique_ptr "
+         "swap without replacement cleanup");
+
+  const lang::FrontendResult invalid =
+      analyzeWithMemory("invalid-unique-owner-swap.gti", R"(
+struct Left {};
+struct Right {};
+int main() {
+  mut std::unique_ptr<Left> left = std::make_unique<Left>();
+  mut std::unique_ptr<Right> right = std::make_unique<Right>();
+  left.swap(right);
+  return 0;
+}
+)");
+  expect(!invalid.canGenerateCode(),
+         "unique_ptr::swap should reject owners with different pointee "
+         "types before MIR");
+}
+
 void testPolymorphicUniqueOwnerUpcast() {
   const lang::FrontendResult frontend =
       analyzeWithMemory("polymorphic-unique-owner-upcast.gti", R"(
-interface Layer {
+[[transfer, share]] interface Layer {
   uint64_t id();
   void update() mut;
 };
@@ -9986,6 +10100,91 @@ int main() {
          "HIR and MIR should retain the trusted ownership-preserving upcast "
          "identity");
 
+  lang::MirInstructionId upcastInstruction = 0;
+  lang::HirFunctionInstanceId upcastFunction = 0;
+  lang::MirBlockId upcastBlock = 0;
+  lang::HirClassInstanceId sourcePointeeInstance = 0;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.intrinsic != lang::IntrinsicKind::UniqueOwnerUpcast ||
+            instruction.operands.size() != 1 ||
+            instruction.operands.front().type.arguments.size() != 1) {
+          continue;
+        }
+        upcastInstruction = instruction.id;
+        upcastFunction = function.id;
+        upcastBlock = block.id;
+        const lang::SemanticType &pointee =
+            instruction.operands.front().type.arguments.front();
+        for (const lang::MirClassInstance &instance :
+             frontend.mir.classInstances()) {
+          if (instance.type == pointee) {
+            sourcePointeeInstance = instance.id;
+          }
+        }
+        break;
+      }
+      if (upcastInstruction != 0) {
+        break;
+      }
+    }
+    if (upcastInstruction != 0) {
+      break;
+    }
+  }
+  expect(upcastInstruction != 0 && upcastFunction != 0 && upcastBlock != 0 &&
+             sourcePointeeInstance != 0,
+         "unique-owner upcast test should retain its concrete source fact");
+  if (sourcePointeeInstance != 0) {
+    auto malformed = frontend.mir;
+    auto *source = const_cast<lang::MirClassInstance *>(
+        malformed.findClassInstance(sourcePointeeInstance));
+    source->traits.transferCapable = false;
+    source->traits.shareCapable = false;
+    expect(!lang::verifyMirProgram(malformed).valid(),
+           "MIR should reject unique-owner erasure that amplifies concurrency "
+           "capabilities");
+  }
+  for (bool retarget : {false, true}) {
+    auto malformed = frontend.mir;
+    auto *function = const_cast<lang::MirFunctionInstance *>(
+        malformed.findFunctionInstance(upcastFunction));
+    lang::MirBlock *block =
+        function == nullptr ? nullptr : function->body.findBlock(upcastBlock);
+    auto instruction =
+        block == nullptr
+            ? std::vector<lang::MirInstruction>::iterator{}
+            : std::find_if(block->instructions.begin(),
+                           block->instructions.end(), [&](const auto &value) {
+                             return value.id == upcastInstruction;
+                           });
+    expect(block != nullptr && instruction != block->instructions.end(),
+           "unique upcast mutation should find its MIR instruction");
+    if (block == nullptr || instruction == block->instructions.end()) {
+      continue;
+    }
+    const auto activation = std::find_if(
+        instruction->lifecycle.begin(), instruction->lifecycle.end(),
+        [](const auto &event) {
+          return event.kind == lang::MirLifecycleEventKind::Initialize;
+        });
+    expect(activation != instruction->lifecycle.end(),
+           "unique upcast should activate its result obligation");
+    if (activation == instruction->lifecycle.end()) {
+      continue;
+    }
+    if (retarget) {
+      activation->target = 0;
+    } else {
+      instruction->lifecycle.erase(activation);
+    }
+    expect(!lang::verifyMirProgram(malformed).valid(),
+           "MIR should reject a missing or retargeted unique-upcast result "
+           "activation");
+  }
+
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir,
                         lang::OptimizationPipeline().run(
@@ -10033,12 +10232,30 @@ int main() {
 class PlainBase {};
 class PlainDerived : public PlainBase {};
 class Unrelated {};
+class CapableBase { public: virtual int read() { return 1; } };
+[[no_transfer]] class NonTransferable : public CapableBase {
+public: int read() override { return 2; }
+};
+[[no_share]] class NonShareable : public CapableBase {
+public: int read() override { return 3; }
+};
+class CleanupBound : public CapableBase {
+public:
+  ~CleanupBound() {}
+  int read() override { return 4; }
+};
 
 int main() {
   [[discard]] std::upcast_unique<PlainBase, PlainDerived>(
       std::make_unique<PlainDerived>());
   [[discard]] std::upcast_unique<PlainBase, Unrelated>(
       std::make_unique<Unrelated>());
+  [[discard]] std::upcast_unique<CapableBase, NonTransferable>(
+      std::make_unique<NonTransferable>());
+  [[discard]] std::upcast_unique<CapableBase, NonShareable>(
+      std::make_unique<NonShareable>());
+  [[discard]] std::upcast_unique<CapableBase, CleanupBound>(
+      std::make_unique<CleanupBound>());
   return 0;
 }
 )");
@@ -10046,9 +10263,14 @@ int main() {
              hasDiagnostic(invalid.diagnostics,
                            "must have polymorphic destruction") &&
              hasDiagnostic(invalid.diagnostics,
-                           "the target must be a public base"),
+                           "the target must be a public base") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "erasing the concrete type would grant transfer") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "erasing the concrete type would grant share"),
          "unique-owner upcasts should reject unsafe destruction and "
-         "unrelated target types before backend generation");
+         "unrelated or capability-amplifying target types before backend "
+         "generation");
 
   const lang::FrontendResult implicit =
       analyzeWithMemory("implicit-polymorphic-owner-conversion.gti", R"(
@@ -16352,7 +16574,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v77 ") &&
+             mirDump.starts_with("mir-v78 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -19371,6 +19593,7 @@ constexpr NamedTest kTests[] = {
     {"testSwitchAndBreakLoanFlow", testSwitchAndBreakLoanFlow},
     {"testSharedReadOnlyLoanAliases", testSharedReadOnlyLoanAliases},
     {"testUniqueOwnershipAndAllocation", testUniqueOwnershipAndAllocation},
+    {"testUniqueOwnerSwap", testUniqueOwnerSwap},
     {"testPolymorphicUniqueOwnerUpcast", testPolymorphicUniqueOwnerUpcast},
     {"testCompilerPrivateStorage", testCompilerPrivateStorage},
     {"testVariadicStorageConstructionAndVector",

@@ -125,9 +125,11 @@ ranges. `as_double` performs a checked decimal conversion and reports
 
 Builders provide exact signed and unsigned integer factories plus
 `number_text`, which validates a caller-supplied JSON number lexeme. Floating
-construction should use a validated decimal lexeme until a shortest-round-trip
-binary32/binary64 formatter exists; the library does not silently narrow
-`double` or route JSON through the fixed-display `std::to_string(float)` API.
+construction can pass the successful result of `std::format("{}", value)` to
+`number_text`; its default binary32/binary64 presentation is shortest-round-trip
+decimal. Non-finite results remain invalid JSON numbers and are rejected by
+`number_text`. The library does not silently narrow `double` or route JSON
+through the fixed-display `std::to_string(float)` API.
 
 ## Building And Serializing
 

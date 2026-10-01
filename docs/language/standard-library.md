@@ -74,10 +74,13 @@ The current implemented foundation includes:
   `build.gti` programs; command execution is not sandboxed, and Windows fails
   closed in the current implementation; and
 - `<std/memory>` `std::unique_ptr<T>` as a nominal move-only unique owner with
-  explicit null construction, reset, null assignment, and checked explicit
-  base upcast, plus the ordinary generic `std::make_unique<T>` for class/struct
-  construction or exact-value/default scalar initialization, and consuming
-  `std::upcast_unique<Base, Derived>` functions; and
+  explicit null construction, reset, null assignment, non-consuming `swap`
+  between matching mutable owners, and checked explicit base upcast, plus the
+  ordinary generic `std::make_unique<T>` for class/struct construction or
+  exact-value/default scalar initialization, and consuming
+  `std::upcast_unique<Base, Derived>` functions. Swap exchanges the two owner
+  tokens directly; it neither copies either pointee nor runs replacement
+  cleanup; and
 - `<std/memory>` `std::shared_ptr<T>` and `std::make_shared<T>` for explicit
   shared ownership: move-only handles with `clone()`, read-only dereference,
   null/default construction, null comparison, `use_count()`, reset, swap, and
@@ -277,9 +280,15 @@ The current implemented foundation includes:
 - `<std/source_location>` immutable, owned call-site snapshots containing the
   source file, qualified function name, one-based line, and a column value.
   `std::source_location::current()` and defaults that call it are expanded at
-  the external caller. The current frontend reports column zero because exact
-  source columns are not yet retained through HIR; file and function strings
-  remain valid independently of compiler storage; and
+  the external caller, including parenthesized/braced construction and
+  explicit or implicit base construction. Calls written in a field initializer
+  retain that initializer's own location. The current frontend reports column
+  zero because exact source columns are not yet retained through HIR; file and
+  function strings remain valid independently of compiler storage. Verified
+  MIR retains base/field caller facts even for state-bearing constructor
+  compositions that the current C++ backend does not yet admit; this is a
+  separate constructor-rollback coverage limit, not a fallback to the
+  declaration location; and
 - `<std/format>` sequential heterogeneous replacement for booleans,
   characters, fixed-width integers, binary32 floats, string views, and
   transferred owning strings through source-defined `std::format`,
@@ -821,8 +830,8 @@ The following component families remain planned or incomplete:
   invalidation support;
 - the remaining callable, output/random-access complete-range, heterogeneous
   accumulation, and hash generic-capability families;
-- indexed/named/specifier-based and binary64 formatting, formatter
-  customization, buffered streams, explicit text decoding, and structured I/O;
+- named/dynamic-field formatting, formatter customization, buffered streams,
+  explicit text decoding, and structured I/O;
 - recursive filesystem copy/iteration and permission editing, calendar/time-zone breadth, random distributions and engine
   breadth, connected networking, traffic buffers, atomic wait/notify, pointer
   atomics and fences, safe scoped condition variables, safe recursive mutexes,

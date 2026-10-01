@@ -14,7 +14,7 @@
     "stdlib/std/deque.gti": "5e014f240f4655824f1c245d507a96805ce4bfb1444570af4af2e6a222c1bba7",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
     "stdlib/std/filesystem.gti": "1018e88ac78adb603b80f0e83427a431c7c6225e00f39b0924721edcc4820687",
-    "stdlib/std/format.gti": "0a6d4cb63ad0e661bf47f8fa8782317dc3c298b87903c497bcf982e36b0ce28b",
+    "stdlib/std/format.gti": "6ef29ccab9a8d9a56e1719b82113ef9aebb4e859d1c597ddfa0af09bcd65f599",
     "stdlib/std/forward_list.gti": "2152aab44209cfa14a3b1709f6250c3ef85db78e1e665d5bc8299f3cb353a4bf",
     "stdlib/std/functional.gti": "2fa13a7b511a42cb3cd87d6ca1a6550e77c77109320b5457f5292bb3e5333540",
     "stdlib/std/http.gti": "3a99fd4a109627769f86d89b16348dbd25431960163e7b9aa016ce72c127954d",
@@ -22,7 +22,7 @@
     "stdlib/std/json.gti": "c73b68761f0194bd11596403c3ef70f56f2d5db8be6e311fb98ba23c79f6239a",
     "stdlib/std/list.gti": "f208f55111c02facf979574b9eceab97ab9676bb91cb8e52ff5a27ee09ca8244",
     "stdlib/std/map.gti": "39a314ff20943e99786f0165a77baca5d9276a73c6b31d253d8a5967647d706b",
-    "stdlib/std/memory.gti": "94965dbe672b0426995f2e99e93b1066a66356a5909941acda0cff4c8e4e786a",
+    "stdlib/std/memory.gti": "acf5c089a86d5a9feaa56bbd426994827a9b223d4c7c47be352389289978d8d5",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "5eef3aba02b84cc5dcb0c86727013d95b29e14f7aebad40d7f301b2229821b35",
     "stdlib/std/optional.gti": "9b038467204b82f5675326e67254bee896b2d6a5648f47bb22f325bbb202b8d8",
@@ -31,6 +31,7 @@
     "stdlib/std/queue.gti": "e7181505d8e12e151310ac46075b33cdc8095b4f727457c11603de1887e4c2ff",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/set.gti": "706d93edf068cc7a207ce3eedc2cd19ad08ea46cdd70b924309c6230cd90c716",
+    "stdlib/std/source_location.gti": "744c1a254ad954db7bedf71652bc4d2f08eb0ed09df96fc61cdfb2a1822e43e1",
     "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
     "stdlib/std/string.gti": "71d3cfa382f0565520822636b70bac8b8ac0176958d0c76db609eab720a529c6",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
@@ -717,6 +718,20 @@
       "expected": {"exit_code": 0, "stdout": "1\n7\n2\n8\n3\n9\n", "stderr": ""}
     },
     {
+      "id": "shared-ptr-upcast",
+      "mode": "run",
+      "source": "tests/fixtures/shared_ownership_upcast.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "7\n8\n", "stderr": ""}
+    },
+    {
+      "id": "source-location",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_source_location.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "span",
       "mode": "run",
       "source": "tests/fixtures/span_owner_dependent.gti",
@@ -1378,9 +1393,9 @@
       "id": "format.executable",
       "source": "stdlib/std/format.gti",
       "status": "executable",
-      "operations": ["std::format", "std::try_print", "std::try_println"],
+      "operations": ["std::format", "std::format_to", "std::try_print", "std::try_println"],
       "case_ids": ["format"],
-      "required_instantiations": ["zero arguments", "all fixed-width integer types", "mixed bool,char,int32_t,float,string_view,string pack", "counted string view with embedded zero", "unsupported nominal and binary64 arguments"],
+      "required_instantiations": ["zero arguments", "all fixed-width integer types", "mixed bool,char,int32_t,float,double,string_view,string pack", "counted string view with embedded zero", "indexed and typed format specifications", "unsupported nominal argument"],
       "evidence": ["tests/fixtures/stdlib_surface_format.gti", "stdlib/std/format.gti"]
     },
     {
@@ -1758,6 +1773,15 @@
       "evidence": ["tests/fixtures/shared_ownership.gti", "tests/shared_ownership_runtime_test.py", "tests/shared_ownership_failure_test.py", "tests/shared_ownership_threads_test.py"]
     },
     {
+      "id": "memory.shared-ptr-upcast",
+      "source": "stdlib/std/memory.gti",
+      "status": "executable",
+      "operations": ["std::shared_ptr::upcast", "std::upcast_shared"],
+      "case_ids": ["shared-ptr-upcast"],
+      "required_instantiations": ["public polymorphic Base/Derived sharing one control block"],
+      "evidence": ["tests/fixtures/shared_ownership_upcast.gti", "tests/shared_ownership_runtime_test.py", "tests/shared_ownership_tests.cpp", "stdlib/std/memory.gti"]
+    },
+    {
       "id": "memory.unique-ptr",
       "source": "stdlib/std/memory.gti",
       "status": "executable",
@@ -1977,6 +2001,22 @@
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti"
       ]
+    },
+    {
+      "id": "source-location.executable",
+      "source": "stdlib/std/source_location.gti",
+      "status": "executable",
+      "operations": [
+        "std::source_location::column",
+        "std::source_location::current",
+        "std::source_location::file_name",
+        "std::source_location::function_name",
+        "std::source_location::line",
+        "std::source_location::source_location"
+      ],
+      "case_ids": ["source-location"],
+      "required_instantiations": ["direct current call", "caller-side default argument", "empty location"],
+      "evidence": ["tests/fixtures/stdlib_surface_source_location.gti", "tests/source_location_runtime_test.py", "stdlib/std/source_location.gti"]
     },
     {
       "id": "span.executable",

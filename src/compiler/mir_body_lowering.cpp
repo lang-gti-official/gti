@@ -900,6 +900,18 @@ private:
                          .aggregate = {*pointee},
                          .requiresActiveCleanup = true};
     }
+    if (owner != program.classInstances().end() &&
+        owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
+      if (type.arguments.size() != 1 || !owner->requiresActiveCleanup)
+        return std::nullopt;
+      auto payload = uniqueCleanupType(type.arguments.front(), visiting);
+      if (!payload || !payload->requiresActiveCleanup)
+        return std::nullopt;
+      return MirDropType{.type = type,
+                         .classInstance = owner->id,
+                         .aggregate = {*payload},
+                         .requiresActiveCleanup = true};
+    }
     if (owner != program.classInstances().end() && owner->destructor &&
         owner->requiresActiveDropState && owner->bases.empty() &&
         std::none_of(owner->fields.begin(), owner->fields.end(),

@@ -6472,8 +6472,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
          instruction.bodyTarget.has_value()) ||
         (instruction.sourceLocation.has_value() != sourceLocationIntrinsic) ||
         (sourceLocationIntrinsic &&
-         (instruction.kind != MirInstructionKind::Call ||
-          !instruction.result || instruction.info.type != sourceLocationResult ||
+         (instruction.kind != MirInstructionKind::Call || !instruction.result ||
+          instruction.info.type != sourceLocationResult ||
           instruction.info.category != ValueCategory::Value ||
           instruction.receiver || !instruction.operands.empty() ||
           !instruction.parameterTypes.empty() || instruction.functionTarget ||

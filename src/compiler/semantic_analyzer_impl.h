@@ -1170,6 +1170,11 @@ private:
   [[nodiscard]] std::optional<TransferCapabilityDenial>
   transferCapabilityDenial(const SemanticType &type) const;
 
+  bool reportOwnershipErasureCapabilityAmplification(
+      const Token &site, std::string_view ownership,
+      const SemanticType &sourcePointee, const SemanticType &targetPointee,
+      const SemanticType &sourceOwner, const SemanticType &targetOwner);
+
   bool reportConcurrentGlobalPolicyFailure(const VariableDecl &declaration,
                                            const SemanticType &type,
                                            bool globalStorage);
@@ -1536,8 +1541,8 @@ private:
   void analyzeMutexIntrinsicCall(const Call &expr,
                                  const CallableCandidate &declaration);
 
-  void analyzeSourceLocationIntrinsicCall(
-      const Call &expr, const CallableCandidate &declaration);
+  void analyzeSourceLocationIntrinsicCall(const Call &expr,
+                                          const CallableCandidate &declaration);
 
   void analyzeIntrinsicCall(const Call &expr,
                             const CallableCandidate &declaration);

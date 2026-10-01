@@ -412,6 +412,10 @@ add_executable("gti_mutex_tests"
 target_link_libraries("gti_mutex_tests" PRIVATE gti_cpp_backend)
 add_test(NAME mutex_semantic_ir COMMAND gti_mutex_tests)
 
+add_executable(gti_source_location_tests source_location_tests.cpp)
+target_link_libraries(gti_source_location_tests PRIVATE gti_cpp_backend)
+add_test(NAME source_location_semantic_ir COMMAND gti_source_location_tests)
+
 add_executable("gti_defined_integer_tests"
                "${PROJECT_SOURCE_DIR}/tests/defined_integer_tests.cpp")
 target_link_libraries("gti_defined_integer_tests" PRIVATE gti_cpp_backend)
@@ -1567,6 +1571,13 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/stdlib_surface_source_location.gti"
   )
   set_tests_properties(source_location_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME mutex_cleanup_failure_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/mutex_cleanup_failure_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(mutex_cleanup_failure_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME function_item_runtime
     COMMAND "${Python3_EXECUTABLE}"

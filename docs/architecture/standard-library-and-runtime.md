@@ -174,10 +174,24 @@ The `<std/string>` convenience functions own whitespace/sign/radix-prefix
 policy in GTI and return recoverable errors instead of exposing native
 exceptions or errno. No public parsing function receives compiler recognition.
 
+Floating output uses the sibling bounded
+`gti_rt_format_f32_v1`/`gti_rt_format_f64_v1` ABI. GTI parses replacement
+fields, selects argument adapters, enforces the precision bound, and owns the
+transactional `format`/`format_to` error policy. The host operation performs
+only locale-independent `to_chars` conversion plus field-local sign,
+alternate, width, fill, and alignment composition into caller-owned storage.
+It reports invalid requests and insufficient capacity without publishing a
+partial size. This boundary avoids native stream state, allocation ownership,
+or C++ exceptions becoming part of the public library contract.
+
 The first public typed-allocation slice is the ordinary source-defined
 `std::unique_ptr<T>`, `std::make_unique`, `std::upcast_unique`,
 `std::allocator`, `std::storage<T>`, `std::alignment`, and `std::alloc_errc`
 surface in `<std/memory>`. The compiler recognizes none of those public names.
+The public `unique_ptr::swap` delegates to one declaration-bound private
+capability operation over two matching mutable owner tokens. MIR verifies both
+places and emits native owner swap directly, so exchanging owners cannot copy a
+pointee or trigger replacement cleanup.
 The stateless allocator calls one recoverable private allocation operation; a
 successful storage owner carries allocation extent, alignment, per-slot live
 state, reverse cleanup, and release authority together. Allocation failure is

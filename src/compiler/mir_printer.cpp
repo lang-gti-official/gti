@@ -263,7 +263,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v77 valid=" << program.valid() << '\n';
+    output << "mir-v78 valid=" << program.valid() << '\n';
     for (const MirNativeCallbackAdapter &adapter :
          program.nativeCallbackAdapters()) {
       output << "native-callback @" << adapter.id
@@ -700,7 +700,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v67\n";
+    output << "mir-body-v68\n";
     body(value, 0);
     return output.str();
   }
@@ -1412,8 +1412,7 @@ private:
     optional(value.enumVariant);
     output << " payload-index=";
     optional(value.payloadIndex);
-    output << " intrinsic=" << name(value.intrinsic)
-           << " source-location=";
+    output << " intrinsic=" << name(value.intrinsic) << " source-location=";
     if (value.sourceLocation) {
       output << value.sourceLocation->file.size() << ':'
              << value.sourceLocation->file << ','

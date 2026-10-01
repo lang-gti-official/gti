@@ -1,4 +1,22 @@
+#include <std/charconv>
 #include <std/string>
+
+namespace gti_internal {
+namespace runtime {
+extern "C" {
+uint32_t gti_rt_format_f32_v1(
+    float value, uint32_t format, int32_t precision, uint32_t flags,
+    uint32_t fill, uint32_t alignment, uint32_t sign, uint32_t zero_pad,
+    uint64_t width, uint8_t* output, uint64_t capacity, uint64_t* size);
+uint32_t gti_rt_format_f64_v1(double value, uint32_t format,
+                             int32_t precision, uint32_t flags,
+                             uint32_t fill, uint32_t alignment,
+                             uint32_t sign, uint32_t zero_pad, uint64_t width,
+                             uint8_t* output, uint64_t capacity,
+                             uint64_t* size);
+}
+}
+}
 
 namespace std {
 enum class format_errc {
@@ -415,6 +433,123 @@ format_argument_status append_integral<std::integral T>(mut string& output,
   return format_argument_status::appended;
 }
 
+struct floating_format_selection {
+  mut chars_format style;
+  mut bool uppercase;
+  mut bool general;
+  mut int32_t precision;
+
+  floating_format_selection()
+      : style(chars_format::general), uppercase(false), general(false),
+        precision(int32_t(-1)) {}
+};
+
+bool select_floating_format(format_spec& spec,
+                            mut floating_format_selection& selection) {
+  mut char presentation = spec.type;
+  if (presentation == '\0') {
+    selection.general = true;
+    if (spec.has_precision) {
+      if (spec.precision > size_t(2048)) {
+        return false;
+      }
+      selection.precision =
+          int32_t(spec.precision == size_t(0) ? size_t(1) : spec.precision);
+    }
+  } else if (presentation == 'f' || presentation == 'F') {
+    selection.style = chars_format::fixed;
+    selection.uppercase = presentation == 'F';
+    if (spec.has_precision && spec.precision > size_t(2048)) {
+      return false;
+    }
+    selection.precision =
+        int32_t(spec.has_precision ? spec.precision : size_t(6));
+  } else if (presentation == 'e' || presentation == 'E') {
+    selection.style = chars_format::scientific;
+    selection.uppercase = presentation == 'E';
+    if (spec.has_precision && spec.precision > size_t(2048)) {
+      return false;
+    }
+    selection.precision =
+        int32_t(spec.has_precision ? spec.precision : size_t(6));
+  } else if (presentation == 'g' || presentation == 'G') {
+    selection.general = true;
+    selection.uppercase = presentation == 'G';
+    if (spec.has_precision && spec.precision > size_t(2048)) {
+      return false;
+    }
+    selection.precision = int32_t(
+        spec.has_precision
+            ? (spec.precision == size_t(0) ? size_t(1) : spec.precision)
+            : size_t(6));
+  } else {
+    return false;
+  }
+  return true;
+}
+
+format_argument_status append_float32(mut string& output, float& value,
+                                      format_spec& spec) {
+  mut floating_format_selection selection{};
+  if (!select_floating_format(spec, selection)) {
+    return format_argument_status::invalid_specifier;
+  }
+  mut uint8_t buffer[4096] = {};
+  mut uint64_t count = uint64_t(0);
+  mut uint32_t code = uint32_t(0);
+  mut uint32_t flags = uint32_t(0);
+  if (selection.uppercase) { flags += uint32_t(1); }
+  if (spec.alternate) { flags += uint32_t(2); }
+  if (selection.general) { flags += uint32_t(4); }
+  unsafe {
+    code = gti_internal::runtime::gti_rt_format_f32_v1(
+        value, numeric_format(selection.style), selection.precision,
+        flags, uint32_t(uint8_t(spec.fill)),
+        uint32_t(uint8_t(spec.alignment)), uint32_t(uint8_t(spec.sign)),
+        spec.zero_pad ? uint32_t(1) : uint32_t(0), uint64_t(spec.width),
+        &buffer[0], uint64_t(4096), &count);
+  }
+  if (code != uint32_t(0) || count > uint64_t(4096)) {
+    return format_argument_status::invalid_specifier;
+  }
+  output.reserve(output.size() + size_t(count));
+  for (mut uint64_t index = uint64_t(0); index < count; index++) {
+    output.push_back(char(buffer[index]));
+  }
+  return format_argument_status::appended;
+}
+
+format_argument_status append_float64(mut string& output, double& value,
+                                      format_spec& spec) {
+  mut floating_format_selection selection{};
+  if (!select_floating_format(spec, selection)) {
+    return format_argument_status::invalid_specifier;
+  }
+  mut uint8_t buffer[4096] = {};
+  mut uint64_t count = uint64_t(0);
+  mut uint32_t code = uint32_t(0);
+  mut uint32_t flags = uint32_t(0);
+  if (selection.uppercase) { flags += uint32_t(1); }
+  if (spec.alternate) { flags += uint32_t(2); }
+  if (selection.general) { flags += uint32_t(4); }
+  unsafe {
+    code = gti_internal::runtime::gti_rt_format_f64_v1(
+        value, numeric_format(selection.style), selection.precision,
+        flags, uint32_t(uint8_t(spec.fill)),
+        uint32_t(uint8_t(spec.alignment)), uint32_t(uint8_t(spec.sign)),
+        spec.zero_pad ? uint32_t(1) : uint32_t(0), uint64_t(spec.width),
+        &buffer[0], uint64_t(4096), &count);
+  }
+  if (code != uint32_t(0) || count > uint64_t(4096)) {
+    return format_argument_status::invalid_specifier;
+  }
+  output.reserve(output.size() + size_t(count));
+  for (mut uint64_t index = uint64_t(0); index < count; index++) {
+    output.push_back(char(buffer[index]));
+  }
+  return format_argument_status::appended;
+}
+
 /// Closed built-in argument adapter used by the heterogeneous pack walker.
 /// The primary reports an unsupported argument without publishing the partly
 /// formatted string. Exact standard-library specializations below own the
@@ -565,36 +700,16 @@ public:
   std::detail::format_argument_status append(mut std::string& output,
                                               float& value,
                                               std::detail::format_spec& spec) {
-    if ((spec.type != '\0' && spec.type != 'f' && spec.type != 'F') ||
-        (spec.has_precision && spec.precision != size_t(6)) ||
-        spec.alternate) {
-      return std::detail::format_argument_status::invalid_specifier;
-    }
-    mut std::string text = std::to_string(value);
-    mut std::string prefix = std::string();
-    mut std::string digits = std::string();
-    mut size_t cursor = 0;
-    if (!text.empty() && text[size_t(0)] == '-') {
-      prefix.push_back('-');
-      cursor = 1;
-    } else if (spec.sign == '+') {
-      prefix.push_back('+');
-    } else if (spec.sign == ' ') {
-      prefix.push_back(' ');
-    }
-    while (cursor < text.size()) {
-      mut char current = text[cursor];
-      if (spec.type == 'F') {
-        if (current == 'n') { current = 'N'; }
-        else if (current == 'a') { current = 'A'; }
-        else if (current == 'i') { current = 'I'; }
-        else if (current == 'f') { current = 'F'; }
-      }
-      digits.push_back(current);
-      cursor++;
-    }
-    std::detail::append_numeric_text(output, prefix, digits, spec);
-    return std::detail::format_argument_status::appended;
+    return std::detail::append_float32(output, value, spec);
+  }
+};
+
+class std::detail::format_argument_writer<double> {
+public:
+  std::detail::format_argument_status append(mut std::string& output,
+                                              double& value,
+                                              std::detail::format_spec& spec) {
+    return std::detail::append_float64(output, value, spec);
   }
 };
 

@@ -342,6 +342,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testUniqueOwnerSwap",
+      "suite": "ownership"
+    },
+    {
       "name": "testPolymorphicUniqueOwnerUpcast",
       "suite": "ownership"
     },

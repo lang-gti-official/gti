@@ -100,7 +100,12 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v77`/`mir-body-v67`.
+The deterministic serialization is currently `mir-v78`/`mir-body-v68`.
+Program v78/body v68 serialize the resolved caller literal on each private
+source-location intrinsic. MIR verification requires the exact zero-argument,
+effect-free call shape, matching scalar/text result, and attached literal;
+optimizers and backends therefore cannot substitute their own native build
+location.
 Program v77/body v67 preserve complete shared-carrier dependency sets and
 the strong-owner intrinsic/cleanup contracts, including exact recursive
 array cleanup recipes.

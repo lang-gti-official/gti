@@ -61,6 +61,22 @@ std::string cppMirCleanupValueExpression(const MirProgram &program,
                                         "__gti_unwinding") +
            "; })";
   }
+  if (const auto *owner = type.classInstance
+                              ? program.findClassInstance(*type.classInstance)
+                              : nullptr;
+      owner != nullptr &&
+      owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
+    if (type.type.arguments.size() != 1 || type.aggregate.size() != 1 ||
+        type.aggregate.front().type != type.type.arguments.front())
+      throw std::logic_error("MIR mutex cleanup lost its payload recipe");
+    return receiver + ".destroy_value_with_failure(" + arguments +
+           ", [](auto &__gti_value, ::gti_failure_record_v1 *__gti_record, "
+           "bool __gti_unwinding) { return " +
+           cppMirCleanupValueExpression(program, type.aggregate.front(),
+                                        "__gti_value", "__gti_record",
+                                        "__gti_unwinding") +
+           "; })";
+  }
   if (type.type.kind == SemanticType::Enum) {
     const auto *enumeration = program.findPayloadEnum(type.type.enumId);
     if (enumeration == nullptr)
@@ -10316,6 +10332,69 @@ failureConstructorEmptyDefaultFieldType(const MirProgram &program,
   return failureConstructorEmptyDefaultFieldType(program, type, visiting);
 }
 
+// A transformed constructor needs two related but distinct guarantees:
+// each destination field must accept publication from its verified MIR value,
+// while the enclosing object only needs an observation-free empty state in
+// which those publications can run. The latter does not require the enclosing
+// GTI class to expose move assignment. In particular, a class containing the
+// sealed mutex capability is intentionally not move-assignable even though
+// the backend can construct its mutex field in the private disengaged state
+// and publish into that field exactly once.
+[[nodiscard]] bool
+failureConstructorEmptyStateConstructible(const MirProgram &program,
+                                          const MirClassInstance &instance) {
+  const bool emptyInterfaceBases = (!instance.polymorphic ||
+                                    !instance.bases.empty()) &&
+                                   instance.bases == instance.structuralBases &&
+                                   std::all_of(instance.bases.begin(),
+                                               instance.bases.end(),
+                                               [&](const HirBaseInstance
+                                                       &base) {
+                                                 const auto *interface =
+                                                     program.findClassInstance(
+                                                         base.instance);
+                                                 return base.interface && interface != nullptr &&
+                           interface->type == base.type &&
+                           interface->kind == ClassKind::Interface &&
+                           interface->declaredFields.empty() &&
+                           interface->fields.empty() &&
+                           interface->fieldDropOrder.empty() &&
+                           !interface->destructor &&
+                           !interface->requiresActiveCleanup &&
+                           !interface->requiresActiveDropState &&
+                           interface->bases.empty() &&
+                           interface->structuralBases.empty() &&
+                           interface->defaultConstructor ==
+                               SpecialMemberStatus::Generated &&
+                           interface->destructorStatus ==
+                               SpecialMemberStatus::Generated;
+                                               });
+  if (instance.declaration == 0 || instance.abstract || instance.cAbiRecord ||
+      instance.unionLayout || !emptyInterfaceBases ||
+      (instance.destructor
+           ? (!instance.requiresActiveDropState ||
+              instance.destructorStatus != SpecialMemberStatus::Declared ||
+              !mirUniqueCleanupType(program, instance.type))
+           : (instance.requiresActiveDropState ||
+              instance.destructorStatus != SpecialMemberStatus::Generated)) ||
+      instance.traits.containsBorrowedState) {
+    return false;
+  }
+  return std::all_of(
+      instance.declaredFields.begin(), instance.declaredFields.end(),
+      [&](const MirClassFieldInfo &field) {
+        if (field.field == 0 || field.symbol == 0) {
+          return false;
+        }
+        if (field.dropKind == DropKind::Trivial) {
+          return !field.requiresActiveCleanup &&
+                 passiveConstructorAggregateType(field.type);
+        }
+        return field.dropKind == DropKind::Lexical &&
+               failureConstructorEmptyDefaultFieldType(program, field.type);
+      });
+}
+
 [[nodiscard]] bool optionalStorageType(const MirProgram &program,
                                        const SemanticType &type);
 
@@ -18942,7 +19021,7 @@ bool cppMirFailureConstructorEmptyStateEligible(const MirProgram &program,
                                                 HirClassInstanceId instanceId) {
   const MirClassInstance *instance = program.findClassInstance(instanceId);
   return instance != nullptr &&
-         failureConstructorEmptyDefaultFieldType(program, instance->type);
+         failureConstructorEmptyStateConstructible(program, *instance);
 }
 
 bool cppMirFailureConstructorEmptyStateTypeEligible(const MirProgram &program,
@@ -18954,7 +19033,7 @@ bool cppMirFailureConstructorEmptyFieldsEligible(
     const MirProgram &program, HirClassInstanceId instanceId) {
   const MirClassInstance *instance = program.findClassInstance(instanceId);
   return instance != nullptr &&
-         (failureConstructorEmptyDefaultFieldType(program, instance->type) ||
+         (failureConstructorEmptyStateConstructible(program, *instance) ||
           optionalStorageOwnerEmptyState(program, *instance) ||
           failureConstructorDisarmsDeclaredDestructor(program, *instance));
 }
@@ -19329,6 +19408,59 @@ storageAllocationFailureCall(const MirProgram &program,
   return instruction.kind == MirInstructionKind::Call &&
          (instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
           instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut);
+}
+
+[[nodiscard]] bool uniqueOwnerSwapCall(const MirBody &body,
+                                       const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.intrinsic != IntrinsicKind::UniqueOwnerSwap ||
+      instruction.receiver || instruction.functionTarget ||
+      instruction.constructorTarget || instruction.bodyTarget ||
+      instruction.lambdaTarget || instruction.callableInvocation ||
+      instruction.result || instruction.info.type != SemanticType::Void ||
+      instruction.operands.size() != 2 ||
+      instruction.parameterTypes.size() != 2 ||
+      !instruction.localFailureSites.empty() ||
+      !instruction.definedFailure.empty() || !instruction.lifecycle.empty()) {
+    return false;
+  }
+  SemanticType ownerType = SemanticType::Unknown;
+  for (std::size_t index = 0; index < instruction.operands.size(); ++index) {
+    const MirOperand &operand = instruction.operands[index];
+    if (instruction.parameterTypes[index] != operand.type ||
+        operand.type.kind != SemanticType::Reference ||
+        operand.type.referenceAccess != AccessMode::Mutable ||
+        operand.type.arguments.size() != 1 ||
+        operand.type.arguments.front().kind != SemanticType::UniqueOwner ||
+        operand.type.arguments.front().arguments.size() != 1) {
+      return false;
+    }
+    const SemanticType &candidate = operand.type.arguments.front();
+    if (index == 0) {
+      ownerType = candidate;
+    } else if (candidate != ownerType) {
+      return false;
+    }
+    MirPlaceId source = 0;
+    if (operand.kind == MirOperandKind::BorrowWrite && operand.place != 0 &&
+        operand.loan == 0) {
+      source = operand.place;
+    } else if (operand.kind == MirOperandKind::Loan && operand.place == 0) {
+      const MirLoan *loan = body.findLoan(operand.loan);
+      if (loan == nullptr || loan->access != AccessMode::Mutable) {
+        return false;
+      }
+      source = loan->source;
+    } else {
+      return false;
+    }
+    const MirPlace *place = body.findPlace(source);
+    if (place == nullptr || place->type != ownerType ||
+        place->access != AccessMode::Mutable) {
+      return false;
+    }
+  }
+  return ownerType != SemanticType::Unknown;
 }
 
 [[nodiscard]] bool scalarUniqueAllocation(const MirInstruction &instruction) {
@@ -31779,6 +31911,13 @@ private:
              << *detail << "};\n";
       return;
     }
+    if (uniqueOwnerSwapCall(facts.body, instruction)) {
+      emitCallArgument(instruction.operands.front(), false, false);
+      output << ".swap(";
+      emitCallArgument(instruction.operands[1], false, false);
+      output << ");\n";
+      return;
+    }
     if (instruction.kind == MirInstructionKind::Call &&
         instruction.intrinsic == IntrinsicKind::UniqueOwnerIsNull) {
       const MirInstruction *staged =
@@ -43143,6 +43282,17 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               {
                 return false;
               }
+            }
+            continue;
+          }
+          if (instruction.intrinsic == IntrinsicKind::UniqueOwnerSwap) {
+            if (!uniqueOwnerSwapCall(body, instruction) ||
+                !typeRow(instruction.operands.front().type) ||
+                !typeRow(instruction.operands.front().type.arguments.front()) ||
+                !typeRow(instruction.operands.front()
+                             .type.arguments.front()
+                             .arguments.front())) {
+              return false;
             }
             continue;
           }

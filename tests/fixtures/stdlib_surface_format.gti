@@ -49,7 +49,7 @@ int main() {
       std::format("{}|{}|{}|{}|{}|{}", true, false, 'X', int32_t(-7),
                   1.25, std::move(owned_argument));
   if (!heterogeneous ||
-      heterogeneous.value() != "true|false|X|-7|1.250000|owned") {
+      heterogeneous.value() != "true|false|X|-7|1.25|owned") {
     return 4;
   }
   mut auto unsupported = std::format("{}", unsupported_format_value());
@@ -58,8 +58,7 @@ int main() {
     return 5;
   }
   mut auto binary64 = std::format("{}", 1.5d);
-  if (binary64 ||
-      binary64.error() != std::format_errc::unsupported_argument) {
+  if (!binary64 || binary64.value() != "1.5") {
     return 6;
   }
   mut auto unsupported_print =
@@ -128,6 +127,19 @@ int main() {
   if (bad_specifier ||
       bad_specifier.error() != std::format_errc::invalid_format) {
     return 20;
+  }
+
+  mut auto floating =
+      std::format("{:.2f}|{:.3e}|{:#.5g}|{:G}|{:+010.2f}", 1.25d,
+                  12.5d, 12.0d, 12.5d, -3.5d);
+  if (!floating ||
+      floating.value() != "1.25|1.250e+01|12.000|12.5|-000003.50") {
+    return 21;
+  }
+  auto excessive_precision = std::format("{:.3000f}", 1.0d);
+  if (excessive_precision ||
+      excessive_precision.error() != std::format_errc::invalid_format) {
+    return 22;
   }
   return 0;
 }

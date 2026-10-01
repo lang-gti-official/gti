@@ -241,10 +241,12 @@ rounded to nearest with ties to even at the sixth place — not a re-rounded
 approximation — and signed zero retains its minus sign. The text therefore
 matches C's default `printf("%f", (float)value)` result for every finite
 binary32 under the default rounding mode, including magnitudes past the range
-of a 64-bit integer. `<std/format>` uses this same binary32 representation;
-binary64 text and float parsing remain later slices.
+of a 64-bit integer. `<std/format>` is deliberately independent of that legacy
+fixed-display conversion. It formats both binary32 and binary64 values through
+the bounded, locale-independent character-conversion runtime described below.
+Floating input for both widths is available through `<std/charconv>`.
 
-`<std/format>` adds the first replacement-field layer:
+`<std/format>` provides checked replacement-field formatting:
 
 ```gti
 namespace std {
@@ -259,6 +261,13 @@ namespace std {
   expected<string, format_errc>
   format<First, Args...>(string_view pattern, First first, Args... args);
 
+  expected<void, format_errc>
+  format_to(mut string& output, string_view pattern);
+
+  expected<void, format_errc>
+  format_to<First, Args...>(mut string& output, string_view pattern,
+                            First first, Args... args);
+
   expected<void, format_errc> try_print(string_view pattern);
 
   expected<void, format_errc>
@@ -272,11 +281,11 @@ namespace std {
 ```
 
 The admitted arguments are `bool`, `char`, every fixed-width integer,
-binary32 `float`, `std::string_view`, and `std::string`. Booleans render as
-`true` or `false`; characters append their one code unit; integers retain
-canonical base-10 text; and floats use `std::to_string(float)`'s exact
-six-fractional-digit contract. String values preserve all counted bytes,
-including embedded zero bytes.
+binary32 `float`, binary64 `double`, `std::string_view`, and `std::string`.
+Booleans render as `true` or `false`; characters append their one code unit;
+integers default to canonical base-10 text; and floating values default to the
+shortest round-tripping decimal representation. String values preserve all
+counted bytes, including embedded zero bytes.
 
 ```gti
 mut std::string host = std::string("gitea.example");
@@ -290,20 +299,30 @@ are not yet implemented. Consequently a named move-only `std::string` is not
 copied implicitly: pass `text.view()` to borrow it, or `std::move(text)` to
 transfer it deliberately. A fresh `std::string(...)` can be passed directly.
 
-`{}` consumes the next argument. `{{` and `}}` emit literal braces without
-consuming one. A lone opening or closing brace returns
-`invalid_format`; a valid pattern with too few or too many arguments returns
-`argument_count_mismatch`. A type outside the admitted set returns
-`unsupported_argument`. Pattern grammar and field count are validated first,
-so those errors take precedence. Replacement is strictly sequential. Indexes,
-names, format specifiers, width, precision, bases other than decimal, locale,
-binary64 values, and user formatter customization are not part of this
-bounded surface.
+`{}` consumes the next argument. `{0}` selects an explicit zero-based argument
+and may reuse or reorder it; automatic and explicit indexing cannot be mixed.
+`{{` and `}}` emit literal braces without consuming one. The supported format
+specifier grammar is `[[fill]align][sign][#][0][width][.precision][type]`.
+Alignment is `<`, `>`, or `^`; integral presentations are `d`, `x`, `X`, `o`,
+`b`, `B`, and `c`; floating presentations are `f`, `F`, `e`, `E`, `g`, and
+`G`; and strings accept `s`. Precision truncates strings, controls floating
+digits, and is bounded to keep formatting resource use finite. Floating
+conversion is locale independent, preserves signs and non-finite spellings,
+and applies sign-aware zero padding.
+
+A lone opening or closing brace, mixed indexing, or an incompatible specifier
+returns `invalid_format`; an out-of-range index or automatic field-count
+mismatch returns `argument_count_mismatch`. A type outside the admitted set
+returns `unsupported_argument`. Pattern grammar and field count are validated
+first, so those errors take precedence. Named fields, dynamic width or
+precision, locale-specific formatting, and user formatter customization are
+not yet part of this bounded surface.
 
 The overload family separates the zero-argument case from the nonempty
 `First, Args...` case and permits heterogeneous admitted arguments in one
-call. `std::format` returns a newly owned string. `try_print` and
-`try_println` validate the complete grammar and exact argument count, then
+call. `std::format` returns a newly owned string. `format_to` appends only after
+the whole replacement succeeds, leaving its destination unchanged on error.
+`try_print` and `try_println` validate the complete grammar and exact argument count, then
 construct the complete owning result before making any stdout write. Invalid
 or unsupported input therefore produces no partial output, and `try_println`
 submits its newline only after successful formatting and after the formatted
@@ -324,7 +343,7 @@ can format to an owning string and pass its view to `try_write_stdout`.
 Allocation failure while constructing an owning result follows the current
 defined-failure allocation policy rather than becoming a `format_errc` value.
 
-Buffered streams, filesystem traversal, encoding conversion, binary64 and
-specifier-driven formatting, and formatter customization remain future
-library layers. A future buffer/stream object should build on this byte surface
-without turning the runtime ABI into the public GTI ABI.
+Buffered streams, encoding conversion, named/dynamic fields, and formatter
+customization remain future library layers. A future buffer/stream object
+should build on this byte surface without turning the runtime ABI into the
+public GTI ABI.

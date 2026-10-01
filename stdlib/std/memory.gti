@@ -21,6 +21,8 @@ gti_internal::unique_owner<T> allocate_unique_owner<T, Args...>(Args... args);
 T & unique_owner_borrow<T>(gti_internal::unique_owner<T>& owner);
 mut T & unique_owner_borrow_mut<T>(mut gti_internal::unique_owner<T>& owner);
 bool unique_owner_is_null<T>(gti_internal::unique_owner<T>& owner);
+void unique_owner_swap<T>(mut gti_internal::unique_owner<T>& left,
+                          mut gti_internal::unique_owner<T>& right);
 gti_internal::unique_owner<Base> unique_owner_upcast<Base, Derived>(gti_internal::unique_owner<Derived> owner);
 
 gti_internal::storage<T> allocate_storage<T>(uint64_t count);
@@ -68,6 +70,10 @@ public:
 
   void operator=(nullptr_t empty) mut {
     this.reset();
+  }
+
+  void swap(mut unique_ptr<T>& other) mut {
+    gti_internal::unique_owner_swap(this.owner, other.owner);
   }
 
   unique_ptr<Base> upcast<Base>() mut {

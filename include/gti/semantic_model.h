@@ -255,6 +255,7 @@ enum class IntrinsicKind {
   UniqueOwnerBorrow,
   UniqueOwnerBorrowMut,
   UniqueOwnerIsNull,
+  UniqueOwnerSwap,
   UniqueOwnerUpcast,
   AllocateStorage,
   StorageTryAllocate,

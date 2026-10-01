@@ -913,7 +913,7 @@ int main() {
          "values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v67\n") &&
+  expect(dump.starts_with("mir-body-v68\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos &&
              dump.find("prepared-parameter-drop=") != std::string::npos,

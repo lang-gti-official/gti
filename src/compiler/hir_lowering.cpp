@@ -1407,7 +1407,8 @@ private:
     const SemanticType enclosingReceiverType = currentReceiverType;
     const AccessMode enclosingReceiverAccess = currentReceiverAccess;
     const std::string enclosingSourceFunctionName = currentSourceFunctionName;
-    const ClassTypeInfo *ownerInfo = baseModel->findClassType(owner.declaration);
+    const ClassTypeInfo *ownerInfo =
+        baseModel->findClassType(owner.declaration);
     currentSourceFunctionName =
         (ownerInfo == nullptr ? std::string{} : ownerInfo->qualifiedName) +
         "::" + snapshot.source->name().lexeme;
@@ -1496,7 +1497,8 @@ private:
         for (const Expr *defaultArgument : resolved->defaultArguments) {
           if (const std::optional<HirValueId> value = lowerDefaultArgument(
                   defaultArgument, defaultModel, targetClassArguments,
-                  targetClassValueArguments, body)) {
+                  targetClassValueArguments, body,
+                  sourceLocationAt(initializer.target.name.last()))) {
             lowered.arguments.push_back(*value);
             initializerValues.push_back(*value);
           }
@@ -1561,7 +1563,8 @@ private:
             for (const Expr *defaultArgument : defaultArguments) {
               if (const std::optional<HirValueId> value = lowerDefaultArgument(
                       defaultArgument, defaultModel, base->type.arguments,
-                      base->type.valueArguments, body)) {
+                      base->type.valueArguments, body,
+                      sourceLocationAt(snapshot.source->name()))) {
                 lowered.arguments.push_back(*value);
                 implicitBaseValues.push_back(*value);
               }
@@ -1654,7 +1657,8 @@ private:
     const SemanticType enclosingReceiverType = currentReceiverType;
     const AccessMode enclosingReceiverAccess = currentReceiverAccess;
     const std::string enclosingSourceFunctionName = currentSourceFunctionName;
-    const ClassTypeInfo *ownerInfo = baseModel->findClassType(owner.declaration);
+    const ClassTypeInfo *ownerInfo =
+        baseModel->findClassType(owner.declaration);
     currentSourceFunctionName =
         (ownerInfo == nullptr ? std::string{} : ownerInfo->qualifiedName) +
         "::~" + snapshot.source->name().lexeme;
@@ -2720,9 +2724,10 @@ private:
 
     HirBody body;
     const std::string enclosingSourceFunctionName = currentSourceFunctionName;
-    currentSourceFunctionName = enclosingSourceFunctionName.empty()
-                                    ? "<lambda>"
-                                    : enclosingSourceFunctionName + "::<lambda>";
+    currentSourceFunctionName =
+        enclosingSourceFunctionName.empty()
+            ? "<lambda>"
+            : enclosingSourceFunctionName + "::<lambda>";
     std::vector<HirBindingId> parameterBindings;
     parameterBindings.reserve(lambda.parameters().size());
     for (const Parameter &parameter : lambda.parameters()) {
@@ -3189,8 +3194,7 @@ private:
     return projectionId;
   }
 
-  [[nodiscard]] static bool
-  sourceLocationIntrinsic(IntrinsicKind intrinsic) {
+  [[nodiscard]] static bool sourceLocationIntrinsic(IntrinsicKind intrinsic) {
     return intrinsic == IntrinsicKind::SourceFileName ||
            intrinsic == IntrinsicKind::SourceFunctionName ||
            intrinsic == IntrinsicKind::SourceLine ||
@@ -3207,19 +3211,27 @@ private:
             .column = 0};
   }
 
-  [[nodiscard]] SourceLocationLiteral
-  sourceLocationAt(const Call &call) const {
+  [[nodiscard]] SourceLocationLiteral sourceLocationAt(const Call &call) const {
     return sourceLocationAt(call.leftParen() ? *call.leftParen()
                                              : call.paren());
   }
 
-  [[nodiscard]] std::optional<HirValueId>
-  lowerDefaultArgument(const Expr *expression, const SemanticModel &model,
-                       const std::vector<SemanticType> &classArguments,
-                       const std::vector<CompileTimeValue> &classValueArguments,
-                       HirBody &body,
-                       std::optional<SourceLocationLiteral> caller =
-                           std::nullopt) {
+  [[nodiscard]] std::optional<SourceLocationLiteral>
+  sourceLocationAt(const Expr &expression) const {
+    if (const auto *call = exprAs<Call>(&expression)) {
+      return sourceLocationAt(*call);
+    }
+    if (const auto *initializer = exprAs<DirectInitializer>(&expression)) {
+      return sourceLocationAt(initializer->brace());
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] std::optional<HirValueId> lowerDefaultArgument(
+      const Expr *expression, const SemanticModel &model,
+      const std::vector<SemanticType> &classArguments,
+      const std::vector<CompileTimeValue> &classValueArguments, HirBody &body,
+      std::optional<SourceLocationLiteral> caller = std::nullopt) {
     if (expression == nullptr) {
       return std::nullopt;
     }
@@ -3300,7 +3312,8 @@ private:
     for (const Expr *defaultArgument : construction.defaultArguments) {
       if (const std::optional<HirValueId> lowered = lowerDefaultArgument(
               defaultArgument, *defaultModel, targetClassArguments,
-              targetClassValueArguments, body)) {
+              targetClassValueArguments, body,
+              sourceLocationAt(initializer.brace()))) {
         value.operands.push_back(*lowered);
       } else {
         lifecycleValid = false;
@@ -4480,8 +4493,7 @@ private:
           for (const Expr *defaultArgument : resolved->defaultArguments) {
             if (const std::optional<HirValueId> lowered = lowerDefaultArgument(
                     defaultArgument, defaultModel, targetClassArguments,
-                    targetClassValueArguments, body,
-                    sourceLocationAt(*call))) {
+                    targetClassValueArguments, body, sourceLocationAt(*call))) {
               value.operands.push_back(*lowered);
             }
           }
@@ -4609,7 +4621,7 @@ private:
           for (const Expr *defaultArgument : construction->defaultArguments) {
             if (const std::optional<HirValueId> lowered = lowerDefaultArgument(
                     defaultArgument, defaultModel, targetClassArguments,
-                    targetClassValueArguments, body)) {
+                    targetClassValueArguments, body, sourceLocationAt(*raw))) {
               value.operands.push_back(*lowered);
             }
           }

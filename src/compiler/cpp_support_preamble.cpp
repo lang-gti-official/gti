@@ -2156,6 +2156,29 @@ public:
     return *value_;
   }
 
+  template <typename Cleanup>
+  [[nodiscard]] bool destroy_value_with_failure(
+      ::gti_failure_record_v1 *record, bool unwinding,
+      Cleanup &&cleanup) noexcept {
+    if (!value_.has_value()) {
+      std::terminate();
+    }
+    bool success = false;
+    try {
+      success = static_cast<Cleanup &&>(cleanup)(*value_, record, unwinding);
+    } catch (...) {
+      std::terminate();
+    }
+    // A second defined failure is terminal at the calling MIR edge.  Keep the
+    // native shell engaged so std::optional teardown cannot run any payload
+    // subobjects that remain live after the source cleanup stopped.
+    if (!success && unwinding) {
+      return false;
+    }
+    value_.reset();
+    return success;
+  }
+
 private:
   mutable std::mutex mutex_;
   mutable std::optional<T> value_;

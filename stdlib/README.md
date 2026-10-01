@@ -239,8 +239,11 @@ owning representation for every fixed-width integer, including signed minima.
 render an optional sign, the integer part, a point, and exactly six fractional
 digits taken from the stored value's exact decimal expansion and rounded to
 nearest with ties to even. Signed zero is preserved; `nan`, `inf`, and `-inf`
-cover non-finite values. `std::format` reuses this binary32 representation;
-binary64 text remains a separate sub-slice.
+cover non-finite values. `std::format` instead uses locale-independent
+character conversion for both binary32 and binary64 values. Its default
+floating presentation is the shortest round-tripping decimal representation;
+checked width, alignment, sign, alternate, zero-padding, precision, and
+`f`/`e`/`g` presentation specifiers are available through replacement fields.
 Read-only `begin()`/`end()` iteration uses the language's
 structural range protocol and a source-defined iterator that retains a checked
 borrow of the backing storage. A read cursor can be copy-constructed into an
@@ -353,6 +356,9 @@ function rather than recognizing the public factory name. Explicit
 `std::upcast_unique<Base, Derived>(owner)` consumes one derived owner only when
 the compiler-private capability proves a public polymorphic base with safe
 destruction; no ordinary call receives an implicit owner conversion.
+`unique_ptr<T>::swap(other)` instead requires two matching mutable handles and
+exchanges their private owner tokens without consuming either public handle,
+copying either pointee, or running replacement cleanup.
 `std::shared_ptr<T>` follows the same explicit base-conversion rule through
 `shared_ptr<T>::upcast<Base>()` and
 `std::upcast_shared<Base, Derived>(owner)`. The conversion consumes one handle
@@ -522,7 +528,7 @@ is recognized by the backend.
 | `<std/list>` | Executable doubly-linked slot-owned nodes, checked indexed mutation, ends, emplacement, read traversal, reverse, remove, unique, merge, sort, and iterative cleanup |
 | `<std/deque>` / `<std/queue>` | Circular per-element-owned double-ended storage and its FIFO adapter, with checked access and deterministic cleanup |
 | `<std/set>` / `<std/unordered_set>` | Unique immutable keys over AVL/hash dictionaries, checked insertion results and traversal, lookup/erase, bounds or hash capacity controls |
-| `<std/memory>` | Implemented `unique_ptr`, `make_unique`, `upcast_unique`, explicit-clone `shared_ptr`, `make_shared`, and `upcast_shared`, typed `allocator`, `storage<T>`, `alignment`, `alloc_errc`, fixed-capacity `arena<T>`/`pool<T>`, and recoverable storage factories; declaration-only `weak_ptr` |
+| `<std/memory>` | Implemented `unique_ptr` with reset/swap, `make_unique`, `upcast_unique`, explicit-clone `shared_ptr`, `make_shared`, and `upcast_shared`, typed `allocator`, `storage<T>`, `alignment`, `alloc_errc`, fixed-capacity `arena<T>`/`pool<T>`, and recoverable storage factories; declaration-only `weak_ptr` |
 | `<std/numeric>` | Implemented exact fixed-width `wrapping_add/sub/mul`, `saturating_add/sub/mul`, `checked_add/sub/mul`, default and operation-based `accumulate`, homogeneous default and operation-based `inner_product`, unary `transform_reduce`, `gcd`, `lcm`, and `midpoint` |
 | `<std/span>` | Executable checked read-only single-owner spans with vector/string factories, local copy/move, subviews, empty ranges, iteration, and no raw-address `data()` API; mutable and multi-owner views remain unsupported |
 | `<std/utility>` | Implemented `pair` and `make_pair`; declaration-only `swap` and `exchange`; compiler-defined `std::move` remains implicitly available |

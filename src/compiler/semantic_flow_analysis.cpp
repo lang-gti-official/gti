@@ -1918,6 +1918,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::DefaultTypeParameterConstruction:
         case IntrinsicKind::Move:
         case IntrinsicKind::UniqueOwnerIsNull:
+        case IntrinsicKind::UniqueOwnerSwap:
         case IntrinsicKind::UniqueOwnerUpcast:
         case IntrinsicKind::SharedOwnerEmpty:
         case IntrinsicKind::SharedOwnerIsNull:
