@@ -991,7 +991,8 @@ private:
            << ',' << value.copyable << ',' << value.movable << ','
            << value.copyAssignable << ',' << value.moveAssignable << ','
            << value.containsBorrowedState << ',' << value.transferCapable << ','
-           << value.shareCapable << ',' << number(value.relocation) << ')';
+           << value.shareCapable << ','
+           << static_cast<unsigned>(value.relocation) << ')';
   }
 
   void info(const ExpressionInfo &value) {

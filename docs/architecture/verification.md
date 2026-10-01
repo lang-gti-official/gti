@@ -2,6 +2,54 @@
 
 Status: Current test and audit structure.
 
+## Structural relocation proposal
+
+`structural_relocation` checks the public constraints and checked storage API
+with unrelated passive, deleted-copy, deleted-move, borrowed, and
+cleanup-owning classes. Concrete arrays include zero-length storage. Semantic
+eligibility must survive HIR and verified MIR; forged traits, movement policy,
+field types, polymorphism, and lost native-opaque identity are rejected.
+Erased-callback/interface and pointer-only native fixtures check that unrelated
+compositions retain coherent metadata. The production sparse/prefix helper
+calls must select the verified bitwise candidate for passive types and the
+generated-transfer path for resource owners. MIR traits serialize as textual
+integers, including the unavailable value, never byte-sized control characters.
+
+`structural_relocation_runtime` runs C++20/C++23 at O0/O1/O3, no-elide, and
+ASan/UBSan. It checks zero-count and zero-capacity operations, source slot
+reuse, vector growth/shrink, values, and exactly-once resource cleanup.
+Capacity, occupied destination, incomplete source prefix, and consumed-source
+access have exact defined-failure codes, details, locations, and status 70.
+Outstanding source/destination loans and self-aliasing remain semantic errors.
+The standard-library surface sweep independently exercises relocation at
+O0/O3; fingerprints and API coverage include both constraints and the method.
+
+`structural_relocation_lsp` verifies shared compiler hover/definition facts,
+constraint diagnostics and related information, unsaved cleanup changes,
+incomplete-source recovery, and formatting followed by reanalysis. No grammar
+or editor-specific semantic rule is added.
+
+The proposal's two public and two private concept declarations add four
+declarations to each of the 87 example inventories; importing `<std/memory>`
+adds the public method as a fifth in 30 examples. The refreshed census retains
+all 7,717 executable bodies and 1,856 generated items unchanged. This inventory
+update is not a waiver of either executable corpus oracle.
+
+The local candidate uses an optimized Release/Ninja compiler on macOS arm64
+with AppleClang 21 and LLVM 22.1.8. All 11 clean staged SDK consumer tests pass;
+the staged compiler also builds and runs the relocation fixture outside the
+repository with the standard-library/runtime overrides cleared. C/C++
+formatting checks all 391 first-party files, and Tree-sitter passes its 66
+corpus cases and parses the changed source units. This is not Linux/Windows
+native validation or a claim of measured runtime speedup.
+
+The optional full audit passes its contract probes, 24 typed differential
+cases, four composition cases, 100 malformed-source mutations, and all 87
+examples in four configurations. Its final comparison phase cannot run because
+`examples/gti-vs-cpp/verify.py` is absent, as on the proposal's base. This is
+not reported as a complete optional-audit pass; its failure artifacts are
+retained locally.
+
 ## Explicit cloning and Objective-C++ bridges
 
 `testMemberRequirementConcepts` covers named, relational, composed, and direct

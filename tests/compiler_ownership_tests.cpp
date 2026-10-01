@@ -3518,7 +3518,7 @@ int main() {
                 "::gti_internal::backend::mir_prefix_read_mut_v1(") !=
                 std::string::npos &&
             artifact.contents.find(
-                "::gti_internal::backend::mir_prefix_relocate_v1(") !=
+                "::gti_internal::backend::mir_prefix_relocate_v1<true>(") !=
                 std::string::npos,
         "the prefix-storage fixture should retain its dedicated "
         "representation and select the exact verified-MIR capability family");
@@ -10391,7 +10391,7 @@ int main() {
                  "::gti_internal::backend::mir_storage_construct_v1(") !=
                  std::string::npos &&
              artifact.contents.find(
-                 "::gti_internal::backend::mir_storage_relocate_v1(") !=
+                 "::gti_internal::backend::mir_storage_relocate_v1<true>(") !=
                  std::string::npos &&
              artifact.contents.find(
                  "::gti_internal::backend::mir_storage_destroy_v1(") !=

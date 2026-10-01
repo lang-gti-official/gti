@@ -1,4 +1,5 @@
 #include <std/memory>
+#include <std/array>
 #include <std/string>
 #include <std/vector>
 
@@ -47,6 +48,9 @@ int main(int argc, std::vector<std::string> argv) {
   accepts_bits<Ticket>();
   accepts_relocation<Resource>();
   accepts_relocation<std::unique_ptr<Fixed>>();
+  accepts_bits<std::array<int, 0>>();
+  std::array<int, 0> empty_values{};
+  if (!empty_values.empty()) { return 12; }
   std::allocator allocator{};
   {
     mut auto empty_a = allocator.try_storage<int>(std::size_t(0));
