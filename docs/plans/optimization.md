@@ -16,8 +16,12 @@ gate is reconciled at `72a8087a`. The measured follow-up implements one bounded
 body-local exact-receiver dispatch refinement, with canonical replay and
 conservative loan/effect/cleanup boundaries. This does not implement general
 devirtualization, MIR inlining, interprocedural receiver specialization, or
-MemorySSA. Final campaign acceptance is tracked by `O-MEASURE-02`; do not
-infer completion from the implementation alone.
+MemorySSA. `O-MEASURE-02` is now complete for this facility at measured clean
+implementation `2c8d4561`: paired local-interface runtime falls from 223.175 to
+120.008 ms, controls show no material regression, and broad/focused functional
+gates pass. Exact evidence and the larger, still-unimplemented callback/helper
+proxy ceilings are recorded in [performance-tooling.md](performance-tooling.md).
+Publication remains held; this is not completion of general devirtualization.
 
 Implementation update (2026-08-22): ADR 016 supersedes the migration mechanics
 in this proposal. `BackendInput`, HIR replacement-table emission, mixed AST/HIR

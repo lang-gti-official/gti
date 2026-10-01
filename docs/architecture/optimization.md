@@ -165,6 +165,13 @@ O0/O1 do not run this pass. Deterministic missed remarks explain the rejected
 receiver, loan, target-effects, inheritance, cleanup, or failure-channel shape.
 Existing closed-call safety analysis stays conservative for virtual method
 declarations; static dispatch does not independently grant a safety discharge.
+The clean `2c8d4561` implementation's paired local-interface benchmark drops
+from 223.175 to 120.008 ms without a material control regression. Exact
+identities, candidate selection, compiler-time/size/memory controls, and the
+arm64 macOS/workload limitations are recorded in the
+[performance campaign](../plans/performance-tooling.md#o-measure-02-exact-head-runtime-facility-campaign-2026-10-01).
+
+### Local Scalar Transformations
 
 The fold pass replaces admitted identity chains and exact non-trapping literal
 computations, then replaces branches whose dominating condition is a proved
