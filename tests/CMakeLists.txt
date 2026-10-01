@@ -441,6 +441,14 @@ add_executable(gti_source_location_tests source_location_tests.cpp)
 target_link_libraries(gti_source_location_tests PRIVATE gti_cpp_backend)
 add_test(NAME source_location_semantic_ir COMMAND gti_source_location_tests)
 
+add_executable(gti_simd_tests simd_tests.cpp)
+target_link_libraries(gti_simd_tests PRIVATE gti_cpp_backend)
+add_test(NAME simd_semantic_ir COMMAND gti_simd_tests)
+add_test(NAME simd_runtime
+         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/simd_runtime_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(simd_runtime PROPERTIES TIMEOUT 600 PROCESSORS 2)
+
 add_executable("gti_defined_integer_tests"
                "${PROJECT_SOURCE_DIR}/tests/defined_integer_tests.cpp")
 target_link_libraries("gti_defined_integer_tests" PRIVATE gti_cpp_backend)

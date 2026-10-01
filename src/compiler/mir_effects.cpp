@@ -396,6 +396,12 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     harmless(),                                // SourceFunctionName
     harmless(),                                // SourceLine
     harmless(),                                // SourceColumn
+    MirEffectTraits{.readsPlace = true, .writesPlace = true}, // SimdAdd
+    MirEffectTraits{.readsPlace = true, .writesPlace = true}, // SimdSubtract
+    MirEffectTraits{.readsPlace = true, .writesPlace = true}, // SimdMultiply
+    MirEffectTraits{.readsPlace = true, .writesPlace = true}, // SimdDivide
+    MirEffectTraits{.readsPlace = true, .writesPlace = true}, // SimdEqual
+    MirEffectTraits{.readsPlace = true, .writesPlace = true}, // SimdLess
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -615,6 +621,12 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "source-function-name",
     "source-line",
     "source-column",
+    "simd-add",
+    "simd-subtract",
+    "simd-multiply",
+    "simd-divide",
+    "simd-equal",
+    "simd-less",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({

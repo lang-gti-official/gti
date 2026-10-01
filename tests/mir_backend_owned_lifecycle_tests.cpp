@@ -303,7 +303,7 @@ void testFamily(const std::filesystem::path &fixture) {
          "proved constructors should use exact targets without failure edges");
 
   const std::string dump = lang::MirPrinter().print(frontend.mir);
-  expect(dump.starts_with("mir-v80 ") &&
+  expect(dump.starts_with("mir-v81 ") &&
              dump.find("constructor-initializer=1") != std::string::npos,
          "MIR v24 should print the new initializer-stage authority");
 
@@ -805,6 +805,49 @@ private:
   }
 }
 
+void testPassiveCallAssignment(const std::filesystem::path &fixtures) {
+  const auto source = fixtures / "passive_class_call_assignment.gti";
+  const auto library = fixtures.parent_path().parent_path() / "stdlib";
+  const auto frontend =
+      lang::Frontend().analyze(source.string(), readFile(source),
+                               {library / "prelude.gti"}, {}, {library});
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "passive user-class replacement should retain valid source MIR");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  for (const auto level :
+       {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
+    try {
+      const auto generated = gti_test::emitCppText(
+          frontend, lang::CppStandard::Cpp23, lang::TargetInfo::host(), level);
+      expect(generated.find("std::move(__gti_mir_v_") != std::string::npos &&
+                 generated.find(".construction_address()") != std::string::npos,
+             "ordinary class call replacement must use uninitialized SSA "
+             "staging without an extra source constructor");
+    } catch (const std::logic_error &error) {
+      std::cerr << "passive call replacement unexpectedly failed: "
+                << error.what() << '\n';
+      expect(false, "passive call replacement must emit through verified MIR");
+    }
+  }
+  const auto immutable =
+      lang::Frontend().analyze("passive-immutable.gti", R"(
+struct Block { mut float lanes[4] = {}; };
+Block make() { Block result{}; return result; }
+int main() { Block value{}; value = make(); return 0; }
+)",
+                               {library / "prelude.gti"}, {}, {library});
+  expect(!immutable.canGenerateCode() &&
+             std::any_of(immutable.diagnostics.begin(),
+                         immutable.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2002";
+                         }),
+         "passive call staging must not permit immutable destinations");
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -819,6 +862,7 @@ int main(int argc, char **argv) {
   testCommaUsesGeneralMir(std::filesystem::path(argv[1]).parent_path() /
                           "mir_backend_owned_lifecycle_comma_near_miss.gti");
   testFoldedFloatDestructorKeepsFailureSummary();
+  testPassiveCallAssignment(std::filesystem::path(argv[1]).parent_path());
   if (failures != 0) {
     std::cerr << failures << " owned lifecycle backend test(s) failed\n";
     return 1;

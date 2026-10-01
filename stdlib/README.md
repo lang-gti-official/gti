@@ -1,5 +1,10 @@
 # GTI standard library
 
+`<std/simd>` provides fixed float/double lane values and masks, checked
+`std::array` copying, arithmetic, explicit lane comparisons and ordered
+reductions. See [the SIMD contract](../docs/language/standard-library.md#fixed-lane-simd)
+for examples, native/fallback behavior, and the initial slice's bounds.
+
 The dependency-ordered path from the current library foundation to the stable
 v1 surface is tracked in
 [`docs/plans/roadmap-to-1.0.md`](../docs/plans/roadmap-to-1.0.md).

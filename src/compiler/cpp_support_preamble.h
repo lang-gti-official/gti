@@ -17,6 +17,7 @@ struct CppSupportPreambleFeatures {
   bool cThreads = false;
   bool atomics = false;
   bool mutexes = false;
+  bool simd = false;
   bool definedFailure = true;
   bool runtimeBinding = false;
   bool cAbiTextView = false;

@@ -112,6 +112,8 @@ standardLibraryIncludeForType(std::string_view qualifiedName) {
       Entry{"std::seek_origin", "std/cstdio"},
       Entry{"std::set", "std/set"},
       Entry{"std::shared_ptr", "std/memory"},
+      Entry{"std::simd", "std/simd"},
+      Entry{"std::simd_mask", "std/simd"},
       Entry{"std::source_location", "std/source_location"},
       Entry{"std::span", "std/span"},
       Entry{"std::storage", "std/memory"},

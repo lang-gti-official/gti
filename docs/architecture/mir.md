@@ -178,7 +178,12 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v80`/`mir-body-v68`.
+The deterministic serialization is currently `mir-v81`/`mir-body-v68`.
+Program v81 adds the six identity-bound SIMD arithmetic/comparison intrinsic
+kinds. Their operands retain three exact immediate array borrows (read, read,
+write), with concrete matching float/double lane shape and a bool output only
+for comparisons. The verifier rejects stale extent/access/result facts and
+normal place/loan verification prevents overlapping read/write operands.
 Program v80/body v68 also serialize the resolved caller literal on each private
 source-location intrinsic. MIR verification requires the exact zero-argument,
 effect-free call shape, matching scalar/text result, and attached literal;
@@ -2043,7 +2048,15 @@ uninitialized on the failure edge and is initialized by an explicit lifecycle
 event only on the normal edge; the verifier rejects failure cleanup or use that
 assumes otherwise. For a class result, production C++ emission additionally
 proves that the result has one exact consuming `Initialize` into matching
-uninitialized lifetime storage, or uses a dedicated discard slot. The callee
+uninitialized lifetime storage, or uses a dedicated discard slot. A cleanup-free,
+non-borrowing class result may also replace a bare mutable binding through the
+existing uninitialized SSA lifetime slot. Its exact single-use assignment must
+immediately follow the call or begin its `Invoke` success block; generated
+move assignment publishes only after success and immediately ends the moved-from
+representation shell so loop re-entry can reuse the stage. This is a structural
+rule for ordinary classes, including fixed-array fields, not a container-specific
+exception; owning or borrowed results retain their separate MIR lifecycle and
+loan protocols. The callee
 constructs directly into that address and the caller engages the slot only on
 the normal edge; default construction followed by assignment is not a valid
 publication implementation. A plain class-returning call uses the same exact

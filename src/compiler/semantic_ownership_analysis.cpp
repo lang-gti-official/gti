@@ -1739,6 +1739,21 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     }
     return IntrinsicKind::None;
   }
+  if (isSimdLibraryUnit(sourceUnit) && scope.front() == "gti_internal") {
+    if (name == "simd_add")
+      return IntrinsicKind::SimdAdd;
+    if (name == "simd_subtract")
+      return IntrinsicKind::SimdSubtract;
+    if (name == "simd_multiply")
+      return IntrinsicKind::SimdMultiply;
+    if (name == "simd_divide")
+      return IntrinsicKind::SimdDivide;
+    if (name == "simd_equal")
+      return IntrinsicKind::SimdEqual;
+    if (name == "simd_less")
+      return IntrinsicKind::SimdLess;
+    return IntrinsicKind::None;
+  }
   if (isNumericLibraryUnit(sourceUnit)) {
     if (scope.front() != "gti_internal") {
       return IntrinsicKind::None;
@@ -5247,6 +5262,56 @@ auto SemanticVisitor::Impl::analyzeSourceLocationIntrinsicCall(
 auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     const Call &expr, const CallableCandidate &declaration) -> void {
   const IntrinsicKind intrinsic = declaration.record().intrinsic;
+  if (simdIntrinsic(intrinsic)) {
+    std::vector<SemanticType> arguments;
+    for (const ExprPtr &argument : expr.arguments()) {
+      arguments.push_back(analyze(argument));
+    }
+    for (const TypeRef &argument : expr.typeArguments())
+      validateType(argument);
+    const auto validArray = [](const SemanticType &type) {
+      return type.kind == SemanticType::Array && type.arguments.size() == 1 &&
+             (type.arrayLengthParameterId != 0 ||
+              (type.arrayLength >= 1 && type.arrayLength <= 64));
+    };
+    const bool shape = arguments.size() == 3 && validArray(arguments[0]) &&
+                       arguments[0] == arguments[1] && validArray(arguments[2]);
+    const bool lane =
+        shape &&
+        (arguments[0].arguments[0] == SemanticType::Float ||
+         arguments[0].arguments[0] == SemanticType::Double ||
+         arguments[0].arguments[0].kind == SemanticType::TypeParameter);
+    const bool output =
+        shape && arguments[0].arrayLength == arguments[2].arrayLength &&
+        arguments[0].arrayLengthParameterId ==
+            arguments[2].arrayLengthParameterId &&
+        arguments[2].arguments[0] == (simdComparisonIntrinsic(intrinsic)
+                                          ? SemanticType::Bool
+                                          : arguments[0].arguments[0]);
+    if (!expr.typeArguments().empty() || !shape || !lane || !output) {
+      report(expr.paren(),
+             "SIMD operations require matching float or double arrays with "
+             "1 to 64 lanes and an equally sized mutable output array "
+             "(bool lanes for comparisons).",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    requireMutableStorage(expr.arguments()[2], "SIMD output");
+    std::vector<SemanticType> parameters;
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      parameters.push_back(SemanticType::referenceTo(
+          arguments[index],
+          index == 2 ? AccessMode::Mutable : AccessMode::ReadOnly));
+    }
+    currentType = SemanticType::Void;
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = currentType,
+                               .parameterTypes = std::move(parameters),
+                               .intrinsic = intrinsic});
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
   if (intrinsic == IntrinsicKind::SourceFileName ||
       intrinsic == IntrinsicKind::SourceFunctionName ||
       intrinsic == IntrinsicKind::SourceLine ||

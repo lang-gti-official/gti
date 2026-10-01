@@ -219,6 +219,12 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::SourceFunctionName:
   case IntrinsicKind::SourceLine:
   case IntrinsicKind::SourceColumn:
+  case IntrinsicKind::SimdAdd:
+  case IntrinsicKind::SimdSubtract:
+  case IntrinsicKind::SimdMultiply:
+  case IntrinsicKind::SimdDivide:
+  case IntrinsicKind::SimdEqual:
+  case IntrinsicKind::SimdLess:
     return barrier(
         "authoritative intrinsic effects; no range/call interpretation");
   case IntrinsicKind::ThreadSpawn:

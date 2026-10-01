@@ -66,6 +66,68 @@ and semantics rather than being ordinary prelude templates.
 Optional units are loaded using `<std/name>` and are independently parsed GTI
 source. An optional unit does not automatically re-export its own dependencies.
 
+### Fixed-lane SIMD
+
+`<std/simd>` provides source-defined `std::simd<T, N>` for `float` and `double`,
+and `std::simd_mask<N>`, with 1 through 64 lanes. These are owning, allocation-free
+values with explicit defaulted copy and move constructors. The compiler does
+not recognize either public type name. A zero-argument constructor initializes
+all lanes to zero/false; the scalar SIMD constructor broadcasts; the fixed-array
+constructor copies exactly N values. `size()`, checked `operator[](size_t)`, and
+mutable `set(size_t, value)` expose lanes without a raw pointer or alignment
+precondition.
+
+`+`, `-`, `*`, and `/` operate independently on corresponding lanes of two
+identically typed SIMD values; `+=`, `-=`, `*=`, and `/=` update a mutable
+receiver. Each lane has the scalar IEEE-754 operation's
+meaning: division by zero produces infinities or NaNs, comparison with NaN is
+unordered, and signed zeros are retained. The implementation uses no fast-math,
+reciprocal approximation, or implicit fused multiply-add. There are no implicit
+cross-width conversions or scalar broadcasts in arithmetic.
+Ordinary borrowing rules still apply: reading the same value twice (`a + a`)
+is valid, but `a += a` is rejected because the mutable receiver overlaps the
+read-only argument. Compute `a = a + a` when replacement is intended.
+
+GTI comparison operators retain their scalar `bool` result rule. Named methods
+`equal`, `not_equal`, `less`, `less_equal`, `greater`, and `greater_equal` return
+lane masks. Masks support `&`, `|`, `^`, `inverted()`, `all_of()`, `any_of()`,
+`none_of()`, and `count()`. A mask has no implicit scalar truth conversion.
+`a.select(mask, b)` takes each lane from `a` when its mask lane is true, otherwise
+from `b`. `reduce()` adds from lane zero through lane N-1 in order; it does not
+reassociate or introduce a positive-zero initial value.
+
+`copy_from<M>(std::array<T, M>& source, size_t offset)` mutates the receiver;
+`copy_to<M>(mut std::array<T, M>& destination, size_t offset)` writes the owner.
+Both validate the complete range before copying, and every index remains
+checked in optimized builds. The caller currently supplies M explicitly because
+value-generic deduction through nominal class arguments is not available.
+Applications using `std::array` directly also include `<std/array>`:
+
+```gti
+#include <std/simd>
+#include <std/array>
+
+int main() {
+  std::simd<float, 4> velocity{2.0};
+  std::simd<float, 4> delta_time{0.5};
+  std::simd<float, 4> displacement = velocity * delta_time;
+  mut std::array<float, 8> output{};
+  displacement.copy_to<8>(output, std::size_t(2));
+  return int(displacement.reduce());
+}
+```
+
+The C++ backend implements full 128-bit chunks with Clang/GCC's private vector
+extension and scalar tails; host compilers without that extension use portable
+C++20 scalar operations with the same semantics. This does not require the
+C++26 SIMD library; the native extension itself is not ISO C++20.
+The native representation and hardware vector width are not part of GTI's ABI.
+Integer lanes, native-width ABI selectors, pointer loads/stores, masked memory
+access, gather/scatter, vector transcendental functions, and constexpr SIMD are
+outside this initial slice.
+
+### Other implemented units
+
 The current implemented foundation includes:
 
 - `<std/build>` host-side package build-program support through

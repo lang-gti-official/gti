@@ -109,6 +109,7 @@ public:
         .cThreads = mir.requiresCThreadRuntime(),
         .atomics = loweredProgramContainsAtomics(),
         .mutexes = loweredProgramContainsMutexes(),
+        .simd = loweredProgramContainsSimd(),
         .definedFailure = true,
         .runtimeBinding = loweredProgramContainsRuntimeBinding(),
         .cAbiTextView = loweredProgramContainsCAbiTextView(),
@@ -349,6 +350,21 @@ public:
           default:
             break;
           }
+        }
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] bool loweredProgramContainsSimd() const {
+    for (const MirBodyAddress address : enumerateMirBodyAddresses(mir)) {
+      const MirBody *body = findMirBody(mir, address);
+      if (body == nullptr)
+        continue;
+      for (const MirBlock &block : body->blocks) {
+        for (const MirInstruction &instruction : block.instructions) {
+          if (simdIntrinsic(instruction.intrinsic))
+            return true;
         }
       }
     }

@@ -58,6 +58,30 @@ def main() -> int:
                 ):
                     return fail(f"run {mode}", executed)
 
+                # A cleanup-free call result has no semantic result-drop
+                # obligation, but still needs uninitialized staging. Include
+                # an unrelated user type with a fixed array and observable
+                # constructor, a repeated self-read replacement, and a plain
+                # scalar-only aggregate returned by an ordinary factory.
+                for name, expected_code, expected_output in (
+                    ("passive_class_call_assignment", 0, "11\n" * 4),
+                    ("passive_class_call_assignment_failure", 70,
+                     "11\n22\n99\n"),
+                ):
+                    executable = root / f"{name}-{mode}"
+                    built = run([str(compiler), str(fixtures / f"{name}.gti"),
+                                 f"-{optimization}", "--std", standard,
+                                 "-o", str(executable)])
+                    if built.returncode != 0:
+                        return fail(f"build {name}/{mode}", built)
+                    executed = run([str(executable)])
+                    if (executed.returncode != expected_code or
+                            executed.stdout != expected_output or
+                            (expected_code == 0 and executed.stderr) or
+                            (expected_code == 70 and
+                             "division_by_zero" not in executed.stderr)):
+                        return fail(f"run {name}/{mode}", executed)
+
         generated_path = root / "class-prvalue-assignment.cpp"
         emitted = run(
             [

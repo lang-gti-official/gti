@@ -1,0 +1,20 @@
+struct Packet {
+  mut float lanes[4] = {};
+  Packet(float first) {
+    std::println(11);
+    this.lanes[0] = first;
+  }
+};
+struct Guard { ~Guard() { std::println(99); } };
+Packet fail(int denominator) {
+  std::println(22);
+  int checked = 1 / denominator;
+  return Packet(float(checked));
+}
+int main() {
+  Guard guard{};
+  mut Packet packet{1.0};
+  packet = fail(0);
+  std::println(33);
+  return 0;
+}

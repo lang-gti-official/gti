@@ -31,6 +31,7 @@
     "stdlib/std/queue.gti": "e7181505d8e12e151310ac46075b33cdc8095b4f727457c11603de1887e4c2ff",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/set.gti": "706d93edf068cc7a207ce3eedc2cd19ad08ea46cdd70b924309c6230cd90c716",
+    "stdlib/std/simd.gti": "ec60e8807ec3d4cf617a03d4f593231e54b298c2b399b260aa19acfddcdbe720",
     "stdlib/std/source_location.gti": "744c1a254ad954db7bedf71652bc4d2f08eb0ed09df96fc61cdfb2a1822e43e1",
     "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
     "stdlib/std/string.gti": "71d3cfa382f0565520822636b70bac8b8ac0176958d0c76db609eab720a529c6",
@@ -744,6 +745,13 @@
       "source": "tests/fixtures/shared_ownership_upcast.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "7\n8\n", "stderr": ""}
+    },
+    {
+      "id": "simd",
+      "mode": "run",
+      "source": "tests/fixtures/simd_values.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "simd ok\n", "stderr": ""}
     },
     {
       "id": "source-location",
@@ -2029,6 +2037,29 @@
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti"
       ]
+    },
+    {
+      "id": "simd.executable",
+      "source": "stdlib/std/simd.gti",
+      "status": "executable",
+      "operations": [
+        "std::simd::copy_from", "std::simd::copy_to", "std::simd::equal",
+        "std::simd::greater", "std::simd::greater_equal", "std::simd::less",
+        "std::simd::less_equal", "std::simd::not_equal", "std::simd::operator*",
+        "std::simd::operator*=", "std::simd::operator+", "std::simd::operator+=",
+        "std::simd::operator-", "std::simd::operator-=", "std::simd::operator/",
+        "std::simd::operator/=",
+        "std::simd::operator[]", "std::simd::reduce", "std::simd::select",
+        "std::simd::set", "std::simd::simd", "std::simd::size",
+        "std::simd_mask::all_of", "std::simd_mask::any_of", "std::simd_mask::count",
+        "std::simd_mask::inverted", "std::simd_mask::none_of",
+        "std::simd_mask::operator&", "std::simd_mask::operator[]",
+        "std::simd_mask::operator^", "std::simd_mask::operator|",
+        "std::simd_mask::set", "std::simd_mask::simd_mask", "std::simd_mask::size"
+      ],
+      "case_ids": ["simd"],
+      "required_instantiations": ["float: 1/4/7/64 lanes", "double: 2/5/7 lanes", "corresponding masks"],
+      "evidence": ["tests/fixtures/simd_values.gti", "tests/simd_tests.cpp", "tests/simd_runtime_test.py"]
     },
     {
       "id": "source-location.executable",
