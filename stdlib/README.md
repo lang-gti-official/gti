@@ -215,10 +215,11 @@ copyable-element `fill`. The contextual fixed-array argument feature permits
 the ordinary constructor call `std::array<int, 3>({1, 2, 3})`; it does not add
 C++ class list-initialization or `std::initializer_list` semantics. `swap`
 remains bodyless because GTI cannot yet move a value out through a mutable
-reference. Iterators remain a later library layer. The language now defines
-the structural `begin`/`end` iterator protocol and range-based `for`
-independently of `std::array`; adding array iterators remains ordinary library
-work. The compiler-owned fixed-array strategy now supports read-only and
+reference. Ordinary owner-borrowing `begin`/`end` cursors support forward,
+bidirectional, and signed-jump traversal; `begin_mut` supports confined output
+and mutable range-for without exposing the storage address. The language
+defines this structural protocol independently of `std::array`.
+The compiler-owned fixed-array strategy also supports read-only and
 mutable parent/element loans without pointer decay. See
 [`docs/language/ranges.md`](../docs/language/ranges.md) for that
 lifetime boundary.
@@ -508,10 +509,10 @@ is recognized by the backend.
 
 | Include | Scaffolded surface |
 | --- | --- |
-| `<std/algorithm>` | Implemented `min`, `max`, `clamp`, iterator/sentinel `all_of`, `any_of`, `none_of`, `find`, `find_if`, `find_if_not`, `count`, `count_if`, and `for_each`, forward-iterator `binary_search`, writable-output `copy`, structural complete-range predicate/operation overloads plus generic `fill`, and vector-bounded `transform`, `reverse`, ordered `sort`, and comparator `sort`; iterator-pair in-place forms remain |
+| `<std/algorithm>` | Search, bounds, extrema, sortedness, sequence/prefix comparison, contains/count and predicate algorithms; whole-range fill/replace; confined output copy/filter/replace/remove-copy families; vector transform/reverse/sort. See [range contracts](../docs/language/ranges.md#searching-and-rewriting-containers) for exact forms and remaining boundaries. |
 | `<std/forward_list>` | Implemented front operations, iterative cleanup, resize, reverse, stable merge/sort, remove, unique, and swap; iteration and emplacement remain declarations |
 | `<std/functional>` | Public exact callable/predicate/operation/comparator concepts, consuming `invoke_once`, comparison function objects, and source-defined read-only, mutable, and consuming `function` / `move_only_function`; declaration-only `hash` |
-| `<std/iterator>` | Structural input-iterator/sentinel/exact-dereference concepts, source-composed `forward_iterator`, and implemented forward-only `advance`, `distance`, and `next`, plus a deliberately unconstrained `prev` placeholder |
+| `<std/iterator>` | Structural input/output, forward, bidirectional, signed-jump and sized-sentinel capabilities, exact element relations, complete-range concepts, `advance`, `distance`, `next`, and `prev` |
 | `<std/list>` | Executable doubly-linked slot-owned nodes, checked indexed mutation, ends, emplacement, read traversal, reverse, remove, unique, merge, sort, and iterative cleanup |
 | `<std/deque>` / `<std/queue>` | Circular per-element-owned double-ended storage and its FIFO adapter, with checked access and deterministic cleanup |
 | `<std/set>` / `<std/unordered_set>` | Unique immutable keys over AVL/hash dictionaries, checked insertion results and traversal, lookup/erase, bounds or hash capacity controls |

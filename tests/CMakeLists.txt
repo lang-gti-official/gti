@@ -1018,6 +1018,20 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   add_test(
+    NAME generic_algorithm_breadth
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/generic_algorithm_breadth_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(generic_algorithm_breadth PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME generic_algorithm_errors
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/generic_algorithm_errors_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(generic_algorithm_errors PROPERTIES TIMEOUT 180)
+  add_test(
     NAME generic_algorithm_cluster
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/generic_algorithm_cluster_test.py"

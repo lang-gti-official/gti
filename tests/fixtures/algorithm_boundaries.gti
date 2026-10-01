@@ -1,0 +1,107 @@
+#include <std/algorithm>
+#include <std/iterator>
+#include <std/vector>
+
+// Exhaustive short sequences, with independent indexed reference answers.
+int main() {
+  mut std::size_t combinations = 1;
+  for (mut std::size_t size = 0; size <= 5; size++) {
+    for (mut std::size_t encoded = 0; encoded < combinations; encoded++) {
+      mut std::vector<int> building{};
+      mut std::size_t digits = encoded;
+      for (mut std::size_t index = 0; index < size; index++) {
+        building.push_back(int(digits % 3));
+        digits /= 3;
+      }
+      std::vector<int> values = std::move(building);
+      mut std::size_t least = size;
+      mut std::size_t greatest = size;
+      mut std::size_t adjacent = size;
+      mut std::size_t unsorted = size;
+      for (mut std::size_t index = 0; index < size; index++) {
+        if (least == size || values[index] < values[least]) { least = index; }
+        if (greatest == size || values[greatest] < values[index]) { greatest = index; }
+        if (index > 0) {
+          if (adjacent == size && values[index - 1] == values[index]) { adjacent = index - 1; }
+          if (unsorted == size && values[index] < values[index - 1]) { unsorted = index; }
+        }
+      }
+      auto low = std::min_element(values.begin(), values.end());
+      auto high = std::max_element(values.begin(), values.end());
+      auto duplicate = std::adjacent_find(values.begin(), values.end());
+      auto sorted = std::is_sorted_until(values.begin(), values.end());
+      if (std::size_t(std::distance(values.begin(), low)) != least ||
+          std::size_t(std::distance(values.begin(), high)) != greatest ||
+          std::size_t(std::distance(values.begin(), duplicate)) != adjacent ||
+          std::size_t(std::distance(values.begin(), sorted)) != unsorted ||
+          std::is_sorted(values.begin(), values.end()) != (unsorted == size)) { return 1; }
+      for (mut int needle = -1; needle <= 3; needle++) {
+        mut std::ptrdiff_t frequency = 0;
+        mut std::size_t lower = 0;
+        mut std::size_t upper = 0;
+        for (mut std::size_t index = 0; index < size; index++) {
+          if (values[index] == needle) { frequency++; }
+          if (values[index] < needle) { lower++; }
+          if (!(needle < values[index])) { upper++; }
+        }
+        if (std::count(values, needle) != frequency || std::contains(values, needle) != (frequency != 0)) { return 2; }
+        if (unsorted == size) {
+          auto lower_result = std::lower_bound(values.begin(), values.end(), needle);
+          auto upper_result = std::upper_bound(values.begin(), values.end(), needle);
+          if (std::size_t(std::distance(values.begin(), lower_result)) != lower ||
+              std::size_t(std::distance(values.begin(), upper_result)) != upper) { return 3; }
+        }
+        for (mut std::size_t count = 0; count <= size + 1; count++) {
+          mut std::size_t match = size;
+          if (count == 0) { match = 0; }
+          else {
+            for (mut std::size_t start = 0; start < size; start++) {
+              mut std::size_t run = 0;
+              while (start + run < size && run < count && values[start + run] == needle) { run++; }
+              if (run == count) { match = start; break; }
+            }
+          }
+          auto repeated = std::search_n(values.begin(), values.end(), count, needle);
+          if (std::size_t(std::distance(values.begin(), repeated)) != match) { return 4; }
+        }
+      }
+      mut std::size_t patterns = 1;
+      for (mut std::size_t length = 0; length <= 3; length++) {
+        for (mut std::size_t code = 0; code < patterns; code++) {
+          mut std::vector<int> pattern{};
+          mut std::size_t rest = code;
+          for (mut std::size_t index = 0; index < length; index++) {
+            pattern.push_back(int(rest % 3)); rest /= 3;
+          }
+          mut std::size_t match = size;
+          mut std::size_t member = size;
+          mut std::size_t prefix = 0;
+          while (prefix < size && prefix < length && values[prefix] == pattern[prefix]) { prefix++; }
+          bool less = prefix == size ? size < length :
+              (prefix < length && values[prefix] < pattern[prefix]);
+          for (mut std::size_t start = 0; start <= size; start++) {
+            mut std::size_t run = 0;
+            while (start + run < size && run < length && values[start + run] == pattern[run]) { run++; }
+            if (run == length) { match = start; break; }
+          }
+          for (mut std::size_t start = 0; start < size; start++) {
+            for (mut std::size_t index = 0; index < length; index++) {
+              if (values[start] == pattern[index] && member == size) { member = start; }
+            }
+          }
+          auto sequence = std::search(values.begin(), values.end(), pattern.begin(), pattern.end());
+          auto first_of = std::find_first_of(values.begin(), values.end(), pattern.begin(), pattern.end());
+          if (std::size_t(std::distance(values.begin(), sequence)) != match ||
+              std::size_t(std::distance(values.begin(), first_of)) != member) { return 5; }
+          if (std::equal(values.begin(), values.end(), pattern.begin(), pattern.end()) !=
+                  (prefix == size && size == length) ||
+              std::starts_with(values.begin(), values.end(), pattern.begin(), pattern.end()) != (prefix == length) ||
+              std::lexicographical_compare(values.begin(), values.end(), pattern.begin(), pattern.end()) != less) { return 6; }
+        }
+        patterns *= 3;
+      }
+    }
+    combinations *= 3;
+  }
+  return 0;
+}

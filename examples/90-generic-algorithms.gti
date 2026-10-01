@@ -1,0 +1,34 @@
+#include <std/algorithm>
+#include <std/array>
+#include <std/list>
+#include <std/set>
+#include <std/vector>
+
+int main() {
+  // Sequence search is generic; the returned cursor keeps its owner borrowed.
+  std::list<int> priorities = {2, 4, 4, 9};
+  int urgent = 9;
+  std::println(std::contains(priorities, urgent) ? "present" : "missing");
+  auto end = priorities.end();
+  auto found = std::find(priorities.begin(), priorities.end(), urgent);
+  if (found != end) { std::println(*found); }
+  auto repeated = std::adjacent_find(priorities.begin(), priorities.end());
+  if (repeated != end) { std::println(*repeated); }
+
+  // Associative members use the container's key lookup rather than a scan.
+  std::set<int> permitted = {2, 9};
+  std::println(permitted.contains(urgent) ? "permitted" : "denied");
+
+  // Mutable traversal borrows the whole owner for the duration of the loop.
+  mut std::array<int, 4> weights = std::array<int, 4>({1, 2, 3, 4});
+  int replacement = 8;
+  std::replace_if(weights, [](int& value) -> bool { return value > 2; }, replacement);
+  for (mut auto& weight : weights) { weight += 1; }
+
+  // Output algorithms write existing slots, never silently grow a container.
+  mut std::vector<int> selected = {0, 0, 0, 0};
+  std::copy_if(weights.begin(), weights.end(), selected.begin_mut(),
+               [](int& value) -> bool { return value > 3; });
+  for (auto& value : selected) { std::println(value); }
+  return 0;
+}

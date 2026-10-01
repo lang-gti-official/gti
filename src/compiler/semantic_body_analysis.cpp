@@ -5138,12 +5138,27 @@ auto SemanticVisitor::Impl::visitDereferenceSetExpr(const DereferenceSet &expr)
     }
   }
   if (simpleAssignment &&
-      !isAssignable(valueTarget, valueType, expr.value().get())) {
+      !isOwnershipAssignment(valueTarget, valueType, expr.value())) {
+    const ExpressionInfo *valueInfo =
+        semanticModel.findExpression(*expr.value());
+    const bool moving =
+        valueInfo != nullptr && valueInfo->category == ValueCategory::Value;
+    const bool sameType =
+        valueTarget == valueType && valueTarget != SemanticType::Unknown;
     report(expressionToken(expr.value()),
-           "Cannot assign a value of type '" + typeSpelling(valueType) +
-               "' through a dereference of type '" + typeSpelling(valueTarget) +
-               "'.",
+           sameType
+               ? "Cannot " + std::string(moving ? "move" : "copy") +
+                     " assign type '" + typeSpelling(valueTarget) +
+                     "' through a dereference: that assignment is unavailable."
+               : "Cannot assign a value of type '" + typeSpelling(valueType) +
+                     "' through a dereference of type '" +
+                     typeSpelling(valueTarget) + "'.",
            "GTI-S2003");
+    if (sameType && !moving && typeTraits(valueTarget).moveAssignable) {
+      diagnostics.back().hints.emplace_back(
+          "Use an owned value or explicit std::move(source) to transfer "
+          "ownership, or clone the value when the source must be preserved.");
+    }
   }
   if (overloadedMutation && mutableTarget) {
     const std::optional<CallableCandidate> selected = resolveOperator(

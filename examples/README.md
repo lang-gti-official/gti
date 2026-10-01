@@ -323,6 +323,14 @@ For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see
 [`gti-vs-cpp/`](gti-vs-cpp/README.md).
 
+## Generic container algorithms
+
+[`90-generic-algorithms.gti`](90-generic-algorithms.gti) demonstrates sequence
+`contains`/`find`, adjacent search, associative member lookup, mutable array
+traversal, replacement predicates, and filtered copying into an existing
+destination. Search cursors retain a checked borrow of their owner; mutating
+that owner while the cursor is still used is rejected.
+
 ## Complete projects
 
 [`transit-planner/`](transit-planner/README.md) is a multi-file manifest project

@@ -394,4 +394,341 @@ bool binary_search<Iterator, Sentinel, T>(mut Iterator first,
   }
   return detail::binary_search_counted(std::move(first), count, value);
 }
+bool contains<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T& value)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::equality_comparable<T> {
+  while (first != last) {
+    if (*first == value) { return true; }
+    ++first;
+  }
+  return false;
+}
+
+bool contains<Range, T>(Range& values, T& value)
+  requires std::range_of<Range, T> && std::equality_comparable<T> {
+  for (auto& element : values) {
+    if (element == value) { return true; }
+  }
+  return false;
+}
+
+ptrdiff_t count<Range, T>(Range& values, T& value)
+  requires std::range_of<Range, T> && std::equality_comparable<T> {
+  mut ptrdiff_t result = 0;
+  for (auto& element : values) {
+    if (element == value) { result++; }
+  }
+  return result;
+}
+
+bool is_partitioned<Iterator, Sentinel, Predicate>(
+    mut Iterator first, Sentinel last, mut Predicate predicate)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::indirect_predicate<Predicate, Iterator> {
+  mut bool reached_false = false;
+  while (first != last) {
+    if (predicate(*first)) {
+      if (reached_false) { return false; }
+    } else { reached_false = true; }
+    ++first;
+  }
+  return true;
+}
+
+bool is_partitioned<Range, Predicate>(Range& values, mut Predicate predicate)
+  requires std::input_range<Range> && std::range_predicate<Predicate, Range> {
+  mut bool reached_false = false;
+  for (auto& element : values) {
+    if (predicate(element)) {
+      if (reached_false) { return false; }
+    } else { reached_false = true; }
+  }
+  return true;
+}
+
+// Four endpoints keep both reads bounded, including unequal-length inputs.
+// Element comparisons are ordinary exact GTI operators, checked again for
+// every concrete instance (no host comparison, conversion, or type erasure).
+bool equal<I, S, J, E>(mut I first, S last, mut J second, E end)
+  requires std::input_iterator<I> && std::sentinel_for<S, I> &&
+           std::input_iterator<J> && std::sentinel_for<E, J> {
+  while (first != last && second != end) {
+    if (!(*first == *second)) { return false; }
+    ++first;
+    ++second;
+  }
+  return !(first != last) && !(second != end);
+}
+
+bool starts_with<I, S, J, E>(mut I first, S last, mut J second, E end)
+  requires std::input_iterator<I> && std::sentinel_for<S, I> &&
+           std::input_iterator<J> && std::sentinel_for<E, J> {
+  while (second != end) {
+    if (!(first != last)) { return false; }
+    if (!(*first == *second)) { return false; }
+    ++first;
+    ++second;
+  }
+  return true;
+}
+
+bool lexicographical_compare<I, S, J, E>(mut I first, S last, mut J second, E end)
+  requires std::input_iterator<I> && std::sentinel_for<S, I> &&
+           std::input_iterator<J> && std::sentinel_for<E, J> {
+  while (first != last && second != end) {
+    if (*first < *second) { return true; }
+    if (*second < *first) { return false; }
+    ++first;
+    ++second;
+  }
+  return !(first != last) && second != end;
+}
+
+Iterator adjacent_find<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> {
+  if (!(first != last)) { return std::move(first); }
+  mut Iterator next = first;
+  ++next;
+  while (next != last) {
+    if (*first == *next) { return std::move(first); }
+    ++first;
+    ++next;
+  }
+  ++first;
+  return std::move(first);
+}
+
+Iterator search<Iterator, Sentinel, Pattern, PatternEnd>(
+    mut Iterator first, Sentinel last, Pattern pattern, PatternEnd pattern_end)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::forward_iterator<Pattern> && std::sentinel_for<PatternEnd, Pattern> {
+  while (first != last) {
+    mut Iterator scan = first;
+    mut Pattern needle = pattern;
+    while (scan != last && needle != pattern_end) {
+      if (!(*scan == *needle)) { break; }
+      ++scan;
+      ++needle;
+    }
+    if (!(needle != pattern_end)) { return std::move(first); }
+    ++first;
+  }
+  return std::move(first);
+}
+
+Iterator find_first_of<Iterator, Sentinel, Pattern, PatternEnd>(
+    mut Iterator first, Sentinel last, Pattern pattern, PatternEnd pattern_end)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::forward_iterator<Pattern> && std::sentinel_for<PatternEnd, Pattern> {
+  while (first != last) {
+    mut Pattern needle = pattern;
+    while (needle != pattern_end) {
+      if (*first == *needle) { return std::move(first); }
+      ++needle;
+    }
+    ++first;
+  }
+  return std::move(first);
+}
+
+Iterator search_n<Iterator, Sentinel, T>(
+    mut Iterator first, Sentinel last, size_t count, T& value)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::equality_comparable<T> {
+  if (count == 0) { return std::move(first); }
+  while (first != last) {
+    mut Iterator scan = first;
+    mut size_t matched = 0;
+    while (scan != last && matched < count) {
+      if (!(*scan == value)) { break; }
+      ++scan;
+      matched++;
+    }
+    if (matched == count) { return std::move(first); }
+    // A failing run cannot contain the start of a successful overlapping run.
+    for (mut size_t skipped = 0; skipped < matched; skipped++) { ++first; }
+    if (first != last) { ++first; }
+  }
+  return std::move(first);
+}
+
+// Returning the original parameter preserves its exact owner identity. Cursor
+// positions are advanced, never reassigned or reseated to a different owner.
+Iterator lower_bound<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T& value)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::totally_ordered<T> {
+  mut Iterator scan = first;
+  mut size_t remaining = 0;
+  while (scan != last) { ++scan; remaining++; }
+  while (remaining > 0) {
+    size_t half = remaining / 2;
+    mut Iterator middle = first;
+    for (mut size_t step = 0; step < half; step++) { ++middle; }
+    if (*middle < value) {
+      for (mut size_t step = 0; step <= half; step++) { ++first; }
+      remaining -= half + 1;
+    } else { remaining = half; }
+  }
+  return std::move(first);
+}
+
+Iterator upper_bound<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T& value)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::totally_ordered<T> {
+  mut Iterator scan = first;
+  mut size_t remaining = 0;
+  while (scan != last) { ++scan; remaining++; }
+  while (remaining > 0) {
+    size_t half = remaining / 2;
+    mut Iterator middle = first;
+    for (mut size_t step = 0; step < half; step++) { ++middle; }
+    if (!(value < *middle)) {
+      for (mut size_t step = 0; step <= half; step++) { ++first; }
+      remaining -= half + 1;
+    } else { remaining = half; }
+  }
+  return std::move(first);
+}
+
+Iterator min_element<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> {
+  if (!(first != last)) { return std::move(first); }
+  mut Iterator scan = first;
+  ++scan;
+  while (scan != last) {
+    if (*scan < *first) {
+      while (first != scan) { ++first; }
+    }
+    ++scan;
+  }
+  return std::move(first);
+}
+
+Iterator max_element<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> {
+  if (!(first != last)) { return std::move(first); }
+  mut Iterator scan = first;
+  ++scan;
+  while (scan != last) {
+    if (*first < *scan) {
+      while (first != scan) { ++first; }
+    }
+    ++scan;
+  }
+  return std::move(first);
+}
+
+bool is_sorted<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> {
+  if (!(first != last)) { return true; }
+  mut Iterator next = first;
+  ++next;
+  while (next != last) {
+    if (*next < *first) { return false; }
+    ++first;
+    ++next;
+  }
+  return true;
+}
+
+Iterator is_sorted_until<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> {
+  if (!(first != last)) { return std::move(first); }
+  mut Iterator next = first;
+  ++next;
+  while (next != last) {
+    if (*next < *first) { ++first; return std::move(first); }
+    ++first;
+    ++next;
+  }
+  ++first;
+  return std::move(first);
+}
+
+void replace<Range, std::copyable T>(mut Range& values, T& old_value, T& new_value)
+  requires std::mutable_range_of<Range, T> && std::equality_comparable<T> {
+  for (mut T& element : values) {
+    if (element == old_value) { element = new_value; }
+  }
+}
+
+void replace_if<Range, std::copyable T, Predicate>(
+    mut Range& values, mut Predicate predicate, T& replacement)
+  requires std::mutable_range_of<Range, T> && std::predicate<Predicate, T> {
+  for (mut T& element : values) {
+    if (predicate(element)) { element = replacement; }
+  }
+}
+
+// Output algorithms retain one exclusive destination cursor and return no
+// escaping cursor. Output exhaustion uses the destination's checked failure.
+void copy_if<Iterator, Sentinel, Output, Predicate>(
+    mut Iterator first, Sentinel last, mut Output output, mut Predicate predicate)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::output_iterator<Output> && std::indirect_predicate<Predicate, Iterator> {
+  while (first != last) {
+    if (predicate(*first)) { *output = *first; ++output; }
+    ++first;
+  }
+}
+
+void copy_n<Iterator, Output>(mut Iterator first, size_t count, mut Output output)
+  requires std::input_iterator<Iterator> && std::output_iterator<Output> {
+  for (mut size_t index = 0; index < count; index++) {
+    *output = *first;
+    ++first;
+    ++output;
+  }
+}
+
+void replace_copy<Iterator, Sentinel, Output, T>(
+    mut Iterator first, Sentinel last, mut Output output, T& old_value, T& new_value)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::copyable<T> &&
+           std::equality_comparable<T> && std::output_iterator<Output> &&
+           std::writes_to<Output, T> {
+  while (first != last) {
+    if (*first == old_value) { *output = new_value; }
+    else { *output = *first; }
+    ++first;
+    ++output;
+  }
+}
+
+void replace_copy_if<Iterator, Sentinel, Output, T, Predicate>(
+    mut Iterator first, Sentinel last, mut Output output,
+    mut Predicate predicate, T& replacement)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::copyable<T> &&
+           std::output_iterator<Output> && std::writes_to<Output, T> &&
+           std::indirect_predicate<Predicate, Iterator> {
+  while (first != last) {
+    if (predicate(*first)) { *output = replacement; }
+    else { *output = *first; }
+    ++first;
+    ++output;
+  }
+}
+
+void remove_copy<Iterator, Sentinel, Output, T>(
+    mut Iterator first, Sentinel last, mut Output output, T& value)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::copyable<T> &&
+           std::equality_comparable<T> && std::output_iterator<Output> &&
+           std::writes_to<Output, T> {
+  while (first != last) {
+    if (!(*first == value)) { *output = *first; ++output; }
+    ++first;
+  }
+}
+
+void remove_copy_if<Iterator, Sentinel, Output, Predicate>(
+    mut Iterator first, Sentinel last, mut Output output, mut Predicate predicate)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::output_iterator<Output> && std::indirect_predicate<Predicate, Iterator> {
+  while (first != last) {
+    if (!predicate(*first)) { *output = *first; ++output; }
+    ++first;
+  }
+}
 }

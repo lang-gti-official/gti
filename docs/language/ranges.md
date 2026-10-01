@@ -443,3 +443,48 @@ remain bounded to `std::vector` while their additional output, movement, and
 random-access complete-range relationships are not yet public. Public
 invalidation capabilities also remain absent; ownership conservatively
 protects the whole owner during iteration.
+
+### Searching and rewriting containers
+
+`<std/algorithm>` also supplies whole-range `contains`, `count`,
+`is_partitioned`, `replace`, and `replace_if`. They work with structural
+user-defined ranges as well as fixed arrays and standard containers. A value
+needle is an exact readable `T&`; bind scalar needles to a local first rather
+than relying on C++ temporary-to-reference conversions. Associative containers
+keep their key-based member `find` and `contains`; generic algorithms perform
+linear sequence traversal and do not substitute for tree/hash lookup.
+
+Iterator/sentinel algorithms include `contains`, `is_partitioned`,
+`adjacent_find`, `search`, `search_n`, `find_first_of`, `lower_bound`,
+`upper_bound`, `min_element`, `max_element`, `is_sorted`, and
+`is_sorted_until`. `equal`, `starts_with`, and `lexicographical_compare` take
+four endpoints, checking both sequence boundaries. Empty patterns match at
+the start; missing searches return the exhausted first cursor; empty extrema
+return that same cursor without dereferencing it. Extrema keep the first
+equivalent element. Bounds require an already sorted sequence, use logarithmic
+comparisons and linear cursor increments. Subsequence search is the ordinary
+quadratic worst-case algorithm, not an allocation-backed optimized search.
+
+`copy_if`, `copy_n`, `replace_copy`, `replace_copy_if`, `remove_copy`, and
+`remove_copy_if` write into pre-existing output elements and return `void`,
+like the existing `copy`. They neither resize the destination nor move from
+the source. Writes require valid copy assignment; move-only elements must be
+handled through an explicit ownership-aware operation. Checked destination
+access reports exhaustion, and `copy_n` also checks source access. Predicates
+are confined, repeatable, exact-`bool` callables. Comparison-only algorithms
+check the concrete element operators during instantiation; input-iterator
+capability alone does not promise that arbitrary element pairs compare.
+
+Read-only `list` iterators support bidirectional traversal; `deque` and
+`array` iterators additionally support signed jumps and sentinel distances.
+Set key iterators support forward algorithms. `array`, `list`, and `deque`
+provide `begin_mut()` for mutable range-for and confined output algorithms.
+The cursors borrow their owner and expose no raw pointer or array decay.
+Retaining a search result keeps that owner borrowed: mutation, movement, and
+destruction cannot invalidate it. Array/list/deque mutable cursors can also be
+bound locally under the existing nominal stored-reference rules, retaining an
+exclusive owner borrow; they cannot escape a local owner. Vector's private
+storage cursor retains its narrower confined contract. This slice adds neither
+iterator reseating nor paired mutable subranges.
+Iterator-returning search still uses explicit endpoints, not a
+whole-range overload with an inferred associated iterator return type.
