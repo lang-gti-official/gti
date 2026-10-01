@@ -1,0 +1,145 @@
+#include "../src/spdlog.gti"
+#include <std/cstdio>
+#include <std/filesystem>
+#include <std/memory>
+#include <std/string>
+
+int main() {
+  spdlog::source_loc source{"/tmp/example.gti", uint32_t(42), "main"};
+  spdlog::details::log_msg message{
+      "demo", spdlog::level::level_enum::info, std::string("hello"),
+      std::move(source), int64_t(0), int32_t(123000000)};
+  spdlog::pattern_formatter formatter{"%Y-%m-%d %H:%M:%S.%e [%n] [%l] %v %s:%# %!"};
+  mut auto rendered = formatter.format(message);
+  if (!rendered ||
+      rendered.value() !=
+          "1970-01-01 00:00:00.123 [demo] [info] hello example.gti:42 main") {
+    return 1;
+  }
+
+  mut auto concrete =
+      std::make_shared<spdlog::sinks::ringbuffer_sink_mt>(std::size_t(8));
+  auto inspector = concrete.clone();
+  spdlog::sink_ptr sink =
+      std::upcast_shared<spdlog::sinks::sink,
+                         spdlog::sinks::ringbuffer_sink_mt>(
+          std::move(concrete));
+  sink->set_level(spdlog::level::level_enum::debug);
+  if (sink->level() != spdlog::level::level_enum::debug) { return 2; }
+  auto logged = sink->log(message);
+  if (!logged) { return 3; }
+
+  spdlog::logger_ptr log = spdlog::make_logger("unit", std::move(sink));
+  log->set_pattern("%v");
+  auto formatted_log = log->info("value={:04d}", int32_t(7));
+  if (!formatted_log) { return 4; }
+  mut auto last = inspector->last_formatted(std::size_t(1));
+  if (last.size() != std::size_t(1) ||
+      last[std::size_t(0)] != "value=0007") {
+    return 5;
+  }
+
+  log->enable_backtrace(std::size_t(2));
+  if (!log->info("first") || !log->info("second") || !log->info("third")) {
+    return 6;
+  }
+  inspector->clear();
+  if (!log->dump_backtrace()) { return 7; }
+  mut auto replayed = inspector->last_formatted(std::size_t(2));
+  if (replayed.size() != std::size_t(2) ||
+      replayed[std::size_t(0)] != "second" ||
+      replayed[std::size_t(1)] != "third") {
+    return 8;
+  }
+
+  spdlog::registry loggers{};
+  spdlog::logger_ptr registered =
+      spdlog::make_logger("registered", spdlog::null_sink_mt());
+  auto retained = registered.clone();
+  if (!loggers.register_logger(std::move(registered))) { return 9; }
+  auto found = loggers.get("registered");
+  if (!found || found->name() != "registered") { return 10; }
+  auto duplicate = loggers.register_logger(retained.clone());
+  if (duplicate || duplicate.error() != spdlog::errc::duplicate_logger) {
+    return 11;
+  }
+  loggers.set_default_logger(retained.clone());
+  auto selected = loggers.default_logger();
+  if (!selected || selected->name() != "registered") { return 12; }
+  loggers.drop("registered");
+  if (loggers.get("registered")) { return 13; }
+
+  std::string_view path = "/tmp/gti-spdlog-basic.log";
+  mut auto file_result = spdlog::basic_logger_mt("file", path, true);
+  if (!file_result) { return 14; }
+  mut spdlog::logger_ptr file_log = std::move(file_result).value();
+  file_log->set_pattern("%v");
+  if (!file_log->info("persisted {}", uint32_t(9))) { return 15; }
+  file_log.reset();
+
+  mut auto opened = std::fopen(path, std::file_mode::read);
+  if (!opened) { return 16; }
+  mut auto input = std::move(opened).value();
+  mut auto line = std::getline(*input);
+  if (!line || line.value() != "persisted 9") { return 17; }
+  input.reset();
+  auto removed = std::filesystem::remove(path);
+  if (!removed || !removed.value()) { return 18; }
+
+  std::string_view rotating_path = "/tmp/gti-spdlog-rotating.log";
+  std::string_view rotating_first = "/tmp/gti-spdlog-rotating.log.1";
+  std::string_view rotating_second = "/tmp/gti-spdlog-rotating.log.2";
+  if (!std::filesystem::remove(rotating_path) ||
+      !std::filesystem::remove(rotating_first) ||
+      !std::filesystem::remove(rotating_second)) {
+    return 19;
+  }
+  auto invalid_rotating = spdlog::rotating_logger_mt(
+      "invalid", rotating_path, std::size_t(0), std::size_t(2));
+  if (invalid_rotating ||
+      invalid_rotating.error() != spdlog::errc::invalid_argument) {
+    return 20;
+  }
+  mut auto rotating_result = spdlog::rotating_logger_mt(
+      "rotating", rotating_path, std::size_t(10), std::size_t(2));
+  if (!rotating_result) { return 21; }
+  mut spdlog::logger_ptr rotating_log = std::move(rotating_result).value();
+  rotating_log->set_pattern("%v");
+  if (!rotating_log->info("aaaaaa") ||
+      !rotating_log->info("bbbbbb") ||
+      !rotating_log->info("cccccc")) {
+    return 22;
+  }
+  rotating_log.reset();
+
+  mut auto current_opened =
+      std::fopen(rotating_path, std::file_mode::read);
+  mut auto first_opened =
+      std::fopen(rotating_first, std::file_mode::read);
+  mut auto second_opened =
+      std::fopen(rotating_second, std::file_mode::read);
+  if (!current_opened || !first_opened || !second_opened) { return 23; }
+  mut auto current_input = std::move(current_opened).value();
+  mut auto first_input = std::move(first_opened).value();
+  mut auto second_input = std::move(second_opened).value();
+  auto current_line = std::getline(*current_input);
+  auto first_line = std::getline(*first_input);
+  auto second_line = std::getline(*second_input);
+  if (!current_line || current_line.value() != "cccccc" ||
+      !first_line || first_line.value() != "bbbbbb" ||
+      !second_line || second_line.value() != "aaaaaa") {
+    return 24;
+  }
+  current_input.reset();
+  first_input.reset();
+  second_input.reset();
+  auto removed_current = std::filesystem::remove(rotating_path);
+  auto removed_first = std::filesystem::remove(rotating_first);
+  auto removed_second = std::filesystem::remove(rotating_second);
+  if (!removed_current || !removed_current.value() ||
+      !removed_first || !removed_first.value() ||
+      !removed_second || !removed_second.value()) {
+    return 25;
+  }
+  return 0;
+}
