@@ -2496,10 +2496,26 @@ semanticFloatFormat(const SemanticType &type) {
         traits.relocation = RelocationKind::Unavailable;
     }
     return traits;
-  default:
+  case SemanticType::Int8:
+  case SemanticType::Int16:
+  case SemanticType::Int32:
+  case SemanticType::Int64:
+  case SemanticType::UInt8:
+  case SemanticType::UInt16:
+  case SemanticType::UInt32:
+  case SemanticType::UInt64:
+  case SemanticType::Float:
+  case SemanticType::Double:
+  case SemanticType::Bool:
+  case SemanticType::Char:
+  case SemanticType::NullPtr:
+  case SemanticType::Enum:
     traits.relocation = RelocationKind::Bitwise;
     return traits;
   }
+  // New or unrecognized kinds have no relocation authority until their
+  // ownership and lifetime behavior is explicitly classified above.
+  return traits;
 }
 
 [[nodiscard]] std::optional<IntegerArithmeticIntrinsic>
