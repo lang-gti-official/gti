@@ -3811,6 +3811,22 @@ public:
       case SemanticType::PrefixStorage:
         return;
       case SemanticType::Class: {
+        // The declaration-bound optional capability stores its exact value
+        // inline even though it has no source fields. Its payload layout must
+        // precede every containing class, unlike pointer-backed storage.
+        const auto capability = std::find_if(
+            mir.classInstances().begin(), mir.classInstances().end(),
+            [&](const MirClassInstance &candidate) {
+              return candidate.type == type &&
+                     candidate.compilerCapability ==
+                         CompilerCapabilityTypeKind::OptionalStorage;
+            });
+        if (capability != mir.classInstances().end()) {
+          for (const SemanticType &argument : type.arguments) {
+            self(self, argument, result);
+          }
+          return;
+        }
         if (const std::optional<std::string> concrete =
                 cppConcreteClassName(loweredProgram, type)) {
           const auto found = concreteClassSchedule.find(*concrete);

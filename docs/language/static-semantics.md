@@ -979,8 +979,8 @@ constructor, and an exact typed lambda. Ordinary argument analysis selects
 copy only when the enum's folded traits permit it; otherwise an explicit move
 or fresh value is required.
 
-An ordinary non-generic, non-polymorphic class or struct may contain an owning
-payload enum as a direct field. The field may be initialized by an in-class
+An ordinary non-polymorphic class or struct, including a concrete generic
+instance, may contain an owning payload enum as a direct field. The field may be initialized by an in-class
 initializer or an ordinary constructor initializer. Its containing value
 inherits the enum's structural copy, move, assignment, and cleanup traits and
 may use the existing direct class-value call and return transport. A mutable
@@ -993,14 +993,21 @@ direct non-class aggregate payloads, stored-reference classes,
 compiler-private capabilities, polymorphic bases, or native-layout
 declarations.
 
-Generic callable families, including methods and constructors declared on a
-generic owner, polymorphic dispatch, native/runtime declarations, operators,
-and lambda captures retain `GTI-S2067` at their declaration or capture
+Concrete generic free functions, methods, and constructors use that same
+ordered transport contract. A type argument mentioning the enum does not by
+itself create an ownership edge; concrete fields and declaration-bound storage
+capabilities determine containment and cleanup. This permits ordinary owning
+collections and inline optional storage of the enum without public-library
+name recognition. Consuming methods may return an enum field while retaining
+the containing receiver through the caller's full expression.
+
+Polymorphic dispatch, native/runtime declarations, operators,
+and direct enum lambda captures retain `GTI-S2067` at their declaration or capture
 boundary. Unsupported containment retains `GTI-S2067` at the field or
 aggregate boundary, before HIR/MIR/backend emission. A direct checked
-reference or raw pointer to the enum does not itself contain the referent's
-ownership state; indirection to a generic wrapper still instantiates that
-unsupported nested value type.
+reference or raw pointer does not itself contain the referent's ownership
+state. Fixed arrays of direct owning enum elements and direct enum captures
+remain outside this transport slice.
 
 Payload alternatives use exact construction. A unit alternative is written
 `Result::empty`; a payload alternative is written `Result::value(arguments)`.

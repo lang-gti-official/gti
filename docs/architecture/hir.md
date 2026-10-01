@@ -147,8 +147,10 @@ otherwise requires an explicit or fresh move path. Results retain the exact
 enum type and ordinary callable identity. An admitted ordinary class or struct
 field retains that enum type in its existing initializer and lifecycle rows;
 the containing class's folded move/drop policy is the transport authority, not
-a new payload-specific HIR operation. Other wrappers do not inherit this
-permission. This keeps callable selection, containment eligibility, and
+a new payload-specific HIR operation. Concrete generic owners and ordinary
+storage-backed wrappers preserve the same exact fields, ordered inputs, and
+drop descriptors; a generic type argument alone is not a stored field.
+This keeps callable selection, containment eligibility, and
 copy/move policy in the frontend while leaving concrete field publication and
 result lifetimes to MIR.
 

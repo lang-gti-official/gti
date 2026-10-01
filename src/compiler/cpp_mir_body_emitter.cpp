@@ -5065,18 +5065,18 @@ payloadEnumOrdinaryTransportConsumer(const MirProgram &program,
             : nullptr;
     const bool ordinaryOwner =
         target != nullptr &&
-        (!target->owner || (owner != nullptr && owner->type.arguments.empty() &&
-                            owner->type.valueArguments.empty()));
+        (!target->owner || (owner != nullptr && !owner->polymorphic));
     return target != nullptr && !consumer.constructorTarget &&
            !consumer.lambdaTarget && !consumer.bodyTarget &&
-           !consumer.callableInvocation &&
+           (!consumer.callableInvocation ||
+            (target->owner && consumer.receiver &&
+             *consumer.callableInvocation ==
+                 callableInvocationCapability(target->receiverMutability))) &&
            consumer.intrinsic == IntrinsicKind::None &&
            consumer.dispatch == CallDispatch::Static &&
            target->definitionKind == MirDefinitionKind::Source &&
-           target->linkage == LanguageLinkage::Gti &&
-           target->typeArguments.empty() && target->valueArguments.empty() &&
-           ordinaryOwner && !target->virtualMethod &&
-           !target->overloadedOperator &&
+           target->linkage == LanguageLinkage::Gti && ordinaryOwner &&
+           !target->virtualMethod && !target->overloadedOperator &&
            target->parameterTypes == consumer.parameterTypes &&
            consumer.operands.size() == target->parameterTypes.size();
   }
@@ -5093,9 +5093,7 @@ payloadEnumOrdinaryTransportConsumer(const MirProgram &program,
            consumer.intrinsic == IntrinsicKind::None &&
            consumer.constructorKind == ConstructorKind::Ordinary &&
            target->definitionKind == MirDefinitionKind::Source &&
-           target->typeArguments.empty() && target->valueArguments.empty() &&
-           owner->type.arguments.empty() &&
-           owner->type.valueArguments.empty() && !owner->polymorphic &&
+           !owner->polymorphic &&
            target->parameterTypes == consumer.parameterTypes &&
            consumer.operands.size() == target->parameterTypes.size();
   }
@@ -5415,6 +5413,56 @@ payloadEnumFreshArgumentStageForStagedValue(const MirProgram &program,
     }
   }
   return false;
+}
+
+// CallInput can reparent an owning enum into a prepared-parameter obligation
+// without creating another native object. If a later argument fails, MIR drops
+// that prepared obligation before entering the callee. Consume the same exact
+// transport proof to locate the still-engaged backing object; erasing a native
+// staging slot must never erase its failure cleanup.
+[[nodiscard]] const MirPlace *
+dropRepresentationSlot(const MirProgram &program, const MirBody &body,
+                       const MirInstruction &instruction,
+                       bool *retainedSourceShell = nullptr) {
+  if (retainedSourceShell != nullptr)
+    *retainedSourceShell = false;
+  const MirPlace *destination = instruction.destination
+                                    ? body.findPlace(*instruction.destination)
+                                    : nullptr;
+  if (instruction.kind != MirInstructionKind::Drop || destination == nullptr ||
+      instruction.lifecycle.size() != 1) {
+    return destination;
+  }
+  const auto &event = instruction.lifecycle.front();
+  const auto *drop = body.findDropObligation(event.source);
+  // Unconditional Drop is verifier-proven live on every incoming edge.
+  // A conditional prepared obligation needs its own native engagement state,
+  // not the backing object's independently scheduled shell lifetime.
+  if (event.kind != MirLifecycleEventKind::Drop || event.conditional ||
+      !event.failureCleanup || event.target != 0 || drop == nullptr ||
+      drop->place != destination->id ||
+      drop->kind != MirDropObligationKind::PreparedParameter ||
+      drop->dropType.type.kind != SemanticType::Enum ||
+      drop->dropType != mirUniqueCleanupType(program, destination->type)) {
+    return destination;
+  }
+  for (const auto &value : body.values) {
+    const auto moved = payloadEnumArgumentMoveStage(program, body, value.id);
+    if (moved && moved.preparedDrop == drop &&
+        moved.sourceDrop->dropType == drop->dropType &&
+        moved.valueDrop->dropType == drop->dropType) {
+      if (retainedSourceShell != nullptr)
+        *retainedSourceShell = true;
+      return moved.source;
+    }
+    const auto fresh =
+        payloadEnumFreshArgumentStageForStagedValue(program, body, value.id);
+    if (fresh && fresh.preparedDrop == drop &&
+        fresh.drop->dropType == drop->dropType) {
+      return fresh.slot;
+    }
+  }
+  return destination;
 }
 
 // An explicit move of an active-cleanup payload enum stages the new active
@@ -5877,9 +5925,11 @@ payloadEnumCallResultSlot(const MirProgram &program, const MirBody &body,
   const bool transformedFunction =
       enumeration != nullptr && target != nullptr && call->functionTarget &&
       !call->constructorTarget && !call->lambdaTarget && !call->bodyTarget &&
-      !call->callableInvocation && target->returnType == enumeration->type &&
-      target->typeArguments.empty() && target->valueArguments.empty() &&
-      !target->virtualMethod &&
+      (!call->callableInvocation ||
+       (target->owner && call->receiver &&
+        *call->callableInvocation ==
+            callableInvocationCapability(target->receiverMutability))) &&
+      target->returnType == enumeration->type && !target->virtualMethod &&
       call->parameterTypes == target->parameterTypes &&
       call->operands.size() == target->parameterTypes.size() &&
       target->definitionKind == MirDefinitionKind::Source &&
@@ -12123,10 +12173,7 @@ payloadEnumConstructorFieldPublication(const MirProgram &program,
       enumeration == nullptr || producer == nullptr || slot == nullptr ||
       valueDrop == nullptr ||
       constructor->definitionKind != MirDefinitionKind::Source ||
-      !constructor->typeArguments.empty() ||
-      !constructor->valueArguments.empty() ||
       (owner->kind != ClassKind::Class && owner->kind != ClassKind::Struct) ||
-      !owner->type.arguments.empty() || !owner->type.valueArguments.empty() ||
       owner->polymorphic || owner->cAbiRecord || owner->unionLayout ||
       owner->compilerCapability != CompilerCapabilityTypeKind::None ||
       owner->lifecycleBoundBorrowCarrier || !owner->requiresActiveCleanup ||
@@ -21721,8 +21768,6 @@ valueRootedMoveAssignmentSlot(const MirProgram &program,
     return receiverRoot != nullptr && resolved &&
            (resolved.owner->kind == ClassKind::Class ||
             resolved.owner->kind == ClassKind::Struct) &&
-           resolved.owner->type.arguments.empty() &&
-           resolved.owner->type.valueArguments.empty() &&
            !resolved.owner->polymorphic && !resolved.owner->cAbiRecord &&
            !resolved.owner->unionLayout &&
            resolved.owner->requiresActiveCleanup &&
@@ -27152,6 +27197,36 @@ private:
       output << "__gti_mir_p_" << *instruction.destination << ".reset();\n";
       return;
     }
+    if (failureForm && instruction.kind == MirInstructionKind::Drop) {
+      bool retainedSourceShell = false;
+      const auto *slot = dropRepresentationSlot(
+          program, facts.body, instruction, &retainedSourceShell);
+      if (retainedSourceShell) {
+        // The Move/CallInput fusion leaves the named representation engaged.
+        // Clean the prepared argument now, but retain that disarmed shell for
+        // the source binding's separately scheduled MIR Drop.
+        const auto *drop =
+            facts.body.findDropObligation(instruction.lifecycle.front().source);
+        const bool fallible = failureDestructorTarget(program, facts.body,
+                                                      instruction) != nullptr;
+        if (fallible)
+          output << "__gti_mir_drop_success_" << instruction.id << " = ";
+        else
+          output << "(void)";
+        output
+            << cppMirCleanupValueExpression(
+                   program, drop->dropType,
+                   "__gti_mir_p_" +
+                       std::to_string(canonicalSlotPlaceId(facts.body, *slot)) +
+                       ".get()",
+                   fallible ? "&__gti_mir_cleanup_failure_record_" +
+                                  std::to_string(instruction.id)
+                            : "nullptr",
+                   "true")
+            << "; // GTI MIR prepared argument cleanup; retain source shell\n";
+        return;
+      }
+    }
     if (failureForm) {
       if (const auto *drop = returnResultDrop(facts.body, instruction);
           drop != nullptr &&
@@ -27422,9 +27497,7 @@ private:
     if (failureForm && instruction.kind == MirInstructionKind::Drop &&
         failureDestructorTarget(program, facts.body, instruction) != nullptr) {
       const MirPlace *slot =
-          instruction.destination
-              ? facts.body.findPlace(*instruction.destination)
-              : nullptr;
+          dropRepresentationSlot(program, facts.body, instruction);
       if (slot == nullptr || !slotPlace(facts.body, *slot)) {
         throw std::logic_error(
             "verified MIR failure-capable drop lost its lifetime slot");
@@ -27448,7 +27521,7 @@ private:
                                              std::to_string(instruction.id)
                                        : "__gti_mir_failure_record";
         output << "__gti_mir_drop_success_" << instruction.id
-               << " = __gti_mir_p_" << *instruction.destination
+               << " = __gti_mir_p_" << canonicalSlotPlaceId(facts.body, *slot)
                << ".destroy_cleanup_with_failure(" << record << ", "
                << (drop.conditional ? "true" : "false") << ", "
                << (block.activeFailure != 0 ? "true" : "false")
@@ -27469,7 +27542,7 @@ private:
       const bool aggregateOwner =
           unique && !aggregate && !obligation->dropType.aggregate.empty();
       output << "__gti_mir_drop_success_" << instruction.id << " = __gti_mir_p_"
-             << *instruction.destination;
+             << canonicalSlotPlaceId(facts.body, *slot);
       if (aggregate) {
         output << ".template destroy_unique_aggregate_with_failure<"
                << *obligation->dropType.classInstance << ">(";
@@ -27537,14 +27610,13 @@ private:
       // success path: the propagate edge must never leak an engaged
       // lifetime slot past the early false return.
       const MirPlace *slot =
-          instruction.destination
-              ? facts.body.findPlace(*instruction.destination)
-              : nullptr;
+          dropRepresentationSlot(program, facts.body, instruction);
       if (slot == nullptr || !slotPlace(facts.body, *slot)) {
         throw std::logic_error(
             "verified MIR failure cleanup lost its lifetime slot");
       }
-      output << "__gti_mir_p_" << *instruction.destination << ".destroy();"
+      output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *slot)
+             << ".destroy();"
              << " // failure cleanup drop-obligation "
              << instruction.lifecycle.front().source << '\n';
       return;
@@ -40894,8 +40966,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         if (failureDestructorTarget(program_, body, instruction) != nullptr) {
           const MirPlace *dropSlot =
-              instruction.destination ? body.findPlace(*instruction.destination)
-                                      : nullptr;
+              dropRepresentationSlot(program_, body, instruction);
           const MirFailureRecord *record =
               body.findFailureRecord(block.terminator.failureRecord);
           const MirBlock *parameter =
@@ -40926,7 +40997,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // The failure-cleanup text destroys the slot, so the probe
           // demands the same slot place the success path demands.
           const MirPlace *cleanupSlot =
-              body.findPlace(*instruction.destination);
+              dropRepresentationSlot(program_, body, instruction);
           if (cleanupSlot == nullptr || !slotPlace(*cleanupSlot)) {
             {
               return false;
