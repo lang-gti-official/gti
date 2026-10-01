@@ -2,6 +2,36 @@
 
 Status: Current test and audit structure.
 
+## Combined 0.358.1 release validation
+
+The 2026-10-01 arm64 macOS Release/Ninja candidate uses AppleClang 21 and
+LLVM 22.1.8. All compiler targets were rebuilt with 12 jobs. The final broad
+CTest run exercised all 356 checks in 989.50 seconds with eight test jobs:
+351 passed, and five tests retained obsolete empty/two-line CLI-output
+expectations after diagnostic summaries were introduced. Those assertions now
+require the exact summary as well as their original error codes, message
+fragments, runtime output, and exit status; all five passed together on rerun
+(23.22 seconds). No production code changed after that broad run. Both MIR/C++
+corpus oracles, differential checks, LSP, optimizer, and runtime gates passed.
+
+An earlier run caught the new constructor placement route displacing ordinary
+assignable-class emission. Restricting that route to nonassignable fields
+restored the existing nested-borrow ownership regression; the full compiler
+partition suite and all three focused constructor gates then passed together.
+The new constructor-field runtime matrix checks success and exact failure
+cleanup under C++20/C++23 at O0/O1/O3, no-elide, and ASan/UBSan configurations.
+Structural mutations retain exact field, initializer, ownership-transfer,
+borrow, layout, and native capability constructor-witness requirements.
+
+All 11 clean staged external-consumer checks passed against the final compiler
+(1.12 seconds). The original scratch Tea project builds offline with that
+staged toolchain: zero errors and one existing unreachable-code warning.
+Formatting checks all 390 first-party C++ files; patch whitespace checks pass.
+This is local macOS evidence, not alternate-platform verification. The optional
+non-gating full language audit was not rerun; deterministic corpus and
+differential gates were. Broader constructor/capability limitations remain
+explicit in the implementation sequence rather than being claimed fixed.
+
 ## Exact-receiver optimization validation
 
 The local 2026-10-01 Release/Ninja run exercised all 354 registered tests:

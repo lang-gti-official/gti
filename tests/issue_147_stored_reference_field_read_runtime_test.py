@@ -92,7 +92,7 @@ def main() -> int:
         )
         if (
             rejected.returncode != 65
-            or rejected.stdout != ""
+            or rejected.stdout != "Diagnostics: 1 error, 0 warnings\n"
             or "error[GTI-S2000]" not in rejected.stderr
             or "Cannot mutate through a read-only receiver."
             not in rejected.stderr

@@ -26,8 +26,9 @@ def main():
             assert result.returncode == 0, (profile, result.stdout, result.stderr)
             assert result.stdout == expected[1], (profile, result.stdout)
             progress = result.stderr.splitlines()
-            assert len(progress) == 2 and progress[0].startswith("Built app [") \
-                and progress[1].startswith("Running "), (profile, result.stderr)
+            assert len(progress) == 3 and progress[0].startswith("Built app [") \
+                and progress[1] == "Diagnostics: 0 errors, 0 warnings" \
+                and progress[2].startswith("Running "), (profile, result.stderr)
             print(f"hosted constructor package identity: {profile} passed", flush=True)
 
 
