@@ -376,6 +376,11 @@ def main() -> int:
         )
         for filename, code, fragments in negative_cases:
             source = fixtures / filename
+            expected_summary = (
+                "Diagnostics: 2 errors, 0 warnings\n"
+                if filename == "generic_algorithm_ambiguous_return_owner.gti"
+                else "Diagnostics: 1 error, 0 warnings\n"
+            )
             rejected = emit_artifact(
                 compiler,
                 source,
@@ -385,7 +390,7 @@ def main() -> int:
             )
             if (
                 rejected.returncode != 65
-                or rejected.stdout != ""
+                or rejected.stdout != expected_summary
                 or f"error[{code}]" not in rejected.stderr
                 or str(source) not in rejected.stderr
                 or any(fragment not in rejected.stderr for fragment in fragments)

@@ -101,7 +101,7 @@ def main() -> int:
         )
         if (
             rejected.returncode != 65
-            or rejected.stdout != ""
+            or rejected.stdout != "Diagnostics: 1 error, 0 warnings\n"
             or "error[GTI-S2015]" not in rejected.stderr
             or "requires a default-initializable element type"
             not in rejected.stderr
