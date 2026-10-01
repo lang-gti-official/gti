@@ -1,4 +1,5 @@
 #include "gti/mir_dominance.h"
+#include "gti/optimization/coverage.h"
 
 #include "llvm/ADT/GraphTraits.h"
 #include "llvm/Support/GenericDomTree.h"
@@ -289,6 +290,9 @@ successorsForDominance(const MirBody &body, const MirTerminator &terminator) {
 } // namespace
 
 std::optional<MirDominanceInfo> computeMirDominance(const MirBody &body) {
+  if (!verifyMirOptimizationVocabulary(body).valid()) {
+    return std::nullopt;
+  }
   std::optional<CfgSnapshot> snapshot = makeSnapshot(body);
   if (!snapshot) {
     return std::nullopt;

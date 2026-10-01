@@ -12,6 +12,68 @@ backend or non-body representation input. No new optimizer pass may use AST
 shape, source spelling, HIR replacement tables, emitted C++, or public
 standard-library names as transformation authority.
 
+## Language-Growth Conformance Gate
+
+`optimization/coverage.h` and `optimization/coverage.cpp` own one exhaustive
+vocabulary review gate. Each instruction, operation, intrinsic, terminator,
+place root/projection, operand, body kind, lifecycle event, synchronization
+operation/order, unsafe operation, defined-failure code/detail/propagation,
+analysis kind, transform/proof kind, and safety-check family names its existing
+bounded consumer, conservative barrier, or structurally inapplicable role.
+Both missing-case warning families are errors in that translation unit,
+including for enums without `Count`. Count sentinels, the reserved failure code
+14, and out-of-range values remain unclassified.
+
+This catalog is **not** another effect table, type system, or transform
+authorization. `Supported` means the named consumer covers the family, not
+that every instance is optimizable. `Barrier` describes that consumer's
+conservative treatment; it does not declare new language effects. All purity,
+trapping, memory, ownership, loan, drop, synchronization, and escape facts
+continue to come from `mir_effects` and verified semantic/MIR metadata. In
+particular, registering a new member does not supply its transfer function,
+effect summary, backend representation, or replay proof.
+
+The audit boundary is:
+
+| Surface | Current handling and enforcement |
+| --- | --- |
+| Instruction/operation/intrinsic effects | Existing count-checked effect tables and exact call summaries remain authoritative. Scalar interpreters whitelist typed operations; all other results are overdefined or conservatively invalidated. |
+| CFG, dominance, loops, bodies | Explicit body inventory and terminator routing include normal, invoke, and terminal failure edges. Vocabulary preflight rejects unknown kinds before a default arm can mistake them for exits. |
+| Use-def and operands | Stable value IDs and the existing canonical use rebuild include receiver, instruction, terminator, and edge arguments. Copy/move/address/loan operands retain their effects and cannot become generic scalar substitutes. |
+| Places, alias, escape, ranges | Structural roots/projections and verified exact call escape facts govern memory reasoning. Unknown projections/roots produce `may-alias`, even across apparently different roots; raw and unresolved indirect memory remains conservative. |
+| Failure, cleanup, ownership | Exact outcomes and schedules survive every edit. Only the implemented bounds, storage-state, overflow, and remainder-domain proofs discharge checks; other failure families remain checked and are reported. |
+| Analysis preservation | Every current cache has an explicit invalidation owner. Local safety-cache preservation is independent of preserving the closed-call cache; dropping closed-call facts also invalidates all dependent body proofs. |
+| Editor, identity repair, evidence | Existing typed edits repair derived identity/use/CFG facts, verify atomically, and replay from canonical source MIR. Transform/proof enum growth also requires explicit coverage. |
+| Lowered program and backends | Body verification includes vocabulary admission, so independent replay and the existing lowered-program seal reject unclassified MIR before backend consumption. No backend semantics or new input path is introduced. |
+
+Vocabulary admission runs even when optional full optimizer verification is
+disabled. Direct dominance, CFG, SCCP, loop, alias, and safety entry points also
+fail closed; callers cannot obtain proofs by bypassing the pipeline. O0 still
+runs no transformations and retains identical source/output MIR.
+
+Range transfer also checks authoritative effects before interpreting a
+`Compute`: raw/unsafe access, place/unknown-memory writes, user-code invocation,
+or synchronization clears mutable-memory facts instead of treating the opcode
+as an implicit purity promise. A focused metadata-extension probe verifies
+that such an operation cannot preserve a previously provable array read.
+
+`optimizer_conformance` exercises malformed vocabulary, unknown projections,
+cache preservation, O0 identity, independent replay, and opaque-call barriers
+on an unrelated user record. `optimizer_coverage_growth` compiles temporary
+header overlays that add a new member to each of the seven principal language
+families; the actual classification translation unit must fail exhaustiveness,
+not merely an unrelated effect-table assertion. This guard forces a review on
+enum growth; new fields or changed semantics still require focused cross-phase
+tests and the ordinary MIR verification contract.
+
+Conformance validation used a Release compiler (AppleClang 21, LLVM 22.1.8,
+arm64 macOS). The 49-test optimizer/MIR/lowered/backend/corpus/differential/CLI
+selection passed, including independent replay and optimization-report checks.
+After the final preservation-mask and remark refinements, the nine focused
+conformance/growth/foundation/analyses/safety/runtime/header/backend/pipeline
+tests passed again. Formatting checked 383 C++ files. Linux, Windows, and
+additional native toolchain versions were not exercised in this local run.
+
 ## HIR Constant Analysis
 
 `run(const HirProgram&, OptimizationLevel, TargetInfo)` performs constant
@@ -316,6 +378,12 @@ interior MIR pointer survives invalidation. Memory SSA, inlining,
 devirtualization, and loop or memory transformations remain absent until a
 bounded measured client requires them.
 
+Preserving `ClosedCallSafety` alone does not implicitly preserve the local
+`SafetyChecks` cache. Preservation claims are valid only when the preserved
+analysis's complete inputs, including body-local facts stored in the closed-call
+result, remain unchanged; they are not permission to reuse a stale summary
+after a semantic edit.
+
 Safety-discharge passes hand the controlled MIR editor that same manager-owned
 closed-call snapshot. The editor exact-matches every queued claim against the
 canonical proof and may reuse it for candidate replay only when the complete
@@ -374,6 +442,16 @@ timing or pointer data, so identical inputs produce identical output. GTI proof
 remarks are labelled separately from native Clang/GCC optimization remarks.
 Version 3 adds the `sparse-constant` proof/provenance vocabulary; it does not
 serialize transient lattice, loop, or alias snapshots.
+
+Missed remarks distinguish raw/unsafe memory, open calls, possible
+synchronization, unknown alias effects, cleanup/lifecycle schedules, loan
+dependencies, ownership transfer, allocation, and trapping. Promotion remarks
+also identify escaping places from the alias/escape analysis. The bounds pass
+reports general conservative analysis boundaries once and names unsupported
+failure-discharge code/detail pairs. These explanatory remarks are not extra
+check candidates or claims that a nearby barrier caused an unrelated missing
+proof; safety counts and transformation evidence keep their existing meaning.
+Unknown facts are reported conservatively, never interpreted as purity.
 
 Ordinary compilation captures none of these outputs and remains unchanged when
 the options are absent. The reusable driver provides equivalent opt-in pre-MIR,

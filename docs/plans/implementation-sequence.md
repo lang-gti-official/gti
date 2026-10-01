@@ -25,6 +25,22 @@ files under `docs/plans/`. The documents under
 [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
+## Current Sequential Optimizer Follow-Up
+
+The combined compiler/library work is locally checkpointed at `113e112a` on
+top of reconciled `main` `b9609587`. Publication remains held by the user.
+These two requested tasks are sequential, not parallel compiler campaigns:
+
+| Order | ID | State | Outcome and exit gate |
+| --- | --- | --- | --- |
+| 1 | `O-CONFORM-01` | **implemented and validated — local reconciliation next** | MIR language growth fails closed across optimizer classification, analyses, edits/replay, and lowered/backend admission. Exhaustive compiler classification, unknown-vocabulary/alias and cache-invalidation regressions, deterministic barrier reasons, canonical docs, optimized-compiler focused tests, MIR/editor/backend/corpus/differential/report gates. No new optimization facility. |
+| 2 | `O-MEASURE-02` | **blocked on O-CONFORM-01 reconciliation** | Start from the resulting clean `main`, measure realistic call/callback, interface, owner/allocation, alias-sensitive SoA, and cross-unit PGO/LTO candidates against semantic-equivalent and idiomatic C++. Require complete-state equality, interleaved repetitions, exact identities, MIR/C++/assembly/size/memory evidence, and a semantics-preserving proxy before selecting at most one backend-neutral facility. If no proxy offers material representative runtime value, record measured defer instead. |
+
+The second row must preserve exact failure/cleanup/ownership and evaluation/FP
+ordering, prove independent replay and O0/O2/O3 C++20/C++23 parity, and retain
+fixed-array/vector/scalar/game/thread, compiler-time, size, and memory controls.
+Neither row authorizes publication while the user's release hold remains.
+
 ## How To Use This Plan
 
 Ordinary feature work should select one row from this plan, or one explicitly

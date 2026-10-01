@@ -326,6 +326,18 @@ add_executable("gti_optimizer_analysis_tests"
 target_link_libraries("gti_optimizer_analysis_tests" PRIVATE gti_compiler)
 add_test(NAME optimizer_analyses COMMAND gti_optimizer_analysis_tests)
 
+add_executable(gti_optimizer_conformance_tests
+               "${PROJECT_SOURCE_DIR}/tests/optimizer_conformance_tests.cpp")
+target_link_libraries(gti_optimizer_conformance_tests PRIVATE gti_compiler)
+add_test(NAME optimizer_conformance COMMAND gti_optimizer_conformance_tests)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU" AND NOT MSVC)
+  add_test(NAME optimizer_coverage_growth
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/optimizer_coverage_growth_test.py"
+                   --cxx "${CMAKE_CXX_COMPILER}"
+                   --source "${PROJECT_SOURCE_DIR}")
+endif()
+
 add_executable("gti_failure_metadata_tests"
                "${PROJECT_SOURCE_DIR}/tests/failure_metadata_tests.cpp")
 target_link_libraries("gti_failure_metadata_tests" PRIVATE gti_compiler)
