@@ -188,7 +188,9 @@ Program v81/body v69 serialize structural relocation eligibility in type
 traits and preserve pointer-only native class identity. Class-table
 verification compares the semantic fact against exact generated movement,
 concrete bases, fields, borrowed state, and cleanup; interface bases contribute
-dispatch requirements, not stored value state. Production
+dispatch requirements, not stored value state. Passive primitive kinds are
+explicitly admitted; an unknown or newly added type kind is unavailable until
+classified, including when nested inside a fixed array. Production
 sparse/prefix-storage relocation selects its bulk candidate only from this
 verified proof. Existing intrinsic identities retain exclusive accesses,
 liveness/capacity failure sites, and source/destination lifetime behavior;

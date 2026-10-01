@@ -52,6 +52,25 @@ int main(int argc, std::vector<std::string> argv) {
   std::array<int, 0> empty_values{};
   if (!empty_values.empty()) { return 12; }
   std::allocator allocator{};
+  if (argc == 6 || argc == 7) {
+    mut auto old_result = allocator.try_storage<Resource>(std::size_t(4));
+    mut auto new_result = allocator.try_storage<Resource>(std::size_t(4));
+    if (!old_result || !new_result) { return 13; }
+    mut auto old_storage = std::move(old_result).value();
+    mut auto new_storage = std::move(new_result).value();
+    old_storage.construct(std::size_t(0), Resource(101));
+    old_storage.construct(std::size_t(1), Resource(102));
+    // This live slot is outside the requested prefix. Its cleanup must still
+    // precede both prefix resources if preflight leaves the source untouched.
+    old_storage.construct(std::size_t(3), Resource(104));
+    if (argc == 6) {
+      new_storage.construct(std::size_t(1), Resource(201));
+    }
+    // The occupied destination at index 1 or missing source at index 2 must
+    // fail before transferring either earlier resource into new_storage.
+    old_storage.relocate_to(new_storage, std::size_t(3));
+    return 14;
+  }
   {
     mut auto empty_a = allocator.try_storage<int>(std::size_t(0));
     mut auto empty_b = allocator.try_storage<int>(std::size_t(0));

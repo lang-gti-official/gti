@@ -17,6 +17,38 @@ int main() {
     return 1;
   expect(lang::verifyMirProgram(frontend.mir).valid(),
          "relocation MIR verifies");
+  using Kind = lang::SemanticType::Kind;
+  for (const Kind kind :
+       {Kind::Int8, Kind::Int16, Kind::Int32, Kind::Int64, Kind::UInt8,
+        Kind::UInt16, Kind::UInt32, Kind::UInt64, Kind::Float, Kind::Double,
+        Kind::Bool, Kind::Char, Kind::NullPtr, Kind::Enum, Kind::RawPointer,
+        Kind::NativeFunction, Kind::FunctionItem, Kind::StringView,
+        Kind::CString}) {
+    const lang::SemanticType type(kind);
+    expect(lang::semanticTraits(type).relocation ==
+                   lang::RelocationKind::Bitwise &&
+               lang::mirTypeRelocationKind(frontend.mir, type) ==
+                   lang::RelocationKind::Bitwise,
+           "only explicitly admitted passive kinds grant bitwise relocation");
+  }
+  // 63 is in the enum's representable range but has no declared enumerator.
+  // Keep this probe undeclared when extending the type-kind inventory.
+  static_assert(Kind::FunctionSignature < 63);
+  for (const Kind kind :
+       {Kind::Unknown, Kind::Void, Kind::TypeParameter, Kind::TypePack,
+        Kind::TypeName, Kind::Function, Kind::FunctionSignature,
+        Kind::Reference, Kind::Class, Kind::Lambda, static_cast<Kind>(63)}) {
+    const lang::SemanticType type(kind);
+    expect(lang::semanticTraits(type).relocation ==
+                   lang::RelocationKind::Unavailable &&
+               lang::mirTypeRelocationKind(frontend.mir, type) ==
+                   lang::RelocationKind::Unavailable,
+           "unknown, future, unresolved, and borrowed kinds fail closed");
+    expect(lang::mirTypeRelocationKind(frontend.mir,
+                                       lang::SemanticType::arrayOf(type, 2)) ==
+               lang::RelocationKind::Unavailable,
+           "an array cannot hide an unavailable relocation element");
+  }
   const auto serialized = lang::MirPrinter().print(frontend.mir);
   expect(serialized.find('\0') == std::string::npos &&
              serialized.starts_with("mir-v81"),

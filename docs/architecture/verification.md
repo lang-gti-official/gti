@@ -9,6 +9,9 @@ with unrelated passive, deleted-copy, deleted-move, borrowed, and
 cleanup-owning classes. Concrete arrays include zero-length storage. Semantic
 eligibility must survive HIR and verified MIR; forged traits, movement policy,
 field types, polymorphism, and lost native-opaque identity are rejected.
+Passive primitive kinds are admitted explicitly; unknown or future kinds and
+arrays containing them cannot acquire relocation eligibility by falling
+through a default case.
 Erased-callback/interface and pointer-only native fixtures check that unrelated
 compositions retain coherent metadata. The production sparse/prefix helper
 calls must select the verified bitwise candidate for passive types and the
@@ -20,6 +23,9 @@ ASan/UBSan. It checks zero-count and zero-capacity operations, source slot
 reuse, vector growth/shrink, values, and exactly-once resource cleanup.
 Capacity, occupied destination, incomplete source prefix, and consumed-source
 access have exact defined-failure codes, details, locations, and status 70.
+Late occupied/uninitialized slots also check destructor-observable resource
+order, including a live source slot outside the requested prefix, proving
+that failed preflight does not transfer any earlier source element.
 Outstanding source/destination loans and self-aliasing remain semantic errors.
 The standard-library surface sweep independently exercises relocation at
 O0/O3; fingerprints and API coverage include both constraints and the method.
