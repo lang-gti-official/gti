@@ -2909,6 +2909,101 @@ file(WRITE "$ENV{GTI_BUILD_OUTPUT}" "version = 1\ninclude-dirs = [\"include\"]\n
          "package explicitly approves it");
 }
 
+void testObjectiveCppSourceResolution() {
+  TemporaryDirectory temporary;
+  const auto root = temporary.root();
+  const std::string manifest =
+      "manifest-version = 1\n[package]\nname = \"bridge\"\nversion = "
+      "\"1.0.0\"\n"
+      "[package.native]\ncpp-sources = [\"native/bridge.mm\"]\n"
+      "[targets.bridge]\nkind = \"executable\"\nroot = \"src/main.gti\"\n";
+  expect(writeFile(root / "gti.toml", manifest) &&
+             writeFile(root / "native/bridge.mm", "// Objective-C++\n") &&
+             writeFile(root / "src/main.gti", "int main() { return 0; }\n"),
+         "Objective-C++ fixtures should be writable");
+  const auto resolve = [&](std::string os) {
+    return lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+        root, std::nullopt, "dev",
+        {.os = std::move(os), .vendor = "apple", .arch = "arm64"}));
+  };
+  const auto mac = resolve("macos");
+  expect(mac.succeeded() && mac.plan &&
+             mac.plan->nativeInputs().cppSources ==
+                 std::vector<std::filesystem::path>{
+                     std::filesystem::canonical(root / "native/bridge.mm")},
+         "Objective-C++ should use the existing immutable C++ source plan");
+  for (const std::string os : {"linux", "windows"}) {
+    const auto other = resolve(os);
+    const auto *diagnostic = findDiagnostic(other.diagnostics, "GTI-B1401");
+    expect(!other.succeeded() && diagnostic &&
+               diagnostic->message.find("Objective-C++") != std::string::npos &&
+               diagnostic->message.find(os) != std::string::npos &&
+               diagnostic->primary.source ==
+                   std::filesystem::canonical(root / "gti.toml").string() &&
+               manifest.substr(diagnostic->primary.start,
+                               diagnostic->primary.end -
+                                   diagnostic->primary.start) ==
+                   "\"native/bridge.mm\"" &&
+               diagnostic->fixes.empty(),
+           "unsupported Objective-C++ targets should point at the exact source "
+           "without guessing a fix");
+  }
+  expect(
+      writeFile(
+          root / "gti.toml",
+          "manifest-version = 1\n[package]\nname = \"bridge\"\nversion = "
+          "\"1.0.0\"\n"
+          "[[package.native.platforms]]\nos = \"macos\"\n"
+          "cpp-sources = [\"missing.mm\"]\n"
+          "[targets.bridge]\nkind = \"executable\"\nroot = \"src/main.gti\"\n"),
+      "unselected Objective-C++ fixture should be writable");
+  expect(resolve("linux").succeeded(),
+         "unselected macOS bridge paths must not be checked on other targets");
+  expect(findDiagnostic(resolve("macos").diagnostics, "GTI-B1103") != nullptr,
+         "selected Objective-C++ paths must still exist");
+
+  // Approved build programs use the same language boundary for generated
+  // sources, both on a fresh result and when considering cached output.
+  expect(
+      writeFile(root / "emit.cmake",
+                R"(file(WRITE "$ENV{GTI_BUILD_OUT_DIR}/bridge.mm" "// bridge\n")
+file(WRITE "$ENV{GTI_BUILD_OUTPUT}" "version = 1\ncpp-sources = [\"bridge.mm\"]\n")
+)") && writeFile(root / "gti.toml",
+                 "manifest-version = 1\n[package]\nname = \"bridge\"\nversion "
+                 "= \"1.0.0\"\n"
+                 "[package.build-script]\ncommand = [\"cmake\", \"-P\", "
+                 "\"emit.cmake\"]\ninputs = [\"emit.cmake\"]\n"
+                 "[targets.bridge]\nkind = \"executable\"\nroot = "
+                 "\"src/main.gti\"\n"),
+      "generated Objective-C++ fixtures should be writable");
+  for (const std::string os : {"macos", "linux"}) {
+    const auto plan = resolve(os);
+    expect(plan.succeeded() && plan.plan,
+           "bridge build-script plan should resolve");
+    if (!plan.plan) {
+      continue;
+    }
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      const auto output = lang::driver::executeBuildScripts(
+          *plan.plan, {.cCompiler = "cc", .cppCompiler = "c++", .jobs = 1});
+      if (os == "macos") {
+        expect(
+            output.succeeded() && output.nativeInputs &&
+                output.nativeInputs->cppSources.size() == 1 &&
+                output.nativeInputs->cppSources.front().extension() == ".mm",
+            "approved build outputs should admit macOS Objective-C++ sources");
+      } else {
+        const auto *diagnostic =
+            findDiagnostic(output.diagnostics, "GTI-B2005");
+        expect(
+            !output.succeeded() && diagnostic &&
+                diagnostic->message.find("macOS") != std::string::npos,
+            "generated Objective-C++ sources must reject a non-macOS target");
+      }
+    }
+  }
+}
+
 int main() {
   lang::installCrashHandlers("gti_project_tests");
   testDiscoveryParsingAndResolution();
@@ -2918,6 +3013,7 @@ int main() {
   testTestTargetResolution();
   testNativeManifestResolution();
   testNativeManifestDiagnostics();
+  testObjectiveCppSourceResolution();
   testCleanSafety();
   testWorkspaceAndPathDependencies();
   testDependencyLockModel();

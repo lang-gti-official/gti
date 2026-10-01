@@ -7415,6 +7415,8 @@ auto SemanticVisitor::Impl::expressionToken(const Expr &expression) -> Token {
     return static_cast<const Lambda &>(expression).bracket();
   case ExprKind::LayoutQuery:
     return static_cast<const LayoutQuery &>(expression).keyword();
+  case ExprKind::MemberRequirement:
+    return static_cast<const MemberRequirement &>(expression).keyword();
   case ExprKind::LiteralExpr:
     return static_cast<const LiteralExpr &>(expression).token();
   case ExprKind::Logical:

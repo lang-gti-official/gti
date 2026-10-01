@@ -142,6 +142,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testMemberRequirementConcepts",
+      "suite": "declarations"
+    },
+    {
       "name": "testRequiresDisjunction",
       "suite": "declarations"
     },

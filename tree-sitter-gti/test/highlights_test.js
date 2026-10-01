@@ -631,6 +631,14 @@ requireCapture(unsafeFunctionRow, "unsafe", "attribute");
 requireCaptureCount(unsafeFunctionRow, "unsafe", "keyword", 0);
 requireCapture(unsafeFunctionRow, "retain_context_highlight", "function");
 
+const memberRequirementRow = fixtureLines.findIndex((line) =>
+  line.includes("requires(T& item)"),
+);
+requireCapture(memberRequirementRow, "requires", "keyword");
+requireCaptureCount(memberRequirementRow, "item", "variable.parameter", 2);
+requireCapture(memberRequirementRow, "snapshot", "function.method");
+requireCapture(memberRequirementRow, "->", "operator");
+
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",
 );

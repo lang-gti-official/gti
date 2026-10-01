@@ -26,6 +26,7 @@ public:
   void visitIndexSetExpr(const IndexSet &expr) override;
   void visitLambdaExpr(const Lambda &expr) override;
   void visitLayoutQueryExpr(const LayoutQuery &expr) override;
+  void visitMemberRequirementExpr(const MemberRequirement &expr) override;
   void visitLiteralExpr(const LiteralExpr &expr) override;
   void visitLogicalExpr(const Logical &expr) override;
   void visitPackFoldExpr(const PackFold &expr) override;

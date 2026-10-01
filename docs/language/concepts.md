@@ -8,7 +8,8 @@ separate compile-time metaprogramming language.
 ## Concept declarations
 
 A namespace-scoped source concept declares one or more type parameters and
-combines existing concepts with bounded conjunction and disjunction:
+combines existing concepts and bounded member requirements with conjunction
+and disjunction:
 
 ```gti
 concept sortable<T> =
@@ -68,7 +69,8 @@ T consume<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, mut T init)
 The implemented clause has this bounded grammar:
 
 ```text
-constraint-primary    = concept-application | '(' constraint-expression ')'
+constraint-primary    = concept-application | member-requirement
+                      | '(' constraint-expression ')'
 constraint-and        = constraint-primary (('&&' | 'and') constraint-primary)*
 constraint-expression = constraint-and (('||' | 'or') constraint-and)*
 requires-clause       = 'requires' constraint-expression
@@ -76,7 +78,7 @@ requires-clause       = 'requires' constraint-expression
 
 Every argument must be a visible non-pack type parameter or closed exact type,
 and every application must have the declared arity. Dependent compound types,
-packs, values, arbitrary expressions, nested requires-expressions, boolean
+packs, values, arbitrary expressions, general nested requires-expressions, boolean
 predicates, and negation are not accepted in this clause.
 
 At a concrete call, conjunction requires both operands and disjunction accepts
@@ -118,6 +120,56 @@ separate design rather than silently weakening the declared requirement.
 
 GTI therefore retains the exact unique-match rule from
 [ADR 003](../decisions/003-exact-overload-resolution.md).
+
+## Exact read-only member requirements
+
+Library authors can describe a public, safe, read-only zero-argument instance
+method with an exact owned result type:
+
+```gti
+concept snapshot_as<T, R> =
+    requires (T& value) { { value.snapshot() } -> R; };
+
+T save_snapshot<T>(T& value) requires snapshot_as<T, T> {
+  return value.snapshot();
+}
+```
+
+The receiver name is local to the requirement. The requirement inspects a
+signature, not an expression body: it never calls the method, constructs a
+receiver, acquires a loan, or changes runtime ownership. Missing, inaccessible,
+unsafe, static, mutable, consuming, ambiguous or result-mismatched methods do
+not satisfy it. A method's own requirements must be satisfied. Cyclic member
+requirements fail closed; nested member-requirement checking is bounded to 64
+active checks. The result cannot be a reference or contain tracked
+borrowed state. The method body remains subject to ordinary analysis when used;
+signature satisfaction alone does not prove that every body instantiation is
+valid.
+
+This first slice admits one receiver and one nullary, nongeneric member per
+requirement. Combine separate requirements using `&&` and `||`. Receiver and
+result arguments in named concepts retain the existing plain-parameter or
+closed-type boundary. Inline generic-parameter constraints still exclude
+structural concepts; use a trailing clause. General expression requirements,
+method arguments, generic method deduction, and borrowed-result contracts are
+not implemented by this syntax.
+
+The same requirement is a boolean static query in expressions, including
+`if constexpr` and `static_assert`. Unlike C++'s compound requirement syntax,
+GTI's `-> R` names the **exact result type**, not a result constraint concept.
+A successful conjunction supplies each member contract to symbolic body
+analysis; a disjunction supplies only contracts shared by every alternative,
+including their member names and exact receiver/result relationships.
+
+`<std/utility>` defines `std::member_cloneable<T>` with this syntax and
+`std::cloneable<T>` as member cloning or `std::copy_constructible<T>`.
+`std::clone(value)` prefers the exact member operation and otherwise performs
+ordinary copy construction. This is explicit duplication, not automatic deep
+copying: strings duplicate their bytes, shared owners retain shared ownership,
+and user types define their own cloning policy. Noncopyable types without a
+compatible clone member remain rejected. `std::vector<T>::clone()` requires
+`std::cloneable<T>` and duplicates each element through that helper, including
+strings and nested vectors. No public clone name is recognized by the compiler.
 
 ## Ownership boundary
 

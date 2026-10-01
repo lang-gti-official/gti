@@ -97,6 +97,7 @@ validGeneratedIdentity(const LoweredGeneratedItemIdentity &identity) {
   case SymbolKind::Operator:
   case SymbolKind::TypeParameter:
   case SymbolKind::ValueParameter:
+  case SymbolKind::RequirementParameter:
     return false;
   }
   return true;
@@ -416,7 +417,10 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
     }
     if (std::any_of(payload->requirements.begin(), payload->requirements.end(),
                     [](const LoweredConceptRequirement &requirement) {
-                      return requirement.conceptId == 0 ||
+                      return (requirement.memberName.empty()
+                                  ? requirement.conceptId == 0
+                                  : requirement.conceptId != 0 ||
+                                        requirement.arguments.size() != 2) ||
                              !std::all_of(requirement.arguments.begin(),
                                           requirement.arguments.end(),
                                           resolvedType);
@@ -466,7 +470,10 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
     }
     if (std::any_of(payload->requirements.begin(), payload->requirements.end(),
                     [](const LoweredConceptRequirement &requirement) {
-                      return requirement.conceptId == 0 ||
+                      return (requirement.memberName.empty()
+                                  ? requirement.conceptId == 0
+                                  : requirement.conceptId != 0 ||
+                                        requirement.arguments.size() != 2) ||
                              !std::all_of(requirement.arguments.begin(),
                                           requirement.arguments.end(),
                                           resolvedType);

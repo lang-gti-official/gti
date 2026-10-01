@@ -325,6 +325,7 @@ public:
   layoutDiagnosticSpan(const TypeRef &type, LayoutEvaluationError error) const;
 
   void visitLayoutQueryExpr(const LayoutQuery &expr) override;
+  void visitMemberRequirementExpr(const MemberRequirement &expr) override;
 
   void visitLiteralExpr(const LiteralExpr &expr) override;
 
@@ -509,6 +510,7 @@ private:
     StructuralConstraintKind kind = StructuralConstraintKind::None;
     std::vector<SemanticType> arguments;
     const ConceptApplication *application = nullptr;
+    std::string memberName;
   };
 
   struct ContextualCallableResult {
@@ -942,6 +944,7 @@ private:
       };
       StructuralConstraintKind kind = StructuralConstraintKind::None;
       std::vector<Argument> arguments;
+      std::string memberName;
 
       friend bool operator==(const StructuralPattern &,
                              const StructuralPattern &) = default;
@@ -1727,6 +1730,21 @@ private:
 
   [[nodiscard]] static std::vector<StructuralConstraintKind>
   guaranteedStructuralKinds(StructuralConstraintKind kind);
+  [[nodiscard]] bool
+  readMemberRequirementSatisfied(const SemanticType &receiver,
+                                 std::string_view member,
+                                 const SemanticType &result) const;
+  void recordMemberRequirementReceiver(const MemberRequirement &query,
+                                       const SemanticType &type);
+  struct ActiveMemberRequirement {
+    SemanticType receiver;
+    std::string member;
+    SemanticType result;
+  };
+  mutable std::vector<ActiveMemberRequirement> activeMemberRequirements;
+  [[nodiscard]] std::optional<SemanticType>
+  symbolicReadMemberReturnType(const SemanticType &receiver,
+                               std::string_view member) const;
 
   [[nodiscard]] std::vector<ExpandedStructuralRequirement>
   activeStructuralRequirements() const;

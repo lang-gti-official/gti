@@ -384,6 +384,7 @@ module.exports = grammar({
     constraint_expression: ($) =>
       choice(
         $.concept_application,
+        $.member_requirement_expression,
         seq("(", $.constraint_expression, ")"),
         prec.left(
           2,
@@ -1295,6 +1296,7 @@ module.exports = grammar({
         $.numeric_conversion,
         $.lambda_expression,
         $.layout_query_expression,
+        $.member_requirement_expression,
         $.this_expression,
         $.nullptr_literal,
         $.pack_fold_expression,
@@ -1312,6 +1314,14 @@ module.exports = grammar({
         "(",
         field("value", $._expression_not_comma),
         ")",
+      ),
+
+    member_requirement_expression: ($) =>
+      seq(
+        "requires", "(", field("receiver_type", $.type),
+        field("binding", $.identifier), ")", "{", "{",
+        field("receiver", $.identifier), ".", field("member", $.identifier),
+        "(", ")", "}", "->", field("result_type", $.type), ";", "}",
       ),
 
     layout_query_expression: ($) =>

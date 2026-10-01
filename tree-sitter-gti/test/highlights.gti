@@ -300,3 +300,6 @@ uint64_t default_extent_highlight<uint64_t N = 3,
 }
 
 [[unsafe]] void retain_context_highlight(void* context) {}
+
+concept snapshot_highlight<T> =
+    requires(T& item) { { item.snapshot() } -> T; };

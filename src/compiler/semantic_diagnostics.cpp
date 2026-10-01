@@ -156,6 +156,10 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     return;
   }
   if (failure.structural != StructuralConstraintKind::None) {
+    const MemberRequirement *memberQuery =
+        failure.application == nullptr
+            ? nullptr
+            : failure.application->memberRequirement.get();
     const std::string constraint =
         failure.constraintName
             ? semantic_spelling::pathSpelling(*failure.constraintName)
@@ -173,13 +177,29 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     }
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2029", DiagnosticPhase::Semantics, site,
-        "Generic arguments do not satisfy concept '" + constraint + "'.");
-    if (failure.application != nullptr) {
+        memberQuery != nullptr
+            ? "Generic arguments do not satisfy required member '" +
+                  memberQuery->member().lexeme + "()'."
+            : "Generic arguments do not satisfy concept '" + constraint + "'.");
+    if (memberQuery != nullptr) {
+      diagnostic.related.push_back(
+          {tokenSpan(memberQuery->member()),
+           "Required here as '" + memberQuery->member().lexeme + "() -> " +
+               semantic_spelling::typeRefSpelling(memberQuery->result()) +
+               "' on '" +
+               semantic_spelling::typeRefSpelling(memberQuery->receiver()) +
+               "'."});
+    } else if (failure.application != nullptr) {
       diagnostic.related.push_back(
           {tokenSpan(failure.application->name.last()),
            "Required here as '" + constraint + "<" + arguments + ">'."});
     }
     switch (failure.structural) {
+    case StructuralConstraintKind::ReadMember:
+      diagnostic.hints.emplace_back(
+          "Provide a public, safe, read-only '" + failure.memberName +
+          "()' member with the exact required owned result type.");
+      break;
     case StructuralConstraintKind::InputIterator:
       diagnostic.hints.emplace_back(
           "The iterator must provide public read-only operator*() returning "

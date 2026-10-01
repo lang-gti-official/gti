@@ -2,6 +2,57 @@
 
 Status: Current test and audit structure.
 
+## Explicit cloning and Objective-C++ bridges
+
+`testMemberRequirementConcepts` covers named, relational, composed, and direct
+exact read-member requirements, symbolic calls, and verified lowered-program
+publication. Negative checks preserve member-name identity and reject absent,
+wrong-result, unsafe, mutable, consuming, static, inaccessible, and non-nullary
+members. A disjunction does not grant a method missing from another alternative;
+self-referential requirements fail closed and reference results are not owned
+results. Formatter round trips preserve the query. `member_requirement_lsp`
+checks compiler-owned hover, receiver definition, malformed-source recovery,
+shared diagnostic codes, and formatting/reanalysis.
+
+`generic_clone_runtime` verifies independent string/vector/nested-vector
+duplication, scalar fallback, custom read-member precedence, shared-owner
+semantics, and unevaluated queries on methods that would fail if executed.
+Its partial-clone failure fixture checks the exact first failure and destruction
+order of completed clones and original elements. Both fixtures run at
+O0/O1/O3 under C++20/C++23, with additional no-elide and ASan/UBSan runs.
+The standard-library surface sweep independently includes the generic cloning
+fixture at O0/O3; exclusive owners without a clone remain rejected.
+
+`objective_cpp_bridge` runs on macOS and is explicitly skipped elsewhere. It
+builds and executes the Foundation bridge through the normal project driver,
+covering caller-owned buffers, translated Objective-C/C++ exceptions, framework
+linking, C++20, explicit ARC, and mixed ordinary C++/Objective-C++ inputs.
+Cache checks cover reuse, header invalidation, dependency packages, conservative
+opaque-flag bypass, and failed-compilation preservation of published artifacts.
+The platform-independent driver/project suites check exact language arguments
+and reject active `.mm` inputs for non-macOS targets, including build-script
+outputs and direct driver requests. This does not claim a GTI Objective-C object
+ABI, imported Objective-C declarations, or native execution on other platforms.
+
+The 0.359.0 local arm64 macOS candidate uses Release/Ninja, AppleClang 21,
+LLVM 22.1.8, 12 build jobs and eight CTest workers. The broad 359-test run
+passed 358 in 1,029.12 seconds; its only failure was the reviewed lowered
+declaration census. Adding the utility include and three public cloning
+declarations adds 201 declarations across 15 examples, without changing the
+7,717 bodies or 1,856 generated items. Both independent corpus oracles passed
+before that inventory baseline was refreshed.
+
+After the final read-only receiver parsing check, direct-requirement diagnostic
+wording, and boundary tests were rebuilt, all 14 focused compiler, driver,
+LSP, runtime, verifier, version and corpus gates passed together (84.76 seconds).
+All 11 clean staged SDK consumers passed against that final rebuild. The staged
+toolchain also passed the cloning matrix and Foundation bridge before the final
+parser/diagnostic-only adjustments. Tree-sitter passes 66 corpus cases, all
+145 shipped sources, highlights/locals/rainbow and source-text checks; generation
+is byte-identical on repetition. Formatting checks all 390 first-party C/C++
+files, and patch whitespace checks pass. No Linux/Windows native bridge execution
+or optional non-gating full language audit is claimed by this local validation.
+
 ## Combined 0.358.1 release validation
 
 The 2026-10-01 arm64 macOS Release/Ninja candidate uses AppleClang 21 and

@@ -15,7 +15,8 @@ overload ordering, and specialization machinery that GTI does not need.
 ## Decision
 
 GTI supports source concepts with one or more type parameters and a trailing
-function clause limited to a Boolean tree of concept applications:
+function clause limited to a Boolean tree of concept applications and bounded
+exact read-only member requirements:
 
 ```gti
 requires Concept<A> && (Relation<B, A> || Alternate<B, A>)
@@ -38,6 +39,17 @@ Requirements are validity predicates only. They supply exact facts for
 symbolic body checking and are substituted and revalidated for concrete calls.
 They do not distinguish overload signatures, rank candidates, provide SFINAE,
 select specializations, or admit general requires-expressions.
+
+The explicit cloning client adds a source-defined exact member signature leaf:
+`requires (T& x) { { x.snapshot() } -> R; }`. It admits one safe public
+read-only nongeneric nullary instance method with exact owned result `R`.
+This is structural signature inspection, not arbitrary expression probing or
+execution. The same semantic predicate serves boolean queries and concept
+contracts, and symbolic generic bodies gain only the guaranteed named method.
+Concrete instances still resolve ordinary calls before HIR/MIR. Primitive
+copy construction remains a separate capability; source-defined library policy
+can combine it with a member requirement, as `std::clone` does. No clone name
+or public type becomes a compiler capability.
 
 The bounded clause applies to generic free functions and non-polymorphic
 methods. It is rejected on operators and on virtual, pure, overriding, or

@@ -99,6 +99,15 @@ resolved trailing requirements from AST/semantic records; hover and completion
 must not reconstruct `requires` syntax or capability meaning in the protocol
 adapter.
 
+Bounded member requirements render their compiler-owned
+`requires(T& value) { { value.method() } -> R; }` signature in concept hover.
+The synthetic receiver declaration and use share a `RequirementParameter`
+symbol for definition, references, rename, and read-only parameter tokens.
+That symbol is source-only: it does not declare runtime parameter storage or
+relax the lowered verifier's rules for ordinary parameters. Malformed queries
+and failed contracts use the shared parser/semantic diagnostics, and formatting
+must preserve their meaning through an edit/reanalysis round trip.
+
 Bounded constraint disjunction follows that same compiler-owned path.
 Signatures render canonical `&&`/`||` precedence and only necessary
 parentheses, selected calls substitute every application leaf, and a failed

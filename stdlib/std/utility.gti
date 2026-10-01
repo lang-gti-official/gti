@@ -3,6 +3,21 @@
 // it is intentionally not redeclared here.
 
 namespace std {
+  concept member_cloneable<T> =
+      requires (T& value) { { value.clone() } -> T; };
+
+  concept cloneable<T> = std::member_cloneable<T> || std::copy_constructible<T>;
+
+  /// Explicit duplication: use an exact read-only clone member when present,
+  /// otherwise ordinary copy construction. Shared owners retain sharing.
+  T clone<T>(T& value) requires std::cloneable<T> {
+    if constexpr (requires (T& candidate) { { candidate.clone() } -> T; }) {
+      return value.clone();
+    } else {
+      return value;
+    }
+  }
+
   namespace detail {
     // A mutable entry still has an immutable key: changing a stored key would
     // invalidate an ordered tree or hash table's lookup invariant.

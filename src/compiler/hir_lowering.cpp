@@ -4169,6 +4169,12 @@ private:
       for (const LambdaCapture &capture : lambda->captures()) {
         lowerOperand(capture.initializer);
       }
+    } else if (exprAs<MemberRequirement>(raw) != nullptr) {
+      kind = HirValueKind::Literal;
+      if (const auto constant = model.findConstant(*raw)) {
+        if (const auto *value = std::get_if<bool>(&*constant))
+          literal = Literal{*value};
+      }
     } else if (exprAs<LayoutQuery>(raw) != nullptr) {
       kind = HirValueKind::LayoutQuery;
       if (const std::optional<ConstantValue> constant =

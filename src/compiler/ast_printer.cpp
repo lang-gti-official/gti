@@ -125,6 +125,12 @@ void AstPrinter::visitLiteralExpr(const LiteralExpr &expr) {
   result = literalToString(expr.value());
 }
 
+void AstPrinter::visitMemberRequirementExpr(const MemberRequirement &expr) {
+  result = "(requires " + typeToString(expr.receiver()) + " " +
+           expr.binding().lexeme + " (" + expr.receiverUse().lexeme + "." +
+           expr.member().lexeme + ") " + typeToString(expr.result()) + ")";
+}
+
 void AstPrinter::visitLogicalExpr(const Logical &expr) {
   result =
       parenthesize(expr.oper().lexeme, {expr.left().get(), expr.right().get()});

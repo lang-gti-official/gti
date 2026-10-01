@@ -25,6 +25,24 @@ files under `docs/plans/`. The documents under
 [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
+## Explicit Cloning And Native Bridge Follow-Up
+
+The explicit-duplication slice supplies source-defined `std::clone`,
+`member_cloneable`/`cloneable` concepts, and vector element cloning (including
+strings and nested vectors). The language prerequisite is a general exact
+read-only nullary member-signature requirement, shared by concept facts and
+boolean queries; actual calls remain concrete HIR and verified MIR. General
+expression probing, borrowed-result requirements, and method-argument/generic
+deduction are not implied. Owning behavior is documented in
+[`concepts.md`](../language/concepts.md).
+
+The independent bounded native bridge slice admits macOS Objective-C++ `.mm`
+sources through existing `cpp-sources`, frameworks and C ABI declarations.
+It adds no Objective-C syntax or ownership model to GTI. `.m`, native Objective-C
+type import, non-Apple runtimes and structured ARC policy remain outside this
+slice. Current behavior and evidence live in the build/driver architecture,
+native C interop contract and `objective_cpp_bridge` gate.
+
 ## Current Sequential Optimizer Follow-Up
 
 The combined compiler/library work is locally checkpointed at `113e112a` on

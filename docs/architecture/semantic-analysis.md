@@ -800,6 +800,17 @@ relationship plus the ordered indices of the concept parameters to which it
 applies. Source concept composition remaps both forms through each concept
 application; public concept names never become semantic enum cases.
 
+Source member requirements add one general `ReadMember` relationship carrying
+the member name and receiver/result type arguments. Both direct boolean queries
+and named concept leaves use the same semantic signature check. Composition
+remaps the arguments and preserves the name; disjunction must not merge facts
+for different methods. Symbolic bodies can call a guaranteed exact nullary
+read-only member, but concrete instance analysis must resolve the real method
+before HIR. Query results become ordinary boolean HIR/MIR literals, never
+synthetic runtime calls. Neither the constant evaluator nor the backend decides
+whether a type supports cloning. `std::clone` and vector element duplication
+remain ordinary source-defined generic bodies and verified-MIR calls.
+
 A function or constructor's trailing clause is resolved once into
 `AppliedConceptRequirement` records containing the selected `ConceptId`, AST
 application, and exact semantic type arguments. Arguments may be visible

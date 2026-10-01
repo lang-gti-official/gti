@@ -565,6 +565,13 @@ std::vector<std::string> nativeSourceCommand(
   }
   command.insert(command.end(), compilerArguments.begin(),
                  compilerArguments.end());
+  // Both compilation and dependency discovery must parse a declared bridge
+  // in the same language. Keep this local to the foreign translation unit;
+  // the final generated GTI source remains ordinary C++.
+  if (source.extension() == ".mm") {
+    command.emplace_back("-x");
+    command.emplace_back("objective-c++");
+  }
   if (depfile == nullptr) {
     command.emplace_back("-c");
   } else {

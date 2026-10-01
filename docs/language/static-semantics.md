@@ -725,6 +725,11 @@ polymorphic contract equivalence require separate representation rules.
 
 Constraints affect candidate validity but do not rank overloads, distinguish
 otherwise identical signatures, provide SFINAE, or select specializations.
+Exact safe read-only nullary member signatures can be declared with
+`requires (T& x) { { x.snapshot() } -> R; }`, either in concepts or as a
+boolean static query. `R` is an exact owned result type; the query does not
+execute the method. See [concepts](concepts.md#exact-read-only-member-requirements)
+for the bounded syntax, composition and ownership rules.
 Negation, general requires-expressions, arbitrary expression requirements,
 value constraints, constraint subsumption, forwarding
 references, and unrestricted metaprogramming are not part of the implemented

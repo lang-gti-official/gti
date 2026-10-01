@@ -38,8 +38,8 @@
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
     "stdlib/std/unordered_map.gti": "dd9a09af61807b6482123f37f4875608c7eb6a5e83129ae7f498586b174e8aa7",
     "stdlib/std/unordered_set.gti": "f99b3591dc87e0fc1bbfa8ee6256403daf07317efa9e466c0dbd38381d314f3f",
-    "stdlib/std/utility.gti": "09c3b6169e23b3f13ba53f95d3298a20129a70757b2e67d6e87605ca967def03",
-    "stdlib/std/vector.gti": "e2b034609bc1135425c99846888d8926f3f90c4a784925e958604ba4b076dbd1"
+    "stdlib/std/utility.gti": "46d9aa9265e8b21693128812d9ccd48f1c464efdf42b77571d1cbefbeeda5086",
+    "stdlib/std/vector.gti": "c4d8d013485cf5a2344da82faef9578830a376dce32e802ec2cfbfec1f8b81d0"
   },
   "cases": [
     {
@@ -933,6 +933,13 @@
         "stdout": "",
         "stderr": ""
       }
+    },
+    {
+      "id": "utility-clone",
+      "mode": "run",
+      "source": "tests/fixtures/generic_clone.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
       "id": "utility-make-pair",
@@ -2263,6 +2270,15 @@
       ]
     },
     {
+      "id": "utility.clone",
+      "source": "stdlib/std/utility.gti",
+      "status": "executable",
+      "operations": ["std::clone", "std::cloneable", "std::member_cloneable"],
+      "case_ids": ["utility-clone"],
+      "required_instantiations": ["int", "std::string", "nested vector<string>", "user-defined Record", "shared_ptr<int>"],
+      "evidence": ["tests/fixtures/generic_clone.gti", "tests/generic_clone_runtime_test.py"]
+    },
+    {
       "id": "utility.pair",
       "source": "stdlib/std/utility.gti",
       "status": "executable",
@@ -2309,9 +2325,9 @@
         "std::vector::size",
         "std::vector::vector"
       ],
-      "case_ids": ["span", "vector"],
-      "required_instantiations": ["std::vector<int32_t>", "std::vector<int32_t>(int32_t[3])"],
-      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_vector.gti", "stdlib/std/vector.gti"]
+      "case_ids": ["span", "vector", "utility-clone"],
+      "required_instantiations": ["std::vector<int32_t>", "std::vector<int32_t>(int32_t[3])", "std::vector<std::string>", "nested vector<string>", "user-defined Record"],
+      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_vector.gti", "tests/fixtures/generic_clone.gti", "stdlib/std/vector.gti"]
     },
     {
       "id": "vector.swap",

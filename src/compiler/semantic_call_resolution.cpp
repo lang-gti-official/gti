@@ -1016,6 +1016,15 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
     -> std::vector<ExpandedStructuralRequirement> {
   const auto expandLeaf = [&](const AppliedConceptRequirement &requirement) {
     std::vector<ExpandedStructuralRequirement> result;
+    if (requirement.syntax && requirement.syntax->memberRequirement) {
+      result.push_back(
+          {.kind = StructuralConstraintKind::ReadMember,
+           .arguments = requirement.arguments,
+           .application = requirement.syntax,
+           .memberName =
+               requirement.syntax->memberRequirement->member().lexeme});
+      return result;
+    }
     if (requirement.conceptId == 0 || requirement.conceptId > concepts.size()) {
       return result;
     }
@@ -1023,7 +1032,8 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
     for (const RegisteredConcept::StructuralPattern &pattern :
          conceptInfo.structuralConstraints) {
       ExpandedStructuralRequirement expanded{.kind = pattern.kind,
-                                             .application = requirement.syntax};
+                                             .application = requirement.syntax,
+                                             .memberName = pattern.memberName};
       bool valid = true;
       for (const RegisteredConcept::StructuralPattern::Argument &argument :
            pattern.arguments) {
@@ -1069,7 +1079,8 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
   }
   const auto sameRequirement = [](const ExpandedStructuralRequirement &left,
                                   const ExpandedStructuralRequirement &right) {
-    return left.kind == right.kind && left.arguments == right.arguments;
+    return left.kind == right.kind && left.arguments == right.arguments &&
+           left.memberName == right.memberName;
   };
   std::function<std::vector<ExpandedStructuralRequirement>(std::size_t)>
       expandNode = [&](std::size_t nodeIndex) {
@@ -1313,6 +1324,14 @@ auto SemanticVisitor::Impl::firstRequirementFailure(
                 requirementAt(active, activeExpression, right.application);
             return leftRequirement != nullptr && rightRequirement != nullptr &&
                    leftRequirement->conceptId == rightRequirement->conceptId &&
+                   (!leftRequirement->syntax ||
+                    !leftRequirement->syntax->memberRequirement ||
+                    (rightRequirement->syntax &&
+                     rightRequirement->syntax->memberRequirement &&
+                     leftRequirement->syntax->memberRequirement->member()
+                             .lexeme ==
+                         rightRequirement->syntax->memberRequirement->member()
+                             .lexeme)) &&
                    leftRequirement->arguments == rightRequirement->arguments;
           }
           return sameExpression(left.left, right.left) &&
@@ -1361,6 +1380,21 @@ auto SemanticVisitor::Impl::firstRequirementFailure(
 auto SemanticVisitor::Impl::firstConceptApplicationFailure(
     const AppliedConceptRequirement &requirement) const
     -> std::optional<ConstraintFailure> {
+  if (requirement.syntax && requirement.syntax->memberRequirement) {
+    const auto &member = requirement.syntax->memberRequirement->member();
+    if (requirement.arguments.size() == 2 &&
+        readMemberRequirementSatisfied(requirement.arguments[0], member.lexeme,
+                                       requirement.arguments[1])) {
+      return std::nullopt;
+    }
+    return ConstraintFailure{.parameter = member,
+                             .argument = requirement.arguments.empty()
+                                             ? SemanticType::Unknown
+                                             : requirement.arguments[0],
+                             .structural = StructuralConstraintKind::ReadMember,
+                             .application = requirement.syntax,
+                             .memberName = member.lexeme};
+  }
   if (requirement.conceptId == 0 || requirement.conceptId > concepts.size()) {
     return std::nullopt;
   }
@@ -3848,6 +3882,73 @@ auto SemanticVisitor::Impl::selectStructuralOperator(
   return candidates.front();
 }
 
+auto SemanticVisitor::Impl::symbolicReadMemberReturnType(
+    const SemanticType &receiver, std::string_view member) const
+    -> std::optional<SemanticType> {
+  std::optional<SemanticType> result;
+  for (const auto &requirement : activeStructuralRequirements()) {
+    if (requirement.kind != StructuralConstraintKind::ReadMember ||
+        requirement.memberName != member || requirement.arguments.size() != 2 ||
+        requirement.arguments[0] != receiver) {
+      continue;
+    }
+    if (result && *result != requirement.arguments[1])
+      return std::nullopt;
+    result = requirement.arguments[1];
+  }
+  return result;
+}
+
+auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
+    const SemanticType &receiver, std::string_view member,
+    const SemanticType &result) const -> bool {
+  if (containsOpenTypeParameter(receiver) ||
+      containsOpenTypeParameter(result)) {
+    return symbolicReadMemberReturnType(receiver, member) == result;
+  }
+  // Bound recursively growing receiver types as well as exact cycles.
+  constexpr std::size_t memberRequirementDepthLimit = 64;
+  if (activeMemberRequirements.size() >= memberRequirementDepthLimit ||
+      std::any_of(activeMemberRequirements.begin(),
+                  activeMemberRequirements.end(), [&](const auto &active) {
+                    return active.receiver == receiver &&
+                           active.member == member && active.result == result;
+                  }))
+    return false;
+  activeMemberRequirements.push_back({receiver, std::string(member), result});
+  struct PopRequirement {
+    std::vector<ActiveMemberRequirement> &stack;
+    ~PopRequirement() { stack.pop_back(); }
+  } pop{activeMemberRequirements};
+  const auto *owner = classInfo(receiver);
+  if (!owner)
+    return false;
+  const auto found = owner->members.find(std::string(member));
+  if (found == owner->members.end() ||
+      found->second.symbol.type != SemanticType::Function)
+    return false;
+  const auto overloads = substituteSymbol(found->second.symbol, receiver);
+  const CallableCandidate *selected = nullptr;
+  for (const auto &candidate : overloads.overloads) {
+    if (candidate.staticMember || candidate.parameterPack ||
+        !candidate.parameterTypes.empty() ||
+        candidate.receiverMutability != ReceiverMutability::ReadOnly ||
+        !candidate.declaration ||
+        !candidate.declaration->genericParameters().empty() ||
+        firstRequirementFailure(candidate.requirements))
+      continue;
+    if (selected)
+      return false;
+    selected = &candidate;
+  }
+  return selected && selected->access == AccessModifier::Public &&
+         !selected->compilerPrivate && selected->returnType == result &&
+         !selected->declaration->unsafeAttribute() &&
+         selected->returnBorrowOrigin == BorrowOriginKind::None &&
+         result.kind != SemanticType::Reference &&
+         !typeTraits(result).containsBorrowedState;
+}
+
 auto SemanticVisitor::Impl::symbolicRangeMemberReturnType(
     const SemanticType &rangeType, std::string_view member) const
     -> std::optional<SemanticType> {
@@ -4398,6 +4499,10 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
   }
   case StructuralConstraintKind::None:
     return true;
+  case StructuralConstraintKind::ReadMember:
+    // Exact member requirements also carry a name, and are checked by
+    // readMemberRequirementSatisfied rather than this name-free interface.
+    return false;
   }
   return false;
 }
@@ -4639,6 +4744,7 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
       // Callable requirements constrain ordinary invocation rather than a
       // member operator expression synthesized by this table.
       break;
+    case StructuralConstraintKind::ReadMember:
     case StructuralConstraintKind::None:
       break;
     }

@@ -4097,6 +4097,22 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
 
   if (const auto *member = exprAs<Get>(expr.callee().get())) {
     const SemanticType *objectType = semanticModel.findType(*member->object());
+    if (objectType && containsOpenTypeParameter(*objectType)) {
+      if (const auto result = symbolicReadMemberReturnType(
+              *objectType, member->name().lexeme)) {
+        if (hasExplicitGenericArguments || !argumentTypes.empty()) {
+          report(expr.paren(),
+                 "Required member takes no arguments or generic arguments.",
+                 "GTI-S2029");
+        }
+        semanticModel.record(
+            expr,
+            ResolvedCallInfo{.returnType = *result,
+                             .receiverMode = CallReceiverMode::ReadOnlyPlace});
+        currentType = *result;
+        return;
+      }
+    }
     if (objectType != nullptr &&
         objectType->kind == SemanticType::TypeParameter) {
       const bool generatedRangeEndpoint =
@@ -5243,6 +5259,14 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
     currentType = SemanticType::Function;
     return;
   }
+  if (containsOpenTypeParameter(objectType) &&
+      symbolicReadMemberReturnType(objectType, expr.name().lexeme)) {
+    if (!analyzingCallCallee) {
+      report(expr.name(), "Required member names must be called immediately.");
+    }
+    currentType = SemanticType::Function;
+    return;
+  }
   if (objectType.kind == SemanticType::Array) {
     const bool generatedRangeEndpoint =
         expr.name().generated &&
@@ -6223,6 +6247,57 @@ auto SemanticVisitor::Impl::visitLayoutQueryExpr(const LayoutQuery &expr)
       expr,
       ConstantValue{ConstantInteger{
           .magnitude = value, .domain = {.width = 64, .signedValue = false}}});
+}
+
+auto SemanticVisitor::Impl::recordMemberRequirementReceiver(
+    const MemberRequirement &query, const SemanticType &type) -> void {
+  const auto symbol = recordToolingSymbol(
+      query.binding(), SymbolKind::RequirementParameter,
+      qualifiedName(currentNamespace, query.binding().lexeme), type);
+  semanticModel.recordOccurrence(
+      {.sourceUnit = sourceUnitFor(query.binding()),
+       .span = tokenSpan(query.binding()),
+       .kind = SemanticOccurrenceKind::Symbol,
+       .symbol = symbol,
+       .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
+       .name = query.binding().lexeme,
+       .type = type});
+  semanticModel.recordOccurrence(
+      {.sourceUnit = sourceUnitFor(query.receiverUse()),
+       .span = tokenSpan(query.receiverUse()),
+       .kind = SemanticOccurrenceKind::Symbol,
+       .symbol = symbol,
+       .roles = OccurrenceRole::Reference,
+       .name = query.receiverUse().lexeme,
+       .type = type});
+}
+
+auto SemanticVisitor::Impl::visitMemberRequirementExpr(
+    const MemberRequirement &expr) -> void {
+  currentType = SemanticType::Bool;
+  const auto before = diagnostics.size();
+  validateType(expr.receiver());
+  validateType(expr.result());
+  recordTypeUse(expr.receiver());
+  recordTypeUse(expr.result());
+  const auto receiver = typeOf(expr.receiver());
+  const auto result = typeOf(expr.result());
+  recordMemberRequirementReceiver(expr, receiver);
+  if (diagnostics.size() != before || receiver == SemanticType::Unknown ||
+      result == SemanticType::Unknown)
+    return;
+  if (containsOpenTypeParameter(receiver) ||
+      containsOpenTypeParameter(result)) {
+    if (analyzingDependentConstantCondition)
+      constantConditionGenericDependency = true;
+    return;
+  }
+  const bool satisfied =
+      receiver.kind == SemanticType::Reference &&
+      receiver.arguments.size() == 1 &&
+      readMemberRequirementSatisfied(receiver.arguments.front(),
+                                     expr.member().lexeme, result);
+  semanticModel.recordConstant(expr, ConstantValue{satisfied});
 }
 
 auto SemanticVisitor::Impl::visitLiteralExpr(const LiteralExpr &expr) -> void {
@@ -8462,7 +8537,8 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
                               context);
     }
   }
-  if (exprAs<LayoutQuery>(&source) != nullptr) {
+  if (exprAs<LayoutQuery>(&source) != nullptr ||
+      exprAs<MemberRequirement>(&source) != nullptr) {
     if (const std::optional<ConstantValue> value =
             semanticModel.findConstant(source)) {
       return constexprSuccess(source, *value, context);

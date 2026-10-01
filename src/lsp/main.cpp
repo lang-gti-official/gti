@@ -1116,6 +1116,7 @@ SemanticClassification classificationForSymbol(const lang::SymbolRecord &symbol,
     type = Variable;
     break;
   case lang::SymbolKind::Parameter:
+  case lang::SymbolKind::RequirementParameter:
   case lang::SymbolKind::ValueParameter:
     type = Parameter;
     break;
@@ -1146,6 +1147,7 @@ SemanticClassification classificationForSymbol(const lang::SymbolRecord &symbol,
   case lang::SymbolKind::GlobalVariable:
   case lang::SymbolKind::LocalVariable:
   case lang::SymbolKind::Parameter:
+  case lang::SymbolKind::RequirementParameter:
   case lang::SymbolKind::LambdaCapture:
     if (!symbol.mutableBinding) {
       modifiers |= Readonly;

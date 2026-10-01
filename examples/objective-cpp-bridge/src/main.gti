@@ -1,0 +1,24 @@
+#include <std/string>
+
+extern "C" {
+  int64_t apple_bridge_copy_label(uint8_t* output, uint64_t capacity);
+}
+
+int main() {
+  mut uint8_t buffer[64] = {};
+  mut int64_t written = -1;
+  unsafe {
+    // The bridge writes at most 64 bytes, does not retain this pointer, and
+    // finishes copying before its Objective-C autorelease pool is drained.
+    written = apple_bridge_copy_label(&buffer[0], uint64_t(64));
+  }
+  if (written < 0 || written > 64) {
+    return 1;
+  }
+  mut std::string label{};
+  for (mut uint64_t index = 0; index < uint64_t(written); index++) {
+    label.push_back(char(buffer[index]));
+  }
+  std::println(label);
+  return 0;
+}

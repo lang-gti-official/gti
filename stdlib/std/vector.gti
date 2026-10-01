@@ -1,4 +1,5 @@
 #include <std/span>
+#include <std/utility>
 
 // The storage-backed value, capacity, indexed operations, move-aware
 // insertion/erasure, and bounded read-only/mutable iteration are implemented.
@@ -333,13 +334,14 @@ public:
     other.reserved = previous_capacity;
   }
 
-  vector<T> clone()
-    requires std::copyable<T> {
+  /// Duplicates each element using its clone contract (or ordinary copying).
+  vector<T> clone() requires std::cloneable<T> {
     mut vector<T> result = vector<T>();
     size_t live = gti_internal::prefix_storage_length(this.data);
     result.reserve(live);
     for (mut size_t index = 0; index < live; index++) {
-      result.push_back(gti_internal::prefix_storage_read(this.data, index));
+      result.push_back(
+          std::clone(gti_internal::prefix_storage_read(this.data, index)));
     }
     return std::move(result);
   }

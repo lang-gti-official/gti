@@ -314,7 +314,8 @@ struct ScriptNativeOutput {
 };
 
 std::optional<ScriptNativeOutput>
-parseOutput(const BuildScriptPlan &plan, std::vector<Diagnostic> &diagnostics) {
+parseOutput(const BuildScriptPlan &plan, const TargetInfo &target,
+            std::vector<Diagnostic> &diagnostics) {
   const std::filesystem::path manifest = plan.outputDirectory / outputFilename;
   const std::optional<std::string> source = readFile(manifest);
   if (!source) {
@@ -395,10 +396,18 @@ parseOutput(const BuildScriptPlan &plan, std::vector<Diagnostic> &diagnostics) {
   }
   for (const std::filesystem::path &sourcePath : output.cppSources) {
     const std::filesystem::path extension = sourcePath.extension();
-    if (extension != ".cpp" && extension != ".cc" && extension != ".cxx") {
+    if (extension != ".cpp" && extension != ".cc" && extension != ".cxx" &&
+        extension != ".mm") {
       diagnostics.push_back(scriptDiagnostic(
           plan, "GTI-B2005",
-          "Build script C++ source must use '.cpp', '.cc', or '.cxx': " +
+          "Build script C++ source must use '.cpp', '.cc', '.cxx', or '.mm': " +
+              sourcePath.string() + "."));
+      valid = false;
+    }
+    if (extension == ".mm" && target.os != "macos") {
+      diagnostics.push_back(scriptDiagnostic(
+          plan, "GTI-B2005",
+          "Build script Objective-C++ '.mm' source requires a macOS target: " +
               sourcePath.string() + "."));
       valid = false;
     }
@@ -581,7 +590,7 @@ executeBuildScripts(const ProjectBuildPlan &plan,
     if (readFile(state) == expectedState) {
       std::vector<Diagnostic> staleDiagnostics;
       if (std::optional<ScriptNativeOutput> native =
-              parseOutput(script, staleDiagnostics)) {
+              parseOutput(script, plan.target(), staleDiagnostics)) {
         appendOutput(inputs, script, std::move(*native));
         result.outcomes.push_back(
             {.packageIdentity = script.packageIdentity, .reused = true});
@@ -646,7 +655,7 @@ executeBuildScripts(const ProjectBuildPlan &plan,
       return result;
     }
     std::optional<ScriptNativeOutput> native =
-        parseOutput(script, result.diagnostics);
+        parseOutput(script, plan.target(), result.diagnostics);
     if (!native) {
       return result;
     }
