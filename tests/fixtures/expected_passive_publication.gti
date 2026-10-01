@@ -1,0 +1,90 @@
+#include <std/memory>
+
+struct Marker {
+  mut int number;
+  Marker(int number) : number(number) {}
+};
+
+struct MoveOnly {
+  int number;
+  MoveOnly(int number) : number(number) {}
+  MoveOnly(MoveOnly& other) = delete;
+  MoveOnly(MoveOnly&& other) = default;
+};
+
+Marker plain(int number) { return Marker(number); }
+Marker checked(int number, int divisor) { return Marker(number / divisor); }
+expected<Marker, int> wrap_plain(int number) { return plain(number); }
+expected<Marker, int> wrap_checked(int number, int divisor) {
+  return checked(number, divisor);
+}
+expected<Marker, Marker> alternative(bool success) {
+  if (success) { return Marker(11); }
+  return unexpected(Marker(17));
+}
+expected<int, Marker> error_only() { return unexpected(Marker(19)); }
+expected<MoveOnly, int> move_only() { return MoveOnly(23); }
+
+struct Factory {
+  Marker make(int number) { return Marker(number); }
+  expected<Marker, int> wrapped(int number) { return this.make(number); }
+};
+
+struct Report {
+  Marker found;
+  bool success;
+  Report(Marker found, bool success) : found(found), success(success) {}
+  Marker value_or(Marker fallback) {
+    if (this.success) { return this.found; }
+    return fallback;
+  }
+};
+expected<Marker, int> wrap_report(int number, bool success) {
+  Report report = Report(Marker(number), success);
+  return report.value_or(plain(37));
+}
+
+int main() {
+  auto result = wrap_plain(7);
+  if (!result) { return 1; }
+  mut Marker copy = result.value();
+  copy.number = 29;
+  if (result.value().number != 7 || copy.number != 29) { return 2; }
+
+  mut auto mutable_result = wrap_checked(20, 2);
+  Marker mutable_copy = mutable_result.value();
+  if (mutable_copy.number != 10 || mutable_result.value().number != 10) { return 3; }
+
+  auto success = alternative(true);
+  Marker success_copy = success.value();
+  if (success_copy.number != 11) { return 4; }
+  auto failure = alternative(false);
+  Marker error_copy = failure.error();
+  if (error_copy.number != 17 || failure.error().number != 17) { return 5; }
+  auto failure_only = error_only();
+  Marker another_error = failure_only.error();
+  if (another_error.number != 19) { return 6; }
+
+  mut auto movable = move_only();
+  MoveOnly moved = std::move(movable).value();
+  if (moved.number != 23) { return 7; }
+
+  Factory factory = Factory();
+  auto member_result = factory.wrapped(31);
+  Marker member_copy = member_result.value();
+  if (member_copy.number != 31) { return 8; }
+  mut int index = 0;
+  while (index < 4) {
+    auto iteration = wrap_plain(index);
+    Marker iteration_copy = iteration.value();
+    if (iteration_copy.number != index) { return 9; }
+    index += 1;
+  }
+  auto report_result = wrap_report(41, true);
+  Marker report_copy = report_result.value();
+  if (report_copy.number != 41) { return 10; }
+  auto fallback = wrap_report(43, false);
+  Marker fallback_copy = fallback.value();
+  if (fallback_copy.number != 37) { return 11; }
+  return 0;
+}

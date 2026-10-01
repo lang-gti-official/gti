@@ -3844,6 +3844,26 @@ int32_t main() {
          "a complete passive fixed-array initializer should be proved "
          "failure-free");
 
+  auto missingStage = frontend.mir;
+  auto *changedConstructor = const_cast<lang::MirConstructorInstance *>(
+      missingStage.findConstructorInstance(constructor.id));
+  bool detachedStage = false;
+  for (auto &block : changedConstructor->body.blocks) {
+    for (auto &instruction : block.instructions) {
+      if (instruction.kind == lang::MirInstructionKind::Initialize &&
+          instruction.constructorInitializer == 1) {
+        instruction.constructorInitializer = 0;
+        detachedStage = true;
+      }
+    }
+  }
+  const auto missingEffects =
+      lang::deriveMirDefinedFailureEffects(missingStage);
+  expect(detachedStage && !lang::verifyMirProgram(missingStage).valid() &&
+             missingEffects.constructors[constructor.id - 1],
+         "an aggregate computation without its exact field-write stage cannot "
+         "prove a passive array constructor failure-free");
+
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
@@ -7217,6 +7237,86 @@ void testNestedOwnedFieldAssignment() {
   }
   expect(assignments == 1,
          "fixture must exercise one nested loan-rooted owned replacement");
+
+  const auto freshFixture = std::filesystem::path(__FILE__).parent_path() /
+                            "fixtures/constexpr_dependent_branches.gti";
+  std::ifstream freshInput(freshFixture);
+  const std::string freshSource{std::istreambuf_iterator<char>(freshInput), {}};
+  const auto fresh =
+      analyzeWithStandardLibrary(freshFixture.string(), freshSource);
+  expect(fresh.canGenerateCode(),
+         "dependent receiver restoration must retain a concrete MIR schedule");
+  if (!fresh.canGenerateCode())
+    return;
+  const auto freshRows = buildRows(fresh, fresh.mir);
+  const lang::CppMirBodyEmissionMap freshMap(freshRows);
+  expect(lang::CppMirBodyEmitter(fresh.mir, freshMap).analyzeProgram().ready(),
+         "a fresh class value can restore an exact mutable owned field");
+  std::size_t restoredFields = 0;
+  for (const auto &function : fresh.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        const auto *destination =
+            instruction.destination
+                ? function.body.findPlace(*instruction.destination)
+                : nullptr;
+        if (instruction.kind != lang::MirInstructionKind::Assign ||
+            destination == nullptr ||
+            destination->root != lang::MirPlaceRootKind::This ||
+            destination->projections.size() != 1 ||
+            destination->type.kind != lang::SemanticType::Class)
+          continue;
+        ++restoredFields;
+        expect(instruction.replacementPair != 0 &&
+                   instruction.lifecycle.size() == 1 &&
+                   instruction.lifecycle.front().kind ==
+                       lang::MirLifecycleEventKind::Replace &&
+                   instruction.lifecycle.front().target == 0,
+               "receiver restoration keeps paired cleanup and the containing "
+               "object's sole field cleanup authority");
+        for (int mutation = 0; mutation != 4; ++mutation) {
+          auto malformed = fresh.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          if (mutation == 0) {
+            changed->receiverMutability = lang::ReceiverMutability::ReadOnly;
+          } else if (mutation == 1) {
+            auto *owner = const_cast<lang::MirClassInstance *>(
+                malformed.findClassInstance(*function.owner));
+            for (auto &field : owner->declaredFields)
+              if (field.symbol == destination->projections.front().field)
+                field.access = lang::AccessMode::ReadOnly;
+          } else {
+            for (auto &changedBlock : changed->body.blocks)
+              for (auto &assignment : changedBlock.instructions)
+                if (assignment.id == instruction.id) {
+                  if (mutation == 2)
+                    assignment.replacementPair = 0;
+                  else
+                    assignment.lifecycle.clear();
+                }
+          }
+          expect(!lang::CppMirBodyEmitter(malformed, freshMap)
+                      .analyzeProgram()
+                      .ready(),
+                 "fresh field replacement rejects immutable access, missing "
+                 "cleanup pairing, or missing lifetime publication");
+        }
+        auto incomplete = freshRows;
+        std::erase_if(incomplete.symbols, [&](const auto &row) {
+          return row.kind == lang::CppMirSymbolRepresentationKind::Field &&
+                 row.symbol == destination->projections.front().field;
+        });
+        const lang::CppMirBodyEmissionMap missing(std::move(incomplete));
+        expect(!lang::CppMirBodyEmitter(fresh.mir, missing)
+                    .analyzeProgram()
+                    .ready(),
+               "fresh field publication requires its exact representation row");
+      }
+    }
+  }
+  expect(restoredFields == 1,
+         "dependent fixture exercises exactly one fresh owned field restore");
 }
 
 void testNestedBorrowedFieldProjection() {

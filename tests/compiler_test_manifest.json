@@ -342,6 +342,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testUniqueOwnerSwap",
+      "suite": "ownership"
+    },
+    {
       "name": "testPolymorphicUniqueOwnerUpcast",
       "suite": "ownership"
     },
@@ -499,6 +503,34 @@
     },
     {
       "name": "testConstexprBindings",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConstexprStringViewInspection",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testMirConstantEvaluation",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testMirConstantRecords",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConstexprLibrary",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConstexprOperators",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testDependentConstexprBranches",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConstexprReadOnlyReferences",
       "suite": "constexpr"
     },
     {

@@ -1,8 +1,152 @@
 #include "mir_verification_queries.h"
 
 #include <algorithm>
+#include <climits>
 
 namespace lang::mir_detail {
+
+namespace {
+
+[[nodiscard]] std::optional<std::uint64_t>
+signedMinimumMagnitude(const SemanticType &type) {
+  switch (type.kind) {
+  case SemanticType::Int8:
+    return std::uint64_t{1} << 7U;
+  case SemanticType::Int16:
+    return std::uint64_t{1} << 15U;
+  case SemanticType::Int32:
+    return std::uint64_t{1} << 31U;
+  case SemanticType::Int64:
+    return std::uint64_t{1} << 63U;
+  default:
+    return std::nullopt;
+  }
+}
+
+[[nodiscard]] bool integerLiteralCarrierCanRepresent(const SemanticType &type,
+                                                     std::uint64_t magnitude) {
+  switch (type.kind) {
+  case SemanticType::Int8:
+    return magnitude <= static_cast<std::uint64_t>(INT8_MAX);
+  case SemanticType::Int16:
+    return magnitude <= static_cast<std::uint64_t>(INT16_MAX);
+  case SemanticType::Int32:
+    return magnitude <= static_cast<std::uint64_t>(INT32_MAX);
+  case SemanticType::Int64:
+    return magnitude <= static_cast<std::uint64_t>(INT64_MAX);
+  case SemanticType::UInt8:
+    return magnitude <= UINT8_MAX;
+  case SemanticType::UInt16:
+    return magnitude <= UINT16_MAX;
+  case SemanticType::UInt32:
+    return magnitude <= UINT32_MAX;
+  case SemanticType::UInt64:
+    return true;
+  default:
+    return false;
+  }
+}
+
+} // namespace
+
+// GTI parses the signed minimum as a positive magnitude followed by unary
+// negation. The magnitude is intentionally one past the positive range, so it
+// has no independently spellable value of the result type. Fuse the exact
+// one-use source chain. Parentheses can retain an explicit MIR Identity
+// between the magnitude and negation; those identities must be exact,
+// failure-free, same-type, and single-use. Program-constant substitution may
+// retain the result type on the magnitude, while a contextually typed direct
+// literal may use a wider integer carrier that can represent the positive
+// magnitude.
+[[nodiscard]] const MirInstruction *
+fusedSignedMinimumLiteral(const MirBody &body, const MirInstruction &negation) {
+  if (negation.kind != MirInstructionKind::Compute ||
+      negation.operation != MirOperation::Negate || !negation.result ||
+      negation.operands.size() != 1 ||
+      negation.operands.front().kind != MirOperandKind::Value ||
+      !negation.localFailureSites.empty() || !negation.definedFailure.empty()) {
+    return nullptr;
+  }
+  const MirInstruction *consumer = &negation;
+  const MirValue *operand = body.findValue(negation.operands.front().value);
+  const MirInstruction *literal = nullptr;
+  while (operand != nullptr) {
+    const MirInstruction *producer = definitionFor(body, operand->id);
+    if (producer == nullptr || !producer->result ||
+        *producer->result != operand->id) {
+      return nullptr;
+    }
+    const std::vector<MirValueUse> &uses = body.usesOf(operand->id);
+    if (uses.size() != 1 ||
+        uses.front().kind != MirValueUseKind::InstructionOperand ||
+        uses.front().instruction != consumer->id ||
+        uses.front().operandIndex != 0) {
+      return nullptr;
+    }
+    if (producer->operation != MirOperation::Identity) {
+      literal = producer;
+      break;
+    }
+    if (producer->kind != MirInstructionKind::Compute ||
+        producer->operands.size() != 1 ||
+        producer->operands.front().kind != MirOperandKind::Value ||
+        producer->info.type != producer->operands.front().type ||
+        !producer->localFailureSites.empty() ||
+        !producer->definedFailure.empty()) {
+      return nullptr;
+    }
+    consumer = producer;
+    operand = body.findValue(producer->operands.front().value);
+  }
+  const std::optional<std::uint64_t> minimum =
+      signedMinimumMagnitude(negation.info.type);
+  const auto *magnitude = literal != nullptr && literal->literal
+                              ? std::get_if<std::uint64_t>(&*literal->literal)
+                              : nullptr;
+  if (literal == nullptr || literal->kind != MirInstructionKind::Compute ||
+      literal->operation != MirOperation::Literal || !literal->result ||
+      operand == nullptr || *literal->result != operand->id ||
+      literal->info.type != negation.operands.front().type ||
+      !literal->localFailureSites.empty() || !literal->definedFailure.empty() ||
+      !minimum || magnitude == nullptr || *magnitude != *minimum ||
+      (literal->info.type != negation.info.type &&
+       !integerLiteralCarrierCanRepresent(literal->info.type, *magnitude))) {
+    return nullptr;
+  }
+  return literal;
+}
+
+[[nodiscard]] const MirInstruction *
+fusedSignedMinimumNegation(const MirBody &body, const MirInstruction &carrier) {
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &candidate : block.instructions) {
+      const MirInstruction *literal =
+          fusedSignedMinimumLiteral(body, candidate);
+      if (literal == nullptr) {
+        continue;
+      }
+      const MirValue *operand =
+          body.findValue(candidate.operands.front().value);
+      while (operand != nullptr) {
+        const MirInstruction *producer = definitionFor(body, operand->id);
+        if (producer == nullptr) {
+          break;
+        }
+        if (producer == &carrier) {
+          return &candidate;
+        }
+        if (producer == literal ||
+            producer->operation != MirOperation::Identity ||
+            producer->operands.size() != 1 ||
+            producer->operands.front().kind != MirOperandKind::Value) {
+          break;
+        }
+        operand = body.findValue(producer->operands.front().value);
+      }
+    }
+  }
+  return nullptr;
+}
 
 const MirInstruction *definitionFor(const MirBody &body, MirValueId valueId) {
   const MirValue *value = body.findValue(valueId);

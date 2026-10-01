@@ -6377,6 +6377,16 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         instruction.parameterTypes.empty() && instruction.lifecycle.empty() &&
         !instruction.functionTarget && !instruction.constructorTarget &&
         !instruction.lambdaTarget;
+    const bool sourceLocationIntrinsic =
+        instruction.intrinsic == IntrinsicKind::SourceFileName ||
+        instruction.intrinsic == IntrinsicKind::SourceFunctionName ||
+        instruction.intrinsic == IntrinsicKind::SourceLine ||
+        instruction.intrinsic == IntrinsicKind::SourceColumn;
+    const bool sourceLocationText =
+        instruction.intrinsic == IntrinsicKind::SourceFileName ||
+        instruction.intrinsic == IntrinsicKind::SourceFunctionName;
+    const SemanticType sourceLocationResult =
+        sourceLocationText ? SemanticType::StringView : SemanticType::UInt32;
     const MirPlace *successResultDestination =
         instruction.successResultDestination
             ? body.findPlace(*instruction.successResultDestination)
@@ -6459,7 +6469,23 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
            instruction.operation != MirOperation::EnumConstant &&
            instruction.operation != MirOperation::Negate))) ||
         (instruction.kind != MirInstructionKind::CallBody &&
-         instruction.bodyTarget.has_value())) {
+         instruction.bodyTarget.has_value()) ||
+        (instruction.sourceLocation.has_value() != sourceLocationIntrinsic) ||
+        (sourceLocationIntrinsic &&
+         (instruction.kind != MirInstructionKind::Call || !instruction.result ||
+          instruction.info.type != sourceLocationResult ||
+          instruction.info.category != ValueCategory::Value ||
+          instruction.receiver || !instruction.operands.empty() ||
+          !instruction.parameterTypes.empty() || instruction.functionTarget ||
+          instruction.constructorTarget || instruction.lambdaTarget ||
+          instruction.bodyTarget || instruction.callableInvocation ||
+          instruction.callableBoundary ||
+          !instruction.callableArguments.empty() ||
+          instruction.synchronization.kind !=
+              SynchronizationOperationKind::None ||
+          !instruction.definedFailure.empty() ||
+          !instruction.localFailureSites.empty() ||
+          !instruction.lifecycle.empty()))) {
       return false;
     }
     const auto validCallableInvocation = [&]() {

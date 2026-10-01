@@ -662,6 +662,7 @@ struct MirInstruction {
   std::optional<std::size_t> enumVariant;
   std::optional<std::size_t> payloadIndex;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  std::optional<SourceLocationLiteral> sourceLocation;
   SynchronizationOperation synchronization;
   DefinedFailureOperation definedFailure;
   // Exact contained element cleanup for explicit sparse-slot destruction and
@@ -1250,6 +1251,7 @@ struct MirConstructorInitializer {
 struct MirConstructorInstance {
   HirConstructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
+  bool constexprConstructor = false;
   // Constructor-local generic arguments are part of the concrete instance
   // identity just as owner arguments are part of the class instance. Keep
   // them explicit in MIR so verification and later phases never have to

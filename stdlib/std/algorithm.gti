@@ -9,21 +9,21 @@
 #include <std/vector>
 
 namespace std {
-T min<std::totally_ordered T>(T left, T right) {
+constexpr T min<std::totally_ordered T>(T left, T right) {
   if (right < left) {
     return std::move(right);
   }
   return std::move(left);
 }
 
-T max<std::totally_ordered T>(T left, T right) {
+constexpr T max<std::totally_ordered T>(T left, T right) {
   if (left < right) {
     return std::move(right);
   }
   return std::move(left);
 }
 
-T clamp<std::totally_ordered T>(T value, T low, T high) {
+constexpr T clamp<std::totally_ordered T>(T value, T low, T high) {
   if (value < low) {
     return std::move(low);
   }

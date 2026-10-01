@@ -8,6 +8,104 @@
 
 namespace lang {
 
+ConstantEvaluation convertConstantToType(const ConstantValue &value,
+                                         const SemanticType &target) {
+  if (const auto *checked = std::get_if<ConstantCheckedIntegerResult>(&value)) {
+    if (target.kind == SemanticType::Expected && target.arguments.size() == 2 &&
+        constantIntegerDomain(target.arguments[0]) == checked->domain &&
+        target.arguments[1].kind == SemanticType::Enum) {
+      return {.value = value};
+    }
+    return {.failure = ConstantEvaluationFailure::UnsupportedType};
+  }
+  if (const auto *enumerator = std::get_if<ConstantEnum>(&value)) {
+    return target.kind == SemanticType::Enum && target.enumId != 0 &&
+                   target.enumId == enumerator->enumId
+               ? ConstantEvaluation{.value = value}
+               : ConstantEvaluation{
+                     .failure = ConstantEvaluationFailure::UnsupportedType};
+  }
+  if (const auto *aggregate = std::get_if<ConstantAggregateValue>(&value)) {
+    if (aggregate->value == nullptr || aggregate->value->exactType == nullptr ||
+        *aggregate->value->exactType != target) {
+      return {.failure = ConstantEvaluationFailure::UnsupportedType};
+    }
+    if (target.kind == SemanticType::Array &&
+        aggregate->value->kind == ConstantAggregateKind::Array &&
+        aggregate->value->elements.size() == target.arrayLength) {
+      return {.value = value};
+    }
+    if (target.kind == SemanticType::Class && target.classId != 0 &&
+        aggregate->value->kind == ConstantAggregateKind::Object &&
+        aggregate->value->identity == target.classId) {
+      return {.value = value};
+    }
+    return {.failure = ConstantEvaluationFailure::UnsupportedType};
+  }
+  if (target == SemanticType::UInt8) {
+    if (const auto *character = std::get_if<CharacterLiteral>(&value)) {
+      return {.value = ConstantValue{
+                  makeConstantInteger({.magnitude = character->value},
+                                      CheckedIntegerDomain{.width = 8})}};
+    }
+  }
+  if (target == SemanticType::Char) {
+    if (const auto *integer = std::get_if<ConstantInteger>(&value);
+        integer != nullptr && !integer->negative &&
+        integer->domain.width == 8 && !integer->domain.signedValue) {
+      return {.value = ConstantValue{CharacterLiteral{
+                  static_cast<std::uint8_t>(integer->magnitude)}}};
+    }
+  }
+  if (const std::optional<CheckedIntegerDomain> domain =
+          constantIntegerDomain(target)) {
+    return convertConstantInteger(value, *domain);
+  }
+  if (const std::optional<BinaryFloatFormat> format =
+          semanticFloatFormat(target)) {
+    return convertConstantFloat(value, *format);
+  }
+  if ((target == SemanticType::Bool && std::holds_alternative<bool>(value)) ||
+      (target == SemanticType::Char &&
+       std::holds_alternative<CharacterLiteral>(value)) ||
+      (target == SemanticType::StringView &&
+       std::holds_alternative<std::string>(value)) ||
+      (target == SemanticType::NullPtr &&
+       std::holds_alternative<NullConstant>(value))) {
+    return {.value = value};
+  }
+  return {.failure = ConstantEvaluationFailure::UnsupportedType};
+}
+
+ConstantEvaluation evaluateConstantTextSize(const ConstantValue &text) {
+  const auto *bytes = std::get_if<std::string>(&text);
+  if (bytes == nullptr) {
+    return {.failure = ConstantEvaluationFailure::InvalidOperands};
+  }
+  return {.value = makeConstantInteger({.magnitude = bytes->size()},
+                                       {.width = 64, .signedValue = false})};
+}
+
+ConstantEvaluation evaluateConstantTextEmpty(const ConstantValue &text) {
+  const auto *bytes = std::get_if<std::string>(&text);
+  if (bytes == nullptr) {
+    return {.failure = ConstantEvaluationFailure::InvalidOperands};
+  }
+  return {.value = bytes->empty()};
+}
+
+ConstantEvaluation evaluateConstantTextIndex(const ConstantValue &text,
+                                             const ConstantValue &index) {
+  const auto *bytes = std::get_if<std::string>(&text);
+  const auto offset = constantUnsignedMagnitude(index);
+  if (bytes == nullptr || !offset || *offset >= bytes->size()) {
+    return {.failure = ConstantEvaluationFailure::InvalidOperands};
+  }
+  // GTI char is an unsigned byte, independently of the host's char signedness.
+  return {.value = CharacterLiteral{static_cast<std::uint8_t>(
+              static_cast<unsigned char>((*bytes)[*offset]))}};
+}
+
 bool operator==(const ConstantAggregate &left, const ConstantAggregate &right) {
   const bool sameType =
       left.exactType == right.exactType ||

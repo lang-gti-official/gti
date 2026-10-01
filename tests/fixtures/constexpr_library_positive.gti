@@ -1,0 +1,61 @@
+#include <std/algorithm>
+#include <std/numeric>
+#include <std/cmath>
+#include <std/utility>
+#include <std/string>
+
+constexpr T identity<T>(T value) { return std::move(value); }
+
+struct Holder<T> {
+  T value;
+  constexpr Holder(T input) : value(std::move(input)) {}
+  constexpr int tag() { return 7; }
+};
+
+constexpr bool is_minimum(int8_t value) { return value == -128; }
+static_assert(is_minimum(int8_t(-128)));
+static_assert(!is_minimum(int8_t(-127)));
+
+constexpr int small = std::min(7, 3);
+constexpr int large = std::max(7, 3);
+constexpr int limited = std::clamp(12, 2, 9);
+constexpr int multiple = std::lcm(12, 18);
+constexpr int middle = std::midpoint(int(-2147483648), 2147483647);
+constexpr double floating_middle = std::midpoint(2.0, 8.0);
+constexpr float magnitude = std::abs(float(-2.5));
+constexpr std::pair<int, int> pair = std::make_pair(3, 7);
+constexpr std::pair<int, std::pair<int, int>> nested =
+    std::make_pair(2, std::make_pair(3, 4));
+static_assert(small == 3 && large == 7 && limited == 9);
+static_assert(multiple == 36 && middle == -1);
+static_assert(floating_middle == 5.0 && magnitude == float(2.5));
+static_assert(pair.first == 3 && pair.second == 7);
+static_assert(nested.first == 2 && nested.second.second == 4);
+static_assert(std::min(int8_t(-128), int8_t(127)) == -128);
+static_assert(std::min(int16_t(-32768), int16_t(7)) == -32768);
+static_assert(std::min(int64_t(-9223372036854775808), int64_t(7)) ==
+              -9223372036854775808);
+static_assert(std::max(uint8_t(0), uint8_t(255)) == 255);
+static_assert(std::lcm(0, 18) == 0);
+static_assert(std::midpoint(4, 1) == 3);
+static_assert(std::clamp(0, 2, 9) == 2);
+static_assert(std::clamp(5, 2, 9) == 5);
+
+int main() {
+  std::string owned = identity(std::string("asset"));
+  std::pair<std::string, int> runtime_pair =
+      std::make_pair(std::move(owned), 5);
+  Holder<std::string> holder = Holder<std::string>(std::string("asset"));
+  std::string smaller = std::min(std::string("a"), std::string("z"));
+  std::string larger = std::max(std::string("a"), std::string("z"));
+  std::string bounded = std::clamp(std::string("m"), std::string("b"), std::string("j"));
+  return std::min(7, 3) == small && std::max(7, 3) == large &&
+         std::clamp(12, 2, 9) == limited && std::lcm(12, 18) == multiple &&
+         std::midpoint(int(-2147483648), 2147483647) == middle &&
+         std::midpoint(2.0, 8.0) == floating_middle &&
+         std::abs(float(-2.5)) == magnitude &&
+         is_minimum(int8_t(-128)) && !is_minimum(int8_t(-127)) &&
+         holder.tag() == 7 && holder.value.size() == 5 &&
+         smaller == "a" && larger == "z" && bounded == "j" &&
+         runtime_pair.first.size() == 5 && runtime_pair.second == 5 ? 0 : 1;
+}

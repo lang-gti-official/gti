@@ -217,6 +217,8 @@ public:
                initializer.targetType == SemanticType::Double ||
                initializer.targetType == SemanticType::Bool ||
                initializer.targetType == SemanticType::Char ||
+               (initializer.targetType.kind == SemanticType::Array &&
+                field->info.traits.drop == DropKind::Trivial) ||
                initializer.targetType.kind == SemanticType::Class ||
                (initializer.targetType.kind == SemanticType::Enum &&
                 std::any_of(program.enumDeclarations().begin(),
@@ -898,6 +900,18 @@ private:
       return MirDropType{.type = type,
                          .classInstance = owner->id,
                          .aggregate = {*pointee},
+                         .requiresActiveCleanup = true};
+    }
+    if (owner != program.classInstances().end() &&
+        owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
+      if (type.arguments.size() != 1 || !owner->requiresActiveCleanup)
+        return std::nullopt;
+      auto payload = uniqueCleanupType(type.arguments.front(), visiting);
+      if (!payload || !payload->requiresActiveCleanup)
+        return std::nullopt;
+      return MirDropType{.type = type,
+                         .classInstance = owner->id,
+                         .aggregate = {*payload},
                          .requiresActiveCleanup = true};
     }
     if (owner != program.classInstances().end() && owner->destructor &&
@@ -4244,6 +4258,7 @@ private:
                                             value.id, value.info)}
                                       : resultFor(value),
                         .intrinsic = value.intrinsic,
+                        .sourceLocation = value.sourceLocation,
                         .synchronization = value.synchronization,
                         .definedFailure = std::move(failure),
                         .dispatch = value.dispatch,

@@ -817,6 +817,9 @@ private:
     const HirConstructorInstance &source = hir.constructorInstances()[index];
     const MirConstructorInstance &lowered = mir.constructorInstances()[index];
     if (source.id != lowered.id || source.owner != lowered.owner ||
+        source.constexprConstructor != lowered.constexprConstructor ||
+        source.constexprConstructor !=
+            (source.source != nullptr && source.source->isConstexpr()) ||
         source.typeArguments != lowered.typeArguments ||
         source.valueArguments != lowered.valueArguments ||
         source.parameterTypes != lowered.parameterTypes ||

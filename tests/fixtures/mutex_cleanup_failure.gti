@@ -1,0 +1,41 @@
+#include <std/memory>
+#include <std/mutex>
+#include <std/string>
+#include <std/vector>
+
+class Item {
+  int32_t divisor;
+public:
+  Item(int32_t divisor) : divisor(divisor) {}
+  ~Item() {
+    std::println(7);
+    std::println(12 / this.divisor);
+  }
+};
+
+class State {
+  std::unique_ptr<Item> first;
+  std::unique_ptr<Item> last;
+public:
+  State(int32_t divisor)
+      : first(std::make_unique<Item>(1)),
+        last(std::make_unique<Item>(divisor)) {}
+};
+
+[[unsafe_transfer, unsafe_share]] class Wrapper {
+  mut std::unique_ptr<std::mutex<State>> state;
+public:
+  Wrapper(int32_t divisor)
+      : state(std::unique_ptr<std::mutex<State>>(nullptr)) {
+    this.state = std::make_unique<std::mutex<State>>(State(divisor));
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  int32_t phase = argc - 1;
+  int32_t divisor = phase == 0 ? 1 : 0;
+  auto value = std::make_shared<Wrapper>(divisor);
+  std::println(3);
+  if (phase == 2) { return 10 / (argc - 3); }
+  return 0;
+}

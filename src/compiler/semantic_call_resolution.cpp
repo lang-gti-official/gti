@@ -101,6 +101,8 @@ auto SemanticVisitor::Impl::uniqueOwnerIntrinsicName(IntrinsicKind intrinsic)
     return "unique_owner_borrow_mut";
   case IntrinsicKind::UniqueOwnerIsNull:
     return "unique_owner_is_null";
+  case IntrinsicKind::UniqueOwnerSwap:
+    return "unique_owner_swap";
   case IntrinsicKind::UniqueOwnerUpcast:
     return "unique_owner_upcast";
   default:

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -67,6 +68,15 @@ struct Diagnostic {
   std::vector<std::string> hints;
   std::vector<DiagnosticTag> tags;
 };
+
+[[nodiscard]] inline bool
+hasErrorDiagnostics(std::span<const Diagnostic> diagnostics) {
+  for (const Diagnostic &diagnostic : diagnostics) {
+    if (diagnostic.severity == DiagnosticSeverity::Error)
+      return true;
+  }
+  return false;
+}
 
 SourceSpan tokenSpan(const Token &token);
 Diagnostic makeDiagnostic(std::string code, DiagnosticPhase phase,

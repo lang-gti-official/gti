@@ -66,7 +66,7 @@ public:
   }
   detail::array_sentinel end() { return detail::array_sentinel(N); }
 
-  T& at(int index) {
+  constexpr T& at(int index) {
     return this.values[index];
   }
 
@@ -74,7 +74,7 @@ public:
     return this.values[index];
   }
 
-  T& at(size_t index) {
+  constexpr T& at(size_t index) {
     return this.values[index];
   }
 
@@ -82,7 +82,7 @@ public:
     return this.values[index];
   }
 
-  T& front() {
+  constexpr T& front() {
     return this.values[0];
   }
 
@@ -90,7 +90,7 @@ public:
     return this.values[0];
   }
 
-  T& back() {
+  constexpr T& back() {
     return this.values[N - 1];
   }
 
@@ -98,7 +98,7 @@ public:
     return this.values[N - 1];
   }
 
-  T& operator[](int index) {
+  constexpr T& operator[](int index) {
     return this.values[index];
   }
 
@@ -106,7 +106,7 @@ public:
     return this.values[index];
   }
 
-  T& operator[](size_t index) {
+  constexpr T& operator[](size_t index) {
     return this.values[index];
   }
 

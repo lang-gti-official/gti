@@ -1,0 +1,77 @@
+#include <std/string>
+
+// A source-defined compile-time asset classifier, also called at runtime.
+struct asset_info {
+  uint64_t length;
+  uint64_t separators;
+  uint64_t checksum;
+  bool empty;
+  constexpr asset_info(uint64_t count, uint64_t slashes, uint64_t sum, bool none)
+      : length(count), separators(slashes), checksum(sum), empty(none) {}
+};
+
+constexpr asset_info inspect_asset(std::string_view name) {
+  mut uint64_t slashes = 0;
+  mut uint64_t sum = 0;
+  for (mut uint64_t index = 0; index < name.size(); index++) {
+    char code = name[index];
+    if (code == '/') { slashes++; }
+    sum += uint8_t(code);
+  }
+  return asset_info(name.size(), slashes, sum, name.empty());
+}
+
+constexpr int asset_kind(std::string_view name) {
+  if (name.empty()) { return 0; }
+  switch (name[0]) {
+    case 'm': return 1;
+    case 't': return 2;
+    default: return 3;
+  }
+}
+
+constexpr int priority(int kind) {
+  switch (kind) {
+    case -1: return 9;
+    case 1: return 4;
+    default: return 0;
+  }
+}
+
+constexpr T scaled<std::numeric T, uint64_t N>(T value) {
+  mut T result = T(0);
+  for (mut uint64_t index = 0; index < N; index++) { result = T(result + value); }
+  return result;
+}
+
+constexpr std::string_view path = "mesh/player\0lod";
+constexpr asset_info asset = inspect_asset(path);
+static_assert(asset.length == 15 && asset.separators == 1 && !asset.empty);
+static_assert(path[11] == '\0');
+static_assert(inspect_asset("").empty);
+static_assert(inspect_asset("é").checksum == 364);
+static_assert(asset_kind(path) == 1 && asset_kind("") == 0);
+static_assert(asset_kind("texture") == 2 && asset_kind("audio") == 3);
+static_assert(priority(-1) == 9 && priority(1) == 4 && priority(0) == 0);
+static_assert(scaled<int, 3>(7) == 21 && scaled<int, 0>(7) == 0);
+static_assert(scaled<double, 2>(double(1.5)) == double(3.0));
+
+int main() {
+  asset_info actual = inspect_asset(path);
+  asset_info empty = inspect_asset("");
+  asset_info high = inspect_asset("é");
+  if (scaled<int, 3>(7) != 21 || scaled<int, 0>(7) != 0 ||
+      scaled<double, 2>(double(1.5)) != double(3.0)) {
+    return 4;
+  }
+  if (asset_kind(path) != 1 || asset_kind("") != 0 ||
+      asset_kind("texture") != 2 || asset_kind("audio") != 3 ||
+      priority(-1) != 9 || priority(1) != 4 || priority(0) != 0) {
+    return 3;
+  }
+  if (actual.length != asset.length || actual.separators != asset.separators ||
+      actual.checksum != asset.checksum || actual.empty != asset.empty) {
+    return 1;
+  }
+  return empty.empty && high.checksum == 364 ? 0 : 2;
+}

@@ -239,8 +239,15 @@ owning representation for every fixed-width integer, including signed minima.
 render an optional sign, the integer part, a point, and exactly six fractional
 digits taken from the stored value's exact decimal expansion and rounded to
 nearest with ties to even. Signed zero is preserved; `nan`, `inf`, and `-inf`
-cover non-finite values. `std::format` reuses this binary32 representation;
-binary64 text remains a separate sub-slice.
+cover non-finite values. `std::format` instead uses locale-independent
+character conversion for both binary32 and binary64 values. Its default
+floating presentation is the shortest round-tripping decimal representation;
+checked width, alignment, sign, alternate, zero-padding, precision, and
+`f`/`e`/`g` presentation specifiers are available through replacement fields.
+Alternate default presentation preserves those shortest digits and adds a
+decimal point only when one is absent; explicit general precision retains
+significant trailing zeroes. Infinity and NaN ignore numeric zero-padding and
+use ordinary fill/alignment.
 Read-only `begin()`/`end()` iteration uses the language's
 structural range protocol and a source-defined iterator that retains a checked
 borrow of the backing storage. A read cursor can be copy-constructed into an
@@ -256,16 +263,18 @@ bytes are preserved and C observes the prefix before the first one.
 NUL. Both pointers retain a checked read-only dependency on the string until
 their last use, but native code that retains one beyond a call still requires a
 binding-specific lifetime contract.
-`<std/format>` implements sequential `{}` replacement for heterogeneous
-booleans, characters, fixed-width integers, binary32 floats, string views, and
-explicitly transferred owning strings, plus escaped `{{`/`}}` and exact field
-counts. It builds an owning `std::string`; malformed patterns, count
-mismatches, and unsupported argument types are returned through
-`std::format_errc` before output. Named strings use `.view()` for non-consuming
-formatting because current value packs have no reference-pack declarator.
-Binary64/specifier formatting and formatter customization remain later
-standard-library layers and must not make the compiler recognize the public
-`std::string` name.
+`<std/format>` implements heterogeneous automatic or numeric-indexed fields
+for booleans, characters, fixed-width integers, binary32/binary64 values,
+string views, and explicitly transferred owning strings, plus escaped
+`{{`/`}}`. Fields support fill/alignment, sign, alternate form, zero-padding,
+width, precision, integer `b`/`B`/`o`/`d`/`x`/`X`/`c`, floating
+`f`/`F`/`e`/`E`/`g`/`G`, and string `s` presentation. It builds an owning
+`std::string`; malformed patterns/specifiers, count mismatches, and unsupported
+argument types are returned through `std::format_errc` before output. Named
+strings use `.view()` for non-consuming formatting because current value packs
+have no reference-pack declarator. Named and dynamic fields, locale-aware
+formatting, and formatter customization remain later standard-library layers;
+none of this makes the compiler recognize the public `std::string` name.
 Front/back, mutable `at`, resize, shrink-to-fit, pop-back, and constant-time
 storage `swap` are implemented. Swap also exchanges size and capacity without
 copying characters or allocating.
@@ -353,6 +362,15 @@ function rather than recognizing the public factory name. Explicit
 `std::upcast_unique<Base, Derived>(owner)` consumes one derived owner only when
 the compiler-private capability proves a public polymorphic base with safe
 destruction; no ordinary call receives an implicit owner conversion.
+`unique_ptr<T>::swap(other)` instead requires two matching mutable handles and
+exchanges their private owner tokens without consuming either public handle,
+copying either pointee, or running replacement cleanup.
+`std::shared_ptr<T>` follows the same explicit base-conversion rule through
+`shared_ptr<T>::upcast<Base>()` and
+`std::upcast_shared<Base, Derived>(owner)`. The conversion consumes one handle
+without allocating or changing the shared count, preserves the same control
+block for concrete and base aliases, and permits final checked cleanup through
+either static view.
 
 Container implementations may use the reserved
 `gti_internal::storage<T>` compiler facility documented in
@@ -516,7 +534,7 @@ is recognized by the backend.
 | `<std/list>` | Executable doubly-linked slot-owned nodes, checked indexed mutation, ends, emplacement, read traversal, reverse, remove, unique, merge, sort, and iterative cleanup |
 | `<std/deque>` / `<std/queue>` | Circular per-element-owned double-ended storage and its FIFO adapter, with checked access and deterministic cleanup |
 | `<std/set>` / `<std/unordered_set>` | Unique immutable keys over AVL/hash dictionaries, checked insertion results and traversal, lookup/erase, bounds or hash capacity controls |
-| `<std/memory>` | Implemented `unique_ptr`, `make_unique`, `upcast_unique`, explicit-clone `shared_ptr` and `make_shared`, typed `allocator`, `storage<T>`, `alignment`, `alloc_errc`, fixed-capacity `arena<T>`/`pool<T>`, and recoverable storage factories; declaration-only `weak_ptr` |
+| `<std/memory>` | Implemented `unique_ptr` with reset/swap, `make_unique`, `upcast_unique`, explicit-clone `shared_ptr`, `make_shared`, and `upcast_shared`, typed `allocator`, `storage<T>`, `alignment`, `alloc_errc`, fixed-capacity `arena<T>`/`pool<T>`, and recoverable storage factories; declaration-only `weak_ptr` |
 | `<std/numeric>` | Implemented exact fixed-width `wrapping_add/sub/mul`, `saturating_add/sub/mul`, `checked_add/sub/mul`, default and operation-based `accumulate`, homogeneous default and operation-based `inner_product`, unary `transform_reduce`, `gcd`, `lcm`, and `midpoint` |
 | `<std/span>` | Executable checked read-only single-owner spans with vector/string factories, local copy/move, subviews, empty ranges, iteration, and no raw-address `data()` API; mutable and multi-owner views remain unsupported |
 | `<std/utility>` | Implemented `pair` and `make_pair`; declaration-only `swap` and `exchange`; compiler-defined `std::move` remains implicitly available |

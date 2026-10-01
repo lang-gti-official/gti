@@ -331,7 +331,8 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   }
 
   SemanticVisitor semantic(options.target, &result.sourceGraph,
-                           options.toolingOccurrences, options.workMetrics);
+                           options.toolingOccurrences, options.workMetrics,
+                           &result.sources);
   if (options.workMetrics != nullptr) {
     for (const SourceUnitId unitId : result.sourceGraph.compilationOrder()) {
       if (const SourceUnit *unit = result.sourceGraph.findUnit(unitId)) {

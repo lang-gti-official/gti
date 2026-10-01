@@ -1,0 +1,33 @@
+#include <std/source_location>
+
+class Record {
+  std::source_location where;
+public:
+  Record(std::source_location where = std::source_location::current())
+      : where(std::move(where)) {}
+  uint32_t line() { return this.where.line(); }
+};
+
+class Envelope {
+  Record where;
+public:
+  Envelope(Record where = Record()) : where(std::move(where)) {}
+  uint32_t line() { return this.where.line(); }
+};
+
+struct DesignatedLocations {
+  std::source_location explicit_where{};
+};
+
+int main() {
+  Record parens = Record();
+  Record braces{};
+  Envelope nested{};
+  DesignatedLocations designated = {
+      .explicit_where = std::source_location::current()};
+  if (parens.line() != uint32_t(23)) { return 1; }
+  if (braces.line() != uint32_t(24)) { return 2; }
+  if (nested.line() != uint32_t(25)) { return 3; }
+  if (designated.explicit_where.line() != uint32_t(27)) { return 4; }
+  return 0;
+}

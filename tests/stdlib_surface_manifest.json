@@ -2,19 +2,19 @@
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
     "stdlib/prelude.gti": "62268d148fec975957e82d41a84536ba5f9c7b54c375451ac6422386846f5639",
-    "stdlib/std/algorithm.gti": "a5d3dff175006c32d4c6fd87238444ddc55f6362584bda0be182e4ee5b73a67d",
-    "stdlib/std/array.gti": "52ce8b8796e2e5b24a1a90728b572cf92e7aa88536f7c3600f8e0e5f2b191cc3",
+    "stdlib/std/algorithm.gti": "9af861e6832ca068e28076d3556258a695b8c6c8f2940f904a4da61163d7b657",
+    "stdlib/std/array.gti": "93925b89feef1498cb17f5c952e1c3aaeaa6b8657be6a03e1e1bfd1434c61f2a",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
     "stdlib/std/charconv.gti": "925dbda69d2eacd4d70525cae5261c46174660e4245eb5a2489e45a7e5af5809",
     "stdlib/std/chrono.gti": "49cbaca555eed6f825680a28366c3528f39cfdfc9a39f4c60e5b154b9cb88309",
-    "stdlib/std/cmath.gti": "b8dcd896a4e7f3708d88c1f1ac5d8dc1f69aba3145c9fc1c5f9000e6a8097369",
+    "stdlib/std/cmath.gti": "ce64a3e07f35f48079a95b6784d4e5aa11c7829691f6436d18a3932319e2773d",
     "stdlib/std/cstdio.gti": "4fdc4c99e067c1870d6dadd7b3dc14f8ae8ad817abdd082d2e54c583754ea13d",
     "stdlib/std/cthread.gti": "4b583b04dd052f5f05d0af2444718360eb12c2da546d4c6f1eddc05a39e8858f",
     "stdlib/std/deque.gti": "5e014f240f4655824f1c245d507a96805ce4bfb1444570af4af2e6a222c1bba7",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
     "stdlib/std/filesystem.gti": "1018e88ac78adb603b80f0e83427a431c7c6225e00f39b0924721edcc4820687",
-    "stdlib/std/format.gti": "0a6d4cb63ad0e661bf47f8fa8782317dc3c298b87903c497bcf982e36b0ce28b",
+    "stdlib/std/format.gti": "6ef29ccab9a8d9a56e1719b82113ef9aebb4e859d1c597ddfa0af09bcd65f599",
     "stdlib/std/forward_list.gti": "2152aab44209cfa14a3b1709f6250c3ef85db78e1e665d5bc8299f3cb353a4bf",
     "stdlib/std/functional.gti": "2fa13a7b511a42cb3cd87d6ca1a6550e77c77109320b5457f5292bb3e5333540",
     "stdlib/std/http.gti": "3a99fd4a109627769f86d89b16348dbd25431960163e7b9aa016ce72c127954d",
@@ -22,22 +22,23 @@
     "stdlib/std/json.gti": "c73b68761f0194bd11596403c3ef70f56f2d5db8be6e311fb98ba23c79f6239a",
     "stdlib/std/list.gti": "f208f55111c02facf979574b9eceab97ab9676bb91cb8e52ff5a27ee09ca8244",
     "stdlib/std/map.gti": "39a314ff20943e99786f0165a77baca5d9276a73c6b31d253d8a5967647d706b",
-    "stdlib/std/memory.gti": "94965dbe672b0426995f2e99e93b1066a66356a5909941acda0cff4c8e4e786a",
+    "stdlib/std/memory.gti": "7ca6b59e6249ac7f6411cb0d5f4e2689cc7bb5c876351a5fe0a64a8a60c25695",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
-    "stdlib/std/numeric.gti": "5eef3aba02b84cc5dcb0c86727013d95b29e14f7aebad40d7f301b2229821b35",
+    "stdlib/std/numeric.gti": "2fe329a8585d1eee0a1be02f42b9cb6d388c80e898a3f58d34e9de12989388fb",
     "stdlib/std/optional.gti": "9b038467204b82f5675326e67254bee896b2d6a5648f47bb22f325bbb202b8d8",
     "stdlib/std/paired_span.gti": "3657f5994dd7880c8de9796e1c6c08bba5f507b492406eb685d529c1c6b0e3ae",
     "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
     "stdlib/std/queue.gti": "e7181505d8e12e151310ac46075b33cdc8095b4f727457c11603de1887e4c2ff",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/set.gti": "706d93edf068cc7a207ce3eedc2cd19ad08ea46cdd70b924309c6230cd90c716",
+    "stdlib/std/source_location.gti": "744c1a254ad954db7bedf71652bc4d2f08eb0ed09df96fc61cdfb2a1822e43e1",
     "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
     "stdlib/std/string.gti": "71d3cfa382f0565520822636b70bac8b8ac0176958d0c76db609eab720a529c6",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
     "stdlib/std/unordered_map.gti": "dd9a09af61807b6482123f37f4875608c7eb6a5e83129ae7f498586b174e8aa7",
     "stdlib/std/unordered_set.gti": "f99b3591dc87e0fc1bbfa8ee6256403daf07317efa9e466c0dbd38381d314f3f",
-    "stdlib/std/utility.gti": "54a3fc018daa437f139c6f39ac2140b81f3d62b43f347a09fdf70c9ff9c4dab0",
+    "stdlib/std/utility.gti": "09c3b6169e23b3f13ba53f95d3298a20129a70757b2e67d6e87605ca967def03",
     "stdlib/std/vector.gti": "e2b034609bc1135425c99846888d8926f3f90c4a784925e958604ba4b076dbd1"
   },
   "cases": [
@@ -331,6 +332,27 @@
         "stdout": "",
         "stderr": ""
       }
+    },
+    {
+      "id": "constexpr-library",
+      "mode": "run",
+      "source": "tests/fixtures/constexpr_library_positive.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "constexpr-operators",
+      "mode": "run",
+      "source": "tests/fixtures/constexpr_operators.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "constexpr-readonly-references",
+      "mode": "run",
+      "source": "tests/fixtures/constexpr_readonly_references.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
       "id": "container-swap",
@@ -717,6 +739,20 @@
       "expected": {"exit_code": 0, "stdout": "1\n7\n2\n8\n3\n9\n", "stderr": ""}
     },
     {
+      "id": "shared-ptr-upcast",
+      "mode": "run",
+      "source": "tests/fixtures/shared_ownership_upcast.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "7\n8\n", "stderr": ""}
+    },
+    {
+      "id": "source-location",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_source_location.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "span",
       "mode": "run",
       "source": "tests/fixtures/span_owner_dependent.gti",
@@ -968,7 +1004,7 @@
         "std::transform",
         "std::upper_bound"
       ],
-      "case_ids": ["algorithm", "algorithm-boundaries", "algorithm-mutation", "algorithm-search", "algorithm-user-types"],
+      "case_ids": ["algorithm", "algorithm-boundaries", "algorithm-mutation", "algorithm-search", "algorithm-user-types", "constexpr-library"],
       "required_instantiations": ["audit_iterator/audit_iterator/int32_t predicates and exact value", "move-only iterator/distinct sentinel/int32_t", "std::vector<int32_t>::iterator/sentinel/int32_t", "read- and mut-callable for_each clients", "application-defined and fixed-array predicate/operation/mutable complete-range clients"],
       "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "tests/fixtures/generic_algorithm_find_count.gti", "tests/fixtures/generic_algorithm_for_each.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_algorithm_cluster_test.py", "tests/generic_callable_concepts_runtime_test.py", "tests/generic_algorithm_breadth_test.py", "tests/generic_algorithm_errors_test.py", "stdlib/std/algorithm.gti"]
     },
@@ -989,7 +1025,7 @@
         "std::array::operator[]",
         "std::array::size"
       ],
-      "case_ids": ["array", "algorithm-search", "algorithm-mutation", "algorithm-user-types"],
+      "case_ids": ["array", "algorithm-search", "algorithm-mutation", "algorithm-user-types", "constexpr-operators", "constexpr-readonly-references"],
       "required_instantiations": ["std::array<int32_t, 0>", "std::array<int32_t, 3>"],
       "evidence": ["tests/fixtures/stdlib_surface_array.gti", "tests/fixtures/algorithm_search.gti", "tests/fixtures/algorithm_mutation.gti", "tests/fixtures/algorithm_user_types.gti", "stdlib/std/array.gti"]
     },
@@ -1153,7 +1189,7 @@
         "std::tan(float)",
         "std::trunc(float)"
       ],
-      "case_ids": ["cmath"],
+      "case_ids": ["cmath", "constexpr-library"],
       "required_instantiations": ["binary32 finite, signed-zero, NaN, infinity, domain, pole, overflow, and subnormal cases"],
       "evidence": ["tests/fixtures/stdlib_surface_cmath.gti", "tests/cmath_runtime_test.py", "stdlib/std/cmath.gti", "runtime/src/math.cpp"]
     },
@@ -1378,9 +1414,9 @@
       "id": "format.executable",
       "source": "stdlib/std/format.gti",
       "status": "executable",
-      "operations": ["std::format", "std::try_print", "std::try_println"],
+      "operations": ["std::format", "std::format_to", "std::try_print", "std::try_println"],
       "case_ids": ["format"],
-      "required_instantiations": ["zero arguments", "all fixed-width integer types", "mixed bool,char,int32_t,float,string_view,string pack", "counted string view with embedded zero", "unsupported nominal and binary64 arguments"],
+      "required_instantiations": ["zero arguments", "all fixed-width integer types", "mixed bool,char,int32_t,float,double,string_view,string pack", "counted string view with embedded zero", "indexed and typed format specifications", "unsupported nominal argument"],
       "evidence": ["tests/fixtures/stdlib_surface_format.gti", "stdlib/std/format.gti"]
     },
     {
@@ -1758,6 +1794,15 @@
       "evidence": ["tests/fixtures/shared_ownership.gti", "tests/shared_ownership_runtime_test.py", "tests/shared_ownership_failure_test.py", "tests/shared_ownership_threads_test.py"]
     },
     {
+      "id": "memory.shared-ptr-upcast",
+      "source": "stdlib/std/memory.gti",
+      "status": "executable",
+      "operations": ["std::shared_ptr::upcast", "std::upcast_shared"],
+      "case_ids": ["shared-ptr-upcast"],
+      "required_instantiations": ["public polymorphic Base/Derived sharing one control block"],
+      "evidence": ["tests/fixtures/shared_ownership_upcast.gti", "tests/shared_ownership_runtime_test.py", "tests/shared_ownership_tests.cpp", "stdlib/std/memory.gti"]
+    },
+    {
       "id": "memory.unique-ptr",
       "source": "stdlib/std/memory.gti",
       "status": "executable",
@@ -1835,7 +1880,7 @@
         "std::wrapping_mul",
         "std::wrapping_sub"
       ],
-      "case_ids": ["numeric", "numeric-boundaries"],
+      "case_ids": ["numeric", "numeric-boundaries", "constexpr-library"],
       "required_instantiations": ["audit_iterator/int32_t", "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "float", "double"],
       "evidence": ["tests/fixtures/stdlib_surface_numeric.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/generic_callable_concepts_runtime_test.py", "tests/defined_integer_runtime_test.py", "tests/numeric_boundaries_runtime_test.py", "tests/fixtures/numeric_boundaries.gti", "tests/fixtures/numeric_boundaries_oracle.cpp", "tests/fixtures/numeric_boundaries_failure.gti"]
     },
@@ -1977,6 +2022,22 @@
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti"
       ]
+    },
+    {
+      "id": "source-location.executable",
+      "source": "stdlib/std/source_location.gti",
+      "status": "executable",
+      "operations": [
+        "std::source_location::column",
+        "std::source_location::current",
+        "std::source_location::file_name",
+        "std::source_location::function_name",
+        "std::source_location::line",
+        "std::source_location::source_location"
+      ],
+      "case_ids": ["source-location"],
+      "required_instantiations": ["direct current call", "caller-side default argument", "empty location"],
+      "evidence": ["tests/fixtures/stdlib_surface_source_location.gti", "tests/source_location_runtime_test.py", "stdlib/std/source_location.gti"]
     },
     {
       "id": "span.executable",
@@ -2206,7 +2267,7 @@
       "source": "stdlib/std/utility.gti",
       "status": "executable",
       "operations": ["std::make_pair", "std::pair::first", "std::pair::pair", "std::pair::second"],
-      "case_ids": ["utility-make-pair", "utility-pair-constructor"],
+      "case_ids": ["utility-make-pair", "utility-pair-constructor", "constexpr-library"],
       "evidence": ["tests/fixtures/stdlib_surface_utility.gti", "tests/fixtures/stdlib_surface_utility_pair.gti", "stdlib/std/utility.gti"],
       "required_instantiations": ["std::pair<int32_t,int64_t>"]
     },

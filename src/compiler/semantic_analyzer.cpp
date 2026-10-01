@@ -5,9 +5,10 @@ namespace lang {
 SemanticVisitor::SemanticVisitor(TargetInfo target,
                                  const SourceGraph *sourceGraph,
                                  bool toolingOccurrences,
-                                 FrontendWorkMetrics *workMetrics)
+                                 FrontendWorkMetrics *workMetrics,
+                                 const SourceManager *sources)
     : impl(std::make_unique<Impl>(std::move(target), sourceGraph,
-                                  toolingOccurrences, workMetrics)) {}
+                                  toolingOccurrences, workMetrics, sources)) {}
 
 SemanticVisitor::~SemanticVisitor() = default;
 SemanticVisitor::SemanticVisitor(SemanticVisitor &&) noexcept = default;

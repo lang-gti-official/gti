@@ -117,14 +117,18 @@ representation.
 `shared_owner<T>` is a nominal move-only strong token, not the legacy implicit
 shared-pointer type. Its private operations create an empty token, consume an
 existing unique owner, explicitly retain, borrow read-only, observe emptiness
-or count, and swap. The public `shared_ptr` policy remains ordinary GTI.
+or count, swap, and explicitly consume one token into a public polymorphic-base
+view. The public `shared_ptr` policy remains ordinary GTI.
 MIR verifies each exact capability/operand/result, its loan anchor, failure
 outcome, and invocation handoff. A shared drop recipe contains one unprojected
 unique-owner recipe, executed only on final release; passive pointees still
 have allocation cleanup. Release is a synchronization and unknown-memory
 barrier, including through aggregate and callable effect summaries.
 
-The native control block uses an atomic count and a move-only inert shell.
+The native control block uses an atomic count shared by typed move-only inert
+shells. A verified upcast changes only the consuming shell's view pointer; it
+retains the same block, does not change the count, and relies on the existing
+dynamic GTI cleanup binding when a base-typed shell performs final release.
 Native destruction of an unreleased strong token fails rather than silently
 substituting C++ cleanup for MIR. Promotion allocates before detaching the
 consumed unique input and owns its rollback on allocation failure. Managed
@@ -170,10 +174,24 @@ The `<std/string>` convenience functions own whitespace/sign/radix-prefix
 policy in GTI and return recoverable errors instead of exposing native
 exceptions or errno. No public parsing function receives compiler recognition.
 
+Floating output uses the sibling bounded
+`gti_rt_format_f32_v1`/`gti_rt_format_f64_v1` ABI. GTI parses replacement
+fields, selects argument adapters, enforces the precision bound, and owns the
+transactional `format`/`format_to` error policy. The host operation performs
+only locale-independent `to_chars` conversion plus field-local sign,
+alternate, width, fill, and alignment composition into caller-owned storage.
+It reports invalid requests and insufficient capacity without publishing a
+partial size. This boundary avoids native stream state, allocation ownership,
+or C++ exceptions becoming part of the public library contract.
+
 The first public typed-allocation slice is the ordinary source-defined
 `std::unique_ptr<T>`, `std::make_unique`, `std::upcast_unique`,
 `std::allocator`, `std::storage<T>`, `std::alignment`, and `std::alloc_errc`
 surface in `<std/memory>`. The compiler recognizes none of those public names.
+The public `unique_ptr::swap` delegates to one declaration-bound private
+capability operation over two matching mutable owner tokens. MIR verifies both
+places and emits native owner swap directly, so exchanging owners cannot copy a
+pointee or trigger replacement cleanup.
 The stateless allocator calls one recoverable private allocation operation; a
 successful storage owner carries allocation extent, alignment, per-slot live
 state, reverse cleanup, and release authority together. Allocation failure is

@@ -346,7 +346,7 @@ namespace std {
 
   /// Nonnegative least common multiple; either zero input gives zero.
   /// A result outside T takes the ordinary checked numeric failure path.
-  T lcm<std::integral T>(T left, T right) {
+  constexpr T lcm<std::integral T>(T left, T right) {
     if (left == T(0) || right == T(0)) { return T(0); }
     T product = T((left / std::gcd(left, right)) * right);
     if (product < T(0)) { return T(T(0) - product); }
@@ -355,7 +355,7 @@ namespace std {
 
   /// Overflow-free halfway value. Integral ties round toward left. Floating
   /// inputs follow GTI IEEE arithmetic, including signed zero and nonfinites.
-  T midpoint<std::numeric T>(T left, T right) {
+  constexpr T midpoint<std::numeric T>(T left, T right) {
     // This ordinary constant condition keeps explicit midpoint<T> valid for
     // every numeric T without requiring type reflection or specialization.
     if (T(T(1) / 2) == 0) {

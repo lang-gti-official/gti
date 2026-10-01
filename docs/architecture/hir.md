@@ -23,6 +23,33 @@ Concrete generic validity is obtained through semantic instance reanalysis.
 Successfully checked static assertions are skipped entirely: they are semantic
 obligations, not HIR declarations or executable values.
 
+For early constant requests, `lowerConstantFunction` and
+`lowerConstantConstructor` reuse ordinary body lowering on a closure rooted in
+one completed constexpr function, method, or constructor. Semantics supplies
+the completed-definition inventory after primary body and scope analysis. A
+fully selected body has also passed loan-flow validation. A generic primary
+with deferred compile-time branches is available only for concrete reanalysis;
+its incomplete primary flow is not a return, movement, or borrow proof. Every
+discovered source callee must belong to that inventory; registration alone does
+not authorize lowering. Concrete reanalysis must select every compile-time
+branch and validate the resulting flow before HIR can publish its body.
+The root carries exact semantic owner/function/constructor type/value
+substitutions; ordinary instance
+discovery and semantic reanalysis validate concrete generic bodies and callees.
+The staged closure admits passive structural class catalogs with ordinary exact
+field substitution. Discovered constexpr methods and constructors must likewise
+belong to the semantic completed-definition inventories. Constructor rows retain
+semantic constexpr eligibility explicitly; a generated native constructor does
+not establish it. The constant executor currently admits read-only methods and
+explicit constructor field initialization. Staging still excludes destructor
+execution, active cleanup, bases, polymorphism, compiler-capability owners, and
+generic packs.
+It produces no program-initialization or hosted-entry plan and
+deliberately omits the whole-program analysis seal. Its output can feed the
+ordinary failure-metadata builder and MIR lowerer, but cannot pass normal
+whole-program plan verification or be published to the backend. Normal
+`lower` retains its original seal and program-plan checks.
+
 `HirProgram` owns:
 
 - the selected execution profile copied from the pre-semantics target facts;

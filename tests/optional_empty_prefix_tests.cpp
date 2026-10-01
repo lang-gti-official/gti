@@ -65,12 +65,19 @@ void checkActiveStorage() {
                 malformed.findConstructorInstance(target->id));
             empty->body.blocks.front().terminator.kind =
                 lang::MirTerminatorKind::Unreachable;
+            expect(!lang::cppMirFailureConstructorEmptyStateEligible(
+                       malformed, constructor.owner) &&
+                       !lang::cppMirFailureConstructorEmptyFieldsEligible(
+                           malformed, constructor.owner),
+                   "optional empty-state helpers retain the selected private "
+                   "constructor Return proof");
           }
           expect(!lang::CppMirBodyEmitter(malformed, rows)
                       .supportsFailureBodyText(
                           {lang::MirBodyKind::Constructor, constructor.id}),
                  "native empty storage requires exact "
-                 "activation/reparent/capability/return proof");
+                 "activation/reparent/capability/return proof (mutation " +
+                     std::to_string(mutation) + ")");
         }
       }
     }

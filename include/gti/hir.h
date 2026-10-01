@@ -213,6 +213,7 @@ struct HirValue {
   std::optional<ConstantValue> constant;
   bool programConstantSubstitution = false;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  std::optional<SourceLocationLiteral> sourceLocation;
   SynchronizationOperation synchronization;
   DefinedFailureOperation definedFailure;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
@@ -562,6 +563,7 @@ struct HirConstructorInstance {
   SourceUnitId sourceUnit = 0;
   ConstructorId declaration = 0;
   const ConstructorDecl *source = nullptr;
+  bool constexprConstructor = false;
   HirClassInstanceId owner = 0;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
@@ -764,7 +766,7 @@ struct HirLoweringResult {
   std::vector<Diagnostic> diagnostics;
 
   [[nodiscard]] bool valid() const {
-    return diagnostics.empty() && program.valid();
+    return !hasErrorDiagnostics(diagnostics) && program.valid();
   }
 };
 
@@ -783,6 +785,24 @@ public:
   [[nodiscard]] HirLoweringResult
   lower(const Program &source, const SemanticModel &semantics,
         SemanticInstanceProvider &instanceProvider);
+
+  // Staged execution only: lower a completed function/method/constructor root
+  // and its closure without publishing whole-program initialization or entry.
+  // The result deliberately has no whole-program analysis seal and cannot
+  // cross the normal LoweredProgram/backend boundary.
+  [[nodiscard]] HirLoweringResult lowerConstantFunction(
+      const SemanticModel &semantics,
+      SemanticInstanceProvider &instanceProvider, FunctionId root,
+      const std::vector<FunctionId> &completedFunctions,
+      const GenericSubstitution &substitution = {},
+      const std::vector<ConstructorId> &completedConstructors = {});
+
+  [[nodiscard]] HirLoweringResult lowerConstantConstructor(
+      const SemanticModel &semantics,
+      SemanticInstanceProvider &instanceProvider,
+      const ResolvedConstructionInfo &root,
+      const std::vector<FunctionId> &completedFunctions,
+      const std::vector<ConstructorId> &completedConstructors);
 
 private:
   class Impl;

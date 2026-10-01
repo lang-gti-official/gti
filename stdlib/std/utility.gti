@@ -19,10 +19,10 @@ namespace std {
     mut T first;
     mut U second;
 
-    pair(T first_value, U second_value) : first(std::move(first_value)), second(std::move(second_value)) {}
+    constexpr pair(T first_value, U second_value) : first(std::move(first_value)), second(std::move(second_value)) {}
   };
 
-  pair<T, U> make_pair<T, U>(T first, U second) {
+  constexpr pair<T, U> make_pair<T, U>(T first, U second) {
     return pair<T, U>(std::move(first), std::move(second));
   }
 

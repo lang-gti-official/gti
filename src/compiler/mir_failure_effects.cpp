@@ -2065,7 +2065,6 @@ bool MirOwnedFailureClosure::proveConstructor(HirConstructorInstanceId id) {
   std::unordered_set<SymbolId> fields;
   std::unordered_set<std::size_t> stages;
   std::unordered_set<std::size_t> boundaries;
-  std::size_t expectedStages = 0;
   for (std::size_t index = 0; valid && index < constructor.initializers.size();
        ++index) {
     const MirConstructorInitializer &initializer =
@@ -2105,39 +2104,17 @@ bool MirOwnedFailureClosure::proveConstructor(HirConstructorInstanceId id) {
         stage != nullptr && stage->destination
             ? constructor.body.findPlace(*stage->destination)
             : nullptr;
-    const MirValue *aggregateValue = nullptr;
-    for (const MirValue &value : constructor.body.values) {
-      if (value.sourceValue != initializer.arguments.front() ||
-          value.info.type != initializer.targetType) {
-        continue;
-      }
-      if (aggregateValue != nullptr) {
-        valid = false;
-        break;
-      }
-      aggregateValue = &value;
-    }
-    const MirInstruction *aggregateDefinition = nullptr;
-    if (aggregateValue != nullptr) {
-      for (const MirBlock &block : constructor.body.blocks) {
-        const auto found =
-            std::find_if(block.instructions.begin(), block.instructions.end(),
-                         [&](const MirInstruction &instruction) {
-                           return instruction.id == aggregateValue->definition;
-                         });
-        if (found != block.instructions.end()) {
-          aggregateDefinition = &*found;
-          break;
-        }
-      }
-    }
     const auto full = std::find_if(
         constructor.body.fullExpressions.begin(),
         constructor.body.fullExpressions.end(),
         [&](const auto &candidate) { return candidate.id == index + 1; });
-    const bool scalarStage =
-        scalarType(initializer.targetType) && stage != nullptr &&
-        !stage->result && stage->destination &&
+    // Passive arrays now publish through the same explicit MIR field write as
+    // scalars. An Aggregate value alone proves computation, not initialization
+    // of this field; require its exact stage instead of reconstructing a write
+    // from the declaration's initializer inventory.
+    const bool passiveStage =
+        passiveConstructorValueType(initializer.targetType) &&
+        stage != nullptr && !stage->result && stage->destination &&
         stage->hirValue == initializer.arguments.front() &&
         stage->operation == MirOperation::None && !stage->literal &&
         stage->operands.size() == 1 &&
@@ -2152,27 +2129,14 @@ bool MirOwnedFailureClosure::proveConstructor(HirConstructorInstanceId id) {
         destination->sourceValue == initializer.arguments.front() &&
         destination->type == initializer.targetType &&
         stages.insert(index + 1).second;
-    const bool aggregatePublication =
-        initializer.targetType.kind == SemanticType::Array &&
-        stage == nullptr && aggregateValue != nullptr &&
-        aggregateDefinition != nullptr &&
-        aggregateDefinition->kind == MirInstructionKind::Compute &&
-        aggregateDefinition->operation == MirOperation::Aggregate &&
-        aggregateDefinition->result == aggregateValue->id &&
-        aggregateDefinition->hirValue == initializer.arguments.front() &&
-        passiveConstructorValueTraits(aggregateValue->info.traits,
-                                      aggregateValue->info.type);
-    if (scalarType(initializer.targetType)) {
-      ++expectedStages;
-    }
-    valid = valid && (scalarStage || aggregatePublication) &&
-            boundary != nullptr && boundaries.insert(index + 1).second &&
+    valid = valid && passiveStage && boundary != nullptr &&
+            boundaries.insert(index + 1).second &&
             full != constructor.body.fullExpressions.end() &&
             full->constructorInitializer == index + 1 &&
             full->roots == initializer.arguments;
   }
   valid = valid && fields.size() == owner->declaredFields.size() &&
-          stages.size() == expectedStages &&
+          stages.size() == constructor.initializers.size() &&
           boundaries.size() == constructor.initializers.size();
   state = State::Complete;
   effects.constructors[id - 1] = !valid;
