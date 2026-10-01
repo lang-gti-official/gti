@@ -25,6 +25,38 @@ files under `docs/plans/`. The documents under
 [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
+## Everyday Program Stabilization
+
+**State:** active, based on reconciled `main` `796772dd`. This campaign closes
+ordinary application composition gaps before adding more advanced surface.
+Source diagnostics for invalid programs are part of every row, not a substitute
+for implementing valid programs. Existing compiler-owned ownership, failure,
+and MIR execution rules remain authoritative.
+
+| Priority | State | Client and exit evidence |
+| --- | --- | --- |
+| 1 — construction and replacement | active | Nested owning objects and optional in-place construction, including fallible constructors, preserve ordered initialization, exact first failure and partial cleanup. Reduced Tea-style regressions run through the production backend. |
+| 2 — borrow composition | queued | Ordinary helpers, lookup and tree traversal compose checked references/views without representation-only rejection; unsafe escape, overlapping mutable access and use-after-move retain precise source errors. |
+| 3 — container/value-wrapper consistency | queued | Movement, replacement and explicit cloning work across everyday eligible optional/container/expected combinations, using structural library contracts rather than public-name compiler exceptions. |
+| 4 — owning payload transport | active, delegated | Concrete generic wrappers and collections can carry owning event/message alternatives through verified construction, movement and exactly-once destruction. Unsupported structural boundaries remain explicit and diagnosed at source. |
+
+Each row requires focused positive/negative tests and relevant compiler/LSP
+diagnostic evidence using an optimized compiler. Integrated completion requires
+the broader affected verifier, backend, corpus and runtime gates. SIMD and
+native-bridge handoff work is independently audited before reconciliation; it
+does not replace these four outcomes. The user also transferred structural
+relocation into this campaign. Its candidate at `875f288d` plus the original
+agent's staged follow-up remains under independent review, not an accepted
+combined checkpoint. The client is checked transfer between typed-storage
+owners and vector/string growth, without user-defined movement or raw-address
+APIs. Reconciliation must preserve empty-destination preflight, exclusive
+borrows, exactly-once cleanup, conservative relocation traits, and independent
+MIR verification. SIMD and relocation's separately proposed serialization and
+version changes must be reconciled together before integrated validation.
+No custom copy/move constructor bodies,
+module implementation, weakened borrow rules, or unchecked failure paths are
+part of this campaign.
+
 ## Explicit Cloning And Native Bridge Follow-Up
 
 The explicit-duplication slice supplies source-defined `std::clone`,
@@ -91,14 +123,20 @@ unqualified replacement of an initialized owning field from a call result.
 The original Tea build and reduced success/failure cleanup cases exercise that
 scope. It does not establish arbitrary constructor/capability composition.
 
-Two broader cases exposed while designing stress fixtures remain open under
-the defined-failure/backend work: a cleanup-free containing field whose source
-constructor can fail but whose caller has no matching Invoke schedule; and a
-fallible payload constructor reached through optional storage's native
-construction capability. The former can still fail backend admission and the
-latter can reference an unavailable ordinary native constructor. Follow-up
-must preserve the exact failure edge and partial-construction cleanup rather
-than emit an unchecked ordinary constructor call.
+The everyday-stabilization campaign has locally fixed the two broader cases
+exposed by stress fixtures: cleanup-free nested field construction now retains
+its Invoke/publication schedule, and optional emplacement constructs its
+payload in ordinary GTI before exact completed-value publication. New partial
+construction regressions and the existing field-publication cases pass all
+eight C++20/23, O0/O1/O3, no-elide and sanitizer modes. MIR mutations cover the
+failure edge and the optional capability's exact operand/constructor boundary.
+Broader checks exposed older straight-line native-constructor assumptions after
+the wider cleanup-free Invoke rule. Exact success-edge publication now handles
+those cases, including prepared-argument obligation handoff. The complete
+lifecycle-emitter suite and seven related constructor/optional gates pass
+together; malformed argument, field, literal, lifecycle and failure-edge
+mutations still reject. Reconciliation and broader campaign verification remain
+pending; these results do not establish arbitrary capability composition.
 
 ## How To Use This Plan
 

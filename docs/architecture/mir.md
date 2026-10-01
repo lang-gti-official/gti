@@ -338,6 +338,23 @@ same complete native initializer binding also suppresses its move. Plain
 constructor emission must prove the ordinary callee actually exists; a
 status-only nested constructor cannot be called through an invented overload.
 
+Cleanup-free class construction still carries its selected constructor's
+failure edge. Absence of a result-drop obligation does not suppress Invoke,
+including in a constructor field initializer. The exact success continuation
+publishes the field; failure propagates the original record and drains earlier
+completed fields. The C++ field-placement proof also admits a failure-free
+owning constructor followed immediately by publication of its initialized
+value obligation, retaining the same field rollback for later failures. Neither
+case invents a cleanup obligation for a cleanup-free result.
+
+The optional-storage publication capability consumes exactly one completed
+element of its exact payload type, with no source-constructor target. Public
+emplacement resets the old value and constructs its replacement in ordinary
+GTI/MIR before publishing it. Constructor arguments, partial construction and
+first failure therefore use the existing construction protocol rather than an
+unchecked native constructor hidden inside a storage intrinsic. Whole-program
+verification checks the exact element and transfer contract.
+
 Program v63/body v55 extend the explicit removal recipe to `PrefixStorageErase`.
 MIR independently proves generated relocation into an empty element slot,
 including guarded source-destructor state, every field and base, and recursively

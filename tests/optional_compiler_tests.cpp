@@ -238,6 +238,63 @@ int main() {
       "whole-program verification should reject optional construction "
       "whose owning input transfer names another live obligation");
 
+  for (int mutation = 0; mutation != 3; ++mutation) {
+    auto malformed = frontend.mir;
+    bool changed = false;
+    for (const auto address : lang::enumerateMirBodyAddresses(malformed)) {
+      auto *body = lang::findMirBody(malformed, address);
+      if (body == nullptr || changed)
+        continue;
+      for (auto &block : body->blocks) {
+        for (auto &instruction : block.instructions) {
+          if (changed || instruction.intrinsic !=
+                             lang::IntrinsicKind::OptionalStorageConstruct)
+            continue;
+          expect(instruction.operands.size() == 2 &&
+                     !instruction.constructorTarget,
+                 "optional publication accepts one completed value, not a "
+                 "hidden constructor");
+          if (mutation == 0) {
+            instruction.operands.pop_back();
+            instruction.parameterTypes.pop_back();
+          } else if (mutation == 1) {
+            instruction.operands[1].type = lang::SemanticType::Bool;
+            instruction.parameterTypes[1] = lang::SemanticType::Bool;
+          } else {
+            instruction.constructorTarget =
+                frontend.mir.constructorInstances().front().id;
+          }
+          changed = true;
+        }
+      }
+    }
+    expect(changed && !lang::verifyMirProgram(malformed).valid(),
+           "optional publication rejects missing/wrong payloads and hidden "
+           "constructor targets");
+  }
+
+  const auto invalidEmplacement = lang::Frontend().analyze(
+      "optional-invalid-payload-construction.gti", R"(
+#include <std/optional>
+struct Payload {
+  int value;
+  Payload(int value) : value(value) {}
+};
+int main() {
+  mut std::optional<Payload> slot{};
+  [[discard]] slot.emplace("invalid");
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!invalidEmplacement.canGenerateCode() &&
+             hasDiagnosticCode(invalidEmplacement.diagnostics, "GTI-S2012") &&
+             hasDiagnostic(invalidEmplacement.diagnostics,
+                           "No constructor of 'Payload' exactly matches") &&
+             !hasDiagnosticCode(invalidEmplacement.diagnostics, "GTI-B0001"),
+         "invalid emplacement must use ordinary source constructor diagnostics "
+         "rather than reaching the native backend");
+
   const lang::FrontendResult copied = lang::Frontend().analyze(
       "optional-copy-rejected.gti", R"(
 #include <std/optional>

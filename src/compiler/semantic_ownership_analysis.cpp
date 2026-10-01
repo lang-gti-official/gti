@@ -6586,14 +6586,16 @@ auto SemanticVisitor::Impl::analyzeOptionalStorageIntrinsicCall(
 
   const bool constructing =
       intrinsic == IntrinsicKind::OptionalStorageConstruct;
-  if ((constructing && argumentTypes.empty()) ||
+  if ((constructing && argumentTypes.size() != 2) ||
       (!constructing && argumentTypes.size() != 1)) {
     report(expr.paren(),
            constructing ? "optional_storage_construct expects mutable optional "
-                          "storage and zero or more constructor arguments."
+                          "storage and one completed payload value."
                         : "This optional storage operation expects exactly one "
                           "storage argument.",
            "GTI-S2019");
+    currentType = SemanticType::Unknown;
+    return;
   }
   if (argumentTypes.empty()) {
     currentType = SemanticType::Unknown;
@@ -6626,6 +6628,18 @@ auto SemanticVisitor::Impl::analyzeOptionalStorageIntrinsicCall(
   }
 
   if (constructing) {
+    if (elementType != SemanticType::Unknown &&
+        elementType.kind != SemanticType::TypeParameter &&
+        argumentTypes[1] != SemanticType::Unknown &&
+        argumentTypes[1] != elementType) {
+      report(expressionToken(expr.arguments()[1]),
+             "Optional storage publication requires one completed payload "
+             "value of the exact element type; construct the payload before "
+             "publishing it.",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
     std::vector<AnalyzedCallArgument> constructorArguments;
     bool concreteArguments = true;
     for (std::size_t index = 1; index < argumentTypes.size(); ++index) {

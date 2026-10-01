@@ -18,8 +18,8 @@ public:
 
 bool optional_storage_has_value<std::movable T>(
     gti_internal::optional_storage<T>& storage);
-void optional_storage_construct<std::movable T, Args...>(
-    mut gti_internal::optional_storage<T>& storage, Args... args);
+void optional_storage_construct<std::movable T>(
+    mut gti_internal::optional_storage<T>& storage, T value);
 T& optional_storage_read<std::movable T>(
     gti_internal::optional_storage<T>& storage);
 mut T& optional_storage_read_mut<std::movable T>(
@@ -107,10 +107,15 @@ public:
     gti_internal::optional_storage_reset(this.storage);
   }
 
-  /// Replaces the current value by constructing `T` directly from `args`.
+  /// Replaces the current value from `args`, remaining empty on failure.
+  ///
+  /// Payload construction runs as ordinary GTI before publication into the
+  /// inline slot. The private capability only transfers a completed value;
+  /// it must not hide a source constructor or its failure/cleanup schedule.
   mut T& emplace<Args...>(Args... args) mut {
     this.reset();
-    gti_internal::optional_storage_construct(this.storage, args...);
+    T value = T(args...);
+    gti_internal::optional_storage_construct(this.storage, std::move(value));
     return gti_internal::optional_storage_read_mut(this.storage);
   }
 };

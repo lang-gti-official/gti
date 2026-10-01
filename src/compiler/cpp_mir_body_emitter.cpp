@@ -12546,6 +12546,26 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       constructorTarget->definitionKind == MirDefinitionKind::Source &&
       constructedOwner->type == value->info.type &&
       failureConstructorBoundaryEligible(program, *constructorTarget);
+  // A proved failure-free constructor publishes its owning temporary on the
+  // instruction rather than an Invoke edge. Its immediately following field
+  // Initialize still reparents that exact obligation, so later failures must
+  // retain the same field rollback as a status-returning constructor.
+  const bool successfulConstructorProducer =
+      commonProducer && producer->kind == MirInstructionKind::Construct &&
+      !producer->receiver && !producer->functionTarget &&
+      producer->constructorKind == ConstructorKind::Ordinary &&
+      constructorTarget != nullptr && constructedOwner != nullptr &&
+      constructorTarget->definitionKind == MirDefinitionKind::Source &&
+      constructorTarget->parameterTypes == producer->parameterTypes &&
+      constructedOwner->type == value->info.type &&
+      producer->definedFailure.empty() && !producer->successResultDrop &&
+      valueDrop != nullptr && producer->lifecycle.size() == 1 &&
+      producer->lifecycle.front().kind == MirLifecycleEventKind::Initialize &&
+      producer->lifecycle.front().source == 0 &&
+      producer->lifecycle.front().target == valueDrop->id &&
+      !producer->lifecycle.front().conditional &&
+      !producer->lifecycle.front().failureCleanup &&
+      cppMirConstructorStatusCannotFail(program, constructorTarget->id);
   const MirClassInstance *defaultOwner =
       value == nullptr ? nullptr
                        : uniqueClassInstanceForType(program, value->info.type);
@@ -12566,8 +12586,12 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
   // Cleanup-free class values have no Value/ConstructionRollback obligation.
   // Preserve their exact adjacent Construct -> Initialize schedule without
   // inventing a drop or requiring move assignment into the empty native field.
-  // Assignable classes retain their existing ordinary constructor route;
-  // selecting placement there would unnecessarily change caller admission.
+  // Failure-free assignable classes retain their ordinary constructor route.
+  // A fallible constructor instead uses its exact status boundary and the
+  // first Initialize on the Invoke success edge, regardless of assignability.
+  const bool cleanupFreeStatusConstruction =
+      constructorProducer &&
+      !cppMirConstructorStatusCannotFail(program, constructorTarget->id);
   if (constructor != nullptr && owner != nullptr && commonProducer &&
       producer->kind == MirInstructionKind::Construct && !producer->receiver &&
       !producer->functionTarget &&
@@ -12578,15 +12602,19 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       constructedOwner->type == value->info.type &&
       value->info.category == ValueCategory::Value &&
       value->info.traits.drop == DropKind::Lexical &&
-      !constructedOwner->traits.moveAssignable &&
       !constructedOwner->requiresActiveCleanup &&
       !constructedOwner->requiresActiveDropState && valueDrop == nullptr &&
-      !producer->successResultDrop && producer->lifecycle.empty() &&
+      !producer->successResultDrop &&
+      // Prepared arguments may hand off their exact input obligations even
+      // though this cleanup-free result creates none. constructorProducer
+      // verifies each unconditional TransferOut against its CallInput stage.
+      (producer->lifecycle.empty() || constructorProducer) &&
       (producer->definedFailure.propagation == FailurePropagationKind::None ||
        producer->definedFailure.propagation ==
            FailurePropagationKind::Constructor) &&
       constructorTarget->parameterTypes == producer->parameterTypes &&
-      cppMirConstructorStatusCannotFail(program, constructorTarget->id)) {
+      (cleanupFreeStatusConstruction ||
+       cppMirConstructorStatusCannotFail(program, constructorTarget->id))) {
     const auto uses = nonRootRecordUses(body, valueId);
     const MirInstruction *initialize =
         uses.size() == 1 &&
@@ -12598,6 +12626,31 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
                                 ? body.findPlace(*initialize->destination)
                                 : nullptr;
     const MirBlock *block = body.findBlock(value->definitionBlock);
+    const MirBlock *success =
+        block && block->terminator.kind == MirTerminatorKind::Invoke &&
+                block->terminator.invokeInstruction == producer->id
+            ? body.findBlock(block->terminator.target)
+            : nullptr;
+    const bool successPublication =
+        cleanupFreeStatusConstruction && block &&
+        !block->instructions.empty() &&
+        &block->instructions.back() == producer &&
+        block->terminator.successLifecycle.empty() && success &&
+        !success->instructions.empty() &&
+        &success->instructions.front() == initialize;
+    // Conservative MIR effects can retain an Invoke even when the exact
+    // native status constructor is independently proved failure-free. Keep
+    // that proof and admit only its immediate success publication, never an
+    // arbitrary later use. An assignable field may use this status route only
+    // when MIR actually retains that Invoke; adjacent failure-free construction
+    // must retain its ordinary member-initializer route.
+    const bool provedSuccessPublication =
+        cppMirConstructorStatusCannotFail(program, constructorTarget->id) &&
+        block && !block->instructions.empty() &&
+        &block->instructions.back() == producer &&
+        block->terminator.successLifecycle.empty() && success &&
+        !success->instructions.empty() &&
+        &success->instructions.front() == initialize;
     const bool adjacent =
         block &&
         std::any_of(block->instructions.begin(), block->instructions.end(),
@@ -12606,7 +12659,12 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
                              &candidate != &block->instructions.back() &&
                              std::next(&candidate) == initialize;
                     });
-    if (initialize && field && adjacent &&
+    if (initialize && field &&
+        (!constructedOwner->traits.moveAssignable ||
+         cleanupFreeStatusConstruction || provedSuccessPublication) &&
+        (cleanupFreeStatusConstruction
+             ? successPublication
+             : (adjacent || provedSuccessPublication)) &&
         initialize->kind == MirInstructionKind::Initialize &&
         initialize->constructorInitializer > 0 &&
         initialize->constructorInitializer <=
@@ -12651,9 +12709,10 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       value->info.type.kind != SemanticType::Class ||
       value->info.category != ValueCategory::Value ||
       value->info.traits.drop != DropKind::Lexical ||
-      (!functionProducer && !constructorProducer && !defaultProducer) ||
+      (!functionProducer && !constructorProducer &&
+       !successfulConstructorProducer && !defaultProducer) ||
       valueDrop == nullptr || valueDrop->initiallyActive ||
-      (!defaultProducer &&
+      (!defaultProducer && !successfulConstructorProducer &&
        (producer->successResultDrop != valueDrop->id ||
         !invokeSuccessActivates(body, *producer, valueDrop->id)))) {
     return {};
@@ -12713,12 +12772,22 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       producerBlock == nullptr
           ? nullptr
           : body.findBlock(producerBlock->terminator.target);
+  const bool adjacentSuccessfulConstruction =
+      successfulConstructorProducer && producerBlock != nullptr &&
+      std::any_of(producerBlock->instructions.begin(),
+                  producerBlock->instructions.end(),
+                  [&](const MirInstruction &candidate) {
+                    return &candidate == producer &&
+                           &candidate != &producerBlock->instructions.back() &&
+                           std::next(&candidate) == initialize;
+                  });
   const bool directConstruction =
-      constructorProducer && producerBlock != nullptr &&
-      producerBlock->terminator.kind == MirTerminatorKind::Invoke &&
-      producerBlock->terminator.invokeInstruction == producer->id &&
-      successBlock != nullptr && !successBlock->instructions.empty() &&
-      &successBlock->instructions.front() == initialize;
+      adjacentSuccessfulConstruction ||
+      (constructorProducer && producerBlock != nullptr &&
+       producerBlock->terminator.kind == MirTerminatorKind::Invoke &&
+       producerBlock->terminator.invokeInstruction == producer->id &&
+       successBlock != nullptr && !successBlock->instructions.empty() &&
+       &successBlock->instructions.front() == initialize);
 
   const std::size_t initializerIndex = initialize->constructorInitializer - 1;
   if (initializerIndex >= constructor->initializers.size()) {
@@ -40321,6 +40390,21 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // The constructed-field proof owns this construction: it spells in
           // the native member-initializer list and emits no body text.
           continue;
+        }
+        if (failureForm && instruction.result &&
+            instruction.definedFailure.empty()) {
+          const auto fieldResult =
+              constructorFieldResultSlot(program_, body, *instruction.result);
+          if (fieldResult.producer == &instruction &&
+              fieldResult.directConstruction &&
+              typeRow(instruction.info.type) &&
+              std::all_of(instruction.operands.begin(),
+                          instruction.operands.end(), valueOperand)) {
+            // The field-slot proof includes the exact failure-free producer,
+            // adjacent publication and later rollback. The failure writer
+            // already consumes that same proof for direct placement.
+            continue;
+          }
         }
         if (generatedSpecialMemberConstruction(program_, body, instruction)) {
           continue;
