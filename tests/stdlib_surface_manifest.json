@@ -1,7 +1,7 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "62268d148fec975957e82d41a84536ba5f9c7b54c375451ac6422386846f5639",
+    "stdlib/prelude.gti": "edfa3c295f6f60dfb091b8412c5fd5a3cd764a94b84e5c8ee1f977deef927ec7",
     "stdlib/std/algorithm.gti": "9af861e6832ca068e28076d3556258a695b8c6c8f2940f904a4da61163d7b657",
     "stdlib/std/array.gti": "93925b89feef1498cb17f5c952e1c3aaeaa6b8657be6a03e1e1bfd1434c61f2a",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
@@ -22,7 +22,7 @@
     "stdlib/std/json.gti": "c73b68761f0194bd11596403c3ef70f56f2d5db8be6e311fb98ba23c79f6239a",
     "stdlib/std/list.gti": "f208f55111c02facf979574b9eceab97ab9676bb91cb8e52ff5a27ee09ca8244",
     "stdlib/std/map.gti": "39a314ff20943e99786f0165a77baca5d9276a73c6b31d253d8a5967647d706b",
-    "stdlib/std/memory.gti": "7ca6b59e6249ac7f6411cb0d5f4e2689cc7bb5c876351a5fe0a64a8a60c25695",
+    "stdlib/std/memory.gti": "202d23c12c1eef2c2fa743a47dff76f4eb315efabd7fab6c261dfe6ece2a200c",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2fe329a8585d1eee0a1be02f42b9cb6d388c80e898a3f58d34e9de12989388fb",
     "stdlib/std/optional.gti": "beb336c90a984da5ec6598f19dc05bc683756859e9cea553c6e3bb1d54ed90a2",
@@ -809,6 +809,13 @@
       "source": "tests/fixtures/string_ordering.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "structural-relocation",
+      "mode": "run",
+      "source": "tests/fixtures/structural_relocation.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "71\n82\n81\nrelocation passed\n", "stderr": ""}
     },
     {
       "id": "tcp",
@@ -1771,10 +1778,11 @@
         "std::storage<T>::get",
         "std::storage<T>::get_mut",
         "std::storage<T>::initialized",
+        "std::storage<T>::relocate_to",
         "std::try_make_arena<T>",
         "std::try_make_pool<T>"
       ],
-      "case_ids": ["allocator-storage", "arena-pool"],
+      "case_ids": ["allocator-storage", "arena-pool", "structural-relocation"],
       "required_instantiations": [
         "std::alignment(64)",
         "std::arena<int32_t>",
@@ -1789,6 +1797,8 @@
         "tests/arena_pool_runtime_test.py",
         "tests/fixtures/allocator_storage.gti",
         "tests/fixtures/arena_pool.gti",
+        "tests/fixtures/structural_relocation.gti",
+        "tests/structural_relocation_runtime_test.py",
         "stdlib/std/memory.gti"
       ]
     },
@@ -1925,6 +1935,15 @@
       "case_ids": ["prelude-output"],
       "required_instantiations": ["std::print<int32_t>", "std::println<uint64_t>"],
       "evidence": ["tests/fixtures/stdlib_surface_prelude_output.gti", "stdlib/prelude.gti"]
+    },
+    {
+      "id": "prelude.relocation",
+      "source": "stdlib/prelude.gti",
+      "status": "executable",
+      "operations": ["std::bitwise_relocatable", "std::relocatable"],
+      "case_ids": ["structural-relocation"],
+      "required_instantiations": ["deleted-copy passive class", "passive user class", "resource-owning user class"],
+      "evidence": ["tests/fixtures/structural_relocation.gti", "tests/structural_relocation_tests.cpp", "tests/structural_relocation_lsp_test.py", "stdlib/prelude.gti"]
     },
     {
       "id": "process.executable",

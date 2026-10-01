@@ -1,5 +1,7 @@
 #include "cpp_mir_body_emitter_test_fixture.h"
 
+#include "gti/mir_printer.h"
+
 int main() {
   const auto fixtures =
       std::filesystem::path(__FILE__).parent_path() / "fixtures";
@@ -15,6 +17,10 @@ int main() {
     return 1;
   expect(lang::verifyMirProgram(frontend.mir).valid(),
          "relocation MIR verifies");
+  const auto serialized = lang::MirPrinter().print(frontend.mir);
+  expect(serialized.find('\0') == std::string::npos &&
+             serialized.starts_with("mir-v81"),
+         "all relocation kinds serialize as textual integers, not bytes");
   const lang::MirClassInstance *particle = nullptr;
   const lang::MirClassInstance *resource = nullptr;
   for (const auto &item : frontend.hir.classInstances()) {
@@ -40,6 +46,10 @@ int main() {
               frontend.mir, lang::SemanticType::arrayOf(resource->type, 4)) ==
               lang::RelocationKind::Structural,
       "fixed arrays inherit the exact element relocation rule");
+  expect(lang::mirTypeRelocationKind(
+             frontend.mir, lang::SemanticType::arrayOf(particle->type, 0)) ==
+             lang::RelocationKind::Bitwise,
+         "zero-length concrete arrays retain element relocation eligibility");
   const auto cpp = gti_test::emitCppText(frontend);
   expect(cpp.find("mir_storage_relocate_v1<true>(") != std::string::npos &&
              cpp.find("mir_storage_relocate_v1<false>(") != std::string::npos &&

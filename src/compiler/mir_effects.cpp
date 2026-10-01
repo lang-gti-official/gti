@@ -1483,7 +1483,7 @@ RelocationKind mirTypeRelocationKind(const MirProgram &program,
                  : RelocationKind::Structural;
     };
     if (candidate.kind == SemanticType::Array)
-      return candidate.arguments.size() == 1 && candidate.arrayLength != 0 &&
+      return candidate.arguments.size() == 1 &&
                      candidate.arrayLengthParameterId == 0
                  ? self(self, candidate.arguments.front())
                  : RelocationKind::Unavailable;
