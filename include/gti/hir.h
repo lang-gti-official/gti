@@ -441,6 +441,7 @@ struct HirClassInstance {
   bool abstract = false;
   bool polymorphic = false;
   bool cAbiRecord = false;
+  bool cOpaqueHandle = false;
   std::optional<CAbiRecordLayout> cAbiLayout;
   std::optional<UnionLayout> unionLayout;
   SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;

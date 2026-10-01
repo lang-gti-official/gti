@@ -2380,6 +2380,7 @@ semanticFloatFormat(const SemanticType &type) {
     // A function item is a zero-state, process-lifetime callable identity.
     // Its backend representation is private; no raw address or borrowed
     // state is exposed through the GTI type.
+    traits.relocation = RelocationKind::Bitwise;
     return traits;
   case SemanticType::Lambda:
     traits.drop = DropKind::Lexical;
@@ -2398,6 +2399,7 @@ semanticFloatFormat(const SemanticType &type) {
   case SemanticType::CString:
     traits.transferCapable = false;
     traits.shareCapable = false;
+    traits.relocation = RelocationKind::Bitwise;
     return traits;
   case SemanticType::Array:
     if (type.arguments.size() == 1) {
@@ -2410,6 +2412,7 @@ semanticFloatFormat(const SemanticType &type) {
       traits.containsBorrowedState = element.containsBorrowedState;
       traits.transferCapable = element.transferCapable;
       traits.shareCapable = element.shareCapable;
+      traits.relocation = element.relocation;
       return traits;
     }
     traits.drop = DropKind::Lexical;
@@ -2425,6 +2428,7 @@ semanticFloatFormat(const SemanticType &type) {
     traits.drop = DropKind::Lexical;
     traits.copyable = false;
     traits.copyAssignable = false;
+    traits.relocation = RelocationKind::Structural;
     if (type.arguments.size() == 1) {
       const SemanticTypeTraits element = semanticTraits(type.arguments[0]);
       traits.transferCapable = element.transferCapable;
@@ -2440,6 +2444,7 @@ semanticFloatFormat(const SemanticType &type) {
     traits.drop = DropKind::Lexical;
     traits.copyable = false;
     traits.copyAssignable = false;
+    traits.relocation = RelocationKind::Structural;
     if (type.arguments.size() == 1) {
       const SemanticTypeTraits element = semanticTraits(type.arguments[0]);
       traits.transferCapable = element.transferCapable;
@@ -2454,6 +2459,7 @@ semanticFloatFormat(const SemanticType &type) {
     traits.drop = DropKind::Lexical;
     traits.transferCapable = false;
     traits.shareCapable = false;
+    traits.relocation = RelocationKind::Structural;
     return traits;
   case SemanticType::Class:
   case SemanticType::TypeParameter:
@@ -2469,6 +2475,7 @@ semanticFloatFormat(const SemanticType &type) {
       traits.shareCapable = false;
       return traits;
     }
+    traits.relocation = RelocationKind::Structural;
     for (std::size_t index = 0; index < type.arguments.size(); ++index) {
       if (type.kind == SemanticType::Expected && index == 0 &&
           type.arguments[index] == SemanticType::Void) {
@@ -2485,9 +2492,12 @@ semanticFloatFormat(const SemanticType &type) {
       traits.transferCapable =
           traits.transferCapable && component.transferCapable;
       traits.shareCapable = traits.shareCapable && component.shareCapable;
+      if (component.relocation == RelocationKind::Unavailable)
+        traits.relocation = RelocationKind::Unavailable;
     }
     return traits;
   default:
+    traits.relocation = RelocationKind::Bitwise;
     return traits;
   }
 }

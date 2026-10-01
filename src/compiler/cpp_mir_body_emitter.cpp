@@ -31797,11 +31797,17 @@ private:
           failureForm && invokePairedInstruction(facts.body, instruction.id);
       if (checked) {
         output << "__gti_mir_failure_status_" << instruction.id << " = "
-               << sparseStorageHelperSpelling(instruction.intrinsic) << '(';
+               << sparseStorageHelperSpelling(instruction.intrinsic);
       } else {
-        output << sparseStoragePlainHelperSpelling(instruction.intrinsic)
-               << '(';
+        output << sparseStoragePlainHelperSpelling(instruction.intrinsic);
       }
+      if (instruction.intrinsic == IntrinsicKind::StorageRelocate)
+        output << (mirTypeRelocationKind(program,
+                                         storage->type.arguments.front()) ==
+                           RelocationKind::Bitwise
+                       ? "<true>"
+                       : "<false>");
+      output << '(';
       emitStoragePlaceValue(facts, *storage);
       for (std::size_t index = 1; index < instruction.operands.size();
            ++index) {
@@ -31868,7 +31874,14 @@ private:
             "verified MIR storage intrinsic lost its staged storage place");
       }
       output << "__gti_mir_failure_status_" << instruction.id << " = "
-             << prefixStorageHelperSpelling(instruction.intrinsic) << '(';
+             << prefixStorageHelperSpelling(instruction.intrinsic);
+      if (instruction.intrinsic == IntrinsicKind::PrefixStorageRelocate)
+        output << (mirTypeRelocationKind(program,
+                                         storage->type.arguments.front()) ==
+                           RelocationKind::Bitwise
+                       ? "<true>"
+                       : "<false>");
+      output << '(';
       emitStoragePlaceValue(facts, *storage);
       for (std::size_t index = 1; index < instruction.operands.size();
            ++index) {

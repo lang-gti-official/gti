@@ -71,6 +71,12 @@ deriveMirDefinedFailureEffects(const MirProgram &program);
 mirTypeRelocationIsDefinedFailureFree(const MirProgram &program,
                                       const SemanticType &type);
 
+// Replays semantic structural relocation eligibility over concrete MIR type
+// identities. Verification compares published nominal traits with this proof;
+// backend selection must consume it, never infer eligibility from C++ names.
+[[nodiscard]] RelocationKind mirTypeRelocationKind(const MirProgram &program,
+                                                   const SemanticType &type);
+
 // Exact ordered class/unique-owner/collection cleanup: the class's guarded
 // source body, if any, precedes its active subobjects. All are represented;
 // recursive ownership uses exact class back-edges; unsupported subobjects

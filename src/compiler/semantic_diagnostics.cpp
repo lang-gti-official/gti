@@ -387,6 +387,18 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
         "The required concept needs state and cleanup that can safely move "
         "between threads.");
     break;
+  case GenericConstraintKind::Relocatable:
+    diagnostic.hints.emplace_back(
+        "Relocation requires available structural movement and no stored "
+        "borrows or address-stable host state; it does not require "
+        "assignment.");
+    break;
+  case GenericConstraintKind::BitwiseRelocatable:
+    diagnostic.hints.emplace_back(
+        "Bytewise eligibility requires passive scalar/array state or a "
+        "non-polymorphic class with no bases, declared cleanup, or "
+        "non-bitwise fields.");
+    break;
   case GenericConstraintKind::Shareable:
     diagnostic.hints.emplace_back(
         "The required concept needs read-only shared access that is safe "

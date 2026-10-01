@@ -1467,6 +1467,113 @@ mirDropDestructorTargets(const MirDropType &type) {
   return result;
 }
 
+RelocationKind mirTypeRelocationKind(const MirProgram &program,
+                                     const SemanticType &type) {
+  std::unordered_set<HirClassInstanceId> visiting;
+  std::unordered_set<EnumId> enums;
+  const auto derive = [&](const auto &self,
+                          const SemanticType &candidate) -> RelocationKind {
+    const auto merge = [](RelocationKind left, RelocationKind right) {
+      return left == RelocationKind::Unavailable ||
+                     right == RelocationKind::Unavailable
+                 ? RelocationKind::Unavailable
+             : left == RelocationKind::Bitwise &&
+                     right == RelocationKind::Bitwise
+                 ? RelocationKind::Bitwise
+                 : RelocationKind::Structural;
+    };
+    if (candidate.kind == SemanticType::Array)
+      return candidate.arguments.size() == 1 && candidate.arrayLength != 0 &&
+                     candidate.arrayLengthParameterId == 0
+                 ? self(self, candidate.arguments.front())
+                 : RelocationKind::Unavailable;
+    if (candidate.kind == SemanticType::Expected ||
+        candidate.kind == SemanticType::Unexpected ||
+        candidate.kind == SemanticType::Lambda) {
+      if ((candidate.kind == SemanticType::Expected &&
+           candidate.arguments.size() != 2) ||
+          (candidate.kind == SemanticType::Unexpected &&
+           candidate.arguments.size() != 1) ||
+          (candidate.kind == SemanticType::Lambda &&
+           !candidate.hasLambdaShape()))
+        return RelocationKind::Unavailable;
+      const auto parts =
+          candidate.kind == SemanticType::Lambda
+              ? candidate.lambdaCaptureTypes()
+              : std::span<const SemanticType>{candidate.arguments};
+      auto result = RelocationKind::Structural;
+      for (const auto &part : parts) {
+        if (candidate.kind == SemanticType::Expected &&
+            &part == &candidate.arguments.front() && part == SemanticType::Void)
+          continue;
+        result = merge(result, self(self, part));
+      }
+      return result;
+    }
+    if (candidate.kind == SemanticType::Enum) {
+      if (const auto *enumeration = program.findPayloadEnum(candidate.enumId)) {
+        if (!enums.insert(candidate.enumId).second)
+          return RelocationKind::Unavailable;
+        auto result = RelocationKind::Structural;
+        for (const auto &variant : enumeration->variants)
+          for (const auto &payload : variant.payloadTypes)
+            result = merge(result, self(self, payload));
+        enums.erase(candidate.enumId);
+        return result;
+      }
+    }
+    if (candidate.kind != SemanticType::Class)
+      return semanticTraits(candidate).relocation;
+    const MirClassInstance *owner = nullptr;
+    for (const auto &instance : program.classInstances()) {
+      if (instance.type != candidate)
+        continue;
+      if (owner != nullptr)
+        return RelocationKind::Unavailable;
+      owner = &instance;
+    }
+    if (owner == nullptr || !visiting.insert(owner->id).second)
+      return RelocationKind::Unavailable;
+    auto result = RelocationKind::Bitwise;
+    if (owner->compilerCapability == CompilerCapabilityTypeKind::TextView ||
+        owner->compilerCapability == CompilerCapabilityTypeKind::CString) {
+      result = RelocationKind::Bitwise;
+    } else if (owner->compilerCapability ==
+               CompilerCapabilityTypeKind::SharedOwner) {
+      result = RelocationKind::Structural;
+    } else if (owner->compilerCapability ==
+               CompilerCapabilityTypeKind::OptionalStorage) {
+      result = candidate.arguments.size() == 1
+                   ? merge(RelocationKind::Structural,
+                           self(self, candidate.arguments.front()))
+                   : RelocationKind::Unavailable;
+    } else if (owner->compilerCapability != CompilerCapabilityTypeKind::None ||
+               owner->moveConstructor != SpecialMemberStatus::Generated ||
+               owner->abstract || owner->cOpaqueHandle ||
+               owner->lifecycleBoundBorrowCarrier ||
+               owner->traits.containsBorrowedState) {
+      result = RelocationKind::Unavailable;
+    } else {
+      if (owner->destructor || owner->polymorphic || !owner->bases.empty() ||
+          owner->unionLayout)
+        result = RelocationKind::Structural;
+      for (const auto &field : owner->declaredFields)
+        result = merge(result, self(self, field.type));
+      for (const auto &base : owner->bases) {
+        // Interface bases carry dispatch requirements, not stored value state.
+        if (base.interface)
+          continue;
+        const auto *instance = program.findClassInstance(base.instance);
+        result = merge(result, instance ? self(self, instance->type)
+                                        : RelocationKind::Unavailable);
+      }
+    }
+    visiting.erase(owner->id);
+    return result;
+  };
+  return derive(derive, type);
+}
+
 bool mirTypeRelocationIsDefinedFailureFree(const MirProgram &program,
                                            const SemanticType &type) {
   std::unordered_set<HirClassInstanceId> classes;

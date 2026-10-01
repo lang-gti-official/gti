@@ -1277,6 +1277,61 @@ now makes moves, projected places, loans, borrow ends, lexical drop points, and
 control-flow cleanup explicit. Concrete object layout and custom lifecycle
 bodies remain deferred rather than being inherited from the C++ backend.
 
+## Structural Relocation
+
+Relocation transfers one complete value into **empty, non-overlapping typed
+storage**, ending the source value's lifetime. It neither copies the ownership
+obligation nor replaces an already-live destination. Generated movement
+transfers resource handles and active cleanup state; the source cleanup body
+does not run, and the destination retains the one remaining cleanup obligation.
+Ordinary assignments still clean up their old destination. Relocation does not
+change `std::move`, implicit return movement, or move/use-after-move checking.
+
+`std::relocatable<T>` describes structural eligibility without requiring move
+assignment. The compiler derives it through generated movement, concrete
+bases, fields, fixed arrays, payload alternatives, and owned captures. Deleted
+movement and stored borrows deny it. Abstract classes and pointer-only native
+pointee declarations cannot relocate as values. The bounded host-state policy
+also excludes private thread, atomic, mutex, and lock-token state; having a
+native move operation is not itself a relocation proof. Owning allocation
+handles relocate independently of their pointee's movability. No class
+annotation or unsafe opt-in is needed.
+
+`std::bitwise_relocatable<T>` refines this to passive scalar state, fixed arrays
+of eligible elements, and classes whose fields are all bitwise-eligible and
+which have no bases, polymorphism, or declared cleanup. Deleted copy
+construction alone does not deny it: relocation is not copying. Cleanup-owning
+classes and tagged/optional carriers use generated structural transfer, not
+bytewise copying. These concepts are constraints, not boolean expressions.
+
+The bitwise concept is a language eligibility fact, not a promise about emitted
+instructions or an unsafe `memcpy` API. The C++20/C++23 backend additionally
+checks its representation's trivial copy, move-construction, and destruction
+properties before using bulk byte transfer. Other representations retain
+equivalent generated elementwise movement. In particular, a resource owner's
+nontrivial C++ representation is never copied as bytes.
+
+The first explicit public operation is
+`std::storage<T>::relocate_to(mut storage<T>& destination, size_t count)` in
+`<std/memory>`. It checks both capacities and every source/destination slot in
+`[0, count)` before transferring anything. Source slots must be initialized;
+destination slots must be empty. The source prefix becomes uninitialized and
+can be constructed again; neither allocation is released. A zero count is a
+no-op, including for zero-capacity storage. Existing storage element
+requirements still apply. State/capacity violations remain defined
+`invalid_storage_state` failures, not recoverable allocation errors.
+
+Both owners are borrowed exclusively for this call. Self-aliasing and live
+loans into either allocation are rejected by ordinary borrow checking, even
+when `count` is zero. There is no address escape, overlap/memmove API,
+replacement authorization, user relocation hook, or pinned/self-referential
+object facility in this slice. Unsafe code retaining a raw address must still
+obey its existing lifetime contract.
+
+Vector/string growth uses the same private relocation mechanism. Passive
+eligible elements can move in bulk; resource-owning elements retain the
+generated transfer and exactly-once cleanup path.
+
 ## Backend Boundary
 
 The C++ backend emits the public wrapper as `__gti_std::unique_ptr<T>`. Its

@@ -6615,7 +6615,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              left.moveAssignable == right.moveAssignable &&
              left.containsBorrowedState == right.containsBorrowedState &&
              left.transferCapable == right.transferCapable &&
-             left.shareCapable == right.shareCapable;
+             left.shareCapable == right.shareCapable &&
+             left.relocation == right.relocation;
     };
     const auto validOwnedValueInputType = [](const ExpressionInfo &info) {
       return info.type.kind == SemanticType::Class ||

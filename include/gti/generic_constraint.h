@@ -20,6 +20,8 @@ enum class GenericConstraintKind : std::uint8_t {
   CopyConstructible,
   Copyable,
   Movable,
+  Relocatable,
+  BitwiseRelocatable,
   Transferable,
   Shareable,
   DefaultInitializable,
@@ -81,7 +83,7 @@ struct CompilerStructuralConstraintRecord {
   std::size_t arity;
 };
 
-inline constexpr std::array<GenericConstraintKind, 15> genericConstraintKinds{{
+inline constexpr std::array<GenericConstraintKind, 17> genericConstraintKinds{{
     GenericConstraintKind::Numeric,
     GenericConstraintKind::SignedNumeric,
     GenericConstraintKind::Integral,
@@ -91,6 +93,8 @@ inline constexpr std::array<GenericConstraintKind, 15> genericConstraintKinds{{
     GenericConstraintKind::CopyConstructible,
     GenericConstraintKind::Copyable,
     GenericConstraintKind::Movable,
+    GenericConstraintKind::Relocatable,
+    GenericConstraintKind::BitwiseRelocatable,
     GenericConstraintKind::Transferable,
     GenericConstraintKind::Shareable,
     GenericConstraintKind::DefaultInitializable,
@@ -99,7 +103,7 @@ inline constexpr std::array<GenericConstraintKind, 15> genericConstraintKinds{{
     GenericConstraintKind::AtomicScalar,
 }};
 
-inline constexpr std::array<CompilerConstraintRecord, 15> compilerConstraints{{
+inline constexpr std::array<CompilerConstraintRecord, 17> compilerConstraints{{
     {"numeric", GenericConstraintKind::Numeric},
     {"signed_numeric", GenericConstraintKind::SignedNumeric},
     {"integral", GenericConstraintKind::Integral},
@@ -109,6 +113,8 @@ inline constexpr std::array<CompilerConstraintRecord, 15> compilerConstraints{{
     {"copy_constructible", GenericConstraintKind::CopyConstructible},
     {"copyable", GenericConstraintKind::Copyable},
     {"movable", GenericConstraintKind::Movable},
+    {"relocatable", GenericConstraintKind::Relocatable},
+    {"bitwise_relocatable", GenericConstraintKind::BitwiseRelocatable},
     {"transferable", GenericConstraintKind::Transferable},
     {"shareable", GenericConstraintKind::Shareable},
     {"default_initializable", GenericConstraintKind::DefaultInitializable},

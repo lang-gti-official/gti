@@ -20,6 +20,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "Arguments",
       "Array",
       "Binding",
+      "Bitwise",
       "Base",
       "Capability",
       "Cleanup",
@@ -280,6 +281,9 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "is_integral_v",
       "is_same_v",
       "is_signed_v",
+      "is_trivially_copyable_v",
+      "is_trivially_destructible_v",
+      "is_trivially_move_constructible_v",
       "is_unsigned_v",
       "isfinite",
       "launder",
@@ -364,6 +368,7 @@ void writeCppSupportPreamble(std::ostream &output,
             "#include <iterator>\n"
             "#include <limits>\n"
             "#include <memory>\n"
+            "#include <cstring>\n"
             "#include <new>\n"
             "#include <string_view>\n"
             "#include <type_traits>\n"
@@ -1046,6 +1051,7 @@ public:
     return success;
   }
 
+  template <bool Bitwise = false>
   void relocate_to(storage &destination, std::uint64_t count) {
     if (count > capacity() || count > destination.capacity()) {
       storage_error("storage relocation exceeds capacity");
@@ -1055,6 +1061,21 @@ public:
       if (initialized_[index] == 0 || destination.initialized_[index] != 0) {
         storage_error("storage relocation requires initialized source and empty destination slots");
       }
+    }
+    // GTI grants eligibility; host traits only gate whether this particular
+    // C++ representation has implicit lifetime and legal bytewise copying.
+    // Never byte-copy an owner representation with nontrivial cleanup.
+    if constexpr (Bitwise && std::is_trivially_copyable_v<T> &&
+                  std::is_trivially_move_constructible_v<T> &&
+                  std::is_trivially_destructible_v<T>) {
+      if (elements == 0) return;
+      std::memcpy(destination.slot(0), slot(0), sizeof(T) * elements);
+      for (std::size_t index = 0; index < elements; ++index) {
+        std::destroy_at(std::launder(slot(index)));
+        destination.initialized_[index] = 1;
+        initialized_[index] = 0;
+      }
+      return;
     }
     for (std::size_t index = 0; index < elements; ++index) {
       try {
@@ -1322,10 +1343,10 @@ inline void storage_destroy(storage<T> &value, std::uint64_t index) {
   value.destroy(index);
 }
 
-template <typename T>
+template <bool Bitwise = false, typename T>
 inline void storage_relocate(storage<T> &source, storage<T> &destination,
                              std::uint64_t count) {
-  source.relocate_to(destination, count);
+  source.template relocate_to<Bitwise>(destination, count);
 }
 
 template <typename T>
@@ -1695,6 +1716,7 @@ public:
     return true;
   }
 
+  template <bool Bitwise = false>
   void relocate_to(prefix_storage &destination) {
     if (destination.length_ != 0) {
       storage_error("prefix storage relocation destination is occupied");
@@ -1703,7 +1725,18 @@ public:
       storage_error("prefix storage relocation exceeds the destination "
                     "capacity");
     }
-    if constexpr (std::is_same_v<T, char8_t>) {
+    if constexpr (Bitwise && std::is_trivially_copyable_v<T> &&
+                  std::is_trivially_move_constructible_v<T> &&
+                  std::is_trivially_destructible_v<T>) {
+      if (length_ != 0) {
+        std::memcpy(destination.slot(0), slot(0), sizeof(T) * length_);
+        if constexpr (!std::is_same_v<T, char8_t>) {
+          for (std::size_t index = 0; index < length_; ++index)
+            std::destroy_at(std::launder(slot(index)));
+        }
+      }
+      destination.length_ = length_;
+    } else if constexpr (std::is_same_v<T, char8_t>) {
       for (std::size_t index = 0; index < length_; ++index) {
         *destination.slot(index) = *slot(index);
         ++destination.length_;
@@ -1897,10 +1930,10 @@ prefix_storage_try_c_string(const prefix_storage<char8_t> &value) noexcept {
   return prefix_storage_c_string(value);
 }
 
-template <typename T>
+template <bool Bitwise = false, typename T>
 inline void prefix_storage_relocate(prefix_storage<T> &source,
                                     prefix_storage<T> &destination) {
-  source.relocate_to(destination);
+  source.template relocate_to<Bitwise>(destination);
 }
 
 template <typename T, typename... Args>

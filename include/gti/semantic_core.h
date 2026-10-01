@@ -628,6 +628,12 @@ projectGenericTypeArgument(std::span<const SemanticType> arguments,
       id, std::vector<SemanticType>(tail.begin(), tail.end()));
 }
 
+// Relocation consumes one complete value into fresh, non-overlapping storage.
+// It is not copying, assignment, or permission to invalidate outstanding loans.
+// Bitwise is a language eligibility fact; a backend must also prove that its
+// concrete representation permits bytewise lifetime creation.
+enum class RelocationKind : std::uint8_t { Unavailable, Structural, Bitwise };
+
 struct SemanticTypeTraits {
   OwnershipKind ownership = OwnershipKind::Value;
   DropKind drop = DropKind::Trivial;
@@ -638,6 +644,7 @@ struct SemanticTypeTraits {
   bool containsBorrowedState = false;
   bool transferCapable = true;
   bool shareCapable = true;
+  RelocationKind relocation = RelocationKind::Unavailable;
 
   friend bool operator==(const SemanticTypeTraits &,
                          const SemanticTypeTraits &) = default;

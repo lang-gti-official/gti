@@ -646,6 +646,7 @@ concretePackElementTraits(const MirProgram &program, const SemanticType &type,
                   type.lambdaCaptureTypes().end()))
     return std::nullopt;
   SemanticTypeTraits traits;
+  traits.relocation = mirTypeRelocationKind(program, type);
   for (const SemanticType &captureType : lambda->captureTypes) {
     const auto capture =
         concretePackElementTraits(program, captureType, depth + 1);
@@ -3805,7 +3806,9 @@ verifyMirPayloadEnums(const MirProgram &program) {
       }
     }
     exact = exact && active == enumeration.requiresActiveCleanup &&
-            (!active || enumeration.traits.drop == DropKind::Lexical);
+            (!active || enumeration.traits.drop == DropKind::Lexical) &&
+            enumeration.traits.relocation ==
+                mirTypeRelocationKind(program, enumeration.type);
     if (!exact) {
       result.errors.push_back(
           {.bodyKind = MirBodyKind::Module,
@@ -8493,6 +8496,14 @@ verifyMirProgramContracts(const MirProgram &program) {
           {.bodyKind = MirBodyKind::FieldInitializers,
            .owner = instance.id,
            .message = "class active-drop state does not match its destructor"});
+    }
+    if (instance.traits.relocation !=
+        mirTypeRelocationKind(program, instance.type)) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::FieldInitializers,
+           .owner = instance.id,
+           .message = "class relocation traits do not match its structural "
+                      "move, borrow, base, field, and cleanup metadata"});
     }
     if (instance.requiresActiveDropState && !instance.requiresActiveCleanup) {
       result.errors.push_back(

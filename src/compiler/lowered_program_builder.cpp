@@ -770,13 +770,16 @@ private:
                                     : semantics.findClassType(*source.source);
     if (source.id != lowered.id || source.declaration != lowered.declaration ||
         source.type != lowered.type || source.kind != lowered.kind ||
+        source.traits != lowered.traits ||
+        source.cOpaqueHandle != lowered.cOpaqueHandle ||
         source.fieldInitializers.placeDomain !=
             lowered.fieldInitializers.placeDomain ||
         source.staticFieldInitializers.placeDomain !=
             lowered.staticFieldInitializers.placeDomain ||
         info == nullptr || info->id != source.declaration ||
         info->declaration != source.source ||
-        info->sourceUnit != source.sourceUnit) {
+        info->sourceUnit != source.sourceUnit ||
+        info->cOpaqueHandle != source.cOpaqueHandle) {
       return reject("class instance " + std::to_string(index + 1) + " differs");
     }
   }

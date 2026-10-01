@@ -23,6 +23,8 @@ namespace gti_internal {
   @compiler_constraint("copy_constructible") concept copy_constructible_capability<T>;
   @compiler_constraint("copyable") concept copyable_capability<T>;
   @compiler_constraint("movable") concept movable_capability<T>;
+  @compiler_constraint("relocatable") concept relocatable_capability<T>;
+  @compiler_constraint("bitwise_relocatable") concept bitwise_relocatable_capability<T>;
   @compiler_constraint("transferable") concept transferable_capability<T>;
   @compiler_constraint("shareable") concept shareable_capability<T>;
   @compiler_constraint("default_initializable") concept default_initializable_capability<T>;
@@ -75,6 +77,12 @@ using c_string = gti_internal::c_string;
 
 namespace std {
   concept movable<T> = gti_internal::movable_capability<T>;
+  /// Can transfer a complete value into empty storage without copying it.
+  /// Does not authorize replacement, moving a borrowed value, or raw access.
+  concept relocatable<T> = gti_internal::relocatable_capability<T>;
+  /// Structurally eligible for bytewise relocation; native representation may
+  /// require an equivalent generated elementwise transfer instead.
+  concept bitwise_relocatable<T> = std::relocatable<T> && gti_internal::bitwise_relocatable_capability<T>;
   concept transferable<T> = gti_internal::transferable_capability<T>;
   concept shareable<T> = gti_internal::shareable_capability<T>;
   concept copy_constructible<T> = gti_internal::copy_constructible_capability<T>;
