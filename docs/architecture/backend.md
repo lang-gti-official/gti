@@ -534,8 +534,23 @@ success edge proves extraction of that same carrier.
 A cleanup-free direct result may forward into caller storage without inventing
 a result-drop obligation when it has one exact return use and only inert
 boundary/EndBorrow records intervene. Passive expected payload construction
-similarly permits its completed input loans to end before return. These
-representation choices preserve the verified Invoke and cleanup schedule.
+and ordinary source-call results similarly permit their completed input loans
+and unrelated passive local lifetimes to end before return, including the
+exact call's Invoke success edge. Prepared argument handoff uses the same exact
+CallInput/TransferOut proof as constructor publication. The
+payload is constructed in a local slot; only the unique Return wraps it in
+the Expected envelope. No default constructor or result-drop obligation is
+invented. These representation choices preserve the verified Invoke and
+cleanup schedule.
+
+A checked `value()` or `error()` on a borrowed Expected may copy a cleanup-free,
+generated-copy class alternative directly into its sole binding's lifetime
+slot. The receiver remains borrowed and unchanged. This representation requires
+the exact success destination and its immediate, unconditional Initialize;
+borrow-carrying payloads and user-defined copy constructors are not folded into
+this route. The wrong-state check precedes construction, so failure never
+activates the destination. Consuming observers retain their separate verified
+movement and cleanup rules.
 
 A temporary expected class result observed only through `has_value()` uses
 the same proved lifetime slot as propagation, without requiring payload
@@ -1272,7 +1287,7 @@ its exact argument index, call site, type, prepared slot and obligation, once
 each. Those input handoffs neither activate the result early nor discharge its
 replacement-failure cleanup.
 
-The publication has three destination families, distinguished by which
+The publication has four destination families, distinguished by which
 obligation owns the storage being replaced. A bare mutable binding owns its
 own cleanup obligation, so the `Replace` transfers into that obligation and
 the write carries no failure site. A checked fixed-array element does not:
@@ -1284,9 +1299,16 @@ destination obligation because its aggregate owner already covers the object,
 and writing through the produced loan has no new failure site. That route
 requires the exact reserved-loan activation immediately before `Assign`, the
 matching `EndBorrow` immediately after it, and only then the staging-slot
-`Drop`. Requiring a destination obligation for an element or loan referent
+`Drop`. An exact mutable owned nominal field uses the same representation-backed
+field-path proof as moved-value/call-result assignment. Its containing object
+already owns cleanup, so publication names no destination obligation; the
+paired replacement preparation, temporary activation and shell drop remain
+explicit. This also covers restoring a moved-out receiver field after concrete
+`if constexpr` selection. No library spelling or compile-time branch marker is
+consulted by the backend.
+Requiring a destination obligation for an element, owned field or loan referent
 would retire the same storage twice, so either publication fails closed when
-it names one. Every other destination, a bare-binding or loan publication with
+it names one. Every other destination, a bare-binding, field or loan publication with
 a failure site, an incomplete two-phase loan schedule, extra uses, and any
 additional lifecycle event on the staging obligation also fail closed.
 
@@ -1374,6 +1396,11 @@ worker or synchronous once entry/leave hooks. The public once state machine
 remains ordinary MIR-emitted GTI and atomic operations. Module initialization
 uses the canonical program-storage root even when a copied argument retains
 another MIR view. Data-only constexpr aggregates are not runtime lifetime slots.
+Their native materialization factories are selected by the constant's exact
+concrete semantic type, not just its class declaration ID. A constant
+`pair<int, int>` therefore does not emit a constexpr factory for an unrelated
+runtime-only `pair<string, int>` instance. This avoids imposing C++ literal-type
+requirements on ordinary runtime owners, including under C++20.
 Passive generated class copies in `CallInput` retain a representation slot at
 their written evaluation point, including across a later argument's failure
 edge; native argument ordering cannot delay the copy. Such slots own no

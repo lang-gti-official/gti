@@ -1944,48 +1944,65 @@ template <typename T> class shared_owner;
   if (usesAtomics) {
     output << R"(
 
-// A strong token has no implicit retain or source-language destructor. MIR
-// releases its one obligation explicitly, supplying the verified pointee
-// recipe on the last release. Native shells must be inert when destroyed.
+// Every typed token carries a view pointer into one allocation and shares this
+// non-templated block. A polymorphic upcast changes only that token's view; it
+// never allocates a second block and never changes the strong count. The block
+// intentionally owns no native destructor policy. Verified MIR supplies the
+// exact pointee recipe on the last release, including dynamic GTI cleanup.
+struct shared_owner_block final {
+  std::atomic<std::uint64_t> strong{1};
+  void *allocation = nullptr;
+};
+
 template <typename T> class shared_owner final {
-  struct block {
-    std::atomic<std::uint64_t> strong{1};
-    std::unique_ptr<T> value;
-  };
-  block *state_ = nullptr;
+  template <typename> friend class shared_owner;
+
+  shared_owner_block *state_ = nullptr;
+  T *view_ = nullptr;
 public:
   shared_owner() noexcept = default;
   shared_owner(const shared_owner &) = delete;
   shared_owner &operator=(const shared_owner &) = delete;
   shared_owner(shared_owner &&other) noexcept
-      : state_(std::exchange(other.state_, nullptr)) {}
+      : state_(std::exchange(other.state_, nullptr)),
+        view_(std::exchange(other.view_, nullptr)) {}
   shared_owner &operator=(shared_owner &&other) noexcept {
     if (this == &other) return *this;
-    if (state_ != nullptr) std::abort();
+    if (state_ != nullptr || view_ != nullptr) std::abort();
     state_ = std::exchange(other.state_, nullptr);
+    view_ = std::exchange(other.view_, nullptr);
     return *this;
   }
-  ~shared_owner() { if (state_ != nullptr) std::abort(); }
+  ~shared_owner() {
+    if (state_ != nullptr || view_ != nullptr) std::abort();
+  }
   explicit operator bool() const noexcept { return state_ != nullptr; }
-  const T *get() const noexcept { return state_ == nullptr ? nullptr : state_->value.get(); }
+  const T *get() const noexcept { return view_; }
   std::uint64_t use_count() const noexcept {
     return state_ == nullptr ? 0 : state_->strong.load(std::memory_order_relaxed);
   }
-  void swap(shared_owner &other) noexcept { std::swap(state_, other.state_); }
+  void swap(shared_owner &other) noexcept {
+    std::swap(state_, other.state_);
+    std::swap(view_, other.view_);
+  }
   // Failure leaves the consumed input intact for the caller's MIR failure
   // rollback. Allocation succeeds before ownership is detached from it.
   static bool promote(std::unique_ptr<T> &source,
                       shared_owner &destination) noexcept {
-    if (destination.state_ != nullptr) std::abort();
+    if (destination.state_ != nullptr || destination.view_ != nullptr)
+      std::abort();
     if (!source) return true;
-    block *fresh = new (std::nothrow) block;
+    shared_owner_block *fresh = new (std::nothrow) shared_owner_block;
     if (fresh == nullptr) return false;
-    fresh->value = std::move(source);
+    T *value = source.release();
+    fresh->allocation = value;
     destination.state_ = fresh;
+    destination.view_ = value;
     return true;
   }
   bool clone_into(shared_owner &destination) const noexcept {
-    if (destination.state_ != nullptr) std::abort();
+    if (destination.state_ != nullptr || destination.view_ != nullptr)
+      std::abort();
     if (state_ == nullptr) return true;
     auto count = state_->strong.load(std::memory_order_relaxed);
     do {
@@ -1994,20 +2011,37 @@ public:
     } while (!state_->strong.compare_exchange_weak(
         count, count + 1, std::memory_order_relaxed, std::memory_order_relaxed));
     destination.state_ = state_;
+    destination.view_ = view_;
     return true;
+  }
+  template <typename Derived>
+  static shared_owner upcast_from(shared_owner<Derived> &&source) noexcept {
+    shared_owner destination;
+    destination.state_ = std::exchange(source.state_, nullptr);
+    destination.view_ = static_cast<T *>(source.view_);
+    source.view_ = nullptr;
+    return destination;
   }
   template <typename Cleanup>
   bool release_with_failure(::gti_failure_record_v1 *record, bool unwinding,
                             Cleanup cleanup) {
-    block *released = std::exchange(state_, nullptr);
+    shared_owner_block *released = std::exchange(state_, nullptr);
+    T *released_view = std::exchange(view_, nullptr);
     if (released == nullptr ||
         released->strong.fetch_sub(1, std::memory_order_acq_rel) != 1)
       return true;
-    const bool success = cleanup(released->value, record, unwinding);
+    if (released_view == nullptr || released->allocation == nullptr)
+      std::abort();
+    std::unique_ptr<T> owner(released_view);
+    const bool success = cleanup(owner, record, unwinding);
     // A secondary failure terminates at the explicit MIR edge: do not let
     // native deletion run remaining subobjects before that terminal edge.
-    if (!success && unwinding) return false;
-    if (released->value) std::abort();
+    if (!success && unwinding) {
+      released->allocation = owner.release();
+      return false;
+    }
+    if (owner) std::abort();
+    released->allocation = nullptr;
     delete released;
     return success;
   }
@@ -2120,6 +2154,29 @@ public:
       std::terminate();
     }
     return *value_;
+  }
+
+  template <typename Cleanup>
+  [[nodiscard]] bool destroy_value_with_failure(
+      ::gti_failure_record_v1 *record, bool unwinding,
+      Cleanup &&cleanup) noexcept {
+    if (!value_.has_value()) {
+      std::terminate();
+    }
+    bool success = false;
+    try {
+      success = static_cast<Cleanup &&>(cleanup)(*value_, record, unwinding);
+    } catch (...) {
+      std::terminate();
+    }
+    // A second defined failure is terminal at the calling MIR edge.  Keep the
+    // native shell engaged so std::optional teardown cannot run any payload
+    // subobjects that remain live after the source cleanup stopped.
+    if (!success && unwinding) {
+      return false;
+    }
+    value_.reset();
+    return success;
   }
 
 private:

@@ -115,6 +115,59 @@ void checkRejections() {
            auto owner = std::make_shared<Borrowed>(value);
            return 0;
          })",
+      R"(class Base { public: virtual int read() { return 1; } };
+         class Other { public: int read() { return 2; } };
+         int main() {
+           auto owner = std::make_shared<Other>();
+           auto base = std::upcast_shared<Base, Other>(std::move(owner));
+           return base->read();
+         })",
+      R"(class Base { public: int read() { return 1; } };
+         class Derived : public Base {};
+         int main() {
+           auto owner = std::make_shared<Derived>();
+           auto base = std::upcast_shared<Base, Derived>(std::move(owner));
+           return base->read();
+         })",
+      R"(interface Base { int read(); };
+         class Derived : public Base {
+         public:
+           int read() override { return 3; }
+         };
+         int main() {
+           auto owner = std::make_shared<Derived>();
+           auto base = std::upcast_shared<Base, Derived>(owner);
+           return base->read();
+         })",
+      R"(class Base { public: virtual int read() { return 1; } };
+         [[no_transfer]] class Derived : public Base {
+         public: int read() override { return 2; }
+         };
+         int main() {
+           auto owner = std::make_shared<Derived>();
+           auto base = std::upcast_shared<Base, Derived>(std::move(owner));
+           return base->read();
+         })",
+      R"(class Base { public: virtual int read() { return 1; } };
+         [[no_share]] class Derived : public Base {
+         public: int read() override { return 2; }
+         };
+         int main() {
+           auto owner = std::make_shared<Derived>();
+           auto base = std::upcast_shared<Base, Derived>(std::move(owner));
+           return base->read();
+         })",
+      R"(class Base { public: virtual int read() { return 1; } };
+         class Derived : public Base {
+         public:
+           ~Derived() {}
+           int read() override { return 2; }
+         };
+         int main() {
+           auto owner = std::make_shared<Derived>();
+           auto base = std::upcast_shared<Base, Derived>(std::move(owner));
+           return base->read();
+         })",
   };
   for (const auto &source : sources) {
     const auto frontend = analyze(source);
@@ -138,6 +191,129 @@ void checkRejections() {
                          }),
             "invalid shared-owner source must not cause an ICE");
   }
+}
+
+void checkUpcastContract() {
+  const auto frontend = analyze(R"(
+[[transfer, share]] interface Sink { int read(); };
+class Concrete : public Sink {
+public:
+  int read() override { return 7; }
+};
+int main() {
+  mut auto concrete = std::make_shared<Concrete>();
+  auto alias = concrete.clone();
+  auto sink = std::upcast_shared<Sink, Concrete>(std::move(concrete));
+  return sink->read() + int(alias.use_count()) - 9;
+}
+)",
+                                lang::FrontendPhase::Mir);
+  if (!frontend.canGenerateCode()) {
+    dump(frontend);
+    for (const auto &error : lang::verifyMirProgram(frontend.mir).errors) {
+      std::cerr << "MIR: " << error.message << '\n';
+    }
+  }
+  require(frontend.canGenerateCode(),
+          "shared-owner polymorphic upcasts must lower to verified MIR");
+  bool observed = false;
+  lang::HirClassInstanceId baseInstance = 0;
+  lang::HirClassInstanceId sourceOwnerInstance = 0;
+  for (const auto &instance : frontend.mir.classInstances()) {
+    if (instance.type.kind == lang::SemanticType::Class &&
+        instance.type.classId != 0 && instance.polymorphic &&
+        instance.kind == lang::ClassKind::Interface) {
+      baseInstance = instance.id;
+    }
+  }
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.intrinsic != lang::IntrinsicKind::SharedOwnerUpcast) {
+          continue;
+        }
+        observed = true;
+        for (const auto &instance : frontend.mir.classInstances()) {
+          if (instance.type == instruction.operands.front().type) {
+            sourceOwnerInstance = instance.id;
+          }
+        }
+        require(
+            instruction.operands.size() == 1 && instruction.result &&
+                instruction.definedFailure.empty() &&
+                instruction.localFailureSites.empty() &&
+                std::count_if(instruction.lifecycle.begin(),
+                              instruction.lifecycle.end(),
+                              [](const auto &event) {
+                                return event.kind ==
+                                       lang::MirLifecycleEventKind::TransferOut;
+                              }) == 1 &&
+                std::count_if(instruction.lifecycle.begin(),
+                              instruction.lifecycle.end(),
+                              [](const auto &event) {
+                                return event.kind ==
+                                       lang::MirLifecycleEventKind::Initialize;
+                              }) == 1,
+            "shared-owner upcasts must consume one token without a "
+            "failure edge");
+        for (int mutation = 0; mutation != 6; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *target = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          auto &changed = *std::find_if(
+              target->body.blocks[block.id - 1].instructions.begin(),
+              target->body.blocks[block.id - 1].instructions.end(),
+              [&](const auto &candidate) {
+                return candidate.id == instruction.id;
+              });
+          if (mutation == 0) {
+            changed.lifecycle.clear();
+          } else if (mutation == 1) {
+            changed.parameterTypes.clear();
+          } else if (mutation == 2) {
+            changed.info.type = changed.operands.front().type;
+          } else if (mutation == 3) {
+            changed.localFailureSites.push_back(1);
+          } else {
+            const auto activation = std::find_if(
+                changed.lifecycle.begin(), changed.lifecycle.end(),
+                [](const auto &event) {
+                  return event.kind == lang::MirLifecycleEventKind::Initialize;
+                });
+            require(activation != changed.lifecycle.end(),
+                    "shared upcast mutation should find result activation");
+            if (activation == changed.lifecycle.end()) {
+              continue;
+            }
+            if (mutation == 4) {
+              changed.lifecycle.erase(activation);
+            } else {
+              activation->target = 0;
+            }
+          }
+          require(!lang::verifyMirProgram(malformed).valid(),
+                  "forged shared-owner upcast contracts must reject");
+        }
+      }
+    }
+  }
+  require(observed && baseInstance != 0 && sourceOwnerInstance != 0,
+          "upcast test must instantiate its polymorphic base capability");
+  auto malformed = frontend.mir;
+  auto *base = const_cast<lang::MirClassInstance *>(
+      malformed.findClassInstance(baseInstance));
+  base->polymorphic = false;
+  require(!lang::verifyMirProgram(malformed).valid(),
+          "shared-owner upcast cannot forge polymorphic destruction");
+
+  malformed = frontend.mir;
+  auto *sourceOwner = const_cast<lang::MirClassInstance *>(
+      malformed.findClassInstance(sourceOwnerInstance));
+  sourceOwner->traits.transferCapable = false;
+  sourceOwner->traits.shareCapable = false;
+  require(!lang::verifyMirProgram(malformed).valid(),
+          "shared-owner upcast cannot amplify erased concurrency "
+          "capabilities");
 }
 
 void checkMirContract() {
@@ -387,6 +563,7 @@ int main() {
   try {
     checkPublicPolicy();
     checkRejections();
+    checkUpcastContract();
     checkMirContract();
     checkConcurrencyCapabilities();
     checkRecursiveOwnership();

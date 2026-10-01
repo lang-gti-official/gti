@@ -7,6 +7,14 @@
 
 namespace lang::mir_detail {
 
+// Recognize the exact, single-use signed-minimum literal schedule shared by
+// native emission and constant execution. Ordinary runtime negation is not
+// interchangeable with this failure-free literal formation.
+[[nodiscard]] const MirInstruction *
+fusedSignedMinimumLiteral(const MirBody &body, const MirInstruction &negation);
+[[nodiscard]] const MirInstruction *
+fusedSignedMinimumNegation(const MirBody &body, const MirInstruction &carrier);
+
 [[nodiscard]] const MirInstruction *definitionFor(const MirBody &body,
                                                   MirValueId value);
 [[nodiscard]] std::optional<MirPlaceId>

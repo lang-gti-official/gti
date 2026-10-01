@@ -21,7 +21,9 @@ using semantic_spelling::pathSpelling;
 using semantic_spelling::qualifiedName;
 using semantic_spelling::typeRefSpelling;
 
-class SemanticVisitor::Impl final : public ExprVisitor, public StmtVisitor {
+class SemanticVisitor::Impl final : public ExprVisitor,
+                                    public StmtVisitor,
+                                    public SemanticInstanceProvider {
 public:
   enum class ProgramEffectOwnerKind {
     None,
@@ -78,8 +80,9 @@ public:
   };
 
   explicit Impl(TargetInfo target, const SourceGraph *sourceGraph,
-                bool toolingOccurrences, FrontendWorkMetrics *workMetrics)
-      : target(std::move(target)), sourceGraph(sourceGraph),
+                bool toolingOccurrences, FrontendWorkMetrics *workMetrics,
+                const SourceManager *sources)
+      : target(std::move(target)), sourceGraph(sourceGraph), sources(sources),
         toolingOccurrences(toolingOccurrences), workMetrics(workMetrics) {
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
   }
@@ -105,9 +108,11 @@ public:
   // further analysis (including concrete instance reanalysis) afterwards.
   [[nodiscard]] SemanticModel takeModel();
 
-  [[nodiscard]] SemanticTypeTraits traitsFor(const SemanticType &type) const;
+  [[nodiscard]] SemanticTypeTraits
+  traitsFor(const SemanticType &type) const override;
 
-  [[nodiscard]] bool requiresActiveCleanupFor(const SemanticType &type) const;
+  [[nodiscard]] bool
+  requiresActiveCleanupFor(const SemanticType &type) const override;
 
   void attachDeclarationDocumentation(SymbolId symbol, const Stmt &declaration);
 
@@ -172,22 +177,22 @@ public:
       const std::vector<SemanticType> &classTypeArguments,
       const std::vector<CompileTimeValue> &classValueArguments,
       const std::vector<SemanticType> &functionTypeArguments,
-      const std::vector<CompileTimeValue> &functionValueArguments);
+      const std::vector<CompileTimeValue> &functionValueArguments) override;
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeConstructorInstance(
       ConstructorId constructorId,
       const std::vector<SemanticType> &classTypeArguments,
       const std::vector<CompileTimeValue> &classValueArguments,
       const std::vector<SemanticType> &constructorTypeArguments,
-      const std::vector<CompileTimeValue> &constructorValueArguments);
+      const std::vector<CompileTimeValue> &constructorValueArguments) override;
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeDestructorInstance(
       ClassId classId, const std::vector<SemanticType> &classTypeArguments,
-      const std::vector<CompileTimeValue> &classValueArguments);
+      const std::vector<CompileTimeValue> &classValueArguments) override;
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeClassFieldInitializers(
       ClassId classId, const std::vector<SemanticType> &classTypeArguments,
-      const std::vector<CompileTimeValue> &classValueArguments);
+      const std::vector<CompileTimeValue> &classValueArguments) override;
 
   void visitAccessSpecifierDecl(const AccessSpecifierDecl &) override;
 
@@ -671,6 +676,10 @@ private:
   };
 
   struct LoanFlowState {
+    // A symbolic constexpr branch has unknown control/ownership effects.
+    // Name/type checking continues, but this body's flow is not a proof until
+    // concrete instance analysis selects every branch and reruns the checks.
+    bool deferredConstexprSelection = false;
     std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
     std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
     std::vector<SemanticLoanId> receiverStorageLoans;
@@ -971,8 +980,13 @@ private:
 
   using ConstexprLocalValue = std::optional<ConstantValue>;
 
-  struct ConstexprInterpreter {
+  struct ConstexprWorkBudget {
     std::size_t steps = 0;
+    std::size_t stagingDepth = 0;
+  };
+
+  struct ConstexprInterpreter {
+    std::shared_ptr<ConstexprWorkBudget> work;
     std::size_t callDepth = 0;
     std::vector<std::unordered_map<SymbolId, ConstexprLocalValue>> scopes;
     std::vector<GenericSubstitution> substitutions;
@@ -995,6 +1009,14 @@ private:
 
   static constexpr std::size_t constexprExpressionStepLimit = 4096;
   static constexpr std::size_t constexprCallDepthLimit = 64;
+
+  [[nodiscard]] std::optional<ConstexprEvaluation> executeStagedConstexpr(
+      const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
+          &target,
+      const std::vector<ConstantValue> &arguments,
+      const GenericSubstitution &substitution,
+      const std::optional<ConstantValue> &receiver, const Token &callSite,
+      ConstexprInterpreter &context);
 
   [[nodiscard]] ConstexprInterpreter makeConstexprInterpreter() const;
 
@@ -1019,9 +1041,6 @@ private:
   bool validateConstexprConstructor(const ConstructorDecl &constructor,
                                     const ConstructorInfo *info,
                                     const SemanticType &ownerType);
-
-  [[nodiscard]] static ConstantEvaluation
-  convertConstantToType(const ConstantValue &value, const SemanticType &target);
 
   [[nodiscard]] ConstexprEvaluation
   constexprSuccess(const Expr &expression, ConstantValue value,
@@ -1069,6 +1088,12 @@ private:
   [[nodiscard]] ConstexprEvaluation
   evaluateConstexprExpression(const Expr &source,
                               ConstexprInterpreter &context);
+
+  [[nodiscard]] ConstexprEvaluation
+  evaluateConstexprCall(const Expr &source, const ResolvedCallInfo &resolved,
+                        const Expr *receiver,
+                        const std::vector<const Expr *> &explicitArguments,
+                        const Token &callSite, ConstexprInterpreter &context);
 
   [[nodiscard]] ConstexprStatementEvaluation
   executeConstexprStatements(const StmtList &statements,
@@ -1169,6 +1194,11 @@ private:
 
   [[nodiscard]] std::optional<TransferCapabilityDenial>
   transferCapabilityDenial(const SemanticType &type) const;
+
+  bool reportOwnershipErasureCapabilityAmplification(
+      const Token &site, std::string_view ownership,
+      const SemanticType &sourcePointee, const SemanticType &targetPointee,
+      const SemanticType &sourceOwner, const SemanticType &targetOwner);
 
   bool reportConcurrentGlobalPolicyFailure(const VariableDecl &declaration,
                                            const SemanticType &type,
@@ -1535,6 +1565,9 @@ private:
 
   void analyzeMutexIntrinsicCall(const Call &expr,
                                  const CallableCandidate &declaration);
+
+  void analyzeSourceLocationIntrinsicCall(const Call &expr,
+                                          const CallableCandidate &declaration);
 
   void analyzeIntrinsicCall(const Call &expr,
                             const CallableCandidate &declaration);
@@ -3059,6 +3092,8 @@ private:
   [[nodiscard]] bool isMemoryLibraryUnit(SourceUnitId sourceUnit) const;
   [[nodiscard]] bool isOptionalLibraryUnit(SourceUnitId sourceUnit) const;
 
+  [[nodiscard]] bool isSourceLocationLibraryUnit(SourceUnitId sourceUnit) const;
+
   [[nodiscard]] bool isNumericLibraryUnit(SourceUnitId sourceUnit) const;
 
   [[nodiscard]] bool isIteratorLibraryUnit(SourceUnitId sourceUnit) const;
@@ -3703,6 +3738,7 @@ private:
     std::vector<std::size_t> sealedShape;
 
     void clear() { *this = SemanticCatalog{}; }
+    [[nodiscard]] SemanticCatalog snapshotForInstanceAnalysis() const;
     void seal() {
       assert(!sealed);
       sealedShape = shape();
@@ -3820,6 +3856,7 @@ private:
       SymbolId symbol = 0;
       Token keyword;
       Token name;
+      ProgramEffectOwner owner;
     };
 
     std::vector<SemanticDiagnostic> diagnostics;
@@ -3839,6 +3876,10 @@ private:
     std::unordered_map<std::string, const FunctionDecl *> externCSymbols;
     std::unordered_set<const FunctionDecl *> constexprDefinitionsAnalyzed;
     std::unordered_set<const ConstructorDecl *> constexprConstructorsAnalyzed;
+    // Only nested staging workers share the request's execution budget.
+    std::shared_ptr<ConstexprWorkBudget> constexprWork;
+    std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash>
+        deferredFlowOwners;
     std::unordered_map<std::string, std::vector<GenericDefaultConstant>>
         genericDefaultConstants;
     std::vector<GenericDefaultConstantUse> genericDefaultConstantUses;
@@ -3872,8 +3913,8 @@ private:
     // publish the bounded receiver-rooted payload borrow.
     const Expr *expectedPayloadRangeCandidate = nullptr;
     bool analyzingPackFoldElement = false;
-    bool analyzingStaticAssertCondition = false;
-    bool staticAssertGenericDependency = false;
+    bool analyzingDependentConstantCondition = false;
+    bool constantConditionGenericDependency = false;
     bool allowPayloadEnumeratorReference = false;
     bool currentStaticMemberFunction = false;
     bool allowPackTypeReference = false;
@@ -4032,10 +4073,10 @@ private:
   const Expr *&expectedPayloadRangeCandidate =
       requestSession.expectedPayloadRangeCandidate;
   bool &analyzingPackFoldElement = requestSession.analyzingPackFoldElement;
-  bool &analyzingStaticAssertCondition =
-      requestSession.analyzingStaticAssertCondition;
-  bool &staticAssertGenericDependency =
-      requestSession.staticAssertGenericDependency;
+  bool &analyzingDependentConstantCondition =
+      requestSession.analyzingDependentConstantCondition;
+  bool &constantConditionGenericDependency =
+      requestSession.constantConditionGenericDependency;
   bool &allowPayloadEnumeratorReference =
       requestSession.allowPayloadEnumeratorReference;
   bool &currentStaticMemberFunction =
@@ -4095,6 +4136,7 @@ private:
 
   TargetInfo target;
   const SourceGraph *sourceGraph = nullptr;
+  const SourceManager *sources = nullptr;
   // Mirrors FrontendOptions::toolingOccurrences; reapplied after the
   // model is cleared at the start of each check().
   bool toolingOccurrences = true;

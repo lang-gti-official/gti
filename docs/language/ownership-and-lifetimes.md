@@ -1018,6 +1018,17 @@ block destroys the completed object before reporting `allocation_failure` in
 release executes the ordinary verified cleanup recipe, including defined
 failure propagation. Empty dereference/member access raises `empty_owner_access`.
 
+`shared_ptr<Derived>::upcast<Base>()` and the equivalent
+`std::upcast_shared<Base, Derived>(owner)` explicitly consume one derived-typed
+handle and return a base-typed handle. The target must be a public polymorphic
+base. Existing aliases retain their original static type, all handles retain
+one control block and one strong count, and the conversion itself neither
+allocates nor introduces a failure edge. This is the ownership mechanism for
+heterogeneous shared interfaces such as logger sink collections; a public
+`sink_ptr`-style name is an alias or spelling of `shared_ptr<sink>`, not a
+second reference-counted pointer type. Ordinary calls do not perform this
+conversion implicitly.
+
 Shared handles can cross threads only when `T` is both transfer-capable and
 share-capable: another thread can perform the last release. Atomic reference
 counts do not make the pointee's ordinary mutable methods safe. Synchronized

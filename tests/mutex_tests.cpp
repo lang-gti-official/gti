@@ -118,6 +118,55 @@ void forEachInstruction(lang::MirProgram &program, Function &&function) {
   }
 }
 
+template <typename Function>
+void forEachDrop(lang::MirProgram &program, Function &&function) {
+  const auto visit = [&](lang::MirBody &body) {
+    for (lang::MirDropObligation &drop :
+         const_cast<std::vector<lang::MirDropObligation> &>(
+             body.dropObligations)) {
+      function(drop);
+    }
+  };
+  visit(const_cast<lang::MirBody &>(program.module()));
+  for (lang::MirFunctionInstance &instance :
+       const_cast<std::vector<lang::MirFunctionInstance> &>(
+           program.functionInstances())) {
+    visit(instance.body);
+  }
+  for (lang::MirConstructorInstance &instance :
+       const_cast<std::vector<lang::MirConstructorInstance> &>(
+           program.constructorInstances())) {
+    visit(instance.body);
+  }
+  for (lang::MirDestructorInstance &instance :
+       const_cast<std::vector<lang::MirDestructorInstance> &>(
+           program.destructorInstances())) {
+    visit(instance.body);
+  }
+  for (lang::MirLambdaInstance &instance :
+       const_cast<std::vector<lang::MirLambdaInstance> &>(
+           program.lambdaInstances())) {
+    visit(instance.body);
+  }
+}
+
+lang::MirDropType *findMutexDropRecipe(lang::MirProgram &program,
+                                       lang::MirDropType &drop) {
+  const lang::MirClassInstance *owner =
+      drop.classInstance ? program.findClassInstance(*drop.classInstance)
+                         : nullptr;
+  if (owner != nullptr && owner->compilerCapability ==
+                              lang::CompilerCapabilityTypeKind::MutexStorage) {
+    return &drop;
+  }
+  for (lang::MirDropType &child : drop.aggregate) {
+    if (lang::MirDropType *found = findMutexDropRecipe(program, child)) {
+      return found;
+    }
+  }
+  return nullptr;
+}
+
 bool isMutex(lang::IntrinsicKind kind) {
   return kind == lang::IntrinsicKind::MutexLock ||
          kind == lang::IntrinsicKind::MutexUnlock ||
@@ -342,6 +391,53 @@ int main() { std::mutex<payload> value{payload(4)}; return 0; }
   expect(found, "fixture exercises a prepared native payload initializer");
 }
 
+void testMutexCleanupRecipe() {
+  const auto frontend = analyze("mutex-cleanup-recipe.gti", R"gti(
+#include <std/memory>
+#include <std/mutex>
+class item {
+public:
+  item() {}
+  ~item() {}
+};
+class payload {
+  std::unique_ptr<item> value;
+public:
+  payload() : value(std::make_unique<item>()) {}
+};
+int main() {
+  std::mutex<payload> value{payload()};
+  return 0;
+}
+)gti");
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "mutex payloads with active cleanup should retain a verified nested "
+         "drop recipe");
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+    return;
+  }
+
+  lang::MirProgram malformed = frontend.mir;
+  bool found = false;
+  forEachDrop(malformed, [&](lang::MirDropObligation &obligation) {
+    if (found) {
+      return;
+    }
+    if (lang::MirDropType *mutex =
+            findMutexDropRecipe(malformed, obligation.dropType)) {
+      found = mutex->aggregate.size() == 1 &&
+              mutex->aggregate.front().requiresActiveCleanup;
+      mutex->aggregate.clear();
+    }
+  });
+  expect(found,
+         "the mutex drop recipe should name its one active payload child");
+  expect(found && !lang::verifyMirProgram(malformed).valid(),
+         "MIR should reject a mutex cleanup recipe with its payload removed");
+}
+
 void testSemanticBoundaries() {
   const std::string use = R"(
 #include <std/mutex>
@@ -519,6 +615,7 @@ int main() {
   testPublicPipeline();
   testReferencePrefixBeforeOwnedField();
   testPreparedMutexPayload();
+  testMutexCleanupRecipe();
   testSemanticBoundaries();
   testVerifierMutations();
   return failures == 0 ? 0 : 1;

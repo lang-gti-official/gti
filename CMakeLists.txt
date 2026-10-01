@@ -319,6 +319,7 @@ add_library(
   "gti_semantic_analysis" OBJECT
   "src/compiler/semantic_analyzer.cpp"
   "src/compiler/semantic_body_analysis.cpp"
+  "src/compiler/semantic_constexpr.cpp"
   "src/compiler/semantic_call_resolution.cpp"
   "src/compiler/semantic_declaration_analysis.cpp"
   "src/compiler/semantic_flow_analysis.cpp"
@@ -348,6 +349,7 @@ add_library(
   "src/compiler/checked_integer.cpp"
   "src/compiler/configuration_directive_processor.cpp"
   "src/compiler/constant_evaluator.cpp"
+  "src/compiler/mir_constant_evaluator.cpp"
   "src/compiler/diagnostic.cpp"
   "src/compiler/documentation.cpp"
   "src/compiler/executable_path.cpp"

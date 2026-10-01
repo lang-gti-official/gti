@@ -28,7 +28,7 @@ float gti_rt_math_atan2_f32_v1(float y, float x);
 }
 
 namespace std {
-float abs(float value) {
+constexpr float abs(float value) {
   if (value == 0.0) {
     return 0.0;
   }

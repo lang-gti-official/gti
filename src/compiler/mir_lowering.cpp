@@ -387,6 +387,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
     result.program.constructors.push_back(
         {.id = instance.id,
          .owner = instance.owner,
+         .constexprConstructor = instance.constexprConstructor,
          .typeArguments = instance.typeArguments,
          .valueArguments = instance.valueArguments,
          .parameterTypes = instance.parameterTypes,

@@ -2,6 +2,138 @@
 
 Status: Current test and audit structure.
 
+## Constexpr staging
+
+The constexpr compiler suite verifies canonical MIR execution against ordinary
+frontend constants, including checked scalar arithmetic, text bytes, loops,
+recursion, integer/character switches, exact argument identity, and resource
+limits. Early-only frontend requests assert actual MIR execution counts before
+whole-program HIR exists, covering array extents, static assertions, and
+discarded-branch exclusion. Completed-body closure tests reject missing roots
+and callees; ordinary failure-metadata/MIR verification still succeeds, while
+whole-program backend publication rejects the intentionally unsealed closure.
+Required-expression arithmetic failures retain their semantic diagnostic code
+and original source operator. Existing enum and returned-view evaluation stays
+covered while those families await MIR-profile migration.
+Concrete type/value generic fixtures cover multiple widths, nested generic
+callees, zero value arguments, and enclosing local/loan preservation. Failed
+concrete static assertions must reject rather than retry through the legacy
+driver. The text runtime fixture also compares generic scalar calls against
+their compile-time results.
+
+`constexpr_text_runtime` compares compile-time and runtime results at O0/O1/O3
+under C++20/C++23; `constexpr_aggregate_runtime` covers O0/O3 under both standards.
+`constexpr_array_mir_runtime` adds default-filled and explicitly initialized
+arrays, indexed mutation, multidimensional copies, by-value array arguments,
+and generic extents at O0/O1/O3 under both standards. The compiler suite also
+asserts early MIR execution, independent copies, read/write bounds failures,
+and rejection before oversized default-array allocation.
+`testMirConstantRecords` proves staged execution for passive record parameters,
+nested field/array mutation, independent copies, generic record identity, and
+returned aggregates. Direct MIR evaluation rejects incomplete, mistyped, and
+duplicate-field input records. Explicit constructors (including nested/generic
+values and fixed-array fields) and read-only receiver methods execute through
+MIR; direct evaluator checks prohibit compatibility fallback from hiding gaps.
+Negative cases reject missing receivers or erased constexpr eligibility, and
+constructor arithmetic failures retain the original initializer operator span.
+Early-only metrics additionally prove direct constructors, generic read-only
+methods, static methods, recursive receiver calls, and method-computed extents
+execute MIR without a free-function wrapper. Direct method evaluation rejects
+a missing or incorrectly typed receiver.
+Ordinary `std::array` default/explicit constructors and observers exercise the
+same structural rules. A verifier mutation detaches an array field write from
+its exact constructor stage and must reject. The passive fixed-array lifecycle
+regression additionally requires failure-free classification for the complete
+write schedule and rejects that proof when its stage identity is removed.
+`constexpr_record_mir_runtime`
+compares field transformations, construction, and nested read-only method calls
+at O0/O1/O3 under both standards. These gates do not claim all constructor
+schedules or general reference execution.
+These focused gates are not
+evidence that all generic, aggregate, or reference constexpr execution has
+moved to MIR, nor a substitute for completion-time production validation.
+
+`testConstexprLibrary` and `constexpr_library_runtime` exercise source-defined
+`min`, `max`, `clamp`, `lcm`, `midpoint`, binary32 `abs`, `pair`, and `make_pair`.
+Frontend metrics prove actual staged MIR evaluation; runtime-only owning
+substitutions remain valid, while implicit copying, use after movement, moving
+a borrowed owner, invalid declarations, and impossible required constants still
+reject. Signed-minimum literals exercise the shared MIR literal query without
+relaxing ordinary negation overflow. The O0/O1/O3, C++20/C++23 differential
+fixture includes nested constant pairs alongside runtime string pairs, catching
+accidental class-wide rather than exact-instance factory emission.
+
+`testConstexprReadOnlyReferences` and `constexpr_readonly_references_runtime`
+cover checked read-only parameters, local bindings, returned field/index
+projections, forwarding, and loan reacquisition after mutation in another loop
+iteration. Exact frontend metrics and direct MIR execution prevent AST fallback
+from hiding missing reference support. `std::array` element access and an
+unrelated `Table` use the same rules. Negative cases retain local-escape,
+borrowed-owner mutation, mutable-reference, runtime-input, bounds, and persistent
+reference-constant rejection, with exact semantic diagnostic codes and source
+spans (including the original library index on an out-of-bounds call). Direct
+MIR tests reject wrong referent types and forged returned-loan access/origins
+before execution. Sweeping every step-budget cutoff in the reference fixture
+requires a resource-limit failure, never a relabeled invalid-input error.
+Borrowed string-view inspection additionally checks embedded
+NUL and non-ASCII bytes. The runtime gate compares O0/O1/O3 under both C++
+standards.
+
+`constexpr_asset_table_runtime` composes those facilities into game-engine-like
+asset metadata: text-derived keys and lengths, constexpr record construction,
+a fixed array of records, and read-only traversal to count texture assets.
+The frontend regression asserts nine staged MIR executions, and the runtime
+matrix compares the same source at O0/O1/O3 under C++20/C++23.
+
+`testConstexprOperators` and `constexpr_operators_runtime` cover read-only
+addition, equality, indexing, dereference and nominal call operators, with
+unrelated records, concrete generic owners, fresh temporary receivers, and
+both `std::array` index overloads. Exact staged-execution counts and direct
+MIR evaluation of the nested operator closure prevent legacy fallback from
+hiding a missing call capability. Erased constexpr eligibility and forged
+mutable invocation capability reject. Negative source tests check immutable
+receiver requirements, non-constexpr targets, runtime inputs, arithmetic
+overflow and library bounds, including exact diagnostic source spans. Runtime
+parity covers O0/O1/O3 under C++20/C++23.
+
+`testDependentConstexprBranches` covers value- and type-dependent selection,
+discarded invalid code, nested early predicates, recursive value-generic calls,
+constructors, methods, and owner restoration. Unused generic bodies still
+diagnose independent false assertions and undefined names outside deferred
+arms. Concrete missing returns, moved values, conflicting loans and local
+reference escape reject. A recursive staging cycle must hit the resource
+limit. Independent required expressions each receive a fresh step budget;
+nested semantic predicates and their enclosing MIR call share one budget.
+Exhaustion retains the executing operator span and the requiring assertion's
+related location. A fault-injected instance provider offers an unresolved primary as a
+concrete body and requires HIR lowering to fail rather than publish an empty
+branch. Warning-only primary and concrete bodies remain valid through staged
+and ordinary HIR lowering. The matching runtime
+gate compares O0/O1/O3 under C++20/C++23.
+The lifecycle suite also verifies fresh class-value publication into the restored
+owned receiver field. Mutations remove receiver/field mutability, replacement
+pairing, lifetime publication or the exact representation row and must reject.
+
+The combined constexpr/spdlog/Expected-publication completion run on 2026-10-01
+uses the optimized Release compiler on macOS arm64. All 350 registered gates
+have passing evidence: 348 passed in the full run, the compiler aggregate passed
+after its manifest order was aligned with the executable's unchanged 160-test
+inventory, and `http_runtime` passed outside the sandbox's localhost-bind
+restriction. The combined build, 21-group constexpr suite, nine constexpr runtime
+gates, spdlog package test, 11 clean installed-library consumers, and staged
+asset-table/CLI/LSP/project checks pass. The staged project check uses one job;
+the build-tree project gate separately exercises its default parallel mode.
+Tree-sitter passes all 65 corpus cases and parses all 144 shipped sources;
+highlight/source-text checks and C/C++ formatting also pass.
+
+The optional full audit passes its contract probes, 24 typed differential cases,
+four composition cases, 100 malformed-source mutations, and 87 examples in four
+variants. Its final comparison step cannot run because
+`examples/gti-vs-cpp/verify.py` is absent. This is not reported as a full audit
+pass and does not replace the mandatory suite. Publication remains held; these
+results do not claim an installed update to the user's active toolchain or
+Linux/Windows release validation.
+
 Tests follow the layer that owns behavior. Documentation examples and emitted
 C++ are useful evidence, but they do not replace focused frontend or IR
 assertions.
@@ -271,6 +403,15 @@ void, and owning success values, owning errors, forwarding, consuming observers,
 and wrong-state cleanup. `owned_unexpected_pending_cleanup` independently
 checks unpublished return rollback and active-alternative recipes, with 40
 native outcomes including primary and secondary destructor failures.
+
+`expected_passive_publication` checks exact binding publication for generated
+copies of cleanup-free success/error alternatives, plus ordinary free/member
+class-call results wrapped by Expected returns. It rejects altered activation,
+failure-edge, source/type, destination, and call-input records at the MIR or
+representation-admission boundary. Its runtime matrix covers C++20/C++23 at
+O0/O1/O3, disabled elision, and ASan/UBSan: independent copies, unchanged source
+carriers, move-only extraction, loop reuse, both wrong-state accesses, and
+producer failure with exact caller cleanup.
 
 `private_constructor_placement` requires private source construction to remain
 in its legal lexical context and retains the external access rejection; its
@@ -670,7 +811,7 @@ upstream code.
 | `class_signature_pattern_runtime` | headerless signature-pattern primaries, result/pack extraction, aliases, repeated/fixed components, empty and reference metadata, ordinary/pack methods and generic forwarding under C++20/C++23 at O0/O1/O3; compiler tests reject mismatches and forged lowered binding projections |
 | `stored_callable_types` / `stored_callable_invocation_runtime` | retained-field callable invocation, concrete heap-owned models and owned value-pack forwarding: exact symbolic result and concrete capability checks, body-scoped representation overlays, forged allocation-type/MIR receiver/capture-recipe/pack-index/cleanup/copyability rejection, repeated calls and owned capture cleanup; 272 executions across C++20/C++23 O0/O1/O3, no-elide and sanitizer modes. Failure cases assert reverse capture and pack-element order, remaining caller cleanup, and exact primary/secondary records, including heap-owned captures. This is prerequisite evidence for L-CALL-02, not public-wrapper completion |
 | `function_signature_lsp` | unsaved signatures and class packs; concrete deduced function/method hover; exact component/call/pack-conflict spans and related declaration publication/clearing; incomplete-source recovery and formatting round-trip |
-| `compiler_pipeline` | manifest-backed aggregate of 149 tests across independently buildable frontend, declarations/types/generics, ownership/lifecycle/ranges/callables, constexpr/configuration/numerics/static-initialization, diagnostics/formatting/queries, and bounded end-to-end executables; the aggregate rejects missing or duplicate registrations before running every suite once |
+| `compiler_pipeline` | manifest-backed aggregate of 160 tests across independently buildable frontend, declarations/types/generics, ownership/lifecycle/ranges/callables, constexpr/configuration/numerics/static-initialization, diagnostics/formatting/queries, and bounded end-to-end executables; the aggregate rejects missing or duplicate registrations before running every suite once |
 | `semantic_header_boundary` | fail-closed include direction for semantic core, model/query, and analyzer/provider headers; exact direct analyzer-consumer allowlist; and frontend/HIR contracts that cannot regain the analyzer umbrella |
 | `semantic_header_self_containment` | independent translation units include and instantiate the semantic core, model, and analyzer contracts without relying on transitive include order |
 | `parser_conditional_recovery` | timeout-bounded stray and active conditional-continuation recovery in switch and extern contexts; exact parser diagnostics; nearest-owner propagation; later branch/declaration retention; and valid nested conditional-switch parsing |

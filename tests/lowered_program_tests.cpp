@@ -747,6 +747,22 @@ void testMutationRejection() {
   }
 
   lang::LoweredProgram forgedConstructorArgument = original;
+  lang::LoweredProgram forgedConstructorConstexpr = original;
+  auto &constantMir =
+      lang::LoweredProgramTestAccess::mir(forgedConstructorConstexpr);
+  auto &constantConstructors =
+      const_cast<std::vector<lang::MirConstructorInstance> &>(
+          constantMir.constructorInstances());
+  expect(!constantConstructors.empty(),
+         "fixture has constructor eligibility metadata");
+  if (!constantConstructors.empty()) {
+    constantConstructors.front().constexprConstructor =
+        !constantConstructors.front().constexprConstructor;
+    expect(hasIssue(lang::verifyLoweredProgram(forgedConstructorConstexpr),
+                    lang::LoweredProgramIssueKind::InvalidInstanceInventory),
+           "constructor constexpr eligibility cannot diverge from its semantic "
+           "declaration");
+  }
   auto &constructorInstances =
       lang::LoweredProgramTestAccess::constructorInstances(
           forgedConstructorArgument);

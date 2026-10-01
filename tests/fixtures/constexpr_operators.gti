@@ -1,0 +1,70 @@
+#include <std/array>
+
+// A source-defined math type exercises the same call rules as std::array.
+struct Point {
+  int x;
+  int y;
+  constexpr Point(int x, int y) : x(x), y(y) {}
+  constexpr Point operator+(Point& other) {
+    return Point(this.x + other.x, this.y + other.y);
+  }
+  constexpr bool operator==(Point& other) {
+    return this.x == other.x && this.y == other.y;
+  }
+  constexpr int operator[](int index) {
+    return index == 0 ? this.x : this.y;
+  }
+  constexpr int operator() (int scale) {
+    return (this.x + this.y) * scale;
+  }
+  constexpr int& operator*() { return this.x; }
+};
+
+constexpr Point origin = Point(2, 3);
+constexpr Point offset = Point(4, 5);
+constexpr Point translated = origin + offset;
+static_assert(translated.x == 6 && translated.y == 8);
+constexpr Point reference_point = Point(6, 8);
+static_assert(translated == reference_point);
+static_assert(translated[1] == 8);
+static_assert(translated(2) == 28);
+static_assert(*translated == 6);
+constexpr std::array<int, 3> values = std::array<int, 3>({3, 5, 7});
+static_assert(values[0] == 3);
+static_assert(values[std::size_t(2)] == 7);
+
+struct Offset<std::numeric T> {
+  T amount;
+  constexpr Offset(T amount) : amount(amount) {}
+  constexpr T operator+(T value) { return T(this.amount + value); }
+};
+constexpr Offset<int> integer_offset = Offset<int>(4);
+constexpr Offset<double> floating_offset = Offset<double>(double(1.5));
+static_assert(integer_offset + 5 == 9);
+static_assert(floating_offset + double(2.5) == double(4.0));
+static_assert((Point(2, 3) + offset)[0] == 6);
+
+constexpr int compute() {
+  Point first = Point(2, 3);
+  Point second = Point(4, 5);
+  Point sum = first + second;
+  std::array<int, 3> table = std::array<int, 3>({sum[0], sum[1], sum(2)});
+  return table[0] + table[1] + table[2] + *sum;
+}
+static_assert(compute() == 48);
+
+int main() {
+  Point first = Point(2, 3);
+  Point second = Point(4, 5);
+  Point sum = first + second;
+  if (!(sum == translated) || sum[1] != 8 || sum(2) != 28 || *sum != 6) {
+    return 1;
+  }
+  Offset<int> integer = Offset<int>(4);
+  Offset<double> floating = Offset<double>(double(1.5));
+  if (integer + 5 != 9 || floating + double(2.5) != double(4.0)) {
+    return 3;
+  }
+  if ((Point(2, 3) + second)[0] != 6) { return 4; }
+  return compute() == 48 && values[0] == 3 && values[std::size_t(2)] == 7 ? 0 : 2;
+}

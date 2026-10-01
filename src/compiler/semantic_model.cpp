@@ -1613,7 +1613,7 @@ void SemanticModel::recordLoanEndAtConditionalEntry(SemanticLoanId id,
 }
 
 void SemanticModel::recordConstexprBranch(const IfStmt &statement,
-                                          bool thenBranch) {
+                                          std::optional<bool> thenBranch) {
   constexprBranches.insert_or_assign(&statement, thenBranch);
 }
 

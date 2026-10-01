@@ -5589,8 +5589,8 @@ auto SemanticVisitor::Impl::prepareInstanceAnalysis() -> void {
   analyzingFieldInitializer = false;
   analyzingConstructorInitializer = false;
   analyzingDefaultArgument = false;
-  analyzingStaticAssertCondition = false;
-  staticAssertGenericDependency = false;
+  analyzingDependentConstantCondition = false;
+  constantConditionGenericDependency = false;
   currentDefaultArgumentRoot = nullptr;
   currentDefaultParameterNames.clear();
   analyzingCallCallee = false;

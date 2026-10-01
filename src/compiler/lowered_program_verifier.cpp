@@ -899,11 +899,15 @@ verifyLoweredProgram(const LoweredProgram &program) {
         program.constructorInstances_[index];
     const MirConstructorInstance &mir =
         program.mir_.constructorInstances()[index];
+    const auto *declaration =
+        program.findConstructorDeclaration(instance.declaration);
     if (instance.id != index + 1 || instance.id != mir.id ||
         instance.owner != mir.owner ||
         instance.typeArguments != mir.typeArguments ||
         instance.valueArguments != mir.valueArguments || instance.owner == 0 ||
         instance.parameterTypes != mir.parameterTypes ||
+        mir.constexprConstructor !=
+            (declaration != nullptr && declaration->constexprConstructor) ||
         instance.owner > program.classInstances_.size() ||
         !resolvedTypes(instance.typeArguments) ||
         !resolvedValues(instance.valueArguments) ||

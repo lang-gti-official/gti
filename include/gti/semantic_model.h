@@ -255,6 +255,7 @@ enum class IntrinsicKind {
   UniqueOwnerBorrow,
   UniqueOwnerBorrowMut,
   UniqueOwnerIsNull,
+  UniqueOwnerSwap,
   UniqueOwnerUpcast,
   AllocateStorage,
   StorageTryAllocate,
@@ -327,7 +328,26 @@ enum class IntrinsicKind {
   SharedOwnerIsNull,
   SharedOwnerUseCount,
   SharedOwnerSwap,
+  SharedOwnerUpcast,
+  SourceFileName,
+  SourceFunctionName,
+  SourceLine,
+  SourceColumn,
   Count,
+};
+
+// A compiler-resolved source call site. These facts are language meaning, not
+// a backend spelling: HIR captures them while expanding caller-side defaults,
+// MIR preserves and verifies them, and each backend only chooses a concrete
+// representation for the already-resolved values.
+struct SourceLocationLiteral {
+  std::string file;
+  std::string function;
+  std::uint32_t line = 0;
+  std::uint32_t column = 0;
+
+  friend bool operator==(const SourceLocationLiteral &,
+                         const SourceLocationLiteral &) = default;
 };
 
 struct IntegerArithmeticIntrinsic {
@@ -1684,7 +1704,8 @@ private:
                                        const IfStmt &statement,
                                        bool thenBranch);
 
-  void recordConstexprBranch(const IfStmt &statement, bool thenBranch);
+  void recordConstexprBranch(const IfStmt &statement,
+                             std::optional<bool> thenBranch);
 
   void recordStaticAssertResult(const StaticAssertDecl &declaration,
                                 StaticAssertResult result);
@@ -1858,7 +1879,8 @@ private:
   std::unordered_map<const Stmt *, std::vector<SemanticLoanId>> loanEnds;
   std::unordered_map<const IfStmt *, SemanticConditionalLoanEnds>
       conditionalLoanEnds;
-  std::unordered_map<const IfStmt *, bool> constexprBranches;
+  // nullopt is an explicitly deferred primary selection, not a false branch.
+  std::unordered_map<const IfStmt *, std::optional<bool>> constexprBranches;
   std::unordered_map<const StaticAssertDecl *, StaticAssertResult>
       staticAssertResults;
   std::unordered_map<const SwitchStmt *,
@@ -1940,7 +1962,7 @@ struct SemanticInstanceAnalysis {
   SemanticModel model;
   std::vector<SemanticDiagnostic> diagnostics;
 
-  [[nodiscard]] bool valid() const { return diagnostics.empty(); }
+  [[nodiscard]] bool valid() const { return !hasErrorDiagnostics(diagnostics); }
 };
 
 } // namespace lang

@@ -30,6 +30,7 @@ struct FrontendWorkMetrics {
   std::size_t hirMicroseconds = 0;
   std::size_t semanticBorrowSummaryCandidateInspections = 0;
   std::size_t semanticBorrowSummaryFunctions = 0;
+  std::size_t constexprMirExecutions = 0;
 
   void clear() {
     loadedUnits.clear();
@@ -51,6 +52,7 @@ struct FrontendWorkMetrics {
     hirMicroseconds = 0;
     semanticBorrowSummaryCandidateInspections = 0;
     semanticBorrowSummaryFunctions = 0;
+    constexprMirExecutions = 0;
   }
 };
 

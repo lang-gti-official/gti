@@ -263,7 +263,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v77 valid=" << program.valid() << '\n';
+    output << "mir-v80 valid=" << program.valid() << '\n';
     for (const MirNativeCallbackAdapter &adapter :
          program.nativeCallbackAdapters()) {
       output << "native-callback @" << adapter.id
@@ -569,6 +569,7 @@ public:
     for (const MirConstructorInstance &instance :
          program.constructorInstances()) {
       output << "constructor @" << instance.id << " owner=" << instance.owner
+             << " constexpr=" << instance.constexprConstructor
              << " type-arguments=[";
       for (std::size_t index = 0; index < instance.typeArguments.size();
            ++index) {
@@ -700,7 +701,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v67\n";
+    output << "mir-body-v68\n";
     body(value, 0);
     return output.str();
   }
@@ -1412,8 +1413,18 @@ private:
     optional(value.enumVariant);
     output << " payload-index=";
     optional(value.payloadIndex);
-    output << " intrinsic=" << name(value.intrinsic)
-           << " synchronization=" << name(value.synchronization.kind)
+    output << " intrinsic=" << name(value.intrinsic) << " source-location=";
+    if (value.sourceLocation) {
+      output << value.sourceLocation->file.size() << ':'
+             << value.sourceLocation->file << ','
+             << value.sourceLocation->function.size() << ':'
+             << value.sourceLocation->function << ','
+             << value.sourceLocation->line << ':'
+             << value.sourceLocation->column;
+    } else {
+      output << '-';
+    }
+    output << " synchronization=" << name(value.synchronization.kind)
            << " atomic-order=";
     if (value.synchronization.order) {
       output << name(*value.synchronization.order);

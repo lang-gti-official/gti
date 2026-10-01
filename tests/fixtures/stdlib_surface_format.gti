@@ -1,3 +1,4 @@
+#include <std/charconv>
 #include <std/format>
 #include <std/string>
 
@@ -49,7 +50,7 @@ int main() {
       std::format("{}|{}|{}|{}|{}|{}", true, false, 'X', int32_t(-7),
                   1.25, std::move(owned_argument));
   if (!heterogeneous ||
-      heterogeneous.value() != "true|false|X|-7|1.250000|owned") {
+      heterogeneous.value() != "true|false|X|-7|1.25|owned") {
     return 4;
   }
   mut auto unsupported = std::format("{}", unsupported_format_value());
@@ -58,8 +59,7 @@ int main() {
     return 5;
   }
   mut auto binary64 = std::format("{}", 1.5d);
-  if (binary64 ||
-      binary64.error() != std::format_errc::unsupported_argument) {
+  if (!binary64 || binary64.value() != "1.5") {
     return 6;
   }
   mut auto unsupported_print =
@@ -83,6 +83,83 @@ int main() {
   auto fourth = std::try_println("done");
   if (!first || !second || third or !fourth) {
     return 10;
+  }
+
+  mut auto indexed =
+      std::format("{1:*^7s}|{0:+#010x}|{1:.3s}", uint32_t(42), "abcdef");
+  if (!indexed || indexed.value() != "abcdef*|+0x000002a|abc") {
+    return 13;
+  }
+  mut auto numeric = std::format("{:08x}|{:#8b}|{:<5d}|{:c}",
+                                 uint16_t(42), uint8_t(5), int32_t(-7),
+                                 uint8_t(65));
+  if (!numeric || numeric.value() != "0000002a|   0b101|-7   |A") {
+    return 14;
+  }
+  mut auto centered = std::format("{:^9.4s}|{:>12.6f}", "truncate", 1.25);
+  if (!centered || centered.value() != "  trun   |    1.250000") {
+    return 15;
+  }
+
+  mut std::string destination = std::string("prefix:");
+  auto appended = std::format_to(destination, " {}", int32_t(7));
+  if (!appended || destination != "prefix: 7") {
+    return 16;
+  }
+  auto rejected =
+      std::format_to(destination, " leak {}", unsupported_format_value());
+  if (rejected ||
+      rejected.error() != std::format_errc::unsupported_argument ||
+      destination != "prefix: 7") {
+    return 17;
+  }
+
+  auto mixed_indexing = std::format("{0} {}", int32_t(1), int32_t(2));
+  if (mixed_indexing ||
+      mixed_indexing.error() != std::format_errc::invalid_format) {
+    return 18;
+  }
+  auto bad_index = std::format("{2}", int32_t(1), int32_t(2));
+  if (bad_index ||
+      bad_index.error() != std::format_errc::argument_count_mismatch) {
+    return 19;
+  }
+  auto bad_specifier = std::format("{:+s}", "text");
+  if (bad_specifier ||
+      bad_specifier.error() != std::format_errc::invalid_format) {
+    return 20;
+  }
+
+  mut auto floating =
+      std::format("{:.2f}|{:.3e}|{:#.5g}|{:G}|{:+010.2f}", 1.25d,
+                  12.5d, 12.0d, 12.5d, -3.5d);
+  if (!floating ||
+      floating.value() != "1.25|1.250e+01|12.000|12.5|-000003.50") {
+    return 21;
+  }
+  mut auto alternate_default =
+      std::format("{:#}|{:#}|{:#.6g}", 1.5d, 0.0d, 1.5d);
+  if (!alternate_default ||
+      alternate_default.value() != "1.5|0.|1.50000") {
+    return 23;
+  }
+  mut double infinity = 0.0d;
+  mut double not_a_number = 0.0d;
+  auto parsed_infinity = std::from_chars("inf", infinity);
+  auto parsed_nan = std::from_chars("nan", not_a_number);
+  if (parsed_infinity.ec != std::parse_errc::none ||
+      parsed_nan.ec != std::parse_errc::none) {
+    return 25;
+  }
+  mut auto special = std::format("{:08}|{:08}|{:08}", infinity, -infinity,
+                                 not_a_number);
+  if (!special || special.value() != "     inf|    -inf|     nan") {
+    return 24;
+  }
+  auto excessive_precision = std::format("{:.3000f}", 1.0d);
+  if (excessive_precision ||
+      excessive_precision.error() != std::format_errc::invalid_format) {
+    return 22;
   }
   return 0;
 }

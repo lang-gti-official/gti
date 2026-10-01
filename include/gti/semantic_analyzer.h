@@ -6,6 +6,8 @@
 
 namespace lang {
 
+class SourceManager;
+
 // Narrow mutable capability used only by HIR's concrete-instance discovery.
 // Consumers receive the immutable base SemanticModel separately and cannot
 // initiate a fresh program/expression analysis through this interface.
@@ -43,7 +45,8 @@ public:
   explicit SemanticVisitor(TargetInfo target = TargetInfo::host(),
                            const SourceGraph *sourceGraph = nullptr,
                            bool toolingOccurrences = true,
-                           FrontendWorkMetrics *workMetrics = nullptr);
+                           FrontendWorkMetrics *workMetrics = nullptr,
+                           const SourceManager *sources = nullptr);
   ~SemanticVisitor();
 
   SemanticVisitor(const SemanticVisitor &) = delete;

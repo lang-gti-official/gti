@@ -1918,11 +1918,17 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::DefaultTypeParameterConstruction:
         case IntrinsicKind::Move:
         case IntrinsicKind::UniqueOwnerIsNull:
+        case IntrinsicKind::UniqueOwnerSwap:
         case IntrinsicKind::UniqueOwnerUpcast:
         case IntrinsicKind::SharedOwnerEmpty:
         case IntrinsicKind::SharedOwnerIsNull:
         case IntrinsicKind::SharedOwnerUseCount:
         case IntrinsicKind::SharedOwnerSwap:
+        case IntrinsicKind::SharedOwnerUpcast:
+        case IntrinsicKind::SourceFileName:
+        case IntrinsicKind::SourceFunctionName:
+        case IntrinsicKind::SourceLine:
+        case IntrinsicKind::SourceColumn:
         case IntrinsicKind::IntegerWrappingAdd:
         case IntrinsicKind::IntegerWrappingSubtract:
         case IntrinsicKind::IntegerWrappingMultiply:
@@ -2321,7 +2327,8 @@ auto SemanticVisitor::Impl::finalizeAdvisoryDiagnostics() -> void {
   }
   for (const RequestSessionState::MutableLocalCandidate &candidate :
        requestSession.mutableLocalCandidates) {
-    if (requestSession.mutableBindingUses.contains(candidate.symbol)) {
+    if (requestSession.mutableBindingUses.contains(candidate.symbol) ||
+        requestSession.deferredFlowOwners.contains(candidate.owner)) {
       continue;
     }
     Diagnostic diagnostic =
@@ -2450,6 +2457,16 @@ auto SemanticVisitor::Impl::isOptionalLibraryUnit(SourceUnitId sourceUnit) const
   const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
   return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
          unit->standardLibraryName == "std/optional";
+}
+
+auto SemanticVisitor::Impl::isSourceLocationLibraryUnit(
+    SourceUnitId sourceUnit) const -> bool {
+  if (sourceGraph == nullptr) {
+    return false;
+  }
+  const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
+  return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
+         unit->standardLibraryName == "std/source_location";
 }
 
 auto SemanticVisitor::Impl::isNumericLibraryUnit(SourceUnitId sourceUnit) const
@@ -2784,8 +2801,8 @@ auto SemanticVisitor::Impl::recordGenericParameterUse(
          .staticMember = binding->staticMember || binding->internalLinkage});
     return;
   }
-  if (analyzingStaticAssertCondition) {
-    staticAssertGenericDependency = true;
+  if (analyzingDependentConstantCondition) {
+    constantConditionGenericDependency = true;
   }
   const GenericParameterInfo *parameter =
       genericParameterInfo(value.parameterId);
@@ -2843,9 +2860,9 @@ auto SemanticVisitor::Impl::recordTypeUse(const TypeRef &type) -> void {
   SemanticType resolvedType = typeOf(type);
   if (const std::optional<SemanticType> parameter =
           resolveTypeParameter(type.name)) {
-    if (analyzingStaticAssertCondition &&
+    if (analyzingDependentConstantCondition &&
         parameter->kind == SemanticType::TypeParameter) {
-      staticAssertGenericDependency = true;
+      constantConditionGenericDependency = true;
     }
     const GenericParameterInfo *info =
         genericParameterInfo(parameter->genericParameterId);
@@ -5924,6 +5941,9 @@ auto SemanticVisitor::Impl::reinitializePlace(const SemanticPlace &place)
 auto SemanticVisitor::Impl::reportUnavailablePlace(
     const Token &use, const ProjectedValueState &state,
     const SemanticPlace *place) -> void {
+  if (loanFlow.deferredConstexprSelection) {
+    return;
+  }
   std::string name = place != nullptr && place->receiver ? "this"
                      : place != nullptr && place->root != nullptr &&
                              !place->root->declaration.lexeme.empty()
@@ -5982,7 +6002,8 @@ auto SemanticVisitor::Impl::analyzeProjectionBase(const ExprPtr &expression)
 
 auto SemanticVisitor::Impl::requireInitializedReceiver(const Token &location)
     -> void {
-  if (currentReceiverMutability == ReceiverMutability::Consuming) {
+  if (currentReceiverMutability == ReceiverMutability::Consuming ||
+      loanFlow.deferredConstexprSelection) {
     return;
   }
   const Symbol *receiver = receiverStateSymbol();
@@ -6017,6 +6038,9 @@ auto SemanticVisitor::Impl::packRequiresMove(const SemanticType &type) const
 auto SemanticVisitor::Impl::reportUnavailableValue(const Token &use,
                                                    const Symbol &symbol)
     -> void {
+  if (loanFlow.deferredConstexprSelection) {
+    return;
+  }
   report(use,
          symbol.valueState == ValueState::Moved
              ? "Value '" + use.lexeme + "' has already been moved."

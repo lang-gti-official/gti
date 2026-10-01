@@ -423,6 +423,17 @@ mir_expected_value_ref_v1(Expected &expected, ResultPointer *result) noexcept {
 
 template <typename Expected, typename ResultSlot>
 inline mir_failure_status_v1
+mir_expected_value_copy_v1(const Expected &expected, ResultSlot *result) {
+  if (!expected.has_value()) {
+    return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
+            GTI_FAILURE_DETAIL_VALUE_ON_ERROR_V1};
+  }
+  result->construct(*expected);
+  return mir_failure_success_v1;
+}
+
+template <typename Expected, typename ResultSlot>
+inline mir_failure_status_v1
 mir_expected_value_move_v1(Expected &expected, ResultSlot *result) {
   if (!expected.has_value()) {
     return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
@@ -451,6 +462,17 @@ mir_expected_error_ref_v1(Expected &expected, ResultPointer *result) noexcept {
             GTI_FAILURE_DETAIL_ERROR_ON_VALUE_V1};
   }
   *result = std::addressof(expected.error());
+  return mir_failure_success_v1;
+}
+
+template <typename Expected, typename ResultSlot>
+inline mir_failure_status_v1
+mir_expected_error_copy_v1(const Expected &expected, ResultSlot *result) {
+  if (expected.has_value()) {
+    return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
+            GTI_FAILURE_DETAIL_ERROR_ON_VALUE_V1};
+  }
+  result->construct(expected.error());
   return mir_failure_success_v1;
 }
 

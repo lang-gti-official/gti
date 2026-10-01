@@ -11,6 +11,84 @@ alone is not the complete backend API.
 
 ## Representation
 
+### Constant-execution foundation
+
+`mir_constant_evaluator` provides a bounded execution service over
+canonical unoptimized MIR. It first runs ordinary whole-program verification,
+then applies a bounded constant-execution profile at the selected function and
+each executed operation. The initial profile covers by-value scalar functions,
+local storage, checked arithmetic/conversions, branches, integer/character
+switches, loops, recursive
+constexpr calls, fixed arrays, and read-only text inspection. Fixed-array
+`Aggregate` construction, default elements, by-value passage, size observation,
+and nested `Index` places use exact typed constants. Binding and temporary
+projections share one canonical root cell; writes replace the immutable array
+along the selected path, preserving independent copies. Array materialization,
+projection traversal, and backing-vector copies consume the shared step budget
+before allocation. Index bounds fail at the executing MIR instruction.
+Passive structural records also admit by-value parameters, local copies,
+field/index projection composition, field mutation, and returned values. Their
+exact class instance supplies field-symbol/type identity; external constant
+arguments are checked recursively for complete, exactly typed fields. Passive
+drop bookkeeping retires local storage without invoking hidden user code;
+active cleanup remains ineligible. Source constructors with explicit semantic
+constexpr eligibility execute the same MIR body and produce one fully initialized
+receiver. Each field must have one explicit, non-reference initialization stage;
+trivial fixed-array fields now retain their exact `Initialize` write as well as
+the constructor-stage boundary. Failure-effect proofs require that exact write
+for both passive scalar and fixed-array fields; computing an aggregate value
+without publishing it into the field is not proof of a completed constructor.
+Declaration defaults and nested initializer
+constructor targets remain outside this executor profile. Before execution,
+the profile checks that every explicit field has its exact MIR initialization
+write; a declaration-only initializer must not become a spurious
+uninitialized-constant failure. Read-only constexpr
+methods inspect an exactly typed receiver through ordinary `This` projections,
+including nested fields, arrays, and further method calls. Only constructor
+frames may initialize receiver fields; method frames cannot mutate them.
+Materialized result receivers read the exact MIR `Value` root; their passive
+storage is retired at the represented move/drop, not reconstructed as a binding
+or kept alive independently of full-expression cleanup.
+Entry string-view dependencies are backed by immutable constant bytes.
+Read-only reference parameters, automatic bindings, and returned projections
+use verified MIR loans and immutable observations of the exact referent value.
+The source loan prevents intervening mutation or movement; no host address or
+reference identity is materialized. Borrow/call instructions publish loan
+observations, reference binding and dereference read them, and `EndBorrow`
+retires the loan. Reacquiring a loan observes the owner's current value, including
+across loop iterations. Source reference-return validation still prevents local
+escape. Reference results are read values at the external constant-service
+boundary, not persistent reference constants. Only a leading checked dereference
+of a read-only reference binding is transparent; arbitrary pointer projections,
+mutable loans, stored-reference carriers, allocation, and runtime calls remain
+ineligible. Untaken runtime-only
+calls do not execute. Rewritten/tombstoned instructions and optimizer-produced
+control flow cannot determine constant eligibility.
+
+The service returns `ConstantValue` or a failure carrying the concrete body
+address, block, and instruction identity, including constructor failures.
+One shared step budget covers instructions and
+terminators across calls, with an independent call-depth bound. Integer,
+floating-point, conversion, and text operations reuse `constant_evaluator`
+kernels rather than host arithmetic or native C++ evaluation.
+
+Semantic constant requests now use this service for completed function, method,
+and constructor roots through staged HIR lowering. Direct calls do not need a
+free-function wrapper. Tests assert execution
+metrics with the frontend stopped at semantics: array extents, static
+assertions, and compile-time branch selection do not wait for whole-program
+HIR. Located MIR failures map back through the staged HIR source expression.
+The source language still has a broader existing subset than this initial MIR
+profile. Unsupported staging/profile cases retain the legacy evaluator;
+executed work is charged to the same budget, and arithmetic/resource failures
+never retry there. Concrete type/value generic bodies use ordinary isolated
+semantic reanalysis. New checked-reference calls never retry through the legacy
+driver. Remaining construction schedules, mutable references,
+and returned-view loans remain migration work rather than new exclusions from
+the source language.
+
+### Runtime representation
+
 A source `return expression;` in a void body evaluates the exact void-typed
 HIR expression through ordinary MIR instructions and failure edges, followed
 by full-expression and lexical cleanup. Its `Return` terminator has no value
@@ -100,7 +178,15 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v77`/`mir-body-v67`.
+The deterministic serialization is currently `mir-v80`/`mir-body-v68`.
+Program v80/body v68 also serialize the resolved caller literal on each private
+source-location intrinsic. MIR verification requires the exact zero-argument,
+effect-free call shape, matching scalar/text result, and attached literal;
+optimizers and backends therefore cannot substitute their own native build
+location. This combines source-location metadata with the constructor const
+eligibility and completed-body staging metadata described above.
+Program v79 retains semantic constexpr eligibility on constructor instances;
+lowered snapshot verification rejects disagreement with the HIR declaration.
 Program v77/body v67 preserve complete shared-carrier dependency sets and
 the strong-owner intrinsic/cleanup contracts, including exact recursive
 array cleanup recipes.

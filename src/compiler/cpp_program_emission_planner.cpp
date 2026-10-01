@@ -3187,7 +3187,12 @@ public:
       const LoweredDeclaration &classRow,
       const LoweredClassDeclaration &declaration, AccessModifier originalAccess,
       const MirClassInstance *concreteInstance = nullptr) {
-    if (!loweredConstexprAggregateClasses.contains(declaration.id)) {
+    const SemanticType exactType =
+        concreteInstance != nullptr ? concreteInstance->type
+                                    : SemanticType::classType(declaration.id);
+    if (std::find(loweredConstexprAggregateClasses.begin(),
+                  loweredConstexprAggregateClasses.end(),
+                  exactType) == loweredConstexprAggregateClasses.end()) {
       return;
     }
     const std::vector<const LoweredDeclaration *> fields =
@@ -6281,7 +6286,12 @@ public:
         throw std::logic_error(
             "object constant lost its exact concrete class type");
       }
-      loweredConstexprAggregateClasses.insert(aggregate->value->identity);
+      const auto &type = *aggregate->value->exactType;
+      if (std::find(loweredConstexprAggregateClasses.begin(),
+                    loweredConstexprAggregateClasses.end(),
+                    type) == loweredConstexprAggregateClasses.end()) {
+        loweredConstexprAggregateClasses.push_back(type);
+      }
       for (const ConstantAggregateField &field : aggregate->value->fields) {
         collectLoweredConstexprAggregateClasses(field.value);
       }
@@ -8100,7 +8110,7 @@ public:
   std::unordered_set<ClassId> loweredNativePrimaryClasses;
   std::unordered_set<LoweredDeclarationId> loweredDeferredMemberIds;
   std::unordered_set<LoweredDeclarationId> loweredEmittedTypes;
-  std::unordered_set<ClassId> loweredConstexprAggregateClasses;
+  std::vector<SemanticType> loweredConstexprAggregateClasses;
   mutable std::optional<CppMirBodyEmitter> generalBodyEmitter;
   // A planner owns one immutable LoweredProgram and representation map. Keep
   // each fully validated overlay plan for declaration and definition emission

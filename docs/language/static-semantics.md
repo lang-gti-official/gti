@@ -1172,7 +1172,8 @@ The evaluator accepts fixed-width integer, `float`, `double`, `bool`, `char`,
 concrete fixed arrays; structural class and struct values; layout-query
 constants; earlier constexpr bindings; grouping; supported scalar unary,
 binary, comparison, and short-circuit logical operations; lazy conditional
-expressions; read-only field and fixed-array indexing; and explicit numeric
+expressions; read-only field and fixed-array indexing; literal-backed
+string-view `size()`, `empty()`, and checked indexing; and explicit numeric
 conversions plus lossless `uint8_t(char)` code-unit extraction.
 Integer operations use the language's checked domains.
 Floating literals, arithmetic, comparisons, integer conversions, signed zero,
@@ -1183,9 +1184,26 @@ integer overflow, integer zero divisors, invalid shifts, out-of-range
 conversions, non-constant references, unsupported operations, and resource
 exhaustion at source locations.
 
-A free function or method may be `constexpr` when each concrete call has
-non-pack, by-value supported parameters and a supported value result. Concrete
-type and `uint64_t` value-generic arguments retain canonical declaration and
+Constant string views retain their complete byte sequence, including embedded
+NULs. Indexing produces one unsigned `char` code unit, not a Unicode code point;
+negative indices and indices greater than or equal to `size()` fail constant
+evaluation. These observers also work on constant parameters, returned views,
+and structural fields. A runtime-owned view cannot become a constant merely
+because its type supports these operations. Text inspection uses the same
+shared evaluation budget and can form array extents, value-generic arguments,
+static assertions, and compile-time branch conditions.
+
+A free function or method may be `constexpr` when its declaration has
+non-pack potentially supported value parameters (by value or read-only
+reference) and a potentially supported value or read-only reference result.
+A generic type parameter can stand for a supported type at the
+declaration. A concrete instantiation with runtime-only types remains callable
+at runtime; for example, a generic by-value transfer helper can accept an owning
+string without becoming eligible to allocate or destroy one at compile time.
+Required constant calls must still have supported concrete types and executed
+operations. Ordinary exact typing, ownership transfer, borrow checks, and
+source-written reference/receiver restrictions apply to every instantiation.
+Concrete type and `uint64_t` value-generic arguments retain canonical declaration and
 type/value identity throughout evaluation. A non-static instance method must
 have a read-only receiver of a supported structural class or struct. Its body
 may use supported automatic value bindings, exact assignment, scalar compound
@@ -1195,10 +1213,57 @@ recursion, and calls to available constexpr definitions. Calling the same
 function at runtime remains an ordinary GTI call with the same language
 semantics.
 
+Read-only arithmetic, bitwise, comparison, subscript, dereference, and call
+operators may also be `constexpr` under those same signature and structural
+receiver rules. Ordinary overload resolution selects the exact target; no
+reversed operands, new conversions, or alternate lookup is introduced. Both
+direct operator expressions and calls inside completed constexpr bodies use
+verified MIR execution, not an AST operator-body fallback. Generic owners retain
+their concrete type/value arguments. For example, a source-defined math record
+can implement constexpr addition, and a read-only `std::array` can be indexed
+in a required constant expression. Reference results are observed values, not
+persistable constant references. Mutable/consuming operators, arrow operators,
+and contextual-bool operators remain excluded from constexpr declarations.
+
+Completed free constexpr functions also support local fixed arrays of supported
+scalar elements (including nested arrays): default or explicit construction,
+by-value copies and parameters, `size()`, checked indexing, element assignment,
+compound assignment, and increment/decrement. Copies remain independent after
+mutation. These operations execute canonical verified MIR during semantic
+constant evaluation; no runtime C++ execution or optimization is required.
+Array materialization and updates share the evaluation budget. This does not
+admit mutation through references or mutable class receivers.
+
+Completed constexpr functions may bind, pass, forward, and return checked
+read-only references to supported scalar, fixed-array, and passive structural
+values. The ordinary loan rules still govern the exact source owner, projection,
+access, and escape lifetime; returning a local reference or mutating an owner
+while a reference remains live is invalid. Required constant calls must observe
+constant data: a reference to a runtime variable cannot supply it. Reference
+results can be read into constant values, but references themselves are not
+persistable constexpr bindings or fields. This capability requires the verified
+MIR executor; it does not extend the legacy AST evaluator with reference rules.
+Mutable references, stored-reference wrappers, raw addresses, and active
+cleanup remain outside this constant-execution profile.
+
+Completed free constexpr functions may also transform fully initialized passive
+structural records supplied by value: copy into a mutable local, mutate fields
+(including nested records and fixed arrays), and return the independent value.
+The same no-base, no-polymorphism, no-stored-borrow, no-active-cleanup boundaries
+apply. Field selection uses exact declaration identity, not field spelling or
+native layout. Completed function closures also execute explicitly constexpr
+constructors with explicit field initializers and read-only constexpr methods
+through MIR. Other already-admitted constructor forms retain the earlier
+evaluator during migration; eligibility is never inferred from a generated
+native constructor.
+
 An ordinary constructor with a source body may be `constexpr`. The constructed
 class or struct must have no base, polymorphism, union state, stored reference,
 or active destructor, and every recursively reachable field must have a
-supported constexpr value type. Each field must be fully initialized by its
+supported constexpr value type for compile-time construction. Generic
+constructors and read-only methods can also be instantiated with runtime-only
+field types for ordinary runtime use, under the same declaration-versus-call
+distinction. Each field must be fully initialized by its
 declaration or one exact constructor initializer before the body runs. The
 bounded initial subset permits local computation in the constructor body but
 does not permit receiver mutation after initialization or a control transfer
@@ -1210,6 +1275,15 @@ generic packs, and polymorphic dispatch remain outside this subset.
 the selected branch is semantically analyzed and lowered; the discarded branch
 cannot contribute diagnostics, symbols, calls, ownership effects, HIR, MIR, or
 emitted C++. Native C++ constant evaluation is not used to choose the branch.
+When a condition depends on an unresolved generic type or value parameter,
+primary analysis records a deferred selection and inspects neither arm.
+Ordinary name/type checks and independent static assertions outside those arms
+still run. Branch-dependent return, movement, receiver-restoration, and loan
+flow must be checked again for each concrete instance; the symbolic primary is
+not an executable flow proof. A concrete instance must select every branch
+before HIR lowering. Nested constexpr predicates may themselves require staged
+concrete analysis; their execution shares the enclosing constant request's
+step budget and a bounded staging/call depth.
 
 Concrete non-negative integer constexpr values may supply fixed-array extents
 and `uint64_t` value-generic arguments. These uses refer to the declaration's
@@ -1222,8 +1296,8 @@ from unrelated enums are not interchangeable. The backend may materialize a
 frontend-computed structural value, but it may not replay constructors or use
 native C++ constant evaluation to decide that value.
 
-Generic parameter packs, constexpr operator functions, mutable or polymorphic
-instance calls, references, allocation, payload enums, unions, inherited or
+Generic parameter packs, mutable or polymorphic
+instance calls, mutable or persistently stored references, allocation, payload enums, unions, inherited or
 cleanup-owning aggregates, and runtime/intrinsic/C calls are rejected until
 they have compiler-owned evaluation rules.
 

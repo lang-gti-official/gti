@@ -1,0 +1,84 @@
+#include <std/array>
+#include <std/string>
+
+constexpr int capacity<uint64_t N>() {
+  if constexpr (N == 0) {
+    return 1;
+  } else {
+    return int(N);
+  }
+}
+constexpr int selected<uint64_t N>() {
+  if constexpr (N == 0) {
+    return 7;
+  } else {
+    return missing_only_in_discarded_branch();
+  }
+}
+static_assert(capacity<0>() == 1);
+static_assert(capacity<4>() == 4);
+static_assert(selected<0>() == 7);
+
+constexpr bool small<uint64_t N>() { return N < 3; }
+constexpr int nested<uint64_t N>() {
+  if constexpr (small<N>()) { return 11; }
+  else { return 22; }
+}
+constexpr int sum<uint64_t N>() {
+  if constexpr (N == 0) { return 0; }
+  else { return int(N) + sum<N - 1>(); }
+}
+constexpr int width_class<T>() {
+  if constexpr (sizeof(T) == 4) { return 4; }
+  else { return 8; }
+}
+static_assert(nested<1>() == 11 && nested<5>() == 22);
+static_assert(sum<4>() == 10);
+static_assert(width_class<int>() == 4 && width_class<double>() == 8);
+
+struct Shape<uint64_t N> {
+  int value;
+  constexpr Shape(int value) : value(value) {
+    if constexpr (N == 0) { static_assert(true); }
+    else { static_assert(N > 0); }
+  }
+  constexpr int size() {
+    if constexpr (N == 0) { return this.value; }
+    else { return this.value * int(N); }
+  }
+};
+constexpr Shape<0> first = Shape<0>(3);
+constexpr Shape<4> second = Shape<4>(3);
+static_assert(first.size() == 3 && second.size() == 12);
+
+int restore<uint64_t N>() {
+  mut std::string text = std::string("old");
+  std::string removed = std::move(text);
+  if constexpr (N == 0) {
+    text = std::string("new");
+  } else {
+    text = std::string("longer");
+  }
+  return int(text.size());
+}
+
+struct Holder<uint64_t N> {
+  mut std::string text;
+  Holder() : text(std::string("old")) {}
+  int restore() mut {
+    std::string removed = std::move(this.text);
+    if constexpr (N == 0) { this.text = std::string("new"); }
+    else { this.text = std::string("longer"); }
+    return int(this.text.size());
+  }
+};
+
+int main() {
+  if (capacity<0>() != 1 || capacity<4>() != 4 || selected<0>() != 7) { return 1; }
+  if (first.size() != 3 || second.size() != 12) { return 2; }
+  if (nested<1>() != 11 || nested<5>() != 22 || sum<4>() != 10) { return 4; }
+  if (width_class<int>() != 4 || width_class<double>() != 8) { return 5; }
+  mut Holder<0> holder = Holder<0>();
+  if (holder.restore() != 3) { return 6; }
+  return restore<0>() == 3 && restore<4>() == 6 ? 0 : 3;
+}

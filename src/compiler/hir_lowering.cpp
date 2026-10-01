@@ -8,18 +8,138 @@ class HirLowerer::Impl {
 public:
   explicit Impl(TargetInfo target) : target(std::move(target)) {}
 
+  [[nodiscard]] HirLoweringResult lowerConstantFunction(
+      const SemanticModel &semantics, SemanticInstanceProvider &provider,
+      FunctionId root, const std::vector<FunctionId> &completedFunctions,
+      const GenericSubstitution &substitution,
+      const std::vector<ConstructorId> &completedConstructors) {
+    initializeConstant(semantics, provider, completedFunctions,
+                       completedConstructors);
+    const FunctionInfo *function = semantics.findFunction(root);
+    if (function == nullptr) {
+      output.program.valid_ = false;
+      return std::move(output);
+    }
+    std::vector<SemanticType> types;
+    std::vector<CompileTimeValue> values;
+    std::vector<SemanticType> ownerTypes;
+    std::vector<CompileTimeValue> ownerValues;
+    if (function->ownerClass != 0) {
+      const auto *owner = semantics.findClassType(function->ownerClass);
+      if (owner == nullptr) {
+        output.program.valid_ = false;
+        return std::move(output);
+      }
+      for (const auto &parameter : owner->genericParameters) {
+        if (parameter.pack ||
+            (parameter.value ? !substitution.values.contains(parameter.id)
+                             : !substitution.types.contains(parameter.id))) {
+          output.program.valid_ = false;
+          return std::move(output);
+        }
+        if (parameter.value)
+          ownerValues.push_back(substitution.values.at(parameter.id));
+        else
+          ownerTypes.push_back(substitution.types.at(parameter.id));
+      }
+    }
+    for (const auto &parameter : function->genericParameters) {
+      if (parameter.pack ||
+          (parameter.value ? !substitution.values.contains(parameter.id)
+                           : !substitution.types.contains(parameter.id))) {
+        output.program.valid_ = false;
+        return std::move(output);
+      }
+      if (parameter.value)
+        values.push_back(substitution.values.at(parameter.id));
+      else
+        types.push_back(substitution.types.at(parameter.id));
+    }
+    auto parameters = function->parameterTypes;
+    for (auto &type : parameters)
+      type = substitute(type, substitution);
+    if (enqueueFunction(*function, ownerTypes, ownerValues, std::move(types),
+                        std::move(values),
+                        substitute(function->returnType, substitution),
+                        std::move(parameters)) == 0) {
+      output.program.valid_ = false;
+      return std::move(output);
+    }
+    return finishConstant();
+  }
+
+  [[nodiscard]] HirLoweringResult lowerConstantConstructor(
+      const SemanticModel &semantics, SemanticInstanceProvider &provider,
+      const ResolvedConstructionInfo &root,
+      const std::vector<FunctionId> &completedFunctions,
+      const std::vector<ConstructorId> &completedConstructors) {
+    initializeConstant(semantics, provider, completedFunctions,
+                       completedConstructors);
+    if (enqueueConstructor(root) == 0) {
+      output.program.valid_ = false;
+      return std::move(output);
+    }
+    return finishConstant();
+  }
+
   [[nodiscard]] HirLoweringResult lower(const Program &source,
                                         const SemanticModel &semantics,
                                         SemanticInstanceProvider &provider) {
+    initialize(semantics, provider);
+    if (!baseModel->analysisSeal().matchesProgram(source, target)) {
+      output.program.valid_ = false;
+      return std::move(output);
+    }
+    seedDeclarations(source.declarations(), std::nullopt);
+    lowerProgramInitializationPlan();
+    lowerHostedProgramEntryPlan();
+    finalizeLifetimes(output.program.moduleBody, *baseModel, false);
+    lowerLoans(*baseModel, output.program.moduleBody);
+    processPendingInstances();
+    output.program.valid_ =
+        !hasErrorDiagnostics(output.diagnostics) && lifecycleValid;
+    if (output.program.valid_ &&
+        !verifyHirProgramPlans(*baseModel, output.program).valid()) {
+      output.program.valid_ = false;
+    }
+    return std::move(output);
+  }
+
+private:
+  void
+  initializeConstant(const SemanticModel &semantics,
+                     SemanticInstanceProvider &provider,
+                     const std::vector<FunctionId> &completedFunctions,
+                     const std::vector<ConstructorId> &completedConstructors) {
+    initialize(semantics, provider);
+    constantFunctions = completedFunctions;
+    constantConstructors = completedConstructors;
+    constantClosure = true;
+    // Preserve source-unit/target identity for failure origins without
+    // claiming completed whole-program semantic analysis.
+    output.program.semanticAnalysisSeal = {
+        .target = target, .sourceGraph = semantics.analysisSeal().sourceGraph};
+  }
+
+  HirLoweringResult finishConstant() {
+    ensurePlaceDomain(output.program.moduleBody);
+    processPendingInstances();
+    output.program.valid_ =
+        !hasErrorDiagnostics(output.diagnostics) && lifecycleValid &&
+        output.program.destructors.empty() && output.program.lambdas.empty();
+    return std::move(output);
+  }
+
+  void initialize(const SemanticModel &semantics,
+                  SemanticInstanceProvider &provider) {
     instanceProvider = &provider;
     baseModel = &semantics;
     output = {};
     output.program.executionProfile_ = target.executionProfile;
     output.program.semanticAnalysisSeal = baseModel->analysisSeal();
-    if (!baseModel->analysisSeal().matchesProgram(source, target)) {
-      output.program.valid_ = false;
-      return std::move(output);
-    }
+    constantClosure = false;
+    constantFunctions.clear();
+    constantConstructors.clear();
     instanceIndex = HirInstanceIndex();
     nextValueId = 1;
     nextBindingId = 1;
@@ -36,23 +156,10 @@ public:
     functionAnalyses.clear();
     constructorAnalyses.clear();
     activeDefaultArguments.clear();
+    activeDefaultSourceLocation.reset();
+    currentSourceFunctionName.clear();
     collectionResults.clear();
-
-    seedDeclarations(source.declarations(), std::nullopt);
-    lowerProgramInitializationPlan();
-    lowerHostedProgramEntryPlan();
-    finalizeLifetimes(output.program.moduleBody, *baseModel, false);
-    lowerLoans(*baseModel, output.program.moduleBody);
-    processPendingInstances();
-    output.program.valid_ = output.diagnostics.empty() && lifecycleValid;
-    if (output.program.valid_ &&
-        !verifyHirProgramPlans(*baseModel, output.program).valid()) {
-      output.program.valid_ = false;
-    }
-    return std::move(output);
   }
-
-private:
   struct LoweredProgramStorage {
     HirBindingId binding = 0;
     std::optional<HirValueId> initializer;
@@ -208,6 +315,17 @@ private:
         baseModel->findClassLifecycle(*declaration->declaration);
     const bool lifecycleBoundBorrowCarrier =
         declaration->lifecycleBoundBorrowCarrier;
+    // This staged family admits passive structural values, not arbitrary
+    // class capabilities or executable lifecycle bodies. The ordinary class
+    // catalog still owns exact substituted fields and initializer metadata.
+    if (constantClosure &&
+        (declaration->kind == ClassKind::Union || declaration->polymorphic ||
+         !declaration->bases.empty() || lifecycleBoundBorrowCarrier ||
+         declaration->compilerCapability != CompilerCapabilityTypeKind::None ||
+         instanceProvider->requiresActiveCleanupFor(resolvedType))) {
+      lifecycleValid = false;
+      return std::nullopt;
+    }
     const HirClassInstanceId id = output.program.classes.size() + 1;
     SemanticTypeTraits instanceTraits =
         instanceProvider->traitsFor(resolvedType);
@@ -268,6 +386,14 @@ private:
                   SemanticType returnType,
                   std::vector<SemanticType> parameterTypes,
                   std::optional<SourceSpan> site = std::nullopt) {
+    if (constantClosure &&
+        (declaration.declaration == nullptr ||
+         !declaration.declaration->isConstexpr() ||
+         std::find(constantFunctions.begin(), constantFunctions.end(),
+                   declaration.id) == constantFunctions.end())) {
+      lifecycleValid = false;
+      return 0;
+    }
     // Calls can discover an instance through individual arguments or through
     // one forwarded pack. Virtual members are also seeded from declarations.
     // These paths must publish the same concrete signature; source pack
@@ -419,6 +545,19 @@ private:
   [[nodiscard]] HirConstructorInstanceId
   enqueueConstructor(const ResolvedConstructionInfo &construction,
                      std::optional<SourceSpan> site = std::nullopt) {
+    const auto *declaration =
+        construction.declaration == nullptr
+            ? nullptr
+            : baseModel->findConstructor(*construction.declaration);
+    const bool constant =
+        declaration != nullptr && declaration->constexprConstructor;
+    if (constantClosure &&
+        (!constant ||
+         std::find(constantConstructors.begin(), constantConstructors.end(),
+                   construction.constructor) == constantConstructors.end())) {
+      lifecycleValid = false;
+      return 0;
+    }
     const std::optional<HirClassInstanceId> owner =
         enqueueClass(construction.constructedType, site);
     if (!owner || construction.kind != ConstructorKind::Ordinary ||
@@ -446,6 +585,7 @@ private:
          .sourceUnit = output.program.classes[*owner - 1].sourceUnit,
          .declaration = construction.constructor,
          .source = construction.declaration,
+         .constexprConstructor = constant,
          .owner = *owner,
          .typeArguments = construction.typeArguments,
          .valueArguments = construction.valueArguments,
@@ -1210,6 +1350,8 @@ private:
     }
     const SemanticType enclosingReceiverType = currentReceiverType;
     const AccessMode enclosingReceiverAccess = currentReceiverAccess;
+    const std::string enclosingSourceFunctionName = currentSourceFunctionName;
+    currentSourceFunctionName = declaration->qualifiedName;
     if (snapshot.owner) {
       currentReceiverType = output.program.classes[*snapshot.owner - 1].type;
       currentReceiverAccess =
@@ -1238,6 +1380,7 @@ private:
         lifecycleValid = false;
         currentReceiverType = enclosingReceiverType;
         currentReceiverAccess = enclosingReceiverAccess;
+        currentSourceFunctionName = enclosingSourceFunctionName;
         return;
       }
       model = &analysis->model;
@@ -1390,6 +1533,7 @@ private:
         std::move(callableParameters);
     currentReceiverType = enclosingReceiverType;
     currentReceiverAccess = enclosingReceiverAccess;
+    currentSourceFunctionName = enclosingSourceFunctionName;
   }
 
   void processConstructor(std::size_t index) {
@@ -1400,6 +1544,12 @@ private:
         owner.valueArguments;
     const SemanticType enclosingReceiverType = currentReceiverType;
     const AccessMode enclosingReceiverAccess = currentReceiverAccess;
+    const std::string enclosingSourceFunctionName = currentSourceFunctionName;
+    const ClassTypeInfo *ownerInfo =
+        baseModel->findClassType(owner.declaration);
+    currentSourceFunctionName =
+        (ownerInfo == nullptr ? std::string{} : ownerInfo->qualifiedName) +
+        "::" + snapshot.source->name().lexeme;
     currentReceiverType = owner.type;
     currentReceiverAccess = AccessMode::Mutable;
     SemanticInstanceAnalysis *analysis = ensureConstructorAnalysis(snapshot.id);
@@ -1407,6 +1557,7 @@ private:
       lifecycleValid = false;
       currentReceiverType = enclosingReceiverType;
       currentReceiverAccess = enclosingReceiverAccess;
+      currentSourceFunctionName = enclosingSourceFunctionName;
       return;
     }
 
@@ -1484,7 +1635,8 @@ private:
         for (const Expr *defaultArgument : resolved->defaultArguments) {
           if (const std::optional<HirValueId> value = lowerDefaultArgument(
                   defaultArgument, defaultModel, targetClassArguments,
-                  targetClassValueArguments, body)) {
+                  targetClassValueArguments, body,
+                  sourceLocationAt(initializer.target.name.last()))) {
             lowered.arguments.push_back(*value);
             initializerValues.push_back(*value);
           }
@@ -1549,7 +1701,8 @@ private:
             for (const Expr *defaultArgument : defaultArguments) {
               if (const std::optional<HirValueId> value = lowerDefaultArgument(
                       defaultArgument, defaultModel, base->type.arguments,
-                      base->type.valueArguments, body)) {
+                      base->type.valueArguments, body,
+                      sourceLocationAt(snapshot.source->name()))) {
                 lowered.arguments.push_back(*value);
                 implicitBaseValues.push_back(*value);
               }
@@ -1633,6 +1786,7 @@ private:
     output.program.constructors[index].body = std::move(body);
     currentReceiverType = enclosingReceiverType;
     currentReceiverAccess = enclosingReceiverAccess;
+    currentSourceFunctionName = enclosingSourceFunctionName;
   }
 
   void processDestructor(std::size_t index) {
@@ -1640,6 +1794,12 @@ private:
     const HirClassInstance &owner = output.program.classes[snapshot.owner - 1];
     const SemanticType enclosingReceiverType = currentReceiverType;
     const AccessMode enclosingReceiverAccess = currentReceiverAccess;
+    const std::string enclosingSourceFunctionName = currentSourceFunctionName;
+    const ClassTypeInfo *ownerInfo =
+        baseModel->findClassType(owner.declaration);
+    currentSourceFunctionName =
+        (ownerInfo == nullptr ? std::string{} : ownerInfo->qualifiedName) +
+        "::~" + snapshot.source->name().lexeme;
     currentReceiverType = owner.type;
     currentReceiverAccess = AccessMode::Mutable;
     SemanticInstanceAnalysis analysis;
@@ -1662,6 +1822,7 @@ private:
     output.program.destructors[index].body = std::move(body);
     currentReceiverType = enclosingReceiverType;
     currentReceiverAccess = enclosingReceiverAccess;
+    currentSourceFunctionName = enclosingSourceFunctionName;
   }
 
   [[nodiscard]] HirValueId lowerImplicitReceiver(HirBody &body) {
@@ -2400,6 +2561,10 @@ private:
                                  classValueArguments, body)) {
             statements.push_back(*lowered);
           }
+        } else {
+          // A symbolic primary is not an executable body. Concrete semantic
+          // reanalysis must choose the branch before HIR can publish it.
+          lifecycleValid = false;
         }
         return appendStatement({.kind = HirStatementKind::CompileTimeBranch,
                                 .source = statement,
@@ -2700,6 +2865,11 @@ private:
     }
 
     HirBody body;
+    const std::string enclosingSourceFunctionName = currentSourceFunctionName;
+    currentSourceFunctionName =
+        enclosingSourceFunctionName.empty()
+            ? "<lambda>"
+            : enclosingSourceFunctionName + "::<lambda>";
     std::vector<HirBindingId> parameterBindings;
     parameterBindings.reserve(lambda.parameters().size());
     for (const Parameter &parameter : lambda.parameters()) {
@@ -2707,6 +2877,7 @@ private:
     }
     body.roots = lowerStatements(lambda.body(), model, classArguments,
                                  classValueArguments, body);
+    currentSourceFunctionName = enclosingSourceFunctionName;
     finalizeLifetimes(body, model, true);
     lowerLoans(model, body);
     std::vector<bool> captureRequiresActiveCleanup;
@@ -3165,11 +3336,44 @@ private:
     return projectionId;
   }
 
-  [[nodiscard]] std::optional<HirValueId>
-  lowerDefaultArgument(const Expr *expression, const SemanticModel &model,
-                       const std::vector<SemanticType> &classArguments,
-                       const std::vector<CompileTimeValue> &classValueArguments,
-                       HirBody &body) {
+  [[nodiscard]] static bool sourceLocationIntrinsic(IntrinsicKind intrinsic) {
+    return intrinsic == IntrinsicKind::SourceFileName ||
+           intrinsic == IntrinsicKind::SourceFunctionName ||
+           intrinsic == IntrinsicKind::SourceLine ||
+           intrinsic == IntrinsicKind::SourceColumn;
+  }
+
+  [[nodiscard]] SourceLocationLiteral
+  sourceLocationAt(const Token &token) const {
+    return {.file = token.source,
+            .function = currentSourceFunctionName,
+            .line = static_cast<std::uint32_t>(std::max(token.line, 0)),
+            // Token offsets are retained, but HIR does not own source text or
+            // line starts. Zero is the standard unavailable-column value.
+            .column = 0};
+  }
+
+  [[nodiscard]] SourceLocationLiteral sourceLocationAt(const Call &call) const {
+    return sourceLocationAt(call.leftParen() ? *call.leftParen()
+                                             : call.paren());
+  }
+
+  [[nodiscard]] std::optional<SourceLocationLiteral>
+  sourceLocationAt(const Expr &expression) const {
+    if (const auto *call = exprAs<Call>(&expression)) {
+      return sourceLocationAt(*call);
+    }
+    if (const auto *initializer = exprAs<DirectInitializer>(&expression)) {
+      return sourceLocationAt(initializer->brace());
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] std::optional<HirValueId> lowerDefaultArgument(
+      const Expr *expression, const SemanticModel &model,
+      const std::vector<SemanticType> &classArguments,
+      const std::vector<CompileTimeValue> &classValueArguments, HirBody &body,
+      std::optional<SourceLocationLiteral> caller = std::nullopt) {
     if (expression == nullptr) {
       return std::nullopt;
     }
@@ -3177,8 +3381,14 @@ private:
       lifecycleValid = false;
       return std::nullopt;
     }
+    const std::optional<SourceLocationLiteral> enclosing =
+        activeDefaultSourceLocation;
+    if (!activeDefaultSourceLocation && caller) {
+      activeDefaultSourceLocation = std::move(caller);
+    }
     const std::optional<HirValueId> result = lowerExpression(
         *expression, model, classArguments, classValueArguments, body);
+    activeDefaultSourceLocation = enclosing;
     activeDefaultArguments.erase(expression);
     return result;
   }
@@ -3244,7 +3454,8 @@ private:
     for (const Expr *defaultArgument : construction.defaultArguments) {
       if (const std::optional<HirValueId> lowered = lowerDefaultArgument(
               defaultArgument, *defaultModel, targetClassArguments,
-              targetClassValueArguments, body)) {
+              targetClassValueArguments, body,
+              sourceLocationAt(initializer.brace()))) {
         value.operands.push_back(*lowered);
       } else {
         lifecycleValid = false;
@@ -4254,6 +4465,12 @@ private:
     if (const auto *call = exprAs<Call>(raw)) {
       if (const ResolvedCallInfo *resolved = model.findCall(*call)) {
         value.intrinsic = resolved->intrinsic;
+        if (sourceLocationIntrinsic(value.intrinsic)) {
+          value.sourceLocation = activeDefaultSourceLocation
+                                     ? activeDefaultSourceLocation
+                                     : std::optional<SourceLocationLiteral>(
+                                           sourceLocationAt(*call));
+        }
         value.retainedReceiverProjection = resolved->retainedReceiverProjection;
         if (resolved->retainedReceiverOwner != nullptr) {
           const auto anchor = std::find_if(
@@ -4418,7 +4635,7 @@ private:
           for (const Expr *defaultArgument : resolved->defaultArguments) {
             if (const std::optional<HirValueId> lowered = lowerDefaultArgument(
                     defaultArgument, defaultModel, targetClassArguments,
-                    targetClassValueArguments, body)) {
+                    targetClassValueArguments, body, sourceLocationAt(*call))) {
               value.operands.push_back(*lowered);
             }
           }
@@ -4546,7 +4763,7 @@ private:
           for (const Expr *defaultArgument : construction->defaultArguments) {
             if (const std::optional<HirValueId> lowered = lowerDefaultArgument(
                     defaultArgument, defaultModel, targetClassArguments,
-                    targetClassValueArguments, body)) {
+                    targetClassValueArguments, body, sourceLocationAt(*raw))) {
               value.operands.push_back(*lowered);
             }
           }
@@ -4883,6 +5100,9 @@ private:
   std::size_t placeSnapshotId = 0;
   std::size_t nextPlaceBodyId = 1;
   bool lifecycleValid = true;
+  bool constantClosure = false;
+  std::vector<FunctionId> constantFunctions;
+  std::vector<ConstructorId> constantConstructors;
   std::size_t processedClasses = 0;
   HirInstanceIndex instanceIndex;
   std::size_t processedFunctions = 0;
@@ -4890,6 +5110,7 @@ private:
   std::size_t processedDestructors = 0;
   SemanticType currentReceiverType = SemanticType::Unknown;
   AccessMode currentReceiverAccess = AccessMode::ReadOnly;
+  std::string currentSourceFunctionName;
   std::unordered_map<LambdaId, HirLambdaId> lambdaTargets;
   std::unordered_map<const VariableDecl *, LoweredProgramStorage>
       loweredProgramStorage;
@@ -4900,6 +5121,7 @@ private:
                      std::unique_ptr<SemanticInstanceAnalysis>>
       constructorAnalyses;
   std::unordered_set<const Expr *> activeDefaultArguments;
+  std::optional<SourceLocationLiteral> activeDefaultSourceLocation;
   std::unordered_set<HirValueId> collectionResults;
 };
 
@@ -4914,6 +5136,26 @@ HirLoweringResult
 HirLowerer::lower(const Program &source, const SemanticModel &semantics,
                   SemanticInstanceProvider &instanceProvider) {
   return impl->lower(source, semantics, instanceProvider);
+}
+
+HirLoweringResult HirLowerer::lowerConstantFunction(
+    const SemanticModel &semantics, SemanticInstanceProvider &instanceProvider,
+    FunctionId root, const std::vector<FunctionId> &completedFunctions,
+    const GenericSubstitution &substitution,
+    const std::vector<ConstructorId> &completedConstructors) {
+  return impl->lowerConstantFunction(semantics, instanceProvider, root,
+                                     completedFunctions, substitution,
+                                     completedConstructors);
+}
+
+HirLoweringResult HirLowerer::lowerConstantConstructor(
+    const SemanticModel &semantics, SemanticInstanceProvider &instanceProvider,
+    const ResolvedConstructionInfo &root,
+    const std::vector<FunctionId> &completedFunctions,
+    const std::vector<ConstructorId> &completedConstructors) {
+  return impl->lowerConstantConstructor(semantics, instanceProvider, root,
+                                        completedFunctions,
+                                        completedConstructors);
 }
 
 } // namespace lang

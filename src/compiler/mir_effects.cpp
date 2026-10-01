@@ -162,6 +162,9 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.readsPlace = true, .mayTrap = true, .startsLoan = true},
     MirEffectTraits{.readsPlace = true, .mayTrap = true, .startsLoan = true},
     MirEffectTraits{.readsPlace = true, .removableWhenUnused = true},
+    MirEffectTraits{.readsPlace = true,
+                    .writesPlace = true,
+                    .movesValue = true}, // UniqueOwnerSwap
     // UniqueOwnerUpcast
     MirEffectTraits{
         .readsPlace = true, .writesPlace = true, .movesValue = true},
@@ -387,6 +390,12 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.readsPlace = true,
                     .writesPlace = true,
                     .movesValue = true}, // SharedOwnerSwap
+    MirEffectTraits{.movesValue = true,
+                    .initializesValue = true}, // SharedOwnerUpcast
+    harmless(),                                // SourceFileName
+    harmless(),                                // SourceFunctionName
+    harmless(),                                // SourceLine
+    harmless(),                                // SourceColumn
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -528,6 +537,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "unique-owner-borrow",
     "unique-owner-borrow-mut",
     "unique-owner-is-null",
+    "unique-owner-swap",
     "unique-owner-upcast",
     "allocate-storage",
     "storage-try-allocate",
@@ -600,6 +610,11 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "shared-owner-is-null",
     "shared-owner-use-count",
     "shared-owner-swap",
+    "shared-owner-upcast",
+    "source-file-name",
+    "source-function-name",
+    "source-line",
+    "source-column",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({
@@ -1194,6 +1209,24 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
       return MirDropType{.type = selected,
                          .classInstance = owner->id,
                          .aggregate = {*pointee},
+                         .requiresActiveCleanup = true};
+    }
+    if (const auto *owner =
+            selected.kind == SemanticType::Class ? classFor(selected) : nullptr;
+        owner != nullptr &&
+        owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
+      if (selected.arguments.size() != 1 || !owner->requiresActiveCleanup)
+        return std::nullopt;
+      auto payload = self(self, selected.arguments.front());
+      if (!payload || !payload->requiresActiveCleanup)
+        return std::nullopt;
+      // The native mutex representation owns its payload in a private
+      // optional slot rather than a source-visible field. Preserve that
+      // ownership edge explicitly so an enclosing aggregate or shared owner
+      // can discharge the payload before leaving the mutex shell empty.
+      return MirDropType{.type = selected,
+                         .classInstance = owner->id,
+                         .aggregate = {*payload},
                          .requiresActiveCleanup = true};
     }
     if (selected.kind == SemanticType::Enum) {

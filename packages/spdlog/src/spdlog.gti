@@ -1,0 +1,1539 @@
+// A source-defined, ownership-safe logging package modelled after spdlog.
+//
+// The public names intentionally follow spdlog where GTI can preserve the
+// same semantics. Operations that may fail return `expected` instead of
+// throwing, and process-global registry state is represented by an explicit
+// `spdlog::registry` owner.
+
+#include <std/chrono>
+#include <std/cstdio>
+#include <std/atomic>
+#include <std/filesystem>
+#include <std/format>
+#include <std/functional>
+#include <std/memory>
+#include <std/mutex>
+#include <std/source_location>
+#include <std/string>
+#include <std/vector>
+
+namespace spdlog {
+
+enum class errc {
+  invalid_argument,
+  format_error,
+  invalid_pattern,
+  io_error,
+  open_failed,
+  clock_error,
+  duplicate_logger,
+  logger_not_found,
+};
+
+enum class color_mode {
+  always,
+  automatic,
+  never,
+};
+
+namespace level {
+
+enum class level_enum {
+  trace,
+  debug,
+  info,
+  warn,
+  err,
+  critical,
+  off,
+};
+
+std::string_view to_string_view(level_enum value) {
+  switch (value) {
+  case level_enum::trace: return "trace";
+  case level_enum::debug: return "debug";
+  case level_enum::info: return "info";
+  case level_enum::warn: return "warning";
+  case level_enum::err: return "error";
+  case level_enum::critical: return "critical";
+  default: return "off";
+  }
+}
+
+std::string_view to_short_string_view(level_enum value) {
+  switch (value) {
+  case level_enum::trace: return "T";
+  case level_enum::debug: return "D";
+  case level_enum::info: return "I";
+  case level_enum::warn: return "W";
+  case level_enum::err: return "E";
+  case level_enum::critical: return "C";
+  default: return "O";
+  }
+}
+
+level_enum from_str(std::string_view value) {
+  if (value == "trace") { return level_enum::trace; }
+  if (value == "debug") { return level_enum::debug; }
+  if (value == "info") { return level_enum::info; }
+  if (value == "warn" || value == "warning") { return level_enum::warn; }
+  if (value == "err" || value == "error") { return level_enum::err; }
+  if (value == "critical") { return level_enum::critical; }
+  return level_enum::off;
+}
+
+uint8_t rank(level_enum value) {
+  switch (value) {
+  case level_enum::trace: return uint8_t(0);
+  case level_enum::debug: return uint8_t(1);
+  case level_enum::info: return uint8_t(2);
+  case level_enum::warn: return uint8_t(3);
+  case level_enum::err: return uint8_t(4);
+  case level_enum::critical: return uint8_t(5);
+  default: return uint8_t(6);
+  }
+}
+
+level_enum from_rank(uint8_t value) {
+  switch (value) {
+  case uint8_t(0): return level_enum::trace;
+  case uint8_t(1): return level_enum::debug;
+  case uint8_t(2): return level_enum::info;
+  case uint8_t(3): return level_enum::warn;
+  case uint8_t(4): return level_enum::err;
+  case uint8_t(5): return level_enum::critical;
+  default: return level_enum::off;
+  }
+}
+
+bool enabled(level_enum message, level_enum threshold) {
+  return rank(message) >= rank(threshold) && threshold != level_enum::off;
+}
+
+}
+
+/// Owned source information suitable for deferred or cross-thread logging.
+class source_loc {
+  std::string file_value;
+  std::string function_value;
+  uint32_t line_value;
+
+public:
+  source_loc()
+      : file_value(std::string("")), function_value(std::string("")),
+        line_value(uint32_t(0)) {}
+
+  source_loc(std::string_view file, uint32_t line,
+             std::string_view function)
+      : file_value(std::string(file)), function_value(std::string(function)),
+        line_value(line) {}
+
+  static source_loc current(
+      std::source_location location = std::source_location::current()) {
+    return source_loc(location.file_name().view(), location.line(),
+                      location.function_name().view());
+  }
+
+  bool empty() { return this.file_value.empty(); }
+  std::string& filename() { return this.file_value; }
+  std::string& funcname() { return this.function_value; }
+  uint32_t line() { return this.line_value; }
+};
+
+namespace details {
+
+/// One immutable owned logging event shared by all selected sinks.
+class log_msg {
+  std::string logger_name_value;
+  level::level_enum level_value;
+  std::string payload_value;
+  source_loc source_value;
+  int64_t unix_seconds_value;
+  int32_t subsecond_nanoseconds_value;
+
+public:
+  log_msg(std::string_view logger_name, level::level_enum severity,
+          std::string payload, source_loc source, int64_t unix_seconds,
+          int32_t subsecond_nanoseconds)
+      : logger_name_value(std::string(logger_name)), level_value(severity),
+        payload_value(std::move(payload)), source_value(std::move(source)),
+        unix_seconds_value(unix_seconds),
+        subsecond_nanoseconds_value(subsecond_nanoseconds) {}
+
+  std::string& logger_name() { return this.logger_name_value; }
+  level::level_enum level() { return this.level_value; }
+  std::string& payload() { return this.payload_value; }
+  source_loc& source() { return this.source_value; }
+  int64_t unix_seconds() { return this.unix_seconds_value; }
+  int32_t subsecond_nanoseconds() {
+    return this.subsecond_nanoseconds_value;
+  }
+};
+
+void append_unsigned(mut std::string& output, mut uint64_t value,
+                     mut std::size_t minimum_width) {
+  mut uint8_t reversed[20] = {};
+  mut std::size_t count = std::size_t(0);
+  if (value == uint64_t(0)) {
+    reversed[0] = uint8_t(0);
+    count = std::size_t(1);
+  } else {
+    while (value != uint64_t(0)) {
+      reversed[count] = uint8_t(value % uint64_t(10));
+      count++;
+      value = value / uint64_t(10);
+    }
+  }
+  while (count < minimum_width) {
+    output.push_back('0');
+    minimum_width--;
+  }
+  while (count > std::size_t(0)) {
+    count--;
+    output.push_back(char(uint8_t(uint8_t('0') + reversed[count])));
+  }
+}
+
+void append_signed(mut std::string& output, int64_t value) {
+  if (value < int64_t(0)) {
+    output.push_back('-');
+    uint64_t magnitude = uint64_t(-(value + int64_t(1))) + uint64_t(1);
+    append_unsigned(output, magnitude, std::size_t(0));
+    return;
+  }
+  append_unsigned(output, uint64_t(value), std::size_t(0));
+}
+
+struct calendar_fields {
+  mut int64_t year;
+  mut uint32_t month;
+  mut uint32_t day;
+  mut uint32_t hour;
+  mut uint32_t minute;
+  mut uint32_t second;
+
+  calendar_fields()
+      : year(int64_t(0)), month(uint32_t(0)), day(uint32_t(0)),
+        hour(uint32_t(0)), minute(uint32_t(0)), second(uint32_t(0)) {}
+};
+
+calendar_fields calendar_from_unix(int64_t unix_seconds) {
+  mut int64_t days = unix_seconds / int64_t(86400);
+  mut int64_t second_of_day = unix_seconds % int64_t(86400);
+  if (second_of_day < int64_t(0)) {
+    second_of_day += int64_t(86400);
+    days--;
+  }
+
+  int64_t shifted = days + int64_t(719468);
+  int64_t era = (shifted >= int64_t(0) ? shifted
+                                       : shifted - int64_t(146096)) /
+                int64_t(146097);
+  uint64_t day_of_era = uint64_t(shifted - era * int64_t(146097));
+  uint64_t year_of_era =
+      (day_of_era - day_of_era / uint64_t(1460) +
+       day_of_era / uint64_t(36524) - day_of_era / uint64_t(146096)) /
+      uint64_t(365);
+  mut int64_t year = int64_t(year_of_era) + era * int64_t(400);
+  uint64_t day_of_year =
+      day_of_era - (uint64_t(365) * year_of_era + year_of_era / uint64_t(4) -
+                    year_of_era / uint64_t(100));
+  uint64_t month_prime =
+      (uint64_t(5) * day_of_year + uint64_t(2)) / uint64_t(153);
+  uint64_t day = day_of_year -
+                     (uint64_t(153) * month_prime + uint64_t(2)) /
+                         uint64_t(5) +
+                 uint64_t(1);
+  int64_t month = int64_t(month_prime) +
+                  (month_prime < uint64_t(10) ? int64_t(3) : int64_t(-9));
+  if (month <= int64_t(2)) { year++; }
+
+  mut calendar_fields result{};
+  result.year = year;
+  result.month = uint32_t(month);
+  result.day = uint32_t(day);
+  result.hour = uint32_t(second_of_day / int64_t(3600));
+  result.minute = uint32_t((second_of_day % int64_t(3600)) / int64_t(60));
+  result.second = uint32_t(second_of_day % int64_t(60));
+  return result;
+}
+
+void append_basename(mut std::string& output, std::string& filename) {
+  mut std::size_t start = std::size_t(0);
+  for (mut std::size_t index = std::size_t(0); index < filename.size();
+       index++) {
+    if (filename[index] == '/' || filename[index] == '\\') {
+      start = index + std::size_t(1);
+    }
+  }
+  for (mut std::size_t index = start; index < filename.size(); index++) {
+    output.push_back(filename[index]);
+  }
+}
+
+expected<std::string, errc> format_pattern(std::string_view pattern,
+                                           log_msg& message) {
+  mut std::string output = std::string();
+  calendar_fields calendar = calendar_from_unix(message.unix_seconds());
+  mut std::size_t cursor = std::size_t(0);
+  while (cursor < pattern.size()) {
+    if (pattern[cursor] != '%') {
+      output.push_back(pattern[cursor]);
+      cursor++;
+      continue;
+    }
+    if (cursor + std::size_t(1) >= pattern.size()) {
+      return unexpected(errc::invalid_pattern);
+    }
+    char flag = pattern[cursor + std::size_t(1)];
+    cursor += std::size_t(2);
+    switch (flag) {
+    case '%': output.push_back('%'); break;
+    case 'v': output.append(message.payload().view()); break;
+    case 'n': output.append(message.logger_name().view()); break;
+    case 'l': output.append(level::to_string_view(message.level())); break;
+    case 'L': output.append(level::to_short_string_view(message.level())); break;
+    case 'g': output.append(message.source().filename().view()); break;
+    case 's': append_basename(output, message.source().filename()); break;
+    case '#': append_unsigned(output, uint64_t(message.source().line()),
+                              std::size_t(0)); break;
+    case '!': output.append(message.source().funcname().view()); break;
+    case 'Y': append_signed(output, calendar.year); break;
+    case 'm': append_unsigned(output, uint64_t(calendar.month),
+                              std::size_t(2)); break;
+    case 'd': append_unsigned(output, uint64_t(calendar.day),
+                              std::size_t(2)); break;
+    case 'H': append_unsigned(output, uint64_t(calendar.hour),
+                              std::size_t(2)); break;
+    case 'M': append_unsigned(output, uint64_t(calendar.minute),
+                              std::size_t(2)); break;
+    case 'S': append_unsigned(output, uint64_t(calendar.second),
+                              std::size_t(2)); break;
+    case 'e': append_unsigned(
+                  output,
+                  uint64_t(message.subsecond_nanoseconds() / int32_t(1000000)),
+                  std::size_t(3)); break;
+    case 'f': append_unsigned(output,
+                              uint64_t(message.subsecond_nanoseconds()),
+                              std::size_t(9)); break;
+    case 'z': output.append("+00:00"); break;
+    case 't': output.push_back('0'); break;
+    case '^': break;
+    case '$': break;
+    case '+':
+      output.push_back('[');
+      append_signed(output, calendar.year);
+      output.push_back('-');
+      append_unsigned(output, uint64_t(calendar.month), std::size_t(2));
+      output.push_back('-');
+      append_unsigned(output, uint64_t(calendar.day), std::size_t(2));
+      output.push_back(' ');
+      append_unsigned(output, uint64_t(calendar.hour), std::size_t(2));
+      output.push_back(':');
+      append_unsigned(output, uint64_t(calendar.minute), std::size_t(2));
+      output.push_back(':');
+      append_unsigned(output, uint64_t(calendar.second), std::size_t(2));
+      output.push_back('.');
+      append_unsigned(
+          output,
+          uint64_t(message.subsecond_nanoseconds() / int32_t(1000000)),
+          std::size_t(3));
+      output.append("] [");
+      output.append(message.logger_name().view());
+      output.append("] [");
+      output.append(level::to_string_view(message.level()));
+      output.append("] ");
+      output.append(message.payload().view());
+      break;
+    default: return unexpected(errc::invalid_pattern);
+    }
+  }
+  return std::move(output);
+}
+
+}
+
+interface formatter {
+  expected<std::string, errc> format(details::log_msg& message);
+  std::unique_ptr<formatter> clone();
+};
+
+class pattern_formatter : public formatter {
+  std::string pattern_value;
+
+public:
+  pattern_formatter() : pattern_value(std::string("%+")) {}
+  pattern_formatter(std::string_view pattern)
+      : pattern_value(std::string(pattern)) {}
+
+  expected<std::string, errc> format(details::log_msg& message) override {
+    return details::format_pattern(this.pattern_value.view(), message);
+  }
+
+  std::unique_ptr<formatter> clone() override {
+    auto copy = std::make_unique<pattern_formatter>(this.pattern_value.view());
+    return std::upcast_unique<formatter, pattern_formatter>(std::move(copy));
+  }
+};
+
+namespace details {
+
+std::unique_ptr<formatter> make_pattern_formatter(std::string_view pattern) {
+  auto concrete = std::make_unique<pattern_formatter>(pattern);
+  return std::upcast_unique<formatter, pattern_formatter>(std::move(concrete));
+}
+
+}
+
+namespace sinks {
+
+/// Shared sink protocol. Implementations provide synchronized interior
+/// mutation so every operation remains callable through `sink_ptr`.
+[[transfer, share]] interface sink {
+  expected<void, errc> log(details::log_msg& message);
+  expected<void, errc> flush();
+  void set_pattern(std::string_view pattern);
+  void set_formatter(std::unique_ptr<formatter> replacement);
+  void set_level(level::level_enum threshold);
+  level::level_enum level();
+};
+
+}
+
+using sink_ptr = std::shared_ptr<sinks::sink>;
+
+namespace details {
+
+struct sink_settings {
+  mut level::level_enum threshold;
+  mut std::unique_ptr<formatter> active_formatter;
+
+  sink_settings()
+      : threshold(level::level_enum::trace),
+        active_formatter(make_pattern_formatter("%+")) {}
+
+  void replace_formatter(std::unique_ptr<formatter> replacement) mut {
+    auto previous = std::move(this.active_formatter);
+    this.active_formatter = std::move(replacement);
+  }
+};
+
+void replace_formatter(mut sink_settings& settings,
+                       std::unique_ptr<formatter> replacement) {
+  settings.replace_formatter(std::move(replacement));
+}
+
+void set_pattern(mut sink_settings& settings, std::string_view pattern) {
+  replace_formatter(settings, make_pattern_formatter(pattern));
+}
+
+expected<std::string, errc> render(sink_settings& settings,
+                                   log_msg& message) {
+  return settings.active_formatter->format(message);
+}
+
+void append_eol(mut std::string& line) { line.push_back('\n'); }
+
+void append_color_prefix(mut std::string& output,
+                         level::level_enum severity) {
+  output.push_back(char(uint8_t(27)));
+  switch (severity) {
+  case level::level_enum::trace: output.append("[37m"); break;
+  case level::level_enum::debug: output.append("[36m"); break;
+  case level::level_enum::info: output.append("[32m"); break;
+  case level::level_enum::warn: output.append("[33m"); break;
+  case level::level_enum::err: output.append("[31m"); break;
+  case level::level_enum::critical: output.append("[1;37;41m"); break;
+  default: output.append("[0m"); break;
+  }
+}
+
+struct console_state {
+  mut sink_settings settings;
+  bool standard_error;
+  color_mode colors;
+
+  console_state(bool use_standard_error, color_mode selected_colors)
+      : settings(sink_settings()), standard_error(use_standard_error),
+        colors(selected_colors) {}
+};
+
+[[unsafe_transfer, unsafe_share]] class console_sink {
+  mut std::unique_ptr<std::mutex<console_state>> state;
+
+public:
+  console_sink(bool standard_error, color_mode colors)
+      : state(std::unique_ptr<std::mutex<console_state>>(nullptr)) {
+    this.state = std::make_unique<std::mutex<console_state>>(
+        console_state(standard_error, colors));
+  }
+
+  expected<void, errc> log(log_msg& message) {
+    mut auto guard = this.state->lock();
+    mut console_state& data = guard.get();
+    if (!level::enabled(message.level(), data.settings.threshold)) {
+      return;
+    }
+    expected<std::string, errc> rendered = render(data.settings, message);
+    if (!rendered) { return unexpected(rendered.error()); }
+    mut std::string line = std::move(rendered).value();
+    if (data.colors == color_mode::always) {
+      mut std::string colored = std::string();
+      append_color_prefix(colored, message.level());
+      colored.append(line.view());
+      colored.push_back(char(uint8_t(27)));
+      colored.append("[0m");
+      line = std::move(colored);
+    }
+    append_eol(line);
+    expected<std::size_t, std::io_errc> written =
+        data.standard_error ? std::try_write_stderr(line.view())
+                            : std::try_write_stdout(line.view());
+    if (!written) { return unexpected(errc::io_error); }
+    return;
+  }
+
+  expected<void, errc> flush() {
+    mut auto guard = this.state->lock();
+    mut console_state& data = guard.get();
+    expected<void, std::io_errc> flushed =
+        data.standard_error ? std::try_flush_stderr()
+                            : std::try_flush_stdout();
+    if (!flushed) { return unexpected(errc::io_error); }
+    return;
+  }
+
+  void set_pattern(std::string_view pattern) {
+    mut auto guard = this.state->lock();
+    details::set_pattern(guard.get().settings, pattern);
+  }
+
+  void set_formatter(std::unique_ptr<formatter> replacement) {
+    mut auto guard = this.state->lock();
+    replace_formatter(guard.get().settings, std::move(replacement));
+  }
+
+  void set_level(level::level_enum threshold) {
+    mut auto guard = this.state->lock();
+    guard.get().settings.threshold = threshold;
+  }
+
+  level::level_enum level() {
+    mut auto guard = this.state->lock();
+    return guard.get().settings.threshold;
+  }
+};
+
+}
+
+namespace sinks {
+
+class stdout_sink_mt : public sink {
+  details::console_sink implementation;
+
+public:
+  stdout_sink_mt()
+      : implementation(details::console_sink(false, color_mode::never)) {}
+  expected<void, errc> log(details::log_msg& message) override {
+    return this.implementation.log(message);
+  }
+  expected<void, errc> flush() override {
+    return this.implementation.flush();
+  }
+  void set_pattern(std::string_view pattern) override {
+    this.implementation.set_pattern(pattern);
+  }
+  void set_formatter(std::unique_ptr<formatter> replacement) override {
+    this.implementation.set_formatter(std::move(replacement));
+  }
+  void set_level(level::level_enum threshold) override {
+    this.implementation.set_level(threshold);
+  }
+  level::level_enum level() override { return this.implementation.level(); }
+};
+
+class stderr_sink_mt : public sink {
+  details::console_sink implementation;
+
+public:
+  stderr_sink_mt()
+      : implementation(details::console_sink(true, color_mode::never)) {}
+  expected<void, errc> log(details::log_msg& message) override {
+    return this.implementation.log(message);
+  }
+  expected<void, errc> flush() override {
+    return this.implementation.flush();
+  }
+  void set_pattern(std::string_view pattern) override {
+    this.implementation.set_pattern(pattern);
+  }
+  void set_formatter(std::unique_ptr<formatter> replacement) override {
+    this.implementation.set_formatter(std::move(replacement));
+  }
+  void set_level(level::level_enum threshold) override {
+    this.implementation.set_level(threshold);
+  }
+  level::level_enum level() override { return this.implementation.level(); }
+};
+
+class stdout_color_sink_mt : public sink {
+  details::console_sink implementation;
+
+public:
+  stdout_color_sink_mt(color_mode colors = color_mode::automatic)
+      : implementation(details::console_sink(
+            false, colors == color_mode::automatic ? color_mode::never
+                                                   : colors)) {}
+  expected<void, errc> log(details::log_msg& message) override {
+    return this.implementation.log(message);
+  }
+  expected<void, errc> flush() override {
+    return this.implementation.flush();
+  }
+  void set_pattern(std::string_view pattern) override {
+    this.implementation.set_pattern(pattern);
+  }
+  void set_formatter(std::unique_ptr<formatter> replacement) override {
+    this.implementation.set_formatter(std::move(replacement));
+  }
+  void set_level(level::level_enum threshold) override {
+    this.implementation.set_level(threshold);
+  }
+  level::level_enum level() override { return this.implementation.level(); }
+};
+
+class stderr_color_sink_mt : public sink {
+  details::console_sink implementation;
+
+public:
+  stderr_color_sink_mt(color_mode colors = color_mode::automatic)
+      : implementation(details::console_sink(
+            true, colors == color_mode::automatic ? color_mode::never
+                                                  : colors)) {}
+  expected<void, errc> log(details::log_msg& message) override {
+    return this.implementation.log(message);
+  }
+  expected<void, errc> flush() override {
+    return this.implementation.flush();
+  }
+  void set_pattern(std::string_view pattern) override {
+    this.implementation.set_pattern(pattern);
+  }
+  void set_formatter(std::unique_ptr<formatter> replacement) override {
+    this.implementation.set_formatter(std::move(replacement));
+  }
+  void set_level(level::level_enum threshold) override {
+    this.implementation.set_level(threshold);
+  }
+  level::level_enum level() override { return this.implementation.level(); }
+};
+
+[[unsafe_transfer, unsafe_share]] class null_sink_mt : public sink {
+  mut std::unique_ptr<std::mutex<details::sink_settings>> state;
+
+public:
+  null_sink_mt()
+      : state(std::unique_ptr<std::mutex<details::sink_settings>>(nullptr)) {
+    this.state = std::make_unique<std::mutex<details::sink_settings>>(
+        details::sink_settings());
+  }
+  expected<void, errc> log(details::log_msg& message) override { return; }
+  expected<void, errc> flush() override { return; }
+  void set_pattern(std::string_view pattern) override {
+    mut auto guard = this.state->lock();
+    details::set_pattern(guard.get(), pattern);
+  }
+  void set_formatter(std::unique_ptr<formatter> replacement) override {
+    mut auto guard = this.state->lock();
+    details::replace_formatter(guard.get(), std::move(replacement));
+  }
+  void set_level(level::level_enum threshold) override {
+    mut auto guard = this.state->lock();
+    guard.get().threshold = threshold;
+  }
+  level::level_enum level() override {
+    mut auto guard = this.state->lock();
+    return guard.get().threshold;
+  }
+};
+
+}
+
+namespace details {
+
+class ringbuffer_state {
+public:
+  mut sink_settings settings;
+  std::size_t capacity;
+  mut std::vector<std::string> messages;
+
+  ringbuffer_state(std::size_t requested)
+      : settings(sink_settings()), capacity(requested),
+        messages(std::vector<std::string>()) {
+    this.messages.reserve(requested);
+  }
+
+  expected<void, errc> append(log_msg& message) mut {
+    if (!level::enabled(message.level(), this.settings.threshold)) { return; }
+    expected<std::string, errc> rendered = render(this.settings, message);
+    if (!rendered) { return unexpected(rendered.error()); }
+    if (this.capacity == std::size_t(0)) { return; }
+    if (this.messages.size() == this.capacity) {
+      this.messages.erase(std::size_t(0));
+    }
+    this.messages.push_back(std::move(rendered).value());
+    return;
+  }
+
+  std::vector<std::string> last(std::size_t limit) {
+    mut std::vector<std::string> result{};
+    mut std::size_t count = this.messages.size();
+    if (limit < count) { count = limit; }
+    result.reserve(count);
+    std::size_t start = this.messages.size() - count;
+    for (mut std::size_t index = start; index < this.messages.size();
+         index++) {
+      result.push_back(std::string(this.messages[index].view()));
+    }
+    return std::move(result);
+  }
+};
+
+class file_state {
+public:
+  mut sink_settings settings;
+  mut std::unique_ptr<std::FILE> stream;
+
+  file_state(std::unique_ptr<std::FILE> opened)
+      : settings(sink_settings()), stream(std::move(opened)) {}
+
+  expected<void, errc> append(log_msg& message) mut {
+    if (!level::enabled(message.level(), this.settings.threshold)) { return; }
+    expected<std::string, errc> rendered = render(this.settings, message);
+    if (!rendered) { return unexpected(rendered.error()); }
+    mut std::string line = std::move(rendered).value();
+    append_eol(line);
+    expected<std::size_t, std::io_errc> written =
+        this.stream->write(line.view());
+    if (!written) { return unexpected(errc::io_error); }
+    return;
+  }
+};
+
+class rotating_file_state {
+public:
+  mut sink_settings settings;
+  std::string filename;
+  std::size_t maximum_size;
+  std::size_t maximum_files;
+  mut std::size_t current_size;
+  mut std::unique_ptr<std::FILE> stream;
+
+  rotating_file_state(std::string_view path, std::size_t max_size,
+                      std::size_t max_files, std::size_t initial_size,
+                      std::unique_ptr<std::FILE> opened)
+      : settings(sink_settings()), filename(std::string(path)),
+        maximum_size(max_size), maximum_files(max_files),
+        current_size(initial_size), stream(std::move(opened)) {}
+
+  std::string rotated_name(std::size_t index) {
+    mut std::string result = std::string(this.filename.view());
+    result.push_back('.');
+    append_unsigned(result, uint64_t(index), std::size_t(0));
+    return std::move(result);
+  }
+
+  expected<void, errc> rotate() mut {
+    this.stream.reset();
+    mut std::size_t index = this.maximum_files;
+    while (index > std::size_t(0)) {
+      std::string destination = this.rotated_name(index);
+      expected<bool, std::filesystem::errc> removed =
+          std::filesystem::remove(destination.view());
+      if (!removed) { return unexpected(errc::io_error); }
+
+      mut std::string source = std::string(this.filename.view());
+      if (index > std::size_t(1)) {
+        source = this.rotated_name(index - std::size_t(1));
+      }
+      expected<bool, std::filesystem::errc> present =
+          std::filesystem::exists(source.view());
+      if (!present) { return unexpected(errc::io_error); }
+      if (present.value()) {
+        expected<void, std::filesystem::errc> renamed =
+            std::filesystem::rename(source.view(), destination.view());
+        if (!renamed) { return unexpected(errc::io_error); }
+      }
+      index--;
+    }
+
+    expected<std::unique_ptr<std::FILE>, std::io_errc> opened =
+        std::fopen(this.filename.view(), std::file_mode::write);
+    if (!opened) { return unexpected(errc::open_failed); }
+    mut std::unique_ptr<std::FILE> replacement = std::move(opened).value();
+    this.stream.swap(replacement);
+    this.current_size = std::size_t(0);
+    return;
+  }
+
+  expected<void, errc> append(log_msg& message) mut {
+    if (!level::enabled(message.level(), this.settings.threshold)) { return; }
+    expected<std::string, errc> rendered = render(this.settings, message);
+    if (!rendered) { return unexpected(rendered.error()); }
+    mut std::string line = std::move(rendered).value();
+    append_eol(line);
+    if (this.current_size > this.maximum_size ||
+        line.size() > this.maximum_size - this.current_size) {
+      expected<void, errc> rotated = this.rotate();
+      if (!rotated) { return unexpected(rotated.error()); }
+    }
+    expected<std::size_t, std::io_errc> written =
+        this.stream->write(line.view());
+    if (!written) { return unexpected(errc::io_error); }
+    this.current_size += written.value();
+    return;
+  }
+};
+
+}
+
+namespace sinks {
+
+/// A synchronized append/truncate file sink. `std::FILE` uses immediate
+/// descriptor writes, so `flush()` has no deferred userspace buffer to drain.
+[[unsafe_transfer, unsafe_share]] class basic_file_sink_mt : public sink {
+  mut std::unique_ptr<std::mutex<details::file_state>> state;
+
+public:
+  basic_file_sink_mt(std::unique_ptr<std::FILE> opened)
+      : state(std::unique_ptr<std::mutex<details::file_state>>(nullptr)) {
+    this.state = std::make_unique<std::mutex<details::file_state>>(
+        details::file_state(std::move(opened)));
+  }
+
+  expected<void, errc> log(details::log_msg& message) override {
+    mut auto guard = this.state->lock();
+    return guard.get().append(message);
+  }
+  expected<void, errc> flush() override { return; }
+  void set_pattern(std::string_view pattern) override {
+    mut auto guard = this.state->lock();
+    details::set_pattern(guard.get().settings, pattern);
+  }
+  void set_formatter(std::unique_ptr<formatter> replacement) override {
+    mut auto guard = this.state->lock();
+    details::replace_formatter(guard.get().settings, std::move(replacement));
+  }
+  void set_level(level::level_enum threshold) override {
+    mut auto guard = this.state->lock();
+    guard.get().settings.threshold = threshold;
+  }
+  level::level_enum level() override {
+    mut auto guard = this.state->lock();
+    return guard.get().settings.threshold;
+  }
+};
+
+/// A synchronized size-based rotating file sink. Rotation retains at most
+/// `maximum_files` numbered backups (`filename.1`, `filename.2`, ...).
+[[unsafe_transfer, unsafe_share]] class rotating_file_sink_mt : public sink {
+  mut std::unique_ptr<std::mutex<details::rotating_file_state>> state;
+
+public:
+  rotating_file_sink_mt(std::string_view filename, std::size_t maximum_size,
+                        std::size_t maximum_files,
+                        std::size_t initial_size,
+                        std::unique_ptr<std::FILE> opened)
+      : state(
+            std::unique_ptr<std::mutex<details::rotating_file_state>>(nullptr)) {
+    this.state =
+        std::make_unique<std::mutex<details::rotating_file_state>>(
+            details::rotating_file_state(
+                filename, maximum_size, maximum_files, initial_size,
+                std::move(opened)));
+  }
+
+  expected<void, errc> log(details::log_msg& message) override {
+    mut auto guard = this.state->lock();
+    return guard.get().append(message);
+  }
+  expected<void, errc> flush() override { return; }
+  expected<void, errc> rotate_now() {
+    mut auto guard = this.state->lock();
+    return guard.get().rotate();
+  }
+  void set_pattern(std::string_view pattern) override {
+    mut auto guard = this.state->lock();
+    details::set_pattern(guard.get().settings, pattern);
+  }
+  void set_formatter(std::unique_ptr<formatter> replacement) override {
+    mut auto guard = this.state->lock();
+    details::replace_formatter(guard.get().settings, std::move(replacement));
+  }
+  void set_level(level::level_enum threshold) override {
+    mut auto guard = this.state->lock();
+    guard.get().settings.threshold = threshold;
+  }
+  level::level_enum level() override {
+    mut auto guard = this.state->lock();
+    return guard.get().settings.threshold;
+  }
+};
+
+/// A bounded in-memory sink useful for diagnostics, tests, and deferred
+/// display. The oldest formatted entry is discarded when capacity is full.
+[[unsafe_transfer, unsafe_share]] class ringbuffer_sink_mt : public sink {
+  mut std::unique_ptr<std::mutex<details::ringbuffer_state>> state;
+
+public:
+  ringbuffer_sink_mt(std::size_t capacity)
+      : state(std::unique_ptr<std::mutex<details::ringbuffer_state>>(nullptr)) {
+    this.state = std::make_unique<std::mutex<details::ringbuffer_state>>(
+        details::ringbuffer_state(capacity));
+  }
+
+  expected<void, errc> log(details::log_msg& message) override {
+    mut auto guard = this.state->lock();
+    return guard.get().append(message);
+  }
+  expected<void, errc> flush() override { return; }
+  void set_pattern(std::string_view pattern) override {
+    mut auto guard = this.state->lock();
+    details::set_pattern(guard.get().settings, pattern);
+  }
+  void set_formatter(std::unique_ptr<formatter> replacement) override {
+    mut auto guard = this.state->lock();
+    details::replace_formatter(guard.get().settings, std::move(replacement));
+  }
+  void set_level(level::level_enum threshold) override {
+    mut auto guard = this.state->lock();
+    guard.get().settings.threshold = threshold;
+  }
+  level::level_enum level() override {
+    mut auto guard = this.state->lock();
+    return guard.get().settings.threshold;
+  }
+
+  std::vector<std::string> last_formatted(std::size_t limit) {
+    mut auto guard = this.state->lock();
+    return guard.get().last(limit);
+  }
+
+  std::size_t size() {
+    mut auto guard = this.state->lock();
+    return guard.get().messages.size();
+  }
+
+  void clear() {
+    mut auto guard = this.state->lock();
+    guard.get().messages.clear();
+  }
+};
+
+// GTI keeps one synchronized implementation for both spellings. The `_st`
+// aliases preserve familiar spdlog source names without introducing a second
+// unsynchronized interior-mutation policy.
+using stdout_sink_st = stdout_sink_mt;
+using stderr_sink_st = stderr_sink_mt;
+using stdout_color_sink_st = stdout_color_sink_mt;
+using stderr_color_sink_st = stderr_color_sink_mt;
+using null_sink_st = null_sink_mt;
+using basic_file_sink_st = basic_file_sink_mt;
+using rotating_file_sink_st = rotating_file_sink_mt;
+using ringbuffer_sink_st = ringbuffer_sink_mt;
+
+}
+
+namespace details {
+
+/// Bounded synchronous backtrace storage. Entries are owned snapshots, so a
+/// later dump never borrows caller data or formatter temporaries.
+class backtrace_state {
+public:
+  mut std::size_t capacity;
+  mut std::vector<log_msg> messages;
+
+  backtrace_state()
+      : capacity(std::size_t(0)), messages(std::vector<log_msg>()) {}
+
+  void enable(std::size_t requested) mut {
+    this.capacity = requested;
+    this.messages.clear();
+    this.messages.reserve(requested);
+  }
+
+  void disable() mut {
+    this.capacity = std::size_t(0);
+    this.messages.clear();
+  }
+
+  void record(log_msg& message) mut {
+    if (this.capacity == std::size_t(0)) { return; }
+    source_loc source_copy{
+        message.source().filename().view(), message.source().line(),
+        message.source().funcname().view()};
+    this.messages.push_back(log_msg(
+        message.logger_name().view(), message.level(),
+        std::string(message.payload().view()), std::move(source_copy),
+        message.unix_seconds(), message.subsecond_nanoseconds()));
+    if (this.messages.size() > this.capacity) {
+      this.messages.erase(std::size_t(0));
+    }
+  }
+};
+
+}
+
+/// A synchronous logger with immutable sink membership and atomic level
+/// controls. Sink state is synchronized by each sink implementation.
+[[unsafe_transfer, unsafe_share]] class logger {
+  std::string name_value;
+  mut std::vector<sink_ptr> sinks_value;
+  mut std::unique_ptr<std::atomic<uint8_t>> threshold_value;
+  mut std::unique_ptr<std::atomic<uint8_t>> flush_threshold_value;
+  mut std::unique_ptr<std::mutex<details::backtrace_state>> backtrace_value;
+
+  expected<void, errc> write(source_loc source,
+                             level::level_enum severity,
+                             std::string payload) {
+    if (!this.should_log(severity)) { return; }
+    mut auto observed = std::chrono::system_clock::now();
+    if (!observed) { return unexpected(errc::clock_error); }
+    std::chrono::system_time_point timestamp =
+        std::move(observed).value();
+    details::log_msg message{
+        this.name_value.view(), severity, std::move(payload),
+        std::move(source), timestamp.unix_seconds(),
+        timestamp.subsecond_nanoseconds()};
+    {
+      mut auto guard = this.backtrace_value->lock();
+      guard.get().record(message);
+    }
+    for (auto& target : this.sinks_value) {
+      expected<void, errc> status = target->log(message);
+      if (!status) { return unexpected(status.error()); }
+    }
+    level::level_enum flush_threshold =
+        level::from_rank(this.flush_threshold_value->load());
+    if (level::enabled(severity, flush_threshold)) {
+      return this.flush();
+    }
+    return;
+  }
+
+  void initialize_controls() mut {
+    this.threshold_value = std::make_unique<std::atomic<uint8_t>>(
+        level::rank(level::level_enum::info));
+    this.flush_threshold_value = std::make_unique<std::atomic<uint8_t>>(
+        level::rank(level::level_enum::off));
+    this.backtrace_value =
+        std::make_unique<std::mutex<details::backtrace_state>>(
+            details::backtrace_state());
+  }
+
+public:
+  logger(std::string_view logger_name, sink_ptr target)
+      : name_value(std::string(logger_name)),
+        sinks_value(std::vector<sink_ptr>()),
+        threshold_value(std::unique_ptr<std::atomic<uint8_t>>(nullptr)),
+        flush_threshold_value(
+            std::unique_ptr<std::atomic<uint8_t>>(nullptr)),
+        backtrace_value(
+            std::unique_ptr<std::mutex<details::backtrace_state>>(nullptr)) {
+    this.initialize_controls();
+    this.sinks_value.push_back(std::move(target));
+  }
+
+  logger(std::string_view logger_name, std::vector<sink_ptr> targets)
+      : name_value(std::string(logger_name)),
+        sinks_value(std::move(targets)),
+        threshold_value(std::unique_ptr<std::atomic<uint8_t>>(nullptr)),
+        flush_threshold_value(
+            std::unique_ptr<std::atomic<uint8_t>>(nullptr)),
+        backtrace_value(
+            std::unique_ptr<std::mutex<details::backtrace_state>>(nullptr)) {
+    this.initialize_controls();
+  }
+
+  std::string& name() { return this.name_value; }
+  std::vector<sink_ptr>& sinks() { return this.sinks_value; }
+
+  void set_level(level::level_enum threshold) {
+    this.threshold_value->store(level::rank(threshold));
+  }
+
+  level::level_enum level() {
+    return level::from_rank(this.threshold_value->load());
+  }
+
+  bool should_log(level::level_enum severity) {
+    return level::enabled(severity, this.level());
+  }
+
+  void flush_on(level::level_enum threshold) {
+    this.flush_threshold_value->store(level::rank(threshold));
+  }
+
+  expected<void, errc> flush() {
+    for (auto& target : this.sinks_value) {
+      expected<void, errc> status = target->flush();
+      if (!status) { return unexpected(status.error()); }
+    }
+    return;
+  }
+
+  void set_pattern(std::string_view pattern) {
+    for (auto& target : this.sinks_value) {
+      target->set_pattern(pattern);
+    }
+  }
+
+  void set_formatter(std::unique_ptr<formatter> replacement) {
+    for (auto& target : this.sinks_value) {
+      target->set_formatter(replacement->clone());
+    }
+  }
+
+  void enable_backtrace(std::size_t capacity) {
+    mut auto guard = this.backtrace_value->lock();
+    guard.get().enable(capacity);
+  }
+
+  void disable_backtrace() {
+    mut auto guard = this.backtrace_value->lock();
+    guard.get().disable();
+  }
+
+  expected<void, errc> dump_backtrace() {
+    mut std::vector<details::log_msg> snapshot{};
+    {
+      mut auto guard = this.backtrace_value->lock();
+      guard.get().messages.swap(snapshot);
+    }
+    for (mut details::log_msg& message : snapshot) {
+      for (auto& target : this.sinks_value) {
+        expected<void, errc> status = target->log(message);
+        if (!status) { return unexpected(status.error()); }
+      }
+    }
+    return;
+  }
+
+  expected<void, errc> log(source_loc source,
+                           level::level_enum severity,
+                           std::string_view message) {
+    return this.write(std::move(source), severity, std::string(message));
+  }
+
+  expected<void, errc> log(level::level_enum severity,
+                           std::string_view message) {
+    return this.write(source_loc(), severity, std::string(message));
+  }
+
+  expected<void, errc> log<First, Args...>(source_loc source,
+                                            level::level_enum severity,
+                                            std::string_view pattern,
+                                            First first, Args... args) {
+    expected<std::string, std::format_errc> formatted =
+        std::format(pattern, std::move(first), args...);
+    if (!formatted) { return unexpected(errc::format_error); }
+    return this.write(std::move(source), severity,
+                      std::move(formatted).value());
+  }
+
+  expected<void, errc> log<First, Args...>(level::level_enum severity,
+                                            std::string_view pattern,
+                                            First first, Args... args) {
+    return this.log(source_loc(), severity, pattern, std::move(first),
+                    args...);
+  }
+
+  expected<void, errc> trace(std::string_view message) {
+    return this.log(level::level_enum::trace, message);
+  }
+  expected<void, errc> debug(std::string_view message) {
+    return this.log(level::level_enum::debug, message);
+  }
+  expected<void, errc> info(std::string_view message) {
+    return this.log(level::level_enum::info, message);
+  }
+  expected<void, errc> warn(std::string_view message) {
+    return this.log(level::level_enum::warn, message);
+  }
+  expected<void, errc> error(std::string_view message) {
+    return this.log(level::level_enum::err, message);
+  }
+  expected<void, errc> critical(std::string_view message) {
+    return this.log(level::level_enum::critical, message);
+  }
+
+  expected<void, errc> trace<First, Args...>(std::string_view pattern,
+                                              First first, Args... args) {
+    return this.log(level::level_enum::trace, pattern, std::move(first),
+                    args...);
+  }
+  expected<void, errc> debug<First, Args...>(std::string_view pattern,
+                                              First first, Args... args) {
+    return this.log(level::level_enum::debug, pattern, std::move(first),
+                    args...);
+  }
+  expected<void, errc> info<First, Args...>(std::string_view pattern,
+                                             First first, Args... args) {
+    return this.log(level::level_enum::info, pattern, std::move(first),
+                    args...);
+  }
+  expected<void, errc> warn<First, Args...>(std::string_view pattern,
+                                             First first, Args... args) {
+    return this.log(level::level_enum::warn, pattern, std::move(first),
+                    args...);
+  }
+  expected<void, errc> error<First, Args...>(std::string_view pattern,
+                                              First first, Args... args) {
+    return this.log(level::level_enum::err, pattern, std::move(first),
+                    args...);
+  }
+  expected<void, errc> critical<First, Args...>(std::string_view pattern,
+                                                 First first,
+                                                 Args... args) {
+    return this.log(level::level_enum::critical, pattern, std::move(first),
+                    args...);
+  }
+};
+
+using logger_ptr = std::shared_ptr<logger>;
+
+namespace details {
+
+class registry_state {
+public:
+  mut std::vector<logger_ptr> loggers;
+  mut logger_ptr default_value;
+
+  registry_state()
+      : loggers(std::vector<logger_ptr>()),
+        default_value(std::shared_ptr<logger>(nullptr)) {}
+
+  logger_ptr find(std::string_view name) {
+    for (auto& candidate : this.loggers) {
+      if (candidate->name() == name) { return candidate.clone(); }
+    }
+    return logger_ptr(nullptr);
+  }
+
+  expected<void, errc> add(logger_ptr candidate) mut {
+    logger_ptr existing = this.find(candidate->name().view());
+    if (existing) { return unexpected(errc::duplicate_logger); }
+    if (!this.default_value) {
+      mut logger_ptr first = candidate.clone();
+      this.default_value.swap(first);
+    }
+    this.loggers.push_back(std::move(candidate));
+    return;
+  }
+
+  void replace_default(mut logger_ptr replacement) mut {
+    logger_ptr existing = this.find(replacement->name().view());
+    if (!existing) {
+      this.loggers.push_back(replacement.clone());
+    }
+    this.default_value.swap(replacement);
+  }
+
+  void drop(std::string_view name) mut {
+    for (mut std::size_t index = std::size_t(0);
+         index < this.loggers.size(); index++) {
+      if (this.loggers[index]->name() == name) {
+        if (this.default_value && this.default_value->name() == name) {
+          this.default_value.reset();
+        }
+        this.loggers.erase(index);
+        return;
+      }
+    }
+  }
+
+  void clear() mut {
+    this.default_value.reset();
+    this.loggers.clear();
+  }
+
+  std::vector<logger_ptr> snapshot() {
+    mut std::vector<logger_ptr> result{};
+    result.reserve(this.loggers.size());
+    for (auto& candidate : this.loggers) {
+      result.push_back(candidate.clone());
+    }
+    return std::move(result);
+  }
+};
+
+}
+
+/// Explicit synchronized logger registry.
+///
+/// Native spdlog exposes a process-global singleton. GTI keeps the same
+/// operations on an owned object so registry lifetime, sharing, and teardown
+/// remain visible in source and test isolation is deterministic.
+[[unsafe_transfer, unsafe_share]] class registry {
+  mut std::unique_ptr<std::mutex<details::registry_state>> state;
+
+public:
+  registry()
+      : state(std::unique_ptr<std::mutex<details::registry_state>>(nullptr)) {
+    this.state = std::make_unique<std::mutex<details::registry_state>>(
+        details::registry_state());
+  }
+
+  expected<void, errc> register_logger(logger_ptr candidate) {
+    mut auto guard = this.state->lock();
+    return guard.get().add(std::move(candidate));
+  }
+
+  logger_ptr get(std::string_view name) {
+    mut auto guard = this.state->lock();
+    return guard.get().find(name);
+  }
+
+  logger_ptr default_logger() {
+    mut auto guard = this.state->lock();
+    if (!guard.get().default_value) { return logger_ptr(nullptr); }
+    return guard.get().default_value.clone();
+  }
+
+  void set_default_logger(logger_ptr replacement) {
+    mut auto guard = this.state->lock();
+    guard.get().replace_default(std::move(replacement));
+  }
+
+  void drop(std::string_view name) {
+    mut auto guard = this.state->lock();
+    guard.get().drop(name);
+  }
+
+  void drop_all() {
+    mut auto guard = this.state->lock();
+    guard.get().clear();
+  }
+
+  void set_level(level::level_enum threshold) {
+    mut std::vector<logger_ptr> current{};
+    {
+      mut auto guard = this.state->lock();
+      current = guard.get().snapshot();
+    }
+    for (auto& candidate : current) {
+      candidate->set_level(threshold);
+    }
+  }
+
+  void set_pattern(std::string_view pattern) {
+    mut std::vector<logger_ptr> current{};
+    {
+      mut auto guard = this.state->lock();
+      current = guard.get().snapshot();
+    }
+    for (auto& candidate : current) {
+      candidate->set_pattern(pattern);
+    }
+  }
+
+  expected<void, errc> flush_all() {
+    mut std::vector<logger_ptr> current{};
+    {
+      mut auto guard = this.state->lock();
+      current = guard.get().snapshot();
+    }
+    for (auto& candidate : current) {
+      expected<void, errc> status = candidate->flush();
+      if (!status) { return unexpected(status.error()); }
+    }
+    return;
+  }
+};
+
+sink_ptr null_sink_mt() {
+  mut auto concrete = std::make_shared<sinks::null_sink_mt>();
+  return std::upcast_shared<sinks::sink, sinks::null_sink_mt>(
+      std::move(concrete));
+}
+
+sink_ptr null_sink_st() { return null_sink_mt(); }
+
+sink_ptr stdout_sink_mt() {
+  mut auto concrete = std::make_shared<sinks::stdout_sink_mt>();
+  return std::upcast_shared<sinks::sink, sinks::stdout_sink_mt>(
+      std::move(concrete));
+}
+
+sink_ptr stdout_sink_st() { return stdout_sink_mt(); }
+
+sink_ptr stderr_sink_mt() {
+  mut auto concrete = std::make_shared<sinks::stderr_sink_mt>();
+  return std::upcast_shared<sinks::sink, sinks::stderr_sink_mt>(
+      std::move(concrete));
+}
+
+sink_ptr stderr_sink_st() { return stderr_sink_mt(); }
+
+sink_ptr stdout_color_sink_mt(
+    color_mode colors = color_mode::automatic) {
+  mut auto concrete =
+      std::make_shared<sinks::stdout_color_sink_mt>(colors);
+  return std::upcast_shared<sinks::sink, sinks::stdout_color_sink_mt>(
+      std::move(concrete));
+}
+
+sink_ptr stdout_color_sink_st(
+    color_mode colors = color_mode::automatic) {
+  return stdout_color_sink_mt(colors);
+}
+
+sink_ptr stderr_color_sink_mt(
+    color_mode colors = color_mode::automatic) {
+  mut auto concrete =
+      std::make_shared<sinks::stderr_color_sink_mt>(colors);
+  return std::upcast_shared<sinks::sink, sinks::stderr_color_sink_mt>(
+      std::move(concrete));
+}
+
+sink_ptr stderr_color_sink_st(
+    color_mode colors = color_mode::automatic) {
+  return stderr_color_sink_mt(colors);
+}
+
+sink_ptr ringbuffer_sink_mt(std::size_t capacity) {
+  mut auto concrete =
+      std::make_shared<sinks::ringbuffer_sink_mt>(capacity);
+  return std::upcast_shared<sinks::sink, sinks::ringbuffer_sink_mt>(
+      std::move(concrete));
+}
+
+sink_ptr ringbuffer_sink_st(std::size_t capacity) {
+  return ringbuffer_sink_mt(capacity);
+}
+
+expected<sink_ptr, errc> basic_file_sink_mt(std::string_view filename,
+                                             bool truncate = false) {
+  expected<std::unique_ptr<std::FILE>, std::io_errc> opened =
+      std::fopen(filename,
+                 truncate ? std::file_mode::write : std::file_mode::append);
+  if (!opened) { return unexpected(errc::open_failed); }
+  mut auto concrete = std::make_shared<sinks::basic_file_sink_mt>(
+      std::move(opened).value());
+  return std::upcast_shared<sinks::sink, sinks::basic_file_sink_mt>(
+      std::move(concrete));
+}
+
+expected<sink_ptr, errc> basic_file_sink_st(std::string_view filename,
+                                             bool truncate = false) {
+  return basic_file_sink_mt(filename, truncate);
+}
+
+expected<sink_ptr, errc>
+rotating_file_sink_mt(std::string_view filename, std::size_t maximum_size,
+                      std::size_t maximum_files,
+                      bool rotate_on_open = false) {
+  if (maximum_size == std::size_t(0) ||
+      maximum_files == std::size_t(0)) {
+    return unexpected(errc::invalid_argument);
+  }
+  expected<std::unique_ptr<std::FILE>, std::io_errc> opened =
+      std::fopen(filename, std::file_mode::append);
+  if (!opened) { return unexpected(errc::open_failed); }
+  expected<uint64_t, std::filesystem::errc> measured =
+      std::filesystem::file_size(filename);
+  if (!measured) { return unexpected(errc::io_error); }
+  std::size_t initial_size = std::size_t(measured.value());
+  mut auto concrete = std::make_shared<sinks::rotating_file_sink_mt>(
+      filename, maximum_size, maximum_files, initial_size,
+      std::move(opened).value());
+  if (rotate_on_open && initial_size > std::size_t(0)) {
+    expected<void, errc> rotated = concrete->rotate_now();
+    if (!rotated) { return unexpected(rotated.error()); }
+  }
+  return std::upcast_shared<sinks::sink, sinks::rotating_file_sink_mt>(
+      std::move(concrete));
+}
+
+expected<sink_ptr, errc>
+rotating_file_sink_st(std::string_view filename, std::size_t maximum_size,
+                      std::size_t maximum_files,
+                      bool rotate_on_open = false) {
+  return rotating_file_sink_mt(filename, maximum_size, maximum_files,
+                               rotate_on_open);
+}
+
+logger_ptr make_logger(std::string_view name, sink_ptr target) {
+  return std::make_shared<logger>(name, std::move(target));
+}
+
+logger_ptr stdout_logger_mt(std::string_view name) {
+  return make_logger(name, stdout_sink_mt());
+}
+
+logger_ptr stdout_logger_st(std::string_view name) {
+  return stdout_logger_mt(name);
+}
+
+logger_ptr stderr_logger_mt(std::string_view name) {
+  return make_logger(name, stderr_sink_mt());
+}
+
+logger_ptr stderr_logger_st(std::string_view name) {
+  return stderr_logger_mt(name);
+}
+
+logger_ptr stdout_color_mt(std::string_view name,
+                           color_mode colors = color_mode::automatic) {
+  return make_logger(name, stdout_color_sink_mt(colors));
+}
+
+logger_ptr stdout_color_st(std::string_view name,
+                           color_mode colors = color_mode::automatic) {
+  return stdout_color_mt(name, colors);
+}
+
+logger_ptr stderr_color_mt(std::string_view name,
+                           color_mode colors = color_mode::automatic) {
+  return make_logger(name, stderr_color_sink_mt(colors));
+}
+
+logger_ptr stderr_color_st(std::string_view name,
+                           color_mode colors = color_mode::automatic) {
+  return stderr_color_mt(name, colors);
+}
+
+expected<logger_ptr, errc> basic_logger_mt(std::string_view name,
+                                           std::string_view filename,
+                                           bool truncate = false) {
+  expected<sink_ptr, errc> target =
+      basic_file_sink_mt(filename, truncate);
+  if (!target) { return unexpected(target.error()); }
+  return make_logger(name, std::move(target).value());
+}
+
+expected<logger_ptr, errc> basic_logger_st(std::string_view name,
+                                           std::string_view filename,
+                                           bool truncate = false) {
+  return basic_logger_mt(name, filename, truncate);
+}
+
+expected<logger_ptr, errc>
+rotating_logger_mt(std::string_view name, std::string_view filename,
+                   std::size_t maximum_size, std::size_t maximum_files,
+                   bool rotate_on_open = false) {
+  expected<sink_ptr, errc> target = rotating_file_sink_mt(
+      filename, maximum_size, maximum_files, rotate_on_open);
+  if (!target) { return unexpected(target.error()); }
+  return make_logger(name, std::move(target).value());
+}
+
+expected<logger_ptr, errc>
+rotating_logger_st(std::string_view name, std::string_view filename,
+                   std::size_t maximum_size, std::size_t maximum_files,
+                   bool rotate_on_open = false) {
+  return rotating_logger_mt(name, filename, maximum_size, maximum_files,
+                            rotate_on_open);
+}
+
+}

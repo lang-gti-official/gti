@@ -1108,6 +1108,99 @@ program-storage materialization. The C++ backend may serialize an accepted
 constant from its exact fields, but it cannot invoke source constructors or
 host constant evaluation to recover language meaning.
 
+Literal-backed text inspection dispatches on resolved `StringViewSize` and
+`StringViewEmpty` intrinsic identities and the typed string-view index
+operation. Its byte/length kernels live in `constant_evaluator`, independent of
+AST or library spelling; indexing preserves unsigned code units and rejects
+negative and end-or-later offsets, matching the verified-MIR runtime operation.
+The semantic interpreter supplies operands and consumes source-located failures.
+Read-only operator expressions normalize their already-resolved receiver and
+arguments into the same constant-call boundary as named methods. This shares
+generic substitution, argument observation, and completed-definition checks;
+operator bodies require staged MIR and never fall back to AST execution.
+Within MIR, an exact static read-only nominal call operator uses the ordinary
+function target and receiver. Its recorded read capability is admitted while
+mutable/consuming invocation, lambda execution, and raw operations remain
+excluded. This does not add a second overload resolver or special stdlib path.
+Completed constexpr free-function closures, including concrete type/value
+generic calls, now execute through
+staged ordinary HIR, exact failure metadata, and verified unoptimized MIR before
+whole-program analysis completes. `semantic_constexpr.cpp` owns this bridge;
+the frontend lends it the request's source graph and source manager so failure
+metadata uses real source bytes, not synthesized locations. All staged
+identities die with that synchronous request. Definition availability is
+recorded after body and scope analysis, not at declaration registration.
+For a fully selected body this includes loan-flow validation. A generic primary
+with deferred branches is only available for concrete reanalysis: its
+availability is not an executable flow proof.
+
+A value- or type-dependent `if constexpr` in a symbolic primary now records an
+explicit deferred selection. Neither arm contributes primary semantics. The
+body-local flow state records that its CFG is incomplete; name/type checking and
+independent assertions continue, but missing-return, move availability,
+receiver-restoration and loan-endpoint proofs cannot use that incomplete CFG.
+Concrete analysis selects the arm and reruns all those checks with fresh body
+state. HIR rejects any still-unselected branch rather than emitting an empty
+branch. Unused-mut advice is withheld for a deferred-flow body's locals since
+uninspected arms may contain writes.
+
+Required constants encountered during concrete reanalysis stage against its
+canonical base model, never its partially analyzed delta. Nested workers keep
+separate semantic state and share only a constant-request work account. Nested
+staging counts toward the depth bound, and its executed work consumes the same
+4096-step budget as the enclosing request. Recursive semantic-staging cycles
+therefore fail with a resource diagnostic instead of unbounded reentry.
+
+Concrete reanalysis resets body scopes, so early HIR discovery uses a lazy,
+isolated semantic provider rather than reentering the unfinished caller. Its
+request-local snapshot copies the sealed catalog and current semantic model,
+preserves declaration IDs, and rebuilds owned callable indexes. Ordinary
+instance analysis still produces each typed delta; there is no second generic
+resolver. Non-generic closures do not allocate this snapshot. The snapshot and
+its instance deltas expire after the synchronous lowering operation. Tests
+retain enclosing locals and live loans across this boundary. Concrete semantic
+diagnostics are authoritative and cannot fall back to legacy execution.
+
+Unsupported closures/profile operations still use the existing AST driver;
+work already executed consumes the shared limit, and arithmetic/resource
+failures are authoritative. Direct semantic-only callers without source text
+also retain the early kernel. Fixed arrays and passive structural record
+parameters, local copies, indexed/field mutation, and returned values now use
+ordinary MIR places. Class catalogs retain exact concrete field identities;
+runtime destruction or borrowed fields cannot be hidden behind passive
+constant storage. Completed explicitly constexpr constructors with explicit
+field initialization and read-only constexpr methods now execute in that same
+profile, retaining exact receiver identity and constructor failure provenance.
+Direct constructor and read-only/static method roots use the same request-local
+staging service, including exact generic owner substitutions. Declaration-default
+schedules and returned-view loans remain staging/profile work. The bridge
+does not introduce a new executable representation or weaken whole-program
+publication seals. Request metrics count actual completed MIR evaluations so
+tests can distinguish this path from compatibility fallback.
+
+`convertConstantToType` is shared by both execution mechanisms in the constant
+service. It preserves exact aggregate/enum identity, checked numeric domains,
+binary-float formats, and the char/uint8 code-unit conversions. Neither engine
+may introduce a separate cast policy.
+
+Constexpr declaration validation checks potential type eligibility before
+instantiation. Concrete reanalysis retains signature-shape and ordinary
+ownership checks but does not reject a generic runtime-only type substitution
+merely because the declaration is constexpr. Required constant execution still
+checks exact types and operations independently. Contextually signed integer
+literals retain their whole checked mathematical value, avoiding a fictitious
+positive intermediate outside the target domain. MIR execution shares the
+exact single-use signed-minimum literal query with native emission; ordinary
+negation and its overflow behaviour are not relaxed.
+
+Read-only reference signatures are now potentially constexpr-capable when the
+referent is supported. Ordinary semantic loans and return-origin checks retain
+authority; the staged MIR evaluator alone executes reference calls and produces
+the observed referent value, not a persistent reference constant. Failed staging
+does not fall back to an AST interpretation of newly admitted reference rules.
+Constructor parameters, mutable references, and stored-reference carriers retain
+their earlier boundaries.
+
 ## Boundaries
 
 - Resolve names, types, visibility, overloads, access, conversions, ownership,

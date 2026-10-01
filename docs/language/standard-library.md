@@ -74,18 +74,29 @@ The current implemented foundation includes:
   `build.gti` programs; command execution is not sandboxed, and Windows fails
   closed in the current implementation; and
 - `<std/memory>` `std::unique_ptr<T>` as a nominal move-only unique owner with
-  explicit null construction, reset, null assignment, and checked explicit
-  base upcast, plus the ordinary generic `std::make_unique<T>` for class/struct
-  construction or exact-value/default scalar initialization, and consuming
-  `std::upcast_unique<Base, Derived>` functions; and
+  explicit null construction, reset, null assignment, non-consuming `swap`
+  between matching mutable owners, and checked explicit base upcast, plus the
+  ordinary generic `std::make_unique<T>` for class/struct construction or
+  exact-value/default scalar initialization, and consuming
+  `std::upcast_unique<Base, Derived>` functions. Swap exchanges the two owner
+  tokens directly; it neither copies either pointee nor runs replacement
+  cleanup; and
 - `<std/memory>` `std::shared_ptr<T>` and `std::make_shared<T>` for explicit
   shared ownership: move-only handles with `clone()`, read-only dereference,
-  null/default construction, null comparison, `use_count()`, reset, and swap.
+  null/default construction, null comparison, `use_count()`, reset, swap, and
+  explicit consuming conversion to a public polymorphic base through
+  `shared_ptr<T>::upcast<Base>()` or
+  `std::upcast_shared<Base, Derived>(owner)`.
+  An upcast preserves the existing control block and every concrete-typed
+  alias; it does not allocate, clone the pointee, or change the strong count.
   Last-owner release performs checked cleanup; reference-count synchronization
   does not grant mutable access to the object; and
 - `<std/array>` `std::array<T, N>` over checked fixed-array storage, including
   front/back access, copyable-element fill, read-only random-access cursors,
-  and confined mutable traversal; and
+  and confined mutable traversal. Constructors, `size`, `empty`, and the
+  read-only `at`, `front`, and `back` methods support constexpr evaluation for
+  supported elements; mutable access and iterator traversal remain runtime
+  operations; and
 - `<std/string>` `std::string` as a move-only owner over private character
   storage, including
   construction from an exact input iterator/sentinel pair whose dereference
@@ -269,11 +280,28 @@ The current implemented foundation includes:
   mapping. Its source-defined surface executes through verified MIR and native
   C++ emission, including move-only owning error alternatives;
   see [JSON](json.md); and
-- `<std/format>` sequential heterogeneous replacement for booleans,
-  characters, fixed-width integers, binary32 floats, string views, and
-  transferred owning strings through source-defined `std::format`,
-  `std::try_print`, and `std::try_println`. The grammar is limited to `{}`,
-  `{{`, and `}}`; pattern, argument-count, and unsupported-type errors return
+- `<std/source_location>` immutable, owned call-site snapshots containing the
+  source file, qualified function name, one-based line, and a column value.
+  `std::source_location::current()` and defaults that call it are expanded at
+  the external caller, including parenthesized/braced construction and
+  explicit or implicit base construction. Calls written in a field initializer
+  retain that initializer's own location. The current frontend reports column
+  zero because exact source columns are not yet retained through HIR; file and
+  function strings remain valid independently of compiler storage. Verified
+  MIR retains base/field caller facts even for state-bearing constructor
+  compositions that the current C++ backend does not yet admit; this is a
+  separate constructor-rollback coverage limit, not a fallback to the
+  declaration location; and
+- `<std/format>` heterogeneous automatic or numeric-indexed replacement for
+  booleans, characters, fixed-width integers, binary32/binary64 values, string
+  views, and transferred owning strings through source-defined `std::format`,
+  `std::format_to`, `std::try_print`, and `std::try_println`. Escaped braces and
+  fill/alignment, sign, alternate, zero-padding, width, precision, integer,
+  floating, and string presentation specifiers are supported. Default floating
+  presentation is the shortest round-tripping decimal; alternate default form
+  only forces a decimal point, explicit general precision retains significant
+  zeroes, and infinity/NaN ignore numeric zero-padding. Pattern, specifier,
+  argument-count, and unsupported-type errors return
   `expected<..., std::format_errc>` before output begins; and
 - `<std/random>` source-defined deterministic `std::random_engine` sequences
   from an explicit `uint64_t` seed, plus fallible `std::random_device` draws
@@ -375,7 +403,8 @@ changed when returning to GTI. Numerical approximations use the host math
 library: finite transcendental results are not promised bit-identical across
 platforms. Native `errno`, floating-point status flags, NaN payloads, and
 signaling-NaN behavior are not public APIs. These functions are runtime
-operations, not `constexpr`; binary64 overloads are not currently declared.
+operations, not `constexpr`, except for source-defined binary32 `abs`, which
+also supports constant evaluation. Binary64 overloads are not currently declared.
 
 ### 7.3.2 Greatest Common Divisor, Least Common Multiple, And Midpoint
 
@@ -384,7 +413,8 @@ operations, not `constexpr`; binary64 overloads are not currently declared.
 arguments have the same exact type. `gcd` returns the nonnegative greatest
 common divisor, with `gcd(0, 0) == 0`. Negative inputs and signed minima are
 valid when the result fits `T`; for example, `gcd(INT_MIN, 2)` is 2. `gcd`
-remains usable in supported constant-evaluation contexts.
+is usable in supported constant-evaluation contexts, as are `lcm` and
+`midpoint`.
 
 `lcm` returns the nonnegative least common multiple; either zero input yields
 zero, including `lcm(0, 0)`. It divides by the gcd before multiplying. If a
@@ -401,6 +431,24 @@ negative zero, mixed zero signs give positive zero, equal-sign infinities give
 that infinity, opposite infinities give NaN, and a NaN input gives NaN without
 a payload guarantee. Inferred and explicit generic calls share this contract.
 `bool` and `char` are not numeric arguments for these templates.
+
+The by-value `min`, `max`, and `clamp` helpers in `<std/algorithm>` are also
+`constexpr` for supported argument types and operations. Their ordinary runtime
+owning-type instantiations remain valid and require explicit movement of named
+move-only values. `<std/utility>` provides constexpr `pair` construction and
+`make_pair` for supported structural fields, including nested passive pairs;
+pairs containing runtime-only owners remain runtime values. No allocation,
+owning-string construction, or user-defined comparison operator becomes
+compile-time eligible merely because a generic wrapper is marked `constexpr`.
+
+These facilities compose into static asset metadata without runtime file I/O:
+a constexpr function can inspect a literal path, return a passive record of
+derived values, and populate a `std::array` whose elements are inspected through
+`at`, `front`, `back`, and read-only `operator[]`. Both `int` and `size_t`
+index overloads are constexpr and retain checked bounds. The
+[asset-table example](../../tests/fixtures/constexpr_asset_table.gti)
+demonstrates this with bounded demonstration hashes, byte lengths, and texture
+classification. The hashes are not collision-free asset identifiers.
 
 The existing `std::MAX_UINT64` constant is exactly 18446744073709551615, not
 the signed 64-bit maximum.
@@ -810,8 +858,8 @@ The following component families remain planned or incomplete:
   invalidation support;
 - the remaining callable, output/random-access complete-range, heterogeneous
   accumulation, and hash generic-capability families;
-- indexed/named/specifier-based and binary64 formatting, formatter
-  customization, buffered streams, explicit text decoding, and structured I/O;
+- named/dynamic-field formatting, formatter customization, buffered streams,
+  explicit text decoding, and structured I/O;
 - recursive filesystem copy/iteration and permission editing, calendar/time-zone breadth, random distributions and engine
   breadth, connected networking, traffic buffers, atomic wait/notify, pointer
   atomics and fences, safe scoped condition variables, safe recursive mutexes,

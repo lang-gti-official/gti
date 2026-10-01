@@ -412,6 +412,10 @@ add_executable("gti_mutex_tests"
 target_link_libraries("gti_mutex_tests" PRIVATE gti_cpp_backend)
 add_test(NAME mutex_semantic_ir COMMAND gti_mutex_tests)
 
+add_executable(gti_source_location_tests source_location_tests.cpp)
+target_link_libraries(gti_source_location_tests PRIVATE gti_cpp_backend)
+add_test(NAME source_location_semantic_ir COMMAND gti_source_location_tests)
+
 add_executable("gti_defined_integer_tests"
                "${PROJECT_SOURCE_DIR}/tests/defined_integer_tests.cpp")
 target_link_libraries("gti_defined_integer_tests" PRIVATE gti_cpp_backend)
@@ -492,6 +496,9 @@ add_test(NAME cpp_mir_body_emitter_lifecycle
 add_executable(gti_expected_payload_pair_emitter_tests expected_payload_pair_emitter_tests.cpp)
 target_link_libraries(gti_expected_payload_pair_emitter_tests PRIVATE gti_cpp_backend)
 add_test(NAME expected_payload_pair_emitter COMMAND gti_expected_payload_pair_emitter_tests)
+add_executable(gti_expected_passive_publication_tests expected_passive_publication_tests.cpp)
+target_link_libraries(gti_expected_passive_publication_tests PRIVATE gti_cpp_backend)
+add_test(NAME expected_passive_publication COMMAND gti_expected_passive_publication_tests)
 add_executable(gti_abstract_generic_failure_contract_tests abstract_generic_failure_contract_tests.cpp)
 target_link_libraries(gti_abstract_generic_failure_contract_tests PRIVATE gti_cpp_backend)
 add_test(NAME abstract_generic_failure_contract COMMAND gti_abstract_generic_failure_contract_tests)
@@ -1141,6 +1148,62 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_aggregate_positive.gti"
   )
   add_test(
+    NAME constexpr_text_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_text_positive.gti"
+  )
+  add_test(
+    NAME constexpr_array_mir_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_array_mir_positive.gti"
+  )
+  add_test(
+    NAME constexpr_readonly_references_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_readonly_references.gti"
+  )
+  add_test(
+    NAME constexpr_library_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_library_positive.gti"
+  )
+  add_test(
+    NAME constexpr_dependent_branches_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_dependent_branches.gti"
+  )
+  add_test(
+    NAME constexpr_operators_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_operators.gti"
+  )
+  add_test(
+    NAME constexpr_asset_table_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_asset_table.gti"
+  )
+  add_test(
+    NAME constexpr_record_mir_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_record_mir_positive.gti"
+  )
+  add_test(
     NAME sum_types_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/sum_types_runtime_test.py"
@@ -1536,6 +1599,9 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME expected_filesystem_prerequisites_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/expected_filesystem_prerequisites_runtime_test.py" "$<TARGET_FILE:gti>")
   set_tests_properties(expected_filesystem_prerequisites_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME expected_passive_publication_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/expected_passive_publication_runtime_test.py" "$<TARGET_FILE:gti>")
+  set_tests_properties(expected_passive_publication_runtime PROPERTIES TIMEOUT 600)
   add_test(NAME charconv_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/charconv_runtime_test.py" "$<TARGET_FILE:gti>")
   set_tests_properties(charconv_runtime PROPERTIES TIMEOUT 300)
@@ -1559,6 +1625,21 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(encoding_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME source_location_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/source_location_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/stdlib_surface_source_location.gti"
+  )
+  set_tests_properties(source_location_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME mutex_cleanup_failure_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/mutex_cleanup_failure_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(mutex_cleanup_failure_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME function_item_runtime
     COMMAND "${Python3_EXECUTABLE}"
