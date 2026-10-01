@@ -8803,6 +8803,38 @@ borrowStagedCallInput(const MirBody &body, const MirOperand &operand) {
          definition->operands.front().place != 0;
 }
 
+[[nodiscard]] const MirPlace *simdArrayPlace(const MirBody &body,
+                                             const MirOperand &operand) {
+  const MirPlace *place = operand.kind == MirOperandKind::BorrowRead ||
+                                  operand.kind == MirOperandKind::BorrowWrite
+                              ? body.findPlace(operand.place)
+                              : nullptr;
+  return place != nullptr && place->type.kind == SemanticType::Array ? place
+                                                                     : nullptr;
+}
+
+[[nodiscard]] unsigned simdRepresentationOperation(IntrinsicKind intrinsic) {
+  // Native helper selectors are representation choices, not serialized
+  // IntrinsicKind ordinals. Enum growth or reordering must never silently
+  // select a different arithmetic operation.
+  switch (intrinsic) {
+  case IntrinsicKind::SimdAdd:
+    return 0;
+  case IntrinsicKind::SimdSubtract:
+    return 1;
+  case IntrinsicKind::SimdMultiply:
+    return 2;
+  case IntrinsicKind::SimdDivide:
+    return 3;
+  case IntrinsicKind::SimdEqual:
+    return 4;
+  case IntrinsicKind::SimdLess:
+    return 5;
+  default:
+    throw std::logic_error("unsupported SIMD representation operation");
+  }
+}
+
 [[nodiscard]] bool hasCompleteCallInputSchedule(const MirBody &body,
                                                 const MirInstruction &call) {
   if (call.callSite == 0) {
@@ -22603,6 +22635,7 @@ enum class ClassSsaSlotConsumerKind {
   Return,
   CallArgument,
   FieldRead,
+  Assignment,
 };
 
 struct ClassSsaLifetimeSlot {
@@ -22618,7 +22651,8 @@ struct ClassSsaLifetimeSlot {
 // Some class SSA producers cannot use an ordinary initialized C++ local. This
 // exact no-alias, at-most-one-consumer shape gives the result uninitialized
 // representation storage. It is not a semantic drop: the value is transferred
-// immediately to a Return or one by-value call parameter, or observed through
+// immediately to a Return, one by-value call parameter, or a cleanup-free
+// mutable binding assignment, or observed through
 // one scalar field read, and only a generated cleanup-free representation
 // remains to be ended by the slot. An unused cleanup-free call result retires
 // its representation immediately after successful publication.
@@ -22648,6 +22682,28 @@ classSsaLifetimeSlot(const MirProgram &program,
       producer == nullptr
           ? nullptr
           : transformedFailureCallee(program, representations, *producer);
+  // Plain source calls need the same uninitialized staging when their result
+  // replaces a binding. Default-constructing a C++ local would introduce a
+  // source-observable constructor call, and publishing directly into the old
+  // destination would overwrite it before the call succeeds.
+  if (callee == nullptr && producer != nullptr &&
+      producer->kind == MirInstructionKind::Call && producer->functionTarget &&
+      producer->intrinsic == IntrinsicKind::None &&
+      producer->dispatch == CallDispatch::Static) {
+    const auto uses = body.usesOf(valueId);
+    const auto *consumer =
+        uses.size() == 1 &&
+                uses.front().kind == MirValueUseKind::InstructionOperand
+            ? findInstruction(body, uses.front().instruction)
+            : nullptr;
+    const auto *target =
+        program.findFunctionInstance(*producer->functionTarget);
+    if (consumer != nullptr && consumer->kind == MirInstructionKind::Assign &&
+        target != nullptr && target->linkage == LanguageLinkage::Gti &&
+        target->definitionKind == MirDefinitionKind::Source) {
+      callee = target;
+    }
+  }
   const MirConstructorInstance *constructor =
       producer != nullptr && producer->kind == MirInstructionKind::Construct &&
               producer->constructorTarget
@@ -22931,6 +22987,65 @@ classSsaLifetimeSlot(const MirProgram &program,
   }
   const MirInstruction *consumer =
       findInstruction(body, uses.front().instruction);
+  if (consumer != nullptr && consumer->kind == MirInstructionKind::Assign) {
+    const MirPlace *destination = consumer->destination
+                                      ? body.findPlace(*consumer->destination)
+                                      : nullptr;
+    const MirValue *result =
+        consumer->result ? body.findValue(*consumer->result) : nullptr;
+    if (callee == nullptr || classInstance->requiresActiveDropState ||
+        classInstance->traits.containsBorrowedState ||
+        value->info.traits.containsBorrowedState ||
+        classInstance->moveConstructor != SpecialMemberStatus::Generated ||
+        classInstance->moveAssignment != SpecialMemberStatus::Generated ||
+        !classInstance->traits.moveAssignable ||
+        consumer->operation != MirOperation::Assign || consumer->receiver ||
+        consumer->operands.size() != 1 ||
+        consumer->operands.front().kind != MirOperandKind::Value ||
+        consumer->operands.front().value != valueId ||
+        consumer->operands.front().type != value->info.type ||
+        consumer->info.type != value->info.type || result == nullptr ||
+        result->definition != consumer->id ||
+        result->info.type != value->info.type ||
+        !body.usesOf(result->id).empty() || destination == nullptr ||
+        destination->root != MirPlaceRootKind::Binding ||
+        !destination->projections.empty() ||
+        destination->type != value->info.type ||
+        destination->access != AccessMode::Mutable ||
+        !destination->traits.moveAssignable ||
+        !consumer->localFailureSites.empty() ||
+        !consumer->definedFailure.empty() || !consumer->lifecycle.empty() ||
+        consumer->fullExpressionEnd != 0 || consumer->cleanupBoundaryEnd != 0 ||
+        std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+                    [&](const MirDropObligation &drop) {
+                      return drop.generatedValue == result->id;
+                    })) {
+      return {};
+    }
+    bool adjacent = false;
+    if (const MirBlock *invoke = invokeProducerBlock(body, *producer)) {
+      const MirBlock *success = body.findBlock(invoke->terminator.target);
+      adjacent = success != nullptr && !success->instructions.empty() &&
+                 success->instructions.front().id == consumer->id;
+    } else {
+      for (const MirBlock &block : body.blocks) {
+        for (std::size_t index = 0; index + 1 < block.instructions.size();
+             ++index) {
+          if (block.instructions[index].id == producer->id &&
+              block.instructions[index + 1].id == consumer->id) {
+            adjacent = true;
+          }
+        }
+      }
+    }
+    return adjacent
+               ? ClassSsaLifetimeSlot{.value = value,
+                                      .producer = producer,
+                                      .consumer = consumer,
+                                      .consumerKind =
+                                          ClassSsaSlotConsumerKind::Assignment}
+               : ClassSsaLifetimeSlot{};
+  }
   if (consumer == nullptr || consumer->kind != MirInstructionKind::Call ||
       consumer->parameterTypes.size() != consumer->operands.size()) {
     return {};
@@ -27901,6 +28016,21 @@ private:
       }
       if (instruction.operands.size() == 1 &&
           instruction.operands.front().kind == MirOperandKind::Value) {
+        const ClassSsaLifetimeSlot staged =
+            classSsaLifetimeSlot(program, representations, facts.body,
+                                 instruction.operands.front().value);
+        if (staged.consumerKind == ClassSsaSlotConsumerKind::Assignment &&
+            staged.consumer == &instruction) {
+          emitStoragePlaceValue(
+              facts, *facts.body.findPlace(*instruction.destination));
+          output << " = std::move(__gti_mir_v_" << staged.value->id
+                 << ".get());\n";
+          writeIndent();
+          // End the generated moved-from shell before a loop can reuse the
+          // SSA staging slot. There is no source cleanup obligation here.
+          output << "__gti_mir_v_" << staged.value->id << ".destroy();\n";
+          return;
+        }
         const PassiveCAbiCallAssignmentResult passive =
             passiveCAbiCallAssignmentResult(program, facts.body,
                                             instruction.operands.front().value);
@@ -32343,6 +32473,21 @@ private:
     }
     if (instruction.kind == MirInstructionKind::Call &&
         instruction.intrinsic != IntrinsicKind::None) {
+      if (simdIntrinsic(instruction.intrinsic)) {
+        output << "::gti_internal::backend::simd_binary<"
+               << simdRepresentationOperation(instruction.intrinsic) << ">(";
+        for (std::size_t index = 0; index < 3; ++index) {
+          if (index != 0)
+            output << ", ";
+          const MirPlace *place =
+              simdArrayPlace(facts.body, instruction.operands[index]);
+          if (place == nullptr)
+            throw std::logic_error("SIMD lost its verified array place");
+          emitStoragePlaceValue(facts, *place);
+        }
+        output << ");\n";
+        return;
+      }
       const std::string_view helper =
           cppIntegerArithmeticIntrinsicSpelling(instruction.intrinsic);
       if (!scalarSpellableArithmeticIntrinsic(instruction.intrinsic) ||
@@ -32903,6 +33048,14 @@ private:
             ? expectedPayloadReturnSlot(program, representations, facts.body,
                                         *instruction.result)
             : ExpectedPayloadReturnSlot{};
+    const ClassSsaLifetimeSlot assignmentResult =
+        instruction.result
+            ? classSsaLifetimeSlot(program, representations, facts.body,
+                                   *instruction.result)
+            : ClassSsaLifetimeSlot{};
+    const bool stagedAssignment =
+        assignmentResult.producer == &instruction &&
+        assignmentResult.consumerKind == ClassSsaSlotConsumerKind::Assignment;
     if (pairedResultLoan != nullptr) {
       // A reference-returning contained callee publishes its result
       // through the paired loan pointer: the referent binds by address,
@@ -32922,7 +33075,8 @@ private:
       output << "__gti_mir_p_"
              << canonicalSlotPlaceId(facts.body, *classResultDestination)
              << ".construct_from([&]() { return ";
-    } else if (expectedPayloadResult.producer == &instruction) {
+    } else if (expectedPayloadResult.producer == &instruction ||
+               stagedAssignment) {
       output << "__gti_mir_v_" << *instruction.result
              << ".construct_from([&]() { return ";
     } else if (instruction.result) {
@@ -32959,7 +33113,8 @@ private:
       output << ')';
     }
     output << (classResultDestination != nullptr ||
-                       expectedPayloadResult.producer == &instruction
+                       expectedPayloadResult.producer == &instruction ||
+                       stagedAssignment
                    ? "; });\n"
                    : ";\n");
     retireConsumedClassResultStages();
@@ -41965,6 +42120,17 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       }
       case MirInstructionKind::Call: {
+        if (simdIntrinsic(instruction.intrinsic)) {
+          if (instruction.operands.size() != 3 || instruction.result ||
+              instruction.receiver || instruction.functionTarget)
+            return false;
+          for (const MirOperand &operand : instruction.operands) {
+            const MirPlace *place = simdArrayPlace(body, operand);
+            if (place == nullptr || !typeRow(place->type))
+              return false;
+          }
+          continue;
+        }
         if (instruction.result && inlineFailureConstructorArgument(
                                       program_, body, *instruction.result)
                                           .producer == &instruction)
@@ -42851,6 +43017,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             !constructorFieldResultSlot(program_, body, *instruction.result) &&
             !passiveCAbiCallAssignmentResult(program_, body,
                                              *instruction.result) &&
+            classSsaLifetimeSlot(program_, representations_, body,
+                                 *instruction.result)
+                    .consumerKind != ClassSsaSlotConsumerKind::Assignment &&
             // A nested contained-member result spells inline at its
             // consuming argument and needs no local either.
             inlineNestedCallResult(program_, representations_, body,

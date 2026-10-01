@@ -263,7 +263,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v80 valid=" << program.valid() << '\n';
+    output << "mir-v81 valid=" << program.valid() << '\n';
     for (const MirNativeCallbackAdapter &adapter :
          program.nativeCallbackAdapters()) {
       output << "native-callback @" << adapter.id

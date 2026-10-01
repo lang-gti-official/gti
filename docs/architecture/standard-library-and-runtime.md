@@ -97,6 +97,27 @@ recognition.
 
 ## Compiler-Private Capabilities
 
+The fixed-lane arithmetic capability is declared only by the physical trusted
+`<std/simd>` unit. Its six selected identities operate on equal-length fixed
+arrays with float/double lanes and an equally sized mutable output (bool for
+comparison). Semantics validates lane type, extent 1..64, and output mutation,
+and records immediate read/read/write borrows. They retain no borrow and return
+no pointer or value. These private immediate array borrows do not relax the
+public restriction on reference-to-array declarations.
+
+HIR retains the selected intrinsic and parameter types. MIR verifies the exact
+three places, matching concrete extents, input/output lane types and access,
+void result, absence of failure/escape/lifecycle metadata, and mutation effects.
+The C++ backend emits only that verified operation. Public vector/mask classes,
+bounds checks, copying, selection, and ordered reduction remain ordinary GTI.
+The private native helper uses copied 16-byte chunks, so it requires neither
+aligned input nor type-punning; no vector object escapes into the source ABI.
+Clang/GCC vector extensions implement the chunk operations, with scalar tails
+and a portable scalar fallback for other C++20 compilers. The test-only
+`GTI_SIMD_SCALAR_REFERENCE` native macro selects that same fallback for parity.
+The preamble planner emits this support only when verified MIR contains one of
+the six operations; a dormant library import does not add vector support.
+
 `gti_internal` declarations represent operations ordinary GTI cannot yet
 express safely, including unique ownership and partially initialized storage.
 The source graph assigns every unit one explicit role: application, implicit

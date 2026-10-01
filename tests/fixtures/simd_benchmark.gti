@@ -1,0 +1,22 @@
+#include <std/simd>
+extern "C" {
+  float simd_benchmark_seed();
+  int simd_benchmark_iterations();
+}
+
+int main() {
+  // Independent damped updates model a batch of scalar physics channels.
+  mut std::simd<float, 16> state{simd_benchmark_seed()};
+  for (mut std::size_t lane = 0; lane < state.size(); lane++) {
+    state.set(lane, simd_benchmark_seed() + float(lane));
+  }
+  std::simd<float, 16> damping{0.9999};
+  std::simd<float, 16> forcing{0.001};
+  int iterations = simd_benchmark_iterations();
+  for (mut int step = 0; step < iterations; step++) {
+    state *= damping;
+    state += forcing;
+  }
+  std::println(int(state.reduce() * 1000.0));
+  return 0;
+}

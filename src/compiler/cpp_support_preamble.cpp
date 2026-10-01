@@ -31,6 +31,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "Index",
       "Left",
       "Parameters",
+      "Operation",
       "Parameter",
       "Result",
       "Right",
@@ -43,6 +44,14 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "Value",
       "__gti_invoke",
       "__gti_mir_lambda_identity",
+      "__gti_simd_vector",
+      "__gti_simd_width",
+      "__gti_simd_left",
+      "__gti_simd_right",
+      "__gti_simd_result",
+      "__gti_simd_lane",
+      "simd_binary",
+      "vector_size",
       "mir_lambda_identity_v",
       "add",
       "add_assign",
@@ -241,6 +250,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "class",
       "cmp_greater_equal",
       "cmp_less",
+      "conditional_t",
       "const",
       "constexpr",
       "construct_at",
@@ -268,6 +278,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "is_floating_point_v",
       "is_iec559",
       "is_integral_v",
+      "is_same_v",
       "is_signed_v",
       "is_unsigned_v",
       "isfinite",
@@ -276,6 +287,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "make_unexpected",
       "make_unsigned_t",
       "max_exponent",
+      "memcpy",
       "move",
       "namespace",
       "new",
@@ -361,6 +373,9 @@ void writeCppSupportPreamble(std::ostream &output,
   const bool usesManagedThreads = features.managedThreads;
   const bool usesAtomics = features.atomics;
   const bool usesMutexes = features.mutexes;
+  if (features.simd) {
+    output << "#include <cstring>\n";
+  }
   if (usesAtomics) {
     output << "#include <atomic>\n";
   }
@@ -2775,6 +2790,58 @@ invoke_selected(Callable &&callable,
   }
 }
 
+)";
+  if (features.simd) {
+    output << R"(
+// A semantic fixed-lane operation. Native vectors are a private lowering
+// choice; copied chunks impose neither aliasing nor alignment requirements on
+// the source arrays. Other C++20 hosts execute the identical scalar contract.
+template <int Operation, typename Value, typename Result, std::size_t Count>
+inline void simd_binary(const std::array<Value, Count> &left,
+                        const std::array<Value, Count> &right,
+                        std::array<Result, Count> &destination) {
+  static_assert(std::is_same_v<Value, float> || std::is_same_v<Value, double>);
+  static_assert(Count >= 1 && Count <= 64 && Operation >= 0 && Operation <= 5);
+  static_assert(std::is_same_v<Result,
+                std::conditional_t<(Operation >= 4), bool, Value>>);
+  std::size_t index = 0;
+#if (defined(__clang__) || defined(__GNUC__)) && !defined(GTI_SIMD_SCALAR_REFERENCE)
+  typedef Value __gti_simd_vector __attribute__((vector_size(16)));
+  constexpr std::size_t __gti_simd_width = 16 / sizeof(Value);
+  for (; index + __gti_simd_width <= Count; index += __gti_simd_width) {
+    __gti_simd_vector __gti_simd_left, __gti_simd_right;
+    std::memcpy(&__gti_simd_left, left.data() + index, 16);
+    std::memcpy(&__gti_simd_right, right.data() + index, 16);
+    if constexpr (Operation < 4) {
+      __gti_simd_vector __gti_simd_result;
+      if constexpr (Operation == 0) __gti_simd_result = __gti_simd_left + __gti_simd_right;
+      if constexpr (Operation == 1) __gti_simd_result = __gti_simd_left - __gti_simd_right;
+      if constexpr (Operation == 2) __gti_simd_result = __gti_simd_left * __gti_simd_right;
+      if constexpr (Operation == 3) __gti_simd_result = __gti_simd_left / __gti_simd_right;
+      std::memcpy(destination.data() + index, &__gti_simd_result, 16);
+    } else {
+      const auto __gti_simd_result = [&] {
+        if constexpr (Operation == 4) return __gti_simd_left == __gti_simd_right;
+        else return __gti_simd_left < __gti_simd_right;
+      }();
+      for (std::size_t __gti_simd_lane = 0; __gti_simd_lane < __gti_simd_width; ++__gti_simd_lane)
+        destination[index + __gti_simd_lane] = __gti_simd_result[__gti_simd_lane] != 0;
+    }
+  }
+#endif
+  for (; index < Count; ++index) {
+    if constexpr (Operation == 0) destination[index] = left[index] + right[index];
+    if constexpr (Operation == 1) destination[index] = left[index] - right[index];
+    if constexpr (Operation == 2) destination[index] = left[index] * right[index];
+    if constexpr (Operation == 3) destination[index] = left[index] / right[index];
+    if constexpr (Operation == 4) destination[index] = left[index] == right[index];
+    if constexpr (Operation == 5) destination[index] = left[index] < right[index];
+  }
+}
+
+)";
+  }
+  output << R"(
 template <typename Array, typename Index>
 inline decltype(auto) array_at(Array &&array, Index index) {
   static_assert(std::is_integral_v<std::remove_cvref_t<Index>>);

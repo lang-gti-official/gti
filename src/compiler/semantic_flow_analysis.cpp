@@ -1929,6 +1929,12 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::SourceFunctionName:
         case IntrinsicKind::SourceLine:
         case IntrinsicKind::SourceColumn:
+        case IntrinsicKind::SimdAdd:
+        case IntrinsicKind::SimdSubtract:
+        case IntrinsicKind::SimdMultiply:
+        case IntrinsicKind::SimdDivide:
+        case IntrinsicKind::SimdEqual:
+        case IntrinsicKind::SimdLess:
         case IntrinsicKind::IntegerWrappingAdd:
         case IntrinsicKind::IntegerWrappingSubtract:
         case IntrinsicKind::IntegerWrappingMultiply:
@@ -2477,6 +2483,14 @@ auto SemanticVisitor::Impl::isNumericLibraryUnit(SourceUnitId sourceUnit) const
   const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
   return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
          unit->standardLibraryName == "std/numeric";
+}
+
+auto SemanticVisitor::Impl::isSimdLibraryUnit(SourceUnitId sourceUnit) const
+    -> bool {
+  const SourceUnit *unit =
+      sourceGraph == nullptr ? nullptr : sourceGraph->findUnit(sourceUnit);
+  return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
+         unit->standardLibraryName == "std/simd";
 }
 
 auto SemanticVisitor::Impl::isIteratorLibraryUnit(SourceUnitId sourceUnit) const

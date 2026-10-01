@@ -6494,6 +6494,55 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           !instruction.lifecycle.empty()))) {
       return false;
     }
+    if (simdIntrinsic(instruction.intrinsic)) {
+      if (instruction.kind != MirInstructionKind::Call || instruction.result ||
+          instruction.info.type != SemanticType::Void || instruction.receiver ||
+          instruction.functionTarget || instruction.constructorTarget ||
+          instruction.lambdaTarget || instruction.bodyTarget ||
+          instruction.callableInvocation || instruction.callableBoundary ||
+          instruction.loan || instruction.borrowPlace ||
+          instruction.borrowOrigin != BorrowOriginKind::None ||
+          !instruction.borrowArguments.empty() ||
+          instruction.synchronization.kind !=
+              SynchronizationOperationKind::None ||
+          !instruction.callableArguments.empty() ||
+          !instruction.definedFailure.empty() ||
+          !instruction.localFailureSites.empty() ||
+          !instruction.lifecycle.empty() || instruction.operands.size() != 3 ||
+          instruction.parameterTypes.size() != 3)
+        return false;
+      std::array<SemanticType, 3> arrays;
+      for (std::size_t index = 0; index < 3; ++index) {
+        const SemanticType &parameter = instruction.parameterTypes[index];
+        const MirOperand &operand = instruction.operands[index];
+        if (parameter.kind != SemanticType::Reference ||
+            parameter.arguments.size() != 1 ||
+            parameter.referenceAccess !=
+                (index == 2 ? AccessMode::Mutable : AccessMode::ReadOnly) ||
+            operand.type != parameter ||
+            operand.kind != (index == 2 ? MirOperandKind::BorrowWrite
+                                        : MirOperandKind::BorrowRead))
+          return false;
+        const MirPlace *place = body.findPlace(operand.place);
+        arrays[index] = parameter.arguments[0];
+        if (place == nullptr || place->type != arrays[index] ||
+            (index == 2 && place->access != AccessMode::Mutable) ||
+            arrays[index].kind != SemanticType::Array ||
+            arrays[index].arguments.size() != 1 ||
+            arrays[index].arrayLengthParameterId != 0 ||
+            arrays[index].arrayLength < 1 || arrays[index].arrayLength > 64)
+          return false;
+      }
+      if (arrays[0] != arrays[1] ||
+          (arrays[0].arguments[0] != SemanticType::Float &&
+           arrays[0].arguments[0] != SemanticType::Double) ||
+          arrays[0].arrayLength != arrays[2].arrayLength ||
+          arrays[2].arguments[0] !=
+              (simdComparisonIntrinsic(instruction.intrinsic)
+                   ? SemanticType::Bool
+                   : arrays[0].arguments[0]))
+        return false;
+    }
     const auto validCallableInvocation = [&]() {
       if (!instruction.callableInvocation) {
         return !instruction.callableBoundary;

@@ -4605,6 +4605,25 @@ consumer, and release refreshes remain outstanding for the full campaign.
   has binary64 parity across O0/O3 and C++20/C++23; formatter, Tree-sitter,
   LSP, layout, generic numeric, diagnostics, and shipped-example gates pass.
 
+### L-SIMD-01: Bounded Floating-Point Lane Values
+
+- **State/role:** implemented; a source-library systems/game numeric slice.
+- **User outcome:** batch float/double updates use fixed-size values and explicit
+  lane masks without exposing raw pointers, alignment requirements, or native
+  vector ABI types. The public `<std/simd>` classes are ordinary GTI; six
+  identity-bound private operations carry exact nonescaping read/read/write
+  array borrows through semantics, HIR, MIR verification, and effects.
+- **Bounds:** 1..64 float/double lanes, independent arithmetic and comparisons,
+  checked owner-array copying, explicit mask reductions, and left-to-right
+  summation. Copied native 128-bit chunks and scalar fallback preserve strict
+  FP ordering. Integer SIMD, pointer/masked loads, gather/scatter, ISA selection,
+  and constexpr execution remain separate work, not silently unchecked cases.
+- **Exit evidence:** semantic and malformed-MIR checks; C++20/C++23 O0/O1/O3
+  parity; subnormal/NaN/signed-zero/non-FMA checks; forced scalar parity;
+  ASan/UBSan; full-range copy failure observed during cleanup; and native
+  instruction inspection. Generic class call-result assignment regression tests
+  cover ordinary user-defined aggregates independently of the SIMD client.
+
 ### L-SUM-01: Payload Enums And Exhaustive Matching
 
 - **State/role:** in progress; prerequisites `D-LANG-01`, `M-OWN-02`,

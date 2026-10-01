@@ -333,8 +333,24 @@ enum class IntrinsicKind {
   SourceFunctionName,
   SourceLine,
   SourceColumn,
+  SimdAdd,
+  SimdSubtract,
+  SimdMultiply,
+  SimdDivide,
+  SimdEqual,
+  SimdLess,
   Count,
 };
+
+[[nodiscard]] constexpr bool simdIntrinsic(IntrinsicKind intrinsic) {
+  return intrinsic >= IntrinsicKind::SimdAdd &&
+         intrinsic <= IntrinsicKind::SimdLess;
+}
+
+[[nodiscard]] constexpr bool simdComparisonIntrinsic(IntrinsicKind intrinsic) {
+  return intrinsic == IntrinsicKind::SimdEqual ||
+         intrinsic == IntrinsicKind::SimdLess;
+}
 
 // A compiler-resolved source call site. These facts are language meaning, not
 // a backend spelling: HIR captures them while expanding caller-side defaults,

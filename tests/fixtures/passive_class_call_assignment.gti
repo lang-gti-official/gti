@@ -1,0 +1,24 @@
+struct Packet {
+  mut float lanes[4] = {};
+  Packet(float first) {
+    std::println(11);
+    this.lanes[0] = first;
+  }
+  Packet next() { return Packet(this.lanes[0] + 1.0); }
+};
+
+struct Point { mut int value = 0; };
+Point make_point() { Point result = {.value = 7}; return result; }
+
+int main() {
+  mut Packet packet{1.0};
+  for (mut int iteration = 0; iteration < 3; iteration++) {
+    packet = packet.next();
+  }
+  mut Point point{};
+  point = make_point();
+  if (packet.lanes[0] != 4.0 || packet.lanes[3] != 0.0 || point.value != 7) {
+    return 1;
+  }
+  return 0;
+}

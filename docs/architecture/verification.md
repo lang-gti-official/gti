@@ -264,6 +264,35 @@ declarations and new algorithm example reflected in their inventories.
 
 ## Primary Targets
 
+`simd_semantic_ir` verifies the private declaration boundary, supported lane
+types/counts, composition inside an unrelated user class, explicit mask truth
+reduction, and MIR mutations of arity, lane/extent, result and output access.
+`simd_runtime` runs float/double, odd-width and 64-lane values, scalar differential
+arithmetic, masks, NaN/Inf/signed-zero, checked copying and ordered reductions
+under C++20/C++23 at O0/O1/O3. It also runs the scalar reference, ASan/UBSan,
+and hostile-native-macro isolation and verifies bounds failures at O0/O3.
+Both floating widths additionally check gradual underflow, ties-to-even and
+non-contracted arithmetic across packed chunks and tails. Ordinary aggregate,
+vector-clone and optional composition require no nominal compiler rule.
+Failure cleanup observes every destination lane after an invalid `copy_to`
+range to prove that validation precedes all writes. Source diagnostics retain
+the ordinary immutable-receiver and overlapping-mutable-borrow rules.
+`mir_backend_owned_lifecycle` and `class_prvalue_assignment_runtime` also
+cover ordinary cleanup-free class call-result replacement independently of
+SIMD: fixed-array and scalar-field structs, repeated self-read replacement,
+exact constructor counts, immutable-binding rejection, and first-failure
+propagation with enclosing cleanup at O0/O3 under C++20/C++23. These regressions
+ensure native representation staging does not introduce hidden construction.
+On arm64 and x86-64 it disables native
+automatic loop/SLP vectorization and checks that packed arithmetic exists only
+in the native-capability path. The scalar reference must contain no packed
+arithmetic instructions in that probe; assembly evidence is architecture-bound
+and does not claim every supported host compiler has native SIMD lowering.
+`python3 scripts/bench_simd.py <optimized-gti>` is a non-gating, warmed,
+interleaved native-versus-scalar damped-update benchmark. It disables automatic
+vectorization, checks identical output, and reports host/compiler and median
+wall time; its ratio is not an application-wide speedup guarantee.
+
 The library-completion gates cover the following public workflows:
 
 - `string_operations_runtime` exercises counted search, independent slices,
