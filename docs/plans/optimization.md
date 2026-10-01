@@ -190,11 +190,11 @@ canonical source MIR; `LoweredProgramBuilder` consumes the result before
 publishing optimized MIR to backends. A future backend does not reproduce any
 optimizer decision.
 
-HIR constant replacements remain only for non-body representation surfaces and
-as a transitional shadow comparison for the existing fold. The bridge cannot
-authorize a new CFG or dataflow transformation. Remaining architectural risk
-is therefore bounded to retiring that final representation compatibility path,
-not split executable-body authority.
+HIR constant replacements remain only as a transitional shadow comparison for
+the existing fold. They are not a backend or non-body representation input.
+The shadow result cannot authorize a new CFG or dataflow transformation;
+canonical semantic/lowered facts supply declaration constants. Remaining work
+is retiring the bounded shadow comparison, not split executable-body authority.
 
 ## Authority And IR Contract
 
@@ -222,7 +222,8 @@ executable behavior must materialize their result in MIR. Do not create a
 second mutable HIR and a second family of CFG or place analyses.
 
 The existing HIR constant-replacement table remains temporarily supported only
-for the current C++ emitter migration. It is not the API for new passes.
+for the existing MIR fold's shadow comparison. It is not an emitter input or
+the API for new passes.
 
 ### MIR
 
@@ -435,6 +436,14 @@ The following rules are mandatory:
 
 ## MIR Evolution Guardrail
 
+The compiler-owned exhaustive classification and runtime vocabulary gate are
+now implemented in `optimization/coverage.cpp`; see the canonical
+[conformance contract](../architecture/optimization.md#language-growth-conformance-gate).
+The gate names current consumers/barriers without duplicating `mir_effects`.
+Compile-failure growth probes supplement the existing effect-table census.
+Registering an enum member is necessary but does not replace the semantic,
+transfer-function, verifier, backend, or equivalence obligations below.
+
 Adding a `MirInstructionKind`, `MirOperation`, operand kind, terminator, place
 projection, intrinsic, or lifecycle effect requires all of the following in
 the same change:
@@ -577,8 +586,8 @@ the sealed `LoweredProgram`; there is no AST/HIR execution fallback.
 
 Status: executable-body bridge retired. `BackendInput` and frontend-aware
 backend snapshots are removed; every backend consumes only `LoweredProgram`.
-HIR compatibility replacements remain solely for bounded non-body
-representation surfaces and the existing fold's shadow comparison.
+HIR compatibility replacements remain solely for the existing fold's shadow
+comparison. Declaration constants use canonical semantic/lowered facts.
 
 Do not add new passes to the legacy HIR replacement path during this migration.
 Fixing a correctness bug in the existing pass remains allowed.

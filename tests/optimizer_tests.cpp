@@ -7515,7 +7515,7 @@ int main() {
           deadComputations->remarks.begin(), deadComputations->remarks.end(),
           [](const lang::OptimizationRemark &remark) {
             return remark.kind == lang::OptimizationRemarkKind::Missed &&
-                   remark.message.find("may trap or has observable") !=
+                   remark.message.find("possible trap/defined failure") !=
                        std::string::npos;
           });
   const lang::MirFunctionInstance *promoted =

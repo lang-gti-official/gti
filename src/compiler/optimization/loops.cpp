@@ -1,6 +1,7 @@
 #include "gti/optimization/loops.h"
 
 #include "gti/mir_effects.h"
+#include "gti/optimization/coverage.h"
 
 #include <algorithm>
 #include <functional>
@@ -483,7 +484,8 @@ const MirNaturalLoop *MirLoopAnalysis::loopForHeader(MirBlockId header) const {
 MirLoopAnalysis analyzeMirLoops(const MirBody &body,
                                 const MirDominanceInfo &dominance) {
   MirLoopAnalysis result;
-  if (body.blocks.size() != dominance.blockCount()) {
+  if (body.blocks.size() != dominance.blockCount() ||
+      !verifyMirOptimizationVocabulary(body).valid()) {
     return result;
   }
   const std::vector<std::vector<MirBlockId>> preds = predecessors(body);

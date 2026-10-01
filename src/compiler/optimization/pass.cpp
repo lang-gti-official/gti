@@ -1,9 +1,11 @@
 #include "gti/optimization/pass.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
+#include "gti/optimization/coverage.h"
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <queue>
 #include <utility>
 
@@ -43,7 +45,8 @@ successors(const MirTerminator &terminator) {
 }
 
 [[nodiscard]] std::optional<MirCfgAnalysis> analyzeCfg(const MirBody &body) {
-  if (body.entry == 0 || body.entry > body.blocks.size()) {
+  if (body.entry == 0 || body.entry > body.blocks.size() ||
+      !verifyMirOptimizationVocabulary(body).valid()) {
     return std::nullopt;
   }
   MirCfgAnalysis result;
@@ -317,6 +320,9 @@ std::string_view name(MirScalarPromotionMissReason reason) {
 }
 
 MirPreservedAnalyses MirPreservedAnalyses::all() {
+  static_assert(static_cast<std::uint32_t>(MirAnalysisKind::Count) <
+                    std::numeric_limits<std::uint32_t>::digits,
+                "analysis preservation mask requires a larger representation");
   MirPreservedAnalyses result;
   result.mask =
       (std::uint32_t{1} << static_cast<std::uint32_t>(MirAnalysisKind::Count)) -
@@ -330,7 +336,8 @@ MirPreservedAnalyses
 MirPreservedAnalyses::only(std::initializer_list<MirAnalysisKind> analyses) {
   MirPreservedAnalyses result;
   for (const MirAnalysisKind analysis : analyses) {
-    if (analysis != MirAnalysisKind::Count) {
+    if (static_cast<std::uint32_t>(analysis) <
+        static_cast<std::uint32_t>(MirAnalysisKind::Count)) {
       result.mask |= std::uint32_t{1} << static_cast<std::uint32_t>(analysis);
     }
   }
@@ -338,7 +345,8 @@ MirPreservedAnalyses::only(std::initializer_list<MirAnalysisKind> analyses) {
 }
 
 bool MirPreservedAnalyses::preserves(MirAnalysisKind analysis) const {
-  return analysis != MirAnalysisKind::Count &&
+  return static_cast<std::uint32_t>(analysis) <
+             static_cast<std::uint32_t>(MirAnalysisKind::Count) &&
          (mask & (std::uint32_t{1} << static_cast<std::uint32_t>(analysis))) !=
              0;
 }
@@ -590,6 +598,9 @@ MirBodyAnalysisManager::invalidate(MirBodyAddress address,
   if (invalidatedDependentSafetyChecks) {
     invalidated.emplace_back(name(MirAnalysisKind::SafetyChecks));
   }
+  // Preserving the program-wide call summary does not preserve local range
+  // facts. A body edit may invalidate those independently of its callees.
+  drop(MirAnalysisKind::SafetyChecks, cached.safetyChecks);
   drop(MirAnalysisKind::PlaceAliasEscape, cached.placeAliasEscape);
   drop(MirAnalysisKind::Loops, cached.loops);
   drop(MirAnalysisKind::SparseConstants, cached.sparseConstants);

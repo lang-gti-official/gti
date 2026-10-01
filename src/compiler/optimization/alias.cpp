@@ -1,6 +1,7 @@
 #include "gti/optimization/alias.h"
 
 #include "gti/mir_effects.h"
+#include "gti/optimization/coverage.h"
 
 #include <algorithm>
 #include <optional>
@@ -187,6 +188,17 @@ MirPlaceAliasEscapeAnalysis::escape(MirPlaceId place) const {
 
 MirAliasRelation mirPlaceRelation(const MirProgram &program,
                                   const MirPlace &left, const MirPlace &right) {
+  const auto classified = [](const MirPlace &place) {
+    return optimizationCoverage(place.root).classified() &&
+           std::all_of(
+               place.projections.begin(), place.projections.end(),
+               [](const MirPlaceProjection &projection) {
+                 return optimizationCoverage(projection.kind).classified();
+               });
+  };
+  if (!classified(left) || !classified(right)) {
+    return MirAliasRelation::MayAlias;
+  }
   if (left.id != 0 && left.id == right.id) {
     return MirAliasRelation::MustAlias;
   }
@@ -226,7 +238,7 @@ MirPlaceAliasEscapeAnalysis
 analyzeMirPlaceAliasEscape(const MirProgram &program, MirBodyAddress address) {
   MirPlaceAliasEscapeAnalysis result;
   const MirBody *body = findMirBody(program, address);
-  if (body == nullptr) {
+  if (body == nullptr || !verifyMirOptimizationVocabulary(*body).valid()) {
     return result;
   }
   result.placeCount = body->places.size();

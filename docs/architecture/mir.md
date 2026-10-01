@@ -1595,6 +1595,15 @@ destruction is not a substitute for releasing checked ownership resources.
 
 ## Controlled Optimization Edits
 
+The compiler-owned optimizer vocabulary gate is described in
+[Optimization](optimization.md#language-growth-conformance-gate). Body
+verification runs its structural admission check before CFG, ownership, and
+lifecycle reasoning, including for hosted startup. Unknown instruction,
+operation, intrinsic, terminator, projection, operand, or failure vocabulary
+cannot become a harmless fall-through. The same gate is used by optimizer
+analysis entry points and independent source replay; effects remain owned by
+`mir_effects`, not by the coverage catalog.
+
 `mir_editor.h` exposes a deliberately narrow `MirEditor`.
 Core MIR identifies bodies by `MirBodyAddress`, a GTI body kind plus owning
 instance ID; instructions use stable `MirInstructionId`, and blocks use

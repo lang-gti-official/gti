@@ -3,6 +3,7 @@
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
+#include "gti/optimization/coverage.h"
 #include "gti/optimization/pass.h"
 
 #include <algorithm>
@@ -639,10 +640,24 @@ public:
         }
         ++outcome.report.candidates;
         ++outcome.report.missed;
+        std::string explanation = std::string(lang::name(miss.reason));
+        if (const auto *aliases =
+                analyses.placeAliasEscape(context.program, address)) {
+          if (const auto *escape = aliases->escape(miss.place);
+              escape != nullptr && escape->escapesBody()) {
+            explanation += "; place escapes the body";
+            if (escape->has(MirPlaceEscapeReason::UnknownCall))
+              explanation += " through an unknown call";
+            if (escape->has(MirPlaceEscapeReason::RetainedBorrow))
+              explanation += " through a retained borrow";
+            if (escape->has(MirPlaceEscapeReason::RawMemory))
+              explanation += " through raw memory";
+          }
+        }
         outcome.report.remarks.push_back(
             {.kind = OptimizationRemarkKind::Missed,
              .pass = outcome.report.name,
-             .message = "not promoted: " + std::string(lang::name(miss.reason)),
+             .message = "not promoted: " + explanation,
              .body = address,
              .place = miss.place});
       }
@@ -865,12 +880,59 @@ public:
       }
       for (const MirBlock &block : body->blocks) {
         for (const MirInstruction &instruction : block.instructions) {
+          // Report conservative boundaries once, rather than repeating them
+          // for every check family. These are facts about this instruction,
+          // not a claim that it caused an unrelated check's missing proof.
+          if (family == MirSafetyCheckFamily::Bounds &&
+              !instruction.tombstone &&
+              ((instruction.kind == MirInstructionKind::Call &&
+                (instruction.intrinsic == IntrinsicKind::None
+                     ? !exactMirInvocationSummary(context.program, *body,
+                                                  instruction)
+                     : optimizationCoverage(instruction.intrinsic).handling ==
+                           MirOptimizationHandling::Barrier)) ||
+               instruction.rawMemoryAccess ||
+               instruction.unsafeOperation != UnsafeOperationKind::None ||
+               instruction.kind == MirInstructionKind::CleanupBeforeAssign ||
+               instruction.kind == MirInstructionKind::Drop)) {
+            const std::string reason = mirOptimizationBarrierReason(
+                context.program, instruction, body);
+            if (!reason.empty()) {
+              outcome.report.remarks.push_back(
+                  {.kind = OptimizationRemarkKind::Missed,
+                   .pass = passName,
+                   .message = "conservative analysis boundary: " + reason,
+                   .body = address,
+                   .block = block.id,
+                   .instruction = instruction.id,
+                   .sourceValue = instruction.hirValue,
+                   .sourceStatement = instruction.hirStatement});
+            }
+          }
           for (std::size_t origin = 0;
                origin < instruction.definedFailure.localOrigins.size();
                ++origin) {
             for (const DefinedFailureOutcome failure :
                  instruction.definedFailure.localOrigins[origin].outcomes) {
               if (safetyFamily(failure) != family) {
+                if (family == MirSafetyCheckFamily::Bounds &&
+                    !safetyFamily(failure)) {
+                  outcome.report.remarks.push_back(
+                      {.kind = OptimizationRemarkKind::Missed,
+                       .pass = passName,
+                       .message =
+                           "check retained: unsupported failure discharge "
+                           "family " +
+                           std::string(definedFailureCodeName(failure.code)) +
+                           "/" +
+                           std::string(
+                               definedFailureDetailName(failure.detail)),
+                       .body = address,
+                       .block = block.id,
+                       .instruction = instruction.id,
+                       .sourceValue = instruction.hirValue,
+                       .sourceStatement = instruction.hirStatement});
+                }
                 continue;
               }
               const MirSafetyDischarge discharge{
@@ -1072,11 +1134,16 @@ public:
                   {.body = address, .instruction = instruction.id});
             } else {
               ++outcome.report.missed;
+              const std::string reason = mirOptimizationBarrierReason(
+                  context.program, instruction, body);
               outcome.report.remarks.push_back(
                   {.kind = OptimizationRemarkKind::Missed,
                    .pass = outcome.report.name,
-                   .message = "unused computation retained because it may "
-                              "trap or has observable effects",
+                   .message =
+                       "unused computation retained: " +
+                       (reason.empty()
+                            ? "unsupported rewrite shape or retained metadata"
+                            : reason),
                    .body = address,
                    .block = block.id,
                    .instruction = instruction.id,
@@ -1152,6 +1219,23 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
   OptimizedProgram result{.sourceMir = request.mir,
                           .mir = std::move(request.mir)};
   result.report.verificationEnabled = request.options.verifyMir;
+
+  // Vocabulary admission is unconditional. Disabling expensive verification
+  // must never let an unknown terminator masquerade as a CFG exit.
+  for (const MirBodyAddress address : enumerateMirBodyAddresses(result.mir)) {
+    const MirBody *body = findMirBody(result.mir, address);
+    if (body == nullptr) {
+      result.report.inputVerification.errors.push_back(
+          {.bodyKind = address.kind,
+           .owner = address.owner,
+           .message = "unresolved MIR optimizer body"});
+      return result;
+    }
+    result.report.inputVerification =
+        verifyMirOptimizationVocabulary(*body, address.owner);
+    if (!result.report.inputVerification.valid())
+      return result;
+  }
 
   if (request.options.verifyMir) {
     result.report.inputVerification = verifyMirProgram(result.mir);

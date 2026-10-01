@@ -1,4 +1,5 @@
 #include "gti/optimization/safety.h"
+#include "gti/optimization/coverage.h"
 
 #include "gti/checked_integer.h"
 #include "gti/mir_dominance.h"
@@ -2078,6 +2079,22 @@ void applyInstruction(const MirBody &body,
   const MirProgram *program =
       closedCalls == nullptr ? nullptr : &closedCalls->program;
   if (instruction.kind == MirInstructionKind::Compute) {
+    // Compute is a representation kind, not a purity promise. An extended
+    // operation must not carry old place facts across newly classified memory,
+    // lifecycle, or synchronization effects just because no scalar transfer
+    // function recognizes it yet.
+    const MirEffectTraits effect = effects(instruction);
+    if (instruction.rawMemoryAccess ||
+        instruction.unsafeOperation != UnsafeOperationKind::None ||
+        effect.writesPlace || effect.writesUnknownMemory ||
+        effect.invokesUserCode || effect.maySynchronize) {
+      killUnknownMemory(state);
+      if (instruction.result) {
+        state.integers.erase(*instruction.result);
+        state.arrayValues.erase(*instruction.result);
+      }
+      return;
+    }
     if (const std::optional<IntegerFact> fact =
             computeIntegerFact(body, state, instruction)) {
       state.integers[*instruction.result] = *fact;
@@ -4910,7 +4927,7 @@ analyzeBodyLocalSafety(const MirProgram &program, MirBodyAddress address,
                        const MirPlaceAliasEscapeAnalysis &aliases) {
   MirSafetyAnalysis result;
   const MirBody *body = findMirBody(program, address);
-  if (body == nullptr) {
+  if (body == nullptr || !verifyMirOptimizationVocabulary(*body).valid()) {
     return result;
   }
   const std::vector<AbstractState> incoming = solveStates(*body, aliases);
@@ -4952,6 +4969,12 @@ analyzeMirClosedCallSafetyChecks(const MirProgram &program) {
 
   const std::vector<MirBodyAddress> addresses =
       enumerateMirBodyAddresses(program);
+  for (const MirBodyAddress address : addresses) {
+    const MirBody *body = findMirBody(program, address);
+    if (body == nullptr || !verifyMirOptimizationVocabulary(*body).valid()) {
+      return {};
+    }
+  }
   std::set<MirBodyAddress, MirBodyAddressLess> rejected =
       rejectedClosedCallBodies(program);
   std::map<MirBodyAddress, std::size_t, MirBodyAddressLess> contextUpdates;

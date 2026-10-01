@@ -3,6 +3,7 @@
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
+#include "gti/optimization/coverage.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
 #include "mir_verification_queries.h"
@@ -5954,6 +5955,10 @@ static MirVerificationResult verifyObjectAllocations(const MirBody &body,
 }
 
 MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
+  if (auto vocabulary = verifyMirOptimizationVocabulary(body, owner);
+      !vocabulary.valid()) {
+    return vocabulary;
+  }
   if (body.entry == 0 || body.entry > body.blocks.size()) {
     return failure(body, owner, "entry block is outside the body");
   }
