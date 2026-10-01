@@ -1128,6 +1128,25 @@ status-tag overload; only that empty-body proof permits a known-success result.
 Capability identity, exact owner/target types, and the original publication
 proof govern both cases, never the public wrapper's spelling.
 
+Private empty-state construction is distinct from move assignment, recursively
+through containing classes. Constructor placement and rollback reconstruction
+may use a nonassignable field's observation-free empty representation; paths
+that emit an assignment still require the stronger assignable-field proof.
+Neither query bypasses the selected native capability constructor witness.
+A cleanup-free class field can also publish at an adjacent, exact
+`Construct`/`Initialize` pair in the body, using placement construction rather
+than assignment. This requires a proved non-failing target and carries no
+invented cleanup obligations. Active fields retain their success-edge
+activation, rollback reparenting, and normal transfer-out identities.
+
+Constructor-body replacement of a completed owning field accepts both an
+unqualified instance-field symbol and `this.field`. Both resolve through the
+same concrete owner and mutable field representation rows; module/static
+symbols are not receiver fields. The existing construction-rollback obligation
+continues to own the replacement, whether it was active on entry or activated
+by an earlier MIR initializer. MIR verification remains responsible for
+availability and lifecycle ordering before the assignment.
+
 A sibling field may share the schedule through the exact parameter-copy proof,
 a source scalar literal, or the substituted scalar default-construction
 intrinsic. Each retains the same explicit field publication and full-expression

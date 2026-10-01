@@ -2,6 +2,80 @@
 
 #include <regex>
 
+void checkContainingClasses() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/constructor_nonassignable_fields.gti";
+  std::ifstream stream(path);
+  const std::string source{std::istreambuf_iterator<char>(stream), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(),
+         "nonassignable constructor fields have valid MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  expect(!gti_test::emitCppText(frontend).empty(),
+         "nested nonassignable and active-cleanup fields admit full emission");
+  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  std::size_t emptyProofs = 0;
+  std::size_t publications = 0;
+  for (const auto &owner : frontend.mir.classInstances()) {
+    if (owner.compilerCapability != lang::CompilerCapabilityTypeKind::None ||
+        owner.traits.moveAssignable || owner.declaredFields.empty() ||
+        !lang::cppMirFailureConstructorEmptyStateTypeEligible(frontend.mir,
+                                                              owner.type))
+      continue;
+    ++emptyProofs;
+    for (int mutation = 0; mutation != 3; ++mutation) {
+      auto malformed = frontend.mir;
+      auto *changed = const_cast<lang::MirClassInstance *>(
+          malformed.findClassInstance(owner.id));
+      if (mutation == 0)
+        changed->traits.containsBorrowedState = true;
+      else if (mutation == 1)
+        changed->cAbiRecord = true;
+      else
+        changed->declaredFields.front().symbol = 0;
+      expect(!lang::cppMirFailureConstructorEmptyStateTypeEligible(malformed,
+                                                                   owner.type),
+             "construction-only empty state retains borrow, layout and field "
+             "identity checks");
+    }
+  }
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    if (!lang::CppMirBodyEmitter(frontend.mir, rows)
+             .supportsFailureBodyText(
+                 {lang::MirBodyKind::Constructor, constructor.id}))
+      continue;
+    for (const auto &block : constructor.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Initialize ||
+            !instruction.constructorInitializer || !instruction.destination)
+          continue;
+        const auto *field =
+            constructor.body.findPlace(*instruction.destination);
+        if (!field || field->type.kind != lang::SemanticType::Class ||
+            field->traits.moveAssignable)
+          continue;
+        ++publications;
+        auto malformed = frontend.mir;
+        auto *changed = const_cast<lang::MirConstructorInstance *>(
+            malformed.findConstructorInstance(constructor.id));
+        for (auto &changedBlock : changed->body.blocks)
+          for (auto &changedInstruction : changedBlock.instructions)
+            if (changedInstruction.id == instruction.id)
+              changedInstruction.constructorInitializer = 0;
+        expect(!lang::CppMirBodyEmitter(malformed, rows)
+                    .supportsFailureBodyText(
+                        {lang::MirBodyKind::Constructor, constructor.id}),
+               "in-place publication requires the selected constructor "
+               "initializer");
+      }
+    }
+  }
+  expect(emptyProofs >= 4 && publications >= 4,
+         "checks cover unrelated wrappers plus passive and active optional "
+         "fields");
+}
+
 void checkActiveStorage() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/optional_lifecycle.gti";
@@ -87,6 +161,61 @@ void checkActiveStorage() {
       "active optional initializer exercises the native constructor boundary");
 }
 
+void checkFieldReplacement() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/constructor_field_call_assignment.gti";
+  std::ifstream stream(path);
+  const std::string source{std::istreambuf_iterator<char>(stream), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(), "constructor replacements have valid MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  std::size_t assignments = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    for (const auto &block : constructor.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Assign ||
+            instruction.info.type.kind != lang::SemanticType::Class ||
+            !instruction.destination || instruction.lifecycle.empty())
+          continue;
+        ++assignments;
+        expect(lang::CppMirBodyEmitter(frontend.mir, rows)
+                   .supportsFailureBodyText(
+                       {lang::MirBodyKind::Constructor, constructor.id}),
+               "qualified and unqualified replacement share the field proof");
+        auto malformed = frontend.mir;
+        auto *changed = const_cast<lang::MirConstructorInstance *>(
+            malformed.findConstructorInstance(constructor.id));
+        for (auto &changedBlock : changed->body.blocks)
+          for (auto &candidate : changedBlock.instructions)
+            if (candidate.id == instruction.id)
+              candidate.lifecycle.front().source = 0;
+        expect(
+            !lang::CppMirBodyEmitter(malformed, rows)
+                 .supportsFailureBodyText(
+                     {lang::MirBodyKind::Constructor, constructor.id}),
+            "field replacement requires the exact result ownership transfer");
+        malformed = frontend.mir;
+        changed = const_cast<lang::MirConstructorInstance *>(
+            malformed.findConstructorInstance(constructor.id));
+        auto *place = const_cast<lang::MirPlace *>(
+            changed->body.findPlace(*instruction.destination));
+        if (place->root == lang::MirPlaceRootKind::Symbol)
+          place->symbol = 0;
+        else
+          place->projections.front().field = 0;
+        expect(!lang::CppMirBodyEmitter(malformed, rows)
+                    .supportsFailureBodyText(
+                        {lang::MirBodyKind::Constructor, constructor.id}),
+               "an unknown symbol or projection cannot be treated as a "
+               "receiver field");
+      }
+    }
+  }
+  expect(assignments == 2, "fixture covers both receiver field spellings");
+}
+
 int main() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/optional_value.gti";
@@ -159,6 +288,8 @@ int main() {
   expect(!gti_test::emitCppText(frontend).empty(),
          "passive optional payload admits complete production emission");
   checkActiveStorage();
+  checkContainingClasses();
+  checkFieldReplacement();
   if (failures)
     return 1;
   std::cout << "optional empty prefix proof tests passed\n";

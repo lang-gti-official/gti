@@ -1,0 +1,42 @@
+#include <std/optional>
+#include <std/string>
+#include <std/vector>
+
+class ScalarSlot {
+  mut std::optional<int> value{};
+public:
+  ScalarSlot() {}
+  void set() mut { [[discard]] value.emplace(7); }
+  int read() { return value.value(); }
+};
+
+class ScalarHolder {
+  mut ScalarSlot slot{};
+public:
+  ScalarHolder() { slot.set(); std::println(slot.read()); }
+};
+
+class Tracked {
+  int value;
+public:
+  Tracked(int number) : value(number) {}
+  ~Tracked() { std::println(value); }
+};
+
+class OwningHolder {
+  mut std::optional<Tracked> first{};
+  mut std::optional<Tracked> second{};
+public:
+  OwningHolder(int divisor) {
+    [[discard]] first.emplace(1);
+    [[discard]] second.emplace(2);
+    std::println(12 / divisor);
+    std::println(3);
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  ScalarHolder scalar{};
+  OwningHolder owner{2 - argc};
+  return 0;
+}

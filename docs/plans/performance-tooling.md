@@ -140,6 +140,12 @@ publication and installation remain held.
 
 ## O-MEASURE-02: exact-head runtime facility campaign (2026-10-01)
 
+Publication update: the user subsequently authorized the combined release of
+this campaign, O-CONFORM-01, and C-TIME-01 after the Tea compiler fixes. The
+held-publication statements in the measurement record describe its original
+checkpoint. The user also authorized running the local installer after
+reconciling and validating the combined release.
+
 This follow-up starts at reconciled, clean `main` `72a8087a`, after
 `O-CONFORM-01`, not at the historical August campaign below. Publication is
 held. The Release/Ninja compiler uses AppleClang 21 and LLVM 22.1.8 on arm64

@@ -968,8 +968,7 @@ int main() {
       "void invoke<Callback>(Callback callback){callback();}"
       "void run(){invoke([]()->void{mut auto result=login();if(!result){"
       "report();}for(mut int i=0;i<3;i++){tick();}});}");
-  expect(nestedLambda.find("login();\n    if (!result)") !=
-                 std::string::npos &&
+  expect(nestedLambda.find("login();\n    if (!result)") != std::string::npos &&
              nestedLambda.find("for (mut int i = 0; i < 3; i++)") !=
                  std::string::npos &&
              lang::Formatter().format(nestedLambda) == nestedLambda,

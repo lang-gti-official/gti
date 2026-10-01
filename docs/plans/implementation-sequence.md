@@ -28,7 +28,10 @@ input, not a second implementation queue.
 ## Current Sequential Optimizer Follow-Up
 
 The combined compiler/library work is locally checkpointed at `113e112a` on
-top of reconciled `main` `b9609587`. Publication remains held by the user.
+top of reconciled `main` `b9609587`. The user subsequently authorized combined
+publication after fixing the Tea constructor-emission failures. The held
+publication labels below describe the original local-validation checkpoints,
+not a continuing release restriction.
 These two requested tasks are sequential, not parallel compiler campaigns:
 
 | Order | ID | State | Outcome and exit gate |
@@ -39,7 +42,7 @@ These two requested tasks are sequential, not parallel compiler campaigns:
 The second row must preserve exact failure/cleanup/ownership and evaluation/FP
 ordering, prove independent replay and O0/O2/O3 C++20/C++23 parity, and retain
 fixed-array/vector/scalar/game/thread, compiler-time, size, and memory controls.
-Neither row authorizes publication while the user's release hold remains.
+The subsequent explicit release authorization covers both completed rows.
 
 ### C-TIME-01: Bounded Compiler Latency Investigation
 
@@ -60,7 +63,24 @@ independent replay. It adds a reusable clean-compilation measurement path, not
 a new optimizer, persistent semantic cache, weakened verifier, or unchecked
 mode. Current measurements and the distinction between comparable performance
 and an explicitly incomplete performance target live in
-[`performance-tooling.md`](performance-tooling.md). Publication remains held.
+[`performance-tooling.md`](performance-tooling.md). This work is included in the
+subsequently authorized combined publication.
+
+### Tea Constructor-Emission Follow-Up
+
+The release fix covers nonassignable empty-field placement and qualified or
+unqualified replacement of an initialized owning field from a call result.
+The original Tea build and reduced success/failure cleanup cases exercise that
+scope. It does not establish arbitrary constructor/capability composition.
+
+Two broader cases exposed while designing stress fixtures remain open under
+the defined-failure/backend work: a cleanup-free containing field whose source
+constructor can fail but whose caller has no matching Invoke schedule; and a
+fallible payload constructor reached through optional storage's native
+construction capability. The former can still fail backend admission and the
+latter can reference an unavailable ordinary native constructor. Follow-up
+must preserve the exact failure edge and partial-construction cleanup rather
+than emit an unchecked ordinary constructor call.
 
 ## How To Use This Plan
 
