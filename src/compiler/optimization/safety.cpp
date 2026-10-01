@@ -2756,7 +2756,13 @@ transferBlock(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
               MirBodyAddress address = {}) {
   BlockTransfer result;
   for (const MirInstruction &instruction : block.instructions) {
-    result.before.insert_or_assign(instruction.id, state);
+    // Only Invoke's failure edge observes a pre-instruction state. Retaining
+    // every intermediate state copies all scalar/place facts (and proof
+    // evidence) for each instruction on every fixpoint iteration.
+    if (block.terminator.kind == MirTerminatorKind::Invoke &&
+        block.terminator.invokeInstruction == instruction.id) {
+      result.before.insert_or_assign(instruction.id, state);
+    }
     applyInstruction(body, aliases, block, instruction, state, thresholds,
                      closedCalls, address);
   }

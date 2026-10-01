@@ -41,6 +41,27 @@ ordering, prove independent replay and O0/O2/O3 C++20/C++23 parity, and retain
 fixed-array/vector/scalar/game/thread, compiler-time, size, and memory controls.
 Neither row authorizes publication while the user's release hold remains.
 
+### C-TIME-01: Bounded Compiler Latency Investigation
+
+**State:** bounded investigation and small improvement complete; general
+compile-time comparability remains an open target, not a claimed plateau.
+Nine focused gates and all 355 Release CTest gates pass on local arm64 macOS.
+
+Start from reconciled `main` `a687b0d4` after the two rows above. The client is
+interactive development of ordinary GTI container, numeric, and game-update
+programs. Compare equivalent idiomatic GTI/C++ workloads at matched native
+settings, separately reporting clean, no-op, and edited-build costs. Equal line
+counts alone are not a comparison contract.
+
+The provisional small-program band is `GTI <= 2 * C++ + 250 ms`, not a shared
+CI gate. The bounded implementation removes unused intermediate safety-state
+copies while preserving exact Invoke failure snapshots, proof precision, and
+independent replay. It adds a reusable clean-compilation measurement path, not
+a new optimizer, persistent semantic cache, weakened verifier, or unchecked
+mode. Current measurements and the distinction between comparable performance
+and an explicitly incomplete performance target live in
+[`performance-tooling.md`](performance-tooling.md). Publication remains held.
+
 ## How To Use This Plan
 
 Ordinary feature work should select one row from this plan, or one explicitly

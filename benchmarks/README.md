@@ -7,6 +7,49 @@ requires one identical `GTI-BENCH-1` result record, and only then collects
 timings. Shared CI may validate builds and records, but must not enforce a wall
 time threshold.
 
+## Compiler latency
+
+Use an optimized **host build** of GTI and matched native compiler, standard,
+optimization level, and strict floating-point policy. Compare equivalent work
+and library use, not merely equal source-line counts. Clean compilation,
+unchanged project builds, and edited rebuilds are different measurements.
+
+```sh
+python3 scripts/compile_time_compare.py \
+  --gti build/gti --baseline-gti /path/to/preserved/gti \
+  --cxx clang++ --output /tmp/gti-compile-comparison-new \
+  --workload fixed-array-loop-proof --workload vector-checked-loop \
+  --workload scalar-fp-update --workload game-update-stage \
+  --workload interface-exact-dispatch --runs 5 --warmup 1
+```
+
+The optional baseline is a preserved compiler executable using the same source
+libraries/runtime. The output directory must be new. Defaults measure O0 and
+O2; repeat `--optimization` to select levels. Do not run builds, tests, or other
+benchmarks concurrently. The runner randomizes/interleaves sequential samples
+with a fixed seed and records commands, raw times, compiler/source hashes,
+build provenance, retained C++, and stdout/stderr. It measures full direct
+builds, GTI through C++ emission, native rebuilding of that generated C++, and
+both C++ twins separately. These independent samples do not add up exactly:
+native-only attribution retains the provenance command's dependency-file
+generation, while timed GTI full builds omit build-report generation.
+
+The filesystem is warm; this is not a cold-disk experiment. Direct builds do
+not use the project cache. O2/O3 executables must produce identical complete
+stdout; large O0 runtime loops are not executed by this compile-time runner.
+Before/after generated-C++ equality is reported, not required for arbitrary
+compiler changes. `compile_time_harness` is a threshold-free correctness gate
+for the measurement path, output preservation, and argument validation.
+
+The **provisional** comparison band is GTI <= 2 × idiomatic C++ + 250 ms.
+This is a transparent starting policy for small interactive workloads, not an
+established user requirement or noisy CI timing threshold. “Comparable” means
+representative workloads meet an agreed band; a “practical plateau” instead
+means further measured improvement would require disproportionate complexity.
+Neither means GTI has reached a physical lower bound. The bounded investigation
+and remaining costs are recorded in
+[performance tooling](../docs/plans/performance-tooling.md).
+
 ## LSP scalability
 
 `scripts/lsp_benchmark.py` drives `gti_lsp` over its real JSON-RPC transport

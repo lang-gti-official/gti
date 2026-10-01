@@ -2256,6 +2256,20 @@ if(Python3_Interpreter_FOUND)
                  "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${PROJECT_SOURCE_DIR}/vendor/expected_lite/include"
   )
   add_test(
+    NAME compile_time_harness
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/compile_time_compare_test.py"
+            "${PROJECT_SOURCE_DIR}/scripts/compile_time_compare.py"
+            "$<TARGET_FILE:gti>"
+            "${CMAKE_CXX_COMPILER}"
+  )
+  set_tests_properties(
+    compile_time_harness
+    PROPERTIES TIMEOUT 240
+               ENVIRONMENT
+                 "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${PROJECT_SOURCE_DIR}/vendor/expected_lite/include"
+  )
+  add_test(
     NAME runtime_performance_workloads
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/runtime_performance_workloads_test.py"
