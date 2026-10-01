@@ -162,9 +162,10 @@ simplified API so its error jumps stay entirely in C, never across GTI frames.
 Zlib's streaming and gzip-file APIs are not part of the initial package.
 
 The source-defined spdlog package is intentionally synchronous. It does not
-need preparation, a build-script approval, a C++ compiler, or an installed
-spdlog library. Its `_st` spellings alias the synchronized implementation;
-async logging and process-global logger state are deliberately excluded. See
+need preparation, build-script approval, an installed spdlog library, or any
+separate native-library toolchain beyond GTI's normal C++ backend. Its `_st`
+spellings alias the synchronized implementation; async logging and
+process-global logger state are deliberately excluded. See
 [`spdlog/README.md`](spdlog/README.md) for its full surface and safety model.
 
 Assimp's 24-function C adapter is generated into GTI by `gti bindgen`; it does
