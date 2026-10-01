@@ -227,6 +227,15 @@ or checked operation. This envelope is derived only from the existing MIR
 predicate and exact comparison operand; it is not a relational solver or a
 source-name rule.
 
+Block transfer retains a pre-instruction abstract-state snapshot only for the
+instruction named by an `Invoke` terminator. Its failure edge consumes that
+snapshot; normal edges consume the completed block state. Other intermediate
+states have no consumer and are not copied. This is storage/work elimination,
+not reduced proof precision, skipped failure analysis, or a cross-run cache.
+Independent optimization-evidence replay uses the same unchanged transfer
+semantics. An analysis regression contrasts the successful result fact with
+the pre-instruction failure-edge fact.
+
 Exact nonzero integer remainder and bitwise-and with one exact nonnegative mask
 have dedicated interval transfer. Remainder contributes a result-domain
 envelope independent of the changing dividend; the mask contributes

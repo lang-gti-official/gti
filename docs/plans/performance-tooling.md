@@ -1,5 +1,143 @@
 # GTI Performance Measurement And Optimization Tooling Proposal
 
+## C-TIME-01: bounded compiler-latency investigation (2026-10-01)
+
+The client is the edit/build loop for ordinary container, numeric, and
+game-update programs. This investigation starts from clean reconciled `main`
+`a687b0d4`, after the runtime campaign below. It does **not** claim that matching
+source-line counts imply matching work: includes, generic instantiations,
+ownership/failure analysis, emitted code, and native optimization all matter.
+These existing fixtures are functional comparisons, not padded 200-line files
+or substitutes for measuring a large application.
+
+The provisional small-program comparison band is `GTI <= 2 * idiomatic C++ +
+250 ms`. It is a visible starting policy, not a user-approved universal margin
+or shared-CI threshold. Report absolute milliseconds as well as ratios and
+retain semantic-checking C++ alongside idiomatic C++. A campaign can close with
+a bounded improvement and an **unmet comparison target**; it must not relabel
+that as comparable performance or proof that GTI cannot become faster.
+
+### Method and identity
+
+`scripts/compile_time_compare.py` performs one warmup and five seeded,
+randomized/interleaved sequential measurements per command. No other builds or
+tests run concurrently. The host compiler is Release/Ninja, AppleClang 21.0.0
+with LLVM 22.1.8; native programs use `/usr/bin/clang++` 21.0.0
+(`clang-2100.3.34.2`), C++23, matched O0/O2 and strict FP on arm64 macOS 27.0,
+twelve logical CPUs. The filesystem is warm. Direct GTI builds have no project
+cache. Preparation/build-provenance collection is outside timed full builds.
+Full builds, emit-only GTI, generated-C++ native compilation/linking, and both
+C++ twins are independently sampled; their medians are not additive phase
+timers. Native-only attribution includes dependency-file generation.
+
+Raw baseline and paired records are retained under
+`/private/tmp/gti-compile-time.3wgjV9/{baseline3,paired}/report.json`, including
+commands, source hashes/line counts, build provenance, emitted C++, logs, and
+sample order. The preserved baseline executable SHA-256 is
+`57c7638ebe80ee019702122105dceec7a91815145822e16f53067c1cf4e7cfca`.
+The measured improved executable SHA-256 is
+`53889aabb1d54c6366977698c8235b8fc511143135b44fd4ba7691f3708ededc`,
+also preserved there as `gti-improved-measured`. Its source is `a687b0d4` plus
+the eight-line `transferBlock` snapshot guard in `optimization/safety.cpp`;
+it is deliberately recorded as a working-tree measurement, not a fictitious
+clean-commit identity. Subsequent documentation/test/harness edits do not
+change that production delta. Temporary evidence is local, not published CI
+storage; the checked-in runner and sources are the reproduction path.
+
+### Results and bounded change
+
+| Workload | Level | Before GTI ms | After GTI ms | Idiomatic C++ ms | Band met |
+| --- | --- | ---: | ---: | ---: | --- |
+| Fixed array | O0 | 1366.5 | 1360.4 | 272.6 | no |
+| Fixed array | O2 | 2201.4 | 2169.7 | 291.7 | no |
+| Vector | O0 | 279.3 | 284.7 | 288.6 | yes |
+| Vector | O2 | 552.2 | 501.0 | 308.4 | yes |
+| Scalar FP | O0 | 1358.2 | 1345.8 | 272.6 | no |
+| Scalar FP | O2 | 2096.9 | 2058.0 | 287.7 | no |
+| Game update | O0 | 353.1 | 353.6 | 293.6 | yes |
+| Game update | O2 | 2576.7 | 2070.3 | 316.2 | no |
+| Local interface dispatch | O0 | 293.8 | 303.4 | 186.1 | yes |
+| Local interface dispatch | O2 | 802.5 | 668.6 | 196.4 | no |
+
+Optimized game compilation improves **19.7%**, interface compilation **16.7%**,
+and vector compilation **9.3%**. Fixed-array/scalar improvements are only
+1–2%. A paired bootstrap of mean milliseconds saved (10,000 resamples,
+seed 1001, five pairs) gives respectively [499.69, 514.33], [129.73, 136.62],
+and [44.23, 54.83]. This small local sample establishes a useful signal, not
+portable speed guarantees. O0 is unaffected by the changed optimization path;
+full-build variation ranges from -12 to +10 ms, including a 9.7 ms interface
+increase. That result is retained rather than advertised as universal speedup.
+Generated C++ is byte-identical for all ten before/after rows; all five O2
+workloads produce matching complete stdout in both compilers and both C++
+twins. O0 runtime execution is outside this compile-time runner.
+
+Sampling the game O2 compiler showed repeated safety-analysis/replay state
+copies and allocator traffic. Block transfer copied all scalar/place facts
+and evidence before **every** instruction even though only `Invoke` failure
+edges consume a pre-instruction snapshot. Retaining that one required snapshot
+is the entire compiler change. State transfer, widening, call summaries,
+barriers, proof precision, failure semantics, independent replay, and backend
+verification are unchanged. The focused regression distinguishes success-state
+facts from failure-state facts; it is not a relaxation of verification.
+
+The disposable `project_measure.py` beside the evidence measures the same
+game-update source as a one-target GTI project and a one-translation-unit C++
+Makefile. After one warmup, five interleaved repetitions measure unchanged
+builds and unique loop-count edits. Edits happen outside the timed interval,
+after a timestamp tick so Make's timestamp resolution cannot create a false
+hit; content is never recycled from an earlier cache key. The corrected record
+is `project-fresh/report.json` (the earlier `project` probe reused two content
+keys and coarse timestamps and is **not** edited-build evidence).
+
+| Project operation | O0 GTI / C++ ms | O2 GTI / C++ ms |
+| --- | ---: | ---: |
+| No-op | 36.7 / 7.7 | 33.3 / 7.8 |
+| Actual source edit | 391.4 / 328.0 | 2024.6 / 350.4 |
+
+GTI's no-op cache is already useful. A genuinely new edit still pays compiler
+and native work; no-op latency is not evidence of incremental semantic reuse.
+These are one-file edits, not a large-project dependency invalidation study.
+
+### Remaining cost and stopping rule
+
+The target is **not generally met**: six of ten rows remain outside the band.
+Post-change game O2 spends about 1.86 s through C++ emission and 0.20 s in
+native compilation/linking; fixed-array O2 is about 1.44 s and 0.71 s. Thus the
+native backend alone does not explain the gaps. Fixed-array/scalar fixtures
+include `std/string` for reporting and emit a much larger library surface than
+their lightweight C++ printing twins. This is a real current idiomatic-library
+cost, not evidence that arrays intrinsically require a second of analysis.
+
+The retained `compiler.sample.txt` and `compiler-O0.sample.txt` profiles show
+two remaining clients: repeated closed-call analysis/replay, and backend
+representation admission, plan construction, text-capability checks and
+library emission. Existing `--time-trace` covers frontend stages only; it must
+not be mistaken for a complete optimizer/backend profile. Profiling overhead
+is excluded from the timing table. No verification bypass, persistent semantic
+cache, demand-driven instantiation redesign, or backend authority shortcut was
+introduced. Further reuse must be scoped to immutable validated inputs and
+must preserve independent replay, not cache a mutable "already verified" bit.
+
+Stop this pass after the small measured fix and correctness gates. Reopen with
+a representative application/include graph demonstrating user-visible delay,
+then test a disposable bounded reuse/emission hypothesis before adding
+infrastructure. If the legal available saving is too small, or requires a new
+incremental compiler/large architectural subsystem, record measured defer and
+the remaining latency. Do not chase C++ parity through safety compromises or
+speculative machinery. This is a **bounded investigation checkpoint**, not a
+claim of an ultimate practical/physical floor or generally stable compilation.
+
+Validation: all Release targets built with twelve host jobs; nine focused
+optimizer/analysis, lowered/backend, and measurement gates passed, then all
+355 CTest gates passed with four test jobs (1914.30 s). This includes corpus,
+differential, optimizer native-evidence, failure/cleanup, runtime, and editor
+gates. All 390 first-party C++ files pass clang-format and the scoped diff
+passes whitespace checks. The full-run log is `full-tests.log` beside the
+measurement records. No additional non-gating language audit or clean local
+installation was run for this internal storage-only change. These are local
+arm64 macOS results, not Linux/Windows evidence. `VERSION` is unchanged;
+publication and installation remain held.
+
 ## O-MEASURE-02: exact-head runtime facility campaign (2026-10-01)
 
 This follow-up starts at reconciled, clean `main` `72a8087a`, after
