@@ -1108,8 +1108,19 @@ no intermediate object and no invented copy or move. Because C++ initializes
 members in declaration order, the proof is whole-constructor: normally every
 declared field must have its own explicit initializer in declaration order, each
 construction argument must be either an exact copy-load of one scalar
-constructor parameter or an exact source scalar literal, and the entry block
-must contain nothing but the named instructions and metadata boundaries.
+constructor parameter or an exact source scalar literal, and the successful
+instruction sequence must contain nothing but the named instructions and
+metadata boundaries. Conservative constructor `Invoke` edges may split that
+sequence only when an acyclic, exact-target MIR proof excludes every local
+failure and unknown propagation in the called constructor chain. Each alternate
+must propagate its matching failure record, either directly or after only an
+exact cleanup-free generated parameter-shell Drop/Failure-boundary schedule;
+active or user cleanup, alternate control flow, mismatched identities and
+unaccounted blocks fail closed. The original MIR edges remain intact. Direct
+native member initialization is
+equivalent because those alternates cannot execute and the complete field,
+argument, publication and cleanup order is still checked. Terminal containment
+of a checked operation alone is not sufficient for this stronger proof.
 A failure-free scalar parameter-to-field constructor is also a valid ordinary
 target: its complete Load/Initialize/full-expression schedule proves the native
 overload, even when its conservative failure summary is set. Floating and
