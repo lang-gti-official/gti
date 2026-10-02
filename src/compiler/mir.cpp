@@ -4102,7 +4102,8 @@ validFailureInstructionShape(const MirInstruction &instruction) {
             instruction.elementCleanup &&
             (instruction.intrinsic == IntrinsicKind::StorageDestroy ||
              instruction.intrinsic == IntrinsicKind::PrefixStoragePop ||
-             instruction.intrinsic == IntrinsicKind::PrefixStorageErase));
+             instruction.intrinsic == IntrinsicKind::PrefixStorageErase ||
+             instruction.intrinsic == IntrinsicKind::OptionalStorageReset));
   case FailurePropagationKind::Count:
     return false;
   }

@@ -328,6 +328,9 @@ and hostile-native-macro isolation and verifies bounds failures at O0/O3.
 Both floating widths additionally check gradual underflow, ties-to-even and
 non-contracted arithmetic across packed chunks and tails. Ordinary aggregate,
 vector-clone and optional composition require no nominal compiler rule.
+Nonempty `vector<simd<float, 4>>` growth and shrink check every lane, exact
+reductions, and retained logical size while exercising structural relocation
+through the same ordinary fixed-array representation.
 Failure cleanup observes every destination lane after an invalid `copy_to`
 range to prove that validation precedes all writes. Source diagnostics retain
 the ordinary immutable-receiver and overlapping-mutable-borrow rules.

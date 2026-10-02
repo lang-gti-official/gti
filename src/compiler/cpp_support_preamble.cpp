@@ -378,9 +378,6 @@ void writeCppSupportPreamble(std::ostream &output,
   const bool usesManagedThreads = features.managedThreads;
   const bool usesAtomics = features.atomics;
   const bool usesMutexes = features.mutexes;
-  if (features.simd) {
-    output << "#include <cstring>\n";
-  }
   if (usesAtomics) {
     output << "#include <atomic>\n";
   }
@@ -1440,6 +1437,21 @@ public:
   }
 
   [[nodiscard]] T &unchecked_read_mut() { return *std::launder(slot()); }
+
+  template <typename Cleanup>
+  [[nodiscard]] bool reset_with_failure(::gti_failure_record_v1 *record,
+                                        Cleanup cleanup) {
+    if (!engaged_) {
+      return true;
+    }
+    // Retire engagement before executing user cleanup, just as sparse and
+    // prefix storage retire the selected element before its destructor.
+    engaged_ = false;
+    T *element = std::launder(slot());
+    const bool success = cleanup(*element, record, false);
+    std::destroy_at(element);
+    return success;
+  }
 
   void reset() {
     if (engaged_) {

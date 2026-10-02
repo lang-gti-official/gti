@@ -368,10 +368,81 @@ int main() {
          "compiler capability identity");
 }
 
+void testOptionalResetCleanup() {
+  const auto frontend = lang::Frontend().analyze(
+      "optional-reset-cleanup.gti", R"(
+#include <std/optional>
+class Resource {
+  int divisor;
+public:
+  Resource(int divisor) : divisor(divisor) {}
+  ~Resource() { int checked = 12 / this.divisor; }
+};
+void destroy(int divisor) {
+  mut std::optional<Resource> slot{Resource(divisor)};
+  slot.reset();
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "fallible payload reset must have independently verified MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  bool found = false;
+  for (const auto address : lang::enumerateMirBodyAddresses(frontend.mir)) {
+    const auto *body = lang::findMirBody(frontend.mir, address);
+    for (const auto &block : body->blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.intrinsic != lang::IntrinsicKind::OptionalStorageReset)
+          continue;
+        found = true;
+        expect(instruction.elementCleanup &&
+                   instruction.definedFailure.propagation ==
+                       lang::FailurePropagationKind::Destructor &&
+                   instruction.localFailureSites.empty() &&
+                   instruction.definedFailure.localOrigins.empty() &&
+                   block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                   block.terminator.invokeInstruction == instruction.id,
+               "reset invokes exact payload cleanup without inventing a new "
+               "failure identity");
+        for (int mutation = 0; mutation != 3; ++mutation) {
+          auto forged = frontend.mir;
+          auto *changedBody = lang::findMirBody(forged, address);
+          auto &changedBlock = changedBody->blocks[block.id - 1];
+          for (auto &changed : changedBlock.instructions) {
+            if (changed.id != instruction.id)
+              continue;
+            if (mutation == 0)
+              changed.elementCleanup.reset();
+            else if (mutation == 1)
+              changed.definedFailure.propagation =
+                  lang::FailurePropagationKind::None;
+            else {
+              changedBlock.terminator.kind = lang::MirTerminatorKind::Goto;
+              changedBlock.terminator.invokeInstruction = 0;
+              changedBlock.terminator.elseTarget = 0;
+              changedBlock.terminator.failureRecord = 0;
+            }
+          }
+          expect(!lang::verifyMirProgram(forged).valid(),
+                 "reset cannot erase payload cleanup, failure propagation, "
+                 "or the caller cleanup edge");
+        }
+      }
+    }
+  }
+  expect(found, "the source reset must reach the trusted storage capability");
+  const auto artifact = gti_test::emitCpp(frontend);
+  expect(artifact.contents.find(".reset_with_failure(") != std::string::npos,
+         "the backend must consume the verified element cleanup recipe");
+}
+
 } // namespace
 
 int main() {
   testOptionalCompilerContract();
+  testOptionalResetCleanup();
   if (failures != 0) {
     std::cerr << failures << " optional compiler test(s) failed\n";
     return 1;
