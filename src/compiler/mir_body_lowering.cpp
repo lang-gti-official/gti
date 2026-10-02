@@ -5054,6 +5054,94 @@ private:
     emittedValues.insert(value.id);
   }
 
+  void emitSpecialMemberPackConstruction(const HirValue &value,
+                                         const HirValue &pack) {
+    const bool moved = value.constructorKind == ConstructorKind::Move;
+    const auto local = localSymbols.find(pack.symbol);
+    const MirPlace *root = output.findPlace(
+        local == localSymbols.end() ? 0 : placeForBinding(local->second));
+    const bool selectedSpecialMember =
+        moved || value.constructorKind == ConstructorKind::Copy;
+    if (!selectedSpecialMember || value.constructorTarget || value.callPlan ||
+        value.info.type.kind != SemanticType::Class ||
+        value.info.traits.containsBorrowedState ||
+        !value.definedFailure.empty() ||
+        pack.kind != HirValueKind::PackExpansion ||
+        pack.info.type.kind != SemanticType::TypePack ||
+        !pack.info.type.concretePack || pack.info.type.arguments.size() != 1 ||
+        pack.info.type.arguments.front() != value.info.type ||
+        pack.packExpansionElements.size() != 1 || root == nullptr ||
+        root->root != MirPlaceRootKind::Binding || !root->projections.empty() ||
+        root->type != pack.info.type || root->symbol != pack.symbol ||
+        !root->key || value.parameterTypes.size() != 1 ||
+        value.parameterTypes.front().kind != SemanticType::Reference ||
+        value.parameterTypes.front().arguments.size() != 1 ||
+        value.parameterTypes.front().arguments.front() != value.info.type) {
+      valid = false;
+      return;
+    }
+    const HirPackExpansionElement &element = pack.packExpansionElements.front();
+    if (element.type != value.info.type ||
+        element.kind != (moved ? HirCallInputKind::MoveValue
+                               : HirCallInputKind::CopyValue) ||
+        (moved ? !element.traits.movable : !element.traits.copyable)) {
+      valid = false;
+      return;
+    }
+    // A generated special member transfers one exact element; it has no
+    // ordinary constructor body or by-value parameter to prepare. Use the
+    // existing copy/move operation and canonical pack-element lifetime.
+    PlaceKey key = *root->key;
+    key.projections.push_back(
+        {.kind = PlaceProjectionKind::ConstantIndex, .index = 0});
+    MirPlace projected = *root;
+    projected.id = 0;
+    projected.projections.push_back(
+        {.kind = MirProjectionKind::PackElement, .constantIndex = 0});
+    projected.type = element.type;
+    projected.traits = element.traits;
+    projected.sourceValue = pack.id;
+    projected.key = key;
+    const MirPlaceId place = appendPackElementPlace(std::move(projected));
+    MirInstruction transfer{.kind = moved ? MirInstructionKind::Move
+                                          : MirInstructionKind::Load,
+                            .hirValue = value.id,
+                            .result = resultFor(value),
+                            .operands = {{.kind = moved ? MirOperandKind::Move
+                                                        : MirOperandKind::Copy,
+                                          .place = place,
+                                          .type = element.type}},
+                            .sourceLocation = value.sourceLocation,
+                            .info = value.info};
+    if (moved) {
+      transfer.ownership =
+          OwnershipEvent{.kind = OwnershipEventKind::Move,
+                         .place = key,
+                         .before = OwnershipStateSet::Available,
+                         .after = OwnershipStateSet::Moved};
+      const MirDropObligationId sourceDrop =
+          dropObligationForLocalPlace(output.findPlace(place));
+      const MirDropObligationId targetDrop = dropObligationForValue(value.id);
+      if (targetDrop != 0) {
+        if (sourceDrop == 0) {
+          valid = false;
+          return;
+        }
+        appendLifecycle(transfer, {.kind = MirLifecycleEventKind::Move,
+                                   .source = sourceDrop,
+                                   .target = targetDrop});
+        registerTemporary(targetDrop);
+      } else if (sourceDrop != 0 && output.findDropObligation(sourceDrop)
+                                        ->dropType.requiresActiveCleanup) {
+        valid = false;
+        return;
+      }
+    } else {
+      (void)initializeValueLifecycle(transfer, value);
+    }
+    (void)appendInstruction(std::move(transfer), false);
+  }
+
   void emitConstruct(const HirValue &value) {
     if (value.callPlan && value.constructorKind == ConstructorKind::Ordinary) {
       // Ordinary constructors own their parameters just like functions.
@@ -5064,6 +5152,14 @@ private:
       return;
     }
     const std::vector<HirValueId> arguments = callArgumentValues(value);
+    if (value.constructorKind != ConstructorKind::Ordinary &&
+        arguments.size() == 1) {
+      const HirValue *input = findValue(arguments.front());
+      if (input != nullptr && input->kind == HirValueKind::PackExpansion) {
+        emitSpecialMemberPackConstruction(value, *input);
+        return;
+      }
+    }
     if (std::any_of(arguments.begin(), arguments.end(),
                     [&](HirValueId argument) {
                       const HirValue *input = findValue(argument);

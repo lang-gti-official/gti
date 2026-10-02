@@ -5965,6 +5965,116 @@ int main() { return 0; }
          "specialization to make its dependent local symbol valid");
 }
 
+void testPackSpecialMemberConstruction() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/pack_special_member_construction.gti";
+  const auto result = lang::Frontend().analyze(fixture, std::nullopt,
+                                               {standardLibraryPrelude()}, {},
+                                               {standardLibraryRoot()});
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "exact generated special members must consume concrete pack elements "
+         "without pretending to invoke an ordinary constructor");
+  if (!result.canGenerateCode()) {
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return;
+  }
+  expect(!gti_test::emitCppText(result).empty(),
+         "special-member pack construction must emit from verified MIR");
+  std::size_t copies = 0;
+  std::size_t moves = 0;
+  for (const auto &function : result.mir.functionInstances()) {
+    const auto *hir = result.hir.findFunctionInstance(function.id);
+    if (hir == nullptr || hir->source == nullptr ||
+        (hir->source->name().lexeme != "construct" &&
+         hir->source->name().lexeme != "copies"))
+      continue;
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.operands.size() != 1 ||
+            (instruction.kind != lang::MirInstructionKind::Move &&
+             instruction.kind != lang::MirInstructionKind::Load))
+          continue;
+        const auto *place =
+            function.body.findPlace(instruction.operands.front().place);
+        if (place == nullptr || place->projections.size() != 1 ||
+            place->projections.front().kind !=
+                lang::MirProjectionKind::PackElement)
+          continue;
+        const bool moved = instruction.kind == lang::MirInstructionKind::Move;
+        copies += !moved;
+        moves += moved;
+        expect(instruction.callSite == 0 && !instruction.constructorTarget &&
+                   instruction.info.type == place->type &&
+                   instruction.operands.front().kind ==
+                       (moved ? lang::MirOperandKind::Move
+                              : lang::MirOperandKind::Copy),
+               "generated pack construction is an exact existing value "
+               "copy/move, not a staged ordinary call");
+        if (!moved)
+          continue;
+        expect(instruction.lifecycle.size() == 1 &&
+                   instruction.lifecycle.front().kind ==
+                       lang::MirLifecycleEventKind::Move &&
+                   instruction.lifecycle.front().source != 0 &&
+                   instruction.lifecycle.front().target != 0,
+               "owning special-member pack movement must transfer the exact "
+               "entry element into its returned value lifetime");
+        auto missingTransfer = function.body;
+        missingTransfer.blocks[block.id - 1]
+            .instructions[&instruction - block.instructions.data()]
+            .lifecycle.clear();
+        expect(!lang::verifyMirBody(missingTransfer, function.id).valid(),
+               "removing the owning pack-to-value transfer must be rejected");
+        auto wrongSource = function.body;
+        auto &forged =
+            wrongSource.blocks[block.id - 1]
+                .instructions[&instruction - block.instructions.data()];
+        forged.operands.front().kind = lang::MirOperandKind::Copy;
+        expect(!lang::verifyMirBody(wrongSource, function.id).valid(),
+               "a pack move cannot be forged into a copy of a move-only owner");
+      }
+    }
+  }
+  expect(copies == 2 && moves == 1,
+         "copyable packs remain reusable while an owning pack moves once");
+
+  const auto trivial =
+      lang::Frontend().analyze("cleanup-free-pack-special.gti", R"(
+class Item {
+  int number;
+public:
+  Item(int initial) : number(initial) {}
+  Item(Item& other) = delete;
+  Item(Item&& other) = default;
+  int value() { return this.number; }
+};
+T construct<T, Args...>(Args... args) { return T(args...); }
+int main() { Item item = construct<Item>(Item(7)); return item.value() - 7; }
+)",
+                               {standardLibraryPrelude()});
+  expect(trivial.canGenerateCode() && !gti_test::emitCppText(trivial).empty(),
+         "cleanup-free pack movement must not require an active result drop");
+
+  const auto reused = lang::Frontend().analyze("reused-special-pack.gti", R"(
+#include <std/string>
+void twice<T, Args...>(Args... args) {
+  T first = T(args...);
+  T second = T(args...);
+}
+int main() { twice<std::string>(std::string("owned")); return 0; }
+)",
+                                               {standardLibraryPrelude()}, {},
+                                               {standardLibraryRoot()});
+  expect(!reused.canGenerateCode() &&
+             hasDiagnostic(reused.diagnostics,
+                           "Value 'args' has already been moved") &&
+             hasRelatedDiagnostic(reused.diagnostics,
+                                  "Concrete generic instance requested here"),
+         "special construction must not bypass whole-pack use-after-move "
+         "diagnostics or their concrete-instance context");
+}
+
 void testConstructorLocalTypeGenerics() {
   const auto borrowedFixture = std::filesystem::path(__FILE__).parent_path() /
                                "fixtures/forward_list_emplacement_borrowed.gti";
@@ -10256,6 +10366,7 @@ constexpr NamedTest kTests[] = {
     {"testCallableConceptCapabilities", testCallableConceptCapabilities},
     {"testSymbolicAutoLocalBinding", testSymbolicAutoLocalBinding},
     {"testConstructorLocalTypeGenerics", testConstructorLocalTypeGenerics},
+    {"testPackSpecialMemberConstruction", testPackSpecialMemberConstruction},
     {"testValueGenerics", testValueGenerics},
     {"testDependentTypeDefaultConstraints",
      testDependentTypeDefaultConstraints},

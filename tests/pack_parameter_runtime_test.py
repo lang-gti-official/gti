@@ -36,6 +36,7 @@ def main():
     forwarded = "pack_parameter_lifetimes"
     constructed = "pack_constructor_lifetimes"
     owner = "owner_parameter_pack_cleanup"
+    special = "pack_special_member_construction"
     cases = {
         owner: [
             (0, "2\n1\n9\n", ""),
@@ -56,6 +57,11 @@ def main():
         "pack_parameter_copies": [(0, "11\n22\n11\n22\n", "")],
         "pack_parameter_borrows": [(0, "4\n", "")],
         "pack_constructor_copies": [(0, "11\n22\n11\n22\n", "")],
+        special: [
+            (0, "7\n9\n", ""),
+            (70, "7\n9\n", report(special, 30)),
+            (70, "7\n9\n", report(special, 33)),
+        ],
         constructed: [
             (0, "payload\n2\n1\n7\n9\n", ""),
             (70, "payload\n2\n1\n9\n", report(constructed, 11)),
