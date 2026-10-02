@@ -178,6 +178,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testPackSpecialMemberConstruction",
+      "suite": "declarations"
+    },
+    {
       "name": "testValueGenerics",
       "suite": "declarations"
     },

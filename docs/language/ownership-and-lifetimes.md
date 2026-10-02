@@ -981,6 +981,12 @@ pack elements. A pack containing any move-only element is consumed as one unit
 by its first `values...` expansion, so forwarding it again is a use-after-move
 error. Copyable packs may still be forwarded repeatedly; individual pack
 elements cannot yet be named or moved separately.
+Exact generated copy/move construction through a generic helper such as
+`T construct<T, Args...>(Args... args) { return T(args...); }` follows the same
+rule: a single move-only `T` is moved from its pack once, while a copyable `T`
+is copied and may be constructed again from that pack. This is ordinary
+generated transfer, not a user-defined move constructor or forwarding-reference
+facility.
 Mutable-reference elements likewise permit repeated exact forwarding: each
 element retains an exclusive entry capability over its caller-owned referent,
 not ownership of that referent. Ordinary call-site exclusivity rules reject

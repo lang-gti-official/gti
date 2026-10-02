@@ -1510,8 +1510,22 @@ an adjacent `Move`/`CallInput` pair whose lifecycle event transfers the exact
 element obligation into the prepared parameter. Normal and failure cleanup
 drain only remaining active elements in reverse order, retaining the ordinary
 primary/secondary defined-failure protocol. Direct constructor-pack owning
-inputs still need the prepared-parameter invocation contract completed; this
-does not claim complete constructor forwarding.
+inputs use the ordinary prepared-parameter invocation contract when semantic
+selection names an ordinary constructor body.
+
+An exact one-element concrete pack selecting a generated copy/move constructor
+uses the existing `Load(Copy)` or `Move` operation on its canonical
+`PackElement`, rather than pretending the special member is an ordinary call.
+The selected reference parameter and concrete element/result type must agree;
+the element's retained HIR copy/move role remains authoritative. An owning move
+transfers the entry element obligation into the result's value obligation;
+copying independently initializes the result and leaves the pack available.
+Cleanup-free results retain the normal no-value-drop convention, while the
+moved-from cleanup-free parameter still has its harmless lexical lifetime.
+The original construction expression supplies result provenance and the
+full-expression boundary. No native constructor lookup or new escape rule is
+introduced; borrowed-state pack elements remain outside the existing by-value
+pack contract.
 
 An active-cleanup nominal receiver's `Move` initializes its existing Value
 obligation from the source binding. Its `CallInput(Receiver, MoveValue)` aliases

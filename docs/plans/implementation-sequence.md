@@ -1102,6 +1102,13 @@ analysis, HIR, MIR, and the backend.
   diagnostic spans, invalid reverse order/escape, and forged MIR input order.
   This does not shorten temporary loans, permit simultaneous mutable aliases,
   or create a second backend execution authority.
+- **Landed generated special-member pack transfer:** one concrete pack element
+  selected for exact generated copy/move construction lowers to the canonical
+  element `Load(Copy)`/`Move`, not an ordinary constructor call. Generic
+  construction helpers now preserve owning entry-to-result transfer and
+  cleanup-free result lifetimes; copyable packs remain reusable. User-defined
+  payloads cover return transport, later-argument and callee failure cleanup,
+  while malformed transfer/copy and repeated move-only expansion remain invalid.
 - **Landed program-authority slice:** Semantics preserves ordered configured
   prelude roots and lexical dependency-first/source declaration order in one
   exact data-only/executable-step plan. `GTI-S2068` rejects a later-storage
