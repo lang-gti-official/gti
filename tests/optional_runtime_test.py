@@ -107,7 +107,7 @@ def main() -> int:
             for optimization in ("O0", "O3"):
                 mode = f"{standard}/{optimization}"
                 for fixture_name in ("optional_value.gti", "optional_lifecycle.gti",
-                                     "optional_clone.gti"):
+                                     "optional_clone.gti", "optional_nested.gti"):
                     executable = root / f"{fixture_name}-{standard}-{optimization}"
                     built = run(
                         [

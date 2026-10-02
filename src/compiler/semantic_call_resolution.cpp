@@ -891,6 +891,8 @@ auto SemanticVisitor::Impl::satisfiesAtomicConstraint(
     return argument == SemanticType::Bool || isInteger(argument);
   case GenericConstraintKind::CopyConstructible:
     return typeTraits(argument).copyable;
+  case GenericConstraintKind::MoveConstructible:
+    return typeTraits(argument).movable;
   case GenericConstraintKind::Copyable: {
     const SemanticTypeTraits traits = typeTraits(argument);
     return traits.copyable && traits.copyAssignable;

@@ -216,6 +216,10 @@ The current structural capability set is intentionally small:
 
 - `copy_constructible<T>` requires an ordinary GTI copy construction to be
   available; unlike `copyable<T>`, it does not require copy assignment;
+- `move_constructible<T>` requires ordinary GTI move construction, without
+  requiring move assignment. `movable<T>` still requires both operations.
+  Construction-only owners can therefore nest without acquiring replacement
+  or borrow-reseating permission; the ordinary ownership checks still apply;
 - `relocatable<T>` requires structurally movable, borrow-free state, excluding
   address-stable private host state; it does not require assignment;
 - `bitwise_relocatable<T>` additionally requires passive scalar/array state or

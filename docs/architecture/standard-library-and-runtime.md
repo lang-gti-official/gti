@@ -265,7 +265,11 @@ execute user code and report its ordinary `allocation_failure` /
 
 The public class owns empty/engaged policy, checked access, reset/emplacement,
 and move-only ownership. Moving transfers the live payload and retires the
-source ownership state exactly once. Copy construction and both assignment
+source ownership state exactly once. Its payload requires move construction,
+not assignment, so construction-only owners can nest. This uses the ordinary
+`std::move_constructible` concept over the existing semantic movement fact;
+`std::movable` retains its stronger assignment requirement. Copy construction
+and both assignment
 forms fail closed in the current slice; GTI cannot yet provide a source-defined
 special-member assignment body that conditionally destroys or constructs the
 private slot. Applications replace a value through `reset()` or `emplace()`.

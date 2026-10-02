@@ -28,6 +28,7 @@ enum class GenericConstraintKind : std::uint8_t {
   EqualityComparable,
   RelationallyOrdered,
   AtomicScalar,
+  MoveConstructible,
   Count,
 };
 
@@ -83,7 +84,7 @@ struct CompilerStructuralConstraintRecord {
   std::size_t arity;
 };
 
-inline constexpr std::array<GenericConstraintKind, 17> genericConstraintKinds{{
+inline constexpr std::array<GenericConstraintKind, 18> genericConstraintKinds{{
     GenericConstraintKind::Numeric,
     GenericConstraintKind::SignedNumeric,
     GenericConstraintKind::Integral,
@@ -93,6 +94,7 @@ inline constexpr std::array<GenericConstraintKind, 17> genericConstraintKinds{{
     GenericConstraintKind::CopyConstructible,
     GenericConstraintKind::Copyable,
     GenericConstraintKind::Movable,
+    GenericConstraintKind::MoveConstructible,
     GenericConstraintKind::Relocatable,
     GenericConstraintKind::BitwiseRelocatable,
     GenericConstraintKind::Transferable,
@@ -103,7 +105,7 @@ inline constexpr std::array<GenericConstraintKind, 17> genericConstraintKinds{{
     GenericConstraintKind::AtomicScalar,
 }};
 
-inline constexpr std::array<CompilerConstraintRecord, 17> compilerConstraints{{
+inline constexpr std::array<CompilerConstraintRecord, 18> compilerConstraints{{
     {"numeric", GenericConstraintKind::Numeric},
     {"signed_numeric", GenericConstraintKind::SignedNumeric},
     {"integral", GenericConstraintKind::Integral},
@@ -111,6 +113,7 @@ inline constexpr std::array<CompilerConstraintRecord, 17> compilerConstraints{{
     {"unsigned_integral", GenericConstraintKind::UnsignedIntegral},
     {"floating_point", GenericConstraintKind::FloatingPoint},
     {"copy_constructible", GenericConstraintKind::CopyConstructible},
+    {"move_constructible", GenericConstraintKind::MoveConstructible},
     {"copyable", GenericConstraintKind::Copyable},
     {"movable", GenericConstraintKind::Movable},
     {"relocatable", GenericConstraintKind::Relocatable},

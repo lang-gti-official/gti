@@ -39,6 +39,16 @@ select a bulk relocation. It is independent of assignability, transfer/share,
 and the MIR defined-failure proof: an empty-destination transfer does not prove
 that replacing a live destination can skip cleanup.
 
+Lifecycle, cleanup, and transfer/share queries distinguish an exact type cycle
+from growth of a generic substitution. A closed non-generic declaration breaks
+that substitution dependency: `Wrapper<Envelope>` containing an `Envelope`
+which itself contains `Wrapper<Leaf>` is not a growing generic recurrence.
+The queries still inspect the leaf's movement, cleanup and concurrency facts,
+and retain exact-cycle checks across that boundary. Uninterrupted nondecreasing
+generic recurrence remains conservatively bounded. MIR independently derives
+relocation from concrete instance identities; it does not accept a semantic
+trait simply because a wrapper's name appeared earlier in a query.
+
 ## Analysis Order
 
 `SemanticVisitor::check(const Program&)` is staged because later facts depend

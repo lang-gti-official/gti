@@ -372,6 +372,11 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
         "The required concept needs an available copy constructor; copy "
         "assignment is not required.");
     break;
+  case GenericConstraintKind::MoveConstructible:
+    diagnostic.hints.emplace_back(
+        "The required concept needs available move construction; move "
+        "assignment is not required.");
+    break;
   case GenericConstraintKind::Copyable:
     diagnostic.hints.emplace_back(
         "The required concept needs available copy construction and "
