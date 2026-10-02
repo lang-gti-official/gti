@@ -60,6 +60,11 @@ def main() -> int:
 
     compiler = pathlib.Path(sys.argv[1]).resolve()
     fixtures = pathlib.Path(sys.argv[2]).resolve()
+    optional_source = fixtures.parents[1] / "stdlib" / "std" / "optional.gti"
+    read_line = next(
+        index + 1 for index, line in enumerate(optional_source.read_text().splitlines())
+        if "return gti_internal::optional_storage_read(this.storage);" in line
+    )
     with tempfile.TemporaryDirectory(prefix="gti-optional-") as temporary:
         root = pathlib.Path(temporary)
         if not expect_rejected(
@@ -85,6 +90,13 @@ def main() -> int:
             return 1
         if not expect_rejected(
             compiler,
+            fixtures / "optional_clone_rejected.gti",
+            "error[GTI-S2029]: Generic arguments do not satisfy any alternative in concept 'std::cloneable'",
+            root / "clone-rejected",
+        ):
+            return 1
+        if not expect_rejected(
+            compiler,
             fixtures / "optional_live_borrow_rejected.gti",
             "while a reference borrowed from it may still be live",
             root / "borrow-rejected",
@@ -94,7 +106,8 @@ def main() -> int:
         for standard in ("c++20", "c++23"):
             for optimization in ("O0", "O3"):
                 mode = f"{standard}/{optimization}"
-                for fixture_name in ("optional_value.gti", "optional_lifecycle.gti"):
+                for fixture_name in ("optional_value.gti", "optional_lifecycle.gti",
+                                     "optional_clone.gti"):
                     executable = root / f"{fixture_name}-{standard}-{optimization}"
                     built = run(
                         [
@@ -149,7 +162,7 @@ def main() -> int:
                     return fail(f"build wrong-state {mode}", built)
                 executed = run([str(wrong_state)])
                 expected_stderr = (
-                    "<std/optional>:69: runtime error[GTI-R0008]: "
+                    f"<std/optional>:{read_line}: runtime error[GTI-R0008]: "
                     "empty_owner_access in member_access\n"
                 )
                 if (

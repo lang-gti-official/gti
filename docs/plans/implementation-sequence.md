@@ -56,8 +56,13 @@ version changes use combined `mir-v82`/`mir-body-v69`; integrated validation
 is in progress, including nonempty SIMD-vector growth and shrinkage. The
 optional consistency audit also reproduced and repaired reset losing caller
 cleanup on a failing payload destructor, using the existing MIR removal
-recipe. Nested optional movement and explicit cloning remain open clients;
-the campaign is not complete.
+recipe. Optional cloning now delegates an engaged payload to ordinary
+`std::clone`, with empty-state, owned string/vector, scalar and unrelated
+user-defined clone policy checks across C++20/23, O0/O1/O3, no-elide and
+sanitizers. Nested optional movement and other wrapper combinations remain open
+clients. A further reduced constructor-pack test exposes invalid MIR when an
+owned pack supplies an exact move-constructor argument; repair is in progress.
+The campaign is not complete.
 No custom copy/move constructor bodies,
 module implementation, weakened borrow rules, or unchecked failure paths are
 part of this campaign.

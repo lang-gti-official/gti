@@ -25,7 +25,7 @@
     "stdlib/std/memory.gti": "202d23c12c1eef2c2fa743a47dff76f4eb315efabd7fab6c261dfe6ece2a200c",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2fe329a8585d1eee0a1be02f42b9cb6d388c80e898a3f58d34e9de12989388fb",
-    "stdlib/std/optional.gti": "beb336c90a984da5ec6598f19dc05bc683756859e9cea553c6e3bb1d54ed90a2",
+    "stdlib/std/optional.gti": "51ec7c059500fcb92015a4f23dbff963ec761aac8dcf5591474982ff681dc4c5",
     "stdlib/std/paired_span.gti": "3657f5994dd7880c8de9796e1c6c08bba5f507b492406eb685d529c1c6b0e3ae",
     "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
     "stdlib/std/queue.gti": "e7181505d8e12e151310ac46075b33cdc8095b4f727457c11603de1887e4c2ff",
@@ -637,6 +637,13 @@
       "id": "optional",
       "mode": "run",
       "source": "tests/fixtures/optional_value.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "optional-clone",
+      "mode": "run",
+      "source": "tests/fixtures/optional_clone.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -1913,10 +1920,10 @@
       "id": "optional.executable",
       "source": "stdlib/std/optional.gti",
       "status": "executable",
-      "operations": ["std::optional::emplace", "std::optional::has_value", "std::optional::operator bool", "std::optional::operator*", "std::optional::operator->", "std::optional::optional", "std::optional::reset", "std::optional::value", "std::optional::value_or"],
-      "case_ids": ["optional"],
+      "operations": ["std::optional::clone", "std::optional::emplace", "std::optional::has_value", "std::optional::operator bool", "std::optional::operator*", "std::optional::operator->", "std::optional::optional", "std::optional::reset", "std::optional::value", "std::optional::value_or"],
+      "case_ids": ["optional", "optional-clone"],
       "required_instantiations": ["std::optional<int32_t>", "std::optional<move_only>"],
-      "evidence": ["tests/fixtures/optional_lifecycle.gti", "tests/fixtures/optional_value.gti", "tests/fixtures/optional_constructor_failure.gti", "tests/constructor_field_publication_test.py", "tests/optional_compiler_tests.cpp", "tests/optional_runtime_test.py", "stdlib/std/optional.gti"]
+      "evidence": ["tests/fixtures/optional_lifecycle.gti", "tests/fixtures/optional_value.gti", "tests/fixtures/optional_clone.gti", "tests/fixtures/optional_constructor_failure.gti", "tests/fixtures/optional_reset_failure.gti", "tests/constructor_field_publication_test.py", "tests/optional_compiler_tests.cpp", "tests/optional_runtime_test.py", "stdlib/std/optional.gti"]
     },
     {
       "id": "paired-span.executable",
