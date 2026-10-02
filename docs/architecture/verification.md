@@ -2,6 +2,34 @@
 
 Status: Current test and audit structure.
 
+## Lambda error mappers
+
+`expected_transform_error` covers exact typed lambda selection, named and
+capturing environments, semantic rejection of invalid mapper signatures, and
+production MIR emission. Mutations reject wrong callable identities/signatures,
+missing receivers, erased capture or lifetime records, and forged prepared
+receiver roles/call sites. `expected_transform_error_lsp` checks lambda success,
+precise invalid-parameter diagnostics, and recovery in successive document
+generations.
+
+`expected_transform_error_runtime` retains the namespace-function cases and
+adds inline/named lambdas, repeated non-consuming environment use, generic and
+void-success mapping, eager owned captures, passive class copies and trivial
+environment reuse in loops, move-only error inputs and mapped
+results, chaining, propagation, and cleanup failures. Its C++20/C++23 O0/O1/O3,
+no-elide, and ASan/UBSan matrix asserts exact output and failure behavior.
+No parser, formatter, or Tree-sitter syntax changes are needed: this extends
+semantic selection for existing lambda and member-call syntax.
+
+The final 2026-10-03 macOS arm64 Release/Ninja build (AppleClang 21,
+LLVM 22.1.8) passed all 359 CTest gates in 1,331.96 seconds with six workers.
+The mapper matrix includes 32 builds and 368 executions; all 11 staged SDK
+consumer checks also passed. Formatting checks all 390 first-party C/C++ files,
+and patch whitespace checks pass. Earlier capture-loop storage reuse and
+consuming-receiver alias-cycle failures were fixed before this complete run;
+the existing consuming-lambda regressions remain enabled. This is local macOS
+evidence, not Linux/Windows execution or an optional full language fuzz audit.
+
 ## Explicit cloning and Objective-C++ bridges
 
 `testMemberRequirementConcepts` covers named, relational, composed, and direct

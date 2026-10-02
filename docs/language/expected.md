@@ -168,13 +168,31 @@ the mapper exactly once. `T` may be `void`. Named receivers require explicit
 The resulting expected can be stored, returned, passed onward, mapped again,
 or propagated with the ordinary prefix `?`. There is no separate `?.` operator.
 
-The current mapper surface accepts one unambiguous, safe, non-generic
-namespace-scope GTI function with a body. Its parameter must be exactly the
-by-value `E`, without an implicit conversion. The source alternatives and `F`
+The mapper accepts an explicitly typed lambda or one unambiguous, safe,
+non-generic namespace-scope GTI function with a body. Its parameter must be
+exactly the by-value `E`, without an implicit conversion. The source alternatives and `F`
 must be movable; `F` must be a non-void owned value without borrowed state or
-lambda components. Lambda mappers, member functions, C function pointers,
+lambda components. Member functions, callable classes, C function pointers,
 reference parameters/results, and `expected<T&, E>` receivers are not part of
 this initial surface. No additional include is required.
+
+```gti
+expected<int, app_error> load_inline(bool fail) {
+  return read(fail).transform_error([](io_error error) -> app_error {
+    return app_error::cannot_load;
+  });
+}
+```
+
+Lambda mappers use ordinary read-only lambda invocation and the existing copy
+and explicit move capture rules. A named lambda may be reused without copying
+its environment, including when that environment owns move-only captures.
+The mapper expression is evaluated once, after the expected receiver and before
+testing its alternative: captures are constructed even on success. Invocation
+occurs at most once, only on error. A fresh closure and its owned captures retain
+normal full-expression cleanup on success, error, and defined-failure paths;
+a named closure retains its existing lifetime. No type erasure or heap allocation
+is required by mapping itself.
 
 Mapping does not catch defined runtime failures. A failure in the producer,
 mapper, or subsequent expression follows the ordinary MIR cleanup protocol.

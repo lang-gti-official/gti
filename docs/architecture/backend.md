@@ -776,6 +776,23 @@ arities or cleanup shapes have distinct symbols and bodies. Member variants
 remain subject to the fail-closed canonical-body check, not general pack-shape
 dispatch.
 
+An owning closure that remains live across a conditional invocation can instead
+occupy its exact value-rooted full-expression slot. Its Closure instruction
+initializes that obligation once; read-only invocations do not transfer it.
+Receiver CallInput records alias the environment without copying it, retaining
+the exact call-site identity. This permits eager captures followed by an
+error-only mapper call, with the same MIR-scheduled cleanup on either branch.
+Trivial eager closures retain an exact value place without a cleanup
+obligation; repeated evaluation resets only their representation storage.
+Class captures retain their lexical lifetime obligation even when destruction
+is passive. Thus scalar moves and class copies occur before the branch too.
+Other frozen passive closures still use the existing checked fused representation.
+Exact lambdas with owned class parameters use the shared parameter-slot prelude;
+class results publish into the same verified destination slots as function
+results. Prepared argument shells are retired after invocation, including its
+failure path. None of these representation rules recognize `transform_error`
+by spelling or recover language rules from HIR.
+
 Closure-dependent allocation also retains explicitly supplied generic type
 arguments, including an allocated model type that does not appear as a direct
 value parameter. Type rows distinguish body-scoped template overlays from

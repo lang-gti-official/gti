@@ -2055,7 +2055,7 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
     };
     if (call.arguments().size() != 1) {
       invalidMapper(member.name(),
-                    "Pass one namespace function with signature F(E), where "
+                    "Pass one function or lambda with signature F(E), where "
                     "F is the application error type.");
       currentType = SemanticType::Unknown;
       return;
@@ -2083,6 +2083,11 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
     }
 
     const ExprPtr &mapperExpression = call.arguments().front();
+    const SemanticType argumentType = semanticModel.typeOf(*mapperExpression);
+    const LambdaInfo *lambda =
+        argumentType.kind == SemanticType::Lambda
+            ? semanticModel.findLambda(argumentType.lambdaId)
+            : nullptr;
     const std::optional<Symbol> mapperSymbol =
         resolveExpressionSymbol(mapperExpression);
     std::vector<const CallableCandidate *> matches;
@@ -2095,13 +2100,22 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
         }
       }
     }
-    if (matches.size() != 1) {
+    if (lambda != nullptr && (lambda->parameterTypes.size() != 1 ||
+                              lambda->parameterTypes.front() != errorType)) {
+      invalidMapper(expressionToken(mapperExpression),
+                    "Use a lambda with one exact by-value parameter matching "
+                    "the expected error type.");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (lambda == nullptr && matches.size() != 1) {
       Diagnostic diagnostic = makeDiagnostic(
           DiagnosticId::InvalidExpectedErrorTransform,
           expressionToken(mapperExpression), {typeSpelling(errorType)});
       diagnostic.hints.emplace_back(
           matches.empty()
-              ? "Use a non-generic namespace function with one exact by-value "
+              ? "Use a lambda or non-generic namespace function with one exact "
+                "by-value "
                 "parameter matching the expected error type."
               : "Use a uniquely named mapper so one exact function item is "
                 "selected.");
@@ -2119,8 +2133,10 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
       return;
     }
 
-    const CallableCandidate &mapper = *matches.front();
-    const SemanticType mappedError = mapper.returnType;
+    const CallableCandidate *mapper =
+        lambda == nullptr ? matches.front() : nullptr;
+    const SemanticType mappedError =
+        lambda != nullptr ? lambda->returnType : mapper->returnType;
     const SemanticTypeTraits sourceValueTraits =
         typeTraits(expected.arguments[0]);
     const SemanticTypeTraits sourceErrorTraits = typeTraits(errorType);
@@ -2141,10 +2157,17 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
       return;
     }
 
-    const SemanticType mapperType = SemanticType::functionItemType(
-        mapper.id, mapper.returnType, mapper.parameterTypes);
+    const SemanticType mapperType =
+        lambda != nullptr
+            ? argumentType
+            : SemanticType::functionItemType(mapper->id, mapper->returnType,
+                                             mapper->parameterTypes);
+    // Lambda arguments were already analyzed in written call order. In
+    // particular, do not analyze their move captures a second time. Invocation
+    // is read-only and confined, just as an ordinary concrete lambda call.
     const SemanticType selectedMapper =
-        analyzeInitializer(mapperExpression, mapperType);
+        lambda != nullptr ? argumentType
+                          : analyzeInitializer(mapperExpression, mapperType);
     if (selectedMapper != mapperType) {
       currentType = SemanticType::Unknown;
       return;
@@ -2158,10 +2181,12 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
                               .receiverMode = CallReceiverMode::Consuming};
     semanticModel.record(call, resolved);
     semanticModel.recordExpectedTransformError(
-        call, ExpectedTransformErrorInfo{.sourceType = expected,
-                                         .resultType = currentType,
-                                         .mapperType = mapperType,
-                                         .mapper = mapper.id});
+        call, ExpectedTransformErrorInfo{
+                  .sourceType = expected,
+                  .resultType = currentType,
+                  .mapperType = mapperType,
+                  .mapper = mapper != nullptr ? mapper->id : 0,
+                  .lambda = lambda != nullptr ? lambda->id : 0});
     recordSelectedCallOccurrence(call, std::move(resolved));
     return;
   }

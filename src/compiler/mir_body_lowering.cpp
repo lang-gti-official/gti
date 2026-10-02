@@ -5827,6 +5827,18 @@ private:
       return;
     }
 
+    for (const HirValueId input : value.conditionalInputs) {
+      emitValue(input);
+      const HirValue *eager = findValue(input);
+      // A cleanup-free closure still needs stable environment identity when
+      // its invocation is in a later branch. Owning closures already have a
+      // value-rooted place from their full-expression drop obligation.
+      if (eager != nullptr && eager->kind == HirValueKind::Lambda &&
+          eager->info.traits.drop == DropKind::Trivial &&
+          !valuePlaces.contains(input)) {
+        valuePlaces.emplace(input, valueRootPlace(*eager));
+      }
+    }
     const MirOperand condition = conditionOperand(value.operands[0]);
     const MirBlockId thenBlock = appendBlock();
     const MirBlockId elseBlock = appendBlock();

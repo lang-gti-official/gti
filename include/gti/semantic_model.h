@@ -880,12 +880,15 @@ struct ResolvedCallInfo {
 
 // One exact consuming expected<T, E>::transform_error mapper. Expected is a
 // language type, but the mapped error is still computed by an ordinary GTI
-// function whose declaration identity remains authoritative through lowering.
+// function or lambda whose exact identity remains authoritative through
+// lowering. Exactly one of mapper/lambda is set; mapperType preserves the
+// environment.
 struct ExpectedTransformErrorInfo {
   SemanticType sourceType = SemanticType::Unknown;
   SemanticType resultType = SemanticType::Unknown;
   SemanticType mapperType = SemanticType::Unknown;
   FunctionId mapper = 0;
+  LambdaId lambda = 0;
 };
 
 // Contextual collection braces select ordinary static GTI functions. The

@@ -2106,6 +2106,9 @@ private:
     for (const HirValueId operand : found->operands) {
       assignFullExpression(body, operand, fullExpression, visited);
     }
+    for (const HirValueId input : found->conditionalInputs) {
+      assignFullExpression(body, input, fullExpression, visited);
+    }
     if (found->receiver) {
       assignFullExpression(body, *found->receiver, fullExpression, visited);
     }
@@ -2258,6 +2261,14 @@ private:
     std::unordered_set<HirValueId> temporaryBorrowValues;
     std::unordered_set<HirValueId> borrowedMoveValues;
     for (const HirValue &call : body.values) {
+      // An eagerly retained closure needs its own full-expression identity,
+      // even when its class captures have only generated passive cleanup.
+      for (const HirValueId input : call.conditionalInputs) {
+        const HirValue *eager = body.findValue(input);
+        if (eager != nullptr && eager->kind == HirValueKind::Lambda &&
+            eager->info.traits.drop == DropKind::Lexical)
+          temporaryBorrowValues.insert(input);
+      }
       if (!call.callPlan) {
         continue;
       }
@@ -3660,25 +3671,35 @@ private:
         transform.sourceType.arguments.size() != 2 ||
         transform.resultType.kind != SemanticType::Expected ||
         transform.resultType.arguments.size() != 2 ||
-        transform.resultType != resultInfo->type || transform.mapper == 0) {
+        transform.resultType != resultInfo->type ||
+        ((transform.mapper == 0) == (transform.lambda == 0))) {
       lifecycleValid = false;
       return std::nullopt;
     }
 
     const std::optional<HirValueId> operand = lowerExpression(
         member->object(), model, classArguments, classValueArguments, body);
-    const std::optional<HirValueId> mapper =
+    std::optional<HirValueId> mapper =
         lowerExpression(expression.arguments().front(), model, classArguments,
                         classValueArguments, body);
     const HirValue *operandValue = operand ? body.findValue(*operand) : nullptr;
     const HirValue *mapperValue = mapper ? body.findValue(*mapper) : nullptr;
+    // Grouping does not create another closure environment. Preserve the
+    // exact producer as ordinary concrete-lambda calls do.
+    while (mapperValue != nullptr &&
+           mapperValue->kind == HirValueKind::Grouping &&
+           mapperValue->operands.size() == 1) {
+      mapper = mapperValue->operands.front();
+      mapperValue = body.findValue(*mapper);
+    }
     if (!operand || !mapper || operandValue == nullptr ||
         mapperValue == nullptr ||
         operandValue->info.type != transform.sourceType ||
         operandValue->info.category != ValueCategory::Value ||
         mapperValue->info.type != transform.mapperType ||
-        mapperValue->kind != HirValueKind::FunctionItem ||
-        !mapperValue->functionTarget) {
+        (transform.mapper != 0 &&
+         (mapperValue->kind != HirValueKind::FunctionItem ||
+          !mapperValue->functionTarget))) {
       lifecycleValid = false;
       return std::nullopt;
     }
@@ -3689,6 +3710,25 @@ private:
     // Appending synthetic values can reallocate body.values. Retain the
     // selected instance identity, never a pointer into that growing vector.
     const auto mapperTarget = mapperValue->functionTarget;
+    std::optional<HirLambdaId> mapperLambda;
+    if (transform.lambda != 0) {
+      if (const auto target = lambdaTargets.find(transform.lambda);
+          target != lambdaTargets.end()) {
+        mapperLambda = target->second;
+      } else {
+        const auto existing = std::find_if(
+            output.program.lambdas.begin(), output.program.lambdas.end(),
+            [&](const HirLambda &candidate) {
+              return lambdaMatchesType(candidate, transform.mapperType);
+            });
+        if (existing != output.program.lambdas.end())
+          mapperLambda = existing->id;
+      }
+      if (!mapperLambda) {
+        lifecycleValid = false;
+        return std::nullopt;
+      }
+    }
     const auto appendExtraction = [&](IntrinsicKind intrinsic,
                                       const SemanticType &type) {
       const HirValueId id = nextValueId++;
@@ -3762,6 +3802,7 @@ private:
         .operands = {*mapper, errorValue},
         .parameterTypes = {errorType},
         .functionTarget = mapperTarget,
+        .lambdaTarget = mapperLambda,
     };
     const std::optional<std::vector<HirCallArgument>> mapperArguments =
         orderedArguments({errorValue}, {errorType}, body, 1);
@@ -3771,6 +3812,12 @@ private:
     }
     mapperCall.callPlan =
         HirCallPlan{.receiver = std::nullopt, .arguments = *mapperArguments};
+    if (mapperLambda) {
+      mapperCall.receiver = *mapper;
+      mapperCall.callableInvocation = CallableInvocationCapability::Read;
+      mapperCall.callPlan->receiver = orderedReceiver(
+          *mapper, ReceiverMutability::ReadOnly, CallReceiverMode::Value, body);
+    }
     if (const DefinedFailureOperation *failure =
             model.findDefinedFailure(expression)) {
       mapperCall.definedFailure = *failure;
@@ -3793,7 +3840,8 @@ private:
                            .kind = HirValueKind::Conditional,
                            .source = &expression,
                            .info = *resultInfo,
-                           .operands = {hasValue, successArm, unexpected}});
+                           .operands = {hasValue, successArm, unexpected},
+                           .conditionalInputs = {*operand, *mapper}});
     output.program.sourceValueIds[&expression].push_back(id);
     return id;
   }
