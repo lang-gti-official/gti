@@ -3,8 +3,8 @@
 
 // A named owner-tied iterator local (a copyable class value holding a
 // reference field) passed BY VALUE into generic functions. The named
-// local forces the unstaged Load-copy argument shape; the fresh prvalue
-// calls pin the staged contrast beside it.
+// local uses an exact prepared CopyValue input; fresh prvalues use the
+// corresponding single-transfer input while preserving the same owner loan.
 
 Iterator relay<Iterator>(mut Iterator iterator)
   requires std::input_iterator<Iterator> {

@@ -86,16 +86,16 @@ public:
         }
       }
     }
-    // Constructor-local iterator/sentinel inference can select an exact
-    // move-only iterator value returned by begin(). Such a value retains a
-    // stored loan of its range owner, but is still transferred exactly once
-    // into the selected constructor parameter. Record only the producers
+    // An exact borrowed-state call result retains its owner's stored loan,
+    // but its carrier is still transferred exactly once into the selected
+    // ordinary call or constructor parameter. Record only the producers
     // named by that explicit HIR call-input plan so their failure-capable
     // result is armed on the success edge before the later CallInput moves it.
     for (const HirValue &consumer : source.values) {
-      if (!consumer.constructorTarget ||
-          consumer.constructorKind != ConstructorKind::Ordinary ||
-          !consumer.callPlan) {
+      if (!consumer.callPlan ||
+          !(consumer.functionTarget ||
+            (consumer.constructorTarget &&
+             consumer.constructorKind == ConstructorKind::Ordinary))) {
         continue;
       }
       for (const HirCallArgument &argument : consumer.callPlan->arguments) {

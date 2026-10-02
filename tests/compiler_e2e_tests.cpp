@@ -799,9 +799,12 @@ int main() {
         source->info.category == (index == 0 ? lang::ValueCategory::Place
                                              : lang::ValueCategory::Value);
   }
-  expect(exactHirPlan && borrowedCall != nullptr && !borrowedCall->callPlan,
+  expect(exactHirPlan && borrowedCall != nullptr && borrowedCall->callPlan &&
+             borrowedCall->callPlan->arguments.size() == 1 &&
+             borrowedCall->callPlan->arguments.front().kind ==
+                 lang::HirCallInputKind::MoveValue,
          "HIR should distinguish class copy and move parameter setup while "
-         "leaving borrowed-state carriers on the conservative legacy path");
+         "using the same exact input plan for constructed borrowed carriers");
 
   const auto definitionFor = [&](const lang::MirOperand &operand) {
     if (operand.kind != lang::MirOperandKind::Value) {
@@ -907,10 +910,16 @@ int main() {
              temporarySource->kind == lang::MirInstructionKind::Construct &&
              inputs[0]->id < inputs[1]->id && inputs[1]->id < inputs[2]->id &&
              inputs[2]->id < call->id && call->lifecycle.size() == 3 &&
-             borrowedMirCall != nullptr && borrowedMirCall->callSite == 0,
+             borrowedMirCall != nullptr && borrowedMirCall->callSite != 0 &&
+             borrowedMirCall->operands.size() == 1 &&
+             definitionFor(borrowedMirCall->operands.front()) != nullptr &&
+             definitionFor(borrowedMirCall->operands.front())->kind ==
+                 lang::MirInstructionKind::CallInput &&
+             definitionFor(borrowedMirCall->operands.front())
+                 ->preparedParameterDrop.has_value(),
          "MIR should stage each class-value parameter in caller-owned storage, "
-         "transfer it when the callee begins, and keep borrowed-state class "
-         "values outside the bounded schedule");
+         "and transfer both owning and borrowed-carrier shells exactly once "
+         "when the callee begins");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
   expect(dump.starts_with("mir-body-v69\n") &&

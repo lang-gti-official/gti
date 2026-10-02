@@ -1,4 +1,6 @@
 #include "compiler_test_fixture.h"
+#include "gti/mir_dominance.h"
+#include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 
 namespace {
@@ -2135,8 +2137,7 @@ int main() {
          "a mutable producer should retain exclusive evaluation access even "
          "when its returned reference is read-only");
 
-  const lang::FrontendResult resultThenMutationConflict =
-      lang::Frontend().analyze("result-then-mutation-conflict.gti", R"(
+  const std::string resultThenMutationSource = R"(
 class Box {
   mut int value = 0;
 
@@ -2152,7 +2153,10 @@ int main() {
   mut Box parent = Box();
   return combine(parent.read(), parent.bump());
 }
-)");
+)";
+  const lang::FrontendResult resultThenMutationConflict =
+      lang::Frontend().analyze("result-then-mutation-conflict.gti",
+                               resultThenMutationSource);
   expect(!resultThenMutationConflict.canGenerateCode() &&
              countDiagnosticCode(resultThenMutationConflict.diagnostics,
                                  "GTI-S2017") == 1 &&
@@ -2162,6 +2166,22 @@ int main() {
                                 "GTI-B0001"),
          "a later mutable receiver evaluation should not invalidate an "
          "earlier retained call result");
+  const auto conflict =
+      std::find_if(resultThenMutationConflict.diagnostics.begin(),
+                   resultThenMutationConflict.diagnostics.end(),
+                   [](const lang::Diagnostic &diagnostic) {
+                     return diagnostic.code == "GTI-S2017";
+                   });
+  expect(conflict != resultThenMutationConflict.diagnostics.end() &&
+             conflict->primary.start ==
+                 resultThenMutationSource.rfind("bump()") &&
+             conflict->primary.end == conflict->primary.start + 4 &&
+             conflict->related.size() == 1 &&
+             conflict->related.front().span.start ==
+                 resultThenMutationSource.rfind("read()") &&
+             !conflict->hints.empty() && conflict->fixes.empty(),
+         "the conflict should identify the later mutation and earlier borrow "
+         "without offering an unsafe automatic reorder");
 
   const lang::FrontendResult resultThenMutableArgumentConflict =
       lang::Frontend().analyze("result-then-mut-argument-conflict.gti", R"(
@@ -2192,8 +2212,8 @@ int main() {
          "a later mutable-reference helper evaluation should not invalidate "
          "an earlier retained call result");
 
-  const lang::FrontendResult mutationThenResultConflict =
-      lang::Frontend().analyze("mutation-then-result-conflict.gti", R"(
+  const lang::FrontendResult mutationThenResult =
+      lang::Frontend().analyze("mutation-then-result.gti", R"(
 class Box {
   mut int value = 0;
 
@@ -2210,16 +2230,171 @@ int main() {
   return combine(parent.bump(), parent.read());
 }
 )");
-  expect(
-      !mutationThenResultConflict.canGenerateCode() &&
-          countDiagnosticCode(mutationThenResultConflict.diagnostics,
-                              "GTI-S2017") == 1 &&
-          hasDiagnostic(mutationThenResultConflict.diagnostics,
-                        "cannot yet lower an earlier call operand mutation") &&
-          !hasDiagnosticCode(mutationThenResultConflict.diagnostics,
-                             "GTI-B0001"),
-      "the compiler should identify the remaining mutation-first ordered-"
-      "call lowering limitation without claiming source order is unknown");
+  expect(mutationThenResult.canGenerateCode() &&
+             lang::verifyMirProgram(mutationThenResult.mir).valid(),
+         "a completed earlier mutation may precede an overlapping borrow "
+         "through the ordinary verified ordered-call schedule");
+  bool provedBorrowOrder = false;
+  bool reorderedInputRejected = false;
+  lang::MirProgram reordered = mutationThenResult.mir;
+  auto &orderedFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      reordered.functionInstances());
+  for (auto &function : orderedFunctions) {
+    if (function.entryKind == lang::ProgramEntryKind::None) {
+      continue;
+    }
+    auto &body = function.body;
+    const auto dominance = lang::computeMirDominance(body);
+    struct Position {
+      lang::MirBlockId block = 0;
+      std::size_t index = 0;
+    };
+    Position mutation, producer, invocation, firstInput, secondInput;
+    lang::HirValueId producerValue = 0;
+    for (const auto &block : body.blocks) {
+      for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+        const auto &instruction = block.instructions[index];
+        if (instruction.kind != lang::MirInstructionKind::Call ||
+            !instruction.functionTarget) {
+          continue;
+        }
+        const auto *target =
+            reordered.findFunctionInstance(*instruction.functionTarget);
+        if (target == nullptr) {
+          continue;
+        }
+        if (target->receiverMutability == lang::ReceiverMutability::Mutable) {
+          mutation = {block.id, index};
+        } else if (instruction.borrowOrigin ==
+                   lang::BorrowOriginKind::Receiver) {
+          producer = {block.id, index};
+          producerValue = instruction.hirValue;
+        } else if (instruction.parameterTypes.size() == 2) {
+          invocation = {block.id, index};
+          for (const auto &inputBlock : body.blocks) {
+            for (std::size_t inputIndex = 0;
+                 inputIndex < inputBlock.instructions.size(); ++inputIndex) {
+              const auto &input = inputBlock.instructions[inputIndex];
+              if (input.kind != lang::MirInstructionKind::CallInput ||
+                  input.callSite != instruction.callSite) {
+                continue;
+              }
+              (input.callInputIndex == 0 ? firstInput : secondInput) = {
+                  inputBlock.id, inputIndex};
+            }
+          }
+        }
+      }
+    }
+    const auto precedes = [&](Position left, Position right) {
+      return dominance && left.block != 0 && right.block != 0 &&
+             (left.block == right.block
+                  ? left.index < right.index
+                  : dominance->dominates(left.block, right.block));
+    };
+    const bool hasExactLoan = std::any_of(
+        body.loans.begin(), body.loans.end(), [&](const lang::MirLoan &loan) {
+          return loan.producedBy == producerValue && producerValue != 0 &&
+                 loan.source != 0 && loan.access == lang::AccessMode::ReadOnly;
+        });
+    provedBorrowOrder = precedes(mutation, firstInput) &&
+                        precedes(firstInput, producer) &&
+                        precedes(producer, secondInput) &&
+                        precedes(secondInput, invocation) && hasExactLoan;
+    if (!provedBorrowOrder) {
+      continue;
+    }
+    // Preserve identities, types, uses and the first input's dominating value;
+    // only reverse the outer call's input schedule across the borrow producer.
+    auto &firstBlock = *body.findBlock(firstInput.block);
+    auto movedInput = firstBlock.instructions[firstInput.index];
+    firstBlock.instructions.erase(firstBlock.instructions.begin() +
+                                  firstInput.index);
+    if (firstInput.block == secondInput.block &&
+        firstInput.index < secondInput.index) {
+      --secondInput.index;
+    }
+    auto &secondBlock = *body.findBlock(secondInput.block);
+    secondBlock.instructions.insert(
+        secondBlock.instructions.begin() + secondInput.index + 1, movedInput);
+    for (auto &value : body.values) {
+      if (value.definition == movedInput.id) {
+        value.definitionBlock = secondBlock.id;
+      }
+    }
+    reorderedInputRejected = lang::rebuildMirValueUses(body) &&
+                             !lang::verifyMirProgram(reordered).valid();
+  }
+  expect(provedBorrowOrder && reorderedInputRejected,
+         "MIR must create the lookup loan only after mutation completes, and "
+         "reject forged ordered-input reordering");
+
+  const auto borrowedCarrierInput =
+      lang::Frontend().analyze("ordered-borrowed-carrier-input.gti", R"(
+class Box {
+  mut int value = 1;
+public:
+  int bump() mut { this.value += 1; return this.value; }
+  int& read() { return this.value; }
+};
+class View {
+  int& value;
+public:
+  View(int& source) : value(source) {}
+  int get() { return this.value; }
+};
+View lookup(Box& box) { return View(box.read()); }
+int inspect(int changed, View view) { return changed + view.get(); }
+int main() {
+  mut Box box{};
+  return inspect(box.bump(), lookup(box));
+}
+)");
+  expect(borrowedCarrierInput.canGenerateCode() &&
+             lang::verifyMirProgram(borrowedCarrierInput.mir).valid(),
+         "ordinary calls should share the exact borrowed-carrier input "
+         "contract with constructors");
+  const auto rejectsCarrierMutation = [&](bool eraseProducerLoan) {
+    lang::MirProgram invalid = borrowedCarrierInput.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        invalid.functionInstances());
+    for (auto &function : functions) {
+      if (function.entryKind == lang::ProgramEntryKind::None) {
+        continue;
+      }
+      auto &body = function.body;
+      for (auto &block : body.blocks) {
+        for (auto &stage : block.instructions) {
+          if (stage.kind != lang::MirInstructionKind::CallInput ||
+              stage.callInputKind !=
+                  lang::HirCallInputKind::MoveBorrowedTemporary ||
+              stage.operands.size() != 1 || !stage.preparedParameterDrop) {
+            continue;
+          }
+          const auto *source = body.findValue(stage.operands.front().value);
+          if (source == nullptr) {
+            return false;
+          }
+          if (!eraseProducerLoan) {
+            stage.lifecycle.clear();
+            return !lang::verifyMirProgram(invalid).valid();
+          }
+          for (auto &producerBlock : body.blocks) {
+            for (auto &producer : producerBlock.instructions) {
+              if (producer.id == source->definition && producer.loan) {
+                producer.loan.reset();
+                return !lang::verifyMirProgram(invalid).valid();
+              }
+            }
+          }
+        }
+      }
+    }
+    return false;
+  };
+  expect(rejectsCarrierMutation(true) && rejectsCarrierMutation(false),
+         "ordinary borrowed-carrier inputs must fail closed when the exact "
+         "producer loan or unique ownership handoff is erased");
 
   const lang::FrontendResult nestedTransientConflict =
       lang::Frontend().analyze("nested-transient-call-conflict.gti", R"(
@@ -2394,10 +2569,10 @@ int main() { return 0; }
   expect(
       !storedCarrierConflicts.canGenerateCode() &&
           countDiagnosticCode(storedCarrierConflicts.diagnostics,
-                              "GTI-S2017") == 2 &&
+                              "GTI-S2017") == 1 &&
           !hasDiagnosticCode(storedCarrierConflicts.diagnostics, "GTI-B0001"),
-      "borrowed-state carrier arguments should conflict with overlapping "
-      "mutation in either source argument order");
+      "a borrowed carrier blocks later mutation, not mutation completed before "
+      "its construction");
 
   const lang::FrontendResult disjointStoredCarrier =
       lang::Frontend().analyze("disjoint-stored-carrier-call.gti", R"(

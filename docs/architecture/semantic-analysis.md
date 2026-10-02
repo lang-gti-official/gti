@@ -291,6 +291,14 @@ and the analyzer therefore retains conservative borrow restrictions for
 families whose MIR schedule is not yet representable. Accepted bodies never
 fall back to an earlier executable authority.
 
+Ordinary call/construction exclusivity follows the implemented ordered-input
+schedule: a completed mutation in an earlier operand does not conflict with a
+borrow first produced by a later operand. The opposite order still conflicts,
+including nested helper-produced and stored-carrier loans. Simultaneous
+mutable parameter accesses and pre-existing lexical loans remain independently
+checked. The primary diagnostic identifies the later invalidating operand and
+relates the earlier borrow; there is no automatic operand-reordering fix.
+
 ## SemanticModel
 
 `SemanticModel` is a set of snapshot-owned side tables keyed by AST identity or

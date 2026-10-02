@@ -1,0 +1,59 @@
+#include <std/vector>
+
+struct Node {
+  int32_t value = 0;
+};
+
+// A tree/table may grow before a lookup establishes a checked node borrow.
+// Reallocation deliberately makes reversing those evaluations observable.
+class Tree {
+public:
+  std::size_t append(int32_t value) mut {
+    this.nodes.reserve(this.nodes.size() + std::size_t(1));
+    Node node = {.value = value};
+    this.nodes.push_back(node);
+    return this.nodes.size();
+  }
+  Node& lookup(std::size_t index) { return this.nodes[index]; }
+  int32_t inspect(std::size_t count, Node& node) {
+    return int32_t(count) + node.value;
+  }
+private:
+  mut std::vector<Node> nodes{};
+};
+
+std::size_t append_node(mut Tree& tree, int32_t value) {
+  return tree.append(value);
+}
+
+Node& lookup_node(Tree& tree, std::size_t index) { return tree.lookup(index); }
+
+T& identity<T>(T& value) { return value; }
+
+int32_t inspect(std::size_t count, Node& node) {
+  return int32_t(count) + node.value;
+}
+
+class Inspection {
+public:
+  Inspection(std::size_t count, Node& node)
+      : score(int32_t(count) + node.value) {}
+  int32_t value() { return this.score; }
+private:
+  int32_t score;
+};
+
+int main() {
+  mut Tree tree{};
+  int32_t direct = inspect(tree.append(41), tree.lookup(std::size_t(0)));
+  int32_t helpers = inspect(append_node(tree, 7),
+                            identity(lookup_node(tree, std::size_t(0))));
+  int32_t method = tree.inspect(tree.append(8), tree.lookup(std::size_t(0)));
+  Inspection constructed = Inspection(tree.append(9), tree.lookup(std::size_t(0)));
+  std::println(direct);
+  std::println(helpers);
+  std::println(method);
+  std::println(constructed.value());
+  return direct == 42 && helpers == 43 && method == 44 &&
+                 constructed.value() == 45 ? 0 : 1;
+}

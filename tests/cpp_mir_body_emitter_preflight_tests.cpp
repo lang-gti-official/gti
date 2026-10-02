@@ -3276,7 +3276,7 @@ int main() {
   }
 
   const lang::MirFunctionInstance *selected = nullptr;
-  lang::MirValueId temporary = 0;
+  lang::MirPlaceId temporary = 0;
   for (const lang::MirFunctionInstance &function :
        frontend.mir.functionInstances()) {
     for (const lang::MirBlock &block : function.body.blocks) {
@@ -3288,30 +3288,25 @@ int main() {
             producer.info.type.kind != lang::SemanticType::Class) {
           continue;
         }
-        bool directCallArgument = false;
         for (const lang::MirBlock &candidate : function.body.blocks) {
           for (const lang::MirInstruction &consumer : candidate.instructions) {
-            directCallArgument =
-                directCallArgument ||
-                (consumer.kind == lang::MirInstructionKind::Call &&
-                 std::any_of(consumer.operands.begin(), consumer.operands.end(),
-                             [&](const lang::MirOperand &operand) {
-                               return operand.kind ==
-                                          lang::MirOperandKind::Value &&
-                                      operand.value == *producer.result;
-                             }));
+            if (consumer.kind == lang::MirInstructionKind::CallInput &&
+                consumer.callInputKind == lang::HirCallInputKind::MoveValue &&
+                consumer.preparedParameterDrop && consumer.destination &&
+                consumer.operands.size() == 1 &&
+                consumer.operands.front().kind == lang::MirOperandKind::Value &&
+                consumer.operands.front().value == *producer.result) {
+              selected = &function;
+              temporary = *consumer.destination;
+            }
           }
-        }
-        if (directCallArgument) {
-          selected = &function;
-          temporary = *producer.result;
         }
       }
     }
   }
   expect(selected != nullptr,
-         "the fixture should lower a default-constructed class SSA value used "
-         "by one call");
+         "the fixture should stage a default-constructed class SSA value into "
+         "one prepared call parameter");
   if (selected == nullptr) {
     return;
   }
@@ -3330,13 +3325,13 @@ int main() {
 
   const std::string text =
       emitter.emitFailureBodyText(address, "class-ssa-slot-test-v0", 1).text;
-  const std::string name = "__gti_mir_v_" + std::to_string(temporary);
-  expect(text.find(", true> " + name + ";") != std::string::npos &&
+  const std::string name = "__gti_mir_p_" + std::to_string(temporary);
+  expect(text.find("> " + name + ";") != std::string::npos &&
              text.find(name + ".construct();") != std::string::npos &&
              text.find("std::move(" + name + ".get())") != std::string::npos &&
              text.find(name + ".destroy();") != std::string::npos,
          "the class temporary should construct, transfer, and retire through "
-         "one representation-only lifetime slot");
+         "one verified prepared-parameter lifetime slot");
 }
 
 void testRepresentationOnlyPublicationRearmsBeforeConstruction() {

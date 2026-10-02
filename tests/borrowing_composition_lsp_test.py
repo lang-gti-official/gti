@@ -91,6 +91,42 @@ int main() {
                           "params": {"textDocument": {"uri": uri, "languageId": "gti",
                                                       "version": 8, "text": source}}})
             assert not diagnostics(8)
+            ordered = """class Box {
+  mut int value = 1;
+public:
+  int& read() { return this.value; }
+  int bump() mut { this.value += 1; return this.value; }
+};
+int inspect(int& borrowed, int changed) { return borrowed + changed; }
+int main() {
+  mut Box box{};
+  /*😀*/ return inspect(box.read(), box.bump());
+}
+"""
+            change(9, ordered)
+            errors = diagnostics(9)
+            conflict = next((d for d in errors if d.get("code") == "GTI-S2017"), None)
+            assert conflict is not None, errors
+            operand_line = ordered.splitlines()[9]
+            def column(token):
+                return len(operand_line[:operand_line.index(token)].encode("utf-16-le")) // 2
+            assert conflict["range"] == {
+                "start": {"line": 9, "character": column("bump")},
+                "end": {"line": 9, "character": column("bump") + 4}}, conflict
+            related = conflict.get("relatedInformation", [])
+            assert len(related) == 1 and related[0]["location"]["uri"] == uri, conflict
+            assert related[0]["location"]["range"]["start"] == {
+                "line": 9, "character": column("read")}, conflict
+            assert "Complete the mutation" in conflict["message"], conflict
+            safe_order = ordered.replace("int& borrowed, int changed",
+                                         "int changed, int& borrowed").replace(
+                "box.read(), box.bump()", "box.bump(), box.read()")
+            change(10, safe_order)
+            assert not diagnostics(10)
+            change(11, safe_order.replace("box.read()", "box."))
+            assert diagnostics(11)
+            change(12, safe_order)
+            assert not diagnostics(12)
         finally:
             session.close()
 

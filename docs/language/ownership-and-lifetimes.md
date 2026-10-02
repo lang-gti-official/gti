@@ -502,11 +502,15 @@ write authority. Ordinary retained references, symbol-rooted globals, and
 calls outside this compiler-generated store schedule do not gain two-phase
 behavior.
 
-The current semantic implementation still rejects the overlapping mutation
-and transient-borrow pair in both written orders because the compatibility
-emitter has not migrated that call family to ordered MIR. M-EXEC-01 and the
-matching M-BACK slice may remove the conservative rejection only for a family
-whose emitted order and cleanup are authoritative.
+The ordered ordinary-call and constructor schedules implement this rule:
+`inspect(tree.append(node), tree.lookup(index))` may complete the append before
+the lookup creates its loan, including when append reallocates owned storage.
+Resolved free/generic helpers preserve the same origin and order. A borrowed
+carrier passed by value retains its owner dependency; moving its shell into a
+parameter does not shorten the owner's loan. The reverse order remains an
+error, as do mutation under an already-live lexical loan, overlapping mutable
+parameters, and a later read under an earlier exclusive loan. This does not
+introduce last-use ending for full-expression temporaries or borrowed results.
 
 Reborrowing adds no syntax or explicit lifetime parameter. It uses the existing
 `T&` and `mut T&` reference declarations:

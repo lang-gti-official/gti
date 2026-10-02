@@ -3124,6 +3124,29 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
   std::vector<CallPlace> places;
   std::vector<std::pair<std::size_t, SemanticLoanPlace>> mutations;
   const std::size_t count = std::min(parameterTypes.size(), arguments.size());
+  const auto argumentAnchor = [](const ExprPtr &expression) {
+    if (const auto *argumentCall = exprAs<Call>(expression.get())) {
+      return callableToken(argumentCall->callee());
+    }
+    return expressionToken(expression);
+  };
+  const auto reportBorrowMutation = [&](std::size_t mutation,
+                                        std::optional<std::size_t> borrowed) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2017", DiagnosticPhase::Semantics,
+        argumentAnchor(*arguments[mutation]),
+        "A later call operand mutates storage borrowed by an earlier "
+        "operand; the transient loan remains active through the "
+        "enclosing full-expression.");
+    diagnostic.related.push_back(
+        {tokenSpan(borrowed ? argumentAnchor(*arguments[*borrowed]) : location),
+         borrowed ? "This earlier operand produces the retained borrow."
+                  : "The receiver evaluation produces the retained borrow."});
+    diagnostic.hints.emplace_back(
+        "Complete the mutation before creating the borrow, or finish "
+        "using the borrow in a separate statement first.");
+    diagnostics.emplace_back(std::move(diagnostic));
+  };
   for (std::size_t index = 0; index < count; ++index) {
     if (reportCommaTransientConflict(*arguments[index], location)) {
       return;
@@ -3213,19 +3236,15 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
             retained.receiver ? 0 : retained.argument + 1;
         const std::size_t mutationSequence = argument + 1;
         if (retainedSequence < mutationSequence) {
-          report(location,
-                 "A later call operand mutates storage borrowed by an "
-                 "earlier operand; the transient loan remains active "
-                 "through the enclosing full-expression.",
-                 "GTI-S2017");
-        } else {
-          report(location,
-                 "The current compiler cannot yet lower an earlier call "
-                 "operand mutation followed by an overlapping transient "
-                 "borrow; split the operations into separate statements.",
-                 "GTI-S2017");
+          reportBorrowMutation(
+              argument, retained.receiver ? std::nullopt
+                                          : std::optional(retained.argument));
+          return;
         }
-        return;
+        // Earlier operand effects finish before this borrow begins. Ordinary
+        // call-input staging preserves that order in HIR/MIR; any loan that
+        // actually survives the earlier operand is checked independently
+        // below and by simultaneous parameter exclusivity above.
       }
     }
   }
@@ -3281,11 +3300,7 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
           !loanPlacesOverlap(retained.place, mutation)) {
         continue;
       }
-      report(location,
-             "A later call operand mutates storage borrowed by an "
-             "earlier operand; the transient loan remains active "
-             "through the enclosing full-expression.",
-             "GTI-S2017");
+      reportBorrowMutation(argument, retained.argument);
       return;
     }
     if (retained.access != AccessMode::Mutable) {
@@ -3297,12 +3312,6 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
           !loanPlacesOverlap(retained.place, read)) {
         continue;
       }
-      const auto argumentAnchor = [](const ExprPtr &expression) {
-        if (const auto *argumentCall = exprAs<Call>(expression.get())) {
-          return callableToken(argumentCall->callee());
-        }
-        return expressionToken(expression);
-      };
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2017", DiagnosticPhase::Semantics,
           argumentAnchor(*arguments[argument]),

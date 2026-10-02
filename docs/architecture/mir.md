@@ -1916,16 +1916,26 @@ premature or missing loan ending, and a missing or duplicate drop. The backend
 therefore consumes a complete schedule rather than relying on C++ reference
 lifetime rules.
 
-An ordinary-constructor argument may use `MoveBorrowedTemporary` only for the
-corresponding HIR input: one exact fresh GTI call result of the same concrete
-class type as the selected by-value parameter. Lowering assigns the successful
-producer result its one value-drop obligation, emits the move checkpoint, and
-reparents that obligation to the constructor parameter before construction.
-Verification requires the producer, parameter, concrete constructor instance,
+An ordinary-call or constructor argument may use `MoveBorrowedTemporary` only
+for the corresponding HIR input: one exact fresh GTI call result of the same
+concrete class type as the selected by-value parameter. Lowering assigns the
+successful producer result its one value-drop obligation, emits the move checkpoint, and
+reparents that obligation to the prepared parameter before invocation.
+Verification requires the producer, parameter, concrete selected instance,
 input order, full-expression, and success/failure cleanup edges to agree. It
 also rejects a copy, duplicate transfer, abandoned producer drop, or second
-destruction. The role is intentionally not available to general borrowed-state
-class arguments.
+destruction. The owner's stored loan survives the shell transfer until its
+existing full-expression endpoint. Other supported constructed/copied borrowed
+carriers use the ordinary exact copy/move input contracts; they do not acquire
+permission to escape or shorten an owner loan.
+Borrowed lambdas retain their separate confined-callable lowering; this input
+rule covers nominal class/struct carriers, not arbitrary borrowed values.
+
+This schedule admits a completed mutation before a later overlapping borrow:
+the mutation and its success edge precede the borrow producer, that producer
+precedes its indexed input, and all inputs precede invocation. Existing loans
+still conflict with mutation. The reverse written order remains invalid, as do
+simultaneous exclusive aliases and later reads under an earlier exclusive loan.
 
 Other calls and expression families still rely on ordered MIR produced by
 recursive lowering rather than a dedicated verifier-visible materialization

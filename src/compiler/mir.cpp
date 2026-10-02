@@ -10145,7 +10145,6 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                   ? (argument->callInputKind == HirCallInputKind::CopyValue ||
                      argument->callInputKind == HirCallInputKind::MoveValue ||
                      (parameter.kind == SemanticType::Class &&
-                      invocation.kind == MirInstructionKind::Construct &&
                       parameter == argument->info.type &&
                       parameter == argument->operands.front().type &&
                       argument->info.traits.containsBorrowedState &&

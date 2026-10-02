@@ -231,6 +231,12 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   longer lifetime. Mutable calls whose view argument aliases their receiver
   use the same code; expression-level text dependencies count even when the
   parameter type alone does not encode an owner.
+  For a later call argument that mutates an earlier operand's retained loan,
+  point at the mutating argument's callable token, relate the earlier borrowing
+  argument (or receiver call), and suggest completing mutation first or using
+  separate statements. Do not offer an automatic reorder: either expression
+  may have observable effects. An earlier completed mutation followed by a
+  newly created borrow is accepted when no existing loan conflicts.
 - `GTI-S2045` owns unsupported stored-reference carrier shapes and incoherent
   borrowed-value return dependencies. One read-only or mutable reference field,
   optionally nested through nominal carrier fields, is accepted when every
