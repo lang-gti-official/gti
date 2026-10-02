@@ -2999,14 +2999,24 @@ private:
         kind = HirCallInputKind::Value;
       } else if (!orderedOwningParameterType(parameter) ||
                  input->info.type != parameter ||
-                 input->info.traits.containsBorrowedState) {
+                 (input->info.traits.containsBorrowedState &&
+                  parameter.kind != SemanticType::Class)) {
         return std::nullopt;
       } else if (input->info.category == ValueCategory::Place &&
                  input->info.traits.copyable) {
         kind = HirCallInputKind::CopyValue;
       } else if (input->info.category == ValueCategory::Value &&
-                 input->info.traits.movable) {
+                 input->info.traits.movable &&
+                 (!input->info.traits.containsBorrowedState ||
+                  input->kind != HirValueKind::Call ||
+                  !input->functionTarget)) {
         kind = HirCallInputKind::MoveValue;
+      } else if (input->kind == HirValueKind::Call && input->functionTarget &&
+                 input->borrowOrigin != BorrowOriginKind::None &&
+                 input->info.category == ValueCategory::Value &&
+                 input->info.traits.movable &&
+                 input->info.traits.containsBorrowedState) {
+        kind = HirCallInputKind::MoveBorrowedTemporary;
       } else {
         return std::nullopt;
       }
@@ -3031,59 +3041,8 @@ private:
         constructor.intrinsic != IntrinsicKind::None) {
       return std::nullopt;
     }
-    if (std::optional<std::vector<HirCallArgument>> ordinary = orderedArguments(
-            arguments, parameterTypes, body, explicitArgumentCount)) {
-      return ordinary;
-    }
-    if (arguments.size() != parameterTypes.size()) {
-      return std::nullopt;
-    }
-
-    std::vector<HirCallArgument> result;
-    result.reserve(arguments.size());
-    for (std::size_t index = 0; index < arguments.size(); ++index) {
-      const HirValue *input = body.findValue(arguments[index]);
-      const SemanticType &parameter = parameterTypes[index];
-      if (input == nullptr || input->kind == HirValueKind::PackExpansion) {
-        return std::nullopt;
-      }
-
-      HirCallInputKind kind = HirCallInputKind::Value;
-      if (parameter.kind == SemanticType::Reference) {
-        kind = parameter.referenceAccess == AccessMode::Mutable
-                   ? HirCallInputKind::MutableBorrow
-                   : HirCallInputKind::ReadBorrow;
-      } else if (orderedValueParameterType(parameter)) {
-        kind = HirCallInputKind::Value;
-      } else if (!orderedOwningParameterType(parameter) ||
-                 input->info.type != parameter) {
-        return std::nullopt;
-      } else if (input->info.category == ValueCategory::Place &&
-                 input->info.traits.copyable) {
-        kind = HirCallInputKind::CopyValue;
-      } else if (input->info.category == ValueCategory::Value &&
-                 input->info.traits.movable &&
-                 (!input->info.traits.containsBorrowedState ||
-                  input->kind != HirValueKind::Call ||
-                  !input->functionTarget)) {
-        kind = HirCallInputKind::MoveValue;
-      } else if (input->kind == HirValueKind::Call && input->functionTarget &&
-                 input->borrowOrigin != BorrowOriginKind::None &&
-                 input->info.category == ValueCategory::Value &&
-                 input->info.traits.movable &&
-                 input->info.traits.containsBorrowedState) {
-        kind = HirCallInputKind::MoveBorrowedTemporary;
-      } else {
-        return std::nullopt;
-      }
-
-      result.push_back({.parameterIndex = index,
-                        .value = input->id,
-                        .parameterType = parameter,
-                        .kind = kind,
-                        .defaultArgument = index >= explicitArgumentCount});
-    }
-    return result;
+    return orderedArguments(arguments, parameterTypes, body,
+                            explicitArgumentCount);
   }
 
   [[nodiscard]] std::optional<HirCallReceiver>

@@ -584,11 +584,10 @@ int main() {
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(artifact.contents.find("[limit = __gti_mir_p_") != std::string::npos &&
-             artifact.contents.find("__gti_mir_closure_factory_") ==
-                 std::string::npos,
-         "the algorithm call should spell the fused literal over its frozen "
-         "capture");
+  expect(artifact.contents.find("__gti_mir_closure_factory_") !=
+             std::string::npos,
+         "the now-scheduled borrowed iterator inputs should stage the closure "
+         "through its factory over the frozen capture");
 }
 
 void testInlineCaptureControlFlowProofFailsClosed() {
@@ -651,11 +650,6 @@ int main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(
-      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
-  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
-                                     .owner = entry->id};
-
   lang::MirProgram bypass = frontend.mir;
   auto &bypassFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
       bypass.functionInstances());
@@ -669,10 +663,9 @@ int main() {
         lang::computeMirDominance(bypassBody);
     expect(bypassDominance &&
                !bypassDominance->dominates(writerBlock, closureBlock) &&
-               !lang::CppMirBodyEmitter(bypass, map)
-                    .supportsFailureBodyText(address),
-           "an edge bypassing capture initialization must reject fused "
-           "closure emission");
+               !lang::verifyMirProgram(bypass).valid(),
+           "an edge bypassing capture initialization must fail verification "
+           "before materialized closure emission");
   }
 
   lang::MirProgram repeated = frontend.mir;
@@ -704,10 +697,9 @@ int main() {
                       return loop.contains(writerBlock);
                     });
     expect(repeatedDominance && writerRepeats &&
-               !lang::CppMirBodyEmitter(repeated, map)
-                    .supportsFailureBodyText(address),
-           "capture initialization on a re-entered loop path must reject "
-           "fused closure emission");
+               !lang::verifyMirProgram(repeated).valid(),
+           "capture initialization on a re-entered loop path must fail "
+           "verification before materialized closure emission");
   }
 }
 

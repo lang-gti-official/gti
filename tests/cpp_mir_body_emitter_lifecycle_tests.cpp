@@ -1275,16 +1275,18 @@ void testCopiedBorrowedArgumentAcrossInvoke() {
                          return instruction.id == value.definition;
                        });
       if (producer == block->instructions.end() ||
-          producer->kind != lang::MirInstructionKind::Load ||
-          producer->operands.size() != 1 ||
+          producer->kind != lang::MirInstructionKind::CallInput ||
+          producer->callInputKind != lang::HirCallInputKind::CopyValue ||
+          !producer->preparedParameterDrop || producer->operands.size() != 1 ||
           producer->operands.front().kind != lang::MirOperandKind::Copy)
         continue;
       found = true;
       const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                          .owner = function.id};
-      expect(lang::CppMirBodyEmitter(frontend.mir, map)
-                 .supportsFailureBodyText(address),
-             "copy before a later argument Invoke has a representation slot");
+      expect(
+          lang::CppMirBodyEmitter(frontend.mir, map)
+              .supportsFailureBodyText(address),
+          "copy before a later argument Invoke has a prepared-parameter slot");
       for (int mutation = 0; mutation != 3; ++mutation) {
         auto malformed = frontend.mir;
         auto *body = lang::findMirBody(malformed, address);
@@ -1301,17 +1303,17 @@ void testCopiedBorrowedArgumentAcrossInvoke() {
             if (candidate.type == value.info.type)
               const_cast<lang::MirClassInstance &>(candidate)
                   .requiresActiveCleanup = true;
-        expect(
-            !lang::CppMirBodyEmitter(malformed, map)
-                 .supportsFailureBodyText(address),
-            "copied argument requires exact Copy source and passive cleanup");
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "copied argument requires exact Copy source and matching "
+               "prepared cleanup before backend admission");
       }
       break;
     }
     if (found)
       break;
   }
-  expect(found, "fixture must retain a borrowed Copy across Invoke blocks");
+  expect(found,
+         "fixture must retain a prepared borrowed Copy across Invoke blocks");
 }
 
 void testNonFailingOwningDeclarationInitializer() {

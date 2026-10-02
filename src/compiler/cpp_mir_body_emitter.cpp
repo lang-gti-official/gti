@@ -7511,16 +7511,18 @@ materializedConstructorArgumentStage(const MirBody &body, MirValueId id) {
       consumer->constructorTarget &&
       consumer->constructorKind == ConstructorKind::Ordinary &&
       consumer->intrinsic == IntrinsicKind::None && stage->info.traits.movable;
-  // A moved class argument is also real prepared storage when a later
-  // argument can fail. Its failure-edge Drop must destroy that prepared
-  // value, not defer the move until the eventual call. Source calls share
+  // A copied or moved class argument is also real prepared storage when a
+  // later argument can fail. Its failure-edge Drop must destroy that prepared
+  // value, not defer construction until the eventual call. Source calls share
   // the closure call's existing slot argument and post-call retirement ABI.
   const bool sourceCall =
       consumer && consumer->kind == MirInstructionKind::Call &&
       consumer->functionTarget && consumer->intrinsic == IntrinsicKind::None &&
       (stage->info.type.kind == SemanticType::Lambda ||
        (stage->info.type.kind == SemanticType::Class &&
-        stage->callInputKind == HirCallInputKind::MoveValue &&
+        (stage->callInputKind == HirCallInputKind::MoveValue ||
+         (stage->callInputKind == HirCallInputKind::CopyValue &&
+          stage->info.traits.copyable)) &&
         stage->info.traits.movable));
   if ((!allocation && !construction && !sourceCall) ||
       consumer->callSite != stage->callSite ||

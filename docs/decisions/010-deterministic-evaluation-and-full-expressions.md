@@ -6,6 +6,13 @@ Implementation note (2026-08-22): source executable bodies now emit only from
 verified MIR. References below to the transitional C++ body emitter describe
 the problem this decision resolved, not a current fallback.
 
+Implementation note (2026-10-02): ordinary calls and constructors now accept a
+completed mutation before a later overlapping checked borrow. Their verified
+ordered-input schedules preserve the producer order and full-expression loan
+endpoint, including borrowed-carrier parameters; borrow-before-mutation remains
+invalid. The historical context below records why that order was originally
+rejected.
+
 ## Context
 
 GTI promises deterministic cleanup and backend-independent behavior, but the

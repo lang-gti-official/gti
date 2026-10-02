@@ -325,6 +325,12 @@ renders the exact selected borrowed overload when the fallback tier is active
 and the exact by-value overload when the ordinary tier wins. The protocol
 layer does not classify producers, rank candidates, or extend lifetimes.
 
+Ordered-call borrow conflicts likewise publish the compiler's later-mutation
+primary span and earlier-borrow related span, including UTF-16 conversion of
+non-ASCII prefixes. Reordering to a valid mutation-before-lookup expression
+clears the error on the next snapshot. The LSP does not reorder operands or
+offer a fix-it that could change observable effects.
+
 Range-for diagnostics follow the same boundary. An immutable owner for a
 mutable element reference, a missing exact `begin_mut()`/mutable-dereference
 path, or an unsupported range publishes compiler-owned `GTI-S2083`; changing

@@ -1077,14 +1077,26 @@ analysis, HIR, MIR, and the backend.
   materializes one distinct caller-owned prepared-parameter obligation. Copy
   initializes the stage, move reparents its exact active source obligation when
   present, and the final call transfers every stage exactly once as the callee
-  begins. Constructors retain direct checkpoint transfer until their partial-
-  construction model lands. Mutation tests cover wrong sites,
+  begins. Scheduled ordinary constructors use the same prepared-parameter
+  handoff and retain their separate partial-field rollback obligations.
+  Mutation tests cover wrong sites,
   duplicate/abandoned and bypassed inputs, type drift, reordering, forged
   receiver/copy/move modes, missing or misplaced transfer, and erased target
   identity. Generated/default zero-argument and copy/move special construction,
-  borrowed-state class values, packs, unresolved callables, operators other
-  than concrete `operator()`, failure rollback, backend emission, and semantic
-  borrow relaxation remain out of these slices.
+  packs, unresolved callables, and operators other than concrete `operator()`
+  remain outside the original bounded slices; their later slices retain their
+  own verification contracts.
+- **Landed checked-borrow composition slice:** an earlier mutation may finish
+  before a later overlapping lookup creates a borrow in ordinary calls or
+  constructions. Generic/free helpers preserve that order and origin. Ordinary
+  call and constructor inputs share one HIR classification, including exact
+  copied/constructed borrowed carriers and fresh borrowed call-result transfer.
+  MIR preserves the unique parameter handoff, retained owner loan, success-edge
+  publication and full-expression endpoint. User-defined tree/table and View
+  clients cover reallocation, mutation/lookup/invocation failures, source
+  diagnostic spans, invalid reverse order/escape, and forged MIR input order.
+  This does not shorten temporary loans, permit simultaneous mutable aliases,
+  or create a second backend execution authority.
 - **Landed program-authority slice:** Semantics preserves ordered configured
   prelude roots and lexical dependency-first/source declaration order in one
   exact data-only/executable-step plan. `GTI-S2068` rejects a later-storage

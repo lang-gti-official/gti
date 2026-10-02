@@ -150,8 +150,8 @@ enum class HirCallInputKind {
   MutableBorrow,
   ReadTemporaryBorrow,
   MutableTemporaryBorrow,
-  // An exact fresh borrowed-state carrier moved into one constructor
-  // parameter. This is not a general borrowed-value transfer: MIR verifies
+  // An exact fresh borrowed-state carrier moved into one ordinary call or
+  // constructor parameter. This is not an escaping transfer: MIR verifies
   // the producer, retained owner loan, lifetime slot, and unique consumer.
   MoveBorrowedTemporary,
   // Once access to an owned field of consuming this; cleanup stays in this.

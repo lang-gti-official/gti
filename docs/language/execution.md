@@ -388,11 +388,12 @@ initializer nor argument allocation can overtake an earlier count-conversion
 failure, and argument construction cannot observe uninitialized standard-
 library state.
 
-**Implementation gap:** semantic analysis still conservatively rejects a
-transient borrow and overlapping mutation in either call-argument order. HIR
-maps semantic-selected full-expression roots to concrete drop identities. Its
+Semantic analysis admits an earlier completed mutation followed by a later
+overlapping borrow in an ordinary call or construction when no other live loan
+conflicts. Borrow-first followed by mutation remains invalid. HIR maps
+semantic-selected full-expression roots to concrete drop identities. Its
 bounded ordered-invocation plan now names the receiver and exact scalar,
-reference, and eligible non-borrowed class-value arguments for concrete
+reference, and eligible class-value arguments for concrete
 non-intrinsic ordinary calls. It also covers a concrete ordinary constructor
 with at least one supported argument and an exact target; constructors have no
 receiver. MIR turns those roles into one-use checkpoints and verifies the
@@ -400,6 +401,12 @@ strict receiver when applicable, source-ordered arguments, then `Call` or
 `Construct` chain. Class places are copied at their checkpoint; owned class
 values are moved there, and an exact active temporary obligation is transferred
 at that same checkpoint.
+
+Borrowed-state class arguments use the same exact copy/move checkpoints as
+constructor inputs. An exact fresh borrowed call result additionally retains
+its producer's owner loan and success-edge lifetime before its unique transfer
+to the parameter. Neither transfer nor a nested consuming call retires that
+loan before the enclosing full-expression boundary.
 
 Verified MIR is the production authority for all source bodies. Construction,
 copy or move parameters, prepared call inputs, transfer, lexical cleanup,
