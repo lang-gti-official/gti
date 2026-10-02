@@ -4852,7 +4852,8 @@ private:
     }
     if ((value.intrinsic == IntrinsicKind::StorageDestroy ||
          value.intrinsic == IntrinsicKind::PrefixStoragePop ||
-         value.intrinsic == IntrinsicKind::PrefixStorageErase) &&
+         value.intrinsic == IntrinsicKind::PrefixStorageErase ||
+         value.intrinsic == IntrinsicKind::OptionalStorageReset) &&
         !call.operands.empty()) {
       const SemanticType &parameter = call.operands.front().type;
       const SemanticType &storage = parameter.kind == SemanticType::Reference &&

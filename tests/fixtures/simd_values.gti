@@ -123,6 +123,32 @@ int main() {
   if (copies[std::size_t(0)].reduce() != 28.0 || maybe.value().reduce() != 28.0) {
     return 16;
   }
+  // Nonempty growth and shrink combine structural storage relocation with
+  // the ordinary fixed-array representation of a four-lane SIMD value.
+  std::simd<float, 4> first = std::simd<float, 4>({1.0, 2.0, 3.0, 4.0});
+  std::simd<float, 4> second = std::simd<float, 4>({5.0, 6.0, 7.0, 8.0});
+  mut std::vector<std::simd<float, 4>> relocated{};
+  relocated.push_back(first);
+  relocated.push_back(second);
+  relocated.reserve(std::size_t(64));
+  if (relocated.size() != 2 || relocated.capacity() < 64) { return 17; }
+  for (mut std::size_t lane = 0; lane < 4; lane++) {
+    if (relocated[std::size_t(0)][lane] != first[lane] ||
+        relocated[std::size_t(1)][lane] != second[lane]) { return 18; }
+  }
+  relocated.push_back(first + second);
+  relocated.shrink_to_fit();
+  if (relocated.size() != 3 || relocated.capacity() != 3) { return 19; }
+  for (mut std::size_t lane = 0; lane < 4; lane++) {
+    if (relocated[std::size_t(0)][lane] != first[lane] ||
+        relocated[std::size_t(1)][lane] != second[lane] ||
+        relocated[std::size_t(2)][lane] != first[lane] + second[lane]) {
+      return 20;
+    }
+  }
+  if (relocated[std::size_t(0)].reduce() != 10.0 ||
+      relocated[std::size_t(1)].reduce() != 26.0 ||
+      relocated[std::size_t(2)].reduce() != 36.0) { return 21; }
   if (lanes<float, 1>() != 0 || lanes<float, 4>() != 0 ||
       lanes<float, 7>() != 0 || lanes<float, 64>() != 0 ||
       lanes<double, 2>() != 0 || lanes<double, 5>() != 0) { return 10; }

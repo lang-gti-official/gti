@@ -22,6 +22,10 @@
 namespace lang {
 namespace {
 
+[[nodiscard]] const MirClassInstance *
+exactMirCapabilityClass(const MirProgram &program, const SemanticType &type,
+                        CompilerCapabilityTypeKind capability);
+
 bool exactCThreadRuntimeFunction(const MirFunctionInstance &function) {
   const auto operation = function.cThreadOperation;
   if (operation == CThreadRuntimeOperation::None) {
@@ -2004,7 +2008,8 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
           instruction.kind == MirInstructionKind::Call &&
           (instruction.intrinsic == IntrinsicKind::StorageDestroy ||
            instruction.intrinsic == IntrinsicKind::PrefixStoragePop ||
-           instruction.intrinsic == IntrinsicKind::PrefixStorageErase);
+           instruction.intrinsic == IntrinsicKind::PrefixStorageErase ||
+           instruction.intrinsic == IntrinsicKind::OptionalStorageReset);
       if (removal && !instruction.operands.empty()) {
         const SemanticType &parameter = instruction.operands.front().type;
         const SemanticType &storage =
@@ -2016,7 +2021,12 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             instruction.intrinsic == IntrinsicKind::StorageDestroy
                 ? SemanticType::Storage
                 : SemanticType::PrefixStorage;
-        if (storage.kind == expectedKind && storage.arguments.size() == 1) {
+        const bool optionalStorage =
+            instruction.intrinsic == IntrinsicKind::OptionalStorageReset &&
+            exactMirCapabilityClass(
+                program, storage, CompilerCapabilityTypeKind::OptionalStorage);
+        if ((storage.kind == expectedKind || optionalStorage) &&
+            storage.arguments.size() == 1) {
           elementCleanup =
               mirUniqueCleanupType(program, storage.arguments.front());
         }
@@ -7089,11 +7099,22 @@ exactOptionalStorageIntrinsicContract(const MirProgram &program,
                        AccessMode::ReadOnly) &&
            noLoanResult() && noFailure();
   case IntrinsicKind::OptionalStorageReset:
+    // Removal uses the same independently verified element cleanup recipe as
+    // sparse/prefix storage. It has no local failure: any failure retains the
+    // original destructor's identity and propagates through this call.
     return instruction.lifecycle.empty() && instruction.operands.size() == 1 &&
            !instruction.constructorTarget &&
            exactResult(SemanticType::Void, ValueCategory::Value,
                        AccessMode::ReadOnly) &&
-           noLoanResult() && noFailure();
+           noLoanResult() && instruction.definedFailure.localOrigins.empty() &&
+           instruction.localFailureSites.empty() &&
+           instruction.safetyDischarges.empty() &&
+           instruction.definedFailure.propagation ==
+               (instruction.elementCleanup &&
+                        mirDropMayRaiseDefinedFailure(
+                            program, *instruction.elementCleanup)
+                    ? FailurePropagationKind::Destructor
+                    : FailurePropagationKind::None);
   case IntrinsicKind::OptionalStorageConstruct:
     // Publication transfers one already-completed value. Source constructor
     // execution and its failure channel must be separate ordinary MIR; this

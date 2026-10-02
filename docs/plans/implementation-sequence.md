@@ -36,23 +36,28 @@ and MIR execution rules remain authoritative.
 | Priority | State | Client and exit evidence |
 | --- | --- | --- |
 | 1 — construction and replacement | active | Nested owning objects and optional in-place construction, including fallible constructors, preserve ordered initialization, exact first failure and partial cleanup. Reduced Tea-style regressions run through the production backend. |
-| 2 — borrow composition | queued | Ordinary helpers, lookup and tree traversal compose checked references/views without representation-only rejection; unsafe escape, overlapping mutable access and use-after-move retain precise source errors. |
-| 3 — container/value-wrapper consistency | queued | Movement, replacement and explicit cloning work across everyday eligible optional/container/expected combinations, using structural library contracts rather than public-name compiler exceptions. |
-| 4 — owning payload transport | active, delegated | Concrete generic wrappers and collections can carry owning event/message alternatives through verified construction, movement and exactly-once destruction. Unsupported structural boundaries remain explicit and diagnosed at source. |
+| 2 — borrow composition | active, delegated | Ordinary helpers, lookup and tree traversal compose checked references/views without representation-only rejection; unsafe escape, overlapping mutable access and use-after-move retain precise source errors. |
+| 3 — container/value-wrapper consistency | active | Movement, replacement and explicit cloning work across everyday eligible optional/container/expected combinations, using structural library contracts rather than public-name compiler exceptions. |
+| 4 — owning payload transport | integrated locally; broader reconciliation pending | Concrete generic wrappers and collections can carry owning event/message alternatives through verified construction, movement and exactly-once destruction. Unsupported structural boundaries remain explicit and diagnosed at source. |
 
 Each row requires focused positive/negative tests and relevant compiler/LSP
 diagnostic evidence using an optimized compiler. Integrated completion requires
 the broader affected verifier, backend, corpus and runtime gates. SIMD and
 native-bridge handoff work is independently audited before reconciliation; it
 does not replace these four outcomes. The user also transferred structural
-relocation into this campaign. Its candidate at `875f288d` plus the original
-agent's staged follow-up remains under independent review, not an accepted
-combined checkpoint. The client is checked transfer between typed-storage
+relocation into this campaign. Its candidate at `875f288d`, original follow-up
+`6cf8e3d8`, and reviewed fail-closed/transactional hardening `596e4264` are
+integrated locally. The client is checked transfer between typed-storage
 owners and vector/string growth, without user-defined movement or raw-address
 APIs. Reconciliation must preserve empty-destination preflight, exclusive
 borrows, exactly-once cleanup, conservative relocation traits, and independent
 MIR verification. SIMD and relocation's separately proposed serialization and
-version changes must be reconciled together before integrated validation.
+version changes use combined `mir-v82`/`mir-body-v69`; integrated validation
+is in progress, including nonempty SIMD-vector growth and shrinkage. The
+optional consistency audit also reproduced and repaired reset losing caller
+cleanup on a failing payload destructor, using the existing MIR removal
+recipe. Nested optional movement and explicit cloning remain open clients;
+the campaign is not complete.
 No custom copy/move constructor bodies,
 module implementation, weakened borrow rules, or unchecked failure paths are
 part of this campaign.

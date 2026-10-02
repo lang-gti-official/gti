@@ -310,8 +310,10 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     // OptionalStorageReadMut
     MirEffectTraits{.readsPlace = true, .mayTrap = true, .startsLoan = true},
     // OptionalStorageReset
-    MirEffectTraits{
-        .writesPlace = true, .dropsValue = true, .invokesUserCode = true},
+    MirEffectTraits{.writesPlace = true,
+                    .mayTrap = true,
+                    .dropsValue = true,
+                    .invokesUserCode = true},
     // StringViewSize: a pure read of the view's stored length.
     MirEffectTraits{},
     // StringViewEmpty

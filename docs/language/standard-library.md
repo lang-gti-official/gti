@@ -310,6 +310,9 @@ The current implemented foundation includes:
   retains its original failure identity and partial-construction cleanup;
   a failed emplacement leaves the slot empty. This staged publication does
   not allocate storage for the optional itself.
+  Reset, including the reset performed before emplacement, preserves normal
+  destructor failure propagation and cleanup of the caller's other owners.
+  Engagement is retired before payload cleanup; an empty reset is a no-op.
   An empty checked access raises `GTI-R0008` after ordinary cleanup. Copy
   construction and copy/move assignment are unavailable in this slice;
   replacement uses `reset()` or `emplace()`, and a moved source cannot be used

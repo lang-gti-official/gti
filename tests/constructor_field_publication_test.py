@@ -12,6 +12,7 @@ if __name__ == "__main__":
     for name, success, failure_output in (
         ("constructor_cleanup_free_failure", "12\n2\n1\n", "1\n"),
         ("optional_constructor_failure", "3\n12\n3\n9\n", "3\n3\n9\n"),
+        ("optional_reset_failure", "3\ndone\n9\n", "3\n9\n"),
         ("constructor_nonassignable_fields", "7\n12\n3\n2\n1\n", "7\n2\n1\n"),
         ("constructor_field_call_assignment", "12\nold\n12\nnew\ndone\nnew\n",
          "12\nold\nnew\n"),

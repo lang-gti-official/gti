@@ -25064,6 +25064,13 @@ public:
             output << "bool __gti_mir_construct_success_" << instruction.id
                    << " = false;\n";
           }
+          if (instruction.kind == MirInstructionKind::Call &&
+              instruction.intrinsic == IntrinsicKind::OptionalStorageReset &&
+              invokePairedInstruction(facts.body, instruction.id)) {
+            writeIndent();
+            output << "bool __gti_mir_element_cleanup_success_"
+                   << instruction.id << " = false;\n";
+          }
           if (instruction.kind == MirInstructionKind::CleanupBeforeAssign) {
             writeIndent();
             output << "bool __gti_mir_replacement_success_" << instruction.id
@@ -31711,6 +31718,18 @@ private:
       if (observes) {
         output << "__gti_mir_v_" << *instruction.result << " = ";
       }
+      if (!observes && instruction.elementCleanup) {
+        const bool checked =
+            failureForm && invokePairedInstruction(facts.body, instruction.id);
+        output << (checked ? "__gti_mir_element_cleanup_success_" +
+                                 std::to_string(instruction.id) + " = "
+                           : "(void)");
+        emitStoragePlaceValue(facts, *storage);
+        output << ".reset_with_failure(";
+        emitElementCleanupArgument(instruction, false);
+        output << ");\n";
+        return;
+      }
       output << "::gti_internal::backend::"
              << (observes ? "optional_storage_has_value"
                           : "optional_storage_reset")
@@ -33343,6 +33362,13 @@ private:
         }
         throw std::logic_error(
             "verified MIR invoke is outside the failure vocabulary");
+      }
+      if (producer != nullptr && producer->kind == MirInstructionKind::Call &&
+          producer->intrinsic == IntrinsicKind::OptionalStorageReset &&
+          producer->elementCleanup) {
+        emitConditionalEdgeTransfer("__gti_mir_element_cleanup_success_" +
+                                    std::to_string(producer->id));
+        return;
       }
       if (producer != nullptr &&
           producer->kind == MirInstructionKind::CleanupBeforeAssign) {
@@ -35083,8 +35109,11 @@ private:
     --indentation;
   }
 
-  void emitElementCleanupArgument(const MirInstruction &instruction) {
-    output << ", __gti_mir_failure_record, ";
+  void emitElementCleanupArgument(const MirInstruction &instruction,
+                                  bool leadingComma = true) {
+    if (leadingComma)
+      output << ", ";
+    output << (failureForm ? "__gti_mir_failure_record" : "nullptr") << ", ";
     if (instruction.intrinsic == IntrinsicKind::PrefixStorageErase) {
       output
           << "&::gti_internal::backend::__gti_failure_artifact_descriptor_v1, ";
@@ -42220,13 +42249,19 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   : nullptr;
           const bool observes =
               instruction.intrinsic == IntrinsicKind::OptionalStorageHasValue;
+          const bool cleanupPropagation =
+              !observes && instruction.elementCleanup &&
+              instruction.definedFailure.propagation ==
+                  FailurePropagationKind::Destructor &&
+              instruction.definedFailure.localOrigins.empty() && failureForm &&
+              invokePairedInstruction(body, instruction.id);
           if (instruction.functionTarget || instruction.constructorTarget ||
               instruction.bodyTarget || instruction.lambdaTarget ||
               instruction.callableInvocation || instruction.receiver ||
               storage == nullptr ||
               !optionalStorageType(program_, storage->type) ||
               !instruction.localFailureSites.empty() ||
-              !instruction.definedFailure.empty() ||
+              (!instruction.definedFailure.empty() && !cleanupPropagation) ||
               (observes ? (!instruction.result ||
                            instruction.info.type != SemanticType::Bool)
                         : (instruction.result.has_value() ||
@@ -44234,6 +44269,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       }
       if (producer->kind == MirInstructionKind::Call) {
+        if (producer->intrinsic == IntrinsicKind::OptionalStorageReset &&
+            producer->elementCleanup &&
+            producer->definedFailure.propagation ==
+                FailurePropagationKind::Destructor &&
+            producer->definedFailure.localOrigins.empty() &&
+            producer->localFailureSites.empty()) {
+          // The exact removal recipe writes the original destructor failure
+          // record; this Invoke routes its boolean result, not a new detector.
+          continue;
+        }
         if (storageAllocationFailureCall(program_, *producer)) {
           // The allocation helper writes the canonical checked status that
           // drives this Invoke edge; successful publication remains in MIR.
