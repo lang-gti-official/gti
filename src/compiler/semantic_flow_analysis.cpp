@@ -6652,11 +6652,18 @@ auto SemanticVisitor::Impl::constraintImplies(GenericConstraintSet actual,
       hasConstraint(actual, GenericConstraintKind::BitwiseRelocatable)) {
     return true;
   }
+  if (required == GenericConstraintKind::MoveConstructible &&
+      (hasConstraint(actual, GenericConstraintKind::Movable) ||
+       hasConstraint(actual, GenericConstraintKind::Relocatable) ||
+       hasConstraint(actual, GenericConstraintKind::BitwiseRelocatable))) {
+    return true;
+  }
   if (!hasConstraint(actual, GenericConstraintKind::AtomicScalar)) {
     return false;
   }
   switch (required) {
   case GenericConstraintKind::CopyConstructible:
+  case GenericConstraintKind::MoveConstructible:
   case GenericConstraintKind::Copyable:
   case GenericConstraintKind::Movable:
   case GenericConstraintKind::Relocatable:

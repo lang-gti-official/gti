@@ -10,7 +10,7 @@ namespace gti_internal {
 /// Exact trusted declaration identity selects the representation. Application
 /// code cannot name this type or its operations, and the public optional class
 /// owns every state transition.
-class optional_storage<std::movable T> {
+class optional_storage<std::move_constructible T> {
 public:
   optional_storage() {}
   optional_storage(optional_storage<T>& other) = delete;
@@ -18,15 +18,15 @@ public:
   ~optional_storage() = default;
 };
 
-bool optional_storage_has_value<std::movable T>(
+bool optional_storage_has_value<std::move_constructible T>(
     gti_internal::optional_storage<T>& storage);
-void optional_storage_construct<std::movable T>(
+void optional_storage_construct<std::move_constructible T>(
     mut gti_internal::optional_storage<T>& storage, T value);
-T& optional_storage_read<std::movable T>(
+T& optional_storage_read<std::move_constructible T>(
     gti_internal::optional_storage<T>& storage);
-mut T& optional_storage_read_mut<std::movable T>(
+mut T& optional_storage_read_mut<std::move_constructible T>(
     mut gti_internal::optional_storage<T>& storage);
-void optional_storage_reset<std::movable T>(
+void optional_storage_reset<std::move_constructible T>(
     mut gti_internal::optional_storage<T>& storage);
 }
 
@@ -39,7 +39,7 @@ namespace std {
 /// `empty_owner_access/member_access` failure after normal MIR cleanup. Copy
 /// construction and both assignment forms remain deliberately absent; use an
 /// explicit `clone()` when `T` supports duplication.
-class optional<std::movable T> {
+class optional<std::move_constructible T> {
   mut gti_internal::optional_storage<T> storage =
       gti_internal::optional_storage<T>();
 

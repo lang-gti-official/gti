@@ -45,6 +45,27 @@ auto SemanticVisitor::Impl::semanticTypeComplexity(const SemanticType &type)
   return result;
 }
 
+auto SemanticVisitor::Impl::nonDecreasingNominalRecurrence(
+    const SemanticType &type, std::span<const SemanticType> active) const
+    -> bool {
+  // Exact cycles remain cycles even across a closed declaration. The growth
+  // guard is different: a closed non-generic declaration breaks dependence
+  // on the incoming substitution. Wrapper<Envelope> -> Envelope ->
+  // Wrapper<Leaf> is finite composition, not a growing Wrapper recurrence.
+  if (std::find(active.begin(), active.end(), type) != active.end())
+    return true;
+  for (auto cursor = active.rbegin(); cursor != active.rend(); ++cursor) {
+    if (cursor->kind != SemanticType::Class)
+      continue;
+    if (cursor->classId == type.classId)
+      return semanticTypeComplexity(type) >= semanticTypeComplexity(*cursor);
+    if (const ClassInfo *owner = classInfo(*cursor);
+        owner != nullptr && owner->genericParameters.empty())
+      return false;
+  }
+  return false;
+}
+
 auto SemanticVisitor::Impl::lambdaTraitsForCaptures(
     std::span<const SemanticType> captureTypes) const -> SemanticTypeTraits {
   SemanticTypeTraits result;
@@ -116,36 +137,26 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
     return cached->state == ActiveCleanupState::Present;
   }
 
-  const std::size_t complexity = semanticTypeComplexity(type);
   if (type.kind == SemanticType::Class) {
     if (type.classId == 0 || type.classId > classes.size()) {
       return false;
     }
-    const auto recursiveNominal =
-        std::find_if(query.entries.rbegin(), query.entries.rend(),
-                     [&](const ActiveCleanupEntry &entry) {
-                       return entry.state == ActiveCleanupState::InProgress &&
-                              entry.type.kind == SemanticType::Class &&
-                              entry.type.classId == type.classId;
-                     });
-    if (recursiveNominal != query.entries.rend() &&
-        complexity >= recursiveNominal->complexity) {
+    if (nonDecreasingNominalRecurrence(type, query.activeTypes)) {
       // A by-value generic recurrence that does not structurally decrease
       // has no finite lifecycle shape. Treat it conservatively as requiring
       // active cleanup so forbidden global/static storage fails before HIR
       // instance expansion. Decreasing concrete nests continue to their
       // leaf type.
-      query.entries.push_back({.type = type,
-                               .state = ActiveCleanupState::Present,
-                               .complexity = complexity});
+      query.entries.push_back(
+          {.type = type, .state = ActiveCleanupState::Present});
       return true;
     }
   }
 
   const std::size_t entryIndex = query.entries.size();
-  query.entries.push_back({.type = type,
-                           .state = ActiveCleanupState::InProgress,
-                           .complexity = complexity});
+  query.entries.push_back(
+      {.type = type, .state = ActiveCleanupState::InProgress});
+  query.activeTypes.push_back(type);
   bool result = false;
   switch (type.kind) {
   case SemanticType::Array:
@@ -225,6 +236,7 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
   }
   query.entries[entryIndex].state =
       result ? ActiveCleanupState::Present : ActiveCleanupState::Absent;
+  query.activeTypes.pop_back();
   return result;
 }
 
@@ -387,15 +399,7 @@ auto SemanticVisitor::Impl::typeCapabilities(
   if (type.classId == 0 || type.classId > classes.size()) {
     return {};
   }
-  const auto recursiveNominal = std::find_if(
-      visiting.rbegin(), visiting.rend(), [&](const SemanticType &active) {
-        return active.kind == SemanticType::Class &&
-               active.classId == type.classId;
-      });
-  if (recursiveNominal != visiting.rend() &&
-      (type == *recursiveNominal ||
-       semanticTypeComplexity(type) >=
-           semanticTypeComplexity(*recursiveNominal))) {
+  if (nonDecreasingNominalRecurrence(type, visiting)) {
     // Recursive nominal state is evaluated as a greatest fixed point. A
     // back-edge contributes no new denial; fields and lifecycle on the
     // enclosing path still decide the final result. Concrete generic nests
@@ -577,15 +581,7 @@ auto SemanticVisitor::Impl::typeTraits(
 
   SemanticTypeTraits traits;
   traits.drop = DropKind::Lexical;
-  const auto recursiveNominal = std::find_if(
-      visiting.rbegin(), visiting.rend(), [&](const SemanticType &active) {
-        return active.kind == SemanticType::Class &&
-               active.classId == type.classId;
-      });
-  if (recursiveNominal != visiting.rend() &&
-      (type == *recursiveNominal ||
-       semanticTypeComplexity(type) >=
-           semanticTypeComplexity(*recursiveNominal))) {
+  if (nonDecreasingNominalRecurrence(type, visiting)) {
     traits.copyable = false;
     traits.movable = false;
     traits.copyAssignable = false;

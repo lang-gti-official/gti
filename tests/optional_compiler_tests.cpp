@@ -1,5 +1,7 @@
 #include "compiler_test_fixture.h"
 
+#include "gti/mir_effects.h"
+
 namespace {
 
 [[nodiscard]] bool isOptionalIntrinsic(lang::IntrinsicKind intrinsic) {
@@ -438,11 +440,41 @@ void destroy(int divisor) {
          "the backend must consume the verified element cleanup recipe");
 }
 
+void testNestedOptionalConstruction() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/optional_nested.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input),
+                           std::istreambuf_iterator<char>()};
+  const auto frontend = lang::Frontend().analyze(path.string(), source,
+                                                 {standardLibraryPrelude()}, {},
+                                                 {standardLibraryRoot()});
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    for (const auto &instance : frontend.mir.classInstances()) {
+      const auto derived =
+          lang::mirTypeRelocationKind(frontend.mir, instance.type);
+      if (derived != instance.traits.relocation)
+        std::cerr << "relocation mismatch: class " << instance.id << " "
+                  << "declaration=" << instance.declaration
+                  << " semantic=" << int(instance.traits.relocation)
+                  << " mir=" << int(derived)
+                  << " move=" << int(instance.moveConstructor) << '\n';
+    }
+  }
+  expect(input.good() && frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "nested construction-only owners retain exact lifecycle and "
+         "relocation metadata without requiring assignment");
+}
+
 } // namespace
 
 int main() {
   testOptionalCompilerContract();
   testOptionalResetCleanup();
+  testNestedOptionalConstruction();
   if (failures != 0) {
     std::cerr << failures << " optional compiler test(s) failed\n";
     return 1;

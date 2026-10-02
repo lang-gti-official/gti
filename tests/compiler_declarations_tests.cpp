@@ -3709,6 +3709,131 @@ T select<std::integral T>(T value) { return value; }
          "parameter name");
 }
 
+void testMoveConstructionCapability() {
+  const auto valid =
+      lang::Frontend().analyze("move-construction-capability.gti", R"(
+class Cursor {
+  int& source;
+public:
+  Cursor(int& value) : source(value) {}
+};
+bool accepts<T>(T& value) requires std::move_constructible<T> { return true; }
+bool from_movable<std::movable T>(T& value) { return accepts(value); }
+bool from_relocation<std::relocatable T>(T& value) { return accepts(value); }
+bool from_either<T>(T& value)
+  requires std::movable<T> || std::relocatable<T> { return accepts(value); }
+int main() {
+  int source = 7;
+  Cursor cursor{source};
+  if (accepts(cursor) && from_movable(source) && from_relocation(source) &&
+      from_either(source)) { return 0; }
+  return 1;
+}
+)",
+                               {standardLibraryPrelude()});
+  if (!valid.canGenerateCode()) {
+    for (const auto &diagnostic : valid.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid() &&
+             !gti_test::emitCppText(valid).empty(),
+         "construction-only user cursors and stronger symbolic contracts "
+         "should satisfy move construction without requiring assignment");
+
+  const std::string invalidSource = R"(
+class Frozen {
+public:
+  Frozen() {}
+  Frozen(Frozen&& other) = delete;
+};
+class Cursor {
+  int& source;
+public:
+  Cursor(int& value) : source(value) {}
+};
+bool constructible<T>(T& value) requires std::move_constructible<T> { return true; }
+bool assignable<T>(T& value) requires std::movable<T> { return true; }
+bool cannot_strengthen<std::move_constructible T>(T& value) {
+  return assignable(value);
+}
+int main() {
+  Frozen frozen;
+  int source = 7;
+  Cursor cursor{source};
+  [[discard]] constructible(frozen);
+  [[discard]] assignable(cursor);
+  return 0;
+}
+)";
+  const auto invalid =
+      lang::Frontend().analyze("move-construction-rejected.gti", invalidSource,
+                               {standardLibraryPrelude()});
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2029") &&
+             hasDiagnostic(invalid.diagnostics, "std::move_constructible") &&
+             hasDiagnostic(invalid.diagnostics, "std::movable") &&
+             hasDiagnosticHint(invalid.diagnostics,
+                               "move assignment is not required") &&
+             !hasDiagnosticCode(invalid.diagnostics, "GTI-B0001"),
+         "deleted construction and unavailable assignment must remain "
+         "distinct source-level constraint failures");
+  const auto failure = std::find_if(
+      invalid.diagnostics.begin(), invalid.diagnostics.end(),
+      [](const auto &item) {
+        return item.code == "GTI-S2029" &&
+               item.message.find("Type 'Frozen'") != std::string::npos;
+      });
+  const auto closingParen = invalidSource.find("constructible(frozen)") +
+                            std::string("constructible(frozen").size();
+  expect(failure != invalid.diagnostics.end() &&
+             failure->primary.start == closingParen &&
+             failure->primary.end == closingParen + 1 &&
+             !failure->related.empty() && failure->fixes.empty(),
+         "move-construction failure points at the call, relates its contract, "
+         "and offers no ownership-changing automatic fix");
+}
+
+void testFiniteWrapperTraits() {
+  const auto frontend =
+      lang::Frontend().analyze("finite-wrapper-traits.gti", R"(
+struct Wrapper<T> { T value; };
+struct Closed { Wrapper<int> nested; };
+struct RawField { int* pointer = nullptr; };
+struct ClosedRaw { Wrapper<RawField> nested; };
+int main() {
+  Wrapper<Closed> finite = {.value = {.nested = {.value = 7}}};
+  Wrapper<ClosedRaw> raw = {.value = {.nested = {.value = {.pointer = nullptr}}}};
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "a closed declaration breaks generic growth dependence, not exact "
+         "cycle detection");
+  const auto *main = findTopLevelFunction(frontend.program, "main");
+  const auto traits =
+      [&](const char *name) -> const lang::SemanticTypeTraits * {
+    const auto *local = findDirectLocal(main, name);
+    const auto *binding =
+        local ? frontend.semantics.findBinding(*local) : nullptr;
+    return binding ? &binding->traits : nullptr;
+  };
+  const auto *finite = traits("finite");
+  const auto *raw = traits("raw");
+  expect(finite && finite->movable && finite->copyable &&
+             finite->relocation == lang::RelocationKind::Bitwise &&
+             finite->transferCapable && finite->shareCapable,
+         "finite passive wrappers retain their structural capabilities");
+  expect(raw && raw->movable && !raw->transferCapable && !raw->shareCapable,
+         "finite wrapper traversal must reach a raw field rather than "
+         "treating a repeated generic name as a harmless recursive edge");
+}
+
 void testConcurrencyTypeCapabilities() {
   const std::string source = R"(
 #include <std/cstdio>
@@ -10118,6 +10243,8 @@ constexpr NamedTest kTests[] = {
      testExactQualifiedClassSpecializations},
     {"testContextualNumericLiterals", testContextualNumericLiterals},
     {"testConstrainedGenerics", testConstrainedGenerics},
+    {"testMoveConstructionCapability", testMoveConstructionCapability},
+    {"testFiniteWrapperTraits", testFiniteWrapperTraits},
     {"testConcurrencyTypeCapabilities", testConcurrencyTypeCapabilities},
     {"testSourceDefinedConcepts", testSourceDefinedConcepts},
     {"testMemberRequirementConcepts", testMemberRequirementConcepts},

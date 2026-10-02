@@ -134,6 +134,14 @@
       "suite": "declarations"
     },
     {
+      "name": "testMoveConstructionCapability",
+      "suite": "declarations"
+    },
+    {
+      "name": "testFiniteWrapperTraits",
+      "suite": "declarations"
+    },
+    {
       "name": "testConcurrencyTypeCapabilities",
       "suite": "declarations"
     },

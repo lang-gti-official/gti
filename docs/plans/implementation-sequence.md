@@ -36,7 +36,7 @@ and MIR execution rules remain authoritative.
 | Priority | State | Client and exit evidence |
 | --- | --- | --- |
 | 1 — construction and replacement | active | Nested owning objects and optional in-place construction, including fallible constructors, preserve ordered initialization, exact first failure and partial cleanup. Reduced Tea-style regressions run through the production backend. |
-| 2 — borrow composition | active, delegated | Ordinary helpers, lookup and tree traversal compose checked references/views without representation-only rejection; unsafe escape, overlapping mutable access and use-after-move retain precise source errors. |
+| 2 — borrow composition | integrated locally; broader reconciliation pending | Ordinary helpers, lookup and tree traversal compose checked references/views without representation-only rejection; unsafe escape, overlapping mutable access and use-after-move retain precise source errors. |
 | 3 — container/value-wrapper consistency | active | Movement, replacement and explicit cloning work across everyday eligible optional/container/expected combinations, using structural library contracts rather than public-name compiler exceptions. |
 | 4 — owning payload transport | integrated locally; broader reconciliation pending | Concrete generic wrappers and collections can carry owning event/message alternatives through verified construction, movement and exactly-once destruction. Unsupported structural boundaries remain explicit and diagnosed at source. |
 
@@ -59,8 +59,13 @@ cleanup on a failing payload destructor, using the existing MIR removal
 recipe. Optional cloning now delegates an engaged payload to ordinary
 `std::clone`, with empty-state, owned string/vector, scalar and unrelated
 user-defined clone policy checks across C++20/23, O0/O1/O3, no-elide and
-sanitizers. Nested optional movement and other wrapper combinations remain open
-clients. A further reduced constructor-pack test exposes invalid MIR when an
+sanitizers. Nested optionals and unrelated construction-only envelopes now
+move and clone under `std::move_constructible`, without granting assignment.
+Finite closed-wrapper traversal no longer loses relocation or leaf concurrency
+facts to the generic-growth guard; exact cycles and uninterrupted generic growth
+remain bounded. Focused compiler checks and the same eight-mode native matrix
+cover these cases. Container/expected combinations remain open clients.
+A further reduced constructor-pack test exposes invalid MIR when an
 owned pack supplies an exact move-constructor argument; repair is in progress.
 The campaign is not complete.
 No custom copy/move constructor bodies,

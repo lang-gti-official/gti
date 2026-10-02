@@ -1165,15 +1165,19 @@ private:
   struct ActiveCleanupEntry {
     SemanticType type = SemanticType::Unknown;
     ActiveCleanupState state = ActiveCleanupState::InProgress;
-    std::size_t complexity = 0;
   };
 
   struct ActiveCleanupQuery {
     std::vector<ActiveCleanupEntry> entries;
+    std::vector<SemanticType> activeTypes;
   };
 
   [[nodiscard]] static std::size_t
   semanticTypeComplexity(const SemanticType &type);
+
+  [[nodiscard]] bool
+  nonDecreasingNominalRecurrence(const SemanticType &type,
+                                 std::span<const SemanticType> active) const;
 
   [[nodiscard]] SemanticTypeTraits
   lambdaTraitsForCaptures(std::span<const SemanticType> captureTypes) const;

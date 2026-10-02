@@ -56,6 +56,7 @@ public surface includes:
 | `std::transferable<T>` | Compiler-backed transfer-capability concept |
 | `std::shareable<T>` | Compiler-backed read-only sharing concept |
 | `std::copy_constructible<T>` | Copy construction is available; copy assignment is not implied |
+| `std::move_constructible<T>` | Move construction is available; move assignment is not implied |
 | `std::copyable<T>` | Copy construction and copy assignment are both available |
 
 `expected<T, E>` and `unexpected(error)` currently have language-level syntax
@@ -301,7 +302,8 @@ The current implemented foundation includes:
   applies the helper to every element, supporting owned strings and nested
   vectors; shared pointers retain sharing. See [concepts](concepts.md); and
 - `<std/optional>` source-defined move-only `std::optional<T>` for
-  `std::movable T`. Empty construction performs no allocation; value
+  `std::move_constructible T`, including nested optionals whose payloads
+  cannot be assigned. Empty construction performs no allocation; value
   construction, `emplace`, `reset`, `clone`, `has_value`, contextual `bool`, checked
   `value`, dereference, arrow, and `value_or` are implemented. A move
   construction transfers an engaged payload and its cleanup obligation.
