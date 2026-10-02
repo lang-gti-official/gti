@@ -2,6 +2,8 @@
 // storage capability. The private representation owns at most one live T and
 // never allocates merely to represent the empty state.
 
+#include <std/utility>
+
 namespace gti_internal {
 /// Compiler-owned inline storage for zero or one live `T`.
 ///
@@ -36,7 +38,7 @@ namespace std {
 /// unavailable. Access to an empty value raises GTI's checked
 /// `empty_owner_access/member_access` failure after normal MIR cleanup. Copy
 /// construction and both assignment forms remain deliberately absent; use an
-/// explicit payload-level copy when `T` supports one.
+/// explicit `clone()` when `T` supports duplication.
 class optional<std::movable T> {
   mut gti_internal::optional_storage<T> storage =
       gti_internal::optional_storage<T>();
@@ -100,6 +102,15 @@ public:
       return this.value();
     }
     return std::move(fallback);
+  }
+
+  /// Duplicates an engaged payload using its explicit clone contract.
+  /// Empty optionals remain empty; sharing follows the payload's clone policy.
+  optional<T> clone() requires std::cloneable<T> {
+    if (this.has_value()) {
+      return optional<T>(std::clone(this.value()));
+    }
+    return optional<T>();
   }
 
   /// Destroys the live value, if any, and becomes empty.

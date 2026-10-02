@@ -302,7 +302,7 @@ The current implemented foundation includes:
   vectors; shared pointers retain sharing. See [concepts](concepts.md); and
 - `<std/optional>` source-defined move-only `std::optional<T>` for
   `std::movable T`. Empty construction performs no allocation; value
-  construction, `emplace`, `reset`, `has_value`, contextual `bool`, checked
+  construction, `emplace`, `reset`, `clone`, `has_value`, contextual `bool`, checked
   `value`, dereference, arrow, and `value_or` are implemented. A move
   construction transfers an engaged payload and its cleanup obligation.
   Emplacement first resets the old value, constructs `T` through ordinary GTI,
@@ -313,6 +313,10 @@ The current implemented foundation includes:
   Reset, including the reset performed before emplacement, preserves normal
   destructor failure propagation and cleanup of the caller's other owners.
   Engagement is retired before payload cleanup; an empty reset is a no-op.
+  `clone()` requires `std::cloneable<T>` and uses ordinary `std::clone` on an
+  engaged payload; an empty optional clones to empty. Owned strings and vectors
+  duplicate according to their element contracts, while shared values retain
+  their sharing policy. This does not enable implicit optional copying.
   An empty checked access raises `GTI-R0008` after ordinary cleanup. Copy
   construction and copy/move assignment are unavailable in this slice;
   replacement uses `reset()` or `emplace()`, and a moved source cannot be used

@@ -169,7 +169,10 @@ copying: strings duplicate their bytes, shared owners retain shared ownership,
 and user types define their own cloning policy. Noncopyable types without a
 compatible clone member remain rejected. `std::vector<T>::clone()` requires
 `std::cloneable<T>` and duplicates each element through that helper, including
-strings and nested vectors. No public clone name is recognized by the compiler.
+strings and nested vectors. `std::optional<T>::clone()` applies the same helper
+only when engaged, preserving empty state otherwise. Both operations are
+ordinary constrained GTI methods. No public clone name is recognized by the
+compiler.
 
 ## Ownership boundary
 
