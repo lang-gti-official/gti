@@ -1,0 +1,25 @@
+#include <std/memory>
+#include <std/string>
+
+class Asset {
+  std::string name_;
+public:
+  Asset(std::string name) : name_(std::move(name)) {}
+  std::string_view name() { return this.name_.view(); }
+  ~Asset() { std::println("asset released"); }
+};
+
+int main() {
+  auto owner = std::make_shared<Asset>(std::string("player.png"));
+  {
+    auto alias = owner.clone(); // another owner of the SAME object, not a deep copy
+    if (owner.use_count() != std::size_t(2)) { return 1; }
+    std::println(alias->name());
+    auto moved = std::move(alias); // transfers this handle; alias is unavailable
+    if (moved.use_count() != std::size_t(2)) { return 2; }
+  }
+  if (owner.use_count() != std::size_t(1)) { return 3; }
+  // Shared lifetime is not permission for unsynchronized mutation.
+  // Prefer unique ownership when sharing lifetime is unnecessary; avoid cycles.
+  return 0; // the final owner releases Asset exactly once
+}

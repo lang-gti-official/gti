@@ -1,0 +1,48 @@
+#include <std/json>
+#include <std/string>
+
+int main() {
+  auto parsed = std::json::parse("{\"name\":\"tea\",\"stars\":42,\"license\":null}");
+  if (!parsed) {
+    std::println(parsed.error().description());
+    return 1;
+  }
+  // The document owns its contents; it does not borrow the input text.
+  auto document = std::move(parsed).value();
+  auto name = document.get_string("name");
+  auto stars = document.get_uint64("stars");
+  if (!name || !stars) { return 2; }
+  std::println(name.value());
+  std::println(stars.value());
+
+  // Missing and null differ. get() is fallible; at() requires a known shape.
+  auto missing = document.get_string("missing");
+  if (missing || missing.error().code() != std::json::errc::missing_key ||
+      !document.contains("license") || !document.at("license").is_null()) { return 3; }
+
+  // Every builder returns a recoverable result; do not silently discard it.
+  mut auto issue = std::json::value::object();
+  auto title = issue.set("title", "Improve examples");
+  auto open = issue.set("open", true);
+  mut auto labels = std::json::value::array();
+  auto first = labels.push("documentation");
+  auto second = labels.push("good first issue");
+  if (!title || !open || !first || !second) { return 4; }
+  for (mut std::size_t index = 0; index < labels.size(); index++) {
+    auto text = labels.at(index).as_string();
+    if (!text) { return 5; }
+    std::println(text.value());
+  }
+  auto stored = issue.set("labels", std::move(labels));
+  if (!stored) { return 4; }
+  std::println(std::json::stringify(issue));
+
+  // Clone is an independent document; modifying it leaves issue unchanged.
+  mut auto edited = issue.clone();
+  auto changed = edited.set("open", false);
+  auto original_open = issue.get_boolean("open");
+  if (!changed || !original_open || !original_open.value()) { return 6; }
+  auto invalid = std::json::parse("{\"x\":1,\"x\":2}");
+  if (invalid || !invalid.error().has_source_location()) { return 7; }
+  return 0;
+}
