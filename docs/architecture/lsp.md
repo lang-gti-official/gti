@@ -572,6 +572,10 @@ Selected mutable-reference constructor arguments count as mutable uses in the
 compiler. Changing a constructor from read-only to mutable-reference removes
 the obsolete warning and its quick fix; an old diagnostic cannot remove a
 now-required `mut` in the new document generation.
+When the client supports literal quick-fix actions, a diagnostic carrying at
+least one current structured fix appends `(fix available)` to its LSP-facing
+message. The compiler diagnostic text remains unchanged, and clients without
+that action capability are not promised an unavailable editor operation.
 When several open roots diagnose the same dependency span, publication merges
 their related information instead of selecting one root arbitrarily; distinct
 include and instantiation locations therefore remain visible on the one

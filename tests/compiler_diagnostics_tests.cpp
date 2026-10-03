@@ -748,16 +748,20 @@ int main() {
              generated.find("[[discard]]") == std::string::npos,
          "discard should be a GTI-only call-site attribute");
 
-  auto invalidTokens = lexer.scan(R"(
+  const std::string invalidSource = R"(
 int calculate() { return 7; }
+namespace output {
+int write(int value) { return value; }
+}
 void perform() {}
 int main() {
-  calculate();
+  output::write(calculate());
   [[discard]] perform();
   [[discard]] 1 + 2;
   return 0;
 }
-)");
+)";
+  auto invalidTokens = lexer.scan(invalidSource);
   lang::Parser invalidParser(std::move(invalidTokens));
   lang::Program invalidProgram = invalidParser.parse();
   expect(!invalidParser.hadError(),
@@ -772,10 +776,14 @@ int main() {
       findDiagnosticByCode(invalidSemantic.errors(), "GTI-S2009");
   expect(ignored != nullptr && ignored->group == "unused-result" &&
              ignored->fixes.size() == 1 &&
+             ignored->fixes.front().span.start ==
+                 invalidSource.find("output::write") &&
+             ignored->fixes.front().span.end ==
+                 invalidSource.find("output::write") &&
              ignored->fixes.front().replacement == "[[discard]] " &&
              !ignored->fixes.front().preferred,
-         "an ignored result should offer an explicit, non-preferred discard "
-         "fix without changing expression evaluation");
+         "an ignored nested result should insert an explicit, non-preferred "
+         "discard fix at the complete expression start");
 }
 
 void testAdvisoryDiagnostics() {
