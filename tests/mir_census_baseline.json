@@ -86,7 +86,15 @@
     "87-associative-containers.gti": 502,
     "88-consuming-builders.gti": 348,
     "89-library-workflow.gti": 790,
-    "90-generic-algorithms.gti": 217
+    "90-generic-algorithms.gti": 217,
+    "91-json-documents.gti": 484,
+    "92-json-codecs.gti": 509,
+    "93-http-json-client.gti": 632,
+    "94-binary-text-encoding.gti": 347,
+    "95-explicit-cloning.gti": 362,
+    "96-error-mapping.gti": 28,
+    "97-constexpr-tables.gti": 37,
+    "98-shared-ownership.gti": 354
   },
-  "total": 7620
+  "total": 10373
 }

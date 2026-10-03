@@ -1,0 +1,30 @@
+#include <std/array>
+
+struct Sprite {
+  int width;
+  int height;
+  constexpr Sprite(int width, int height) : width(width), height(height) {}
+  constexpr int pixels() { return this.width * this.height; }
+};
+
+constexpr std::array<Sprite, 2> sprites = std::array<Sprite, 2>({Sprite(16, 16), Sprite(32, 16)});
+
+constexpr int total_pixels(std::array<Sprite, 2>& table) {
+  mut int result = 0;
+  for (mut std::size_t index = 0; index < table.size(); index++) {
+    result += table.at(index).pixels();
+  }
+  return result;
+}
+
+// Failed assertions reject the program during compilation, not at startup.
+static_assert(total_pixels(sprites) == 768);
+static_assert(sprites.front().pixels() == 256);
+
+int main() {
+  // constexpr functions are also ordinary functions when used at runtime.
+  Sprite dynamic_sprite{8, 8};
+  std::println(dynamic_sprite.pixels());
+  std::println(total_pixels(sprites));
+  return dynamic_sprite.pixels() == 64 ? 0 : 1;
+}

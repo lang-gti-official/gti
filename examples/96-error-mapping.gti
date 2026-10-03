@@ -1,0 +1,30 @@
+enum class input_error { invalid };
+enum class app_error { bad_configuration };
+
+expected<int, input_error> parse_jobs(bool valid) {
+  if (!valid) { return unexpected(input_error::invalid); }
+  return 4;
+}
+
+app_error map_input(input_error error) { return app_error::bad_configuration; }
+
+expected<int, app_error> worker_limit(bool valid) {
+  // transform_error consumes the result, changes only its error type, and
+  // invokes the mapper only on failure. '?' propagates that application error.
+  int jobs = ?parse_jobs(valid).transform_error(map_input);
+  return jobs * 2;
+}
+
+int main() {
+  auto success = worker_limit(true);
+  auto failure = worker_limit(false);
+  if (!success || success.value() != 8 || failure ||
+      failure.error() != app_error::bad_configuration) { return 1; }
+  auto pending = parse_jobs(false);
+  // Named receivers need explicit movement; pending cannot be reused afterward.
+  auto mapped = std::move(pending).transform_error(map_input);
+  if (mapped) { return 2; }
+  std::println(success.value());
+  std::println("configuration error handled");
+  return 0;
+}
