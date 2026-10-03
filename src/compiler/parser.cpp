@@ -2293,13 +2293,15 @@ private:
   StmtPtr
   expressionStatement(std::optional<Token> discardAttribute = std::nullopt) {
     const bool hadCompletion = consumedCompletion;
+    Token expressionStart = peek();
     ExprPtr value = expression();
     if (check(TokenKind::SEMICOLON)) {
       advance();
     } else if (hadCompletion == consumedCompletion) {
       consume(TokenKind::SEMICOLON, "Expect ';' after expression.");
     }
-    return std::make_shared<ExpressionStmt>(std::move(value),
+    return std::make_shared<ExpressionStmt>(std::move(expressionStart),
+                                            std::move(value),
                                             std::move(discardAttribute));
   }
 

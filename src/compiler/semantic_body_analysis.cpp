@@ -1323,7 +1323,7 @@ auto SemanticVisitor::Impl::visitExpressionStmt(const ExpressionStmt &stmt)
       resultType != SemanticType::Unknown) {
     Diagnostic diagnostic =
         makeDiagnostic(DiagnosticId::IgnoredReturnValue, call->paren());
-    SourceSpan insertion = tokenSpan(expressionToken(stmt.expression()));
+    SourceSpan insertion = tokenSpan(stmt.expressionStart());
     insertion.end = insertion.start;
     diagnostic.fixes.push_back(
         {.span = std::move(insertion),

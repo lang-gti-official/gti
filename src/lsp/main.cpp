@@ -710,8 +710,12 @@ LspDiagnostic convertDiagnostic(const lang::Diagnostic &diagnostic,
   return result;
 }
 
-std::string diagnosticMessage(const lang::Diagnostic &diagnostic) {
+std::string diagnosticMessage(const lang::Diagnostic &diagnostic,
+                              bool fixAvailable = false) {
   std::string message = diagnostic.message;
+  if (fixAvailable) {
+    message += " (fix available)";
+  }
   for (const std::string &hint : diagnostic.hints) {
     message += "\nhelp: " + hint;
   }
@@ -737,6 +741,7 @@ void mergeDiagnosticRelatedInformation(LspDiagnostic &target,
 
 JsonValue diagnosticJson(const LspDiagnostic &published,
                          bool includeRelatedInformation, bool includeData,
+                         bool includeFixAvailability,
                          bool includeUnnecessaryTag,
                          bool includeDeprecatedTag) {
   const lang::Diagnostic &diagnostic = published.diagnostic;
@@ -752,7 +757,8 @@ JsonValue diagnosticJson(const LspDiagnostic &published,
     result["code"] = diagnostic.code;
   }
 
-  const std::string message = diagnosticMessage(diagnostic);
+  const std::string message = diagnosticMessage(
+      diagnostic, includeFixAvailability && !published.fixes.empty());
   result["message"] = message;
 
   JsonArray tags;
@@ -825,7 +831,8 @@ bool diagnosticIntersects(const LspDiagnostic &diagnostic,
 }
 
 bool diagnosticRequested(const LspDiagnostic &diagnostic,
-                         const JsonValue *requestedDiagnostics) {
+                         const JsonValue *requestedDiagnostics,
+                         bool includeFixAvailability) {
   const JsonArray *requestedValues = requestedDiagnostics != nullptr
                                          ? requestedDiagnostics->getAsArray()
                                          : nullptr;
@@ -850,7 +857,9 @@ bool diagnosticRequested(const LspDiagnostic &diagnostic,
       continue;
     }
     if (stringMember(&requested, "message") !=
-        diagnosticMessage(diagnostic.diagnostic)) {
+        diagnosticMessage(diagnostic.diagnostic,
+                          includeFixAvailability &&
+                              !diagnostic.fixes.empty())) {
       continue;
     }
     return true;
@@ -872,7 +881,7 @@ JsonValue codeActionJson(const CodeActionCandidate &candidate,
   JsonArray diagnostics;
   diagnostics.push_back(diagnosticJson(
       candidate.diagnostic, includeRelatedInformation, includeDiagnosticData,
-      includeUnnecessaryTag, includeDeprecatedTag));
+      true, includeUnnecessaryTag, includeDeprecatedTag));
   JsonObject action{{"title", title},
                     {"kind", "quickfix"},
                     {"diagnostics", std::move(diagnostics)}};
@@ -2685,7 +2694,8 @@ private:
             if (diagnostic.uri != uri ||
                 diagnostic.source != document->second ||
                 !diagnosticIntersects(diagnostic, *requestedRange) ||
-                !diagnosticRequested(diagnostic, requestedDiagnostics)) {
+                !diagnosticRequested(diagnostic, requestedDiagnostics,
+                                     codeActionLiterals)) {
               continue;
             }
             for (std::size_t index = 0; index < diagnostic.fixes.size();
@@ -3488,9 +3498,10 @@ private:
       JsonArray diagnostics;
       diagnostics.reserve(publication.diagnostics.size());
       for (const LspDiagnostic &diagnostic : publication.diagnostics) {
-        diagnostics.push_back(diagnosticJson(
-            diagnostic, diagnosticRelatedInformation, diagnosticData,
-            diagnosticUnnecessaryTag, diagnosticDeprecatedTag));
+        diagnostics.push_back(
+            diagnosticJson(diagnostic, diagnosticRelatedInformation,
+                           diagnosticData, codeActionLiterals,
+                           diagnosticUnnecessaryTag, diagnosticDeprecatedTag));
       }
       publishDiagnostics(publication.uri, std::move(diagnostics),
                          publication.version);

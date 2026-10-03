@@ -5067,7 +5067,14 @@ def test_advisory_diagnostics_and_actions(executable, root):
     )
     ignored_source = (
         "int calculate() { return 1; }\n"
-        "int main() { calculate(); return 0; }\n"
+        "namespace output {\n"
+        "  int write(int value) { return value; }\n"
+        "}\n"
+        "int main() { output::write(calculate()); return 0; }\n"
+    )
+    corrected_ignored_source = ignored_source.replace(
+        "output::write(calculate());",
+        "[[discard]] output::write(calculate());",
     )
     path = root / "advisory-diagnostics.gti"
     path.write_text(warning_source, encoding="utf-8")
@@ -5172,6 +5179,12 @@ def test_advisory_diagnostics_and_actions(executable, root):
             if diagnostic.get("code") == "GTI-S2009"
         )
         assert ignored["data"]["group"] == "unused-result"
+        assert ignored["message"].endswith(" (fix available)"), ignored
+        expression_start = ignored_source.index("output::write")
+        assert ignored["data"]["fixes"][0]["range"] == {
+            "start": lsp_position(ignored_source, expression_start),
+            "end": lsp_position(ignored_source, expression_start),
+        }, ignored
 
         session.send(
             {
@@ -5196,6 +5209,27 @@ def test_advisory_diagnostics_and_actions(executable, root):
         assert ignored_actions[0]["edit"]["documentChanges"][0]["edits"][0][
             "newText"
         ] == "[[discard]] "
+        assert ignored_actions[0]["edit"]["documentChanges"][0]["edits"][0][
+            "range"
+        ] == ignored["data"]["fixes"][0]["range"]
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": corrected_ignored_source}],
+                },
+            }
+        )
+        corrected = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"].get("uri") == uri
+            and message["params"].get("version") == 3
+        )["params"]
+        assert not has_error_diagnostics(corrected), corrected
 
         constructor_source = (
             "class Touch {\n"
@@ -5209,9 +5243,9 @@ def test_advisory_diagnostics_and_actions(executable, root):
             "}\n"
         )
         for version, source in (
-            (3, constructor_source),
+            (4, constructor_source),
             (
-                4,
+                5,
                 constructor_source.replace(
                     "Touch(int& source) {}",
                     "Touch(mut int& source) { source += 1; }",
@@ -5234,7 +5268,7 @@ def test_advisory_diagnostics_and_actions(executable, root):
                 and message["params"].get("uri") == uri
                 and message["params"].get("version") == version
             )["params"]["diagnostics"]
-            if version == 3:
+            if version == 4:
                 assert len(current) == 1, current
                 old_constructor_warning = current[0]
                 assert old_constructor_warning["code"] == "GTI-S2096"
@@ -5292,6 +5326,10 @@ def test_advisory_diagnostics_and_actions(executable, root):
         )["params"]
         assert publication["diagnostics"]
         assert all("tags" not in item for item in publication["diagnostics"])
+        assert all(
+            not item["message"].endswith(" (fix available)")
+            for item in publication["diagnostics"]
+        )
     finally:
         plain_session.close()
 
