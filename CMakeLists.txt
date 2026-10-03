@@ -15,6 +15,8 @@ option(GTI_BUNDLE_LLVM "Download and build pinned LLVM support libraries" OFF)
 option(GTI_RELEASE_BUILD "Require a self-contained, release-ready toolchain" OFF)
 option(GTI_BUILD_FUZZERS
        "Build opt-in libFuzzer harnesses (Clang only; never installed)" OFF)
+option(GTI_ENABLE_THREAD_SANITIZER_TESTS
+       "Run ThreadSanitizer test variants on a compatible host" ON)
 
 # Enforce the host compiler configuration before dependency discovery.
 include(CTest)

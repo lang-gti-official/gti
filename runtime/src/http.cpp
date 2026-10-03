@@ -560,8 +560,10 @@ extern "C" gti_http_error_v1 gti_rt_http_client_send_v1(
   *outputNativeCode = static_cast<std::int32_t>(nativeStatus);
   if (nativeStatus != CURLE_OK) {
     setClientError(*client, nativeStatus, errorBuffer.data());
-    return transfer.responseTooLarge ? GTI_HTTP_RESPONSE_TOO_LARGE_V1
-                                     : mapCurlError(nativeStatus);
+    if (transfer.responseTooLarge) {
+      return GTI_HTTP_RESPONSE_TOO_LARGE_V1;
+    }
+    return mapCurlError(nativeStatus);
   }
 
   long status = 0;

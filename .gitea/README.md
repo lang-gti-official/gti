@@ -45,15 +45,21 @@ Tune capacity only after measuring the host's memory/CPU budget. Restart the
 runner after changing its configuration; repository variables cannot alter its
 job capacity or timeout.
 
-The native and release jobs execute a small, race-free C++ sanitizer probe
-before their expensive builds. `ThreadSanitizer: unexpected memory mapping`
-from this probe is a host/toolchain address-space failure, not a GTI race.
-Check the compiler's sanitizer runtime against the host kernel, address-space
-limits, and container seccomp policy. Modern LLVM may need the `personality`
-system call when re-executing with a compatible mapping. Use a suitably
-configured dedicated runner/VM and retest the probe in the exact job container;
-do not skip sanitizers or enable privileged containers as a blanket fix.
-The workflows do not change host ASLR or sandbox policy automatically.
+The generic Gitea runner executes a small, race-free ASan/UBSan probe before
+its expensive builds. ThreadSanitizer is a separate runner capability because
+this Docker host rejects its shadow-memory mapping before GTI code runs.
+`GTI_ENABLE_THREAD_SANITIZER_TESTS` defaults to `ON` for local and compatible
+dedicated runners; the generic Gitea workflows set it to `OFF`. Mixed runtime
+matrices still execute their ordinary and ASan/UBSan modes, while dedicated
+TSAN CTests report an explicit skip (return code 77) rather than a false pass.
+
+A dedicated TSAN runner must first pass
+`scripts/check_ci_sanitizers.py --sanitizer thread` in the exact job container,
+then configure without disabling `GTI_ENABLE_THREAD_SANITIZER_TESTS`. Check its
+compiler runtime, kernel, address-space limits, and container seccomp policy
+when the probe reports `ThreadSanitizer: unexpected memory mapping`. Do not use
+privileged containers as a blanket fix. The workflows do not change host ASLR
+or sandbox policy automatically.
 
 After a hostname migration, also check Gitea's configured server `ROOT_URL`,
 runner registration URL, and reverse-proxy routing. The canonical URL is now
