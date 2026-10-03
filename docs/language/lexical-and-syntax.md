@@ -193,8 +193,12 @@ All three declarations require their terminating semicolon.
 An interface cannot be loaded with `#include`, and a legacy include unit cannot
 be loaded with `import`. Existing includes keep their original behavior.
 Source-local configuration flags neither enter nor escape imported modules;
-compiler-supplied flags still apply. Sharing a legacy include across module
-boundaries with inconsistent flags is diagnosed.
+compiler-supplied flags still apply. A legacy include processes its flag
+directives once in each module, including directives in its nested includes.
+Repeating an include within that module does not reapply a previous definition
+after an `#undef`. Sharing a legacy include across module boundaries requires
+matching incoming flags and selected syntax; incompatible include ordering or
+configuration is diagnosed.
 
 This initial implementation controls visibility, not separate compilation or
 module linkage. Program-wide qualified-name uniqueness still applies, including

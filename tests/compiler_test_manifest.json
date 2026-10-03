@@ -18,6 +18,10 @@
       "suite": "frontend"
     },
     {
+      "name": "testSourceModuleConfigurationDomains",
+      "suite": "frontend"
+    },
+    {
       "name": "testStandardLibraryImports",
       "suite": "frontend"
     },

@@ -77,15 +77,26 @@ visibility uses the graph: a unit sees itself, direct includes, and the
 prelude, not arbitrary declarations in the combined AST.
 
 Explicit `export module name;` interfaces additionally retain their module
-declaration token. The loader consumes the header and unconditional imports,
-retaining `Import` and `ExportImport` dependency kinds. It resolves named
+declaration token. The loader consumes the header and resolves unconditional
+imports, retaining `Import` and `ExportImport` dependency kinds. Import tokens
+and their source spans remain in the syntax digest and parser input. Only the
+parser's source-unit declaration loop consumes them: an import embedded in a
+parameter, initializer, or unfinished declaration must not disappear into a
+valid program. The loader resolves named
 imports only through supplied `PackageSourceRoot::modules` registrations and
 direct dependency aliases; quoted imports use the same canonical path and
 package-containment authority. Includes cannot load an interface and imports
 cannot load a legacy unit. An imported interface starts from compiler-supplied
-configuration flags and restores the importer's flag state on return. Reusing
-a legacy unit across distinct module configuration domains with different
-active flags is diagnosed rather than silently selecting the first context.
+configuration flags and restores the importer's flag state on return. Each
+legacy include runs once per module configuration domain. On reuse in a new
+domain, the loader processes the retained source snapshot through the same
+directive processor, including nested includes, while retaining one canonical
+source identity and dependency edge set. Repeated inclusion in that domain
+does not reapply flag mutations. Different incoming flags or selected syntax
+are diagnosed rather than silently selecting the first module's context;
+matching incoming flags alone cannot prove compatibility when nested include
+history differs. Parsed and lexical cache reuse preserve this check, including
+unsaved source overlays.
 
 The parser retains an optional export token on declarations. Frontend assembly
 collects their exact ranges, including inherited namespace exports in selected

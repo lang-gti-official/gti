@@ -61,7 +61,9 @@ private:
   struct FileState {
     LoadState state = LoadState::Visiting;
     SourceUnitId unit = 0;
-    SourceUnitId configurationDomain = 0;
+    // Includes run once in each isolated module configuration domain. The
+    // source graph and selected syntax still have one canonical identity.
+    std::unordered_set<SourceUnitId> configurationDomains;
     std::unordered_set<std::string> inputFlags;
   };
 

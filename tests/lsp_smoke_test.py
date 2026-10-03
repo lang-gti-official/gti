@@ -5070,11 +5070,11 @@ def test_advisory_diagnostics_and_actions(executable, root):
         "namespace output {\n"
         "  int write(int value) { return value; }\n"
         "}\n"
-        "int main() { output::write(calculate()); return 0; }\n"
+        "int main() { /* 🙂 */ (output::write(calculate())); return 0; }\n"
     )
     corrected_ignored_source = ignored_source.replace(
-        "output::write(calculate());",
-        "[[discard]] output::write(calculate());",
+        "(output::write(calculate()));",
+        "[[discard]] (output::write(calculate()));",
     )
     path = root / "advisory-diagnostics.gti"
     path.write_text(warning_source, encoding="utf-8")
@@ -5180,7 +5180,7 @@ def test_advisory_diagnostics_and_actions(executable, root):
         )
         assert ignored["data"]["group"] == "unused-result"
         assert ignored["message"].endswith(" (fix available)"), ignored
-        expression_start = ignored_source.index("output::write")
+        expression_start = ignored_source.index("(output::write")
         assert ignored["data"]["fixes"][0]["range"] == {
             "start": lsp_position(ignored_source, expression_start),
             "end": lsp_position(ignored_source, expression_start),
@@ -5206,12 +5206,24 @@ def test_advisory_diagnostics_and_actions(executable, root):
         )["result"]
         assert len(ignored_actions) == 1, ignored_actions
         assert ignored_actions[0]["isPreferred"] is False
+        assert ignored_actions[0]["diagnostics"] == [ignored]
+        assert ignored_actions[0]["edit"]["documentChanges"][0]["textDocument"] == {
+            "uri": uri,
+            "version": 2,
+        }
         assert ignored_actions[0]["edit"]["documentChanges"][0]["edits"][0][
             "newText"
         ] == "[[discard]] "
         assert ignored_actions[0]["edit"]["documentChanges"][0]["edits"][0][
             "range"
         ] == ignored["data"]["fixes"][0]["range"]
+        edit = ignored_actions[0]["edit"]["documentChanges"][0]["edits"][0]
+        applied_source = (
+            ignored_source[:expression_start]
+            + edit["newText"]
+            + ignored_source[expression_start:]
+        )
+        assert applied_source == corrected_ignored_source
 
         session.send(
             {
@@ -5219,7 +5231,7 @@ def test_advisory_diagnostics_and_actions(executable, root):
                 "method": "textDocument/didChange",
                 "params": {
                     "textDocument": {"uri": uri, "version": 3},
-                    "contentChanges": [{"text": corrected_ignored_source}],
+                    "contentChanges": [{"text": applied_source}],
                 },
             }
         )
@@ -5230,6 +5242,22 @@ def test_advisory_diagnostics_and_actions(executable, root):
             and message["params"].get("version") == 3
         )["params"]
         assert not has_error_diagnostics(corrected), corrected
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 30,
+                "method": "textDocument/codeAction",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "range": ignored["range"],
+                    "context": {"diagnostics": [ignored], "only": ["quickfix"]},
+                },
+            }
+        )
+        assert session.receive_until(lambda message: message.get("id") == 30)[
+            "result"
+        ] == []
 
         constructor_source = (
             "class Touch {\n"

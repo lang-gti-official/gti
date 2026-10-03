@@ -1,7 +1,8 @@
 # 024: Explicit Source Module Interfaces
 
-Status: Proposal; acceptance into main is pending. The associated branch contains
-the candidate implementation and its validation evidence.
+Status: Accepted design; the reconciled implementation candidate awaits combined
+release validation. Separate compilation and independent module linkage remain
+outside this decision.
 
 ## Outcome
 
@@ -51,7 +52,8 @@ consumer name lookup. Import edges participate in the same deterministic
 dependency-first initialization plan and cache invalidation as source edges.
 
 The frontend owns source/module identity and import resolution over immutable
-driver input. Parsing retains declaration export requests. Semantic publication
+driver input. Parsing validates imports at source-unit declaration boundaries
+and retains declaration export requests. Semantic publication
 enforces those requests per declaration and overload; tools consume the same
 facts. Neither the LSP nor the C++ backend independently discovers public APIs.
 
@@ -80,6 +82,4 @@ diagnosed rather than silently reusing whichever configuration loaded first.
 reserved C++ keyword. A minor-version migration must call out the two newly
 reserved identifier spellings. Existing include visibility and resolution do
 not change meaning. ADR 002's deferred module vocabulary
-is introduced explicitly under ADR 011's pre-1.0 minor-version draft-change rule. This
-proposal does not authorize merging, installing, or publishing a compiler
-release before acceptance.
+is introduced explicitly under ADR 011's pre-1.0 minor-version draft-change rule.

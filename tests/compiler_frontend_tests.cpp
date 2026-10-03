@@ -2314,6 +2314,55 @@ void testSourceModuleResolution() {
   expect(analyze("import lib.main; int main() { return answer(); }")
              .canGenerateCode(),
          "explicit dependency module names resolve");
+  expect(analyze("int before() { return 0; } import lib; "
+                 "struct Item { int value = 1; }; import local; "
+                 "namespace n { int value = 2; } import lib.main; "
+                 "int main() { return answer() + local_value(); }")
+             .canGenerateCode(),
+         "imports remain valid between complete functions, records, and "
+         "namespaces");
+  for (const std::string source :
+       {"int main(import lib;) { return answer(); }",
+        "int value = import lib; 1;", "int value import lib; = 1;",
+        "int before(int value = import lib; 1) { return value; }",
+        "struct Item { int value = 1; } import lib; ;"}) {
+    const auto result = analyze(source);
+    const auto *diagnostic =
+        findDiagnosticByCode(result.diagnostics, "GTI-P0001");
+    const auto start = source.find("import");
+    expect(result.sourceValid && !result.syntaxValid && diagnostic != nullptr &&
+               diagnostic->primary.source == entry.string() &&
+               diagnostic->primary.start == start &&
+               diagnostic->primary.end == start + 6,
+           "misplaced imports retain their parser-visible source span: " +
+               source);
+    expect(!result.canGenerateCode(),
+           "a misplaced import cannot be erased into a valid program");
+  }
+  lang::FrontendOptions cachedOptions;
+  cachedOptions.cache = std::make_shared<lang::FrontendCache>();
+  const lang::Frontend cached(cachedOptions);
+  expect(cached.analyze(entry, "import lib; int main() { return answer(); }",
+                        {}, sources, {}, packages)
+                 .canGenerateCode() &&
+             !cached
+                  .analyze(entry, "int main(import lib;) { return answer(); }",
+                           {}, sources, {}, packages)
+                  .syntaxValid,
+         "cached syntax cannot erase an import moved inside a declaration");
+  const auto ordinaryLocal = sources[local.string()];
+  sources[local.string()] =
+      "export module local; int before(export import lib;) { return 0; }";
+  const auto misplacedReexport = analyze("import local;");
+  const auto *reexportDiagnostic =
+      findDiagnosticByCode(misplacedReexport.diagnostics, "GTI-P0001");
+  expect(misplacedReexport.sourceValid && !misplacedReexport.syntaxValid &&
+             reexportDiagnostic != nullptr &&
+             reexportDiagnostic->primary.source == local.string() &&
+             reexportDiagnostic->primary.start ==
+                 sources[local.string()].find("export import"),
+         "a re-export embedded in a declaration retains its original span");
+  sources[local.string()] = ordinaryLocal;
   const auto unit = imported.sourceGraph.sourceUnitForPath(api.string());
   const auto *loaded = imported.sourceGraph.findUnit(unit);
   expect(loaded != nullptr && loaded->packageIdentity == "library" &&
@@ -2402,6 +2451,139 @@ int main() { return local_value(); }
          "contexts");
 }
 
+void testSourceModuleConfigurationDomains() {
+  const auto root = std::filesystem::weakly_canonical(
+      std::filesystem::temp_directory_path() / "gti-module-configuration");
+  const auto entry = root / "main.gti";
+  const auto flags = root / "flags.gti";
+  const auto parent = root / "parent.gti";
+  const auto first = root / "first.gti";
+  const auto second = root / "second.gti";
+  std::unordered_map<std::string, std::string> sources{
+      {flags.string(), "#define ENABLED\n#undef STARTED\n"},
+      {parent.string(), "#include \"flags.gti\"\n"}};
+  const auto interface = [](std::string name) {
+    return "export module " + name + ";\n" + R"(#include "parent.gti"
+#if defined(ENABLED) && !defined(STARTED)
+export int )" +
+           name + R"(_value() { return 1; }
+#endif
+#undef ENABLED
+#include "flags.gti"
+#include "parent.gti"
+#if defined(ENABLED)
+#error "a repeated include must not reapply its define"
+#endif
+#define MODULE_LOCAL
+)";
+  };
+  sources[first.string()] = interface("first");
+  sources[second.string()] = interface("second");
+  lang::FrontendOptions options;
+  options.configurationFlags = {"STARTED"};
+  options.cache = std::make_shared<lang::FrontendCache>();
+  const lang::Frontend frontend(options);
+  const auto analyze = [&](const std::string &source) {
+    return frontend.analyze(entry, source, {}, sources);
+  };
+  const auto consumer = [](bool reverse) {
+    return std::string("#define MODULE_LOCAL\n#undef MODULE_LOCAL\n") +
+           (reverse ? "import \"second.gti\";\nimport \"first.gti\";\n"
+                    : "import \"first.gti\";\nimport \"second.gti\";\n") +
+           R"(#if defined(ENABLED) || defined(MODULE_LOCAL) || !defined(STARTED)
+#error "module flags must not enter the importer"
+#endif
+int main() { return first_value() + second_value(); }
+)";
+  };
+  for (const bool reverse : {false, true}) {
+    const auto result = analyze(consumer(reverse));
+    expect(result.canGenerateCode(),
+           "shared nested includes replay defines and undefs once per module "
+           "domain, independently of import order and lexical-cache reuse");
+    expect(result.sourceGraph.sourceUnits().size() == 5 &&
+               result.sourceGraph.dependencyEdges().size() == 9,
+           "configuration replay must retain one source identity and one edge "
+           "per written directive, without duplicating shared-unit edges");
+  }
+
+  // Reusing a saved parent output flag set would incorrectly restore ENABLED:
+  // the child has already run in the second domain and must remain included.
+  sources[first.string()] = R"(export module first;
+#include "parent.gti"
+export int first_value() { return 1; }
+)";
+  sources[second.string()] = R"(export module second;
+#include "flags.gti"
+#undef ENABLED
+#define STARTED
+#include "parent.gti"
+#if defined(ENABLED) || !defined(STARTED)
+#error "a cached parent must respect this domain's child include history"
+#endif
+export int second_value() { return 1; }
+)";
+  for (const bool reverse : {false, true}) {
+    expect(
+        analyze(consumer(reverse)).canGenerateCode(),
+        "a reused parent processes actual nested include history rather than "
+        "blindly restoring its original output flags");
+  }
+
+  // The canonical syntax cannot depend on whether another module happened to
+  // load it first, even when both parent entries have equal incoming flags.
+  sources[parent.string()] = R"(#include "flags.gti"
+#if defined(ENABLED)
+int configured_value() { return 1; }
+#endif
+)";
+  const auto divergent = analyze(consumer(false));
+  const auto *mismatch =
+      findDiagnosticByCode(divergent.diagnostics, "GTI-I0012");
+  const std::size_t includeOffset =
+      sources[second.string()].find("#include \"parent.gti\"");
+  expect(!divergent.sourceValid && mismatch != nullptr &&
+             mismatch->message.find("selects different syntax") !=
+                 std::string::npos &&
+             mismatch->primary.source == second.string() &&
+             mismatch->primary.start == includeOffset &&
+             mismatch->primary.end == includeOffset + 8 &&
+             mismatch->fixes.empty(),
+         "different selected syntax must fail at the importing include span "
+         "without guessing a configuration-changing fix");
+  expect(!analyze(consumer(true)).sourceValid,
+         "incompatible shared configurations must fail in either import order");
+
+  sources[parent.string()] = "#include \"flags.gti\"\n";
+  sources[second.string()] = R"(export module second;
+#define SECOND_ONLY
+#include "parent.gti"
+export int second_value() { return 1; }
+)";
+  const auto incompatible = analyze(consumer(false));
+  expect(
+      !incompatible.sourceValid &&
+          hasDiagnostic(incompatible.diagnostics,
+                        "different source-local configuration flags"),
+      "first inclusion in a new domain retains canonical input compatibility");
+
+  // These sources are overlays. Mutating an overlay and analyzing again with
+  // the same cache must replay the new bytes rather than a previous flag set.
+  sources[first.string()] = interface("first");
+  sources[second.string()] = interface("second");
+  sources[flags.string()] = "#define ENABLED\n";
+  expect(!analyze(consumer(false)).semanticValid,
+         "editing a shared include overlay invalidates its configuration");
+  sources[flags.string()] = "#define ENABLED\n#undef STARTED\n";
+  expect(analyze(consumer(false)).canGenerateCode(),
+         "restoring a shared include overlay restores every module domain");
+  sources[flags.string()] += "#include \"parent.gti\"\n";
+  const auto cycle = analyze(consumer(false));
+  expect(!cycle.sourceValid &&
+             hasDiagnosticCode(cycle.diagnostics, "GTI-I0001"),
+         "per-domain include replay must preserve cycle rejection");
+}
+
 void testSupportFacilities() {
   bool ran = false;
   expect(lang::runGuarded([&ran] { ran = true; }) && ran,
@@ -2417,6 +2599,8 @@ constexpr NamedTest kTests[] = {
     {"testSourceUnitDependencyGraph", testSourceUnitDependencyGraph},
     {"testSourceModuleInterfaces", testSourceModuleInterfaces},
     {"testSourceModuleResolution", testSourceModuleResolution},
+    {"testSourceModuleConfigurationDomains",
+     testSourceModuleConfigurationDomains},
     {"testStandardLibraryImports", testStandardLibraryImports},
     {"testPackageImports", testPackageImports},
     {"testLoopControlStatements", testLoopControlStatements},
