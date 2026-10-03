@@ -6,6 +6,8 @@ import subprocess
 import sys
 import tempfile
 
+from sanitizer_support import thread_sanitizer_enabled
+
 
 def execute(command, *, quiet=False):
     result = subprocess.run(command, capture_output=True, text=True, timeout=120)
@@ -29,7 +31,8 @@ def main():
             for optimization in ("O0", "O1", "O3")
         ]
         modes.append(("sanitized", ["--std", "c++23", "-O1"]))
-        modes.append(("tsan", ["--std", "c++23", "-O1"]))
+        if thread_sanitizer_enabled():
+            modes.append(("tsan", ["--std", "c++23", "-O1"]))
         for name, flags in modes:
             for fixture in (
                 "cthread_yield", "cthread_yield_concurrent", "cthread_yield_call_count",
