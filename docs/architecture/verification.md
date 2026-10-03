@@ -2,6 +2,18 @@
 
 Status: Current test and audit structure.
 
+## CLI terminal colour
+
+`cli_color` checks direct diagnostics, source underlines, hints, successful
+status, summaries, metadata, option validation/operand boundaries, project
+check/run, and captured parallel build success/failure counts. It compares
+unstyled output with ANSI-stripped styled output and verifies generated C++
+stays plain. On POSIX it also exercises pseudo-terminals, `NO_COLOR`, `TERM=dumb`,
+and independent redirected-stdout/terminal-stderr behavior. Windows runs the
+forced-colour and redirected-output cases; its native console detection still
+requires platform coverage. Existing `cli_workflow` and `project_cli_workflow`
+retain the plain captured-output contract.
+
 ## Combined 0.362.0 release validation
 
 The reconciled source at `3c2fe8fd` combines the validated 0.361.0 receiver
