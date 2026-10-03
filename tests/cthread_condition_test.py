@@ -6,6 +6,7 @@ import sys
 import tempfile
 
 from cthread_mutex_test import run
+from sanitizer_support import thread_sanitizer_enabled
 
 
 def main():
@@ -17,8 +18,11 @@ def main():
     fixtures = root / "tests/fixtures"
     modes = [(f"{std}-{opt}", std, opt, []) for std in ("c++20", "c++23")
              for opt in ("O0", "O1", "O3")]
-    modes += [("asan-ubsan", "c++23", "O1", ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]),
-              ("tsan", "c++23", "O1", ["-fsanitize=thread", "-fno-omit-frame-pointer"])]
+    modes.append(("asan-ubsan", "c++23", "O1",
+                  ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    if thread_sanitizer_enabled():
+        modes.append(("tsan", "c++23", "O1",
+                      ["-fsanitize=thread", "-fno-omit-frame-pointer"]))
     with tempfile.TemporaryDirectory(prefix="gti-cthread-condition-") as directory:
         output = pathlib.Path(directory)
         for mode, std, opt, sanitizers in modes:

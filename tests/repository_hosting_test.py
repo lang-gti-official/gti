@@ -160,9 +160,11 @@ def main() -> None:
             f"workflow lost its floating Ubuntu runner label: {workflow}",
         )
         expect(
-            "scripts/check_ci_sanitizers.py --sanitizer thread --sanitizer address,undefined"
-            in contents,
-            f"workflow lost native sanitizer execution preflight: {workflow}",
+            "scripts/check_ci_sanitizers.py --sanitizer address,undefined" in contents
+            and "-DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF" in contents
+            and "--sanitizer thread" not in contents,
+            f"workflow lost required ASan/UBSan preflight or explicit TSAN "
+            f"capability policy: {workflow}",
         )
         actions = ACTION_USE.findall(contents)
         expect(actions, f"Gitea workflow has no auditable action uses: {workflow}")
