@@ -5351,6 +5351,67 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   return result;
 }
 
+auto SemanticVisitor::Impl::freshTemporaryReceiverValue(
+    const ExprPtr &expression) -> FreshTemporaryValueAssessment {
+  FreshTemporaryValueAssessment result = freshTemporaryValue(expression);
+  if (result.failure != FreshTemporaryValueFailure::BorrowedState) {
+    return result;
+  }
+
+  // A carrier is materialized only for its immediate receiver use. Its
+  // established stored-borrow summary, not the public type name, supplies the
+  // external dependency. Keep this separate from temporary argument admission.
+  const Expr *producer = transparentTemporaryProducer(expression);
+  if (producer == nullptr) {
+    result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
+    return result;
+  }
+  bool ordinaryProducer = false;
+  if (const auto *construction = semanticModel.findConstruction(*producer)) {
+    ordinaryProducer = construction->kind == ConstructorKind::Ordinary &&
+                       construction->constructedType == result.type &&
+                       construction->borrowOrigin == BorrowOriginKind::Argument;
+  } else if (const auto *call = exprAs<Call>(producer)) {
+    const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+    const FunctionInfo *target =
+        resolved == nullptr ? nullptr
+                            : semanticModel.findFunction(resolved->function);
+    if (target == nullptr && resolved != nullptr &&
+        instanceBaseModel != nullptr)
+      target = instanceBaseModel->findFunction(resolved->function);
+    ordinaryProducer = resolved != nullptr && target != nullptr &&
+                       target->linkage == LanguageLinkage::Gti &&
+                       !target->virtualMethod &&
+                       resolved->dispatch == CallDispatch::Static &&
+                       resolved->declaration != nullptr &&
+                       resolved->declaration->body() != nullptr &&
+                       !resolved->declaration->runtimeBinding() &&
+                       !resolved->declaration->hasCLinkage() &&
+                       !resolved->declaration->operatorName() &&
+                       resolved->intrinsic == IntrinsicKind::None &&
+                       resolved->returnType == result.type &&
+                       resolved->borrowOrigin != BorrowOriginKind::None;
+  }
+  if (!ordinaryProducer) {
+    result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
+    return result;
+  }
+  const auto dependencies = storedBorrowDependencies(expression);
+  if (dependencies.size() > 1) {
+    result.failure = FreshTemporaryValueFailure::MultipleBorrowOwners;
+    return result;
+  }
+  if (!hasStableBorrowStorage(expression) || dependencies.empty() ||
+      (dependencies.front().place.root == 0 &&
+       !dependencies.front().place.receiver)) {
+    result.failure = FreshTemporaryValueFailure::UnstableBorrowOwner;
+    return result;
+  }
+  result.eligible = true;
+  result.failure = FreshTemporaryValueFailure::None;
+  return result;
+}
+
 auto SemanticVisitor::Impl::freshTemporaryMethodSupported(
     const CallableCandidate &function) const -> bool {
   if (function.ownerClass == 0 || function.staticMember ||
@@ -5384,8 +5445,7 @@ auto SemanticVisitor::Impl::consumingReceiverValue(
 
 auto SemanticVisitor::Impl::receiverModeForObject(
     const ExprPtr &receiver, const CallableCandidate &function,
-    bool allowFreshTemporary, bool consumingReceiver) const
-    -> CallReceiverMode {
+    bool allowFreshTemporary, bool consumingReceiver) -> CallReceiverMode {
   if (function.staticMember) {
     return CallReceiverMode::None;
   }
@@ -5409,7 +5469,9 @@ auto SemanticVisitor::Impl::receiverModeForObject(
     return CallReceiverMode::MutablePlace;
   }
   if (allowFreshTemporary && freshTemporaryMethodSupported(function) &&
-      (freshTemporaryValue(receiver).eligible ||
+      (info == nullptr || !info->traits.containsBorrowedState ||
+       ephemeralBorrowResultSupported(function)) &&
+      (freshTemporaryReceiverValue(receiver).eligible ||
        consumingReceiverValue(receiver))) {
     return function.receiverMutability == ReceiverMutability::Mutable
                ? CallReceiverMode::FreshTemporaryMutable
@@ -5418,8 +5480,8 @@ auto SemanticVisitor::Impl::receiverModeForObject(
   return CallReceiverMode::Value;
 }
 
-auto SemanticVisitor::Impl::callReceiverMode(
-    const ExprPtr &callee, const CallableCandidate &function) const
+auto SemanticVisitor::Impl::callReceiverMode(const ExprPtr &callee,
+                                             const CallableCandidate &function)
     -> CallReceiverMode {
   if (function.ownerClass == 0 || function.staticMember) {
     return CallReceiverMode::None;
@@ -5454,7 +5516,7 @@ auto SemanticVisitor::Impl::reportMutableReceiverFailure(
     const ExprPtr &receiver, const Token &location,
     const CallableCandidate &function, std::string_view operation) -> void {
   const FreshTemporaryValueAssessment assessment =
-      freshTemporaryValue(receiver);
+      freshTemporaryReceiverValue(receiver);
   const bool valueShaped = assessment.type.kind == SemanticType::Class;
   if (!valueShaped) {
     report(location, std::string(operation) + " requires a mutable receiver.");
@@ -5467,9 +5529,11 @@ auto SemanticVisitor::Impl::reportMutableReceiverFailure(
              "supported by the bounded temporary materialization model.";
   } else if (function.returnType.kind == SemanticType::Reference ||
              function.returnBorrowOrigin != BorrowOriginKind::None ||
-             typeTraits(function.returnType).containsBorrowedState) {
-    reason = "A temporary receiver cannot produce a reference or value "
-             "containing tracked borrowed state.";
+             typeTraits(function.returnType).containsBorrowedState ||
+             (typeTraits(assessment.type).containsBorrowedState &&
+              !ephemeralBorrowResultSupported(function))) {
+    reason = "A temporary receiver cannot produce a reference, pointer-like "
+             "value, or value containing tracked borrowed state.";
   } else {
     switch (assessment.failure) {
     case FreshTemporaryValueFailure::ExplicitMove:
@@ -5481,8 +5545,16 @@ auto SemanticVisitor::Impl::reportMutableReceiverFailure(
                "temporary receiver.";
       break;
     case FreshTemporaryValueFailure::BorrowedState:
-      reason = "A temporary containing tracked borrowed state cannot be "
-               "borrowed as a mutable receiver.";
+      reason = "A temporary containing tracked borrowed state requires exactly "
+               "one stable owner dependency for an immediate method call.";
+      break;
+    case FreshTemporaryValueFailure::UnstableBorrowOwner:
+      reason = "A temporary borrowed receiver requires an owner whose storage "
+               "remains alive for the complete expression.";
+      break;
+    case FreshTemporaryValueFailure::MultipleBorrowOwners:
+      reason = "A temporary borrowed receiver cannot retain multiple owner "
+               "dependencies in an immediate method call.";
       break;
     case FreshTemporaryValueFailure::UnsupportedProducer:
       reason = "This value is not produced directly by an ordinary "
@@ -5509,9 +5581,19 @@ auto SemanticVisitor::Impl::reportMutableReceiverFailure(
                   ? " is declared mutable here."
                   : " is declared here.")});
   }
-  diagnostic.hints.emplace_back(
-      "Bind the value to a 'mut' local before calling this operation when "
-      "the object must come from existing or unsupported storage.");
+  if (assessment.failure == FreshTemporaryValueFailure::UnstableBorrowOwner) {
+    diagnostic.hints.emplace_back(
+        "Keep the borrowed owner in named storage that outlives the complete "
+        "expression before creating its service or view.");
+  } else if (typeTraits(assessment.type).containsBorrowedState) {
+    diagnostic.hints.emplace_back(
+        "Use a named service or view with a valid stored owner dependency; "
+        "make the binding 'mut' when the operation requires mutable access.");
+  } else {
+    diagnostic.hints.emplace_back(
+        "Bind the value to a 'mut' local before calling this operation when "
+        "the object must come from existing or unsupported storage.");
+  }
   diagnostics.emplace_back(std::move(diagnostic));
 }
 

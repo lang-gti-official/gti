@@ -1,0 +1,113 @@
+#include <std/string>
+#include <std/vector>
+
+void checked(int divisor) { int value = 7 / divisor; }
+void checked_cleanup(int divisor) { int value = 19 / divisor; }
+
+class Trace {
+  int identity;
+  bool fail_cleanup;
+public:
+  Trace(int value, bool fail = false) : identity(value), fail_cleanup(fail) {}
+  Trace(Trace&) = delete;
+  ~Trace() {
+    std::println(this.identity);
+    if (this.fail_cleanup) { checked_cleanup(0); }
+  }
+};
+
+class Resource {
+  mut int value = 0;
+public:
+  int add(int amount) mut { this.value += amount; return this.value; }
+  int read() { return this.value; }
+  ~Resource() { std::println(900); }
+};
+
+class AuthService {
+  mut Resource& resource;
+  Trace lifetime;
+public:
+  AuthService(mut Resource& source, int divisor = 1, bool fail_cleanup = false)
+      : resource(source), lifetime(Trace(100, fail_cleanup)) { checked(divisor); }
+  int create_access_token(int amount) mut { return this.resource.add(amount); }
+  int read() { return this.resource.read(); }
+  int fail() mut { checked(0); return 0; }
+  std::string label() { return std::string("token"); }
+};
+
+class RepositoryService {
+  mut Resource& resource;
+  Trace lifetime;
+public:
+  RepositoryService(mut Resource& source) : resource(source), lifetime(Trace(200)) {}
+  int create(int amount) mut { return this.resource.add(amount); }
+};
+
+class Inspector {
+  Resource& resource;
+  Trace lifetime;
+public:
+  Inspector(Resource& source) : resource(source), lifetime(Trace(300)) {}
+  int read() { return this.resource.read(); }
+};
+
+class Client {
+  mut Resource resource{};
+public:
+  AuthService auth() mut { return AuthService(this.resource); }
+  AuthService bad_producer() mut { return AuthService(this.resource, 0); }
+  AuthService bad_cleanup() mut { return AuthService(this.resource, 1, true); }
+  RepositoryService repositories() mut { return RepositoryService(this.resource); }
+  Inspector inspect() { return Inspector(this.resource); }
+  int read() { return this.resource.read(); }
+};
+
+int fail_argument() { checked(0); return 0; }
+expected<int, int> argument_error() { return unexpected(7); }
+int conditional_calls(mut Client& api, bool auth) {
+  return auth ? api.auth().create_access_token(3)
+              : api.repositories().create(4);
+}
+expected<int, int> propagated() {
+  mut Client api{};
+  return api.auth().create_access_token(?argument_error());
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 7) {
+    auto result = propagated();
+    return !result && result.error() == 7 ? 0 : 1;
+  }
+  mut Client api{};
+  if (argc == 2) { return api.auth().create_access_token(fail_argument()); }
+  if (argc == 3) { return api.auth().fail(); }
+  if (argc == 4) { return api.bad_producer().read(); }
+  if (argc == 5) { return api.bad_cleanup().create_access_token(fail_argument()); }
+  if (argc == 6) { return api.bad_cleanup().read(); }
+  if (argc == 8) {
+    return argc > 7 ? api.auth().create_access_token(fail_argument()) : 0;
+  }
+  if (argc == 9) {
+    return argc > 8 ? 0 : api.auth().create_access_token(fail_argument());
+  }
+  if (api.auth().create_access_token(3) != 3) { return 1; }
+  if (api.read() != 3) { return 2; }
+  if (api.repositories().create(4) != 7) { return 3; }
+  if (api.auth().read() != 7) { return 4; }
+  if (api.inspect().read() != 7) { return 5; }
+  {
+    mut AuthService named = api.auth();
+    if (named.create_access_token(1) != 8) { return 6; }
+  }
+  if (api.read() != 8) { return 7; }
+  if (conditional_calls(api, true) != 11) { return 8; }
+  if (conditional_calls(api, false) != 15) { return 9; }
+  if (!(false || api.auth().read() == 15)) { return 10; }
+  if (!(true || api.auth().read() == 15)) { return 11; }
+  if (false && api.auth().read() == 15) { return 12; }
+  if (!(true && api.auth().read() == 15)) { return 13; }
+  if (api.read() != 15) { return 14; }
+  std::println(api.auth().label());
+  return 0;
+}

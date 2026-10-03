@@ -25,10 +25,54 @@ files under `docs/plans/`. The documents under
 [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
+## Ephemeral Borrowed Receivers And PR Reconciliation
+
+**State:** receiver implementation and complete local validation are finished
+for 0.361.0, following the 0.360.0 stabilization release at `61f3880a`.
+Open-PR reconciliation remains in progress on a separate candidate.
+
+The immediate client is an ordinary service facade:
+`api.auth().create_access_token(...)`. A directly produced class/struct value
+with one proven stable stored owner dependency may supply one immediate read
+or mutable receiver. The receiver's physical loan must end after invocation;
+the stored owner dependency must survive the carrier's full-expression drop,
+including argument failure, callee failure, and propagation. The result may
+not export a reference or borrowed dependency. Named carriers retain their
+existing rules. This adds no syntax, library-name recognition, runtime lifetime
+tracking, or general temporary-argument/reference binding.
+
+Use the existing caller-visible borrow summary: a method returning a carrier
+from a private field still protects its complete caller receiver unless the
+existing summary identifies a more precise source expression. This work does
+not claim new callee-internal return-place transforms. Physical shell loans
+and stored dependencies remain distinct; a dependency is not a writable
+physical reborrow parent.
+
+Exit evidence: positive service/view and unrelated user-defined cases;
+negative escape, multiple-owner, temporary-owner and overlap cases; independent
+MIR mutations; exact normal and failure cleanup through the MIR-only backend;
+compiler/LSP parity; C++20/C++23 at O0/O1/O3, no-elide and sanitizers. Verify
+branch/short-circuit cleanup explicitly before declaring the capability done.
+Use an optimized compiler throughout. Publish the validated feature commit
+promptly to canonical `main` as 0.361.0, starting its automatic stable release
+without waiting for CI. Then reconcile the open PRs as one coherent candidate.
+The user narrowed this campaign to those two outcomes: unresolved issue fixes
+and remaining branch/worktree cleanup are deferred. Preserve unvalidated drafts
+and the active local installation; they are not part of this release. Panic APIs
+and compiler stabilization are follow-up work, not an extension of this feature.
+The high-level changelog proceeds independently; incomplete proposals are not
+listed as shipped features.
+
+Final receiver evidence covers all 379 registered CTests on unchanged optimized
+production source, including successful retries of three timeout-only results,
+plus 11 staged external consumers and nine clean staged execution cases. The
+exact run accounting is recorded in
+[`verification.md`](../architecture/verification.md#ephemeral-borrowed-carrier-receivers).
+
 ## Everyday Program Stabilization
 
-**State:** implementation and combined release validation complete; prepared
-for 0.360.0 delivery. The candidate reconciles canonical `main` through
+**State:** implementation, combined release validation, local installation and
+0.360.0 publication complete at `61f3880a`. The candidate reconciles canonical `main` through
 `0ff67a4e`. This campaign closes
 ordinary application composition gaps before adding more advanced surface.
 Source diagnostics for invalid programs are part of every row, not a substitute
@@ -56,8 +100,7 @@ with no failures or skips in 1617.18 seconds, including both executable corpus
 oracles and the expanded 95-example inventory. All 11 clean staged consumers
 and the staged carrier, lambda-mapper and mixed-emplacement probes pass.
 Formatting and syntax-tooling checks also pass. Local installation and
-canonical Gitea dispatch are the remaining operational delivery steps, not
-unfinished implementation. Neither the interrupted run nor prior installed
+canonical Gitea dispatch subsequently completed. Neither the interrupted run nor prior installed
 checkpoints substitute for the final evidence recorded in
 [`verification.md`](../architecture/verification.md#combined-03600-release-validation).
 
