@@ -1,0 +1,57 @@
+#include <std/http>
+#include <std/json>
+#include <std/string>
+#include <std/vector>
+
+// No arguments: offline URL recipe. URL: GET. URL post: POST a JSON object.
+// See README.md for a reproducible local-server demo (no credentials needed).
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 1) {
+    auto base = std::http::url::https("example.com");
+    if (!base) { return 1; }
+    mut auto endpoint = base.value() / "api" / "users";
+    endpoint.add_query_parameter("name", "Alice Smith");
+    std::println(endpoint.view());
+    std::println("Usage: http-json URL [post]");
+    return 0;
+  }
+  if (argc > 3 || (argc == 3 && argv[std::size_t(2)].view() != "post")) { return 1; }
+  auto parsed_url = std::http::url::parse(argv[std::size_t(1)].view());
+  if (!parsed_url) { std::println("Invalid HTTP(S) URL"); return 2; }
+  auto endpoint = std::move(parsed_url).value();
+  mut std::http::request request{
+      argc == 3 ? std::http::method::post : std::http::method::get, endpoint};
+  request.set_connect_timeout_ms(uint64_t(2000));
+  request.set_timeout_ms(uint64_t(5000));
+  request.set_max_response_bytes(uint64_t(65536));
+  auto accept = request.set_header("Accept", "application/json");
+  if (!accept) { return 3; }
+  if (argc == 3) {
+    mut auto body = std::json::value::object();
+    auto name = body.set("name", "tea");
+    auto content_type = request.set_header("Content-Type", "application/json");
+    if (!name || !content_type) { return 3; }
+    request.set_body(std::json::stringify(body));
+  }
+  auto created = std::http::client::create();
+  if (!created) { std::println("HTTP client unavailable"); return 4; }
+  // Reuse this mutable owner for multiple sends to retain its connection pool.
+  mut auto client = std::move(created).value();
+  auto received = client.send(request);
+  if (!received) { std::println("HTTP transport failed"); return 5; }
+  auto response = std::move(received).value();
+  // A 404/500 is a response, not a transport failure. Check before parsing.
+  if (response.status() < uint32_t(200) || response.status() >= uint32_t(300)) {
+    std::println("HTTP status rejected");
+    std::println(response.status());
+    return 6;
+  }
+  std::string body = response.body();
+  auto document = std::json::parse(body.view());
+  if (!document) { std::println("Invalid JSON response"); return 7; }
+  auto name = document.value().get_string("name");
+  if (!name) { std::println("Missing or invalid name"); return 8; }
+  std::println(name.value());
+  // HTTPS certificate and hostname verification are always enabled.
+  return 0;
+}

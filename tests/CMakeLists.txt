@@ -775,6 +775,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(http_runtime PROPERTIES TIMEOUT 600)
   add_test(
+    NAME practical_examples
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/practical_examples_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(practical_examples PROPERTIES TIMEOUT 600)
+  add_test(
     NAME process_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/process_runtime_test.py"
