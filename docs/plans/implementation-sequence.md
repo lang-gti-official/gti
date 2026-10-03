@@ -27,9 +27,15 @@ input, not a second implementation queue.
 
 ## Ephemeral Borrowed Receivers And PR Reconciliation
 
-**State:** receiver implementation and complete local validation are finished
-for 0.361.0, following the 0.360.0 stabilization release at `61f3880a`.
-Open-PR reconciliation remains in progress on a separate candidate.
+**State:** receiver implementation, validation and publication are complete at
+`be149354` (0.361.0), following the 0.360.0 stabilization release at `61f3880a`.
+PRs 17 (source modules) and 22 (discard quick fixes) are reconciled for 0.362.0
+at `3c2fe8fd`, with all 381 CTests, staged consumers and editor/package gates
+passing. PR 18's lambda error mappers were already integrated and validated in
+`61f3880a`; the older branch is superseded, not replayed over newer lifetime work.
+Only canonical publication and PR/verified-fixed-issue bookkeeping follow the
+completed implementation and validation. The detailed evidence is in
+[`verification.md`](../architecture/verification.md#combined-03620-release-validation).
 
 The immediate client is an ordinary service facade:
 `api.auth().create_access_token(...)`. A directly produced class/struct value
@@ -337,7 +343,8 @@ arguments now use the same mutability-use accounting as ordinary calls.
 Compiler tests cover three construction spellings, rejection after removing
 required `mut`, and a read-only control that must still warn. LSP regression
 coverage checks UTF-16 spans and rejects stale fixes after the constructor
-becomes mutable. These changes await the final combined build and validation.
+becomes mutable. These changes passed the final combined 0.360.0 validation
+and remain covered by the 0.362.0 run.
 
 The user's requested order is current stabilization, this accessor capability
 and its validation, then the repository-supported local install and installed
@@ -347,15 +354,15 @@ a production release; the previous publication hold is lifted. Tea sources are r
 input only: do not edit the application or execute authenticated network calls.
 
 The separate `expected::transform_error` lambda-mapper handoff in Gitea PR 18
-(`12e8cc1635277cc5fd0f71d260aa64d73059ca58`) is reconciled into the candidate,
-but has not yet passed integrated validation. Its eager conditional inputs, closure
-publication, and owned error-parameter cleanup overlap the current HIR/MIR and
-backend changes. Reconciliation must retain source-order evaluation even on the
+(`12e8cc1635277cc5fd0f71d260aa64d73059ca58`) was reconciled, independently
+reviewed and published in 0.360.0 at `61f3880a`. Its eager conditional inputs,
+closure publication and owned error-parameter cleanup overlapped the HIR/MIR
+and backend work. Reconciliation retained source-order evaluation even on the
 success branch, exactly-once capture cleanup on both branches and on failure,
-and the current prepared-input and carrier-lifetime proofs. Audit all HIR value
-traversals for the added conditional-input edges, then rerun its compiler,
-runtime, LSP, independent verifier, and combined gates; the handoff's separate
-branch results are not integrated validation evidence.
+and the prepared-input and carrier-lifetime proofs. HIR value traversals for
+the added conditional-input edges were audited, and the compiler, runtime,
+LSP, independent verifier and combined gates passed on the integrated source;
+the handoff's separate branch results were not substituted for that evidence.
 The review reproduced a moved named owning mapper reaching `GTI-B0001`:
 semantic admission is valid, but the synthesized read invocation stages its
 moved receiver as `Value` where the retained-lifetime proof requires
@@ -365,8 +372,8 @@ success/error/later-failure execution, two concrete generic mapper instances
 pass, and receiver failure preserves capture-source cleanup order at O0/O3 in
 the handoff build. These reduced probes are now integrated regressions, along
 with moved-binding reuse rejection, a later successful argument before capture
-cleanup, and malformed eager-input HIR plans. The integrated test run remains
-required before release.
+cleanup, and malformed eager-input HIR plans. The 0.361.0 and 0.362.0 combined
+runs also retain these regressions.
 
 ## Explicit Cloning And Native Bridge Follow-Up
 
