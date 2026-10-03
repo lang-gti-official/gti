@@ -683,6 +683,31 @@ exact reference path; selecting an individual path from a multi-path by-value
 parameter is not part of this slice. Receiver-based accessors remain available
 and conservatively retain the receiver's complete owner set.
 
+An ordinary local, parameter, or returned reference may refer to one of these
+borrowed-state objects. It protects two distinct things: the object's physical
+storage and the external owners retained by its fields. For example, an
+accessor returning a reference to a contained service keeps both that service
+and the dependencies it borrows alive. Moving or replacing the service while
+the reference remains live is rejected even if all external owners survive.
+The same rule applies to unrelated user-defined wrappers and concrete generic
+or lambda reference parameters; it does not recognize library names.
+
+Reference access and stored-field access are independent. A mutable reference
+to a shared view can mutate its own eligible fields, but cannot turn a stored
+read-only reference into a mutable one. A read-only reference to an exclusive
+view cannot call its mutable methods. Copying a copyable shared view through a
+reference creates a distinct object retaining the original external
+dependencies, not a reference to the source object's shell. Such a copy may be
+returned by value under the existing return-origin rules. Returning a reference
+to a local copy or by-value parameter remains invalid; `GTI-S2017` or the
+existing by-value-carrier `GTI-S2085` diagnoses the escaping storage.
+
+This does not add mixed-permission carriers or general lifetime parameters.
+Local copies made inside a borrowed receiver/reference body currently require
+the same complete carrier type as that entry; a differently typed nested field
+copy still needs per-copy dependency-path representation. Direct supported
+field access and reference-returning accessors do not require that copy.
+
 Multiple exclusive paths, mixed shared/exclusive paths, inherited borrowed
 state, arrays of borrowed carriers, user-defined destructors, global/static or
 captured borrowed storage, dependency-changing returns, and assignment that would replace a carrier's
@@ -1615,8 +1640,14 @@ ordinary GTI source.
 
 `std::vector<T>`, imported with `#include <std/vector>`, is now an ordinary GTI
 class over `gti_internal::prefix_storage<T>`. Its element type satisfies
-`std::movable`; the storage field makes the vector itself move-only, so transfer
-uses `std::move` and an ordinary copy is rejected. No frontend or backend phase
+`std::move_constructible`, not assignment-bearing `std::movable`: growth,
+insertion and erasure move-construct into verified empty slots rather than
+assigning over live elements. Construction-only owners such as an owning
+record containing an optional string may therefore be vector elements and may
+be cloned when their explicit clone contract permits it. Borrowed-state and
+deleted-move elements remain rejected. The storage field makes the vector
+itself move-only, so transfer uses `std::move` and an ordinary copy is rejected.
+No frontend or backend phase
 recognizes the public `std::vector` name to supply container behavior. The
 separate hosted-entry rule validates the canonical
 `std::vector<std::string>` nominal identity only as an accepted `main`
@@ -1631,7 +1662,7 @@ initializable. Unlike C++, both `at` and `operator[]` retain GTI's checked
 storage failure rather than exposing an unchecked indexing path.
 
 `emplace_back(arguments...)` forwards one final by-value pack to
-`storage_construct`, which selects the element's exact constructor and builds
+`prefix_storage_append`, which selects the element's exact constructor and builds
 the element in its final slot. It returns a writable receiver-tied reference to
 that element. The reference prevents reserve, push, clear, movement, or another
 mutable vector operation until its loan ends. This API avoids an intermediate

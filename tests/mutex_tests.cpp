@@ -4,6 +4,7 @@
 #include "gti/optimizer.h"
 
 #include "../src/compiler/cpp_mir_body_emitter.h"
+#include "../src/compiler/cpp_mir_representation_snapshot.h"
 #include "cpp_backend_test_support.h"
 
 #include <algorithm>
@@ -343,6 +344,10 @@ int main() { std::mutex<payload> value{payload(4)}; return 0; }
   expect(frontend.canGenerateCode(), "prepared native payload lowers");
   if (!frontend.canGenerateCode())
     return;
+  const auto lowered = gti_test::lowerProgram(frontend, frontend.mir,
+                                              frontend.mir, concurrentTarget());
+  const lang::CppMirBodyEmissionMap map(
+      lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23));
   bool found = false;
   for (const auto &constructor : frontend.mir.constructorInstances()) {
     for (const auto &block : constructor.body.blocks) {
@@ -358,7 +363,18 @@ int main() { std::mutex<payload> value{payload(4)}; return 0; }
         expect(bindings.size() == 1 && bindings.front().arguments.size() == 1 &&
                    bindings.front().arguments.front().moved,
                "native payload initializer preserves its exact parameter move");
-        for (int mutation = 0; mutation != 5; ++mutation) {
+        const auto text =
+            lang::CppMirBodyEmitter(frontend.mir, map)
+                .emitFailureBodyText(
+                    {lang::MirBodyKind::Constructor, constructor.id},
+                    "passive-native-initializer", 1)
+                .text;
+        expect(text.find("if (__gti_mir_construct_success_" +
+                         std::to_string(bindings.front().constructInstruction) +
+                         ")") == std::string::npos,
+               "an initializer executed before the body must follow success, "
+               "not branch on an unset body-local status flag");
+        for (int mutation = 0; mutation != 8; ++mutation) {
           auto malformed = frontend.mir;
           auto &changed = const_cast<lang::MirConstructorInstance &>(
               *malformed.findConstructorInstance(constructor.id));
@@ -378,17 +394,36 @@ int main() { std::mutex<payload> value{payload(4)}; return 0; }
               if (mutation == 3 &&
                   instruction.id == bindings.front().constructInstruction)
                 instruction.lifecycle.clear();
+              if (candidateBlock.failureParameter != 0 &&
+                  instruction.kind == lang::MirInstructionKind::Drop &&
+                  instruction.lifecycle.size() == 1) {
+                const auto dropId = instruction.lifecycle.front().source;
+                if (mutation == 5)
+                  instruction.lifecycle.front().failureCleanup = false;
+                if (mutation == 6)
+                  changed.body.dropObligations[dropId - 1].initiallyActive =
+                      false;
+                if (mutation == 7)
+                  changed.body.dropObligations[dropId - 1]
+                      .dropType.requiresActiveCleanup = true;
+              }
             }
           expect(lang::cppMirConstructedFieldInitializerBindings(malformed,
                                                                  changed)
                      .empty(),
                  "prepared native payload needs exact slot, activation, "
-                 "invocation transfer and inactive initial state");
+                 "invocation transfer, inactive prepared state and exact "
+                 "passive parameter cleanup on the impossible failure edge");
         }
       }
     }
   }
   expect(found, "fixture exercises a prepared native payload initializer");
+  expect(
+      !gti_test::emitCpp(frontend, lang::CppStandard::Cpp23, concurrentTarget())
+           .contents.empty(),
+      "a passive move-only payload must have production emission; "
+      "retiring its parameter shell cannot require a copy constructor");
 }
 
 void testMutexCleanupRecipe() {

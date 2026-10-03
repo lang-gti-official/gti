@@ -26,6 +26,29 @@ policy, and `requires` clause placement are among the supported controls.
 Unknown or unsupported keys are diagnostics; they are not silently accepted as
 future promises.
 
+For one constructor initializer per line, with the colon on the signature line,
+add these entries to `.gti-format`:
+
+```yaml
+PackConstructorInitializers: Never
+BreakConstructorInitializers: AfterColon
+ConstructorInitializerIndentWidth: 4
+```
+
+```gti
+http_service(std::http::client client, std::http::url base_url) :
+    m_client_(std::move(client)),
+    m_base_url_(base_url.clone()) {}
+```
+
+The width is extra indentation beyond the constructor declaration. Use
+`BeforeColon` to put the colon on a new line instead. `BreakBeforeBraces`
+continues to control the body brace. The default
+`PackConstructorInitializers: BinPack` retains compact lists; no
+column-limit-based packing is implemented.
+The accepted packing values are `BinPack` and `Never`; the accepted colon
+styles are `BeforeColon` and `AfterColon`.
+
 The formatter is recovery-oriented so incomplete editor buffers can still be
 formatted, but the compiler remains responsible for deciding whether the
 source is valid GTI.

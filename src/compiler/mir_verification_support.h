@@ -31,6 +31,11 @@ terminatorSuccessors(const MirTerminator &terminator);
 [[nodiscard]] bool constantMatchesType(const ConstantValue &constant,
                                        const SemanticType &type,
                                        const MirProgram *program = nullptr);
+// The bounded conversions represented by a CallInput, after semantics selects
+// the parameter. Pack lowering must preserve this same input contract.
+[[nodiscard]] bool validCallInputType(const SemanticType &source,
+                                      const SemanticType &parameter,
+                                      HirCallInputKind kind);
 
 [[nodiscard]] const MirInstruction *linearDefinition(const MirBody &body,
                                                      MirValueId value);
@@ -51,7 +56,8 @@ terminatorSuccessors(const MirTerminator &terminator);
 [[nodiscard]] CanonicalPlace canonicalBorrowOrigin(
     const MirBody &body, MirPlaceId place,
     const std::unordered_map<HirBindingId, std::vector<MirLoanId>>
-        &bindingLoans);
+        &bindingLoans,
+    bool physicalCarrier = false);
 [[nodiscard]] bool sameCanonicalPlace(const CanonicalPlace &left,
                                       const CanonicalPlace &right);
 [[nodiscard]] bool sameGlobalBorrowPlace(const BorrowOriginPlace &expected,

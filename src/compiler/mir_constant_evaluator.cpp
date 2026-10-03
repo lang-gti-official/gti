@@ -842,7 +842,7 @@ private:
     }
     for (const auto &loan : body.loans) {
       const auto *source = body.findPlace(loan.source);
-      if (loan.access != AccessMode::ReadOnly ||
+      if (loan.access != AccessMode::ReadOnly || loan.storedDependency != 0 ||
           !loan.additionalSources.empty() || loan.lifecycleBound ||
           loan.twoPhase || source == nullptr ||
           !observedStorageType(source->type)) {

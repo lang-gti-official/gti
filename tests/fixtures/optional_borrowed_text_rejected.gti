@@ -1,0 +1,12 @@
+#include <std/optional>
+#include <std/string>
+
+std::optional<std::string_view> escape() {
+  std::string owner{"owned"};
+  return std::optional<std::string_view>(owner.view());
+}
+
+int main() {
+  auto escaped = escape();
+  return escaped.value().size() == std::size_t(5) ? 0 : 1;
+}

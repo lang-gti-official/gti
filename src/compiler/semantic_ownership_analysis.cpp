@@ -1283,7 +1283,8 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
         parameter.kind == SemanticType::Reference &&
         parameter.referenceAccess == AccessMode::ReadOnly &&
         (parameter.arguments.empty() ||
-         !typeTraits(parameter.arguments.front()).containsBorrowedState);
+         !typeTraits(parameter.arguments.front()).containsBorrowedState ||
+         isDirectStoredReferenceType(parameter.arguments.front()));
     const bool readOnlyBorrowedValue =
         isDirectStoredReferenceType(parameter) &&
         borrowAccess(parameter) == AccessMode::ReadOnly;
@@ -1459,15 +1460,13 @@ auto SemanticVisitor::Impl::nestsBorrowedState(const SemanticType &type) const
          !isDirectStoredReferenceType(type);
 }
 
-auto SemanticVisitor::Impl::isReadOnlyBorrowedCarrierParameter(
+auto SemanticVisitor::Impl::isBorrowedCarrierReference(
     const SemanticType &type) const -> bool {
-  if (type.kind != SemanticType::Reference ||
-      type.referenceAccess != AccessMode::ReadOnly ||
-      type.arguments.size() != 1 ||
+  if (type.kind != SemanticType::Reference || type.arguments.size() != 1 ||
       !isDirectStoredReferenceType(type.arguments.front())) {
     return false;
   }
-  return borrowAccess(type.arguments.front()) == AccessMode::ReadOnly;
+  return true;
 }
 
 auto SemanticVisitor::Impl::isDirectOwnerType(const SemanticType &type)
@@ -1999,7 +1998,11 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
     }
   }
   if (const auto source = retainedLoanSource(expression)) {
-    if (const SemanticLoanInfo *loan = semanticModel.findLoan(source->loan)) {
+    const SemanticLoanInfo *loan = semanticModel.findLoan(source->loan);
+    if (loan != nullptr && loan->storedDependency != 0) {
+      loan = semanticModel.findLoan(loan->storedDependency);
+    }
+    if (loan != nullptr) {
       std::vector<SemanticLoanDependency> dependencies{
           {.place = loan->place,
            .designatedFields = loan->designatedFields,
@@ -2158,11 +2161,27 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
   if (!expression) {
     return std::nullopt;
   }
+  if (exprAs<This>(expression.get()) != nullptr) {
+    for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+      const auto found = scope->find(std::string(receiverStateName));
+      if (found != scope->end() && found->second.retainedLoan != 0)
+        return RetainedLoanSource{.loan = found->second.retainedLoan};
+    }
+  }
   if (const auto *variable = exprAs<Variable>(expression.get())) {
     const Symbol *symbol = resolve(variable->name());
     if (symbol != nullptr && symbol->retainedLoan != 0) {
       return RetainedLoanSource{.loan = symbol->retainedLoan,
                                 .carrier = variable};
+    }
+    if (symbol != nullptr &&
+        symbol->bindingKind == SemanticBindingKind::Field &&
+        !symbol->staticMember) {
+      for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+        const auto found = scope->find(std::string(receiverStateName));
+        if (found != scope->end() && found->second.retainedLoan != 0)
+          return RetainedLoanSource{.loan = found->second.retainedLoan};
+      }
     }
     return std::nullopt;
   }
@@ -2301,6 +2320,18 @@ auto SemanticVisitor::Impl::loanPlace(const ExprPtr &expression)
   }
   if (const auto *call = exprAs<Call>(expression.get())) {
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+    if (resolved != nullptr &&
+        isBorrowedCarrierReference(resolved->returnType)) {
+      if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
+        if (const auto *member = exprAs<Get>(call->callee().get()))
+          return loanPlace(member->object());
+        if (currentClass)
+          return {.receiver = true};
+      } else if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
+                 resolved->borrowArgument < call->arguments().size()) {
+        return loanPlace(call->arguments()[resolved->borrowArgument]);
+      }
+    }
     if (resolved != nullptr &&
         (resolved->intrinsic == IntrinsicKind::ExpectedValue ||
          resolved->intrinsic == IntrinsicKind::ExpectedError)) {
@@ -3486,6 +3517,68 @@ auto SemanticVisitor::Impl::createRetainedLoan(
   return id;
 }
 
+auto SemanticVisitor::Impl::recordStoredEntryDependency(
+    Symbol &carrier, SymbolId carrierSymbol, const SemanticType &type,
+    bool receiver) -> SemanticLoanId {
+  const SemanticLoanPlace place{.root = carrierSymbol, .receiver = receiver};
+  const auto paths = storedReferencePaths(type);
+  const bool abstractEntry =
+      receiver || carrier.type.kind == SemanticType::Reference;
+  std::vector<SymbolId> designatedFields;
+  std::vector<SemanticLoanDependency> additional;
+  for (const auto &path : paths) {
+    SemanticType ownerType = type;
+    std::vector<SymbolId> fields;
+    for (const VariableDecl *field : path.fields) {
+      const ClassInfo *owner = classInfo(ownerType);
+      if (owner == nullptr)
+        return 0;
+      const auto member = owner->members.find(field->name().lexeme);
+      if (member == owner->members.end())
+        return 0;
+      const SymbolId symbol = toolingSymbolFor(member->second.symbol);
+      if (symbol == 0)
+        return 0;
+      fields.push_back(symbol);
+      ownerType = substituteType(member->second.symbol.type,
+                                 classSubstitution(ownerType));
+    }
+    if (designatedFields.empty())
+      designatedFields = std::move(fields);
+    else
+      additional.push_back({.place = place,
+                            .designatedFields = std::move(fields),
+                            .access = AccessMode::ReadOnly});
+  }
+  if (designatedFields.empty())
+    return 0;
+  const SemanticLoanId id =
+      createRetainedLoan(carrier, carrierSymbol, SemanticLoanKind::StoredValue,
+                         nullptr, place, carrierSymbol, receiver,
+                         abstractEntry ? paths.front().reference.referenceAccess
+                                       : borrowAccess(type),
+                         false, 0, true, std::move(designatedFields));
+  SemanticLoanInfo loan = *semanticModel.findLoan(id);
+  loan.additionalDependencies = std::move(additional);
+  if (abstractEntry) {
+    // Abstract caller-owned referents are not another alias of the physical
+    // carrier parameter. Its Reference entry retains this separate authority.
+    loan.carriers.clear();
+    // The caller owns the carrier and any release obligation it contains.
+    // This entry describes its declared reference fields only; it neither
+    // acquires that obligation nor inherits a capability-produced loan's
+    // stronger access (such as the loan of a live lock guard).
+    loan.lifecycleBound = false;
+    loanFlow.records.at(id).lifecycleBound = false;
+    // Only receiver entries lack an ordinary binding to select their body.
+    // A reference formal is selected through its physical Parameter loan,
+    // including inside lambdas where the enclosing function is not its owner.
+    loan.entryFunction = receiver ? currentFunctionDeclaration : nullptr;
+  }
+  semanticModel.recordLoan(std::move(loan));
+  return id;
+}
+
 auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
     -> void {
   Symbol *carrier = resolveMutable(parameter.name);
@@ -3549,51 +3642,30 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
       referenceCarrier &&
       carrier->type.referenceAccess == AccessMode::ReadOnly &&
       summarizedParameterSource;
+  const bool borrowedShell =
+      referenceCarrier &&
+      isDirectStoredReferenceType(carrier->type.arguments.front());
   if (referenceCarrier &&
       carrier->type.referenceAccess != AccessMode::Mutable &&
-      !summarizedReadOnlySource) {
+      !summarizedReadOnlySource && !borrowedShell) {
     return;
   }
   const SymbolId carrierSymbol = toolingSymbolFor(*carrier);
   const SemanticLoanPlace place{.root = carrierSymbol};
   const AccessMode access = referenceCarrier ? carrier->type.referenceAccess
                                              : borrowAccess(carrier->type);
-  std::vector<SymbolId> designatedFields;
-  std::vector<SemanticLoanDependency> additionalDependencies;
   if (storedValueCarrier && !dynamicTextCarrier) {
-    for (const auto &path : storedReferencePaths(carrier->type)) {
-      SemanticType ownerType = carrier->type;
-      std::vector<SymbolId> fields;
-      for (const VariableDecl *field : path.fields) {
-        const ClassInfo *owner = classInfo(ownerType);
-        if (owner == nullptr) {
-          return;
-        }
-        const auto member = owner->members.find(field->name().lexeme);
-        if (member == owner->members.end()) {
-          return;
-        }
-        const SymbolId symbol = toolingSymbolFor(member->second.symbol);
-        if (symbol == 0) {
-          return;
-        }
-        fields.push_back(symbol);
-        ownerType = substituteType(member->second.symbol.type,
-                                   classSubstitution(ownerType));
-      }
-      if (designatedFields.empty()) {
-        designatedFields = std::move(fields);
-      } else {
-        additionalDependencies.push_back({.place = place,
-                                          .designatedFields = std::move(fields),
-                                          .access = AccessMode::ReadOnly,
-                                          .protectsStorage = false});
-      }
-    }
-    if (designatedFields.empty()) {
-      return;
-    }
+    const auto id = recordStoredEntryDependency(*carrier, carrierSymbol,
+                                                carrier->type, false);
+    if (id != 0)
+      semanticModel.recordBindingLoan(parameter, id);
+    return;
   }
+  const SemanticLoanId dependency =
+      borrowedShell
+          ? recordStoredEntryDependency(*carrier, carrierSymbol,
+                                        carrier->type.arguments.front(), false)
+          : 0;
   const SemanticLoanId id = createRetainedLoan(
       *carrier, carrierSymbol,
       storedValueCarrier ? SemanticLoanKind::StoredValue
@@ -3605,10 +3677,10 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
       // it were that owner would incorrectly reject increment, copy, and
       // move of the iterator itself.  The caller's retained loan continues
       // to protect the actual owner for the duration of the call.
-      referenceCarrier, 0, true, designatedFields);
-  if (!additionalDependencies.empty()) {
+      referenceCarrier, 0, true);
+  if (dependency != 0) {
     SemanticLoanInfo loan = *semanticModel.findLoan(id);
-    loan.additionalDependencies = std::move(additionalDependencies);
+    loan.storedDependency = dependency;
     semanticModel.recordLoan(std::move(loan));
   }
   semanticModel.recordBindingLoan(parameter, id);
@@ -3641,7 +3713,8 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           ? carrier->type.referenceAccess
           : borrowAccess(carrier->type);
   const bool retainedStoredBorrow =
-      (info != nullptr && info->traits.containsBorrowedState) ||
+      (carrier->type.kind != SemanticType::Reference && info != nullptr &&
+       info->traits.containsBorrowedState) ||
       symbolicRangeIterator;
   const std::optional<TransientBorrowProduction> retainedProduction =
       transientBorrowProduction(expression);
@@ -3698,7 +3771,48 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
   }
   if (const auto source = retainedLoanSource(expression)) {
     const SemanticLoanInfo *sourceLoan = semanticModel.findLoan(source->loan);
+    if (sourceLoan != nullptr && retainedStoredBorrow &&
+        sourceLoan->storedDependency != 0) {
+      // Copying a view out of a reference copies its external dependency,
+      // not a dependency on the source view object's physical storage.
+      sourceLoan = semanticModel.findLoan(sourceLoan->storedDependency);
+    }
     if (sourceLoan == nullptr) {
+      return;
+    }
+    if (carrier->type.kind == SemanticType::Reference &&
+        carrier->type.arguments.size() == 1 &&
+        typeTraits(carrier->type.arguments.front()).containsBorrowedState &&
+        sourceLoan->kind == SemanticLoanKind::StoredValue &&
+        !source->transfer) {
+      // Referencing the carrier is not a copy of its stored dependency.
+      // Protect the addressable shell and retain its existing external-owner
+      // authority through a separate edge. Neither permission upgrades the
+      // other; ordinary reference binding already checks shell access.
+      SemanticLoanPlace shell = loanPlace(expression);
+      if (shell.root == 0 && !shell.receiver) {
+        report(expressionToken(expression),
+               "A reference to borrowed-state storage requires a stable "
+               "carrier object.",
+               "GTI-S2017");
+        return;
+      }
+      const SemanticLoanId dependency = sourceLoan->id;
+      reportBorrowConflict(
+          expressionToken(expression), conflictingLoans(shell, carrierAccess),
+          "Cannot borrow this carrier while an overlapping borrow of its "
+          "storage may still be live.");
+      const SymbolId owner = shell.root;
+      const bool receiver = shell.receiver;
+      const SemanticLoanId reference = createRetainedLoan(
+          *carrier, carrierSymbol, SemanticLoanKind::Reference,
+          expression.get(), std::move(shell), owner, receiver, carrierAccess,
+          true);
+      SemanticLoanInfo loan = *semanticModel.findLoan(reference);
+      loan.storedDependency = dependency;
+      semanticModel.recordLoan(std::move(loan));
+      semanticModel.recordBindingLoan(binding, reference);
+      recordSemanticLoanUseForLoan(dependency);
       return;
     }
     if (source->transfer) {
@@ -3739,8 +3853,8 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     if (retainedStoredBorrow && binding.isRangeIterator() &&
         sourceLoan->access == AccessMode::Mutable &&
         carrierAccess == AccessMode::Mutable) {
-      attachLoanCarrier(source->loan, *carrier, carrierSymbol, false);
-      semanticModel.recordBindingLoan(binding, source->loan);
+      attachLoanCarrier(sourceLoan->id, *carrier, carrierSymbol, false);
+      semanticModel.recordBindingLoan(binding, sourceLoan->id);
       return;
     }
     const bool exactMutableStoredReborrow =
@@ -3767,8 +3881,8 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       return;
     }
     if (sourceLoan->access == AccessMode::ReadOnly) {
-      attachLoanCarrier(source->loan, *carrier, carrierSymbol, false);
-      semanticModel.recordBindingLoan(binding, source->loan);
+      attachLoanCarrier(sourceLoan->id, *carrier, carrierSymbol, false);
+      semanticModel.recordBindingLoan(binding, sourceLoan->id);
       return;
     }
 
@@ -3794,10 +3908,16 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     const SemanticLoanKind kind = retainedStoredBorrow
                                       ? SemanticLoanKind::StoredValue
                                       : SemanticLoanKind::Reference;
+    const SemanticLoanId dependency = sourceLoan->storedDependency;
     const SemanticLoanId child = createRetainedLoan(
         *carrier, carrierSymbol, kind, expression.get(), std::move(childPlace),
         sourceLoan->owner, sourceLoan->receiverOrigin, carrierAccess,
         sourceLoan->protectsStorage, sourceLoan->id);
+    if (dependency != 0) {
+      SemanticLoanInfo loan = *semanticModel.findLoan(child);
+      loan.storedDependency = dependency;
+      semanticModel.recordLoan(std::move(loan));
+    }
     semanticModel.recordBindingLoan(binding, child);
     return;
   }
@@ -3927,12 +4047,20 @@ auto SemanticVisitor::Impl::recordSemanticLoanUse(SymbolId carrier) -> void {
   if (retained == loanFlow.carrierLoans.end()) {
     return;
   }
-  SemanticLoanId loan = retained->second;
+  std::vector<SemanticLoanId> pending{retained->second};
   std::unordered_set<SemanticLoanId> visited;
-  while (loan != 0 && visited.insert(loan).second) {
+  while (!pending.empty()) {
+    const SemanticLoanId loan = pending.back();
+    pending.pop_back();
+    if (loan == 0 || !visited.insert(loan).second) {
+      continue;
+    }
     recordSemanticLoanUseForLoan(loan);
     const SemanticLoanInfo *info = semanticModel.findLoan(loan);
-    loan = info == nullptr ? 0 : info->parent;
+    if (info != nullptr) {
+      pending.push_back(info->parent);
+      pending.push_back(info->storedDependency);
+    }
   }
 }
 
@@ -5811,15 +5939,17 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
                                             .after = ValueState::Moved});
   currentType = valueType;
   semanticModel.record(
-      expr, ResolvedCallInfo{.returnType = currentType,
-                             .parameterTypes = {valueType},
-                             .intrinsic = IntrinsicKind::Move,
-                             .borrowOrigin =
-                                 typeTraits(currentType).containsBorrowedState
-                                     ? BorrowOriginKind::Argument
-                                     : BorrowOriginKind::None,
-                             .borrowArgument = 0,
-                             .borrowAccess = borrowAccess(currentType)});
+      expr,
+      ResolvedCallInfo{.returnType = currentType,
+                       .parameterTypes = {valueType},
+                       .intrinsic = IntrinsicKind::Move,
+                       .borrowOrigin =
+                           (typeTraits(currentType).containsBorrowedState ||
+                            isOwnerDependentTextExpression(argument))
+                               ? BorrowOriginKind::Argument
+                               : BorrowOriginKind::None,
+                       .borrowArgument = 0,
+                       .borrowAccess = borrowAccess(currentType)});
   if (declaration != nullptr)
     bindIntrinsicCallDeclaration(expr, *declaration);
 }
@@ -6322,11 +6452,13 @@ auto SemanticVisitor::Impl::analyzePrefixStorageIntrinsicCall(
              "Prefix storage indices are uint64_t values.", "GTI-S2019");
     }
   };
-  const auto requireMovableElement = [&](std::string_view name) {
-    if (!satisfiesConstraint(elementType,
-                             constraintBit(GenericConstraintKind::Movable))) {
+  const auto requireMoveConstructibleElement = [&](std::string_view name) {
+    if (!satisfiesConstraint(
+            elementType,
+            constraintBit(GenericConstraintKind::MoveConstructible))) {
       report(expr.paren(),
-             std::string(name) + " requires a movable element type, but '" +
+             std::string(name) +
+                 " requires a move-constructible element type, but '" +
                  typeSpelling(elementType) +
                  "' does not guarantee move construction.",
              "GTI-S2019");
@@ -6343,7 +6475,7 @@ auto SemanticVisitor::Impl::analyzePrefixStorageIntrinsicCall(
     // Inserts inside the live prefix: the element shift and the
     // construction happen inside one sealed operation, so the prefix
     // invariant holds before and after with no observable gap.
-    requireMovableElement("prefix_storage_insert");
+    requireMoveConstructibleElement("prefix_storage_insert");
     if (argumentTypes.size() < 2) {
       report(expr.paren(),
              "prefix_storage_insert expects mutable prefix storage, a "
@@ -6355,7 +6487,7 @@ auto SemanticVisitor::Impl::analyzePrefixStorageIntrinsicCall(
     currentType = SemanticType::Void;
     break;
   case IntrinsicKind::PrefixStorageErase:
-    requireMovableElement("prefix_storage_erase");
+    requireMoveConstructibleElement("prefix_storage_erase");
     if (argumentTypes.size() != 2) {
       report(expr.paren(),
              "prefix_storage_erase expects mutable prefix storage and a "
@@ -6394,7 +6526,7 @@ auto SemanticVisitor::Impl::analyzePrefixStorageIntrinsicCall(
     currentType = SemanticType::UInt64;
     break;
   case IntrinsicKind::PrefixStorageRelocate:
-    requireMovableElement("prefix_storage_relocate");
+    requireMoveConstructibleElement("prefix_storage_relocate");
     if (argumentTypes.size() != 2 ||
         (argumentTypes[1] != SemanticType::Unknown &&
          argumentTypes[1] != storageType)) {
@@ -6441,6 +6573,20 @@ auto SemanticVisitor::Impl::analyzePrefixStorageIntrinsicCall(
   const bool returnsCString =
       intrinsic == IntrinsicKind::PrefixStorageCString ||
       intrinsic == IntrinsicKind::PrefixStorageTryCString;
+  if (intrinsic == IntrinsicKind::PrefixStorageAppend) {
+    if (const auto *construction = semanticModel.findConstruction(expr);
+        construction != nullptr &&
+        construction->kind == ConstructorKind::Ordinary &&
+        construction->constructor != 0 && !construction->generatedDefault &&
+        !argumentTypes.empty()) {
+      // Preserve the selected constructor's reference/value roles rather than
+      // replacing them with the expressions' (possibly pack-grouped) types.
+      argumentTypes.resize(1);
+      argumentTypes.insert(argumentTypes.end(),
+                           construction->parameterTypes.begin(),
+                           construction->parameterTypes.end());
+    }
+  }
   semanticModel.record(
       expr,
       ResolvedCallInfo{
@@ -6730,6 +6876,12 @@ auto SemanticVisitor::Impl::analyzeOptionalStorageIntrinsicCall(
   }
 
   if (constructing) {
+    if ((elementType.kind == SemanticType::StringView ||
+         elementType.kind == SemanticType::CString) &&
+        isOwnerDependentTextExpression(expr.arguments()[1])) {
+      reportOwnerDependentTextStorage(expr.arguments()[1],
+                                      "nested in optional storage");
+    }
     if (elementType != SemanticType::Unknown &&
         elementType.kind != SemanticType::TypeParameter &&
         argumentTypes[1] != SemanticType::Unknown &&

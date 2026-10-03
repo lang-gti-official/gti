@@ -594,6 +594,15 @@ constantIntegerDomain(const SemanticType &type);
 [[nodiscard]] std::optional<BinaryFloatFormat>
 semanticFloatFormat(const SemanticType &type);
 
+// Primitive by-value inputs have no loan or cleanup to transfer across an
+// in-place construction preflight. Classes, enums, text and pointers are not
+// admitted by representation similarity to a primitive.
+[[nodiscard]] inline bool isPassiveScalarValueType(const SemanticType &type) {
+  return constantIntegerDomain(type).has_value() ||
+         semanticFloatFormat(type).has_value() || type == SemanticType::Bool ||
+         type == SemanticType::Char;
+}
+
 [[nodiscard]] SemanticType semanticIntegerType(CheckedIntegerDomain domain);
 
 // Apply a resolved binder projection; this does not perform name lookup,

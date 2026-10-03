@@ -59,7 +59,16 @@ struct SemanticLoanInfo {
   SymbolId owner = 0;
   bool receiverOrigin = false;
   SemanticLoanId parent = 0;
+  // A reference to a borrowed-state carrier protects the carrier's physical
+  // storage separately from the external owners retained by this StoredValue
+  // loan. Unlike parent, this edge neither denotes containment nor suspends
+  // the dependency's access permission.
+  SemanticLoanId storedDependency = 0;
   bool entry = false;
+  // Receiver-only abstract entry dependencies have no source binding. This
+  // identity keeps them in their declaring body when one model holds many
+  // functions; it is consumed during HIR lowering, never by the backend.
+  const FunctionDecl *entryFunction = nullptr;
   SemanticLoanPlace place;
   AccessMode access = AccessMode::ReadOnly;
   bool protectsStorage = false;
@@ -896,12 +905,15 @@ struct ResolvedCallInfo {
 
 // One exact consuming expected<T, E>::transform_error mapper. Expected is a
 // language type, but the mapped error is still computed by an ordinary GTI
-// function whose declaration identity remains authoritative through lowering.
+// function or lambda whose exact identity remains authoritative through
+// lowering. Exactly one of mapper/lambda is set; mapperType preserves the
+// environment.
 struct ExpectedTransformErrorInfo {
   SemanticType sourceType = SemanticType::Unknown;
   SemanticType resultType = SemanticType::Unknown;
   SemanticType mapperType = SemanticType::Unknown;
   FunctionId mapper = 0;
+  LambdaId lambda = 0;
 };
 
 // Contextual collection braces select ordinary static GTI functions. The

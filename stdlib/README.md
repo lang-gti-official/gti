@@ -295,12 +295,13 @@ encryption, authentication, or Unicode transforms.
 
 `std::vector<T>` is implemented in `std/vector.gti` as an ordinary source-defined
 class over `gti_internal::prefix_storage<T>` and imported with
-`#include <std/vector>`. `T` must satisfy `std::movable`, and the vector itself is
-move-only. The first working surface includes default and size construction,
+`#include <std/vector>`. `T` must satisfy `std::move_constructible`; element
+assignment is not required. The vector itself is move-only. The first working
+surface includes default and size construction,
 construction from one contextual `T[N]` value,
 size/capacity observation, reserve, clear, push/pop, indexed insert/erase,
 checked `at` and `operator[]`, front/back, both resize forms, shrink-to-fit,
-variadic `emplace_back`, explicit copyable-element `clone`, and read-only plus
+variadic `emplace_back`, explicit `std::cloneable`-element `clone`, and read-only plus
 mutable structural iteration. The size constructor value-initializes its elements; it
 is not a reserve-only constructor. The fixed-array constructor is ordinary GTI
 source:

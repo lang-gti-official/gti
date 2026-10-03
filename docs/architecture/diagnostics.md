@@ -23,6 +23,13 @@ This includes concrete generic instance results, ordinary/staged HIR results,
 and constexpr definition availability. A warning discovered during early
 concrete evaluation remains a warning, not a failed constant-expression error.
 
+Concrete class validation owns publication of its field, alias, and class
+assertion diagnostics. Constructor lowering may repeat that analysis to obtain
+body-local field-expression identities, but does not republish the class-owned
+records. Concrete constructor-body errors remain independently published with
+their own instantiation sites; no message-based deduplication hides distinct
+diagnostics or notes.
+
 `WarningPolicy` is the immutable driver-boundary filter for compiler warning
 groups. Direct compilation accepts repeatable `-Wno-<group>` (or
 `--disable-warning <group>`) options, while a project profile declares
@@ -231,6 +238,13 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   longer lifetime. Mutable calls whose view argument aliases their receiver
   use the same code; expression-level text dependencies count even when the
   parameter type alone does not encode an owner.
+  A reference return to a borrowed-state object must preserve the physical
+  receiver or selected reference-parameter storage, not merely its external
+  borrowed owners. Returning a local copy's shell reports `GTI-S2017` at the
+  returned expression, with a hint to return the object by value or choose
+  longer-lived storage. It offers no ownership-changing fix-it. A by-value
+  carrier parameter keeps its existing, more specific `GTI-S2085` rule below.
+  Compiler and LSP tests cover the exact UTF-16 span and diagnostic clearing.
   For a later call argument that mutates an earlier operand's retained loan,
   point at the mutating argument's callable token, relate the earlier borrowing
   argument (or receiver call), and suggest completing mutation first or using
@@ -251,6 +265,15 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   Owner-dependent `std::string_view` and `c_string` values use this same family
   for unsupported storage and escape; mutation or movement of their source
   owner while live remains `GTI-S2017`.
+- `GTI-S2019` owns invalid payloads of declaration-bound private storage.
+  Sparse and prefix storage reject borrowed-state elements even when empty;
+  optional storage additionally requires move construction and excludes void,
+  references and raw-pointer payloads. This boundary does not require move
+  assignment. Point at the concrete payload type, or retain the precise user
+  instantiation as related information when the private field is instantiated
+  from library source. Name the concrete payload and explain that this storage
+  does not retain external-owner dependencies. No fix-it chooses a different
+  ownership model. Invalid storage must not reach `GTI-B0001`.
 - `GTI-S2018` owns an unavailable copy, move, or ownership transfer at a
   by-value argument. When constructor search finds one accessible candidate
   whose parameter types match and rejects it only because the written value
@@ -361,7 +384,10 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   declarations, documentation, or deliberately retained code.
 - `GTI-S2096` warns when an explicitly `mut` ordinary local value is never
   written, addressed mutably, passed by mutable reference, or used as a mutable
-  receiver. It does not inspect compiler-trusted standard-library
+  receiver. Mutable-reference parameters of the selected constructor count as
+  uses just as ordinary function parameters do, including when the constructor
+  stores that reference in a carrier. Read-only constructor parameters do not
+  suppress the warning. It does not inspect compiler-trusted standard-library
   implementation locals or infer warnings for generated/range/reference
   bindings. It carries group `unused-mut`, the LSP `Unnecessary` tag, and one
   preferred fix that removes exactly the `mut` token without consuming nearby

@@ -178,7 +178,33 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v82`/`mir-body-v69`.
+The deterministic serialization is currently `mir-v84`/`mir-body-v71`.
+The prefix-construction capacity check and its exact append identity are
+serialized for deterministic evidence and independent replay.
+The new loan contract separates a physical carrier reference from its inherited
+external-owner authority. `storedDependency` names one exact `Stored` loan;
+unlike `parent`, it does not denote containment or suspend that loan. Dependency
+identity, liveness, permission capping and child-before-dependency retirement
+are verified independently. Reference formals and receivers seed an abstract
+`Stored` entry naming their concrete reference-field paths, separate from the
+physical reference loan. Program verification independently binds function and
+lambda entries to the exact formal or receiver and checks field access against
+the concrete class layout. Each local value copy attached to an entry requires
+an independently proven, dominating same-type initialization; merely adding a
+binding to the carrier list grants no authority.
+An abstract entry describes declared field access, not a capability-produced
+loan or the caller's cleanup ownership. In particular, borrowing a guard does
+not acquire its lock-release obligation. Local bindings of stored referents
+retain their concrete reference-field dereference; semantic overlap identities
+are not substituted for executable projection chains.
+A reference return preserves both its physical source and stored dependency.
+A copied by-value return instead publishes a fresh external-owner loan from
+the exact copied SSA value. Its original entry remains live until physical
+references retire child-first, and must end on both value-return and failure
+exits. These rules are verified before C++ representation admission. Optimizer
+protected-source queries include dependency edges; unsupported profiles such as
+constant evaluation remain conservative. Full campaign validation is tracked
+in the implementation sequence, independently of this represented contract.
 Program v82 reconciles SIMD intrinsic identities with structural relocation
 traits in one program contract; it supersedes the separate v81 development
 snapshots without changing the body-v69 format.
@@ -357,6 +383,19 @@ parameters. Body-ordered parameter publication may be suppressed only when the
 same complete native initializer binding also suppresses its move. Plain
 constructor emission must prove the ordinary callee actually exists; a
 status-only nested constructor cannot be called through an invented overload.
+No-failure analysis is not itself proof that a plain constructor body exists:
+the representation snapshot retains a contained status wrapper when the exact
+field-publication schedule requires in-place construction.
+
+An owning Expected field can use the same private construction/rollback path
+when its error alternative has a recursively proved observation-free empty
+representation and defined-failure-free structural transport. The backend
+constructs that error alternative in place, never default-constructing the
+success payload. This is unpublished representation, not a new GTI default
+value or permission to assign either alternative. Generated guarded native
+moves preserve the source lifecycle guard, including a disarmed private shell;
+they must not reactivate an empty error or its nested fields. MIR still owns
+field publication, rollback order and the active alternative's cleanup.
 
 Cleanup-free class construction still carries its selected constructor's
 failure edge. Absence of a result-drop obligation does not suppress Invoke,
@@ -367,13 +406,60 @@ owning constructor followed immediately by publication of its initialized
 value obligation, retaining the same field rollback for later failures. Neither
 case invents a cleanup obligation for a cleanup-free result.
 
+Prefix append retains an exact selected source constructor for final-slot
+construction, including its reference/value parameter roles after concrete pack
+expansion. All arguments are staged before `PrefixAppendPreflight`, which reads
+the staged storage and owns only the capacity failure. Prepared owning arguments
+remain active on that failure edge. The unique success continuation begins with
+the paired append, transfers prepared parameters once into the constructor, and
+extends the live prefix only after construction succeeds. This applies even
+when the constructor itself is proved failure-free.
+
+The preflight/append pair must name the same storage input, source call identity
+and exact constructor. No intervening executable operation or alternative entry
+may reach the handoff. Only that exact preflight may add a non-consuming use of
+the append's mutable storage input; ordinary prepared inputs remain single-use.
+MIR independently checks the selected target, parameter types, argument roles,
+dominance, failure sites and cleanup transfer. The intrinsic's storage effects
+compose with the selected constructor's effects. The constructor's original
+failure record drives field rollback, previous-element and caller cleanup.
+Reference, owner-dependent text and unsafe raw-pointer inputs retain their
+existing semantic access/escape contracts; native copyability grants no new
+borrowing permission or borrowed-payload storage admission.
+Concrete pack flattening uses the same bounded `CallInput` type-compatibility
+predicate as independent MIR verification. It retains the source operand type
+and exact selected parameter type for existing null-pointer and pointee-const
+conversions, rather than rejecting a valid conversion or changing the selected
+constructor signature. Removing pointee constness and changing pointee types
+remain invalid.
+
+Generated same-type copy/move append has no source-constructor target. Direct
+arguments and concrete pack expansion retain the same ordered `CallInput`
+preparation. The backend must not introduce a native block-local owning
+temporary outside that schedule: on capacity failure its destructor could
+otherwise hide the original failure instead of using MIR's secondary-failure
+cleanup path. Capacity success/failure and failing destructors are checked for
+both spellings, without introducing a public container-name rule.
+
 The optional-storage publication capability consumes exactly one completed
 element of its exact payload type, with no source-constructor target. Public
 emplacement resets the old value and constructs its replacement in ordinary
 GTI/MIR before publishing it. Constructor arguments, partial construction and
 first failure therefore use the existing construction protocol rather than an
 unchecked native constructor hidden inside a storage intrinsic. Whole-program
-verification checks the exact element and transfer contract.
+verification checks the exact element and transfer contract. The inline slot
+does not encode external-owner loans: semantic admission rejects borrowed-state
+payloads even without an accessor call, and MIR independently checks the
+concrete payload's movability and borrowed-state facts, including actual fields,
+bases, aggregate components and captures. Neither assignment capability nor a
+public container spelling grants admission. Sparse and prefix storage likewise
+reject borrowed payloads in their typed places, values, signatures and fields;
+an empty storage value is not an exemption.
+Publication also rejects an owner-dependent text expression, matching sparse
+and prefix storage. Text parameters conservatively retain that dependency even
+when a caller passes a literal; the generic optional value constructor cannot
+store them until its contract can distinguish static text from an owner loan.
+Empty optional text storage remains permitted.
 
 Reset of the same inline capability uses the shared element-removal cleanup
 recipe also used by sparse and prefix storage. MIR independently derives the
@@ -883,7 +969,14 @@ the folded traits permit it; move inputs reparent a named value obligation,
 while a fresh variant reparents or transfers its value-rooted obligation
 directly. Parameter entry owns one lexical enum obligation, and an enum return
 has one initially inactive value-rooted drop that only the paired `Invoke`
-success edge activates. Version 18 also added
+success edge activates. When an ordinary constructor consumes that result as
+an enum field initializer, the same exact slot and success activation precede
+the field's `Initialize`/`Reparent` into its construction-rollback obligation.
+The callee failure edge leaves the field unpublished; a later initializer
+failure drops the successfully published field. The backend uses this existing
+schedule for constructed variants, moved parameters, and helper results,
+requiring failure-free generated relocation rather than enum assignment.
+Version 18 also added
 normal-success lifecycle events for one bounded cleanup-owning ordinary-call
 result shape, leaving that result uninitialized on the failure edge. The same
 schema now supports an exact local scalar argument detector or un-sited static
@@ -1131,6 +1224,13 @@ For each body, MIR lowering creates an entry block and root scope, seeds
 parameter cleanup, lowers prologue/construction values, lowers statements,
 synthesizes a legal terminal edge, rebuilds reachability and value uses, then
 verifies structure.
+
+Program verification also requires each function, constructor, destructor and
+lambda body to retain its enclosing instance's exact body kind and return
+type. Constructors and destructors return `void`. A well-formed body-local
+return operand cannot authorize changing the callable's published result
+signature, including either alternative of an Expected result. Backend
+admission independently retains this identity check.
 
 An implicit named return arrives as an ordinary HIR `Move`, so MIR emits the
 same exact-place `Move` instruction and availability transition used for
@@ -1388,6 +1488,19 @@ carry an `Initialize` into the exact This-rooted field. The initializer value is
 ordinary instruction operand, so optimization sees its publication use.
 Program verification requires exactly one matching stage and full-expression
 boundary; constructor metadata cannot stand in for a missing write.
+An owned synthetic temporary returned by a Move publishes at that Move, then
+retires its disarmed native shell at the adjacent exact MIR `TransferOut`.
+It does not acquire a second semantic drop; named locals retain their existing
+moved-from cleanup schedule. This includes a propagated owning success payload
+returned into an expected result after its source envelope has been consumed.
+
+An explicit stage also suppresses metadata-derived publication from every
+sibling MIR record of that source initializer. Increment and assignment
+expressions may retain a discarded assignment result alongside the scalar
+value actually consumed by `Initialize`; that bookkeeping record must not
+introduce a second field write or an invented native temporary. Checked
+arithmetic still precedes the source-place write and field publication, so
+overflow leaves the source unchanged and rolls back only completed fields.
 
 Partial-construction rollback is represented for ordinary constructors: a
 class field completed from one owning constructed temporary is an explicit
@@ -1432,6 +1545,27 @@ completed object on success without a backend reconstructing source
 initialization. The C++ spelling consumes these field drops in place and restores
 empty native fields, rather than deferring their observable cleanup beyond the
 MIR schedule.
+This rollback needs empty-state construction, not assignment into a live
+field. A source destructor therefore does not exclude an otherwise eligible
+owner containing a construction-only field. Fresh owning arguments use the
+same verified prepared-parameter slot and exact transfer into a selected
+field constructor as named moved arguments. A constructor result can also
+publish into an owned Expected binding: its Invoke success activates the
+payload obligation, then the binding Initialize transfers it into the
+wrapper. Generated lifecycle-guarded movement reuses MIR's failure-free
+relocation proof; it does not execute the disarmed source destructor.
+An owning Expected call result passed into a constructor retains its exact
+value-rooted slot across subsequent argument evaluation. Its producer's Invoke
+success dominates the consumer, and one shared owned-argument CFG proof checks
+both prepared class arguments and these aggregate results: every normal path
+reaches the sole consumer without touching the slot, while each intervening
+failure path drops it exactly once or terminates on a second cleanup failure.
+The exact storage root is not another value consumer merely because failure
+cleanup references it. Parameter position and type, unconditional transfer,
+and the constructor result's own publication remain independently checked.
+Emission preserves the MIR argument order and only retires the moved-from
+native shell at the consuming operation; it does not defer argument evaluation
+into a C++ call expression.
 
 The first base-subobject family now uses an entry `InitializeBase` followed by
 an `Invoke`. It covers a selected zero-argument owning base constructor,
@@ -1637,6 +1771,26 @@ Passive class payloads still require representation storage, even without a
 semantic destructor; these slots retire only the native representation.
 Owning slots follow MIR's transfer and cleanup events, including mapper failure
 and pending return rollback. No AST/HIR expression walker executes the mapping.
+An owning call result may also publish through `Unexpected` into an ordinary
+named Expected binding. The payload, wrapper, and binding retain distinct drop
+identities: the checked call activates only on success, wrapping transfers its
+payload once, and the exact Initialize transfers the wrapper into the binding.
+Later failure cleans the binding; it does not replay or delay the producing
+call. Direct Expected moves use the same return-publication proof whether the
+owned class appears in the success or error alternative.
+Storage-free error values use that same binding-publication model without an
+invented wrapper lifetime: `Unexpected` is spelled at its sole `Initialize`
+consumer. The binding has uninitialized native storage even when the error is
+scalar, so an inactive owning success alternative is never default-constructed.
+Trivial bindings retire only their native representation and rearm at the next
+loop iteration; owning bindings retain their exact MIR activation and drop.
+When an owning aggregate call result is consumed directly by a constructor,
+its exact success-activated value obligation is transferred into that
+construction before the constructed object is prepared for a later call.
+The staging proof accepts this direct value route as well as an explicit
+prepared-parameter shell, requiring the same unique consumer, type/place
+identity, success activation, and single transfer. It does not defer the
+argument call or skip either constructor's failure cleanup.
 
 A concrete fixed-array obligation retains one aggregate schedule rather than
 inventing a backend-visible drop for every element. Its extent sequence and
@@ -2092,7 +2246,9 @@ live until invocation and are unwound if construction fails. Other constructor
 destinations retain their own publication contracts. Scalar values
 remain usable only from the normal successor. An owning result stays
 uninitialized on the failure edge and is initialized by an explicit lifecycle
-event only on the normal edge; the verifier rejects failure cleanup or use that
+event only on the normal edge. A value-rooted producer slot cannot claim to
+be initially available independently of its drop activation; the verifier
+rejects that contradictory lifetime as well as failure cleanup or use that
 assumes otherwise. For a class result, production C++ emission additionally
 proves that the result has one exact consuming `Initialize` into matching
 uninitialized lifetime storage, or uses a dedicated discard slot. A cleanup-free,

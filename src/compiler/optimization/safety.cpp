@@ -87,6 +87,10 @@ struct ObjectFact {
 
 struct AbstractState {
   bool reachable = false;
+  // Unknown effects on a failure-only path must not poison a successful
+  // result summary, but an opaque effect on any successful path must survive
+  // joins even when all scalar result facts later become constant.
+  bool hasOpaqueEffects = false;
   std::map<MirValueId, IntegerFact> integers;
   std::map<MirPlaceId, IntegerFact> integerPlaces;
   std::map<MirValueId, IntegerFact> arrayValues;
@@ -127,6 +131,11 @@ struct ClosedCallContext {
 
 struct ClosedCallSummary {
   bool complete = false;
+  // Result/postcondition completeness is independent of effect closure.
+  // A known scalar result may survive an opaque cleanup or runtime operation,
+  // but callers must invalidate memory and cannot use that call as a closed
+  // recurrence edge.
+  bool hasOpaqueEffects = false;
   ObservedFact<IntegerFact> result;
   ObservedFact<ObjectFact> receiver;
   std::vector<ObservedFact<ObjectFact>> argumentObjects;
@@ -1876,6 +1885,7 @@ contextForCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
 
 struct ClosedElementConstruction {
   bool pending = false;
+  bool hasOpaqueEffects = false;
   std::optional<ObjectFact> object;
 };
 
@@ -1929,7 +1939,8 @@ struct ClosedElementConstruction {
     closedCalls->incompleteBodies.insert(address);
     return {.pending = true};
   }
-  return {.object = summary->second.constructed.observed
+  return {.hasOpaqueEffects = summary->second.hasOpaqueEffects,
+          .object = summary->second.constructed.observed
                         ? summary->second.constructed.fact
                         : std::nullopt};
 }
@@ -1943,6 +1954,73 @@ void invalidateObjectOperand(const MirBody &body,
     invalidatePlaceRoot(body, aliases, state, origin);
   } else if (operand.value != 0) {
     state.objectValues.erase(operand.value);
+  }
+}
+
+[[nodiscard]] bool parameterAllowsMutation(const SemanticType &type);
+[[nodiscard]] std::optional<std::vector<MirPlaceId>>
+operandProtectedPlaces(const MirBody &body, const MirOperand &operand);
+[[nodiscard]] bool
+operandMayAliasPlace(const MirBody &body,
+                     const MirPlaceAliasEscapeAnalysis &aliases,
+                     const MirOperand &operand, MirPlaceId tracked);
+void killUnknownMemory(AbstractState &state);
+
+void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
+                                const MirPlaceAliasEscapeAnalysis &aliases,
+                                const MirInstruction &instruction,
+                                MirBodyAddress target, bool opaqueEffects,
+                                AbstractState &state) {
+  const auto summary = exactMirInvocationSummary(program, body, instruction);
+  if (!summary || (opaqueEffects && summary->traits.writesUnknownMemory)) {
+    killUnknownMemory(state);
+    return;
+  }
+  const auto *function = target.kind == MirBodyKind::Function
+                             ? program.findFunctionInstance(target.owner)
+                             : nullptr;
+  const auto *constructor = target.kind == MirBodyKind::Constructor
+                                ? program.findConstructorInstance(target.owner)
+                                : nullptr;
+  const auto *parameters = function      ? &function->parameterTypes
+                           : constructor ? &constructor->parameterTypes
+                                         : nullptr;
+  if (parameters == nullptr ||
+      parameters->size() != instruction.operands.size()) {
+    killUnknownMemory(state);
+    return;
+  }
+
+  // Scalar/object return summaries do not describe every post-call referent.
+  // Invalidate the exact staged inputs first; independently proven object
+  // summaries may subsequently republish their supported field facts. A shell
+  // reference also protects the external owners in its stored dependency.
+  const auto invalidate = [&](const MirOperand &operand) {
+    const auto sources = operandProtectedPlaces(body, operand);
+    if (!sources) {
+      killUnknownMemory(state);
+      return;
+    }
+    // MayAlias is not transitive: invalidate from actual sources, never from
+    // all places which might alias a source and then expand aliasing again.
+    for (const auto source : *sources)
+      invalidatePlaceRoot(body, aliases, state, source);
+  };
+  if (summary->traits.writesPlace)
+    for (const auto &place : body.places)
+      if (place.root == MirPlaceRootKind::Symbol)
+        invalidatePlaceRoot(body, aliases, state, place.id);
+  if (function && instruction.receiver &&
+      receiverAllowsMutation(function->receiverMutability) &&
+      (summary->traits.writesPlace || summary->receiverEscapes ||
+       function->receiverMutability == ReceiverMutability::Consuming))
+    invalidate(*instruction.receiver);
+  for (std::size_t index = 0; index < parameters->size(); ++index) {
+    const bool escapes = index >= summary->argumentsEscape.size() ||
+                         summary->argumentsEscape[index];
+    if (parameterAllowsMutation((*parameters)[index]) &&
+        (summary->traits.writesPlace || escapes))
+      invalidate(instruction.operands[index]);
   }
 }
 
@@ -1982,6 +2060,22 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     return true;
   }
   const ClosedCallSummary &summary = found->second;
+  const MirPlaceId receiverOrigin =
+      instruction.receiver
+          ? objectOriginForOperand(body, aliases, state, *instruction.receiver)
+          : 0;
+  std::vector<MirPlaceId> argumentOrigins;
+  argumentOrigins.reserve(instruction.operands.size());
+  for (const auto &operand : instruction.operands)
+    argumentOrigins.push_back(
+        objectOriginForOperand(body, aliases, state, operand));
+  invalidateClosedCallInputs(closedCalls->program, body, aliases, instruction,
+                             *target, summary.hasOpaqueEffects, state);
+  if (summary.hasOpaqueEffects) {
+    // Opacity blocks recurrence invariance; it is not independent write
+    // authority. The exact effect summary above governs caller invalidation.
+    state.hasOpaqueEffects = true;
+  }
   // Closed calls transport scalar/object summaries, but not relational
   // identity between a prior logical-size check and private prefix storage.
   // Drop those relations at the call boundary until exact effect summaries
@@ -2025,7 +2119,11 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     if (summary.receiver.fact) {
       ObjectFact object = *summary.receiver.fact;
       stabilize(object);
-      applyObjectToOperand(body, aliases, *instruction.receiver, object, state);
+      if (receiverOrigin != 0)
+        seedObjectFact(body, aliases, receiverOrigin, object, state);
+      else
+        applyObjectToOperand(body, aliases, *instruction.receiver, object,
+                             state);
     } else {
       invalidateObjectOperand(body, aliases, *instruction.receiver, state);
     }
@@ -2039,8 +2137,11 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     if (summary.argumentObjects[index].fact) {
       ObjectFact object = *summary.argumentObjects[index].fact;
       stabilize(object);
-      applyObjectToOperand(body, aliases, instruction.operands[index], object,
-                           state);
+      if (argumentOrigins[index] != 0)
+        seedObjectFact(body, aliases, argumentOrigins[index], object, state);
+      else
+        applyObjectToOperand(body, aliases, instruction.operands[index], object,
+                             state);
     } else {
       invalidateObjectOperand(body, aliases, instruction.operands[index],
                               state);
@@ -2078,6 +2179,10 @@ void applyInstruction(const MirBody &body,
   }
   const MirProgram *program =
       closedCalls == nullptr ? nullptr : &closedCalls->program;
+  const auto unknownEffectBarrier = [&] {
+    killUnknownMemory(state);
+    state.hasOpaqueEffects = true;
+  };
   if (instruction.kind == MirInstructionKind::Compute) {
     // Compute is a representation kind, not a purity promise. An extended
     // operation must not carry old place facts across newly classified memory,
@@ -2088,7 +2193,7 @@ void applyInstruction(const MirBody &body,
         instruction.unsafeOperation != UnsafeOperationKind::None ||
         effect.writesPlace || effect.writesUnknownMemory ||
         effect.invokesUserCode || effect.maySynchronize) {
-      killUnknownMemory(state);
+      unknownEffectBarrier();
       if (instruction.result) {
         state.integers.erase(*instruction.result);
         state.arrayValues.erase(*instruction.result);
@@ -2417,7 +2522,7 @@ void applyInstruction(const MirBody &body,
     const MirEffectTraits effect = effects(instruction);
     if (effect.writesUnknownMemory || effect.invokesUserCode ||
         effect.maySynchronize) {
-      killUnknownMemory(state);
+      unknownEffectBarrier();
     } else {
       invalidatePlaceRoot(body, aliases, state, *instruction.destination);
     }
@@ -2425,10 +2530,16 @@ void applyInstruction(const MirBody &body,
   }
   if (instruction.kind != MirInstructionKind::Call) {
     const MirEffectTraits effect = effects(instruction);
-    if (instruction.rawMemoryAccess ||
+    const bool opaque =
+        instruction.rawMemoryAccess ||
         instruction.unsafeOperation != UnsafeOperationKind::None ||
-        effect.writesPlace || effect.writesUnknownMemory ||
-        effect.invokesUserCode || effect.maySynchronize) {
+        effect.writesUnknownMemory || effect.invokesUserCode ||
+        effect.maySynchronize;
+    if (opaque) {
+      unknownEffectBarrier();
+    } else if (effect.writesPlace) {
+      // A default Initialize with no value operands still writes its exact
+      // destination, but does not itself introduce unknown execution effects.
       killUnknownMemory(state);
     }
     return;
@@ -2620,6 +2731,12 @@ void applyInstruction(const MirBody &body,
           state.reachable = false;
           return;
         }
+        if (construction.hasOpaqueEffects) {
+          // The saved prefix state predates the constructor. Do not republish
+          // it across effects outside the supported construction profile.
+          unknownEffectBarrier();
+          return;
+        }
         object = construction.object;
         if (!object && instruction.operands.size() > valueIndex) {
           object = objectForOperand(body, aliases, state,
@@ -2745,7 +2862,7 @@ void applyInstruction(const MirBody &body,
   // Calls outside the admitted private-storage vocabulary may mutate any
   // reachable place through a reference or opaque host boundary. Value facts
   // remain valid because MIR values are immutable.
-  killUnknownMemory(state);
+  unknownEffectBarrier();
 }
 
 [[nodiscard]] BlockTransfer
@@ -2944,6 +3061,7 @@ void joinAggregateElementIntegers(
     return true;
   }
   const AbstractState before = target;
+  target.hasOpaqueEffects |= incoming.hasOpaqueEffects;
   joinIntegers(target.integers, incoming.integers, widen);
   joinIntegers(target.integerPlaces, incoming.integerPlaces, widen);
   joinIntegers(target.arrayValues, incoming.arrayValues, widen);
@@ -3223,56 +3341,87 @@ loadedPlace(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
           type.pointerAccess == AccessMode::Mutable);
 }
 
-[[nodiscard]] bool
-operandMayAliasPlace(const MirBody &body,
-                     const MirPlaceAliasEscapeAnalysis &aliases,
-                     const MirOperand &operand, MirPlaceId tracked) {
+[[nodiscard]] std::optional<std::vector<MirPlaceId>>
+operandProtectedPlaces(const MirBody &body, const MirOperand &operand) {
   const bool identityOperand = operand.kind == MirOperandKind::Address ||
                                operand.kind == MirOperandKind::BorrowRead ||
                                operand.kind == MirOperandKind::BorrowWrite ||
                                operand.kind == MirOperandKind::Loan ||
                                typeCarriesPlaceIdentity(operand.type);
   if (!identityOperand) {
-    return false;
+    return std::vector<MirPlaceId>{};
   }
-  const auto aliasesTracked = [&](MirPlaceId candidate) {
-    return candidate != 0 &&
-           aliases.relation(tracked, candidate) != MirAliasRelation::NoAlias;
+  std::vector<MirPlaceId> result;
+  const auto retainLoan = [&](MirLoanId id) {
+    const auto sources = mirLoanProtectedSources(body, id);
+    if (sources.empty())
+      return false;
+    appendUnique(result, sources);
+    return true;
   };
-  if (aliasesTracked(operand.place)) {
-    return true;
-  }
-  if (operand.loan != 0) {
-    const MirLoan *loan = body.findLoan(operand.loan);
-    if (loan == nullptr || aliasesTracked(loan->source) ||
-        std::any_of(loan->additionalSources.begin(),
-                    loan->additionalSources.end(), aliasesTracked)) {
-      return true;
+  const MirOperand *source = &operand;
+  std::set<MirValueId> visited;
+  for (;;) {
+    if (source->loan != 0 && !retainLoan(source->loan))
+      return std::nullopt;
+    if (source->place != 0) {
+      const auto *place = body.findPlace(source->place);
+      if (place == nullptr)
+        return std::nullopt;
+      bool protectedReference = place->root == MirPlaceRootKind::Loan;
+      if (place->root == MirPlaceRootKind::Loan && !retainLoan(place->loan))
+        return std::nullopt;
+      for (const auto &loan : body.loans) {
+        if (place->root == MirPlaceRootKind::Binding &&
+            std::find(loan.carriers.begin(), loan.carriers.end(),
+                      place->binding) != loan.carriers.end()) {
+          if (!retainLoan(loan.id))
+            return std::nullopt;
+          protectedReference |=
+              !place->projections.empty() &&
+              place->projections.front().kind == MirProjectionKind::Dereference;
+        }
+      }
+      // A loan's complete protected sources already bound any projection
+      // through that reference. Do not add its pointer spelling as a second,
+      // unknown alias root. An actual carrier shell remains a distinct source.
+      if (!protectedReference)
+        appendUnique(result, std::vector<MirPlaceId>{place->id});
+      return result;
     }
+    if (source->value == 0)
+      return result.empty() ? std::nullopt : std::optional{std::move(result)};
+    if (!visited.insert(source->value).second)
+      return std::nullopt;
+    const auto *definition = definingInstruction(body, source->value);
+    if (definition == nullptr)
+      return std::nullopt;
+    if (definition->loan)
+      return retainLoan(*definition->loan) ? std::optional{std::move(result)}
+                                           : std::nullopt;
+    const bool forwardsSource =
+        definition->kind == MirInstructionKind::CallInput ||
+        definition->kind == MirInstructionKind::Load ||
+        (definition->kind == MirInstructionKind::Compute &&
+         definition->operation == MirOperation::Identity);
+    if (!forwardsSource || definition->operands.size() != 1)
+      return std::nullopt;
+    // Staging changes the SSA identity, not its referent. Inspect both the
+    // physical source and its stored owner dependency, including for Load.
+    source = &definition->operands.front();
   }
-  if (const std::optional<MirPlaceId> loaded =
-          loadedPlace(body, aliases, operand)) {
-    return aliasesTracked(*loaded);
-  }
-  if (operand.value == 0) {
-    return false;
-  }
-  const MirInstruction *definition = definingInstruction(body, operand.value);
-  if (definition == nullptr) {
-    return false;
-  }
-  if (definition->destination && aliasesTracked(*definition->destination)) {
-    return true;
-  }
-  if (definition->loan != 0) {
-    const MirLoan *loan = body.findLoan(*definition->loan);
-    if (loan == nullptr || aliasesTracked(loan->source) ||
-        std::any_of(loan->additionalSources.begin(),
-                    loan->additionalSources.end(), aliasesTracked)) {
-      return true;
-    }
-  }
-  return false;
+}
+
+[[nodiscard]] bool
+operandMayAliasPlace(const MirBody &body,
+                     const MirPlaceAliasEscapeAnalysis &aliases,
+                     const MirOperand &operand, MirPlaceId tracked) {
+  const auto sources = operandProtectedPlaces(body, operand);
+  return !sources ||
+         std::any_of(sources->begin(), sources->end(), [&](MirPlaceId source) {
+           return aliases.relation(tracked, source) !=
+                  MirAliasRelation::NoAlias;
+         });
 }
 
 [[nodiscard]] bool
@@ -3302,11 +3451,21 @@ mayMutateTrackedPlace(const MirBody &body,
       exactMirInvocationSummary(closedCalls->program, body, instruction);
   if (!target || closedCalls->rejected.contains(*target) ||
       summary == closedCalls->summaries.end() || !summary->second.complete ||
-      !effects || effects->traits.writesUnknownMemory ||
-      effects->traits.allocates || effects->traits.invokesUserCode ||
-      effects->traits.targetDependent) {
+      summary->second.hasOpaqueEffects || !effects ||
+      effects->traits.writesUnknownMemory || effects->traits.allocates ||
+      effects->traits.invokesUserCode || effects->traits.targetDependent) {
     return true;
   }
+  // Runtime effects conservatively carry maySynchronize even for the exact
+  // prefix-length/read transfers interpreted by this analysis. Effect
+  // closure above is a separate, successful-path proof: explicit atomic
+  // operations reject the body, and every unsupported runtime effect marks
+  // the summary opaque (including through joins and nested calls). Do not
+  // replace that proof by treating every runtime-backed read as unknown.
+  if (const auto *place = body.findPlace(tracked);
+      place && place->root == MirPlaceRootKind::Symbol &&
+      effects->traits.writesPlace)
+    return true;
   if (target->kind != MirBodyKind::Function) {
     return true;
   }
@@ -4271,7 +4430,8 @@ indexedAggregateAccess(const MirProgram *program, const MirBody &body,
   const bool directCarrier = carrierLoan != nullptr && carrierLoan == loan;
   if (loan == nullptr || loan->kind != MirLoanKind::CallResult ||
       loan->source == 0 || loan->producedBy == 0 || loan->entry ||
-      !loan->additionalSources.empty() || loan->escapes || element == nullptr ||
+      loan->storedDependency != 0 || !loan->additionalSources.empty() ||
+      loan->escapes || element == nullptr ||
       (place->root == MirPlaceRootKind::Loan && !loan->carriers.empty()) ||
       (loan->parent != 0 &&
        (parentLoan == nullptr || parentLoan->kind != MirLoanKind::Parameter ||
@@ -4279,6 +4439,7 @@ indexedAggregateAccess(const MirProgram *program, const MirBody &body,
         parentLoan->access != loan->access)) ||
       (place->root == MirPlaceRootKind::Binding &&
        (carrierLoan == nullptr || carrierLoan->entry || carrierLoan->escapes ||
+        carrierLoan->storedDependency != 0 ||
         carrierLoan->carriers.size() != 1 ||
         carrierLoan->carriers.front() != place->binding ||
         (directCarrier ? carrierLoan->kind != MirLoanKind::CallResult
@@ -4699,11 +4860,17 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
       if (initializers == round.summaries.end() ||
           !initializers->second.complete) {
         round.incompleteBodies.insert(address);
-      } else if (initializers->second.constructed.observed) {
-        initialFields = initializers->second.constructed.fact;
-        const MirPlaceId root = thisRoot(*body);
-        if (root != 0 && initialFields) {
-          seedObjectFact(*body, aliases, root, *initialFields, entry);
+      } else {
+        if (initializers->second.hasOpaqueEffects) {
+          killUnknownMemory(entry);
+          entry.hasOpaqueEffects = true;
+        }
+        if (initializers->second.constructed.observed) {
+          initialFields = initializers->second.constructed.fact;
+          const MirPlaceId root = thisRoot(*body);
+          if (root != 0 && initialFields) {
+            seedObjectFact(*body, aliases, root, *initialFields, entry);
+          }
         }
       }
     }
@@ -4753,6 +4920,10 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
     return result;
   }
   result.summary.complete = true;
+  result.summary.hasOpaqueEffects =
+      std::any_of(exits.begin(), exits.end(), [](const AbstractState &state) {
+        return state.hasOpaqueEffects;
+      });
 
   if (!returnFacts.empty()) {
     result.summary.result.observed = true;
@@ -5058,7 +5229,8 @@ analyzeMirClosedCallSafetyChecks(const MirProgram &program) {
     }
     const auto summary = summaries.find(address);
     body.closed = result.converged && !rejected.contains(address) &&
-                  summary != summaries.end() && summary->second.complete;
+                  summary != summaries.end() && summary->second.complete &&
+                  !summary->second.hasOpaqueEffects;
     body.safety = analyzeBodyLocalSafety(
         program, address, analyzeMirPlaceAliasEscape(program, address));
     if (result.converged) {

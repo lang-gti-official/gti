@@ -561,6 +561,12 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
   }
   if (const ExpectedTransformErrorInfo *transform =
           semanticModel.findExpectedTransformError(*call)) {
+    if (transform->lambda != 0) {
+      addProgramEffectEdge(
+          {.kind = ProgramEffectOwnerKind::Lambda, .id = transform->lambda},
+          expression);
+      return;
+    }
     const FunctionInfo *target = semanticModel.findFunction(transform->mapper);
     if (target == nullptr || target->linkage != LanguageLinkage::Gti ||
         target->declaration == nullptr ||
@@ -1691,8 +1697,11 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
 
   if (kind == ExprKind::Call) {
     const auto *call = static_cast<const Call *>(&expr);
-    if (semanticModel.findExpectedTransformError(*call) != nullptr) {
-      operation.propagation = FailurePropagationKind::DirectCall;
+    if (const auto *transform =
+            semanticModel.findExpectedTransformError(*call)) {
+      operation.propagation = transform->lambda != 0
+                                  ? FailurePropagationKind::Callable
+                                  : FailurePropagationKind::DirectCall;
       return operation;
     }
     if (call->callee() && call->callee()->exprKind() == ExprKind::Get) {
@@ -1786,6 +1795,16 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
                             DefinedFailureDetail::RelocationCapacity);
           addFailureOutcome(operation, DefinedFailureCode::AllocationFailure,
                             DefinedFailureDetail::ElementConstruction);
+          // MIR checks capacity while prepared parameters are still owned by
+          // the caller, then transfers them into this exact final-slot ctor.
+          if (const auto *construction = semanticModel.findConstruction(expr);
+              construction != nullptr &&
+              construction->kind == ConstructorKind::Ordinary &&
+              construction->constructor != 0 &&
+              construction->constructedType.kind == SemanticType::Class &&
+              !construction->generatedDefault) {
+            operation.propagation = FailurePropagationKind::Constructor;
+          }
           break;
         case IntrinsicKind::PrefixStoragePop:
           anchor(token);

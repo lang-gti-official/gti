@@ -87,7 +87,8 @@ proveMirExactReceiver(const MirProgram &program, MirBodyAddress address,
         continue;
       if (origin || loan.carriers.size() != 1 ||
           loan.kind != MirLoanKind::Local || loan.parent || loan.entry ||
-          loan.escapes || loan.access != AccessMode::ReadOnly ||
+          loan.storedDependency || loan.escapes ||
+          loan.access != AccessMode::ReadOnly ||
           !loan.additionalSources.empty() || !loan.designatedFields.empty() ||
           loan.lifecycleBound || loan.twoPhase)
         return reject("receiver loan is not one confined local origin");

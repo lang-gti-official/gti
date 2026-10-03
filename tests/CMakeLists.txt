@@ -207,6 +207,9 @@ set(GTI_COMPILER_TEST_SUITES
     constexpr
     diagnostics
     e2e)
+add_executable(gti_constructor_formatting_tests constructor_formatting_tests.cpp)
+target_link_libraries(gti_constructor_formatting_tests PRIVATE gti_compiler)
+add_test(NAME constructor_formatting COMMAND gti_constructor_formatting_tests)
 add_library(
   gti_compiler_test_pch OBJECT
   "${PROJECT_SOURCE_DIR}/tests/compiler_test_pch.cpp"
@@ -269,6 +272,28 @@ target_link_libraries("gti_optional_compiler_tests" PRIVATE gti_cpp_backend)
 target_precompile_headers("gti_optional_compiler_tests"
                           REUSE_FROM gti_compiler_test_pch)
 add_test(NAME optional_compiler_contract COMMAND gti_optional_compiler_tests)
+
+add_executable(gti_prefix_constructor_tests prefix_constructor_tests.cpp)
+target_link_libraries(gti_prefix_constructor_tests PRIVATE gti_cpp_backend)
+add_test(NAME prefix_constructor_contract COMMAND gti_prefix_constructor_tests)
+add_test(NAME vector_prepared_constructor_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/vector_prepared_constructor_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(vector_prepared_constructor_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME prefix_generated_transport_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/prefix_generated_transport_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(prefix_generated_transport_runtime PROPERTIES TIMEOUT 240)
+
+add_executable(gti_carrier_shell_reference_tests carrier_shell_reference_tests.cpp)
+target_link_libraries(gti_carrier_shell_reference_tests PRIVATE gti_cpp_backend)
+target_precompile_headers(gti_carrier_shell_reference_tests
+                          REUSE_FROM gti_compiler_test_pch)
+add_test(NAME carrier_shell_references COMMAND gti_carrier_shell_reference_tests)
+add_test(NAME carrier_reference_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/carrier_reference_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(carrier_reference_runtime PROPERTIES TIMEOUT 180)
 
 add_test(
   NAME semantic_header_boundary
@@ -1186,6 +1211,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(numeric_boundaries_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME optimizer_mutable_call_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/optimizer_mutable_call_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(optimizer_mutable_call_runtime PROPERTIES TIMEOUT 240)
+  add_test(
     NAME container_swap_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/container_swap_runtime_test.py"
@@ -1285,6 +1317,20 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures"
   )
   set_tests_properties(optional_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME vector_construction_only_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/vector_construction_only_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(vector_construction_only_runtime PROPERTIES TIMEOUT 240)
+  add_test(
+    NAME vector_scalar_constructor_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/vector_scalar_constructor_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(vector_scalar_constructor_runtime PROPERTIES TIMEOUT 240)
   add_test(
     NAME expected_propagation_runtime
     COMMAND "${Python3_EXECUTABLE}"

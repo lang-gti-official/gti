@@ -44,6 +44,17 @@ int main() {
   expect(lang::cppMirExpectedClassPlacementResult(frontend.mir, rows,
                                                   factory->returnType),
          "Expected result placement admits exact nested guarded owner");
+  const auto artifact = gti_test::emitCpp(frontend);
+  const std::string active =
+      "__gti_lifecycle_active_" + std::to_string(leaf->declaration);
+  expect(artifact.contents.find(active + "(other." + active + ")") !=
+                 std::string::npos &&
+             artifact.contents.find(active + " = other." + active + ";") !=
+                 std::string::npos &&
+             artifact.contents.find("other." + active + " = false;") !=
+                 std::string::npos,
+         "generated moves must transfer then retire the source lifecycle bit, "
+         "preserving both live owners and disarmed private empty shells");
   for (int mutation = 0; mutation != 7; ++mutation) {
     auto malformed = frontend.mir;
     auto *changedLeaf = const_cast<lang::MirClassInstance *>(

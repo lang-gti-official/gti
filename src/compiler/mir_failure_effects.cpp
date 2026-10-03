@@ -1138,6 +1138,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         case MirInstructionKind::AllocateObject:
         case MirInstructionKind::InitializeBase:
         case MirInstructionKind::CleanupBeforeAssign:
+        case MirInstructionKind::PrefixAppendPreflight:
         case MirInstructionKind::Count:
           valid = false;
           break;
@@ -1741,6 +1742,7 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
       case MirInstructionKind::AllocateObject:
       case MirInstructionKind::InitializeBase:
       case MirInstructionKind::CleanupBeforeAssign:
+      case MirInstructionKind::PrefixAppendPreflight:
       case MirInstructionKind::Count:
         return false;
       }

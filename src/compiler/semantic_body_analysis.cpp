@@ -1692,7 +1692,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
           isBorrowReturningType(declaredReturnType),
       methodDeclaration ? "method return type" : "function return type");
   if (nestsBorrowedState(declaredReturnType) &&
-      !isFallibleBorrowType(declaredReturnType)) {
+      !isFallibleBorrowType(declaredReturnType) &&
+      !isBorrowedCarrierReference(declaredReturnType)) {
     report(stmt.name(),
            "Borrowed state cannot be nested in a function return type in "
            "the current lifetime model.",
@@ -1731,7 +1732,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
         parameterType, parameter.type.name.last(), "function parameter",
         directOwningPayloadTransport);
     if (nestsBorrowedState(parameterType) &&
-        !isReadOnlyBorrowedCarrierParameter(parameterType)) {
+        !isBorrowedCarrierReference(parameterType)) {
       report(parameter.name,
              "Function parameters cannot nest borrowed state in the "
              "current lifetime model.",
@@ -1877,6 +1878,10 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   beginScope();
   if (methodDeclaration && !stmt.isStatic()) {
     declareReceiverState();
+    if (Symbol *receiver = receiverStateSymbol();
+        receiver != nullptr && isDirectStoredReferenceType(receiver->type)) {
+      recordStoredEntryDependency(*receiver, 0, receiver->type, true);
+    }
   }
 
   for (const Parameter &parameter : stmt.parameters()) {

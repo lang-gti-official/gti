@@ -578,11 +578,14 @@ its alternative by copy from a named value, by transfer from an explicit
 `std::move`, or directly from a fresh prvalue construction, before any later
 sibling field expression evaluates. A payload switch evaluates its subject
 once through a read-only observation, selects by the active alternative,
-copies that alternative's fields into immutable arm bindings, and executes the
-selected arm; a class-typed arm binding owns its copy and drops at the arm's
-end. A move-only payload is observed through a tag-only pattern because the
-current pattern family does not consume or borrow its field. An exhaustive
-payload switch has no unmatched execution path.
+binds that alternative's selected fields, and executes the selected arm. An
+ordinary value binding owns an immutable copy and drops it at the arm's end.
+A tag-only pattern observes a move-only payload without extracting it;
+`auto&` instead borrows a field from stable enum storage for the arm, and
+`mut auto&` requires mutable storage and an exclusive loan. The whole enum
+remains the conservative conflict root while a payload loan lives. Temporary
+subjects cannot supply borrowed bindings, and consuming patterns remain
+unsupported. An exhaustive payload switch has no unmatched execution path.
 
 When any alternative contains an active-cleanup class, the enum owns one
 variant-aware lexical cleanup obligation. Payload construction transfers each
@@ -591,8 +594,9 @@ arming the enum value. A failure before publication cleans the produced
 operand through its existing construction obligation; a failure after
 publication, ordinary fallthrough, `return`, `break`, and `continue` all drop
 the enum exactly once. Whole-enum move construction transfers the active
-alternative and disarms the source. Whole-enum move assignment drops the old
-destination alternative exactly once, transfers the source alternative, and
+alternative and disarms the source. When the payloads permit assignment,
+whole-enum move assignment drops the old destination alternative exactly once,
+transfers the source alternative, and
 later destroys only the moved-from staging shell. A unit alternative has no
 payload cleanup to run.
 
@@ -600,8 +604,8 @@ Owning payload enums may remain direct local values, cross a top-level checked
 reference for non-consuming observation, or cross an admitted ordinary
 callable by value. The by-value family covers ordinary source-defined free
 functions, non-polymorphic methods and ordinary constructors, and exact typed
-lambdas. Argument preparation follows the enum's folded copy/move traits: a
-named move transfers its obligation, a fresh variant is consumed directly,
+captureless lambdas. Argument preparation follows the enum's folded copy/move
+traits: a named move transfers its obligation, a fresh variant is consumed directly,
 and an unavailable copy is rejected before lowering. Entry moves the native
 parameter into the callable's lexical enum obligation. An enum result is
 constructed directly in caller-provided storage and is armed only on the
@@ -609,9 +613,10 @@ call's success edge; defined failure cleans active arguments but never cleans
 an unpublished result. These rules preserve one active variant and
 exactly-once cleanup across the boundary.
 
-An ordinary non-generic, non-polymorphic class or struct may own the same
-obligation in a direct field. In-class and constructor initializers publish
-the field only after its enum construction succeeds. A later constructor
+An ordinary non-polymorphic class or struct, including a concrete generic
+instance, may own the same obligation in a direct field. In-class and
+constructor initializers publish the field only after its enum construction
+succeeds. A later constructor
 failure drops exactly the already-published fields in reverse declaration
 order; an unpublished field has no obligation. Generated movement transfers
 the field obligation with its containing value, and direct mutable-field
@@ -620,11 +625,19 @@ replacement. Normal scope exit, `return`, `break`, `continue`, partial
 construction, and defined runtime failure therefore retain exactly one owner
 and one eventual drop.
 
-Generic callable families, polymorphic dispatch, lambda capture of an owning
-payload enum, recursive containment, fixed arrays and other generic-wrapper
-containment, stored borrowed state, and consuming or borrowed match bindings
-remain diagnosed before execution lowering. No native C ABI, stable layout,
-or implicit cleanup for an unsupported wrapper is inferred.
+Concrete generic callables and owning wrappers use the same ordered transport
+and cleanup rules. Containment follows actual fields and declaration-bound
+storage capabilities, including collections and inline optional storage, not
+the spelling of a generic argument. Finite recursive owning-class containment
+is supported, such as an alternative holding a vector of enclosing nodes;
+direct by-value cycles remain ill-formed. Cleanup selects the active variant
+and retains the ordinary first-failure and remaining-sibling cleanup rules.
+
+Polymorphic dispatch, native/runtime callable transport, operators, direct
+lambda capture of an owning payload enum, fixed arrays of direct owning enum
+elements, stored borrowed state, and consuming match bindings remain
+diagnosed before execution lowering. No native C ABI, stable layout, or
+implicit cleanup for an unsupported wrapper is inferred.
 
 A native union retains only overlapping bytes and no active-field tag. A union
 member operation performs the requested native access inside `unsafe`; the

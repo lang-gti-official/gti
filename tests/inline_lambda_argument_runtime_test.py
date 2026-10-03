@@ -2,6 +2,7 @@
 """Inline capturing lambda literals as generic-algorithm arguments."""
 
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -20,16 +21,41 @@ def fail(label: str, process: subprocess.CompletedProcess[str]) -> int:
 
 
 def validate_emission(generated: str, mode: str) -> bool:
-    required = (
-        "[limit = __gti_mir_p_",
-        "[moved = std::move(__gti_mir_p_",
-    )
-    if any(item not in generated for item in required):
-        sys.stderr.write(f"{mode} did not spell the fused capture literals\n")
+    stages = list(re.finditer(
+        r"(?P<slot>__gti_mir_p_\d+)\.construct_from\(\[&\]\(\) \{ return "
+        r"__gti_mir_closure_factory_(?P<identity>\d+)\((?P<capture>[^\n]+)\); \}\);",
+        generated,
+    ))
+    if len(stages) != 3:
+        sys.stderr.write(f"{mode} lost the three prepared closure constructions\n")
         return False
-    if "__gti_mir_closure_factory_" in generated:
-        sys.stderr.write(f"{mode} materialized an inline literal argument\n")
-        return False
+    for stage, algorithm, moved in zip(
+        stages, ("count_if", "any_of", "all_of"), (False, True, False), strict=True
+    ):
+        slot, identity, capture = stage.group("slot", "identity", "capture")
+        capture_pattern = (r"std::move\(__gti_mir_p_\d+\.get\(\)\)" if moved
+                           else r"__gti_mir_p_\d+")
+        argument = f"__gti_mir_capture_arg_{identity}_0"
+        field = f"std::move({argument})" if moved else argument
+        factory_return = f"return __gti_mir_closure_environment_{identity}{{{field}}};"
+        calls = list(re.finditer(
+            rf"^\s*__gti_mir_call_success_\d+ = [^\n]*_{algorithm}__gti_mir_failure"
+            rf"\([^\n]*std::move\({re.escape(slot)}\.get\(\)\)[^\n]*;",
+            generated, re.MULTILINE,
+        ))
+        if (not re.fullmatch(capture_pattern, capture)
+                or generated.count(factory_return) != 1 or len(calls) != 1):
+            sys.stderr.write(f"{mode} lost {algorithm}'s exact capture/argument identity\n")
+            return False
+        call = calls[0]
+        retire = generated.find(f"{slot}.destroy();", call.end())
+        if (not stage.end() < call.start() < retire
+                or generated.count(f"{slot}.construct_from(") != 1
+                or generated.count(f"std::move({slot}.get())") != 1
+                or "goto " in generated[call.end():retire]
+                or "if (" in generated[call.end():retire]):
+            sys.stderr.write(f"{mode} lost {algorithm}'s once-only preparation and retirement\n")
+            return False
     return True
 
 
@@ -53,7 +79,8 @@ def main() -> int:
             executed = run([str(executable)])
             if (
                 executed.returncode != 0
-                or "inline lambda arguments ok" not in executed.stdout
+                or executed.stdout != "inline lambda arguments ok\n"
+                or executed.stderr
             ):
                 return fail(f"run {optimization}", executed)
 

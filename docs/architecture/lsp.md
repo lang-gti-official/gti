@@ -331,6 +331,18 @@ non-ASCII prefixes. Reordering to a valid mutation-before-lookup expression
 clears the error on the next snapshot. The LSP does not reorder operands or
 offer a fix-it that could change observable effects.
 
+Moving an owner-dependent text view retains its compiler-owned dependency.
+The LSP therefore publishes `GTI-S2045` when that moved expression is stored
+in an unsupported field, with the same source token and non-mechanical hint
+as compilation. A local view transfer remains valid. The borrowing-composition
+protocol regression checks the UTF-16 range after a supplementary Unicode
+comment, structured hints, and clearing after valid or repaired edits.
+It also checks `GTI-S2019` for a borrowed payload in optional storage. When
+concrete instantiation diagnoses the library's private storage declaration,
+the published related information retains the exact requesting user binding.
+Replacing that payload with an eligible value clears the dependency diagnostic
+as well as publishing the new valid document generation.
+
 Range-for diagnostics follow the same boundary. An immutable owner for a
 mutable element reference, a missing exact `begin_mut()`/mutable-dereference
 path, or an unsupported range publishes compiler-owned `GTI-S2083`; changing
@@ -546,11 +558,18 @@ and unnecessary-`mut` warnings use `Unnecessary`. Quick-fix preference is
 compiler-owned per fix. Removing an unnecessary local `mut` is preferred,
 whereas inserting `[[discard]]` for an ignored result is deliberately
 non-preferred because using the value may be the intended repair.
+Selected mutable-reference constructor arguments count as mutable uses in the
+compiler. Changing a constructor from read-only to mutable-reference removes
+the obsolete warning and its quick fix; an old diagnostic cannot remove a
+now-required `mut` in the new document generation.
 When several open roots diagnose the same dependency span, publication merges
 their related information instead of selecting one root arbitrarily; distinct
 include and instantiation locations therefore remain visible on the one
 deduplicated diagnostic. Diagnostics with different hints or fixes remain
-distinct.
+distinct. The same grouping applies to identical primary errors from multiple
+concrete instantiations in one root; every substitution note and requesting
+location is retained. This presentation grouping does not deduplicate the
+compiler's instance-owned diagnostic records.
 Quick fixes come only from compiler `Diagnostic::fixes` associated with the
 current source/generation, an intersecting request range, and an exact
 client-provided diagnostic. Position conversion is tested at the protocol

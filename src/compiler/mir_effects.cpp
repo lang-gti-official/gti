@@ -84,6 +84,9 @@ constexpr auto instructionEffects = std::to_array<MirEffectTraits>({
                     .mayTrap = true,
                     .dropsValue = true,
                     .invokesUserCode = true}, // CleanupBeforeAssign.
+    MirEffectTraits{.readsPlace = true,
+                    .mayTrap = true,
+                    .dependsOnLoan = true}, // PrefixAppendPreflight.
 });
 
 constexpr auto operationEffects = std::to_array<MirEffectTraits>({
@@ -476,6 +479,7 @@ constexpr auto instructionNames = std::to_array<std::string_view>({
     "allocate-object",
     "initialize-base",
     "cleanup-before-assign",
+    "prefix-append-preflight",
 });
 
 constexpr auto operationNames = std::to_array<std::string_view>({
@@ -1001,6 +1005,16 @@ struct ExactTargets {
            .owner = static_cast<std::size_t>(destructor)});
     }
   } else if (instruction.kind == MirInstructionKind::Call &&
+             instruction.intrinsic == IntrinsicKind::PrefixStorageAppend &&
+             instruction.constructorTarget &&
+             instruction.prefixPreflight != 0) {
+    // The sealed slot operation also executes the exact source constructor;
+    // retain its memory, synchronization and escape effects in the shared
+    // interprocedural analysis rather than treating it as only a helper.
+    result.addresses.push_back(
+        {.kind = MirBodyKind::Constructor,
+         .owner = static_cast<std::size_t>(*instruction.constructorTarget)});
+  } else if (instruction.kind == MirInstructionKind::Call &&
              (instruction.intrinsic != IntrinsicKind::None ||
               instruction.synchronization.kind !=
                   SynchronizationOperationKind::None)) {
@@ -1227,17 +1241,19 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
     }
     if (const auto *owner =
             selected.kind == SemanticType::Class ? classFor(selected) : nullptr;
-        owner != nullptr &&
-        owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
+        owner != nullptr && (owner->compilerCapability ==
+                                 CompilerCapabilityTypeKind::MutexStorage ||
+                             owner->compilerCapability ==
+                                 CompilerCapabilityTypeKind::OptionalStorage)) {
       if (selected.arguments.size() != 1 || !owner->requiresActiveCleanup)
         return std::nullopt;
       auto payload = self(self, selected.arguments.front());
       if (!payload || !payload->requiresActiveCleanup)
         return std::nullopt;
-      // The native mutex representation owns its payload in a private
-      // optional slot rather than a source-visible field. Preserve that
+      // These private inline capabilities own a conditionally live payload
+      // rather than a source-visible field. Preserve that
       // ownership edge explicitly so an enclosing aggregate or shared owner
-      // can discharge the payload before leaving the mutex shell empty.
+      // can discharge the payload before leaving the native shell empty.
       return MirDropType{.type = selected,
                          .classInstance = owner->id,
                          .aggregate = {*payload},
@@ -1760,6 +1776,17 @@ exactMirInvocationSummary(const MirProgram &program, const MirBody &body,
   }
   if (result && targets.nativeCleanup)
     result->traits.invokesRuntime = true;
+  if (result && instruction.kind == MirInstructionKind::Call &&
+      instruction.intrinsic == IntrinsicKind::PrefixStorageAppend) {
+    // This invocation is the complete slot operation, not just its selected
+    // constructor. The constructor receiver denotes the new element, whereas
+    // the instruction argument denotes its backing storage. Retain the
+    // authoritative intrinsic effects and conservatively map any escape to
+    // that storage rather than exposing the constructor's receiver ABI.
+    result->traits = merge(result->traits, effects(instruction));
+    result->receiverEscapes = false;
+    result->argumentsEscape.assign(instruction.operands.size(), true);
+  }
   if (result)
     result->traits = cleanupEffects(result->traits, targets);
   return result;
@@ -1856,8 +1883,7 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
       if (!loan.escapes) {
         continue;
       }
-      auto origins = loan.additionalSources;
-      origins.insert(origins.begin(), loan.source);
+      const auto origins = mirLoanProtectedSources(*node.body, loan.id);
       for (const MirPlaceId origin : origins) {
         const MirPlace *sourcePlace = node.body->findPlace(origin);
         if (sourcePlace == nullptr) {

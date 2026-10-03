@@ -82,6 +82,22 @@
       "suite": "preflight"
     },
     {
+      "name": "testDefaultPrefixConstructorStatusAdmission",
+      "suite": "preflight"
+    },
+    {
+      "name": "testScalarPrefixConstructorStatusAdmission",
+      "suite": "preflight"
+    },
+    {
+      "name": "testOwningConstructorAcrossArgumentDiamond",
+      "suite": "preflight"
+    },
+    {
+      "name": "testOptionalPayloadCleanupComposition",
+      "suite": "preflight"
+    },
+    {
       "name": "testPrefixStorageCStringAdmissionFailsClosed",
       "suite": "preflight"
     },
@@ -406,11 +422,31 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testExpectedConstructorPayloadPublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testScalarConstructorFieldPublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveUnexpectedBinding",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testPassiveConstructorFieldPublication",
       "suite": "lifecycle"
     },
     {
       "name": "testGenericScalarConstructedFieldPublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testNestedConstructorRepresentationPrecedence",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testConservativeConstructorAssignmentFusion",
       "suite": "lifecycle"
     },
     {

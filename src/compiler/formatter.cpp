@@ -55,12 +55,17 @@ public:
     const std::vector<Lexeme> lexemes = scan(normalizedSource);
     const std::vector<bool> multilineBraces =
         multilineInitializerBraces(lexemes);
+    const std::vector<ConstructorLayout> constructorLayout =
+        constructorInitializerLayout(lexemes);
     const std::unordered_set<std::string> declaredTypes =
         collectDeclaredTypes(lexemes);
     State state(options);
 
     for (std::size_t index = 0; index < lexemes.size(); ++index) {
       const Lexeme &lexeme = lexemes[index];
+      if (constructorLayout[index] == ConstructorLayout::Body) {
+        state.endConstructorInitializers();
+      }
       if (state.initializerLineBreakPending && !isComment(lexeme.kind)) {
         state.newline();
         state.initializerLineBreakPending = false;
@@ -279,7 +284,8 @@ public:
       case Kind::Comma:
         state.trimSpaces();
         state.append(",");
-        if (state.atMultilineInitializerElement()) {
+        if (state.atMultilineInitializerElement() ||
+            constructorLayout[index] == ConstructorLayout::Separator) {
           // Preserve a trailing comment beside its element; break before the
           // next token or source newline, rather than moving that comment.
           state.initializerLineBreakPending = true;
@@ -317,6 +323,10 @@ public:
       case Kind::Colon:
         state.endRequiresClause();
         state.trimSpaces();
+        if (constructorLayout[index] == ConstructorLayout::Colon) {
+          state.beginConstructorInitializers();
+          break;
+        }
         if ((previous != nullptr && previous->kind == Kind::Word &&
              (previous->text == "public" || previous->text == "private")) ||
             isSwitchLabelColon(lexemes, index)) {
@@ -497,6 +507,8 @@ private:
     std::string text;
   };
 
+  enum class ConstructorLayout { None, Colon, Separator, Body };
+
   struct State {
     struct Initializer {
       bool multiline;
@@ -538,7 +550,8 @@ private:
       if (!atLineStart) {
         return;
       }
-      writeIndentColumns(indentLevel * options.indentWidth);
+      writeIndentColumns(indentLevel * options.indentWidth +
+                         constructorIndentColumns);
       atLineStart = false;
     }
 
@@ -559,7 +572,8 @@ private:
     void appendOutdented(std::string_view text) {
       if (atLineStart) {
         const std::size_t level = indentLevel == 0 ? 0 : indentLevel - 1;
-        writeIndentColumns(level * options.indentWidth);
+        writeIndentColumns(level * options.indentWidth +
+                           constructorIndentColumns);
         atLineStart = false;
       }
       beforeAppend();
@@ -569,7 +583,8 @@ private:
 
     void appendAccessModifier(std::string_view text) {
       if (atLineStart) {
-        const std::size_t baseColumns = indentLevel * options.indentWidth;
+        const std::size_t baseColumns =
+            indentLevel * options.indentWidth + constructorIndentColumns;
         std::size_t columns =
             indentLevel == 0 ? 0 : baseColumns - options.indentWidth;
         if (options.accessModifierOffset) {
@@ -664,6 +679,34 @@ private:
         newline();
       } else {
         space();
+      }
+    }
+
+    void beginConstructorInitializers() {
+      const bool afterColon = options.breakConstructorInitializers ==
+                              BreakConstructorInitializersStyle::AfterColon;
+      const std::size_t width = options.constructorInitializerIndentWidth;
+      if (afterColon) {
+        space();
+        append(":");
+        constructorIndentColumns += width;
+        constructorIndents.push_back(width);
+        initializerLineBreakPending = true;
+      } else {
+        newline();
+        constructorIndentColumns += width;
+        append(":");
+        space();
+        // Subsequent members align with the first target after ": ".
+        constructorIndentColumns += 2;
+        constructorIndents.push_back(width + 2);
+      }
+    }
+
+    void endConstructorInitializers() {
+      if (!constructorIndents.empty()) {
+        constructorIndentColumns -= constructorIndents.back();
+        constructorIndents.pop_back();
       }
     }
 
@@ -807,7 +850,171 @@ private:
     bool includeLine = false;
     bool requiresClauseOpen = false;
     bool lexicalSeparatorRequired = false;
+    std::size_t constructorIndentColumns = 0;
+    std::vector<std::size_t> constructorIndents;
   };
+
+  // Annotate legal constructor-list boundaries before emitting whitespace.
+  // No width heuristic: Never requests mandatory breaks; BinPack preserves
+  // the existing layout. Balanced argument subtrees are opaque here, so their
+  // commas, colons, lambdas and collection braces cannot become list breaks.
+  std::vector<ConstructorLayout>
+  constructorInitializerLayout(const std::vector<Lexeme> &lexemes) const {
+    std::vector<ConstructorLayout> layout(lexemes.size(),
+                                          ConstructorLayout::None);
+    if (options.packConstructorInitializers !=
+        PackConstructorInitializersStyle::Never) {
+      return layout;
+    }
+    std::vector<std::size_t> significant;
+    std::vector<std::size_t> closes(lexemes.size(), lexemes.size());
+    std::vector<std::size_t> openings;
+    bool directive = false;
+    for (std::size_t i = 0; i < lexemes.size(); ++i) {
+      const Kind kind = lexemes[i].kind;
+      if (kind == Kind::Directive) {
+        directive = true;
+      }
+      if (kind == Kind::Newline) {
+        directive = false;
+      }
+      if (directive) {
+        continue;
+      }
+      if (kind != Kind::Newline && !isComment(kind)) {
+        significant.push_back(i);
+      }
+      if (kind == Kind::LeftParen || kind == Kind::LeftBracket ||
+          kind == Kind::LeftBrace) {
+        openings.push_back(i);
+      } else if (kind == Kind::RightParen || kind == Kind::RightBracket ||
+                 kind == Kind::RightBrace) {
+        if (openings.empty()) {
+          continue;
+        }
+        const Kind open = lexemes[openings.back()].kind;
+        if ((open == Kind::LeftParen && kind == Kind::RightParen) ||
+            (open == Kind::LeftBracket && kind == Kind::RightBracket) ||
+            (open == Kind::LeftBrace && kind == Kind::RightBrace)) {
+          closes[openings.back()] = i;
+          openings.pop_back();
+        } else {
+          openings.clear();
+        }
+      }
+    }
+    const auto positionAfter = [&](std::size_t token) {
+      return static_cast<std::size_t>(
+          std::upper_bound(significant.begin(), significant.end(), token) -
+          significant.begin());
+    };
+    const auto kindAt = [&](std::size_t position, Kind kind) {
+      return position < significant.size() &&
+             lexemes[significant[position]].kind == kind;
+    };
+    const auto skipGeneric = [&](std::size_t &position) {
+      if (!kindAt(position, Kind::Less)) {
+        return true;
+      }
+      const auto close =
+          matchingGenericClose(lexemes, significant[position], true);
+      if (!close) {
+        return false;
+      }
+      position = positionAfter(*close);
+      return true;
+    };
+    for (std::size_t start = 0; start < significant.size(); ++start) {
+      if (start != 0) {
+        const Lexeme &previous = lexemes[significant[start - 1]];
+        const bool access = previous.kind == Kind::Colon && start >= 2 &&
+                            (lexemes[significant[start - 2]].text == "public" ||
+                             lexemes[significant[start - 2]].text == "private");
+        if (previous.kind != Kind::LeftBrace &&
+            previous.kind != Kind::RightBrace &&
+            previous.kind != Kind::Semicolon && !access) {
+          continue;
+        }
+      }
+      std::size_t position = start;
+      if (lexemes[significant[position]].text == "constexpr") {
+        ++position;
+      }
+      if (!kindAt(position, Kind::Word)) {
+        continue;
+      }
+      const std::string &name = lexemes[significant[position++]].text;
+      if (name == "if" || name == "while" || name == "for" ||
+          name == "switch" || name == "return") {
+        continue;
+      }
+      if (!skipGeneric(position) || !kindAt(position, Kind::LeftParen)) {
+        continue;
+      }
+      const std::size_t parametersEnd = closes[significant[position]];
+      if (parametersEnd == lexemes.size()) {
+        continue;
+      }
+      position = positionAfter(parametersEnd);
+      if (kindAt(position, Kind::Word) &&
+          lexemes[significant[position]].text == "requires") {
+        ++position;
+        while (position < significant.size() &&
+               !kindAt(position, Kind::Colon) &&
+               !kindAt(position, Kind::LeftBrace) &&
+               !kindAt(position, Kind::Semicolon) &&
+               !kindAt(position, Kind::RightBrace)) {
+          ++position;
+        }
+      }
+      if (!kindAt(position, Kind::Colon)) {
+        continue;
+      }
+      const std::size_t colon = significant[position++];
+      std::vector<std::size_t> separators;
+      bool complete = false;
+      while (position < significant.size()) {
+        if (!kindAt(position, Kind::Word)) {
+          break;
+        }
+        ++position;
+        if (!skipGeneric(position)) {
+          break;
+        }
+        while (kindAt(position, Kind::Scope) &&
+               kindAt(position + 1, Kind::Word)) {
+          position += 2;
+          if (!skipGeneric(position)) {
+            break;
+          }
+        }
+        if (!kindAt(position, Kind::LeftParen)) {
+          break;
+        }
+        const std::size_t argumentsEnd = closes[significant[position]];
+        if (argumentsEnd == lexemes.size()) {
+          break;
+        }
+        position = positionAfter(argumentsEnd);
+        if (kindAt(position, Kind::LeftBrace)) {
+          complete = true;
+          break;
+        }
+        if (!kindAt(position, Kind::Comma)) {
+          break;
+        }
+        separators.push_back(significant[position++]);
+      }
+      if (complete) {
+        layout[colon] = ConstructorLayout::Colon;
+        layout[significant[position]] = ConstructorLayout::Body;
+        for (const std::size_t separator : separators) {
+          layout[separator] = ConstructorLayout::Separator;
+        }
+      }
+    }
+    return layout;
+  }
 
   // Determine layout once, including on incomplete editor input. A designated
   // list is structural, not a packed argument list. Its enclosing collections

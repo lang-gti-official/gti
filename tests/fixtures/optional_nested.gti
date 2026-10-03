@@ -29,8 +29,15 @@ int main() {
   if (!empty.has_value() || empty.value().has_value()) { return 4; }
   empty.reset();
   if (empty.has_value()) { return 5; }
+  [[discard]] empty.emplace(std::optional<std::string>(std::string("first")));
+  [[discard]] empty.emplace(std::optional<std::string>(std::string("replaced")));
+  if (empty.value().value().view() != "replaced") { return 6; }
+
+  mut std::optional<std::string> owned{};
+  [[discard]] owned.emplace(std::string("owned"));
+  if (owned.value().view() != "owned") { return 7; }
 
   std::optional<Envelope> wrapped{Envelope(std::string("wrapped"))};
   std::optional<Envelope> cloned = wrapped.clone();
-  return cloned.value().view() == "wrapped" ? 0 : 6;
+  return cloned.value().view() == "wrapped" ? 0 : 8;
 }

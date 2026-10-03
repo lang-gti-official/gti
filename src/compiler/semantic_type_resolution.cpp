@@ -1813,6 +1813,7 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
       continue;
     }
     const SemanticLoanPlace place = transientLoanPlace(*argument.expression);
+    recordMutableBindingUse(place.root);
     if (place.root != 0 || place.receiver) {
       reportLoanPlaceConflict(
           paren, place, AccessMode::Mutable,
@@ -2055,7 +2056,7 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
     };
     if (call.arguments().size() != 1) {
       invalidMapper(member.name(),
-                    "Pass one namespace function with signature F(E), where "
+                    "Pass one function or lambda with signature F(E), where "
                     "F is the application error type.");
       currentType = SemanticType::Unknown;
       return;
@@ -2083,6 +2084,11 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
     }
 
     const ExprPtr &mapperExpression = call.arguments().front();
+    const SemanticType argumentType = semanticModel.typeOf(*mapperExpression);
+    const LambdaInfo *lambda =
+        argumentType.kind == SemanticType::Lambda
+            ? semanticModel.findLambda(argumentType.lambdaId)
+            : nullptr;
     const std::optional<Symbol> mapperSymbol =
         resolveExpressionSymbol(mapperExpression);
     std::vector<const CallableCandidate *> matches;
@@ -2095,13 +2101,22 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
         }
       }
     }
-    if (matches.size() != 1) {
+    if (lambda != nullptr && (lambda->parameterTypes.size() != 1 ||
+                              lambda->parameterTypes.front() != errorType)) {
+      invalidMapper(expressionToken(mapperExpression),
+                    "Use a lambda with one exact by-value parameter matching "
+                    "the expected error type.");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (lambda == nullptr && matches.size() != 1) {
       Diagnostic diagnostic = makeDiagnostic(
           DiagnosticId::InvalidExpectedErrorTransform,
           expressionToken(mapperExpression), {typeSpelling(errorType)});
       diagnostic.hints.emplace_back(
           matches.empty()
-              ? "Use a non-generic namespace function with one exact by-value "
+              ? "Use a lambda or non-generic namespace function with one exact "
+                "by-value "
                 "parameter matching the expected error type."
               : "Use a uniquely named mapper so one exact function item is "
                 "selected.");
@@ -2119,8 +2134,10 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
       return;
     }
 
-    const CallableCandidate &mapper = *matches.front();
-    const SemanticType mappedError = mapper.returnType;
+    const CallableCandidate *mapper =
+        lambda == nullptr ? matches.front() : nullptr;
+    const SemanticType mappedError =
+        lambda != nullptr ? lambda->returnType : mapper->returnType;
     const SemanticTypeTraits sourceValueTraits =
         typeTraits(expected.arguments[0]);
     const SemanticTypeTraits sourceErrorTraits = typeTraits(errorType);
@@ -2141,10 +2158,17 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
       return;
     }
 
-    const SemanticType mapperType = SemanticType::functionItemType(
-        mapper.id, mapper.returnType, mapper.parameterTypes);
+    const SemanticType mapperType =
+        lambda != nullptr
+            ? argumentType
+            : SemanticType::functionItemType(mapper->id, mapper->returnType,
+                                             mapper->parameterTypes);
+    // Lambda arguments were already analyzed in written call order. In
+    // particular, do not analyze their move captures a second time. Invocation
+    // is read-only and confined, just as an ordinary concrete lambda call.
     const SemanticType selectedMapper =
-        analyzeInitializer(mapperExpression, mapperType);
+        lambda != nullptr ? argumentType
+                          : analyzeInitializer(mapperExpression, mapperType);
     if (selectedMapper != mapperType) {
       currentType = SemanticType::Unknown;
       return;
@@ -2158,10 +2182,12 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
                               .receiverMode = CallReceiverMode::Consuming};
     semanticModel.record(call, resolved);
     semanticModel.recordExpectedTransformError(
-        call, ExpectedTransformErrorInfo{.sourceType = expected,
-                                         .resultType = currentType,
-                                         .mapperType = mapperType,
-                                         .mapper = mapper.id});
+        call, ExpectedTransformErrorInfo{
+                  .sourceType = expected,
+                  .resultType = currentType,
+                  .mapperType = mapperType,
+                  .mapper = mapper != nullptr ? mapper->id : 0,
+                  .lambda = lambda != nullptr ? lambda->id : 0});
     recordSelectedCallOccurrence(call, std::move(resolved));
     return;
   }
@@ -3014,16 +3040,20 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
     }
     return;
   }
-  if (compilerCapability == CompilerCapabilityTypeKind::Storage) {
+  if (compilerCapability == CompilerCapabilityTypeKind::Storage ||
+      compilerCapability == CompilerCapabilityTypeKind::PrefixStorage) {
+    const std::string name =
+        compilerCapability == CompilerCapabilityTypeKind::Storage
+            ? "gti_internal::storage"
+            : "gti_internal::prefix_storage";
     if (type.arguments.size() != 1) {
-      report(type.name.last(),
-             "gti_internal::storage<T> requires exactly one element type.",
+      report(type.name.last(), name + "<T> requires exactly one element type.",
              "GTI-S2019");
     } else {
       if (type.arguments.front().genericArgumentSyntax ==
           GenericArgumentSyntax::Value) {
         report(type.arguments.front().name.last(),
-               "gti_internal::storage requires a type argument.", "GTI-S2026");
+               name + " requires a type argument.", "GTI-S2026");
         return;
       }
       validateType(type.arguments.front());
@@ -3048,6 +3078,40 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
              "GTI-S2019");
     }
     return;
+  }
+  if (compilerCapability == CompilerCapabilityTypeKind::OptionalStorage) {
+    if (type.arguments.size() != 1 ||
+        type.arguments.front().genericArgumentSyntax ==
+            GenericArgumentSyntax::Value) {
+      report(type.name.last(),
+             "Compiler-private optional storage requires exactly one payload "
+             "type.",
+             "GTI-S2019");
+      return;
+    }
+    validateType(type.arguments.front());
+    const SemanticType payload = typeOf(type.arguments.front());
+    if (payload != SemanticType::Unknown &&
+        payload.kind != SemanticType::TypeParameter) {
+      const auto traits = typeTraits(payload);
+      if (payload == SemanticType::Void ||
+          payload.kind == SemanticType::Reference ||
+          payload.kind == SemanticType::RawPointer || !traits.movable ||
+          traits.containsBorrowedState) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2019", DiagnosticPhase::Semantics,
+            type.arguments.front().name.last(),
+            "Optional storage payload '" + typeSpelling(payload) +
+                "' must be a move-constructible value without borrowed state; "
+                "void, reference, and raw-pointer payloads are not supported.");
+        diagnostic.hints.push_back(
+            "Use an owning payload. Optional storage does not retain "
+            "dependencies on an external borrowed owner.");
+        diagnostics.emplace_back(std::move(diagnostic));
+      }
+    }
+    // Retain ordinary nominal argument/constraint validation below. Symbolic
+    // payloads are checked again under concrete generic substitution.
   }
   if (compilerCapability == CompilerCapabilityTypeKind::TextView) {
     if (!type.arguments.empty()) {
@@ -3634,7 +3698,12 @@ auto SemanticVisitor::Impl::validateReferenceBinding(
         retainedLoanSource(initializer);
     const SemanticLoanInfo *sourceLoan =
         source ? semanticModel.findLoan(source->loan) : nullptr;
-    if (sourceLoan != nullptr && sourceLoan->access == AccessMode::ReadOnly) {
+    const bool carrierShell =
+        sourceLoan != nullptr &&
+        sourceLoan->kind == SemanticLoanKind::StoredValue &&
+        typeTraits(referent).containsBorrowedState;
+    if (sourceLoan != nullptr && !carrierShell &&
+        sourceLoan->access == AccessMode::ReadOnly) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2017", DiagnosticPhase::Semantics, expressionToken(initializer),
           "A read-only loan cannot be upgraded to a mutable reborrow.");
@@ -3861,6 +3930,52 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
     report(expressionToken(value),
            "Mutable reference return requires a mutable value.", "GTI-S2017");
     return;
+  }
+  if (isBorrowedCarrierReference(reference)) {
+    const FunctionInfo *function = currentFunctionInfo();
+    if (function != nullptr &&
+        function->returnBorrowOrigin == BorrowOriginKind::Argument &&
+        function->returnBorrowParameter < function->parameterTypes.size() &&
+        isDirectStoredReferenceType(
+            function->parameterTypes[function->returnBorrowParameter])) {
+      // A by-value carrier can expose its exact external referent, never its
+      // own shell. Keep the existing field-path proof (and precise S2085
+      // diagnostics) authoritative for that distinct return family.
+      validateCurrentReturnBorrowSource(value, "reference", "GTI-S2017");
+      return;
+    }
+    // An external dependency does not extend the containing object's storage.
+    // A copied local view can be returned by value, but never by reference to
+    // its local shell, even if its contents borrow from this or a parameter.
+    const SemanticLoanPlace shell = loanPlace(value);
+    bool validShell =
+        function != nullptr && shell.receiver &&
+        function->returnBorrowOrigin == BorrowOriginKind::Receiver;
+    if (function != nullptr && function->declaration != nullptr &&
+        function->returnBorrowOrigin == BorrowOriginKind::Argument &&
+        function->returnBorrowParameter < function->parameterTypes.size() &&
+        function->returnBorrowParameter <
+            function->declaration->parameters().size()) {
+      const auto index = function->returnBorrowParameter;
+      const auto *binding =
+          semanticModel.findBinding(function->declaration->parameters()[index]);
+      validShell =
+          binding != nullptr &&
+          function->parameterTypes[index].kind == SemanticType::Reference &&
+          !shell.receiver && shell.root == binding->symbol;
+    }
+    if (!validShell) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2017", DiagnosticPhase::Semantics, expressionToken(value),
+          "A reference to a borrowed-state object must return storage owned by "
+          "the receiver or the selected reference parameter, not a local or "
+          "by-value object.");
+      diagnostic.hints.emplace_back(
+          "Return the borrowed-state object by value, or return a reference to "
+          "an object whose storage outlives this call.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      return;
+    }
   }
   enum class EscapingMutexGuardReceiver { None, Local, Temporary };
   const auto escapingMutexGuardReceiver = [&]() {

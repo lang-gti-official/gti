@@ -1,0 +1,54 @@
+#include <std/string>
+#include <std/vector>
+
+mut int failing_stage = 0;
+
+class Marker {
+  int identity;
+public:
+  Marker(int value) : identity(value) {}
+  ~Marker() { std::println(this.identity); }
+};
+
+class Value {
+  Marker marker;
+public:
+  Value(int identity) : marker(Marker(identity)) { std::println(10); }
+  ~Value() { std::println(11); }
+};
+
+class Error {
+  Marker marker;
+public:
+  Error(int identity) : marker(Marker(identity)) { std::println(20); }
+  ~Error() {
+    std::println(21);
+    int divisor = failing_stage >= 4 ? 0 : 1;
+    int checked = 3 / divisor;
+  }
+};
+
+expected<Value, Error> produce(bool fail) {
+  if (fail) { return unexpected(Error(22)); }
+  return Value(12);
+}
+
+class Envelope {
+  expected<Value, Error> item;
+public:
+  Envelope(expected<Value, Error> value) : item(std::move(value)) {
+    std::println(30);
+    int divisor = failing_stage == 1 || failing_stage == 3 || failing_stage == 4 ? 0 : 1;
+    int checked = 2 / divisor;
+  }
+  ~Envelope() { std::println(40); }
+  bool has_value() { return this.item.has_value(); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  failing_stage = argc - 1;
+  Marker caller{0};
+  Envelope result{produce(argc > 2)};
+  std::println(result.has_value() ? 1 : 0);
+  return 0;
+}

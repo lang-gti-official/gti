@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Composed owner diagnostics and field navigation use compiler snapshots."""
 
+import os
 import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import LspSession
+from lsp_smoke_test import LspSession, lsp_position
 
 
 def main():
+    repository = pathlib.Path(__file__).resolve().parent.parent
+    os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
     source = """struct View {
   int& first;
   int& second;
@@ -52,7 +55,8 @@ int main() {
 
         try:
             request("initialize", {"capabilities": {"textDocument": {
-                "publishDiagnostics": {"relatedInformation": True}}}})
+                "publishDiagnostics": {"relatedInformation": True,
+                                       "dataSupport": True}}}})
             session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
             session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",
                           "params": {"textDocument": {"uri": uri, "languageId": "gti",
@@ -127,6 +131,190 @@ int main() {
             assert diagnostics(11)
             change(12, safe_order)
             assert not diagnostics(12)
+            moved_view = """#include <std/string>
+struct Holder { std::string_view text; };
+int main() {
+  std::string owner{"owned"};
+  std::string_view view = owner.view();
+  /*😀*/ Holder held{.text = std::move(view)};
+  return 0;
+}
+"""
+            change(13, moved_view)
+            errors = diagnostics(13)
+            storage = next((d for d in errors if d.get("code") == "GTI-S2045"), None)
+            assert storage is not None, errors
+            assert "stored in a field" in storage["message"], storage
+            assert storage["data"]["phase"] == "semantics", storage
+            assert storage["data"]["hints"] and not storage["data"].get("fixes"), storage
+            start = moved_view.index(")", moved_view.index("std::move(view"))
+            assert storage["range"] == {
+                "start": lsp_position(moved_view, start),
+                "end": lsp_position(moved_view, start + 1)}, storage
+            assert not any(d.get("code", "").startswith("GTI-B") for d in errors), errors
+            local_view = moved_view.replace(
+                "Holder held{.text = std::move(view)};",
+                "std::string_view local = std::move(view);\n"
+                "  if (local != owner.view()) { return 1; }")
+            change(14, local_view)
+            assert not diagnostics(14)
+            change(15, local_view.replace("std::move(view)", "std::move("))
+            assert diagnostics(15)
+            change(16, local_view)
+            assert not diagnostics(16)
+            borrowed_payload = """#include <std/optional>
+struct View {
+  int& value;
+  View(int& source) : value(source) {}
+};
+int main() {
+  /*😀*/ std::optional<View> item{};
+  return 0;
+}
+"""
+            change(17, borrowed_payload)
+            publication = session.receive_until(lambda message:
+                message.get("method") == "textDocument/publishDiagnostics"
+                and any(d.get("code") == "GTI-S2019"
+                        for d in message["params"]["diagnostics"]))["params"]
+            storage = next(d for d in publication["diagnostics"]
+                           if d.get("code") == "GTI-S2019")
+            assert sum(d.get("code") == "GTI-S2019"
+                       for d in publication["diagnostics"]) == 1, publication
+            assert "payload 'View'" in storage["message"], storage
+            assert "without borrowed state" in storage["message"], storage
+            assert storage["severity"] == 1, storage
+            assert storage["data"]["phase"] == "semantics", storage
+            assert storage["data"]["hints"] and not storage["data"].get("fixes"), storage
+            start = borrowed_payload.index("item{}")
+            request_location = {"uri": uri, "range": {
+                "start": lsp_position(borrowed_payload, start),
+                "end": lsp_position(borrowed_payload, start + 4)}}
+            locations = [{"uri": publication["uri"], "range": storage["range"]}]
+            locations += [related["location"]
+                          for related in storage.get("relatedInformation", [])]
+            assert request_location in locations, storage
+            # A concrete generic error may originate in the library's private
+            # storage declaration. Its user-site relation and dependency
+            # publication must both survive, then clear on a valid generation.
+            rejected_uri = publication["uri"]
+            change(18, borrowed_payload.replace("optional<View>", "optional<int>"))
+            cleared = set()
+
+            def cleared_storage(message):
+                if message.get("method") != "textDocument/publishDiagnostics":
+                    return False
+                publication = message["params"]
+                target = publication["uri"]
+                if target == uri and publication.get("version") == 18:
+                    assert not publication["diagnostics"], publication
+                    cleared.add(uri)
+                if target == rejected_uri and not publication["diagnostics"]:
+                    cleared.add(rejected_uri)
+                return {uri, rejected_uri} <= cleared
+
+            session.receive_until(cleared_storage)
+            concrete_errors = """class Broken<uint64_t N> {
+  static_assert(N > 2, "class constraint");
+public:
+  Broken() {
+    static_assert(N > 0, "first constructor constraint");
+    static_assert(N > 1, "second constructor constraint");
+  }
+};
+int main() {
+  Broken<0> first = Broken<0>();
+  Broken<1> second = Broken<1>();
+  return 0;
+}
+"""
+            change(19, concrete_errors)
+            errors = diagnostics(19)
+            # Publication coalesces identical primary errors, but must retain
+            # all five concrete failures' substitution and requesting sites.
+            assert len(errors) == 3, errors
+            assert all(d.get("code") == "GTI-S2079" for d in errors), errors
+            for value in (0, 1):
+                for condition in ("N > 2", "N > 0", "N > 1"):
+                    start = concrete_errors.index(condition)
+                    expected_range = {
+                        "start": lsp_position(concrete_errors, start),
+                        "end": lsp_position(concrete_errors, start + len(condition))}
+                    substitution = f"Concrete substitution: 'N' = '{value}'."
+                    matching = [d for d in errors if d["range"] == expected_range
+                                and any(r["message"] == substitution
+                                        for r in d.get("relatedInformation", []))]
+                    assert len(matching) == int(value == 0 or condition != "N > 0"), (
+                        value, condition, errors)
+                    if matching:
+                        construction = f"Broken<{value}>()"
+                        if condition == "N > 2":
+                            name = "first" if value == 0 else "second"
+                            start = concrete_errors.index(name + " =")
+                            length = len(name)
+                        else:
+                            start = concrete_errors.index(construction) + len(construction) - 1
+                            length = 1
+                        request_location = {"uri": uri, "range": {
+                            "start": lsp_position(concrete_errors, start),
+                            "end": lsp_position(concrete_errors, start + length)}}
+                        assert request_location in [r["location"] for r in
+                            matching[0]["relatedInformation"] if r["message"] ==
+                            "Concrete generic instance requested here."], matching
+            change(20, concrete_errors.replace("Broken<0>", "Broken<3>").replace(
+                "Broken<1>", "Broken<4>"))
+            assert not diagnostics(20)
+            carrier_access = """struct Counter { mut int value = 7; };
+class Shared {
+  Counter& counter;
+public:
+  Shared(Counter& source) : counter(source) {}
+  int read() { return this.counter.value; }
+};
+class Client {
+  Shared stored;
+public:
+  Client(Shared source) : stored(source) {}
+  Shared& auth() { return this.stored; }
+};
+int main() {
+  Counter owner{};
+  Client client{Shared(owner)};
+  Shared& reference = client.auth();
+  return reference.read() - 7;
+}
+"""
+            change(21, carrier_access)
+            errors = diagnostics(21)
+            assert not errors, errors
+            use = carrier_access.index("auth();")
+            position = {"textDocument": {"uri": uri},
+                        "position": lsp_position(carrier_access, use)}
+            assert "Shared&" in str(request("textDocument/hover", position))
+            definition = request("textDocument/definition", position)
+            location = definition[0] if isinstance(definition, list) else definition
+            assert location["uri"] == uri, definition
+            assert location["range"]["start"] == lsp_position(
+                carrier_access, carrier_access.index("auth() {")), definition
+            escaped = carrier_access.replace(
+                "return this.stored;",
+                "Shared local = this.stored; /*😀*/ return local;")
+            change(22, escaped)
+            errors = diagnostics(22)
+            escape = next((d for d in errors if d.get("code") == "GTI-S2017"), None)
+            assert escape is not None, errors
+            assert "not a local or by-value object" in escape["message"], escape
+            start = escaped.index("local;", escaped.index("/*😀*/"))
+            assert escape["range"] == {
+                "start": lsp_position(escaped, start),
+                "end": lsp_position(escaped, start + 5)}, escape
+            assert escape["data"]["phase"] == "semantics", escape
+            assert escape["data"]["hints"] and not escape["data"].get("fixes"), escape
+            assert not any(d.get("code", "").startswith("GTI-B") for d in errors), errors
+            change(23, carrier_access.replace("client.auth()", "client."))
+            assert diagnostics(23)
+            change(24, carrier_access)
+            assert not diagnostics(24)
         finally:
             session.close()
 

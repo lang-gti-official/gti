@@ -1285,8 +1285,7 @@ private:
 
   [[nodiscard]] bool nestsBorrowedState(const SemanticType &type) const;
 
-  [[nodiscard]] bool
-  isReadOnlyBorrowedCarrierParameter(const SemanticType &type) const;
+  [[nodiscard]] bool isBorrowedCarrierReference(const SemanticType &type) const;
 
   [[nodiscard]] static bool isDirectOwnerType(const SemanticType &type);
 
@@ -1451,6 +1450,10 @@ private:
       std::vector<SymbolId> designatedFields = {});
 
   void recordParameterEntryLoan(const Parameter &parameter);
+  SemanticLoanId recordStoredEntryDependency(Symbol &carrier,
+                                             SymbolId carrierSymbol,
+                                             const SemanticType &type,
+                                             bool receiver);
 
   void recordRetainedBorrow(const VariableDecl &binding,
                             const ExprPtr &expression);

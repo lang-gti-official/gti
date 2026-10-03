@@ -53,6 +53,10 @@ struct MirClosedCallIntegerInterval {
 struct MirClosedCallBodyAnalysis {
   MirBodyAddress body;
   bool reached = false;
+  // True only when successful exits have both complete fact transport and no
+  // opaque effects. Internally a known result may still be transported across
+  // an opaque call, after invalidating caller memory; that is not effect
+  // closure and cannot justify recurrence invariance.
   bool closed = false;
   std::optional<MirClosedCallIntegerInterval> returnInterval;
   MirSafetyAnalysis safety;

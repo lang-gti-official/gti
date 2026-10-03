@@ -500,6 +500,18 @@ semantic place key, in addition to resolving to the loan's provenance source.
 Two same-typed iterator values over one owner are therefore not interchangeable
 runtime carriers merely because they share owner provenance.
 
+Carrier references preserve a physical runtime address independently of their
+`storedDependency` owner loan. The latter is lifetime metadata, not another
+pointer to the carrier's storage. A copied shared-carrier value return also
+needs no extra runtime loan pointer: the returned class value already contains
+its reference fields. Representation admission recognizes the exact readonly
+abstract entry and earlier `Load`/`Copy` SSA producer. Unlike an immediate
+transfer, its entry can retire later during scope cleanup. This does not relax
+lifetime verification: `verifyLoweredProgram` runs the complete MIR verifier
+before representation admission, requiring child-first retirement on success
+and failure. The backend neither reconstructs owner origins nor invents loan
+endpoints from C++ reference fields.
+
 For an exact cleanup-owning class value consumed by an ordinary by-value call,
 the body emitter uses the caller-owned `PreparedParameter` slot named by MIR.
 A direct `Construct` or admitted cleanup-owning call result publishes once into
@@ -601,12 +613,13 @@ class-typed values, so lambda closures and unique owners keep their fused and
 prepared spellings; nothing between the producer and the call may touch the
 source place.
 
-For a verified `MoveBorrowedTemporary` constructor input, the body emitter
+For a verified `MoveBorrowedTemporary` ordinary call or constructor input, the body emitter
 publishes the exact producer call result into its MIR value-rooted lifetime
-slot, moves that value into the selected constructor parameter, and ends the
-moved-from slot representation after the consuming construction. MIR remains
-authoritative for producer success, ownership transfer, constructor failure
-cleanup, and the resulting value's one drop.
+slot, moves that value into the selected parameter, and ends the
+moved-from slot representation after the consuming invocation. MIR remains
+authoritative for producer success, ownership transfer, call/constructor
+failure cleanup, external-owner loan endpoints, and the resulting value's
+one drop.
 
 When a generic source member has only a failure-form C++ entry point but a
 particular concrete MIR body is proved unable to fail, `CppEmitter` publishes a
@@ -776,6 +789,23 @@ arities or cleanup shapes have distinct symbols and bodies. Member variants
 remain subject to the fail-closed canonical-body check, not general pack-shape
 dispatch.
 
+An owning closure that remains live across a conditional invocation can instead
+occupy its exact value-rooted full-expression slot. Its Closure instruction
+initializes that obligation once; read-only invocations do not transfer it.
+Receiver CallInput records alias the environment without copying it, retaining
+the exact call-site identity. This permits eager captures followed by an
+error-only mapper call, with the same MIR-scheduled cleanup on either branch.
+Trivial eager closures retain an exact value place without a cleanup
+obligation; repeated evaluation resets only their representation storage.
+Class captures retain their lexical lifetime obligation even when destruction
+is passive. Thus scalar moves and class copies occur before the branch too.
+Other frozen passive closures still use the existing checked fused representation.
+Exact lambdas with owned class parameters use the shared parameter-slot prelude;
+class results publish into the same verified destination slots as function
+results. Prepared argument shells are retired after invocation, including its
+failure path. None of these representation rules recognize `transform_error`
+by spelling or recover language rules from HIR.
+
 Closure-dependent allocation also retains explicitly supplied generic type
 arguments, including an allocated model type that does not appear as a direct
 value parameter. Type rows distinguish body-scoped template overlays from
@@ -943,8 +973,13 @@ exact payload construction, `This.field` publication, value-rooted reparenting,
 full-expression endpoint, and construction-rollback row. A transformed
 failure-capable constructor may require a temporarily disengaged native shell;
 the C++ representation therefore reserves a private `std::monostate`
-alternative. It is neither a source variant nor observable tag state. The
-joint class/enum definition scheduler emits every payload class before its enum
+alternative. It is neither a source variant nor observable tag state. Field
+publication retires only that proved empty shell and placement-move-constructs
+the enum from its exact value slot. Its generated transfer must be failure-free;
+neither publication nor rollback reconstruction requires enum assignment. An
+enum with a construction-only class payload therefore remains nonassignable
+while supporting ordinary owning-field construction. The joint class/enum
+definition scheduler emits every payload class before its enum
 and that enum before a class embedding it, rejecting a recursive by-value
 cycle. Concrete generic owners/callables use the same exact lifecycle proofs;
 generic arguments are not a reason to bypass or reject those proofs. The
@@ -1116,8 +1151,12 @@ failure and unknown propagation in the called constructor chain. Each alternate
 must propagate its matching failure record, either directly or after only an
 exact cleanup-free generated parameter-shell Drop/Failure-boundary schedule;
 active or user cleanup, alternate control flow, mismatched identities and
-unaccounted blocks fail closed. The original MIR edges remain intact. Direct
-native member initialization is
+unaccounted blocks fail closed. The original MIR edges remain intact.
+Parameter-shell retirement proves generated, observation-free destruction,
+not copyability: a deleted copy constructor cannot invalidate a Drop that
+performs no copy. Native parameter-copy initialization retains its separate
+generated-copy requirement.
+Native member initialization is
 equivalent because those alternates cannot execute and the complete field,
 argument, publication and cleanup order is still checked. Terminal containment
 of a checked operation alone is not sufficient for this stronger proof.
@@ -1152,6 +1191,13 @@ through containing classes. Constructor placement and rollback reconstruction
 may use a nonassignable field's observation-free empty representation; paths
 that emit an assignment still require the stronger assignable-field proof.
 Neither query bypasses the selected native capability constructor witness.
+When a complete native initializer binding claims a constructed value, that
+binding takes precedence over its local placement shape. Snapshot planning and
+plain-constructor admission use the same per-value decision; a partial prefix
+cannot hide placement required by an unclaimed later value. A claimed
+construction's conservative Invoke follows its proven success edge, not an
+unset body-local status flag. Its original failure and cleanup metadata remains
+intact for verification.
 A cleanup-free nonassignable class field can also publish at an adjacent, exact
 `Construct`/`Initialize` pair in the body, using placement construction rather
 than assignment. This requires a proved non-failing target and carries no
@@ -1360,6 +1406,12 @@ the loan points into, so like an element it carries no obligation of its own
 and, like a bare binding, its write carries no failure site. Materializing an
 intermediate C++ object there would invent construction and destruction that
 MIR does not contain.
+The adjacent assignment may sit across the constructor's unique Invoke success
+edge only when the complete ordinary-constructor/status proof succeeds. No
+other work or incoming edge may intervene, apart from the exact boundary- and
+effect-free two-phase loan activation. A genuinely fallible or status-only
+constructor cannot use this representation. The MIR failure edge is preserved;
+no cleanup or failure semantics are inferred from the generated C++.
 
 ### Declarations And ABI
 

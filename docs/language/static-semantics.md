@@ -967,21 +967,24 @@ the alternative before any later sibling field expression evaluates, matching
 the ordinary left-to-right argument order. An enum whose alternatives carry
 class payloads folds its copyability, movability, and ownership traits from
 those payload types, so a move-only payload makes the enum value move-only.
-An admitted owning enum supports whole-value move construction and move
-assignment between direct local bindings. Move assignment first drops the
-destination's old active alternative, transfers the source alternative, and
+An admitted owning enum supports whole-value move construction. Move
+assignment between direct local bindings additionally requires the folded
+assignment capability of its payloads; field construction does not require
+assignment. Move assignment first drops the destination's old active
+alternative, transfers the source alternative, and
 leaves the moved-from source without the transferred cleanup obligation.
 
 The bounded owning family admits direct local values and top-level read-only
 checked-reference observation. It also admits the enum itself by value across
 an ordinary source-defined free function, non-polymorphic method or ordinary
-constructor, and an exact typed lambda. Ordinary argument analysis selects
-copy only when the enum's folded traits permit it; otherwise an explicit move
-or fresh value is required.
+constructor, and an exact typed captureless lambda. Ordinary argument analysis
+selects copy only when the enum's folded traits permit it; otherwise an explicit
+move or fresh value is required.
 
 An ordinary non-polymorphic class or struct, including a concrete generic
-instance, may contain an owning payload enum as a direct field. The field may be initialized by an in-class
-initializer or an ordinary constructor initializer. Its containing value
+instance, may contain an owning payload enum as a direct field. The field may
+be initialized by an in-class initializer or an ordinary constructor
+initializer. Its containing value
 inherits the enum's structural copy, move, assignment, and cleanup traits and
 may use the existing direct class-value call and return transport. A mutable
 direct field may be replaced from an explicit move; the old active alternative

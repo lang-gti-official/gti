@@ -6,6 +6,7 @@
 #include "gti/optimizer.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <functional>
 #include <iostream>
 #include <string>
@@ -40,7 +41,7 @@ template <typename Enum> void census(Enum last) {
 
 void testCensus() {
   using namespace lang;
-  census(MirInstructionKind::CleanupBeforeAssign);
+  census(MirInstructionKind::PrefixAppendPreflight);
   census(MirOperation::PostDecrement);
   census(IntrinsicKind::SourceColumn);
   census(MirTerminatorKind::TerminateCleanupFailure);
@@ -255,6 +256,157 @@ void testComputeEffects(const lang::FrontendResult &frontend) {
          "interpretation");
 }
 
+void testInPlaceConstructorEffects() {
+  using namespace lang;
+  const auto stdlib =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto frontend =
+      Frontend().analyze("optimizer-in-place-constructor.gti", R"(
+#include <std/string>
+#include <std/vector>
+class Item {
+  std::string text;
+public:
+  Item() : text(std::string("resource")) {}
+};
+int main() {
+  std::vector<Item> values{std::size_t(2)};
+  return 0;
+}
+)",
+                         {stdlib / "prelude.gti"}, {}, {stdlib});
+  expect(frontend.canGenerateCode(),
+         "in-place constructor effect fixture must have verified MIR");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    for (const auto &issue : verifyMirProgram(frontend.mir).errors)
+      std::cerr << "MIR owner " << issue.owner << " block " << issue.block
+                << " instruction " << issue.instruction << ": " << issue.message
+                << '\n';
+    return;
+  }
+
+  std::size_t checked = 0;
+  for (const auto &owner : frontend.mir.constructorInstances()) {
+    for (const auto &block : owner.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.intrinsic != IntrinsicKind::PrefixStorageAppend ||
+            !instruction.constructorTarget || instruction.operands.size() != 1)
+          continue;
+        ++checked;
+        const auto *target = frontend.mir.findConstructorInstance(
+            *instruction.constructorTarget);
+        const auto traits = effects(frontend.mir, instruction);
+        const auto summary =
+            exactMirInvocationSummary(frontend.mir, owner.body, instruction);
+        expect(target != nullptr && target->effectSummary.traits.allocates,
+               "the selected user constructor must contribute allocation");
+        expect(traits.allocates && traits.writesUnknownMemory &&
+                   traits.initializesValue && traits.invokesRuntime &&
+                   traits.invokesUserCode && !traits.removableWhenUnused &&
+                   !traits.reorderable,
+               "exact instruction effects combine construction and storage");
+        expect(owner.effectSummary.traits.allocates &&
+                   owner.effectSummary.traits.writesUnknownMemory &&
+                   owner.effectSummary.traits.initializesValue,
+               "caller fixed-point summary retains both effect families");
+        expect(summary && summary->traits.allocates &&
+                   summary->traits.writesUnknownMemory &&
+                   summary->traits.initializesValue &&
+                   summary->traits.invokesRuntime &&
+                   !summary->receiverEscapes &&
+                   summary->argumentsEscape == std::vector<bool>{true},
+               "exact invocation query describes the storage argument, not "
+               "the constructor receiver");
+
+        MirProgram changed = frontend.mir;
+        auto *body = findMirBody(changed, {MirBodyKind::Constructor, owner.id});
+        MirInstruction *lostTarget = nullptr;
+        if (body != nullptr) {
+          for (auto &candidateBlock : body->blocks) {
+            for (auto &candidate : candidateBlock.instructions) {
+              if (candidate.id == instruction.id)
+                lostTarget = &candidate;
+            }
+          }
+        }
+        expect(lostTarget != nullptr, "copied append instruction must exist");
+        if (lostTarget == nullptr)
+          continue;
+        lostTarget->constructorTarget.reset();
+        expect(!exactMirInvocationSummary(changed, *body, *lostTarget) &&
+                   effects(changed, *lostTarget).writesUnknownMemory &&
+                   effects(changed, *lostTarget).initializesValue,
+               "a missing selected target cannot become a pure call");
+      }
+    }
+  }
+  expect(checked != 0, "fixture must exercise selected in-place construction");
+  for (const auto level :
+       {OptimizationLevel::O0, OptimizationLevel::O2, OptimizationLevel::O3}) {
+    const auto optimized = OptimizationPipeline().run(
+        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+    expect(optimized.valid() &&
+               verifyMirOptimizationCoherence(frontend.mir, optimized.mir,
+                                              optimized.report.transformations)
+                   .valid(),
+           "in-place constructor effects survive independent optimizer replay");
+  }
+}
+
+void testCallableBodySignatures() {
+  using namespace lang;
+  const auto frontend = Frontend().analyze("mir-callable-signatures.gti", R"(
+struct Item { Item() {} ~Item() {} };
+int main() {
+  Item item{};
+  auto action = []() -> int { return 1; };
+  return action();
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "callable signature fixture must have verified MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  std::vector<MirBodyKind> checked;
+  for (const auto address : enumerateMirBodyAddresses(frontend.mir)) {
+    if (address.kind != MirBodyKind::Function &&
+        address.kind != MirBodyKind::Constructor &&
+        address.kind != MirBodyKind::Destructor &&
+        address.kind != MirBodyKind::Lambda)
+      continue;
+    checked.push_back(address.kind);
+    for (const bool changeReturn : {false, true}) {
+      MirProgram changed = frontend.mir;
+      auto *body = findMirBody(changed, address);
+      expect(body != nullptr, "copied callable body must exist");
+      if (body == nullptr)
+        continue;
+      if (changeReturn)
+        body->returnType = body->returnType == SemanticType::Bool
+                               ? SemanticType::Int32
+                               : SemanticType::Bool;
+      else
+        body->kind = MirBodyKind::Module;
+      const auto verification = verifyMirProgram(changed);
+      expect(!verification.valid() &&
+                 std::any_of(verification.errors.begin(),
+                             verification.errors.end(),
+                             [](const auto &error) {
+                               return error.message ==
+                                      "callable body kind or return type does "
+                                      "not match its instance signature";
+                             }),
+             "every callable body must retain its declared kind and result");
+    }
+  }
+  for (const auto kind : {MirBodyKind::Function, MirBodyKind::Constructor,
+                          MirBodyKind::Destructor, MirBodyKind::Lambda})
+    expect(std::find(checked.begin(), checked.end(), kind) != checked.end(),
+           "fixture must exercise each callable body family");
+}
+
 void testKnownBarriers(const lang::FrontendResult &frontend) {
   using namespace lang;
   const auto *mainBody =
@@ -348,6 +500,8 @@ void testKnownBarriers(const lang::FrontendResult &frontend) {
 
 int main() {
   testCensus();
+  testInPlaceConstructorEffects();
+  testCallableBodySignatures();
   const auto frontend =
       lang::Frontend().analyze("optimizer-conformance.gti", R"(
 struct UserRecord { mut int32_t value = 1; };

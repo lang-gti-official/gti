@@ -2,7 +2,168 @@
 
 Status: Current test and audit structure.
 
-## Structural relocation proposal
+## Combined 0.360.0 release validation
+
+The final candidate reconciles canonical `main` through `0ff67a4e`. After an
+all-target Release/Ninja rebuild on macOS arm64 with AppleClang 21 and LLVM
+22.1.8, all 377 CTests pass with no failures or skips in 1617.18 seconds
+(12 compile jobs, eight test workers). This includes the compiler, independent
+MIR verification/editor and optimizer gates, both executable corpus oracles,
+the 95-example declaration census, all 109 standard-library surface cases,
+LSP/driver protocols, SIMD, the Foundation Objective-C++ bridge, structural
+relocation, and the enabled thread/atomic/mutex ThreadSanitizer tests.
+
+The mixed in-place constructor matrix passes 88 outcomes and generated prefix
+transport passes 64; both cover C++20/C++23 at O0/O1/O3, no-elide, and
+ASan/UBSan. The complete suite also covers lambda error mapping, carrier-shell
+reference lifetimes, mutable-call optimizer invalidation, and owning
+constructor/enum failure cleanup. The earlier interrupted run is not used as
+completion evidence.
+
+All 11 external consumers pass against the freshly staged package. With
+build-tree resource overrides cleared, its compiler passes four carrier cases,
+the three lambda-mapper fixtures at C++23/O3, and an ordinary public vector
+emplacement program combining an owning argument, reference, owner-backed
+text, and raw pointer. Formatting checks all 396 first-party C/C++ files;
+Tree-sitter passes 66 corpus cases, all 154 shipped sources, highlights/locals/
+rainbow, and source-text checks. Generated parser sources remain unchanged.
+
+Local activation and canonical Gitea dispatch are delivery steps after the
+validated source is committed. These results are local macOS evidence, not
+Linux/Windows execution or a claim that asynchronous release CI has finished.
+The optional full language audit was not repeated for this final source; its
+earlier checkpoint and missing comparison-fixture limitation remain recorded
+below and are not substituted for a complete optional-audit pass.
+
+## Lambda error mappers
+
+`expected_transform_error` covers exact typed lambda selection, named and
+capturing environments, semantic rejection of invalid mapper signatures and
+use after explicit movement, and production MIR emission. HIR mutations reject
+lost, reordered, missing, duplicated and misplaced eager inputs. MIR mutations
+reject wrong callable identities/signatures, missing receivers, erased capture
+or lifetime records, and forged prepared receiver roles/call sites.
+`expected_transform_error_lsp` checks lambda success, precise invalid-parameter
+diagnostics, and recovery in successive document generations.
+
+`expected_transform_error_runtime` retains namespace-function cases and covers
+inline/named lambdas, repeated non-consuming environment use, two distinct
+generic error instantiations, void-success mapping, eager owned captures,
+passive class copies and trivial environment reuse in loops, move-only error
+inputs/results, chaining, propagation, and cleanup failures. Moved named
+environments retain captures until the whole expression ends, including later
+argument success/failure; receiver failure occurs before capture construction.
+Its C++20/C++23 O0/O1/O3, no-elide, and ASan/UBSan matrix asserts exact output
+and failure behavior. The final combined run above passes this matrix.
+No parser, formatter or Tree-sitter syntax changes
+are needed for this existing lambda/member-call syntax.
+
+## Everyday program stabilization
+
+The four campaign outcomes have distinct owning evidence. Passing one row is
+not a substitute for the combined production suite:
+
+| Outcome | Owning evidence |
+| --- | --- |
+| Construction, replacement and partial cleanup | `mir_backend_owned_lifecycle`, `cpp_mir_body_emitter_preflight`, `constructor_field_publication_runtime`, `optional_compiler_contract`, `optional_runtime`, and `owned_unexpected_pending_cleanup_runtime` check exact producer/field publication, rollback, no duplicate scalar initialization, first and secondary failure, and prepared owning arguments. |
+| Borrow/reference composition | `compiler_ownership`, `borrowing_composition_pipeline`, `ordered_borrow_composition_runtime`, and `borrowing_composition_lsp` check independent owner dependencies, ordered mutation then lookup, helper/tree traversal, loan protection, malformed MIR, source spans, and editor recovery. |
+| Eligible container/value-wrapper consistency | `optional_runtime`, `vector_construction_only_runtime`, `generic_clone_runtime`, and the owning Expected gates check move construction without assignment, explicit payload cloning, nested wrappers, vector growth/removal, and cleanup through active alternatives. |
+| Owning payload enums | `sum_type_pipeline`, `class_payload_enum_runtime`, `payload_enum_containment_runtime`, `generic_payload_enum_runtime`, `recursive_payload_sum_runtime`, and the emitter preflight mutations check concrete generic owners, collections, borrowed observation, exact transport and partial cleanup. |
+
+The 2026-10-03 carrier/optimizer checkpoint passes all 372 registered tests
+after a full Release/Ninja rebuild on macOS arm64 (AppleClang 21, LLVM 22.1.8,
+12 build jobs and eight test workers). The full run took 1236.58 seconds.
+All 11 restaged external consumers, four staged carrier cases and 42 staged
+mutable-call optimizer cases also pass without build-tree resource overrides.
+The repository local installer passed archive/Neovim validation, installed
+0.360.0, and synchronized terminal commands with the editor while preserving
+the previous binaries and configuration. The installed terminal command
+additionally compiled and ran the carrier fixture at C++23/O3; its four-case
+C++20/O0 matrix passes. This is a local checkpoint, not public publication or
+completion of the non-scalar emplacement and separate lambda-mapper work.
+
+The construction-only enum fixture deliberately deletes copy construction and
+does not supply assignment. Fresh variant production, moved parameters, and
+helper results initialize fields under the same lifetime contract. Its expanded
+matrix contains 19 cases in eight native configurations; rejected assignment
+remains a source diagnostic. The six-fixture owning-error matrix contains 216
+outcomes, including an owning Expected argument followed by conditional and
+fallible arguments. These counts describe the registered scope, not a claim
+that a pending execution has passed.
+
+`prefix_constructor_contract` checks exact selected constructor roles, prepared
+owner slots, capacity preflight, and independently rejected malformed handoffs.
+Its native counterpart combines owning values, references, owner-backed text,
+and raw pointers with constructor, argument, capacity, and cleanup failures
+in 88 outcomes. Concrete packs check `T*` to `const T*` and `nullptr` inputs
+without admitting the reverse qualification or unrelated pointee types.
+Private-capability controls reside only in a disposable trusted library unit;
+application access is not relaxed. `prefix_generated_transport_runtime` compares
+direct and pack-expanded generated movement, capacity success/failure, and
+payload-destructor failure. Its 64 outcomes preserve the primary capacity error
+when cleanup also fails. Both matrices use C++20/C++23 at O0/O1/O3, no-elide,
+and ASan/UBSan configurations.
+
+`carrier_shell_references` checks physical references to shared/exclusive
+borrowed-state objects, accessor forwarding, reference parameters including
+lambdas, generated value copies, and rejection of shell/owner invalidation or
+local reference escape. It mutates dependency identities and designated paths;
+actual source-generated copy-return MIR also loses its required retirement and
+must be rejected by both the independent verifier and production lowered
+boundary. `optimizer_foundation` separately forges access, formal identity,
+copy provenance, return SSA identity, and cleanup ordering.
+`carrier_reference_runtime` covers normal execution, mutation overflow,
+destructor failure after provisional reference return, and destructor failure
+after provisional value-copy return in C++20/C++23 at O0/O1/O3, no-elide, and
+ASan/UBSan modes (32 outcomes). The LSP composition test checks accessor hover
+and definition, exact UTF-16 escape spans, hints without unsafe automatic
+ownership edits, and recovery after correcting the source.
+
+Storage admission tests require `GTI-S2019` before backend publication for an
+unrelated borrowed payload. The exact user instantiation, concrete payload,
+hint, and absence of an ownership-changing fix-it are checked. Generic class
+diagnostics publish once even when constructor lowering needs a second field
+model; independent constructor assertions and distinct concrete instances
+retain their own diagnostics and substitution notes. The LSP additionally checks
+UTF-16 locations, preservation of every instantiation site when identical
+primary errors are grouped, and clearing of both user and library dependency
+diagnostics after correction.
+
+`optimizer_mutable_call_runtime` protects the post-call safety-proof boundary:
+direct and forwarded mutable scalar references, projected array elements,
+unrelated user-defined borrowed-state objects, local reference aliases,
+references to borrowed-state objects, and global setters must retain
+the following overflow check. Its 42 native outcomes cover C++20/C++23 at
+O0/O2/O3 and require identical first-failure identity, source line, status 70,
+and caller cleanup. The corresponding `optimizer_safety` cases reject forged
+discharges through the editor and independent replay while retaining valid
+proofs for unrelated inputs, read-only calls, and exact object postconditions.
+Real atomic-load calls and an unsupported shared-owner runtime query returning
+a constant also require reached but incomplete closed summaries, with their
+recurrence checks retained. These cover explicit synchronization metadata and
+opaque runtime effects separately; the existing exact prefix-storage loop
+still requires both of its valid arithmetic proofs.
+The record-envelope fixture additionally distinguishes earlier caller object
+facts invalidated by opaque native cleanup from fresh object construction
+after that boundary. The former retains checks; the latter retains the original
+positive record-update and recurrence proof counts. The cleanup's authoritative
+effects are not weakened to satisfy a proof-count expectation.
+
+The completion sweep additionally checks passive move-only mutex payloads,
+nested generic constructor publication, and cleanup-free polymorphic
+replacement. Emitter mutations retain exact initializer ownership, effective
+field-placement selection, failure-edge cleanup, and adjacency across a
+conservative constructor Invoke. Inline-lambda runtime tests check the same
+prepared closure slot is constructed once, passed by move, and retired after
+its call rather than requiring an obsolete fused-literal spelling.
+
+The reviewed census refresh adds the two move-construction concept declarations
+to all 87 examples and 17 declarations to `84-optional-values.gti`
+through optional cloning and its utility include: 24,081 declarations, with
+7,717 bodies and 1,856 generated items unchanged. Both independent executable
+corpus checks passed before this refresh; this is not a combined completion claim.
+
+## Structural relocation
 
 `structural_relocation` checks the public constraints and checked storage API
 with unrelated passive, deleted-copy, deleted-move, borrowed, and
@@ -71,6 +232,14 @@ These examples also participate in both complete MIR/LoweredProgram inventories
 and the native two-endpoint corpus oracle. Adding them must not silently
 refresh counts for an existing example. No compiler semantics, standard-library
 API, parser, or editor protocol change is involved.
+
+Reconciliation with the structural-relocation and move-construction work adds
+six declaration-only prelude concepts to each of the eight examples and the
+storage relocation method to the six that import memory. Their measured
+declaration increase is 54; body and generated-item counts are unchanged.
+The merged inventory contains 95 examples, 30,208 declarations, 10,470 bodies,
+and 2,286 generated items. Both corpus oracles remain mandatory independent
+checks of this inventory, not waived by the declaration-only explanation.
 
 ## Explicit cloning and Objective-C++ bridges
 
@@ -604,8 +773,60 @@ view through its full expression, including later-argument and callee failure.
 malformed activation/transfer records; its 48-outcome matrix covers passive,
 void, and owning success values, owning errors, forwarding, consuming observers,
 and wrong-state cleanup. `owned_unexpected_pending_cleanup` independently
-checks unpublished return rollback and active-alternative recipes, with 40
-native outcomes including primary and secondary destructor failures.
+checks unpublished return rollback and active-alternative recipes. Its six
+fixtures cover 216 native outcomes including primary and secondary destructor
+failures, direct constructor-argument transport, and fallible constructor fields
+with both passive and owning errors.
+Its extended binding coverage includes a storage-free error published into a
+scalar, owning-inactive or void-success Expected, repeated loop construction,
+and exact operand/error-type mutations. The inactive payload has an observable
+constructor/destructor and no default constructor, so native default activation
+cannot silently satisfy the test.
+The both-owning field fixture makes each source constructor/destructor
+observable and omits both default constructors. It checks success and error
+publication, field rollback, first cleanup failure and immediate termination
+on secondary cleanup failure. Together with the guarded-move representation
+assertions, this prevents a private empty error shell from becoming a live
+source object during native movement.
+The multi-argument constructor fixture keeps an owning result between earlier
+and later scalar arguments, including a conditional later argument. It checks
+both branches, failure before production, later-argument and constructor-body
+failure, and secondary cleanup failure with exact output and source records.
+Independent mutations reject missing/retagged cleanup, parameter-type drift
+and conditional ownership transfer.
+
+`constructor_field_publication_runtime` additionally checks side-effecting
+scalar initializers: prefix/postfix increment, compound/plain assignment and
+overflow before field publication. It observes both cleanup order and the
+unchanged source place after a failed update. The lifecycle emitter suite
+rejects deletion of the explicit field stage and asserts that discarded
+assignment records never introduce an extra publication.
+`vector_construction_only_runtime` covers empty-slot movement without
+assignment, cloning and growth, fallible zero-argument sized construction and
+resize, partial-prefix rollback, nested optional payload destruction, and
+first/secondary failure records. Its source negatives retain deleted-move,
+borrowed-payload and live-reference rejection. Both runtime gates use the
+eight-mode C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan matrix.
+
+`vector_scalar_constructor_runtime` checks the adjacent nonempty primitive-input
+constructor path through the same final-slot protocol. An unrelated owner has
+an observable field, nested optional storage, and a stored-address witness;
+argument evaluation, constructor failure, first/secondary cleanup failure and
+later-argument failure have exact traces and source records in all eight modes.
+`testScalarPrefixConstructorStatusAdmission` mutates target, signature, input
+ownership, propagation, and Invoke publication, including malformed missing
+parameter metadata.
+
+`prefix_constructor_contract` and `vector_prepared_constructor_runtime` add the mixed
+owning/reference/owner-dependent-text/unsafe-pointer argument boundary.
+Capacity failure must destroy staged owners without entering the constructor;
+later-argument failure must likewise preserve earlier staged cleanup.
+Constructor and first/secondary destructor failures retain exact output,
+partial-prefix state and source records. A stored address proves construction
+at the final element slot. Malformed MIR rejects lost or redirected pairing,
+wrong storage/target/reference roles, premature or missing transfer, and failure
+edges that reach the constructor. These are release-candidate coverage gates;
+their combined validation is still required.
 
 `expected_passive_publication` checks exact binding publication for generated
 copies of cleanup-free success/error alternatives, plus ordinary free/member
@@ -1022,6 +1243,7 @@ upstream code.
 | `parser_conditional_recovery` | timeout-bounded stray and active conditional-continuation recovery in switch and extern contexts; exact parser diagnostics; nearest-owner propagation; later branch/declaration retention; and valid nested conditional-switch parsing |
 | `documentation_index` | deterministic, pointer-free standard-library declaration projection; exact signatures, retained documentation, source-facing operator names, stable source identities, visibility filtering, schema serialization, and fail-closed frontend/tooling prerequisites |
 | `block_comment_pipeline` | line tracking, literal exclusion, non-nesting block-comment lexing, unterminated diagnostics, frontend composition, and formatter preservation/idempotence |
+| `constructor_formatting` | constructor-list packing, colon placement and indentation configuration; exact default/opt-in layouts; nested argument/lambda/collection isolation, comments, conditional declarations, tabs, malformed input, token preservation and idempotence; `lsp_protocol` additionally covers configuration discovery and reload |
 | `block_comment_lsp` | multiline UTF-16 semantic tokens, literal exclusion, formatting, and publication of the shared unterminated-comment diagnostic |
 | `source_text_pipeline` | strict UTF-8 validation and no-cascade recovery, leading-BOM offsets, ASCII token boundaries, Unicode string/comment preservation, LF/CRLF line identity, lone-CR rejection, source locations, and formatter preservation/idempotence |
 | `source_text_lsp` | BOM-aware UTF-16 token positions, Unicode and CRLF document acceptance, LF formatter output, exact lone-CR diagnostic publication, and next-generation clearing |
@@ -1065,7 +1287,7 @@ upstream code.
 | `expected_payload_range_runtime` | payload iteration with named and by-value `expected` owners, nested loops, continue/break/early return, local and parameter wrong-state failures, and cstdio payload integration under C++20/C++23 at O0/O3; explicit lifetime slots execute their MIR drops rather than deferring to native parameter scope |
 | `optional_compiler_contract` | exact declaration-bound optional capability identity; inline storage instance policy; semantic, HIR, MIR, lifecycle-transfer, and backend-intrinsic retention; move-only source unavailability; live-borrow rejection; private representation isolation; and fail-closed forged intrinsic and transfer evidence |
 | `optional_runtime` | empty, value, move, checked read, reset, emplacement, fallback, and move-only payload behavior; inline allocation-free representation; copy and assignment rejection; live-borrow protection; exact cleanup; and `GTI-R0008` wrong-state reporting at O0/O3 under C++20/C++23 |
-| `class_payload_enum_runtime` | passive and active-cleanup class alternatives; fresh/copy/move construction; tag inspection through a checked reference; same-tag replacement plus cross-tag move assignment; distinct cleanup of two same-type owning fields; unit and `std::string` alternatives; normal/control-flow/defined-failure exactly-once drop; and declaration-time rejection of move-only copied bindings and owning by-value call/return at O0/O3 under C++20/C++23 |
+| `class_payload_enum_runtime` | passive and active-cleanup class alternatives; fresh/copy/move construction; tag inspection through a checked reference; same-tag replacement plus cross-tag move assignment; distinct cleanup of two same-type owning fields; unit and `std::string` alternatives; normal/control-flow/defined-failure exactly-once drop; direct owning by-value call/return; and declaration-time rejection of move-only copied bindings at O0/O3 under C++20/C++23 |
 | `payload_enum_containment_runtime` | ordinary class/struct direct fields; constructor and in-class initialization; containing-value move/call/return/assignment, including an immutable source and nested scope directly in the hosted entry; direct mutable-field replacement; return, break, and continue cleanup; partial-construction defined-failure rollback; C++ type-definition ordering and private disengaged representation; precise polymorphic-owner and fixed-array `GTI-S2067` rejection; and O0/O3 under C++20/C++23 |
 | `generic_payload_enum_runtime` | generic free-function and unrelated user-defined owner transport/capture, consuming extraction, vector reallocation/iteration, optional inline storage/reset, partial-owner rollback, later-argument and callee failure, failing and non-failing cleanup, implicit-copy/live-borrow/use-after-move diagnostics, C++20/C++23 O0/O1/O3 parity, disabled elision, and ASan/UBSan |
 | `compiler_ownership` / `ordered_borrow_composition_runtime` | completed mutation before checked lookup through user-defined tree/table, method, generic/free helper and constructor paths; borrowed-carrier call inputs; exact MIR order and forged-order rejection; earlier mutation, lookup and invocation failures; reverse-order, lexical-loan, exclusive-read, mutable-parameter and escaping-local rejection; precise diagnostic spans; C++20/C++23 O0/O1/O3 parity, disabled elision, and ASan/UBSan |
@@ -1481,7 +1703,11 @@ diagnostics. `generic_payload_enum_runtime` proves the same exact lifecycle
 through a user-defined `Envelope<T>`, vector, and optional. Its failure matrix
 checks cleanup of prepared arguments before the callee is entered, including
 retiring fresh representations and preserving a moved source's separately
-scheduled disarmed shell. Generic field and transport mutations retain the
+scheduled disarmed shell. Construction-only enum payloads additionally cover
+generic parameter-field and fresh alternative publication, vector growth,
+optional reset, later-initializer rollback, first and secondary cleanup failure,
+and rejected assignment. Preflight mutations reject lost reparent identities
+and premature field activation. Generic field and transport mutations retain the
 independent preflight gates. The Tree-sitter corpus and capture tests own editor grammar and
 highlighting.
 

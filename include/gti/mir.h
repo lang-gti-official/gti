@@ -331,6 +331,10 @@ struct MirLoan {
   MirLoanId id = 0;
   SemanticLoanId semanticLoan = 0;
   MirLoanId parent = 0;
+  // source/parent protect a reference's physical carrier shell. This
+  // independent Stored loan protects its inherited external owners without
+  // transferring ownership, suspending the dependency, or increasing access.
+  MirLoanId storedDependency = 0;
   MirLoanKind kind = MirLoanKind::Local;
   MirPlaceId source = 0;
   // Independent protected owners for a composed read-only carrier. These
@@ -514,6 +518,9 @@ enum class MirInstructionKind {
   // enclosing representation stays live but disarmed/empty, including on
   // failure. RHS ownership is untouched until the success-path Assign.
   CleanupBeforeAssign,
+  // Reads prefix capacity before an in-place constructor receives any prepared
+  // parameters. The exact paired Append is its sole success continuation.
+  PrefixAppendPreflight,
   Count,
 };
 
@@ -685,6 +692,9 @@ struct MirInstruction {
   // Body-local ObjectAllocation obligation consumed by unique construction,
   // or established by AllocateObject. It is not a source-visible owner value.
   MirDropObligationId objectAllocation = 0;
+  // Exact non-consuming capacity check preceding parameter transfer into an
+  // ordinary PrefixStorageAppend constructor. Zero for all other instructions.
+  MirInstructionId prefixPreflight = 0;
   std::optional<MirBodyAddress> bodyTarget;
   ConstructorKind constructorKind = ConstructorKind::Ordinary;
   std::optional<HirLambdaId> lambdaTarget;
@@ -717,6 +727,12 @@ allMirLocalFailuresDischarged(const MirInstruction &instruction);
 
 [[nodiscard]] MirInstruction
 makeMirInstructionTombstone(const MirInstruction &instruction);
+
+// Exact CFG pairing only; program verification additionally checks the selected
+// constructor signature and body-local verification checks staged ownership.
+struct MirBody;
+[[nodiscard]] const MirInstruction *
+mirPrefixAppendForPreflight(const MirBody &body, MirInstructionId preflight);
 
 struct MirScalarPromotionRewrite {
   MirPlaceId place = 0;
@@ -1664,6 +1680,12 @@ enumerateMirBodyAddresses(const MirProgram &program);
 [[nodiscard]] const MirBody *findMirBody(const MirProgram &program,
                                          MirBodyAddress address);
 [[nodiscard]] MirBody *findMirBody(MirProgram &program, MirBodyAddress address);
+
+// Complete protected-place set, preserving deterministic first-seen order.
+// Missing/malformed loan or dependency identities yield an empty set so
+// consumers cannot accidentally treat incomplete provenance as disjoint.
+[[nodiscard]] std::vector<MirPlaceId>
+mirLoanProtectedSources(const MirBody &body, MirLoanId loan);
 
 // Conservative same-block lifecycle proof. A moved-from shell still needs
 // retirement, but cannot invoke its source destructor. Zero means block end.
