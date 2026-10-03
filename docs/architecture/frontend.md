@@ -76,6 +76,32 @@ transitional `Program`. Semantic
 visibility uses the graph: a unit sees itself, direct includes, and the
 prelude, not arbitrary declarations in the combined AST.
 
+Explicit `export module name;` interfaces additionally retain their module
+declaration token. The loader consumes the header and unconditional imports,
+retaining `Import` and `ExportImport` dependency kinds. It resolves named
+imports only through supplied `PackageSourceRoot::modules` registrations and
+direct dependency aliases; quoted imports use the same canonical path and
+package-containment authority. Includes cannot load an interface and imports
+cannot load a legacy unit. An imported interface starts from compiler-supplied
+configuration flags and restores the importer's flag state on return. Reusing
+a legacy unit across distinct module configuration domains with different
+active flags is diagnosed rather than silently selecting the first context.
+
+The parser retains an optional export token on declarations. Frontend assembly
+collects their exact ranges, including inherited namespace exports in selected
+configuration branches, from the fresh or cached AST. These are syntax requests,
+not a separate symbol catalog.
+Semantic analysis validates export eligibility and publishes each declaration
+and overload through `SourceGraph::isDeclarationVisible`. Ordinary source
+edges remain direct-only; import edges also follow explicit re-export edges.
+Definition-site generic context preserves private implementation lookup. A
+public result can retain an inferred private nominal type without exposing its
+name. Tooling consumes resolved semantic scope/occurrence facts rather than
+filtering reachable members by module name. Initialization, failure provenance
+and caches retain the ordered source graph, including both new edge kinds.
+HIR/MIR and C++ emission use existing executable contracts; this is not binary
+or separate compilation.
+
 ### Reusable lexical and parsed units
 
 `FrontendCache` is an optional frontend input owned by a coordinator such as

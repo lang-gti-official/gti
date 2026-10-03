@@ -48,12 +48,60 @@ bool SourceGraph::isVisible(SourceUnitId requester,
   if (declaringUnit != nullptr && declaringUnit->prelude) {
     return true;
   }
-  return std::any_of(
-      dependencies.begin(), dependencies.end(),
-      [requester, declaration](const SourceDependency &dependency) {
-        return dependency.source == requester &&
-               dependency.target == declaration;
-      });
+  std::unordered_set<SourceUnitId> visited;
+  std::vector<SourceUnitId> reexports;
+  for (const SourceDependency &dependency : dependencies) {
+    if (dependency.source != requester) {
+      continue;
+    }
+    if (dependency.target == declaration) {
+      return true;
+    }
+    if (dependency.kind == SourceDependencyKind::Import ||
+        dependency.kind == SourceDependencyKind::ExportImport) {
+      reexports.push_back(dependency.target);
+    }
+  }
+  while (!reexports.empty()) {
+    const SourceUnitId unit = reexports.back();
+    reexports.pop_back();
+    if (!visited.insert(unit).second) {
+      continue;
+    }
+    for (const SourceDependency &dependency : dependencies) {
+      if (dependency.source != unit ||
+          dependency.kind != SourceDependencyKind::ExportImport) {
+        continue;
+      }
+      if (dependency.target == declaration) {
+        return true;
+      }
+      reexports.push_back(dependency.target);
+    }
+  }
+  return false;
+}
+
+bool SourceGraph::isExported(SourceUnitId declaration,
+                             std::size_t nameOffset) const {
+  const SourceUnit *unit = findUnit(declaration);
+  if (unit == nullptr || !unit->moduleDeclaration) {
+    return true;
+  }
+  const auto contains = [nameOffset](const SourceSpan &span) {
+    return span.start <= nameOffset && nameOffset < span.end;
+  };
+  return std::any_of(unit->exportedDeclarations.begin(),
+                     unit->exportedDeclarations.end(), contains) ||
+         std::any_of(unit->exportedNamespaces.begin(),
+                     unit->exportedNamespaces.end(), contains);
+}
+
+bool SourceGraph::isDeclarationVisible(SourceUnitId requester,
+                                       SourceUnitId declaration,
+                                       std::size_t nameOffset) const {
+  return isVisible(requester, declaration) &&
+         (requester == declaration || isExported(declaration, nameOffset));
 }
 
 std::vector<SourceUnitId> SourceGraph::compilationOrder() const {

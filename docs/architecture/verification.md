@@ -2201,6 +2201,18 @@ without changing its census.
 
 ## Development And Completion Cadence
 
+The source-module slice is owned by `testSourceModuleInterfaces` and
+`testSourceModuleResolution` in `compiler_frontend`, `testModuleManifest` in
+`project_model`, and build-provenance round trips in `driver_pipeline`.
+`source_modules_runtime` covers imported globals, private helper bodies,
+re-exported classes and constrained generics at O0/O1/O3 with C++20/C++23,
+then project imports, build-report edges, cache hits, export revocation and
+module-map invalidation. `source_modules_lsp` covers private-name filtering,
+hover/definition, incomplete code, unsaved interfaces, close/reload, and
+inferred private result types. Grammar corpus and highlight checks include
+module declarations, all import forms and exported namespaces. These gates
+supplement rather than replace the unchanged include and package regressions.
+
 Use the existing CMake targets and test filters to keep the development loop
 proportional to the edit. A broad verification plan describes the evidence
 needed to deliver the feature; it is not a command list to repeat after each

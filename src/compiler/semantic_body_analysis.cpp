@@ -87,6 +87,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
 
 auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   resetRequestState(&program);
+  validateModuleExports(program.declarations());
 
   const auto registrationStart = std::chrono::steady_clock::now();
   registerNamespaces(program.declarations(), {});

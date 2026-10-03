@@ -107,6 +107,10 @@ std::string_view sourceDependencyKindName(SourceDependencyKind kind) {
     return "standard-library";
   case SourceDependencyKind::Package:
     return "package";
+  case SourceDependencyKind::Import:
+    return "import";
+  case SourceDependencyKind::ExportImport:
+    return "export-import";
   }
   return "include";
 }
@@ -124,6 +128,12 @@ parseSourceDependencyKindName(std::string_view name) {
   }
   if (name == "package") {
     return SourceDependencyKind::Package;
+  }
+  if (name == "import") {
+    return SourceDependencyKind::Import;
+  }
+  if (name == "export-import") {
+    return SourceDependencyKind::ExportImport;
   }
   return std::nullopt;
 }

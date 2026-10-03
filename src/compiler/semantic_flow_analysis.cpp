@@ -3440,7 +3440,8 @@ auto SemanticVisitor::Impl::declareNamespaceSymbol(
     const auto &namespaceIndex = activeNamespaceSymbols();
     if (const auto external = namespaceIndex.find(qualified);
         external != namespaceIndex.end() &&
-        sourceVisible(declarationSourceUnit(external->second))) {
+        declarationVisible(declarationSourceUnit(external->second),
+                           external->second.declaration)) {
       report(name,
              "Static declaration of '" + name.lexeme +
                  "' conflicts with a visible namespace declaration.",
@@ -4269,7 +4270,8 @@ auto SemanticVisitor::Impl::reportInvisibleDeclaration(
     const Token &use, std::string name, const Token &declaration,
     SourceUnitId declarationUnit) -> bool {
   if (sourceGraph == nullptr || currentSourceUnit == 0 ||
-      declarationUnit == 0 || sourceVisible(declarationUnit)) {
+      declarationUnit == 0 ||
+      declarationVisible(declarationUnit, declaration)) {
     return false;
   }
 
@@ -4282,6 +4284,25 @@ auto SemanticVisitor::Impl::reportInvisibleDeclaration(
       {tokenSpan(declaration), "Declaration is in this source unit."});
   const SourceUnit *requester = sourceGraph->findUnit(currentSourceUnit);
   const SourceUnit *target = sourceGraph->findUnit(declarationUnit);
+  if (target != nullptr && target->moduleDeclaration) {
+    if (!sourceGraph->isExported(declarationUnit, declaration.position)) {
+      diagnostic.message = "Declaration '" + name + "' is private to module '" +
+                           target->moduleDeclaration->lexeme +
+                           "'; it is not exported.";
+      diagnostic.hints.emplace_back(
+          "Use the module's public API, or explicitly export this declaration "
+          "in its defining interface.");
+    } else {
+      diagnostic.message =
+          "Declaration '" + name +
+          "' is not visible; import its public module interface.";
+      diagnostic.hints.emplace_back(
+          "Add an import of the defining interface or a module that explicitly "
+          "re-exports it.");
+    }
+    diagnostics.push_back(std::move(diagnostic));
+    return true;
+  }
   if (requester != nullptr && target != nullptr) {
     if (target->standardLibraryName) {
       diagnostic.hints.emplace_back("Add '#include <" +

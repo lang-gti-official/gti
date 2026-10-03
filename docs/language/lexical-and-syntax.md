@@ -141,7 +141,8 @@ include guards.
 A source unit can name declarations from:
 
 - itself;
-- its direct includes; and
+- its direct includes;
+- exported declarations of its imports and their explicit re-exports; and
 - the implicit standard prelude.
 
 An included unit does not re-export its own dependencies. Only the entry source
@@ -150,6 +151,59 @@ unit may define `main`.
 When package roots are active, a quoted include must remain within the
 including unit's owning package. Cross-package access uses a declared angle
 alias. Package provenance does not make source compiler-trusted.
+
+### Explicit Module Interfaces
+
+A module interface starts with `export module name;` before other tokens.
+Comments and whitespace may precede it. `name` is one ordinary ASCII identifier;
+it is package-local and does not introduce a namespace. Legacy include units
+and ordinary consumers do not need a module declaration.
+
+```gti
+// src/api.gti
+export module main;
+namespace geometry {
+  int implementation_detail() { return 40; }
+  export int answer() { return implementation_detail() + 2; }
+}
+```
+
+Namespace-scope declarations in an interface are private unless prefixed with
+`export`. `export namespace geometry { ... }` exports its declarations as a
+group; a namespace with selected exported children does not export its other
+children. Class access rules are unchanged. Exporting a source-local `static`
+function or variable is invalid, as is an export outside an interface. Exports
+inside active configuration branches are allowed; headers and imports must be
+unconditional and at source-unit top level.
+
+`import "api.gti";` imports a relative interface, including in direct compilation.
+With an explicit package graph, `import local;` selects `[modules].local` in the
+owning package, `import dependency.name;` selects a module of a direct dependency,
+and `import dependency;` selects that dependency's `main` module. A collision
+between a local name and a dependency alias is diagnosed. The registered name
+must match the target's module declaration. Names never trigger filesystem
+search or implicit manifest discovery. Quoted imports cannot cross package
+boundaries. See the [manifest contract](../architecture/build-and-driver.md#source-module-registration).
+
+`export import ...;` is allowed only in an interface and deliberately re-exports
+the imported public surface. Ordinary imports do not re-export. Import cycles
+and multiple interface files declaring the same name in one package are errors.
+All three declarations require their terminating semicolon.
+
+An interface cannot be loaded with `#include`, and a legacy include unit cannot
+be loaded with `import`. Existing includes keep their original behavior.
+Source-local configuration flags neither enter nor escape imported modules;
+compiler-supplied flags still apply. Sharing a legacy include across module
+boundaries with inconsistent flags is diagnosed.
+
+This initial implementation controls visibility, not separate compilation or
+module linkage. Program-wide qualified-name uniqueness still applies, including
+to private types; libraries should retain their ordinary namespaces. Private
+declarations remain available to their defining bodies and generic instances.
+The keywords `import` and `module` are newly reserved in this pre-1.0 minor
+release; rename existing identifiers using those spellings. `export` was
+already reserved. [ADR 024](../decisions/024-source-module-interfaces.md) records
+the proposal and the intentionally unimplemented binary-module boundary.
 
 ## 2.7 Grammar Presentation
 

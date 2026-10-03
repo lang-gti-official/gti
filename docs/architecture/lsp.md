@@ -16,6 +16,16 @@ JSON-RPC/LSP
 
 ## Semantic Source Of Truth
 
+Source modules use the same manifest module maps, source graph, export
+publication, and re-export traversal as compilation. Completion only presents
+the candidates supplied by semantic lookup; hover and definition use resolved
+occurrences. An inferred value of a private type can still present its ordinary
+public members without exposing that type's name as a namespace candidate.
+Dirty interface overlays invalidate consumers through the existing dependency
+generation machinery, and closing an overlay restores the on-disk surface.
+Unrelated semantic errors do not suppress module completion. Import-path/module-
+name completion and import-directive navigation are not added by this slice.
+
 `FrontendResult` retains the recovered AST, `SemanticModel`, `SemanticDatabase`,
 HIR/MIR, source graph, source text, and diagnostics together. The LSP retains a
 `shared_ptr<const FrontendResult>` in each `AnalysisSnapshot`. This keeps AST

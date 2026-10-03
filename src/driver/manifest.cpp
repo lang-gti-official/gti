@@ -1961,8 +1961,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
   toml::table document = std::move(parsed).table();
   validateFields(document,
                  {"manifest-version", "package", "targets", "profiles",
-                  "dependencies", "workspace", "build", "bindgen",
-                  "toolchains"},
+                  "dependencies", "workspace", "build", "bindgen", "toolchains",
+                  "modules"},
                  "top-level manifest", sourceName, source, result.diagnostics);
 
   if (const toml::node *version =
@@ -2169,6 +2169,75 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
           }
         }
         package.buildScript = std::move(script);
+      }
+    }
+  }
+
+  if (const toml::node *moduleNode = document.get("modules")) {
+    const toml::table *modules = moduleNode->as_table();
+    if (modules == nullptr) {
+      result.diagnostics.push_back(buildDiagnostic(
+          "GTI-B1004", sourceSpan(sourceName, source, *moduleNode),
+          "Manifest field 'modules' must map module names to interface "
+          "paths."));
+    } else {
+      for (const auto &[moduleKey, pathNode] : *modules) {
+        const std::string name(moduleKey.str());
+        const SourceSpan declaration = sourceSpan(sourceName, source, pathNode);
+        if (!isImportAlias(name) || keywords.contains(name) ||
+            isCppReservedIdentifier(name) || name.starts_with("__gti_")) {
+          result.diagnostics.push_back(buildDiagnostic(
+              "GTI-B1005", sourceSpan(sourceName, source, moduleKey),
+              "Module names must be ordinary ASCII GTI identifiers."));
+          continue;
+        }
+        const auto spelling = pathNode.value<std::string>();
+        if (!spelling) {
+          result.diagnostics.push_back(
+              buildDiagnostic("GTI-B1004", declaration,
+                              "A module interface path must be a string."));
+          continue;
+        }
+        const std::filesystem::path relative(*spelling);
+        if (spelling->empty() || spelling->find('\0') != std::string::npos ||
+            isAbsoluteOnSupportedHost(*spelling, relative) ||
+            relative.extension() != ".gti") {
+          result.diagnostics.push_back(
+              buildDiagnostic("GTI-B1103", declaration,
+                              "A module interface must be a relative .gti path "
+                              "inside its package."));
+          continue;
+        }
+        std::error_code pathError;
+        const auto resolved =
+            std::filesystem::canonical(packageRoot / relative, pathError);
+        if (pathError ||
+            !std::filesystem::is_regular_file(resolved, pathError)) {
+          result.diagnostics.push_back(buildDiagnostic(
+              "GTI-B1103", declaration,
+              "Module interface does not name an existing regular file: " +
+                  *spelling + "."));
+          continue;
+        }
+        if (!pathIsWithin(packageRoot, resolved)) {
+          result.diagnostics.push_back(
+              buildDiagnostic("GTI-B1104", declaration,
+                              "Module interface escapes its owning package."));
+          continue;
+        }
+        if (std::any_of(package.modules.begin(), package.modules.end(),
+                        [&](const auto &module) {
+                          return module.second == resolved ||
+                                 portableProjectNameKey(module.first) ==
+                                     portableProjectNameKey(name);
+                        })) {
+          result.diagnostics.push_back(
+              buildDiagnostic("GTI-B1005", declaration,
+                              "Module registrations must have distinct "
+                              "interface files and portable names."));
+          continue;
+        }
+        package.modules.emplace_back(name, resolved);
       }
     }
   }

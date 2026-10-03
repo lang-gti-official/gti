@@ -1041,8 +1041,9 @@ auto SemanticVisitor::Impl::resolveClassArguments(
         selectSignatureClassDefinition(classId, result.types);
     resolveClassArgumentPatterns(selected);
     if (sourceGraph != nullptr && currentSourceUnit != 0 &&
-        !sourceGraph->isVisible(currentSourceUnit,
-                                classInfo(selected).sourceUnit)) {
+        !sourceGraph->isDeclarationVisible(currentSourceUnit,
+                                           classInfo(selected).sourceUnit,
+                                           classInfo(selected).name.position)) {
       reportInvisibleDeclaration(site, owner.name.lexeme,
                                  classInfo(selected).name,
                                  classInfo(selected).sourceUnit);
@@ -4583,7 +4584,7 @@ auto SemanticVisitor::Impl::genericDefaultConstant(
          candidate != found->second.rend(); ++candidate) {
       if (candidate->sourceUnit == currentSourceUnit ||
           (!candidate->internalLinkage &&
-           sourceVisible(candidate->sourceUnit))) {
+           declarationVisible(candidate->sourceUnit, candidate->declaration))) {
         return *candidate;
       }
     }
@@ -4665,7 +4666,8 @@ auto SemanticVisitor::Impl::recordGenericDefaultConstant(
       GenericDefaultConstant{.value = *value,
                              .sourceUnit = currentSourceUnit,
                              .internalLinkage = declaration.isStatic(),
-                             .qualifiedName = qualified});
+                             .qualifiedName = qualified,
+                             .declaration = declaration.name()});
 }
 
 auto SemanticVisitor::Impl::recordGenericDefaultConstantUses() -> void {

@@ -5,7 +5,7 @@ Status: Normative scaffold
 ## 6.1 Program Formation
 
 A program consists of one entry source unit, every source unit reachable
-through valid includes, the implicit prelude, and one selected target. Source
+through valid includes and imports, the implicit prelude, and one selected target. Source
 units are parsed independently and retain their identity through semantic
 analysis.
 

@@ -10,6 +10,14 @@
       "suite": "frontend"
     },
     {
+      "name": "testSourceModuleInterfaces",
+      "suite": "frontend"
+    },
+    {
+      "name": "testSourceModuleResolution",
+      "suite": "frontend"
+    },
+    {
       "name": "testStandardLibraryImports",
       "suite": "frontend"
     },

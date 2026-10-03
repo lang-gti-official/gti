@@ -70,6 +70,7 @@ struct ProjectPackage {
   SourceSpan sourceRootDeclaration;
   ProjectNativeSettings native;
   std::optional<ProjectBuildScript> buildScript;
+  std::vector<std::pair<std::string, std::filesystem::path>> modules;
 };
 
 // A pinned git dependency source as spelled in the manifest: an exact URL
