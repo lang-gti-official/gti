@@ -173,6 +173,38 @@ void applyEntry(const Entry &entry, FormatConfigResult &result) {
     }
     return;
   }
+  if (key == "PackConstructorInitializers") {
+    if (value == "BinPack") {
+      options.packConstructorInitializers =
+          PackConstructorInitializersStyle::BinPack;
+    } else if (value == "Never") {
+      options.packConstructorInitializers =
+          PackConstructorInitializersStyle::Never;
+    } else {
+      issue(result, entry.line,
+            "PackConstructorInitializers currently supports BinPack or Never");
+    }
+    return;
+  }
+  if (key == "BreakConstructorInitializers") {
+    if (value == "BeforeColon") {
+      options.breakConstructorInitializers =
+          BreakConstructorInitializersStyle::BeforeColon;
+    } else if (value == "AfterColon") {
+      options.breakConstructorInitializers =
+          BreakConstructorInitializersStyle::AfterColon;
+    } else {
+      issue(result, entry.line,
+            "BreakConstructorInitializers currently supports BeforeColon or "
+            "AfterColon");
+    }
+    return;
+  }
+  if (key == "ConstructorInitializerIndentWidth") {
+    applyUnsigned(key, value, entry.line, 0, 16,
+                  options.constructorInitializerIndentWidth, result);
+    return;
+  }
   if (key == "BreakBeforeBraces") {
     if (value == "Attach") {
       options.breakBeforeBraces = BraceBreakingStyle::Attach;
@@ -269,6 +301,9 @@ std::string_view defaultFormatConfig() {
 IndentWidth: 2
 UseTab: Never
 BreakBeforeBraces: Attach
+PackConstructorInitializers: BinPack
+BreakConstructorInitializers: BeforeColon
+ConstructorInitializerIndentWidth: 4
 RequiresClausePosition: OwnLine
 SpaceBeforeParens: ControlStatements
 IndentCaseLabels: false

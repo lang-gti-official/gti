@@ -62,6 +62,9 @@ MirOptimizationCoverage optimizationCoverage(MirInstructionKind kind) {
     return barrier("exact body effects; no contextual range transfer");
   case MirInstructionKind::AllocateObject:
     return barrier("allocation, failure and rollback effects");
+  case MirInstructionKind::PrefixAppendPreflight:
+    return barrier(
+        "capacity preflight before prepared-parameter ownership transfer");
   case MirInstructionKind::Count:
     break;
   }

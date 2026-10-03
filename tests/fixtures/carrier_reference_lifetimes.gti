@@ -1,0 +1,82 @@
+#include <std/utility>
+#include <std/string>
+
+class Scope {
+public:
+  Scope() {}
+  ~Scope() { std::println(999); }
+};
+class Cleanup {
+  int divisor;
+public:
+  Cleanup(int value) : divisor(value) {}
+  ~Cleanup() {
+    std::println(90);
+    int checked = 1 / this.divisor; // cleanup failure
+  }
+};
+struct Counter {
+  mut int value;
+  Counter(int initial) : value(initial) {}
+};
+class View {
+  mut Counter& counter;
+public:
+  View(mut Counter& source) : counter(source) {}
+  void advance() mut { this.counter.value += 1; } // checked addition
+  int read() { return this.counter.value; }
+};
+class Holder {
+  mut View stored;
+public:
+  Holder(View value) : stored(std::move(value)) {}
+  mut View& get(int divisor) mut {
+    Cleanup cleanup{divisor};
+    return this.stored;
+  }
+  View& inspect() { return this.stored; }
+};
+mut T& forward<T>(mut T& value) { return value; }
+T& observe<T>(T& value) { return value; }
+
+class Shared {
+  Counter& counter;
+public:
+  Shared(Counter& source) : counter(source) {}
+  int read() { return this.counter.value; }
+};
+int copied(Shared& source) {
+  Shared first = source;
+  Shared second = first;
+  return second.read();
+}
+Shared copied_return(Shared& source, int divisor) {
+  Cleanup cleanup{divisor};
+  Shared result = source;
+  return result;
+}
+int alias_iteration() {
+  mut std::string text{"abc"};
+  mut auto iterator = text.begin();
+  std::detail::storage_iterator<char>& alias = iterator;
+  std::detail::storage_iterator<char>& second = alias;
+  if (*second != 'a') { return 1; }
+  text.push_back('d');
+  return text.size() == 4 ? 0 : 1;
+}
+
+int main() {
+  Scope scope{};
+  Counter shared_owner{6};
+  Shared shared{shared_owner};
+  if (copied_return(shared, 1).read() != 6 ||
+      copied(shared) != 6 || alias_iteration() != 0) { return 2; }
+  mut Counter owner{4}; // initial value
+  mut Holder holder{View(owner)};
+  holder.get(1).advance(); // first accessor
+  mut View& retained = forward(holder.get(1));
+  retained.advance();
+  View& read_only = observe(holder.inspect());
+  std::println(read_only.read());
+  return read_only.read() == 6 ? 0 : 1;
+}

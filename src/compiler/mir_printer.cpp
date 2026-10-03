@@ -263,7 +263,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v82 valid=" << program.valid() << '\n';
+    output << "mir-v84 valid=" << program.valid() << '\n';
     for (const MirNativeCallbackAdapter &adapter :
          program.nativeCallbackAdapters()) {
       output << "native-callback @" << adapter.id
@@ -703,7 +703,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v69\n";
+    output << "mir-body-v71\n";
     body(value, 0);
     return output.str();
   }
@@ -1237,7 +1237,8 @@ private:
   void loan(const MirLoan &value) {
     output << "  loan" << value.id << " kind=" << number(value.kind)
            << " semantic=" << value.semanticLoan << " parent=loan"
-           << value.parent << " source=p" << value.source
+           << value.parent << " stored-dependency=loan"
+           << value.storedDependency << " source=p" << value.source
            << " access=" << number(value.access) << " produced=v"
            << value.producedBy << " carriers=[";
     for (std::size_t index = 0; index < value.carriers.size(); ++index) {
@@ -1482,7 +1483,8 @@ private:
     optional(value.functionTarget);
     output << " constructor=";
     optional(value.constructorTarget);
-    output << " object-allocation=" << value.objectAllocation;
+    output << " object-allocation=" << value.objectAllocation
+           << " prefix-preflight=" << value.prefixPreflight;
     output << " body-target=";
     if (value.bodyTarget) {
       output << number(value.bodyTarget->kind) << ':'

@@ -1,0 +1,61 @@
+#include <std/string>
+#include <std/vector>
+
+mut int stage = 0;
+
+class Marker {
+  int identity;
+public:
+  Marker(int value) : identity(value) {}
+  ~Marker() { std::println(this.identity); }
+};
+
+class Value {
+  Marker tail;
+public:
+  Value() : tail(Marker(110)) { std::println(10); }
+  ~Value() {
+    std::println(20);
+    int divisor = stage == 3 ? 0 : 1;
+    int checked = 3 / divisor;
+  }
+};
+
+expected<Value, int> produce() {
+  std::println(1);
+  if (stage == 2) { return unexpected(7); }
+  return Value();
+}
+
+int before() {
+  std::println(3);
+  int divisor = stage == 5 ? 0 : 1;
+  return 5 / divisor;
+}
+
+int later(int marker) {
+  std::println(marker);
+  int divisor = stage == 1 || stage == 3 ? 0 : 1;
+  return 2 / divisor;
+}
+
+class Envelope {
+  expected<Value, int> item;
+public:
+  Envelope(int first, expected<Value, int> value, int last)
+      : item(std::move(value)) {
+    std::println(4);
+    int divisor = stage == 6 ? 0 : 1;
+    int checked = 6 / divisor;
+  }
+  ~Envelope() { std::println(5); }
+  bool has_value() { return this.item.has_value(); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  Marker caller{90};
+  Envelope result{before(), produce(), stage == 4 ? later(31) : later(30)};
+  std::println(result.has_value() ? 1 : 0);
+  return 0;
+}

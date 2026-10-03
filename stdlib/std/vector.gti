@@ -95,7 +95,7 @@ public:
 }
 
 /// An owning, move-only, contiguous sequence of `T` values.
-class vector<std::movable T> {
+class vector<std::move_constructible T> {
   mut gti_internal::prefix_storage<T> data;
   mut size_t reserved = 0;
 

@@ -1,0 +1,23 @@
+#include <std/optional>
+
+class View {
+  int& source;
+public:
+  View(int& value) : source(value) {}
+};
+
+struct Envelope<std::move_constructible T> {
+  std::optional<T> value;
+  Envelope(T input) : value(std::optional<T>(std::move(input))) {}
+  ~Envelope() {}
+};
+
+Envelope<View> escape() {
+  int source = 7;
+  return Envelope<View>(View(source));
+}
+
+int main() {
+  auto escaped = escape();
+  return 0;
+}

@@ -114,6 +114,38 @@ void testDiagnostics() {
                            return diagnostic.code == "GTI-S2097";
                          }),
          "wrong mapper arity has one owning error rather than cascades");
+  for (const std::string lambda :
+       {"[](bool error) -> int { return 1; }",
+        "[](int& error) -> int { return error; }", "[]() -> int { return 1; }",
+        "[](int first, int second) -> int { return first; }"}) {
+    reject(
+        producer + "int main() { auto map = " + lambda +
+            ";\n"
+            "  /* 😀 */ [[discard]] read().transform_error(map); return 0; }\n",
+        "GTI-S2097", "map", "exact by-value");
+  }
+  reject(producer + "int main() { auto map = [](int error) -> void {};\n"
+                    "  [[discard]] read().transform_error(map); return 0; }\n",
+         "GTI-S2097", "map", "movable owned");
+  const auto movedCapture = analyze(producer + R"(
+struct Owner { ~Owner() {} };
+int main() {
+  Owner owner{};
+  auto result = read().transform_error(
+      [captured = std::move(owner)](int error) -> int { return error; });
+  auto invalid = [again = std::move(owner)]() -> int { return 1; };
+  return result.error() + invalid();
+}
+)");
+  expect(!movedCapture.canGenerateCode() &&
+             std::any_of(movedCapture.diagnostics.begin(),
+                         movedCapture.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.message.find(
+                                      "already been moved") !=
+                                  std::string::npos;
+                         }),
+         "mapper move captures retain ordinary source-availability checks");
 }
 
 void testPipeline() {
@@ -210,6 +242,269 @@ int main() {
   }
   expect(checked == 3 && mutations == 3,
          "scalar, propagated, and void mapper pipelines checked independently");
+}
+
+void testLambdaMappers() {
+  const auto result = analyze(R"(
+enum class Error { bad = 7 };
+expected<int, Error> read(bool fail) {
+  if (fail) { return unexpected(Error::bad); }
+  return 42;
+}
+expected<int, int> mapped(bool fail) {
+  return read(fail).transform_error(([](Error error) -> int { return error == Error::bad ? 7 : 0; }));
+}
+int main() {
+  int offset = 3;
+  auto mapper = [offset](Error error) -> int { return (error == Error::bad ? 7 : 0) + offset; };
+  auto first = read(true).transform_error(mapper);
+  auto second = read(false).transform_error([owned = std::move(offset)](Error error) -> int {
+    return (error == Error::bad ? 7 : 0) + owned;
+  });
+  return first.error() + second.value() - 52;
+}
+)");
+  if (!result.canGenerateCode()) {
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  expect(result.canGenerateCode(),
+         "literal and named capturing lambda mappers lower");
+  if (!result.canGenerateCode())
+    return;
+  expect(lang::verifyMirProgram(result.mir).valid(),
+         "lambda mapper MIR verifies");
+  expect(lang::verifyHirProgramPlans(result.semantics, result.hir).valid(),
+         "eager lambda inputs retain the selected source order");
+  unsigned eagerPlans = 0;
+  for (const auto &function : result.hir.functionInstances()) {
+    for (const auto &value : function.body.values) {
+      if (value.conditionalInputs.empty())
+        continue;
+      ++eagerPlans;
+      for (unsigned mutation = 0; mutation < 5; ++mutation) {
+        auto malformed = result.hir;
+        auto *changed = const_cast<lang::HirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        for (auto &candidate : changed->body.values) {
+          if (candidate.id != value.id)
+            continue;
+          if (mutation == 0)
+            candidate.conditionalInputs.clear();
+          else if (mutation == 1)
+            std::swap(candidate.conditionalInputs[0],
+                      candidate.conditionalInputs[1]);
+          else if (mutation == 2)
+            candidate.conditionalInputs[1] = 999999;
+          else if (mutation == 3)
+            candidate.conditionalInputs[1] = candidate.conditionalInputs[0];
+          else
+            candidate.kind = lang::HirValueKind::Grouping;
+        }
+        expect(
+            !lang::verifyHirProgramPlans(result.semantics, malformed).valid(),
+            "HIR rejects lost, reordered, missing, duplicated or misplaced "
+            "eager inputs");
+      }
+    }
+  }
+  expect(eagerPlans == 3,
+         "all three lambda mappings have verified eager plans");
+  unsigned calls = 0;
+  for (const auto &function : result.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (!instruction.lambdaTarget ||
+            instruction.kind != lang::MirInstructionKind::Call)
+          continue;
+        ++calls;
+        for (unsigned mutation = 0; mutation < 4; ++mutation) {
+          auto malformed = result.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          for (auto &changedBlock : changed->body.blocks)
+            for (auto &candidate : changedBlock.instructions)
+              if (candidate.id == instruction.id) {
+                if (mutation == 0)
+                  candidate.lambdaTarget = 999999;
+                else if (mutation == 1)
+                  candidate.receiver.reset();
+                else if (mutation == 2)
+                  candidate.parameterTypes = {lang::SemanticType::Bool};
+                else
+                  candidate.definedFailure.propagation =
+                      lang::FailurePropagationKind::DirectCall;
+              }
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "lambda mapping rejects forged target, environment and "
+                 "signature or callable failure propagation");
+        }
+      }
+    }
+  }
+  expect(calls == 3, "all three mappers use exact lambda calls");
+  for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    try {
+      expect(!gti_test::emitCppText(result, standard).empty(),
+             "lambda mapping emits through the production MIR backend");
+    } catch (const std::exception &error) {
+      std::cerr << error.what() << '\n';
+      expect(false, "lambda mapper production emission");
+    }
+  }
+}
+
+void testOwnedLambdaEnvironment() {
+  const auto result = analyze(R"(
+class Resource {
+  int value;
+public:
+  Resource(int value) : value(value) {}
+  ~Resource() { std::println(value); }
+  int read() { return value; }
+};
+expected<int, int> read(bool fail) {
+  if (fail) { return unexpected(7); }
+  return 42;
+}
+int main() {
+  auto resource = Resource(8);
+  auto result = read(true).transform_error(
+      [owned = std::move(resource)](int error) -> int {
+        return owned.read() + error;
+      });
+  return result.error() - 15;
+}
+)");
+  expect(result.canGenerateCode(), "owning mapper environment lowers");
+  if (!result.canGenerateCode())
+    return;
+  unsigned closures = 0;
+  unsigned stages = 0;
+  for (const auto &function : result.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        const bool closure =
+            instruction.operation == lang::MirOperation::Closure;
+        const bool stage =
+            instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.info.type.kind == lang::SemanticType::Lambda;
+        if (!closure && !stage)
+          continue;
+        closures += closure;
+        stages += stage;
+        for (unsigned mutation = 0; mutation < 2; ++mutation) {
+          auto malformed = result.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          for (auto &changedBlock : changed->body.blocks)
+            for (auto &candidate : changedBlock.instructions)
+              if (candidate.id == instruction.id) {
+                if (closure) {
+                  if (mutation == 0)
+                    candidate.lifecycle.clear();
+                  else
+                    candidate.operands.clear();
+                } else {
+                  if (mutation == 0)
+                    candidate.callSite = 0;
+                  else
+                    candidate.callInputRole = lang::MirCallInputRole::Argument;
+                }
+              }
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "owned closure rejects erased capture/lifecycle or forged "
+                 "receiver stage");
+          bool rejected = false;
+          try {
+            (void)gti_test::emitCpp(result, result.mir, malformed);
+          } catch (const std::exception &) {
+            rejected = true;
+          }
+          expect(rejected,
+                 "invalid owned closure cannot reach C++ publication");
+        }
+      }
+    }
+  }
+  expect(closures == 1 && stages == 1,
+         "one eager closure and one prepared receiver");
+  try {
+    expect(!gti_test::emitCppText(result).empty(),
+           "owned closure slot emits from MIR");
+  } catch (const std::exception &error) {
+    std::cerr << error.what() << '\n';
+    expect(false, "owned closure slot production emission");
+  }
+}
+
+void testMovedLambdaEnvironment() {
+  const std::string source = R"(
+struct Resource { ~Resource() {} };
+expected<int, int> read() { return unexpected(7); }
+int main() {
+  Resource resource{};
+  auto mapper = [owned = std::move(resource)](int error) -> int {
+    return error;
+  };
+  auto result = read().transform_error(std::move(mapper));
+  return result.error() - 7;
+}
+)";
+  const auto result = analyze(source);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "an explicitly moved owning mapper retains a verified environment");
+  if (!result.canGenerateCode())
+    return;
+  unsigned movedReceivers = 0;
+  for (const auto &function : result.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.info.type.kind == lang::SemanticType::Lambda &&
+            instruction.callInputRole == lang::MirCallInputRole::Receiver) {
+          ++movedReceivers;
+          expect(instruction.callInputKind ==
+                         lang::HirCallInputKind::MoveValue &&
+                     instruction.lifecycle.empty() &&
+                     !instruction.preparedParameterDrop,
+                 "moved receiver staging aliases its full-expression owner "
+                 "without transferring cleanup into the invocation");
+        }
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.lambdaTarget) {
+          expect(instruction.callableInvocation ==
+                     lang::CallableInvocationCapability::Read,
+                 "moving the environment does not select consuming invocation");
+        }
+      }
+    }
+  }
+  expect(movedReceivers == 1, "the mapper has one explicit moved receiver");
+  for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    try {
+      expect(!gti_test::emitCppText(result, standard).empty(),
+             "moved owning mapper emits through the production MIR backend");
+    } catch (const std::exception &error) {
+      std::cerr << error.what() << '\n';
+      expect(false, "moved owning mapper production emission");
+    }
+  }
+  std::string invalid = source;
+  invalid.insert(invalid.find("  return result.error()"),
+                 "  [[discard]] mapper(1);\n");
+  const auto reused = analyze(invalid);
+  expect(!reused.canGenerateCode() &&
+             std::any_of(reused.diagnostics.begin(), reused.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.phase ==
+                                      lang::DiagnosticPhase::Semantics &&
+                                  diagnostic.message.find(
+                                      "already been moved") !=
+                                      std::string::npos;
+                         }),
+         "a moved mapper cannot be reused even though its invocation was "
+         "read-only");
 }
 
 void testOwningPublication() {
@@ -371,6 +666,9 @@ int main() {
 int main() {
   testDiagnostics();
   testPipeline();
+  testLambdaMappers();
+  testOwnedLambdaEnvironment();
+  testMovedLambdaEnvironment();
   testOwningPublication();
   return failures == 0 ? 0 : 1;
 }

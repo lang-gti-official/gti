@@ -1304,7 +1304,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v69\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v71\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -3470,7 +3470,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v82 ") &&
+  expect(mirDump.starts_with("mir-v84 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -7357,7 +7357,11 @@ int main() {
         if (instruction.kind != lang::MirInstructionKind::CallInput ||
             instruction.callInputRole != lang::MirCallInputRole::Argument ||
             instruction.operands.size() != 1 ||
-            instruction.operands.front().kind != lang::MirOperandKind::Loan ||
+            (instruction.operands.front().kind != lang::MirOperandKind::Loan &&
+             instruction.operands.front().kind !=
+                 lang::MirOperandKind::BorrowRead &&
+             instruction.operands.front().kind !=
+                 lang::MirOperandKind::BorrowWrite) ||
             instruction.operands.front().place == 0 || !instruction.ownership) {
           continue;
         }
@@ -7389,6 +7393,11 @@ int main() {
   }
   const lang::MirVerificationResult verification =
       lang::verifyMirProgram(forged);
+  if (substituted && !verification.valid() &&
+      !hasMirVerificationError(verification,
+                               "exact runtime carrier for its loan"))
+    for (const auto &error : verification.errors)
+      std::cerr << "Forged carrier diagnostic: " << error.message << '\n';
   expect(substituted && !verification.valid() &&
              hasMirVerificationError(verification,
                                      "exact runtime carrier for its loan"),
@@ -9415,18 +9424,23 @@ int loop_aliases() {
       iteratorBinding == nullptr ? 0 : iteratorBinding->retainedLoan;
   const lang::SemanticLoanInfo *semanticLoan =
       frontend.semantics.findLoan(sharedLoan);
-  expect(sharedLoan != 0 && aliasBinding != nullptr &&
-             aliasBinding->retainedLoan == sharedLoan &&
+  const lang::SemanticLoanInfo *shellLoan =
+      aliasBinding == nullptr
+          ? nullptr
+          : frontend.semantics.findLoan(aliasBinding->retainedLoan);
+  expect(sharedLoan != 0 && aliasBinding != nullptr && shellLoan != nullptr &&
+             shellLoan->storedDependency == sharedLoan &&
              secondAliasBinding != nullptr &&
-             secondAliasBinding->retainedLoan == sharedLoan &&
+             secondAliasBinding->retainedLoan == shellLoan->id &&
              semanticLoan != nullptr &&
              semanticLoan->access == lang::AccessMode::ReadOnly &&
-             semanticLoan->carriers.size() == 3 &&
+             semanticLoan->carriers.size() == 1 &&
+             shellLoan->carriers.size() == 2 &&
              hasLoanEndpoint(semanticLoan,
                              lang::SemanticLoanEndKind::AfterStatement,
                              lastSequentialUse),
-         "semantic analysis should retain one read-only loan across all "
-         "carriers and select their aggregate final use");
+         "semantic analysis should distinguish the physical aliases from "
+         "their shared external dependency and retain its aggregate final use");
 
   const auto sequentialHir =
       sequential == nullptr
@@ -9476,7 +9490,10 @@ int loop_aliases() {
         if (instruction.kind != lang::MirInstructionKind::Initialize ||
             !instruction.destination || instruction.operands.size() != 1 ||
             instruction.operands.front().kind != lang::MirOperandKind::Loan ||
-            instruction.operands.front().loan != mirLoan->id) {
+            sequentialMir->body.findLoan(instruction.operands.front().loan) ==
+                nullptr ||
+            sequentialMir->body.findLoan(instruction.operands.front().loan)
+                    ->storedDependency != mirLoan->id) {
           continue;
         }
         const lang::MirPlace *destination =
@@ -9514,12 +9531,13 @@ int loop_aliases() {
       }
     }
   }
-  expect(sequentialMir != nullptr && mirLoan != nullptr &&
-             mirLoan->carriers.size() == 3 &&
-             exactReferenceAddressSources == 2 && endsBeforeMutation &&
-             lang::verifyMirBody(sequentialMir->body).valid(),
-         "MIR should retain one shared provenance loan, each alias's exact "
-         "runtime address source, and the endpoint before owner mutation");
+  expect(
+      sequentialMir != nullptr && mirLoan != nullptr &&
+          mirLoan->carriers.size() == 1 && exactReferenceAddressSources == 2 &&
+          endsBeforeMutation &&
+          lang::verifyMirBody(sequentialMir->body).valid(),
+      "MIR should retain an independent shared dependency, each alias's exact "
+      "runtime address source, and the endpoint before owner mutation");
 
   if (sequentialMir != nullptr && mirLoan != nullptr) {
     lang::MirBody missingAddress = sequentialMir->body;
@@ -9530,7 +9548,10 @@ int loop_aliases() {
             instruction.kind == lang::MirInstructionKind::Initialize &&
             instruction.operands.size() == 1 &&
             instruction.operands.front().kind == lang::MirOperandKind::Loan &&
-            instruction.operands.front().loan == mirLoan->id) {
+            missingAddress.findLoan(instruction.operands.front().loan) !=
+                nullptr &&
+            missingAddress.findLoan(instruction.operands.front().loan)
+                    ->storedDependency == mirLoan->id) {
           instruction.operands.front().place = 0;
           mutated = true;
         }
@@ -9580,11 +9601,24 @@ int loop_aliases() {
       "auto iterator = value.begin(); mut "
       "std::detail::storage_iterator<char>& alias = iterator; return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!mutableAlias.canGenerateCode() &&
-             hasDiagnosticCode(mutableAlias.diagnostics, "GTI-S2017") &&
-             hasDiagnostic(mutableAlias.diagnostics, "cannot be upgraded"),
-         "a read-only stored owner dependency should not be upgraded through "
-         "a mutable carrier reference");
+  expect(mutableAlias.canGenerateCode() &&
+             lang::verifyMirProgram(mutableAlias.mir).valid(),
+         "a mutable carrier shell reference is independent of read-only owner "
+         "access");
+  const auto mutableElement = lang::Frontend().analyze(
+      "mutable-carrier-read-only-element.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); mut "
+      "std::detail::storage_iterator<char>& alias = iterator; *alias = 'x'; "
+      "return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !mutableElement.canGenerateCode() &&
+          hasDiagnosticCode(mutableElement.diagnostics, "GTI-S2002") &&
+          hasDiagnostic(mutableElement.diagnostics,
+                        "Dereference assignment requires mutable access"),
+      "mutable carrier access never upgrades the external read-only referent");
 }
 
 void testUniqueOwnershipAndAllocation() {
@@ -16749,7 +16783,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v82 ") &&
+             mirDump.starts_with("mir-v84 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=

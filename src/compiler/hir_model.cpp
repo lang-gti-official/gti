@@ -247,8 +247,44 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     verifyNativeCallbackValues(instance.body);
   }
 
-  const auto verifyFunctionItemValues = [&](const HirBody &body) {
+  const auto verifyCallableValues = [&](const HirBody &body) {
     for (const HirValue &value : body.values) {
+      const auto *sourceCall = exprAs<Call>(value.source);
+      const auto *transform =
+          sourceCall == nullptr
+              ? nullptr
+              : semantics.findExpectedTransformError(*sourceCall);
+      if (!value.conditionalInputs.empty() ||
+          (value.kind == HirValueKind::Conditional && transform != nullptr)) {
+        const auto *member = sourceCall == nullptr
+                                 ? nullptr
+                                 : exprAs<Get>(sourceCall->callee().get());
+        const auto ungroup = [](const Expr *expression) {
+          while (const auto *grouping = exprAs<Grouping>(expression)) {
+            expression = grouping->expression().get();
+          }
+          return expression;
+        };
+        const auto *receiver = value.conditionalInputs.size() == 2
+                                   ? body.findValue(value.conditionalInputs[0])
+                                   : nullptr;
+        const auto *mapper = value.conditionalInputs.size() == 2
+                                 ? body.findValue(value.conditionalInputs[1])
+                                 : nullptr;
+        if (value.kind != HirValueKind::Conditional || transform == nullptr ||
+            member == nullptr || sourceCall->arguments().size() != 1 ||
+            value.operands.size() != 3 || receiver == nullptr ||
+            mapper == nullptr || receiver->id == mapper->id ||
+            receiver->id == value.id || mapper->id == value.id ||
+            receiver->fullExpression != value.fullExpression ||
+            mapper->fullExpression != value.fullExpression ||
+            ungroup(receiver->source) != ungroup(member->object().get()) ||
+            ungroup(mapper->source) !=
+                ungroup(sourceCall->arguments().front().get())) {
+          result.errors.emplace_back("conditional eager inputs differ from the "
+                                     "selected source call order");
+        }
+      }
       if (value.kind != HirValueKind::FunctionItem) {
         continue;
       }
@@ -284,23 +320,23 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       }
     }
   };
-  verifyFunctionItemValues(program.module());
+  verifyCallableValues(program.module());
   for (const HirClassInstance &instance : program.classInstances()) {
-    verifyFunctionItemValues(instance.fieldInitializers);
-    verifyFunctionItemValues(instance.staticFieldInitializers);
+    verifyCallableValues(instance.fieldInitializers);
+    verifyCallableValues(instance.staticFieldInitializers);
   }
   for (const HirFunctionInstance &instance : program.functionInstances()) {
-    verifyFunctionItemValues(instance.body);
+    verifyCallableValues(instance.body);
   }
   for (const HirConstructorInstance &instance :
        program.constructorInstances()) {
-    verifyFunctionItemValues(instance.body);
+    verifyCallableValues(instance.body);
   }
   for (const HirDestructorInstance &instance : program.destructorInstances()) {
-    verifyFunctionItemValues(instance.body);
+    verifyCallableValues(instance.body);
   }
   for (const HirLambda &instance : program.lambdaInstances()) {
-    verifyFunctionItemValues(instance.body);
+    verifyCallableValues(instance.body);
   }
 
   std::vector<std::size_t> threadTaskRoots(program.threadTaskAdapters().size(),
@@ -777,6 +813,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     }
     pendingValues.insert(pendingValues.end(), value->operands.begin(),
                          value->operands.end());
+    pendingValues.insert(pendingValues.end(), value->conditionalInputs.begin(),
+                         value->conditionalInputs.end());
   }
   if (program.module().values.size() != reachableValues.size() ||
       std::any_of(program.module().values.begin(),
@@ -791,6 +829,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   for (const HirValue &parent : program.module().values) {
     for (const HirValueId operand : parent.operands) {
       valueParents[operand].push_back(&parent);
+    }
+    for (const HirValueId input : parent.conditionalInputs) {
+      valueParents[input].push_back(&parent);
     }
   }
   // The source-bearing ArrayInitializer rooting a (possibly nested)
@@ -889,9 +930,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   const auto exactSyntheticCommon = [](const HirValue &value) {
     return value.source == nullptr &&
            value.unsafeOperation == UnsafeOperationKind::None &&
-           value.operands.empty() && value.parameterTypes.empty() &&
-           !value.operation && !value.constant &&
-           !value.programConstantSubstitution &&
+           value.operands.empty() && value.conditionalInputs.empty() &&
+           value.parameterTypes.empty() && !value.operation &&
+           !value.constant && !value.programConstantSubstitution &&
            value.intrinsic == IntrinsicKind::None &&
            value.synchronization == SynchronizationOperation{} &&
            value.definedFailure.empty() &&
@@ -926,7 +967,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         value.info.category != ValueCategory::Value ||
         value.info.access != AccessMode::ReadOnly ||
         value.unsafeOperation != UnsafeOperationKind::None ||
-        !value.parameterTypes.empty() || value.operation || value.constant ||
+        !value.parameterTypes.empty() || !value.conditionalInputs.empty() ||
+        value.operation || value.constant ||
         value.programConstantSubstitution ||
         value.intrinsic != IntrinsicKind::None ||
         value.synchronization != SynchronizationOperation{} ||

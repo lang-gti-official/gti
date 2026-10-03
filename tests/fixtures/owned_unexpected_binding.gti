@@ -1,0 +1,28 @@
+#include <std/string>
+#include <std/vector>
+
+class Error {
+  int value;
+public:
+  Error(int value) : value(value) {}
+  ~Error() { std::println(4); }
+};
+
+Error make(int divisor) {
+  std::println(1);
+  int checked = 12 / divisor;
+  return Error(checked);
+}
+
+expected<int, Error> publish(int factory_divisor, int later_divisor) {
+  expected<int, Error> local = unexpected(make(factory_divisor));
+  std::println(2);
+  int checked = 12 / later_divisor;
+  return std::move(local);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  auto result = publish(argc == 2 ? 0 : 1, argc == 3 ? 0 : 1);
+  std::println(3);
+  return result.has_value() ? 1 : 0;
+}

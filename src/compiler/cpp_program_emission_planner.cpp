@@ -2912,7 +2912,11 @@ public:
     if (declaration.requiresActiveDropState) {
       if (separator)
         output << ", ";
-      output << loweredLifecycleActiveName(declaration.id) << "(true) {\n";
+      // Transfer the representation's lifecycle state, not just its fields.
+      // A private empty-state shell is deliberately disarmed; relocating it
+      // must not manufacture an observable GTI destructor obligation.
+      output << loweredLifecycleActiveName(declaration.id) << "(other."
+             << loweredLifecycleActiveName(declaration.id) << ") {\n";
       ++indentation;
       writeIndent();
       output << "other." << loweredLifecycleActiveName(declaration.id)
@@ -2954,7 +2958,8 @@ public:
     }
     if (declaration.requiresActiveDropState) {
       writeIndent();
-      output << loweredLifecycleActiveName(declaration.id) << " = true;\n";
+      output << loweredLifecycleActiveName(declaration.id) << " = other."
+             << loweredLifecycleActiveName(declaration.id) << ";\n";
       writeIndent();
       output << "other." << loweredLifecycleActiveName(declaration.id)
              << " = false;\n";

@@ -825,6 +825,26 @@ mir_prefix_append_v1(::gti_internal::backend::prefix_storage<T> &storage,
   return mir_failure_success_v1;
 }
 
+template <typename T, typename Constructor>
+inline mir_failure_status_v1 mir_prefix_construct_v1(
+    ::gti_internal::backend::prefix_storage<T> &storage,
+    ::gti_failure_record_v1 *record, Constructor construct) {
+  if (!storage.append_with_constructor(construct)) {
+    return {record->code, record->detail, true};
+  }
+  return mir_failure_success_v1;
+}
+
+template <typename T>
+inline mir_failure_status_v1 mir_prefix_preflight_v1(
+    const ::gti_internal::backend::prefix_storage<T> &storage) {
+  if (storage.length() >= storage.capacity()) {
+    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
+            GTI_FAILURE_DETAIL_RELOCATION_CAPACITY_V1};
+  }
+  return mir_failure_success_v1;
+}
+
 template <typename T>
 inline mir_failure_status_v1
 mir_prefix_pop_v1(::gti_internal::backend::prefix_storage<T> &storage) {

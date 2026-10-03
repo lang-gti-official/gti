@@ -25,7 +25,8 @@ def expect_rejected(
     output: pathlib.Path,
 ) -> bool:
     process = run([str(compiler), str(source), "-O0", "-o", str(output)])
-    if process.returncode == 0 or diagnostic not in process.stderr:
+    if (process.returncode == 0 or diagnostic not in process.stderr or
+            "GTI-B0001" in process.stderr):
         fail(f"reject {source.name}", process)
         return False
     return True
@@ -103,11 +104,25 @@ def main() -> int:
         ):
             return 1
 
+        for fixture_name in ("optional_borrowed_payload_rejected.gti",
+                             "optional_borrowed_escape_rejected.gti"):
+            if not expect_rejected(compiler, fixtures / fixture_name,
+                                   "GTI-S2019", root / fixture_name):
+                return 1
+
+        if not expect_rejected(
+            compiler, fixtures / "optional_borrowed_text_rejected.gti",
+            "GTI-S2045", root / "borrowed-text-rejected",
+        ):
+            return 1
+
         for standard in ("c++20", "c++23"):
             for optimization in ("O0", "O3"):
                 mode = f"{standard}/{optimization}"
                 for fixture_name in ("optional_value.gti", "optional_lifecycle.gti",
-                                     "optional_clone.gti", "optional_nested.gti"):
+                                     "optional_clone.gti", "optional_nested.gti",
+                                     "optional_expected_composition.gti",
+                                     "optional_move_view_local.gti"):
                     executable = root / f"{fixture_name}-{standard}-{optimization}"
                     built = run(
                         [

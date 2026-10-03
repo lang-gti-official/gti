@@ -133,6 +133,7 @@ struct HirLoan {
   SemanticLoanId semanticLoan = 0;
   SemanticLoanKind kind = SemanticLoanKind::Reference;
   SemanticLoanId parent = 0;
+  SemanticLoanId storedDependency = 0;
   SemanticLoanPlace place;
   AccessMode access = AccessMode::ReadOnly;
   std::vector<SymbolId> designatedFields;
@@ -230,6 +231,10 @@ struct HirValue {
   std::optional<HirValueId> receiver;
   std::optional<HirCallPlan> callPlan;
   std::optional<HirExpectedPropagationPlan> expectedPropagation;
+  // Eager call inputs evaluated in source order before a synthesized branch.
+  // Unlike branch operands these retain their full-expression cleanup on both
+  // paths, including when the conditional mapper is never invoked.
+  std::vector<HirValueId> conditionalInputs;
   SymbolId packFoldSymbol = 0;
   GenericParameterId packFoldParameter = 0;
   FunctionId packFoldFunction = 0;

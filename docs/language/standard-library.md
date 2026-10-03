@@ -303,7 +303,12 @@ The current implemented foundation includes:
   vectors; shared pointers retain sharing. See [concepts](concepts.md); and
 - `<std/optional>` source-defined move-only `std::optional<T>` for
   `std::move_constructible T`, including nested optionals whose payloads
-  cannot be assigned. Empty construction performs no allocation; value
+  cannot be assigned. Payloads cannot contain borrowed state and cannot be
+  void, references, or raw pointers. An empty `optional<string_view>` is valid,
+  but storing a by-value text-view parameter is rejected because this storage
+  does not carry its external-owner dependency. This includes literal callers
+  of that parameterized constructor until a static-lifetime contract can
+  distinguish them. Empty construction performs no allocation; value
   construction, `emplace`, `reset`, `clone`, `has_value`, contextual `bool`, checked
   `value`, dereference, arrow, and `value_or` are implemented. A move
   construction transfers an engaged payload and its cleanup obligation.
@@ -710,8 +715,10 @@ borrows prevent mutation, movement, or cleanup while an element reference is
 retained. The factories and classes are ordinary GTI source; only their
 underlying typed-storage operations are compiler-private.
 
-The initial `std::vector<T>` requires movable elements and rejects element
-types that retain borrowed state. It is move-only even when `T` is copyable.
+`std::vector<T>` requires move-constructible elements and rejects element
+types that retain borrowed state. Empty-slot growth and shifting do not require
+element assignment or grant permission to assign an otherwise nonassignable
+element. The vector is move-only even when `T` is copyable.
 `vector(n)` constructs `n` value-initialized elements, matching the familiar
 C++ size-constructor meaning; it is not a reserve-only constructor. `at` and
 `operator[]` are both checked in this initial safe surface.
@@ -723,8 +730,8 @@ elements may be copied and noncopyable movable elements are consumed once.
 This is in-place construction, but it is not C++ perfect forwarding and does
 not preserve every source value category.
 
-`insert(index, value)` and `erase(index)` support movable, including move-only,
-elements. They use checked private slot shifts while the source-defined vector
+`insert(index, value)` and `erase(index)` support move-constructible, including
+move-only, elements. They use checked private slot shifts while the source-defined vector
 retains logical size, capacity growth, and API policy. Invalid indices take the
 defined storage failure path rather than performing unchecked memory access.
 

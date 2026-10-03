@@ -119,6 +119,70 @@ int main() {
 }
 """, 70, ""),
     }
+    construction_only = (pathlib.Path(__file__).parent / "fixtures" /
+                         "construction_only_payload_enum.gti").read_text()
+    construction_prefix = construction_only.split("void exercise()", 1)[0]
+    def fixture_line(fragment):
+        matches = [index for index, line in enumerate(construction_only.splitlines(), 1)
+                   if fragment in line]
+        if len(matches) != 1:
+            raise AssertionError(f"expected one fixture line containing {fragment!r}")
+        return matches[0]
+
+    parameter_line = fixture_line(": item(std::move(value)), checked")
+    fresh_line = fixture_line(": item(Event::message(Payload(identity))), checked")
+    called_line = fixture_line(": item(make_event(identity)), checked")
+    helper_line = fixture_line("int32_t helper_checked = int32_t(1) / helper_divisor;")
+    destructor_line = fixture_line("int32_t checked = int32_t(1) / cleanup_divisor;")
+    exact_stderr = {"construction-only-success": ""}
+    cases["construction-only-success"] = (
+        construction_only, 0, "50\n60\n70\n4\n3\n5\n2\n1\n9\n")
+    for name, statement, output, primary_line in (
+        ("parameter-field-failure",
+         "Envelope<Event> value = Envelope<Event>(Event::message(Payload(1)), 0);",
+         "1\n9\n", parameter_line),
+        ("fresh-field-failure", "FreshEnvelope value = FreshEnvelope(2, 0);",
+         "2\n9\n", fresh_line),
+        ("destructor-failure",
+         "cleanup_divisor = 0; FreshEnvelope value = FreshEnvelope(2, 1);",
+         "60\n2\n9\n", destructor_line),
+        ("secondary-failure",
+         "cleanup_divisor = 0; FreshEnvelope value = FreshEnvelope(2, 0);",
+         "2\n", fresh_line),
+        ("called-field-failure", "CalledEnvelope value = CalledEnvelope(2, 0);",
+         "2\n9\n", called_line),
+        ("called-destructor-failure",
+         "cleanup_divisor = 0; CalledEnvelope value = CalledEnvelope(2, 1);",
+         "70\n2\n9\n", destructor_line),
+        ("called-secondary-failure",
+         "cleanup_divisor = 0; CalledEnvelope value = CalledEnvelope(2, 0);",
+         "2\n", called_line),
+        ("callee-failure",
+         "helper_divisor = 0; CalledEnvelope value = CalledEnvelope(2, 1);",
+         "2\n9\n", helper_line),
+        ("callee-secondary-failure",
+         "helper_divisor = 0; cleanup_divisor = 0; "
+         "CalledEnvelope value = CalledEnvelope(2, 1);",
+         "2\n", helper_line),
+    ):
+        case_name = "construction-only-" + name
+        file_name = case_name + ".gti"
+        if name.endswith("secondary-failure"):
+            exact_stderr[case_name] = (
+                f"{file_name}:{destructor_line}: runtime error[GTI-R0014]: "
+                f"failure_during_cleanup; primary [GTI-R0002] at "
+                f"{file_name}:{primary_line}; secondary [GTI-R0002]\n")
+        else:
+            exact_stderr[case_name] = (
+                f"{file_name}:{primary_line}: runtime error[GTI-R0002]: "
+                "division_by_zero in integer_division\n")
+        cases[case_name] = (construction_prefix + f"""
+int main() {{
+  Guard caller{{}};
+  {statement}
+  return 0;
+}}
+""", 70, output)
     modes = [(standard, optimization, [])
              for standard in ("c++20", "c++23")
              for optimization in ("O0", "O1", "O3")]
@@ -166,6 +230,23 @@ int main() {
                 sys.stderr.write(f"{name}: expected source diagnostic {code}\n" +
                                  rejected.stdout + rejected.stderr)
                 return 1
+        assignment = root / "construction-only-assignment.gti"
+        assignment.write_text(construction_prefix + """
+int main() {
+  Event source = Event::message(Payload(1));
+  mut Event destination = Event::idle;
+  destination = std::move(source);
+  return 0;
+}
+""")
+        rejected = run([str(compiler), str(assignment), "--emit-cpp",
+                        "-o", str(root / "construction-only-assignment.cpp")])
+        if (rejected.returncode == 0 or "GTI-S2003" not in rejected.stderr or
+                "assign" not in rejected.stderr.lower() or
+                "GTI-B000" in rejected.stderr):
+            sys.stderr.write("construction-only enum must remain nonassignable\n" +
+                             rejected.stdout + rejected.stderr)
+            return 1
         for name, (text, expected_exit, expected_output) in cases.items():
             path = root / (name + ".gti")
             path.write_text(text)
@@ -183,7 +264,10 @@ int main() {
                 executed = run([str(binary)])
                 if (executed.returncode != expected_exit or
                         executed.stdout != expected_output or
-                        (expected_exit == 70 and "division_by_zero" not in executed.stderr) or
+                        (name in exact_stderr and
+                         executed.stderr != exact_stderr[name]) or
+                        (name not in exact_stderr and expected_exit == 70 and
+                         "division_by_zero" not in executed.stderr) or
                         "AddressSanitizer" in executed.stderr or
                         "runtime error:" in executed.stderr):
                     sys.stderr.write(f"{name} {standard} {optimization}: "

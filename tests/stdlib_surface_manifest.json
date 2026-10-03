@@ -40,7 +40,7 @@
     "stdlib/std/unordered_map.gti": "dd9a09af61807b6482123f37f4875608c7eb6a5e83129ae7f498586b174e8aa7",
     "stdlib/std/unordered_set.gti": "f99b3591dc87e0fc1bbfa8ee6256403daf07317efa9e466c0dbd38381d314f3f",
     "stdlib/std/utility.gti": "46d9aa9265e8b21693128812d9ccd48f1c464efdf42b77571d1cbefbeeda5086",
-    "stdlib/std/vector.gti": "c4d8d013485cf5a2344da82faef9578830a376dce32e802ec2cfbfec1f8b81d0"
+    "stdlib/std/vector.gti": "5d0b093abbcb3a14ef427d5d4929db090b797b006a4694921db0af7c92aedd31"
   },
   "cases": [
     {
@@ -648,6 +648,13 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "optional-expected-composition",
+      "mode": "run",
+      "source": "tests/fixtures/optional_expected_composition.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "optional-nested",
       "mode": "run",
       "source": "tests/fixtures/optional_nested.gti",
@@ -990,6 +997,13 @@
       "source": "tests/fixtures/stdlib_surface_vector.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "vector-construction-only",
+      "mode": "run",
+      "source": "tests/fixtures/vector_construction_only.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "beta\nalpha\n1\n2\n3\nthree\ntwo\n102\n103\n9\n", "stderr": ""}
     }
   ],
   "entries": [
@@ -1928,9 +1942,9 @@
       "source": "stdlib/std/optional.gti",
       "status": "executable",
       "operations": ["std::optional::clone", "std::optional::emplace", "std::optional::has_value", "std::optional::operator bool", "std::optional::operator*", "std::optional::operator->", "std::optional::optional", "std::optional::reset", "std::optional::value", "std::optional::value_or"],
-      "case_ids": ["optional", "optional-clone", "optional-nested"],
+      "case_ids": ["optional", "optional-clone", "optional-nested", "optional-expected-composition", "vector-construction-only"],
       "required_instantiations": ["std::optional<int32_t>", "std::optional<move_only>", "std::optional<std::optional<std::string>>"],
-      "evidence": ["tests/fixtures/optional_lifecycle.gti", "tests/fixtures/optional_value.gti", "tests/fixtures/optional_clone.gti", "tests/fixtures/optional_nested.gti", "tests/fixtures/optional_constructor_failure.gti", "tests/fixtures/optional_reset_failure.gti", "tests/constructor_field_publication_test.py", "tests/optional_compiler_tests.cpp", "tests/optional_runtime_test.py", "stdlib/std/optional.gti"]
+      "evidence": ["tests/fixtures/optional_lifecycle.gti", "tests/fixtures/optional_value.gti", "tests/fixtures/optional_clone.gti", "tests/fixtures/optional_nested.gti", "tests/fixtures/optional_expected_composition.gti", "tests/fixtures/expected_constructor_payload.gti", "tests/fixtures/optional_constructor_failure.gti", "tests/fixtures/optional_reset_failure.gti", "tests/constructor_field_publication_test.py", "tests/optional_compiler_tests.cpp", "tests/optional_runtime_test.py", "stdlib/std/optional.gti"]
     },
     {
       "id": "paired-span.executable",
@@ -2398,9 +2412,9 @@
         "std::vector::size",
         "std::vector::vector"
       ],
-      "case_ids": ["span", "vector", "utility-clone"],
-      "required_instantiations": ["std::vector<int32_t>", "std::vector<int32_t>(int32_t[3])", "std::vector<std::string>", "nested vector<string>", "user-defined Record"],
-      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_vector.gti", "tests/fixtures/generic_clone.gti", "stdlib/std/vector.gti"]
+      "case_ids": ["span", "vector", "utility-clone", "vector-construction-only", "optional-expected-composition"],
+      "required_instantiations": ["std::vector<int32_t>", "std::vector<int32_t>(int32_t[3])", "std::vector<std::string>", "nested vector<string>", "user-defined Record", "construction-only Message", "std::vector<std::optional<std::string>>"],
+      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_vector.gti", "tests/fixtures/generic_clone.gti", "tests/fixtures/vector_construction_only.gti", "tests/fixtures/vector_construction_only_failure.gti", "tests/vector_construction_only_runtime_test.py", "stdlib/std/vector.gti"]
     },
     {
       "id": "vector.swap",

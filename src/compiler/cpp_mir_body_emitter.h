@@ -414,6 +414,13 @@ cppMirStoredReferenceBindings(const MirConstructorInstance &constructor);
 cppMirConstructorStatusCannotFail(const MirProgram &program,
                                   HirConstructorInstanceId constructor);
 
+// True when an exact field-publication proof still requires in-place body
+// construction after native initializer bindings claim their own values.
+// That remaining schedule has only a status-ABI spelling even if its
+// constructor cannot report failure; no-failure is not a plain-body witness.
+[[nodiscard]] bool cppMirConstructorRequiresFieldPlacement(
+    const MirProgram &program, const MirConstructorInstance &constructor);
+
 // True when this concrete MIR body has no status-producing failure record or
 // routing terminator.  The C++ adapter layer uses this exact proof before
 // exposing an ordinary wrapper for a conservatively may-raise source member.

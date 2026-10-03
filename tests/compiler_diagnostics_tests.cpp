@@ -853,6 +853,77 @@ int main() {
          "receivers, field writes, and indexed writes should each preserve a "
          "required local mut qualifier");
 
+  for (const std::string_view construction :
+       {"mut View view{owner};", "mut View view = View(owner);",
+        "mut View view = (View(owner));"}) {
+    std::string source = R"(
+struct Counter {
+  mut int value;
+  Counter(int initial) : value(initial) {}
+};
+class View {
+  mut Counter& owner;
+public:
+  View(mut Counter& source) : owner(source) {}
+  void advance() mut { this.owner.value += 1; }
+};
+int main() {
+  mut Counter owner{4};
+)";
+    source += construction;
+    source += "\n  view.advance();\n  return 0;\n}\n";
+    const auto requiredConstructorMutation =
+        lang::Frontend().analyze("mutable-constructor-advisory.gti", source);
+    if (!requiredConstructorMutation.canGenerateCode() ||
+        countDiagnosticCode(requiredConstructorMutation.diagnostics,
+                            "GTI-S2096") != 0) {
+      std::cerr << "Constructor advisory spelling: " << construction << '\n';
+      for (const auto &diagnostic : requiredConstructorMutation.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    expect(requiredConstructorMutation.canGenerateCode() &&
+               countDiagnosticCode(requiredConstructorMutation.diagnostics,
+                                   "GTI-S2096") == 0,
+           "a selected mutable-reference constructor parameter must preserve "
+           "the argument owner's required mut qualifier for every construction "
+           "spelling");
+
+    source.erase(source.find("mut Counter owner"), 4);
+    const auto missingConstructorMutation =
+        lang::Frontend().analyze("immutable-constructor-advisory.gti", source);
+    expect(!missingConstructorMutation.canGenerateCode() &&
+               findDiagnosticByCode(missingConstructorMutation.diagnostics,
+                                    "GTI-S2012") != nullptr,
+           "removing the mutable constructor argument's mut must remain "
+           "invalid rather than becoming an advisory fix");
+  }
+
+  const std::string readOnlyConstructorSource = R"(
+class Inspect {
+public:
+  Inspect(int& source) {}
+};
+int main() {
+  mut int owner = 4;
+  Inspect view{owner};
+  return owner;
+}
+)";
+  const auto readOnlyConstructor = lang::Frontend().analyze(
+      "readonly-constructor-advisory.gti", readOnlyConstructorSource);
+  const auto *readOnlyWarning =
+      findDiagnosticByCode(readOnlyConstructor.diagnostics, "GTI-S2096");
+  expect(readOnlyConstructor.canGenerateCode() && readOnlyWarning != nullptr &&
+             countDiagnosticCode(readOnlyConstructor.diagnostics,
+                                 "GTI-S2096") == 1 &&
+             readOnlyWarning->primary.start ==
+                 readOnlyConstructorSource.find("mut int owner") &&
+             readOnlyWarning->fixes.size() == 1 &&
+             readOnlyWarning->fixes.front().replacement.empty() &&
+             readOnlyWarning->fixes.front().preferred,
+         "a read-only constructor argument must retain the safe unnecessary "
+         "mut warning and exact token-removal fix");
+
   const auto payloadBorrow =
       lang::Frontend().analyze("mutable-payload-advisory.gti", R"(
 enum class Data { some(int item), none };

@@ -27,7 +27,9 @@ input, not a second implementation queue.
 
 ## Everyday Program Stabilization
 
-**State:** active, based on reconciled `main` `796772dd`. This campaign closes
+**State:** implementation and combined release validation complete; prepared
+for 0.360.0 delivery. The candidate reconciles canonical `main` through
+`0ff67a4e`. This campaign closes
 ordinary application composition gaps before adding more advanced surface.
 Source diagnostics for invalid programs are part of every row, not a substitute
 for implementing valid programs. Existing compiler-owned ownership, failure,
@@ -35,10 +37,33 @@ and MIR execution rules remain authoritative.
 
 | Priority | State | Client and exit evidence |
 | --- | --- | --- |
-| 1 — construction and replacement | active | Nested owning objects and optional in-place construction, including fallible constructors, preserve ordered initialization, exact first failure and partial cleanup. Reduced Tea-style regressions run through the production backend. |
-| 2 — borrow composition | integrated locally; broader reconciliation pending | Ordinary helpers, lookup and tree traversal compose checked references/views without representation-only rejection; unsafe escape, overlapping mutable access and use-after-move retain precise source errors. |
-| 3 — container/value-wrapper consistency | active | Movement, replacement and explicit cloning work across everyday eligible optional/container/expected combinations, using structural library contracts rather than public-name compiler exceptions. |
-| 4 — owning payload transport | integrated locally; broader reconciliation pending | Concrete generic wrappers and collections can carry owning event/message alternatives through verified construction, movement and exactly-once destruction. Unsupported structural boundaries remain explicit and diagnosed at source. |
+| 1 — construction and replacement | complete; combined validation passed | Nested owning objects and optional in-place construction, including mixed-argument fallible emplacement, preserve ordered initialization, exact first failure and partial cleanup. Reduced Tea-style regressions run through the production backend. |
+| 2 — borrow composition | complete; combined validation passed | Ordinary helpers, lookup and tree traversal compose checked references/views without representation-only rejection; unsafe escape, overlapping mutable access and use-after-move retain precise source errors. |
+| 3 — container/value-wrapper consistency | complete; combined validation passed | Movement, replacement, explicit cloning, emplacement and lambda error mapping work across everyday eligible optional/container/expected combinations, using structural library contracts rather than public-name compiler exceptions. |
+| 4 — owning payload transport | complete; combined validation passed | Concrete generic wrappers and collections can carry owning event/message alternatives through verified construction, movement and exactly-once destruction. Unsupported structural boundaries remain explicit and diagnosed at source. |
+
+The final focused pass covers the mixed constructor's 88 native outcomes,
+64 direct/pack generated-transport outcomes, lambda mapper/compiler/LSP
+matrices, and the constructor mutability advisory. In particular, staged owner
+cleanup cannot replace an earlier capacity failure with a later destructor
+failure. All compiler targets have been rebuilt with host optimization after
+the interrupted session. A broad run exposed a concrete-pack pointer-input
+compatibility regression; it was stopped before reconciling the newly merged
+practical examples. The existing checked conversion predicate is now shared
+by pack lowering and independent MIR verification; the original regression and
+new positive/negative coverage pass. The fresh 377-test combined suite passes
+with no failures or skips in 1617.18 seconds, including both executable corpus
+oracles and the expanded 95-example inventory. All 11 clean staged consumers
+and the staged carrier, lambda-mapper and mixed-emplacement probes pass.
+Formatting and syntax-tooling checks also pass. Local installation and
+canonical Gitea dispatch are the remaining operational delivery steps, not
+unfinished implementation. Neither the interrupted run nor prior installed
+checkpoints substitute for the final evidence recorded in
+[`verification.md`](../architecture/verification.md#combined-03600-release-validation).
+
+The following checkpoint narrative records development history. References to
+pending integration below describe that checkpoint, not additional work beyond
+the current status above.
 
 Each row requires focused positive/negative tests and relevant compiler/LSP
 diagnostic evidence using an optimized compiler. Integrated completion requires
@@ -52,7 +77,8 @@ owners and vector/string growth, without user-defined movement or raw-address
 APIs. Reconciliation must preserve empty-destination preflight, exclusive
 borrows, exactly-once cleanup, conservative relocation traits, and independent
 MIR verification. SIMD and relocation's separately proposed serialization and
-version changes use combined `mir-v82`/`mir-body-v69`; integrated validation
+version changes used combined `mir-v82`/`mir-body-v69`; the accessor follow-up
+advances this to `mir-v83`/`mir-body-v70` for exact stored-dependency edges. Integrated validation
 is in progress, including nonempty SIMD-vector growth and shrinkage. The
 optional consistency audit also reproduced and repaired reset losing caller
 cleanup on a failing payload destructor, using the existing MIR removal
@@ -64,13 +90,240 @@ move and clone under `std::move_constructible`, without granting assignment.
 Finite closed-wrapper traversal no longer loses relocation or leaf concurrency
 facts to the generic-growth guard; exact cycles and uninterrupted generic growth
 remain bounded. Focused compiler checks and the same eight-mode native matrix
-cover these cases. Container/expected combinations remain open clients.
-A further reduced constructor-pack test exposes invalid MIR when an
-owned pack supplies an exact move-constructor argument; repair is in progress.
-The campaign is not complete.
+cover these cases. The vector consistency slice now uses move construction,
+rather than assignment, for empty-slot transport; concrete borrowed-payload
+admission and container/expected integration checks are still in progress.
+Exact generated special-member construction from a concrete owned pack now
+lowers as a verified copy or transfer, preserving caller/parameter cleanup;
+the focused pack matrix and nested optional emplacement checks pass.
+The broader library sweep exposed an immobile-field constructor publication
+regression after conservative failure edges were introduced. The backend now
+proves exact failure-free constructor success chains from MIR while retaining
+all original failure and cleanup metadata. Unrelated user-defined records and
+the eight-mode once/thread runtime matrix pass; the full combined sweep still
+needs to complete.
+Fresh owning constructor arguments now reuse their exact prepared slots when
+publishing a containing field, and destructor-bearing owners can restore
+construction-only fields during rollback. Constructor results also publish
+through owned Expected bindings using the existing success-edge obligation
+and failure-free generated transfer proof. The reduced nested-owner fixture
+preserves its exact success and first-failure cleanup in all eight native
+modes: C++20/C++23 at O0/O1/O3, no-elide, and ASan/UBSan. All 66 focused
+lifecycle-emitter cases also pass, including independent rejection of lost
+constructor target, result ownership, or Expected publication. Broader
+reconciliation remains in progress.
+The subsequent scalar-initializer repair suppresses duplicate metadata-only
+field writes; prefix/postfix increments, compound/plain assignment, and
+overflow rollback pass the eight-mode native matrix. Passive error bindings
+also use uninitialized Expected storage, including loop reuse, a non-default
+constructible inactive success alternative and `void` success. These two
+focused fixtures cover 40 executions. The vector construction-only matrix
+passes 128 executions in the same modes, including sized construction and
+resize with partial-prefix rollback, first/secondary destructor failures and
+cleanup nested inside optional storage. These are focused results, not a
+combined completion claim. Declaration-initializer admission in
+`constructor_nonassignable_fields` and owning Expected temporary-return
+representation retirement are repaired and pass their focused gates.
+Fallible constructors containing owning Expected fields now pass the original
+nested-argument regression and the both-owning-alternative extension. The
+five-fixture owning-error matrix passes 160 executions across all eight native
+modes, including private-empty-state transport and both cleanup failure kinds.
+The separately handed-off constructor-formatter feature is committed at
+`96e21754` in `codex/ctor-initializer-format`, with focused formatter/LSP
+verification. Its patch is reconciled locally with candidate version 0.360.0;
+combined verification remains pending. It has not been published or installed.
+The completion audit additionally found two cross-feature gaps: later arguments
+after an owning Expected constructor input, and fallible field construction of
+an owning enum whose payload cannot be assigned. Expected transport now reuses
+the existing owned-argument CFG/cleanup proof and passes the six-fixture,
+216-outcome native matrix. Construction-only enum fields reuse exact producer
+slots for fresh, moved-parameter, and helper-returned values; the 19-case
+C++23/O0 check and malformed-MIR mutation gate pass. Its expanded 152-outcome
+matrix also passed in the completion sweep. A staged invalid-payload check
+also exposed duplicate publication of class-owned diagnostics during generic
+constructor reanalysis. The narrow repair retains distinct constructor errors,
+source spans and instantiation notes, and passes the compiler and LSP gates.
+The optimized all-target rebuild and all 11 staged external consumers pass.
+The first complete 368-test sweep passed 358 checks. It exposed constructor
+representation inconsistencies for passive move-only mutex payloads, nested
+generic defaults and polymorphic replacement; their focused runtime regressions
+now pass after shared structural repairs. Updated negative emitter checks
+preserve exact initializer ownership, status-only placement, cleanup proofs and
+two-phase borrow ordering. Stale generated-text expectations were replaced with
+actual retirement/publication identity checks. The HTTP test passed separately
+with loopback access, and the declaration census was refreshed after both
+independent corpus checks passed. The supplemental full language audit passed
+with the absent GTI/C++ comparison-fixture phase explicitly skipped.
+The follow-up standard-library sweep now passes after the mutex repair;
+the borrowing-composition LSP gate also passes. The optimized optional compiler
+gate now additionally proves that distinct concrete instances retain separate
+class/constructor diagnostics at shared generic spans. Its LSP counterpart
+preserves every substitution and instantiation site when presentation groups
+identical primary errors, and clears them after correction. The executable
+corpus tests still need the final all-target relink so their completion evidence
+covers the latest constructor-admission hardening.
+Final all-target/full-suite and clean staged validation must be repeated on the
+completed source. Nonempty fallible vector emplacement with primitive scalar
+inputs now retains the checked in-place constructor channel and passes 48
+native outcomes in the eight-mode matrix. The fixture verifies the final
+element address, heterogeneous scalar inputs, evaluation order, partial field
+rollback, prior-prefix/caller cleanup, and first/secondary failure identity.
+Focused structural mutations also pass; the final combined gates are pending.
+The subsequent completion sweep caught a failure-free scalar constructor whose
+HIR arguments were still grouped in a concrete pack during failure-effect
+normalization. Normalization now uses the exact semantic-selected constructor,
+not the pre-flattening argument shape. The reduced `Pair(int, int)` case checks
+`None` propagation and ordinary in-place emission alongside the fallible
+constructor route. The CLI workflow, full emitter preflight, and updated
+48-outcome scalar matrix pass. After the all-target optimized relink, the fresh
+369-test sweep passed in 1416.04 seconds, including the library surface,
+MIR/C++ corpus, verifier, LSP, and native runtime gates. All 11 fresh
+staged-toolchain consumers and the staged scalar emplacement success/failure
+probe also pass against that rebuild. This establishes the existing-candidate
+stabilization checkpoint before the accessor follow-up; it does not complete
+the remaining campaign or replace validation of subsequent changes. The
+interrupted previous sweep is not completion evidence.
+
+The non-scalar in-place input candidate now preserves selected constructor
+parameter roles and retains prepared argument obligations through a distinct
+`PrefixAppendPreflight`. Its unique success continuation transfers them once at
+constructor entry and publishes prefix length only on success. Independent
+verification ties both steps to the same storage, target, call inputs and
+failure control flow; the storage input's extra non-consuming use is confined
+to that pair. Serialization advances to `mir-v84`/`mir-body-v71` and exhaustive
+optimizer coverage treats the check as a conservative trapping barrier.
+Mixed owning/reference/owner-dependent-text/raw-pointer regressions and forged
+pair/cleanup tests are implemented. The first coordinated optimized build is
+in progress; these programs are not considered delivered until their full
+native matrix and combined gates pass. Controlled backend rejection was not
+treated as a completion claim.
+At that earlier checkpoint, the campaign was not complete.
 No custom copy/move constructor bodies,
 module implementation, weakened borrow rules, or unchecked failure paths are
 part of this campaign.
+
+### Receiver-accessor lifetime integration (validated and installed locally)
+
+After the 369-test stabilization checkpoint, implement receiver-tied reference
+returns to objects that themselves retain borrowed dependencies. The motivating
+client is Tea's `client.auth()` accessor, where the contained auth service
+borrows a separate HTTP service. The candidate now represents the returned
+reference to the service shell and its inherited external-owner dependencies
+with separate access authority and loan endpoints. The carrier integration
+passed its full 371-test inventory, followed by the optimizer correctness
+repair and fresh installed checkpoint described below.
+The planning handoff is a proposal to audit against current semantics, not
+permission to remove a rejection without the corresponding lifetime proof.
+Baseline inspection also found that direct local references to an exclusive
+carrier are rejected, while a shared carrier reference is currently attached
+to the external owner loan without protecting its physical shell. A reduced
+program can consequently move or mutate the shell and then use that still-live
+reference without a source error. This is part of the same lifetime repair;
+fixing accessor syntax alone would leave the general rule unsound.
+
+The audited design direction keeps physical containment/reborrowing separate
+from a shell reference's inherited stored dependency. Reuse the existing
+complete stored-owner loan through an explicit checked dependency relation;
+do not widen the homogeneous read-only multi-owner source set into unrelated
+mixed permissions or infer the relation in the backend. The dependency remains
+live for dependent shell references and their descendants. Each access is
+bounded by both shell and inherited permissions, without changing the stored
+loan's original permission. Entry/return provenance, cross-argument aliases,
+normal/failure retirement, and optimizer alias/escape consumers must verify the
+relation. The candidate implements this rule with unrelated user-defined
+carriers and concrete generic instances, positive/negative semantic,
+MIR-verifier, native runtime, and compiler/LSP diagnostic evidence. Preserve
+safety for shell movement,
+replacement, escape, reborrowing, and conflicting external-owner access.
+
+The focused native matrix passes 32 outcomes across C++20/C++23, O0/O1/O3,
+no-elide, and ASan/UBSan. It includes generic accessor forwarding, readonly
+carrier copies, iterator reference aliases, checked mutation overflow, and
+cleanup failure after provisional reference or copied-value return. The LSP passes accessor
+navigation, exact UTF-16 escape diagnostics, invalid-source recovery, and
+diagnostic clearing. Broader ownership testing exposed missing dependency
+propagation for scalar references returned through carrier references; the
+producer now preserves that existing edge. Copied-value return publication
+and its independent verifier proof pass, including actual-source MIR mutations
+that remove required retirement and must fail at the production lowered
+boundary. All 60 ownership compiler cases pass. The first post-integration broad
+run exposed an abstract receiver-entry sibling conflict in existing algorithm
+and associative-iterator operations; that run was interrupted for focused
+repair, not counted as a pass. Exact designated referent chains now distinguish
+the abstract declaration authority from a competing physical borrow, with
+wrong-field/access/dereference and real-sibling negatives. The unrelated
+Cursor/Box/Leaf chain also runs at O3. An audited SSA-producer alias query now
+includes inherited owners. The rebuilt compiler passes all seven focused
+groups, including the complete algorithm and container regressions, and all
+11 fresh staged-toolchain consumers plus four staged accessor cleanup cases.
+The complementary 364-test sweep finished with 356 passes and eight failures:
+three mutex groups and the stdlib surface exposed an abstract guard entry
+incorrectly claiming the caller's release obligation; nested-borrow runtime
+and lifecycle emission exposed a prematurely reconstructed, missing-dereference
+place; the alias text test expected the superseded shared-loan representation.
+The HTTP runtime test separately lacked sandbox permission to bind its local
+test server. These were repaired and revalidated, not waived. Source
+repairs keep capability ownership and exact projection verification strict;
+the representation test now requires physical-reference authority separate
+from the external dependency, including checked reference-to-reference aliases.
+The fresh optimized full inventory passed 371/371 in 1213.74 seconds, including
+the HTTP local-server test with the required permission. All 11 freshly staged
+toolchain consumers and four standalone staged accessor cases also passed.
+An additional audit then reproduced a pre-existing optimizer wrong-code case:
+an exact source call mutating a scalar reference left the caller's old value
+fact available to discharge a required overflow check. The pre-accessor SDK
+reproduces it too. The repair now invalidates exact mutable call-input origins
+and separates proved result facts from opaque effects, while preserving
+independently proved object postconditions and supported storage-loop proofs.
+All seven focused gates passed, including the 42-outcome native regression.
+The fresh optimized full inventory passed 372/372 in 1236.58 seconds; all 11
+restaged external consumers, four staged accessor cases, and all 42 staged
+optimizer cases also passed. The repository installer then passed archive and
+headless Neovim checks and installed 0.360.0 locally. Terminal commands now
+use the same toolchain as Neovim, with hash-verified backups of the original
+terminal executables and a backup of the prior Neovim configuration. The old
+0.359.0 primary-checkout toolchain is unchanged. Standalone installed accessor
+execution passes at C++23/O3, and all four installed accessor cases pass at
+C++20/O0 without build-tree resource overrides.
+The carrier checkpoint does not claim completion of the full stabilization goal.
+
+That standalone check also exposed an advisory follow-up: `GTI-S2096` called
+the carrier fixture's mutable owner unnecessary even though its constructor
+passes that owner to an exact mutable-reference parameter. Selected constructor
+arguments now use the same mutability-use accounting as ordinary calls.
+Compiler tests cover three construction spellings, rejection after removing
+required `mut`, and a read-only control that must still warn. LSP regression
+coverage checks UTF-16 spans and rejects stale fixes after the constructor
+becomes mutable. These changes await the final combined build and validation.
+
+The user's requested order is current stabilization, this accessor capability
+and its validation, then the repository-supported local install and installed
+toolchain smoke tests, followed by any remaining work. That local install is
+complete. The user has now authorized finalizing all remaining work and starting
+a production release; the previous publication hold is lifted. Tea sources are reproduction
+input only: do not edit the application or execute authenticated network calls.
+
+The separate `expected::transform_error` lambda-mapper handoff in Gitea PR 18
+(`12e8cc1635277cc5fd0f71d260aa64d73059ca58`) is reconciled into the candidate,
+but has not yet passed integrated validation. Its eager conditional inputs, closure
+publication, and owned error-parameter cleanup overlap the current HIR/MIR and
+backend changes. Reconciliation must retain source-order evaluation even on the
+success branch, exactly-once capture cleanup on both branches and on failure,
+and the current prepared-input and carrier-lifetime proofs. Audit all HIR value
+traversals for the added conditional-input edges, then rerun its compiler,
+runtime, LSP, independent verifier, and combined gates; the handoff's separate
+branch results are not integrated validation evidence.
+The review reproduced a moved named owning mapper reaching `GTI-B0001`:
+semantic admission is valid, but the synthesized read invocation stages its
+moved receiver as `Value` where the retained-lifetime proof requires
+`MoveValue`. The shared staging contract is corrected without changing read-only
+invocation or full-expression cleanup. The named non-moved control passes
+success/error/later-failure execution, two concrete generic mapper instances
+pass, and receiver failure preserves capture-source cleanup order at O0/O3 in
+the handoff build. These reduced probes are now integrated regressions, along
+with moved-binding reuse rejection, a later successful argument before capture
+cleanup, and malformed eager-input HIR plans. The integrated test run remains
+required before release.
 
 ## Explicit Cloning And Native Bridge Follow-Up
 
@@ -948,6 +1201,20 @@ analysis, HIR, MIR, and the backend.
   [`place-and-ownership-state.md`](place-and-ownership-state.md#9-proposed-m-own-04-named-expected-payload-range-slice).
 
 ### M-FAIL-01: Failure Operations And Cleanup Edges
+
+- **In-place storage construction:** the everyday stabilization candidate now
+  carries the selected zero-argument or staged scalar/owning/reference/text/raw
+  prefix-append constructor's failure
+  channel and effects. Capacity preflight precedes construction at the final
+  slot; only success extends the initialized prefix. Failure preserves the
+  constructor's original record and rolls back completed fields, earlier
+  elements and caller owners. The retained client is an unrelated owner with
+  optional string storage and a failing default constructor, used by both
+  sized vector construction and resize. Combined validation is still in
+  progress. Mixed inputs retain exact selected parameter roles and capacity
+  preflight before ownership transfer. Insert and sparse storage construction
+  retain their separate general propagation gaps; prefix-append support does
+  not claim those families are complete.
 
 - **Toy-engine field initialization (Gitea #2):** concrete source constructors
   for owners without a generated-default route now select declaration defaults

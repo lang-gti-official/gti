@@ -1418,7 +1418,7 @@ private:
                           *model, classArguments, classValueArguments, body);
     }
     finalizeLifetimes(body, *model, true);
-    lowerLoans(*model, body);
+    lowerLoans(*model, body, declaration->declaration);
     std::vector<HirCallableParameter> callableParameters;
     callableParameters.reserve(declaration->callableParameters.size());
     for (const CallableParameterContract &parameter :
@@ -1726,8 +1726,12 @@ private:
     if (!classArguments.empty() || !classValueArguments.empty()) {
       fieldAnalysis = instanceProvider->analyzeClassFieldInitializers(
           owner.declaration, classArguments, classValueArguments);
-      appendInstanceDiagnostics(std::move(fieldAnalysis.diagnostics),
-                                owner.instantiationSite);
+      // processPendingInstances completes this owner through processClass
+      // before any constructor. That class-owned pass already publishes these
+      // substitution diagnostics. Reanalysis supplies constructor-local field
+      // expression identities only; publishing again would repeat the same
+      // class error for every constructor. Constructor-body diagnostics remain
+      // owned by ensureConstructorAnalysis above.
       fieldModel = &fieldAnalysis.model;
     }
     for (const HirClassField &field : owner.fields) {
@@ -1926,7 +1930,8 @@ private:
     return event;
   }
 
-  void lowerLoans(const SemanticModel &model, HirBody &body) {
+  void lowerLoans(const SemanticModel &model, HirBody &body,
+                  const FunctionDecl *function = nullptr) {
     ensurePlaceDomain(body);
     body.loans.clear();
     std::unordered_map<SymbolId, HirBindingId> bindings;
@@ -1935,10 +1940,33 @@ private:
         bindings.insert_or_assign(binding.info.symbol, binding.id);
       }
     }
+    std::unordered_set<SemanticLoanId> included;
+    std::vector<SemanticLoanId> pending;
     for (const SemanticLoanInfo &loan : model.loans()) {
+      if ((function != nullptr && loan.entryFunction == function) ||
+          std::any_of(
+              loan.carriers.begin(), loan.carriers.end(),
+              [&](SymbolId carrier) { return bindings.contains(carrier); }))
+        pending.push_back(loan.id);
+    }
+    while (!pending.empty()) {
+      const SemanticLoanId id = pending.back();
+      pending.pop_back();
+      const auto *loan = model.findLoan(id);
+      if (loan == nullptr || !included.insert(id).second)
+        continue;
+      if (loan->parent != 0)
+        pending.push_back(loan->parent);
+      if (loan->storedDependency != 0)
+        pending.push_back(loan->storedDependency);
+    }
+    for (const SemanticLoanInfo &loan : model.loans()) {
+      if (!included.contains(loan.id))
+        continue;
       HirLoan lowered{.semanticLoan = loan.id,
                       .kind = loan.kind,
                       .parent = loan.parent,
+                      .storedDependency = loan.storedDependency,
                       .place = qualifyPlace(loan.place, body.placeDomain),
                       .access = loan.access,
                       .designatedFields = loan.designatedFields,
@@ -1956,9 +1984,7 @@ private:
           lowered.carriers.push_back(found->second);
         }
       }
-      if (!lowered.carriers.empty()) {
-        body.loans.push_back(std::move(lowered));
-      }
+      body.loans.push_back(std::move(lowered));
     }
   }
 
@@ -2106,6 +2132,9 @@ private:
     found->fullExpression = fullExpression;
     for (const HirValueId operand : found->operands) {
       assignFullExpression(body, operand, fullExpression, visited);
+    }
+    for (const HirValueId input : found->conditionalInputs) {
+      assignFullExpression(body, input, fullExpression, visited);
     }
     if (found->receiver) {
       assignFullExpression(body, *found->receiver, fullExpression, visited);
@@ -2259,6 +2288,14 @@ private:
     std::unordered_set<HirValueId> temporaryBorrowValues;
     std::unordered_set<HirValueId> borrowedMoveValues;
     for (const HirValue &call : body.values) {
+      // An eagerly retained closure needs its own full-expression identity,
+      // even when its class captures have only generated passive cleanup.
+      for (const HirValueId input : call.conditionalInputs) {
+        const HirValue *eager = body.findValue(input);
+        if (eager != nullptr && eager->kind == HirValueKind::Lambda &&
+            eager->info.traits.drop == DropKind::Lexical)
+          temporaryBorrowValues.insert(input);
+      }
       if (!call.callPlan) {
         continue;
       }
@@ -2305,18 +2342,19 @@ private:
   orderedLoanEnds(std::vector<SemanticLoanId> loans,
                   const SemanticModel &model) {
     const auto depth = [&](SemanticLoanId id) {
-      std::size_t result = 0;
-      std::vector<SemanticLoanId> visited;
-      while (id != 0 &&
-             std::find(visited.begin(), visited.end(), id) == visited.end()) {
-        visited.push_back(id);
-        const SemanticLoanInfo *loan = model.findLoan(id);
-        id = loan == nullptr ? 0 : loan->parent;
-        if (id != 0) {
-          ++result;
+      std::unordered_set<SemanticLoanId> visiting;
+      const auto visit = [&](const auto &self,
+                             SemanticLoanId current) -> std::size_t {
+        const SemanticLoanInfo *loan = model.findLoan(current);
+        if (loan == nullptr || !visiting.insert(current).second) {
+          return 0;
         }
-      }
-      return result;
+        const auto result = 1 + std::max(self(self, loan->parent),
+                                         self(self, loan->storedDependency));
+        visiting.erase(current);
+        return result;
+      };
+      return visit(visit, id);
     };
     std::stable_sort(loans.begin(), loans.end(),
                      [&](SemanticLoanId left, SemanticLoanId right) {
@@ -3111,6 +3149,12 @@ private:
                  : HirCallInputKind::ReadBorrow;
     } else if (!temporaryReceiver && receiverMode != CallReceiverMode::Value) {
       return std::nullopt;
+    } else if (!temporaryReceiver && input->kind == HirValueKind::Move &&
+               input->info.type.kind == SemanticType::Lambda) {
+      // Moving an environment and invoking it are distinct operations. Even a
+      // read-only invocation must stage the explicitly moved owner as such;
+      // its full-expression obligation, not the call, retains capture cleanup.
+      kind = HirCallInputKind::MoveValue;
     }
 
     return HirCallReceiver{
@@ -3620,25 +3664,35 @@ private:
         transform.sourceType.arguments.size() != 2 ||
         transform.resultType.kind != SemanticType::Expected ||
         transform.resultType.arguments.size() != 2 ||
-        transform.resultType != resultInfo->type || transform.mapper == 0) {
+        transform.resultType != resultInfo->type ||
+        ((transform.mapper == 0) == (transform.lambda == 0))) {
       lifecycleValid = false;
       return std::nullopt;
     }
 
     const std::optional<HirValueId> operand = lowerExpression(
         member->object(), model, classArguments, classValueArguments, body);
-    const std::optional<HirValueId> mapper =
+    std::optional<HirValueId> mapper =
         lowerExpression(expression.arguments().front(), model, classArguments,
                         classValueArguments, body);
     const HirValue *operandValue = operand ? body.findValue(*operand) : nullptr;
     const HirValue *mapperValue = mapper ? body.findValue(*mapper) : nullptr;
+    // Grouping does not create another closure environment. Preserve the
+    // exact producer as ordinary concrete-lambda calls do.
+    while (mapperValue != nullptr &&
+           mapperValue->kind == HirValueKind::Grouping &&
+           mapperValue->operands.size() == 1) {
+      mapper = mapperValue->operands.front();
+      mapperValue = body.findValue(*mapper);
+    }
     if (!operand || !mapper || operandValue == nullptr ||
         mapperValue == nullptr ||
         operandValue->info.type != transform.sourceType ||
         operandValue->info.category != ValueCategory::Value ||
         mapperValue->info.type != transform.mapperType ||
-        mapperValue->kind != HirValueKind::FunctionItem ||
-        !mapperValue->functionTarget) {
+        (transform.mapper != 0 &&
+         (mapperValue->kind != HirValueKind::FunctionItem ||
+          !mapperValue->functionTarget))) {
       lifecycleValid = false;
       return std::nullopt;
     }
@@ -3649,6 +3703,25 @@ private:
     // Appending synthetic values can reallocate body.values. Retain the
     // selected instance identity, never a pointer into that growing vector.
     const auto mapperTarget = mapperValue->functionTarget;
+    std::optional<HirLambdaId> mapperLambda;
+    if (transform.lambda != 0) {
+      if (const auto target = lambdaTargets.find(transform.lambda);
+          target != lambdaTargets.end()) {
+        mapperLambda = target->second;
+      } else {
+        const auto existing = std::find_if(
+            output.program.lambdas.begin(), output.program.lambdas.end(),
+            [&](const HirLambda &candidate) {
+              return lambdaMatchesType(candidate, transform.mapperType);
+            });
+        if (existing != output.program.lambdas.end())
+          mapperLambda = existing->id;
+      }
+      if (!mapperLambda) {
+        lifecycleValid = false;
+        return std::nullopt;
+      }
+    }
     const auto appendExtraction = [&](IntrinsicKind intrinsic,
                                       const SemanticType &type) {
       const HirValueId id = nextValueId++;
@@ -3722,6 +3795,7 @@ private:
         .operands = {*mapper, errorValue},
         .parameterTypes = {errorType},
         .functionTarget = mapperTarget,
+        .lambdaTarget = mapperLambda,
     };
     const std::optional<std::vector<HirCallArgument>> mapperArguments =
         orderedArguments({errorValue}, {errorType}, body, 1);
@@ -3731,6 +3805,12 @@ private:
     }
     mapperCall.callPlan =
         HirCallPlan{.receiver = std::nullopt, .arguments = *mapperArguments};
+    if (mapperLambda) {
+      mapperCall.receiver = *mapper;
+      mapperCall.callableInvocation = CallableInvocationCapability::Read;
+      mapperCall.callPlan->receiver = orderedReceiver(
+          *mapper, ReceiverMutability::ReadOnly, CallReceiverMode::Value, body);
+    }
     if (const DefinedFailureOperation *failure =
             model.findDefinedFailure(expression)) {
       mapperCall.definedFailure = *failure;
@@ -3753,7 +3833,8 @@ private:
                            .kind = HirValueKind::Conditional,
                            .source = &expression,
                            .info = *resultInfo,
-                           .operands = {hasValue, successArm, unexpected}});
+                           .operands = {hasValue, successArm, unexpected},
+                           .conditionalInputs = {*operand, *mapper}});
     output.program.sourceValueIds[&expression].push_back(id);
     return id;
   }
@@ -4934,6 +5015,32 @@ private:
           value.callPlan =
               HirCallPlan{.receiver = receiverPlan, .arguments = *planned};
         }
+      }
+    }
+    if (value.intrinsic == IntrinsicKind::PrefixStorageAppend &&
+        ((value.constructorTarget &&
+          value.constructorKind == ConstructorKind::Ordinary) ||
+         (!value.constructorTarget &&
+          (value.constructorKind == ConstructorKind::Copy ||
+           value.constructorKind == ConstructorKind::Move))) &&
+        !value.parameterTypes.empty() &&
+        value.operands.size() >= value.parameterTypes.size()) {
+      // Intrinsics need not retain a callable-expression operand. Select the
+      // exact signature-sized argument suffix, including storage-only calls.
+      // Generated copy/move transport needs the same staged ownership as a
+      // concrete pack: a native temporary must not own failure cleanup.
+      const std::vector<HirValueId> arguments(
+          value.operands.end() -
+              static_cast<std::ptrdiff_t>(value.parameterTypes.size()),
+          value.operands.end());
+      std::vector<SemanticType> roles = value.parameterTypes;
+      roles.front() =
+          SemanticType::referenceTo(roles.front(), AccessMode::Mutable);
+      if (auto planned = orderedArguments(arguments, roles, body)) {
+        // Storage is a capability-place input, not a source reference formal.
+        planned->front().parameterType = value.parameterTypes.front();
+        value.callPlan = HirCallPlan{.receiver = std::nullopt,
+                                     .arguments = std::move(*planned)};
       }
     }
     if (model.findConstruction(*raw) != nullptr && value.constructorTarget &&

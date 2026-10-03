@@ -308,6 +308,49 @@ or virtual calls, owning-argument transfers, synchronization, raw/unsafe
 memory, unsupported cleanup, open call families, and conflicting facts remain
 conservative.
 
+At a complete closed-call boundary, a scalar or object result summary is not
+proof that other caller storage was unchanged. Mutable reference/pointer
+inputs and mutable or consuming receivers invalidate their protected origins
+before independently proved object postconditions are republished. One bounded
+source walk follows staged `CallInput`, `Load`, and identity values and reuses
+the MIR loan's physical source and stored-owner dependencies. Missing,
+unsupported, or cyclic identity fails closed. Invalidation expands aliasing
+once from the actual origins; a `may-alias` relation is not transitive.
+A verified reference's pointer representation is not an additional unknown
+origin: its loan supplies the protected sources. A reference to a borrowed-state
+object still retains both the physical object and its external owner dependency.
+Calls with place writes also invalidate represented global-symbol facts,
+because current effect summaries do not enumerate written globals. Recurrence
+proofs likewise treat possible global writes and synchronization as barriers.
+The existing closed-body admission remains authoritative: supported private
+storage and numeric-conversion effects are interpreted by that analysis, not
+mistaken for opaque calls solely from their coarse effect traits. Native,
+unknown, unsafe, and unsupported call boundaries retain their conservative
+behavior. None of this transports a new scalar-reference postcondition or
+adds a second effects model.
+
+An unhandled call or an unknown-effect compute, drop, or other instruction
+both clears mutable-memory facts and marks that abstract execution path as
+opaque. This marker is retained at control-flow joins; any successful exit
+carrying it prevents an effect-closed summary or recurrence proof. A separately
+proved return value may still be transported, but is never evidence that caller
+memory was unchanged. Caller invalidation still uses the authoritative exact
+invocation effects; opacity is not a separate source of write authority.
+Returning a constant after the barrier does not restore
+effect closure. Cleanup confined to a terminating failure path does not taint
+the distinct normal-return summary. Explicit atomic synchronization and runtime
+intrinsics whose effects lack a supported transfer rule have separate negative fixtures;
+an interpreted private-storage read is not evidence that other runtime calls
+are safe to cross.
+Current authoritative effects classify some native-only owning cleanup as
+opaque, including a cleanup with no source destructor target. A caller cannot
+retain earlier mutable object facts across that boundary merely because the
+callee's scalar return is known. The record-envelope controls cover this
+conservative case separately from an exact chain whose object is constructed
+after the barrier. Refining native cleanup effects requires its own structural
+proof in `mir_effects`; the safety analysis does not infer one from a library
+name or emitted deallocation code.
+
 Discharged checked `+=`, `-=`, and `*=` may emit the equivalent native C++
 compound operator. Remainder and shifts remain on GTI-owned helpers even after
 a local failure is discharged because native C++ does not represent every GTI

@@ -352,7 +352,7 @@ def main() -> int:
     parser.add_argument("compiler", type=pathlib.Path)
     parser.add_argument("--mode", action="append", choices=[mode[0] for mode in modes],
                         help="Run selected modes during focused iteration; default: all.")
-    parser.add_argument("--fixture", action="append", choices=("basic", "owned"),
+    parser.add_argument("--fixture", action="append", choices=("basic", "owned", "lambda", "lambda-owned", "lambda-moved"),
                         help="Run selected fixtures during focused iteration; default: all.")
     arguments = parser.parse_args()
     compiler = arguments.compiler.resolve()
@@ -395,6 +395,56 @@ def main() -> int:
                 ("owned", OWNED_SOURCE,
                  [(tuple(["case"] * index), expected)
                   for index, expected in enumerate(owned_cases)])]
+    lambda_source = (pathlib.Path(__file__).parent / "fixtures" /
+                     "expected_lambda_mapper.gti").read_text()
+    failure_line = next(i + 1 for i, line in enumerate(lambda_source.splitlines())
+                        if "1 / (argc == 6" in line)
+    cleanup_line = next(i + 1 for i, line in enumerate(lambda_source.splitlines())
+                        if "1 / (identity - 81)" in line)
+    later_line = next(i + 1 for i, line in enumerate(lambda_source.splitlines())
+                     if "1 / (argc - 7)" in line)
+    def lambda_secondary(primary):
+        return (f"transform-error-lambda.gti:{cleanup_line}: runtime error[GTI-R0014]: "
+                "failure_during_cleanup; primary [GTI-R0002] at "
+                f"transform-error-lambda.gti:{primary}; secondary [GTI-R0002]\n")
+    fixtures.append(("lambda", lambda_source, [
+        ((), (0, "1\n80\n3\n99\n", "")),
+        (("error",), (0, "1\n2\n80\n3\n99\n", "")),
+        (("error", "fail"), (70, "1\n2\n80\n99\n",
+            f"transform-error-lambda.gti:{failure_line}: runtime error[GTI-R0002]: "
+            "division_by_zero in integer_division\n")),
+        (("named", "generic", "void"), (0, "1\n1\n1\n3\n80\n99\n", "")),
+        (("success", "capture", "cleanup", "failure"), (70, "1\n81\n99\n",
+            f"transform-error-lambda.gti:{cleanup_line}: runtime error[GTI-R0002]: "
+            "division_by_zero in integer_division\n")),
+        (tuple(["mapper-secondary"] * 5), (70, "1\n2\n81\n", lambda_secondary(failure_line))),
+        (tuple(["later-secondary"] * 6), (70, "1\n81\n", lambda_secondary(later_line))),
+    ]))
+    lambda_owned = OWNED_SOURCE.replace(
+        ".transform_error(map_owned)",
+        ".transform_error([](SourceError error) -> AppError { return map_owned(std::move(error)); })")
+    fixtures.append(("lambda-owned", lambda_owned, [
+        (tuple(["case"] * index), (status, stdout,
+            stderr.replace("transform-error-owned.gti", "transform-error-lambda-owned.gti")))
+        for index, (status, stdout, stderr) in enumerate(owned_cases)
+    ]))
+    moved_source = (pathlib.Path(__file__).parent / "fixtures" /
+                    "expected_moved_lambda_mapper.gti").read_text()
+    def moved_failure(function):
+        lines = moved_source.splitlines()
+        start = next(i for i, line in enumerate(lines) if function in line)
+        line = next(i + 1 for i in range(start, len(lines))
+                    if "return 1 / divisor;" in lines[i])
+        return (f"transform-error-lambda-moved.gti:{line}: runtime error[GTI-R0002]: "
+                "division_by_zero in integer_division\n")
+    fixtures.append(("lambda-moved", moved_source, [
+        ((), (0, "1\n80\n3\n99\n", "")),
+        (("error",), (0, "1\n2\n80\n3\n99\n", "")),
+        (("later", "failure"), (70, "1\n2\n4\n80\n99\n", moved_failure("int later("))),
+        (("later", "success", "cleanup"), (0, "1\n2\n4\n5\n80\n3\n99\n", "")),
+        (("receiver", "failure", "before", "capture"),
+         (70, "1\n81\n80\n99\n", moved_failure("expected<int, int> receiver_failure("))),
+    ]))
     if arguments.fixture:
         fixtures = [fixture for fixture in fixtures if fixture[0] in arguments.fixture]
     with tempfile.TemporaryDirectory(prefix="gti-expected-transform-error-") as temp:

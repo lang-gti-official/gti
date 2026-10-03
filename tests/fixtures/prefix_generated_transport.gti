@@ -1,0 +1,31 @@
+#include <std/string>
+#include <std/vector>
+#include "prefix_constructor_test.gti"
+
+mut bool fail_cleanup = false;
+
+struct Token {
+  std::string text;
+  Token() : text(std::string("resource")) {}
+  ~Token() {
+    std::println(89);
+    int divisor = fail_cleanup ? 0 : 1;
+    int checked = 1 / divisor; // token cleanup
+  }
+};
+struct Guard {
+  ~Guard() { std::println(900); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard caller{};
+  int scenario = argc - 1;
+  fail_cleanup = scenario >= 4;
+  uint64_t capacity = scenario % 4 >= 2 ? uint64_t(1) : uint64_t(0);
+  if (scenario % 2 == 0) {
+    append_same_type<Token>(Token(), capacity);
+  } else {
+    append_same_type_pack<Token>(capacity, Token());
+  }
+  return 0;
+}

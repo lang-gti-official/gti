@@ -3,6 +3,18 @@
 
 namespace {
 
+template <typename Body>
+auto *findPreflightInstruction(Body &body, lang::MirInstructionId id) {
+  for (auto &block : body.blocks) {
+    for (auto &instruction : block.instructions) {
+      if (instruction.id == id)
+        return &instruction;
+    }
+  }
+  return static_cast<decltype(&body.blocks.front().instructions.front())>(
+      nullptr);
+}
+
 void testDischargedCompoundOperatorVocabulary() {
   expect(
       lang::cppMirCompoundOperatorSpelling(lang::MirOperation::AddAssign) ==
@@ -549,8 +561,137 @@ int main() {
   }
 }
 
+void testConstructionOnlyPayloadEnumFieldAdmission() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/construction_only_payload_enum.gti";
+  std::ifstream input(path);
+  expect(input.good(), "construction-only enum fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(),
+         "construction-only enum fields must pass semantic and MIR checks");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.analyzeProgram().ready(),
+         "fallible owners of construction-only enums need a complete backend "
+         "representation, not an assignment capability");
+  bool foundFresh = false;
+  bool foundMove = false;
+  bool foundCall = false;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    for (const auto &block : constructor.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        const auto *field =
+            instruction.destination
+                ? constructor.body.findPlace(*instruction.destination)
+                : nullptr;
+        const auto *enumeration =
+            field && field->type.kind == lang::SemanticType::Enum
+                ? frontend.mir.findPayloadEnum(field->type.enumId)
+                : nullptr;
+        if (instruction.kind != lang::MirInstructionKind::Initialize ||
+            !field || field->root != lang::MirPlaceRootKind::This ||
+            !enumeration || !enumeration->requiresActiveCleanup ||
+            !enumeration->traits.movable ||
+            enumeration->traits.moveAssignable ||
+            instruction.lifecycle.size() != 1 ||
+            instruction.lifecycle.front().kind !=
+                lang::MirLifecycleEventKind::Reparent)
+          continue;
+        const auto *value =
+            constructor.body.findValue(instruction.operands.front().value);
+        const auto *producer =
+            value
+                ? findPreflightInstruction(constructor.body, value->definition)
+                : nullptr;
+        const bool moved = producer != nullptr &&
+                           producer->kind == lang::MirInstructionKind::Move;
+        const bool called = producer != nullptr &&
+                            producer->kind == lang::MirInstructionKind::Call;
+        foundMove = foundMove || moved;
+        foundCall = foundCall || called;
+        foundFresh = foundFresh || (producer != nullptr &&
+                                    producer->operation ==
+                                        lang::MirOperation::PayloadConstruct);
+        const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
+                                           constructor.id};
+        expect(emitter.supportsFailureBodyText(address),
+               "construction-only enum publication must retain its failure "
+               "and rollback schedule");
+        if (emitter.supportsFailureBodyText(address)) {
+          const auto text =
+              emitter.emitFailureBodyText(address, "construction-only-enum", 1);
+          const auto fieldSpelling = "__gti_mir_p_" + std::to_string(field->id);
+          const auto *sourceDrop = constructor.body.findDropObligation(
+              instruction.lifecycle.front().source);
+          const auto sourceSpelling =
+              "__gti_mir_p_" + std::to_string(sourceDrop->place);
+          const auto retirement = text.text.find(
+              "std::destroy_at(std::addressof(" + fieldSpelling + "));");
+          const auto publication = text.text.find(
+              "std::construct_at(std::addressof(" + fieldSpelling +
+              "), std::move(" + sourceSpelling + ".get()));");
+          const auto sourceRetirement = text.text.find(
+              sourceSpelling + ".destroy(); // end transferred "
+                               "payload-enum field representation");
+          expect(
+              text.emitted() && retirement != std::string::npos &&
+                  publication != std::string::npos &&
+                  retirement < publication &&
+                  sourceRetirement != std::string::npos &&
+                  publication < sourceRetirement,
+              "publication must replace the private empty enum shell by "
+              "construction and retire its transferred source representation");
+        }
+        for (int mutation = 0; mutation != (called ? 6 : 3); ++mutation) {
+          auto malformed = frontend.mir;
+          auto *body = lang::findMirBody(malformed, address);
+          auto *publication = findPreflightInstruction(*body, instruction.id);
+          if (mutation == 0)
+            publication->lifecycle.front().target = 0;
+          else if (mutation == 1)
+            body->dropObligations[publication->lifecycle.front().target - 1]
+                .initiallyActive = true;
+          else if (mutation == 2 && !called)
+            findPreflightInstruction(*body, producer->id)->lifecycle.clear();
+          else if (mutation == 3)
+            findPreflightInstruction(*body, producer->id)->successResultDrop =
+                publication->lifecycle.front().target;
+          else if (mutation == 5)
+            findPreflightInstruction(*body, producer->id)->functionTarget = 0;
+          else {
+            for (auto &producerBlock : body->blocks) {
+              if (producerBlock.terminator.kind !=
+                      lang::MirTerminatorKind::Invoke ||
+                  producerBlock.terminator.invokeInstruction != producer->id)
+                continue;
+              if (mutation == 2)
+                producerBlock.terminator.successLifecycle.clear();
+              else
+                producerBlock.terminator.successLifecycle.front().target =
+                    publication->lifecycle.front().target;
+            }
+          }
+          expect(!lang::verifyMirProgram(malformed).valid() &&
+                     !lang::CppMirBodyEmitter(malformed, map)
+                          .supportsFailureBodyText(address),
+                 "construction-only enum publication must reject a lost "
+                 "reparent, prematurely active field, erased/forged success "
+                 "activation or unavailable source target");
+        }
+      }
+    }
+  }
+  expect(foundFresh && foundMove && foundCall,
+         "fixture must exercise constructed, moved and helper-returned "
+         "nonassignable enum field publications");
+}
+
 void testOwningPayloadEnumTransportAdmissionFailsClosed() {
   testOwningPayloadEnumFieldContainmentAdmission();
+  testConstructionOnlyPayloadEnumFieldAdmission();
 
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("owning-payload-transport-preflight.gti", R"(
@@ -2414,6 +2555,662 @@ int main() {
          "without a dead failure-status carrier");
 }
 
+void testDefaultPrefixConstructorStatusAdmission() {
+  const auto source = [](std::string_view body) {
+    return std::string(R"(
+#include <std/optional>
+#include <std/string>
+#include <std/vector>
+class Envelope {
+  std::optional<std::string> payload{};
+public:
+  Envelope() { )") +
+           std::string(body) + R"( }
+};
+int main() {
+  std::vector<Envelope> values{std::size_t(2)};
+  return 0;
+}
+)";
+  };
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-default-prefix-constructor.gti", source(""));
+  expect(frontend.canGenerateCode() && frontend.mir.valid(),
+         "construction-only default prefix elements should have verified MIR");
+  if (!frontend.canGenerateCode() || !frontend.mir.valid())
+    return;
+  const auto findAppend = [](const lang::MirProgram &program) {
+    std::pair<lang::HirConstructorInstanceId, lang::MirInstructionId> result{};
+    for (const auto &constructor : program.constructorInstances()) {
+      for (const auto &block : constructor.body.blocks) {
+        for (const auto &instruction : block.instructions) {
+          if (instruction.intrinsic ==
+                  lang::IntrinsicKind::PrefixStorageAppend &&
+              instruction.constructorTarget && instruction.operands.size() == 1)
+            result = {constructor.id, instruction.id};
+        }
+      }
+    }
+    return result;
+  };
+  const auto [owner, appendId] = findAppend(frontend.mir);
+  expect(owner != 0 && appendId != 0,
+         "sized vector must preserve its selected default element constructor");
+  if (owner == 0 || appendId == 0)
+    return;
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                     .owner = owner};
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.supportsFailureBodyText(address),
+         "failure-free default prefix construction should admit status ABI");
+  const auto emitted =
+      emitter.emitFailureBodyText(address, "default-prefix-status-test", 1);
+  expect(
+      emitted.emitted() &&
+          emitted.text.find("mir_prefix_construct_v1(") != std::string::npos &&
+          emitted.text.find("&__gti_prefix_constructed") != std::string::npos &&
+          emitted.text.find("if (!__gti_mir_failure_status_" +
+                            std::to_string(appendId) + ".propagated)") !=
+              std::string::npos,
+      "prefix append must call the exact status constructor after preflight");
+
+  lang::MirProgram forged = frontend.mir;
+  auto &constructors = const_cast<std::vector<lang::MirConstructorInstance> &>(
+      forged.constructorInstances());
+  lang::HirConstructorInstanceId target = 0;
+  for (const auto &block : constructors[owner - 1].body.blocks) {
+    for (const auto &instruction : block.instructions) {
+      if (instruction.id == appendId)
+        target = instruction.constructorTarget.value_or(0);
+    }
+  }
+  expect(target != 0 && lang::cppMirConstructorStatusCannotFail(forged, target),
+         "status append requires independent exact-target no-failure proof");
+  if (target != 0) {
+    lang::MirProgram wrongActivation = frontend.mir;
+    auto &activationConstructors =
+        const_cast<std::vector<lang::MirConstructorInstance> &>(
+            wrongActivation.constructorInstances());
+    bool changedActivation = false;
+    for (auto &block : activationConstructors[target - 1].body.blocks) {
+      if (!block.terminator.successLifecycle.empty()) {
+        block.terminator.successLifecycle.front().target = 0;
+        changedActivation = true;
+        break;
+      }
+    }
+    expect(
+        changedActivation &&
+            !lang::cppMirConstructorStatusCannotFail(wrongActivation, target) &&
+            !lang::CppMirBodyEmitter(wrongActivation, map)
+                 .supportsFailureBodyText(address),
+        "a forged success-result drop cannot enter the no-failure proof");
+
+    // Preserve the selected target/signature but forge an unknown propagation
+    // channel on its initializer. The no-failure proof must fail closed.
+    auto &body = constructors[target - 1].body;
+    expect(!body.blocks.empty() && !body.blocks.front().instructions.empty(),
+           "the selected constructor should initialize its owning field");
+    if (!body.blocks.empty() && !body.blocks.front().instructions.empty()) {
+      body.blocks.front().instructions.front().definedFailure.propagation =
+          lang::FailurePropagationKind::DirectCall;
+      expect(!lang::cppMirConstructorStatusCannotFail(forged, target) &&
+                 !lang::CppMirBodyEmitter(forged, map)
+                      .supportsFailureBodyText(address),
+             "unproved constructor failure cannot bypass prefix publication");
+    }
+  }
+
+  const auto fallible = analyzeWithStandardLibrary(
+      "cpp-mir-fallible-default-prefix-constructor.gti",
+      source("int zero = 0; int result = 1 / zero;"));
+  expect(fallible.canGenerateCode() && fallible.mir.valid(),
+         "fallible default construction should retain a valid source schedule");
+  if (fallible.canGenerateCode() && fallible.mir.valid()) {
+    const auto [fallibleOwner, fallibleAppend] = findAppend(fallible.mir);
+    expect(fallibleOwner != 0 && fallibleAppend != 0,
+           "fallible default construction must retain its exact append target");
+    if (fallibleOwner != 0) {
+      const lang::CppMirBodyEmissionMap fallibleMap(
+          buildRows(fallible, fallible.mir, lang::CppStandard::Cpp23));
+      expect(
+          lang::CppMirBodyEmitter(fallible.mir, fallibleMap)
+              .supportsFailureBodyText({.kind = lang::MirBodyKind::Constructor,
+                                        .owner = fallibleOwner}),
+          "fallible default prefix construction must use the exact propagated "
+          "constructor status without publishing a failed slot");
+      auto missingEffect = fallible.mir;
+      auto &instances = const_cast<std::vector<lang::MirConstructorInstance> &>(
+          missingEffect.constructorInstances());
+      for (auto &block : instances[fallibleOwner - 1].body.blocks) {
+        for (auto &instruction : block.instructions) {
+          if (instruction.id == fallibleAppend)
+            instruction.definedFailure.propagation =
+                lang::FailurePropagationKind::None;
+        }
+      }
+      expect(
+          !lang::verifyMirProgram(missingEffect).valid(),
+          "a zeroarg prefix call cannot erase its exact ctor failure effect");
+      auto forgedOwnership = fallible.mir;
+      auto &ownershipInstances =
+          const_cast<std::vector<lang::MirConstructorInstance> &>(
+              forgedOwnership.constructorInstances());
+      for (auto &block : ownershipInstances[fallibleOwner - 1].body.blocks) {
+        for (auto &instruction : block.instructions) {
+          if (instruction.id == fallibleAppend)
+            instruction.lifecycle.push_back(
+                {.kind = lang::MirLifecycleEventKind::TransferOut,
+                 .source = 1});
+        }
+      }
+      expect(
+          !lang::verifyMirProgram(forgedOwnership).valid(),
+          "zeroarg prefix construction cannot invent an owned input handoff");
+      const auto rejectMutation = [&](const auto &mutate,
+                                      std::string_view message) {
+        auto changed = fallible.mir;
+        auto &changedConstructors =
+            const_cast<std::vector<lang::MirConstructorInstance> &>(
+                changed.constructorInstances());
+        auto &body = changedConstructors[fallibleOwner - 1].body;
+        auto *append = findPreflightInstruction(body, fallibleAppend);
+        expect(append != nullptr, "prefix mutation must find its exact append");
+        if (append == nullptr)
+          return;
+        mutate(changed, body, *append);
+        expect(!lang::verifyMirProgram(changed).valid(), message);
+        expect(!lang::CppMirBodyEmitter(changed, fallibleMap)
+                    .supportsFailureBodyText(
+                        {.kind = lang::MirBodyKind::Constructor,
+                         .owner = fallibleOwner}),
+               message);
+      };
+      rejectMutation(
+          [](auto &, auto &, auto &append) {
+            append.constructorTarget.reset();
+          },
+          "default append cannot erase its exact selected constructor");
+      rejectMutation(
+          [](auto &, auto &, auto &append) {
+            append.constructorTarget.reset();
+            append.definedFailure.propagation =
+                lang::FailurePropagationKind::None;
+          },
+          "erasing target and propagation cannot recover native T() fallback");
+      rejectMutation(
+          [&](auto &, auto &, auto &append) {
+            append.constructorTarget = fallibleOwner;
+          },
+          "default append cannot select a different element constructor");
+      rejectMutation(
+          [](auto &, auto &body, auto &append) {
+            for (auto &block : body.blocks) {
+              if (block.terminator.invokeInstruction == append.id)
+                block.terminator.kind = lang::MirTerminatorKind::Goto;
+            }
+          },
+          "default append cannot erase its checked Invoke edge");
+      rejectMutation(
+          [](auto &, auto &body, auto &append) {
+            for (auto &block : body.blocks) {
+              if (block.terminator.invokeInstruction == append.id)
+                block.terminator.elseTarget = block.terminator.target;
+            }
+          },
+          "default append cannot route failure through successful publication");
+    }
+  }
+}
+
+void testScalarPrefixConstructorStatusAdmission() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/vector_scalar_constructor_failure.gti";
+  std::ifstream stream(path);
+  const std::string source{std::istreambuf_iterator<char>(stream), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode() && frontend.mir.valid(),
+         "scalar-input final-slot construction must retain verified MIR");
+  if (!frontend.canGenerateCode() || !frontend.mir.valid())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  std::size_t tested = 0;
+  std::size_t normalized = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &append : block.instructions) {
+        if (append.intrinsic != lang::IntrinsicKind::PrefixStorageAppend ||
+            !append.constructorTarget || append.operands.size() != 3)
+          continue;
+        const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                           .owner = function.id};
+        const auto *target =
+            frontend.mir.findConstructorInstance(*append.constructorTarget);
+        if (target != nullptr && !target->mayRaiseDefinedFailure) {
+          ++normalized;
+          expect(append.definedFailure.propagation ==
+                     lang::FailurePropagationKind::None,
+                 "concrete HIR packs must normalize an exact failure-free "
+                 "constructor effect");
+          const auto emitted =
+              lang::CppMirBodyEmitter(frontend.mir, map)
+                  .emitFailureBodyText(address, "passive-prefix", 1);
+          expect(emitted.emitted() &&
+                     emitted.text.find("mir_prefix_append_v1(") !=
+                         std::string::npos &&
+                     emitted.text.find("&__gti_prefix_constructed") ==
+                         std::string::npos,
+                 "proved-failure-free scalar construction must retain ordinary "
+                 "in-place construction");
+          continue;
+        }
+        ++tested;
+        const auto emitted =
+            lang::CppMirBodyEmitter(frontend.mir, map)
+                .emitFailureBodyText(address, "scalar-prefix", 1);
+        expect(
+            emitted.emitted() &&
+                emitted.text.find("mir_prefix_construct_v1(") !=
+                    std::string::npos &&
+                emitted.text.find(
+                    "&__gti_prefix_constructed, __gti_mir_failure_record);") !=
+                    std::string::npos,
+            "scalar append must call the exact status ctor with its staged "
+            "inputs");
+        const auto summary = lang::exactMirInvocationSummary(
+            frontend.mir, function.body, append);
+        expect(summary && summary->argumentsEscape.size() == 3 &&
+                   !summary->receiverEscapes && summary->traits.writesPlace &&
+                   summary->traits.invokesUserCode && summary->traits.mayTrap,
+               "the complete append summary must retain storage and selected "
+               "constructor effects");
+        const auto reject = [&](const auto &mutate, std::string_view reason) {
+          auto forged = frontend.mir;
+          auto &functions =
+              const_cast<std::vector<lang::MirFunctionInstance> &>(
+                  forged.functionInstances());
+          auto &body = functions[function.id - 1].body;
+          auto *changed = findPreflightInstruction(body, append.id);
+          mutate(forged, body, *changed);
+          expect(!lang::verifyMirProgram(forged).valid(), reason);
+          expect(!lang::CppMirBodyEmitter(forged, map)
+                      .supportsFailureBodyText(address),
+                 reason);
+        };
+        reject(
+            [](auto &, auto &, auto &call) { call.constructorTarget.reset(); },
+            "scalar append cannot lose its selected target");
+        reject(
+            [](auto &, auto &, auto &call) {
+              call.constructorTarget.reset();
+              call.parameterTypes.clear();
+            },
+            "missing target and parameter roles must fail closed without "
+            "invalid tail iteration");
+        reject(
+            [](auto &, auto &, auto &call) {
+              call.constructorTarget.reset();
+              call.definedFailure.propagation =
+                  lang::FailurePropagationKind::None;
+            },
+            "erasing target and propagation cannot recover native constructor "
+            "fallback");
+        reject(
+            [](auto &, auto &, auto &call) {
+              call.definedFailure.propagation =
+                  lang::FailurePropagationKind::None;
+            },
+            "scalar append cannot erase constructor propagation");
+        reject(
+            [](auto &program, auto &, auto &call) {
+              for (const auto &constructor : program.constructorInstances()) {
+                if (constructor.id != *call.constructorTarget) {
+                  call.constructorTarget = constructor.id;
+                  break;
+                }
+              }
+            },
+            "scalar append cannot select a different constructor target");
+        reject(
+            [](auto &, auto &, auto &call) { call.parameterTypes.pop_back(); },
+            "scalar append must retain exact constructor arity");
+        reject(
+            [](auto &, auto &, auto &call) {
+              call.parameterTypes[1] = lang::SemanticType::Bool;
+            },
+            "scalar append must retain exact constructor parameter types");
+        reject(
+            [](auto &, auto &, auto &call) {
+              call.lifecycle.push_back(
+                  {.kind = lang::MirLifecycleEventKind::TransferOut,
+                   .source = 1});
+            },
+            "passive inputs cannot invent an ownership handoff");
+        reject(
+            [](auto &, auto &body, auto &call) {
+              for (auto &candidate : body.blocks)
+                if (candidate.terminator.invokeInstruction == call.id)
+                  candidate.terminator.kind = lang::MirTerminatorKind::Goto;
+            },
+            "scalar construction cannot remove its checked Invoke");
+        reject(
+            [](auto &, auto &body, auto &call) {
+              for (auto &candidate : body.blocks)
+                if (candidate.terminator.invokeInstruction == call.id)
+                  candidate.terminator.elseTarget = candidate.terminator.target;
+            },
+            "failed scalar construction cannot publish a successful element");
+        for (const auto &type :
+             {lang::SemanticType::referenceTo(lang::SemanticType::Int32),
+              lang::SemanticType::rawPointerTo(lang::SemanticType::Int32),
+              lang::SemanticType(lang::SemanticType::StringView)}) {
+          reject([&](auto &, auto &,
+                     auto &call) { call.parameterTypes[1] = type; },
+                 "reference/raw/text inputs cannot enter the passive status "
+                 "route");
+        }
+      }
+    }
+  }
+  expect(
+      tested == 1,
+      "the fixture must exercise exactly one concrete scalar emplacement body");
+  expect(normalized == 1, "the fixture must also exercise one "
+                          "proved-failure-free scalar constructor");
+}
+
+void testOwningConstructorAcrossArgumentDiamond() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-owning-constructor-argument-diamond.gti", R"(
+#include <std/string>
+class Parcel {
+  std::string text;
+public:
+  Parcel(int value) : text(std::string("parcel")) {
+    int checked = 1 / value;
+  }
+  ~Parcel() { std::println(this.text); }
+};
+struct Sink {
+  void accept(Parcel parcel) mut { std::println("accepted"); }
+};
+int exercise(bool choose) {
+  mut Sink sink{};
+  sink.accept(Parcel(choose ? 1 : 2));
+  return 0;
+}
+int main() { return exercise(true); }
+)");
+  expect(frontend.canGenerateCode() && frontend.mir.valid(),
+         "owning constructor after scalar argument diamond must verify");
+  if (!frontend.canGenerateCode() || !frontend.mir.valid())
+    return;
+  lang::HirFunctionInstanceId owner = 0;
+  lang::MirInstructionId producerId = 0;
+  lang::MirInstructionId stageId = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::CallInput ||
+            instruction.callInputKind != lang::HirCallInputKind::MoveValue ||
+            instruction.operands.size() != 1 ||
+            !instruction.preparedParameterDrop ||
+            instruction.operands.front().kind != lang::MirOperandKind::Value)
+          continue;
+        const auto *value =
+            function.body.findValue(instruction.operands.front().value);
+        const auto *producer =
+            value ? findPreflightInstruction(function.body, value->definition)
+                  : nullptr;
+        if (producer && producer->kind == lang::MirInstructionKind::Construct &&
+            producer->successResultDrop) {
+          owner = function.id;
+          producerId = producer->id;
+          stageId = instruction.id;
+        }
+      }
+    }
+  }
+  expect(owner && producerId && stageId,
+         "diamond must retain exact owning constructor result staging");
+  if (!owner)
+    return;
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = owner};
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  expect(
+      lang::CppMirBodyEmitter(frontend.mir, map)
+          .supportsFailureBodyText(address),
+      "owning constructor staging must preserve the earlier stable receiver");
+  const auto rejectMutation = [&](const auto &mutate,
+                                  std::string_view message) {
+    auto changed = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        changed.functionInstances());
+    auto &body = functions[owner - 1].body;
+    auto *producer = findPreflightInstruction(body, producerId);
+    auto *stage = findPreflightInstruction(body, stageId);
+    mutate(body, *producer, *stage);
+    expect(!lang::verifyMirProgram(changed).valid(), message);
+    expect(
+        !lang::CppMirBodyEmitter(changed, map).supportsFailureBodyText(address),
+        message);
+  };
+  rejectMutation(
+      [](auto &, auto &, auto &stage) { stage.lifecycle.front().source = 0; },
+      "argument diamond cannot erase the owning result Reparent source");
+  rejectMutation(
+      [](auto &, auto &, auto &stage) {
+        stage.lifecycle.front().target = stage.lifecycle.front().source;
+      },
+      "argument diamond cannot reparent to the wrong prepared slot");
+  rejectMutation(
+      [](auto &body, auto &producer, auto &) {
+        for (auto &block : body.blocks) {
+          if (block.terminator.invokeInstruction == producer.id)
+            block.terminator.successLifecycle.clear();
+        }
+      },
+      "argument diamond cannot erase successful result activation");
+}
+
+void testOptionalPayloadCleanupComposition() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-optional-payload-cleanup-composition.gti", R"(
+#include <std/optional>
+#include <std/string>
+#include <std/vector>
+class Message {
+  std::optional<std::string> text{};
+public:
+  Message() {}
+  ~Message() { int zero = 0; int result = 1 / zero; }
+};
+class Quiet {
+  int marker;
+public:
+  Quiet(int value) : marker(value) {}
+  ~Quiet() { std::println(marker); }
+};
+class EmptyHolder {
+  std::optional<Quiet> first{};
+  std::optional<Quiet> second{};
+public:
+  EmptyHolder(int value) {}
+};
+int main() {
+  EmptyHolder empty{0};
+  mut std::vector<Message> messages{};
+  messages.push_back(Message());
+  messages.erase(std::size_t(0));
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode() && frontend.mir.valid(),
+         "optional payload cleanup composition must produce verified MIR");
+  if (!frontend.canGenerateCode() || !frontend.mir.valid())
+    return;
+  lang::MirBodyAddress address{};
+  lang::MirInstructionId eraseId = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.intrinsic == lang::IntrinsicKind::PrefixStorageErase) {
+          address = {.kind = lang::MirBodyKind::Function, .owner = function.id};
+          eraseId = instruction.id;
+        }
+      }
+    }
+  }
+  expect(eraseId != 0, "cleanup fixture must retain prefix erase");
+  if (!eraseId)
+    return;
+  const auto findOptional = [&](const auto &self,
+                                auto &recipe) -> decltype(&recipe) {
+    const auto *owner =
+        recipe.classInstance
+            ? frontend.mir.findClassInstance(*recipe.classInstance)
+            : nullptr;
+    if (owner && owner->compilerCapability ==
+                     lang::CompilerCapabilityTypeKind::OptionalStorage)
+      return &recipe;
+    for (auto &child : recipe.aggregate)
+      if (auto *found = self(self, child))
+        return found;
+    return nullptr;
+  };
+  const auto *body = lang::findMirBody(frontend.mir, address);
+  const auto *erase = findPreflightInstruction(*body, eraseId);
+  expect(erase->elementCleanup &&
+             erase->definedFailure.propagation ==
+                 lang::FailurePropagationKind::Destructor &&
+             findOptional(findOptional, *erase->elementCleanup),
+         "nested optional capability must preserve exact payload cleanup and "
+         "enclosing destructor failure propagation");
+  if (!erase->elementCleanup)
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  expect(lang::CppMirBodyEmitter(frontend.mir, map)
+             .supportsFailureBodyText(address),
+         "nested capability cleanup must remain an admitted MIR operation");
+  bool sawDormantCleanup = false;
+  for (const auto &owner : frontend.mir.classInstances()) {
+    for (const auto &block : owner.fieldInitializers.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Drop ||
+            instruction.definedFailure.propagation !=
+                lang::FailurePropagationKind::Destructor ||
+            instruction.lifecycle.size() != 1)
+          continue;
+        const auto *drop = owner.fieldInitializers.findDropObligation(
+            instruction.lifecycle.front().source);
+        if (!drop || !findOptional(findOptional, drop->dropType))
+          continue;
+        const auto targets = lang::mirDropDestructorTargets(drop->dropType);
+        if (targets.empty())
+          continue;
+        sawDormantCleanup = true;
+        expect(lang::CppMirBodyEmitter(frontend.mir, map)
+                   .initializerSchedule(
+                       {.kind = lang::MirBodyKind::FieldInitializers,
+                        .owner = owner.id})
+                   .supported,
+               "contained declaration initialization must admit its exact "
+               "dormant optional rollback independently of payload effects");
+      }
+    }
+  }
+  expect(sawDormantCleanup,
+         "fixture must retain a dormant optional cleanup rollback edge");
+  bool sawInfallibleStatusOnly = false;
+  bool sawRequiredContainedWrapper = false;
+  for (const auto &row : map.containedConstructors()) {
+    const auto *constructor =
+        frontend.mir.findConstructorInstance(row.constructor);
+    if (!constructor ||
+        !lang::cppMirConstructorStatusCannotFail(frontend.mir,
+                                                 constructor->id) ||
+        !lang::cppMirConstructorRequiresFieldPlacement(frontend.mir,
+                                                       *constructor))
+      continue;
+    sawInfallibleStatusOnly = true;
+    const lang::MirBodyAddress constructorAddress{
+        .kind = lang::MirBodyKind::Constructor, .owner = constructor->id};
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    expect(!emitter.supportsBodyText(constructorAddress) &&
+               emitter.supportsFailureBodyText(constructorAddress),
+           "infallible field placement must retain its status-only body");
+    std::optional<lang::MirBodyAddress> requiredInitializer;
+    for (const auto &owner : frontend.mir.classInstances()) {
+      const lang::MirBodyAddress fields{
+          .kind = lang::MirBodyKind::FieldInitializers, .owner = owner.id};
+      const auto schedule = emitter.initializerSchedule(fields);
+      if (schedule.supported &&
+          std::any_of(schedule.fields.begin(), schedule.fields.end(),
+                      [&](const auto &field) {
+                        return field.spelling.find(row.tagSpelling) !=
+                               std::string::npos;
+                      })) {
+        requiredInitializer = fields;
+        break;
+      }
+    }
+    if (!requiredInitializer)
+      continue;
+    sawRequiredContainedWrapper = true;
+    auto missingRows =
+        buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23);
+    std::erase_if(missingRows.containedConstructors,
+                  [&](const auto &candidate) {
+                    return candidate.constructor == row.constructor;
+                  });
+    const lang::CppMirBodyEmissionMap missingMap(std::move(missingRows));
+    expect(!lang::CppMirBodyEmitter(frontend.mir, missingMap)
+                .initializerSchedule(*requiredInitializer)
+                .supported,
+           "removing a status-only initializer wrapper must fail closed even "
+           "when its exact constructor cannot fail");
+  }
+  expect(sawInfallibleStatusOnly,
+         "fixture must retain an infallible status-only initializer wrapper");
+  expect(
+      sawRequiredContainedWrapper,
+      "a concrete declaration schedule must consume the status-only wrapper");
+  const auto rejectMutation = [&](const auto &mutate,
+                                  std::string_view message) {
+    auto changed = frontend.mir;
+    auto *changedBody = lang::findMirBody(changed, address);
+    auto *changedErase = findPreflightInstruction(*changedBody, eraseId);
+    mutate(*changedErase);
+    expect(!lang::verifyMirProgram(changed).valid(), message);
+  };
+  rejectMutation([](auto &erase) { erase.elementCleanup.reset(); },
+                 "nested capability cleanup cannot erase its removal recipe");
+  rejectMutation(
+      [&](auto &erase) {
+        auto *payload = findOptional(findOptional, *erase.elementCleanup);
+        if (payload)
+          payload->aggregate.clear();
+      },
+      "optional cleanup cannot omit its engaged payload recipe");
+  rejectMutation(
+      [&](auto &erase) {
+        auto *payload = findOptional(findOptional, *erase.elementCleanup);
+        if (payload && !payload->aggregate.empty())
+          payload->aggregate.front().type = lang::SemanticType::Int32;
+      },
+      "optional cleanup cannot replace its exact payload type");
+  rejectMutation(
+      [](auto &erase) {
+        erase.definedFailure.propagation = lang::FailurePropagationKind::None;
+      },
+      "nested cleanup cannot erase its propagated failure");
+}
+
 void testPrefixStorageCStringAdmissionFailsClosed() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-prefix-storage-c-string.gti", R"(
@@ -3739,6 +4536,14 @@ constexpr NamedTest kTests[] = {
      testGlobalClassStorageMemberProjection},
     {"testConcreteClassStaticStorage", testConcreteClassStaticStorage},
     {"testDischargedStorageReadAnalysis", testDischargedStorageReadAnalysis},
+    {"testDefaultPrefixConstructorStatusAdmission",
+     testDefaultPrefixConstructorStatusAdmission},
+    {"testScalarPrefixConstructorStatusAdmission",
+     testScalarPrefixConstructorStatusAdmission},
+    {"testOwningConstructorAcrossArgumentDiamond",
+     testOwningConstructorAcrossArgumentDiamond},
+    {"testOptionalPayloadCleanupComposition",
+     testOptionalPayloadCleanupComposition},
     {"testPrefixStorageCStringAdmissionFailsClosed",
      testPrefixStorageCStringAdmissionFailsClosed},
     {"testExpectedExtractionStateAdmissionFailsClosed",

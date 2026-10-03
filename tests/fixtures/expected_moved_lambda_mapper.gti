@@ -1,0 +1,67 @@
+#include <std/string>
+#include <std/vector>
+
+class Resource {
+  int identity;
+public:
+  Resource(int identity) : identity(identity) {}
+  ~Resource() { std::println(identity); }
+  int read() { return identity; }
+};
+
+expected<int, int> produce(bool fail) {
+  std::println(1);
+  if (fail) { return unexpected(7); }
+  return 42;
+}
+
+expected<int, int> receiver_failure(int divisor) {
+  std::println(1);
+  return 1 / divisor;
+}
+
+int later(int divisor) {
+  std::println(4);
+  return 1 / divisor;
+}
+
+int consume(expected<int, int> value, int after) {
+  std::println(5);
+  return (value.has_value() ? value.value() : value.error()) + after;
+}
+
+expected<int, E> generic_map<E>(expected<int, E> value) {
+  return std::move(value).transform_error([](E error) -> E { return error; });
+}
+expected<int, int> integer_error() { return unexpected(7); }
+expected<int, bool> boolean_error() { return unexpected(true); }
+
+int main(int argc, std::vector<std::string> argv) {
+  Resource outer{99};
+  Resource resource{80};
+  if (argc == 5) {
+    Resource second{81};
+    auto result = receiver_failure(0).transform_error(
+        [owned = std::move(resource)](int error) -> int {
+          return owned.read() + error;
+        });
+    return result.value();
+  }
+  auto mapper = [owned = std::move(resource)](int error) -> int {
+    std::println(2);
+    return owned.read() + error;
+  };
+  if (argc == 3 || argc == 4) {
+    int result = consume(produce(true).transform_error(std::move(mapper)),
+                         later(argc - 3));
+    std::println(3);
+    return result == 88 ? 0 : 1;
+  }
+  auto mapped = produce(argc != 1).transform_error(std::move(mapper));
+  auto first = generic_map<int>(integer_error());
+  auto second = generic_map<bool>(boolean_error());
+  if (first.error() != 7 || !second.error()) { return 3; }
+  std::println(3);
+  return mapped.has_value() ? (mapped.value() == 42 ? 0 : 1)
+                           : (mapped.error() == 87 ? 0 : 2);
+}

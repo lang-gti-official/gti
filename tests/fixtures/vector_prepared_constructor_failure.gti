@@ -1,0 +1,114 @@
+#include <std/string>
+#include <std/vector>
+#include "prefix_constructor_test.gti"
+
+mut int scenario = 0;
+
+class Token {
+  int number;
+  std::string text;
+public:
+  Token(int value) : number(value), text(std::string("token")) {}
+  int id() { return this.number; }
+  ~Token() { std::println(this.number); }
+};
+class Guard {
+public:
+  ~Guard() { std::println(900); }
+};
+class QuietEntry {
+  Token payload;
+public:
+  QuietEntry(Token value) : payload(std::move(value)) {}
+};
+class PointerEntry {
+  const int* pointer = nullptr;
+public:
+  PointerEntry(const int* value) : pointer(value) {}
+  int read() {
+    unsafe { return this.pointer == nullptr ? 0 : *this.pointer; }
+  }
+};
+class Entry {
+  Token payload;
+  int number;
+  mut const int* original_address = nullptr;
+public:
+  Entry(Token value, int divisor, int& source, std::string_view text,
+        const int* pointer) : payload(std::move(value)), number(source) {
+    unsafe {
+      this.original_address = &this.number;
+      if (*pointer != 7) { int zero = 0; int checked = 1 / zero; }
+    }
+    std::println(this.payload.id());
+    std::println(text);
+    int checked = 12 / divisor; // constructor failure
+  }
+  ~Entry() {
+    std::println(this.payload.id() + 100);
+    bool fail = (scenario == 2 && this.payload.id() == 12) ||
+                (scenario == 3 && this.payload.id() == 11) || scenario == 4;
+    int divisor = fail ? 0 : 1;
+    int checked = 12 / divisor; // cleanup failure
+  }
+  bool stable_address() {
+    unsafe { return this.original_address == &this.number; }
+  }
+};
+
+int later(int divisor) {
+  int check = scenario == 5 ? 0 : 1;
+  return divisor / check; // later argument failure
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  scenario = argc - 1;
+  Guard caller{};
+  int source = 7;
+  std::string owner{"owner"};
+  if (scenario == 10) {
+    mut int value = 5;
+    mut int* pointer = nullptr;
+    unsafe { pointer = &value; }
+    mut std::vector<PointerEntry> entries{};
+    [[discard]] entries.emplace_back(pointer);
+    [[discard]] entries.emplace_back(nullptr);
+    return entries[std::size_t(0)].read() == 5 &&
+           entries[std::size_t(1)].read() == 0 ? 0 : 16;
+  }
+  if (scenario == 9) {
+    mut std::vector<QuietEntry> entries{};
+    for (mut int index = 0; index < 2; index++) {
+      [[discard]] entries.emplace_back(Token(90 + index));
+    }
+    return 0;
+  }
+  if (scenario == 8) {
+    append_to_empty<Token>(Token(89));
+    return 14;
+  }
+  if (scenario == 7) {
+    append_to_empty<QuietEntry>(Token(88));
+    return 13;
+  }
+  if (scenario == 6) {
+    unsafe {
+      append_to_empty<Entry>(Token(77), 1, source, owner.view(), &source);
+    }
+    return 10;
+  }
+  mut std::vector<Entry> entries{};
+  entries.reserve(std::size_t(2));
+  unsafe {
+    [[discard]] entries.emplace_back(Token(11), 1, source, owner.view(), &source);
+  }
+  if (!entries[std::size_t(0)].stable_address()) { return 11; }
+  int divisor = scenario == 1 || scenario == 3 ? 0 : 1;
+  unsafe {
+    [[discard]] entries.emplace_back(Token(12), later(divisor), source,
+                                    owner.view(), &source);
+  }
+  if (!entries[std::size_t(1)].stable_address()) { return 12; }
+  std::println(300);
+  return 0;
+}

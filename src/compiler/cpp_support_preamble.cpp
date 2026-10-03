@@ -429,6 +429,8 @@ inline constexpr std::uint64_t mir_lambda_identity_v = [] {
 // accept it by reference here so a transformed constructor can create an
 // observation-free native empty state before publishing the MIR result.
 struct mir_empty_state_constructor_tag_v1;
+template <typename T>
+struct mir_empty_state_factory_v1;
 template <std::uint64_t Constructor>
 struct mir_failure_constructor_tag_v1;
 template <std::uint64_t Function>
@@ -455,6 +457,23 @@ inline constexpr auto make_unexpected_result(Error error) {
 )");
   }
   if (usesExpected) {
+    output << R"(
+
+// The compiler proves the error alternative has an observation-free private
+// empty state before using this factory for unpublished fields. In particular,
+// this never runs the success alternative's source default constructor.
+template <typename Value, typename Error>
+struct mir_empty_state_factory_v1<expected_result<Value, Error>> {
+  [[nodiscard]] static expected_result<Value, Error> make() noexcept {
+    return expected_result<Value, Error>(
+)";
+    output << (features.standard == CppStandard::Cpp23
+                   ? "        std::unexpect, "
+                   : "        ::nonstd::unexpect, ");
+    output << R"(mir_empty_state_factory_v1<Error>::make());
+  }
+};
+)";
     output << R"(
 
 // std::expected deliberately forbids reference payloads. GTI's
@@ -1440,7 +1459,8 @@ public:
 
   template <typename Cleanup>
   [[nodiscard]] bool reset_with_failure(::gti_failure_record_v1 *record,
-                                        Cleanup cleanup) {
+                                        Cleanup cleanup,
+                                        bool unwinding = false) {
     if (!engaged_) {
       return true;
     }
@@ -1448,7 +1468,13 @@ public:
     // prefix storage retire the selected element before its destructor.
     engaged_ = false;
     T *element = std::launder(slot());
-    const bool success = cleanup(*element, record, false);
+    const bool success = cleanup(*element, record, unwinding);
+    // A second failure returns directly to the calling MIR terminal edge.
+    // Native teardown must not run payload subobjects whose cleanup the
+    // verified schedule deliberately stopped before reaching.
+    if (!success && unwinding) {
+      return false;
+    }
     std::destroy_at(element);
     return success;
   }
@@ -1575,6 +1601,22 @@ public:
     }
     ++length_;
     write_character_terminator();
+  }
+
+  // Only an exact MIR-selected status constructor supplies this callback.
+  // A failed constructor leaves a disarmed native shell, not a live GTI
+  // element; the caller's prefix cleanup must not visit that slot.
+  template <typename Constructor>
+  [[nodiscard]] bool append_with_constructor(Constructor construct) {
+    if (length_ >= capacity_) std::abort();
+    T *destination = slot(length_);
+    if (!construct(destination)) {
+      std::destroy_at(destination);
+      return false;
+    }
+    ++length_;
+    write_character_terminator();
+    return true;
   }
 
   void pop() {

@@ -1,0 +1,45 @@
+#include <std/optional>
+#include <std/string>
+#include <std/vector>
+
+class Tail {
+  int number;
+public:
+  Tail(int initial) : number(initial) {}
+  ~Tail() { std::println(this.number); }
+};
+
+class Payload {
+  Tail remaining;
+  int number;
+  int divisor;
+public:
+  Payload(int initial, int cleanup_divisor)
+      : remaining(Tail(initial + 100)), number(initial),
+        divisor(cleanup_divisor) {}
+  ~Payload() {
+    std::println(this.number);
+    int result = 1 / this.divisor;
+  }
+};
+
+class Message {
+  std::optional<Payload> payload;
+  int number;
+public:
+  Message(int initial, int divisor)
+      : payload(std::optional<Payload>(Payload(initial, divisor))),
+        number(initial) {}
+  ~Message() { std::println(this.number * 10); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Payload caller = Payload(9, 1);
+  mut std::vector<Message> messages{};
+  messages.push_back(Message(1, 1));
+  messages.push_back(Message(2, argc > 1 ? 0 : 1));
+  messages.push_back(Message(3, argc > 2 ? 0 : 1));
+  messages.reserve(std::size_t(8));
+  messages.erase(std::size_t(1));
+  return 0;
+}

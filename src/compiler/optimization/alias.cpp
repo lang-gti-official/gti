@@ -150,12 +150,36 @@ void addReason(std::vector<MirPlaceEscapeFact> &facts, MirPlaceId place,
   facts[place - 1].reasons |= static_cast<std::uint8_t>(reason);
 }
 
-void addOrigins(std::vector<MirPlaceEscapeFact> &facts,
+void addLoanOrigins(const MirBody &body, const MirOperand &operand,
+                    std::set<MirPlaceId> &origins) {
+  const auto retain = [&](MirLoanId id) {
+    const auto sources = mirLoanProtectedSources(body, id);
+    origins.insert(sources.begin(), sources.end());
+  };
+  if (operand.loan != 0)
+    retain(operand.loan);
+  const auto *place = body.findPlace(operand.place);
+  if (place == nullptr)
+    return;
+  if (place->root == MirPlaceRootKind::Loan)
+    retain(place->loan);
+  else if (place->root == MirPlaceRootKind::Binding)
+    for (const auto &loan : body.loans)
+      if (std::find(loan.carriers.begin(), loan.carriers.end(),
+                    place->binding) != loan.carriers.end())
+        retain(loan.id);
+}
+
+void addOrigins(const MirBody &body, std::vector<MirPlaceEscapeFact> &facts,
                 const std::vector<std::set<MirPlaceId>> &origins,
                 const MirOperand &operand, MirPlaceEscapeReason reason) {
   if (operand.place != 0) {
     addReason(facts, operand.place, reason);
   }
+  std::set<MirPlaceId> protectedSources;
+  addLoanOrigins(body, operand, protectedSources);
+  for (const MirPlaceId place : protectedSources)
+    addReason(facts, place, reason);
   if (operand.value == 0 || operand.value > origins.size()) {
     return;
   }
@@ -271,6 +295,7 @@ analyzeMirPlaceAliasEscape(const MirProgram &program, MirBodyAddress address) {
           next.insert(*instruction.destination);
         }
         if (instruction.receiver) {
+          addLoanOrigins(*body, *instruction.receiver, next);
           if (instruction.receiver->place != 0) {
             next.insert(instruction.receiver->place);
           }
@@ -281,6 +306,7 @@ analyzeMirPlaceAliasEscape(const MirProgram &program, MirBodyAddress address) {
           }
         }
         for (const MirOperand &operand : instruction.operands) {
+          addLoanOrigins(*body, operand, next);
           if (operand.place != 0) {
             next.insert(operand.place);
           }
@@ -302,9 +328,7 @@ analyzeMirPlaceAliasEscape(const MirProgram &program, MirBodyAddress address) {
 
   for (const MirLoan &loan : body->loans) {
     if (loan.escapes) {
-      addReason(result.escapes, loan.source,
-                MirPlaceEscapeReason::RetainedBorrow);
-      for (const MirPlaceId source : loan.additionalSources) {
+      for (const MirPlaceId source : mirLoanProtectedSources(*body, loan.id)) {
         addReason(result.escapes, source, MirPlaceEscapeReason::RetainedBorrow);
       }
     }
@@ -316,7 +340,7 @@ analyzeMirPlaceAliasEscape(const MirProgram &program, MirBodyAddress address) {
       }
       if (instruction.operation == MirOperation::AddressOf) {
         for (const MirOperand &operand : instruction.operands) {
-          addOrigins(result.escapes, origins, operand,
+          addOrigins(*body, result.escapes, origins, operand,
                      MirPlaceEscapeReason::AddressTaken);
         }
       }
@@ -331,7 +355,7 @@ analyzeMirPlaceAliasEscape(const MirProgram &program, MirBodyAddress address) {
               (operand.value != 0 && operand.value <= body->values.size() &&
                carriesPlaceIdentity(
                    body->values[operand.value - 1].info.type))) {
-            addOrigins(result.escapes, origins, operand,
+            addOrigins(*body, result.escapes, origins, operand,
                        MirPlaceEscapeReason::StoredOutsideLocal);
           }
         }
@@ -350,22 +374,22 @@ analyzeMirPlaceAliasEscape(const MirProgram &program, MirBodyAddress address) {
           exactMirInvocationSummary(program, *body, instruction);
       if (!summary) {
         if (instruction.receiver) {
-          addOrigins(result.escapes, origins, *instruction.receiver,
+          addOrigins(*body, result.escapes, origins, *instruction.receiver,
                      MirPlaceEscapeReason::UnknownCall);
         }
         for (const MirOperand &operand : instruction.operands) {
-          addOrigins(result.escapes, origins, operand,
+          addOrigins(*body, result.escapes, origins, operand,
                      MirPlaceEscapeReason::UnknownCall);
         }
         continue;
       }
       if (summary->receiverEscapes && instruction.receiver) {
-        addOrigins(result.escapes, origins, *instruction.receiver,
+        addOrigins(*body, result.escapes, origins, *instruction.receiver,
                    MirPlaceEscapeReason::ExactCall);
       }
       if (summary->argumentsEscape.size() != instruction.operands.size()) {
         for (const MirOperand &operand : instruction.operands) {
-          addOrigins(result.escapes, origins, operand,
+          addOrigins(*body, result.escapes, origins, operand,
                      MirPlaceEscapeReason::UnknownCall);
         }
         continue;
@@ -373,14 +397,15 @@ analyzeMirPlaceAliasEscape(const MirProgram &program, MirBodyAddress address) {
       for (std::size_t index = 0; index < instruction.operands.size();
            ++index) {
         if (summary->argumentsEscape[index]) {
-          addOrigins(result.escapes, origins, instruction.operands[index],
+          addOrigins(*body, result.escapes, origins,
+                     instruction.operands[index],
                      MirPlaceEscapeReason::ExactCall);
         }
       }
     }
     if (block.terminator.kind == MirTerminatorKind::Return &&
         block.terminator.value) {
-      addOrigins(result.escapes, origins, *block.terminator.value,
+      addOrigins(*body, result.escapes, origins, *block.terminator.value,
                  MirPlaceEscapeReason::Returned);
     }
   }

@@ -800,6 +800,9 @@ def test_missing_include_and_format_config(executable, root):
         "IndentWidth: 4\n"
         "UseTab: Never\n"
         "BreakBeforeBraces: Allman\n"
+        "PackConstructorInitializers: Never\n"
+        "BreakConstructorInitializers: AfterColon\n"
+        "ConstructorInitializerIndentWidth: 6\n"
         "SpaceBeforeParens: Never\n"
         "IndentCaseLabels: true\n"
         "AccessModifierOffset: -4\n"
@@ -815,6 +818,8 @@ def test_missing_include_and_format_config(executable, root):
         "int inspect(int& value,Box& box){int bits=value&value;// note\n"
         "switch(bits){case 0:return 0;default:if(bits>0&&true||false){"
         "return(bits);}}return bits;}"
+        "class Service{int first;int second;"
+        "Service(int value):first(value),second(value){}};"
     )
     format_path.write_text(format_source, encoding="utf-8")
     format_uri = format_path.resolve().as_uri()
@@ -867,6 +872,11 @@ def test_missing_include_and_format_config(executable, root):
         assert "\n        case 0:\n            return 0;" in formatted
         assert "if(bits > 0 && true || false)\n" in formatted
         assert "return (bits);" in formatted
+        assert (
+            "    Service(int value) :\n"
+            "          first(value),\n"
+            "          second(value)\n    {}"
+        ) in formatted
 
         (config_root / ".gti-format").write_text(
             "BasedOnStyle: GTI\n", encoding="utf-8"
@@ -915,6 +925,24 @@ def test_missing_include_and_format_config(executable, root):
             "observe(External& reference, External* pointer)" in default_formatted
         )
         assert "return left & right;" in default_formatted
+
+        # Configuration changes apply to the same unsaved document without
+        # restarting the server; the default must retain packed initializers.
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "textDocument/formatting",
+                "params": {
+                    "textDocument": {"uri": format_uri},
+                    "options": {"tabSize": 2, "insertSpaces": True},
+                },
+            }
+        )
+        restored = session.receive_until(lambda message: message.get("id") == 4)
+        assert "Service(int value) : first(value), second(value) {}" in (
+            restored["result"][0]["newText"]
+        )
     finally:
         session.close()
 
@@ -5168,6 +5196,74 @@ def test_advisory_diagnostics_and_actions(executable, root):
         assert ignored_actions[0]["edit"]["documentChanges"][0]["edits"][0][
             "newText"
         ] == "[[discard]] "
+
+        constructor_source = (
+            "class Touch {\n"
+            "public:\n"
+            "  Touch(int& source) {}\n"
+            "};\n"
+            "int main() {\n"
+            "  /* 😀 */ mut int source = 1;\n"
+            "  Touch use{source};\n"
+            "  return source;\n"
+            "}\n"
+        )
+        for version, source in (
+            (3, constructor_source),
+            (
+                4,
+                constructor_source.replace(
+                    "Touch(int& source) {}",
+                    "Touch(mut int& source) { source += 1; }",
+                ),
+            ),
+        ):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didChange",
+                    "params": {
+                        "textDocument": {"uri": uri, "version": version},
+                        "contentChanges": [{"text": source}],
+                    },
+                }
+            )
+            current = session.receive_until(
+                lambda message: message.get("method")
+                == "textDocument/publishDiagnostics"
+                and message["params"].get("uri") == uri
+                and message["params"].get("version") == version
+            )["params"]["diagnostics"]
+            if version == 3:
+                assert len(current) == 1, current
+                old_constructor_warning = current[0]
+                assert old_constructor_warning["code"] == "GTI-S2096"
+                assert old_constructor_warning["range"] == {
+                    "start": {"line": 5, "character": 11},
+                    "end": {"line": 5, "character": 14},
+                }, old_constructor_warning
+            else:
+                assert current == [], current
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "textDocument/codeAction",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "range": old_constructor_warning["range"],
+                    "context": {
+                        "diagnostics": [old_constructor_warning],
+                        "only": ["quickfix"],
+                    },
+                },
+            }
+        )
+        stale_actions = session.receive_until(
+            lambda message: message.get("id") == 4
+        )["result"]
+        assert stale_actions == [], stale_actions
     finally:
         session.close()
 

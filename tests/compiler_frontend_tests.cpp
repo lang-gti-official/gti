@@ -1497,30 +1497,42 @@ int main() {
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact generated =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(
-      generated.contents.find("// GTI verified-MIR body: scalar-cfg-v1") !=
-              std::string::npos &&
-          generated.contents.find("if (__gti_mir_v_1) {") !=
-              std::string::npos &&
-          generated.contents.find("goto __gti_mir_bb_2;") !=
-              std::string::npos &&
-          generated.contents.find("goto __gti_mir_bb_3;") !=
-              std::string::npos &&
-          generated.contents.find("switch (__gti_mir_bb)") ==
-              std::string::npos &&
-          generated.contents.find(
-              "__gti_mir_p_4.construct(std::move(__gti_mir_p_2.get()));") !=
-              std::string::npos &&
-          generated.contents.find(
-              "__gti_mir_p_4.construct(std::move(__gti_mir_p_3.get()));") !=
-              std::string::npos &&
-          generated.contents.find("std::construct_at(__gti_mir_out_result, "
-                                  "std::move(__gti_mir_p_4.get()));") !=
-              std::string::npos &&
-          generated.contents.find("GTI MIR conditional return transfer-out") !=
-              std::string::npos,
-      "the C++ backend should emit scalar conditional control flow from "
-      "verified MIR while preserving explicit ownership transfer");
+  const auto publication =
+      generated.contents.find("std::construct_at(__gti_mir_out_result, "
+                              "std::move(__gti_mir_p_4.get()));");
+  const auto retirement =
+      generated.contents.find("__gti_mir_p_4.destroy();", publication);
+  const auto rightCleanup =
+      generated.contents.find("__gti_mir_p_3.destroy();", retirement);
+  const auto leftCleanup =
+      generated.contents.find("__gti_mir_p_2.destroy();", rightCleanup);
+  const auto returnPublication =
+      generated.contents.find("return true;", publication);
+  expect(generated.contents.find("// GTI verified-MIR body: scalar-cfg-v1") !=
+                 std::string::npos &&
+             generated.contents.find("if (__gti_mir_v_1) {") !=
+                 std::string::npos &&
+             generated.contents.find("goto __gti_mir_bb_2;") !=
+                 std::string::npos &&
+             generated.contents.find("goto __gti_mir_bb_3;") !=
+                 std::string::npos &&
+             generated.contents.find("switch (__gti_mir_bb)") ==
+                 std::string::npos &&
+             generated.contents.find(
+                 "__gti_mir_p_4.construct(std::move(__gti_mir_p_2.get()));") !=
+                 std::string::npos &&
+             generated.contents.find(
+                 "__gti_mir_p_4.construct(std::move(__gti_mir_p_3.get()));") !=
+                 std::string::npos &&
+             publication != std::string::npos &&
+             retirement != std::string::npos &&
+             rightCleanup != std::string::npos &&
+             leftCleanup != std::string::npos &&
+             returnPublication != std::string::npos &&
+             publication < retirement && retirement < rightCleanup &&
+             rightCleanup < leftCleanup && leftCleanup < returnPublication,
+         "the C++ backend should emit scalar conditional control flow from "
+         "verified MIR while preserving explicit ownership transfer");
 
   const lang::FrontendResult invalid = lang::Frontend().analyze(
       "invalid-conditional-expression.gti", R"(

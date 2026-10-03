@@ -99,7 +99,15 @@ def main() -> int:
             r"holder::holder\([^\n]*\)\s*:\s*"
             r"held\(::__gti_program::leaf\(static_cast<std::int32_t>\(3\)\)\)"
         )
-        if len(literal_initializer.findall(literal_cpp)) != 2:
+        # A constructor may need only its checked entry point. Require the
+        # source literal in every emitted definition, without requiring an
+        # unused ordinary ABI definition solely for a fixed text count.
+        constructor_definitions = re.findall(
+            r"^\s*holder::holder\(", literal_cpp, re.MULTILINE
+        )
+        if (not constructor_definitions or
+                len(literal_initializer.findall(literal_cpp)) !=
+                len(constructor_definitions)):
             sys.stderr.write(
                 "generated C++ lost the exact source-literal field initializer\n"
             )

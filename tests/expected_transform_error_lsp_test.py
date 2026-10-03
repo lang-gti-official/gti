@@ -107,6 +107,21 @@ int main() {
                           "params": {"textDocument": {"uri": uri}}})
             open_document(6)
             assert not diagnostics(6)
+            lambda_source = source.replace("transform_error(map)",
+                "transform_error([](int error) -> Error { return Error::failed; })")
+            change(7, lambda_source)
+            assert not diagnostics(7)
+            wrong_lambda = lambda_source.replace("[](int error)", "[](bool error)")
+            change(8, wrong_lambda)
+            errors = diagnostics(8)
+            error = next((d for d in errors if d.get("code") == "GTI-S2097"), None)
+            assert error is not None, errors
+            start = wrong_lambda.index("[](")
+            assert error["range"] == {"start": lsp_position(wrong_lambda, start),
+                                      "end": lsp_position(wrong_lambda, start + 1)}, error
+            assert "exact by-value" in error["message"], error
+            change(9, lambda_source)
+            assert not diagnostics(9)
         finally:
             session.close()
 

@@ -936,9 +936,10 @@ authoritative until a dedicated optimization architecture is adopted.
 
 ### Phase 3: Standard containers — vector mutable iteration implemented
 
-- The first source-defined `std::vector<T>` slice is implemented for movable
-  elements, including variadic in-place construction, indexed insertion and
-  erasure, read-only iteration, and compiler-confined mutable iteration.
+- The source-defined `std::vector<T>` slice accepts move-constructible
+  elements without requiring assignment, including variadic in-place
+  construction, indexed insertion and erasure, read-only iteration, and
+  compiler-confined mutable iteration.
 - Read-only iterators are implemented for `std::vector` and owning strings;
   mutable `std::vector`, `std::list`, `std::deque`, and `std::array` iteration
   is implemented; nominal array cursors remain separate from built-in

@@ -1,0 +1,86 @@
+#include <std/optional>
+#include <std/string>
+#include <std/vector>
+
+mut int32_t cleanup_divisor = 1;
+mut int32_t helper_divisor = 1;
+
+class Payload {
+  std::optional<std::string> text;
+  int32_t identity;
+public:
+  Payload(int32_t identity)
+      : text(std::optional<std::string>(std::string("event"))), identity(identity) {}
+  Payload(Payload& other) = delete;
+  Payload(Payload&& other) = default;
+  ~Payload() {
+    std::println(this.identity);
+    if (this.identity == 2) {
+      int32_t checked = int32_t(1) / cleanup_divisor;
+    }
+  }
+};
+
+enum class Event { message(Payload payload), idle };
+
+// The enum's move construction exists, but its optional-bearing payload
+// deliberately prevents assignment. Field publication must not assign.
+class Envelope<T> {
+  T item;
+  int32_t checked;
+public:
+  Envelope(T value, int32_t divisor)
+      : item(std::move(value)), checked(int32_t(1) / divisor) {
+    std::println(50);
+  }
+};
+
+class FreshEnvelope {
+  Event item;
+  int32_t checked;
+public:
+  FreshEnvelope(int32_t identity, int32_t divisor)
+      : item(Event::message(Payload(identity))), checked(int32_t(1) / divisor) {
+    std::println(60);
+  }
+};
+
+Event make_event(int32_t identity) {
+  Payload payload = Payload(identity);
+  int32_t helper_checked = int32_t(1) / helper_divisor;
+  return Event::message(std::move(payload));
+}
+
+class CalledEnvelope {
+  Event item;
+  int32_t checked;
+public:
+  CalledEnvelope(int32_t identity, int32_t divisor)
+      : item(make_event(identity)), checked(int32_t(1) / divisor) {
+    std::println(70);
+  }
+};
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { std::println(9); }
+};
+
+void exercise() {
+  Envelope<Event> named = Envelope<Event>(Event::message(Payload(1)), 1);
+  FreshEnvelope fresh = FreshEnvelope(2, 1);
+  CalledEnvelope called = CalledEnvelope(5, 1);
+  mut std::vector<Event> events{};
+  events.push_back(Event::message(Payload(3)));
+  events.reserve(std::size_t(8));
+  mut std::optional<Event> selected =
+      std::optional<Event>(Event::message(Payload(4)));
+  selected.reset();
+}
+
+int main() {
+  Guard caller{};
+  exercise();
+  return 0;
+}

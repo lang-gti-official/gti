@@ -1394,18 +1394,43 @@ int32_t main() {
             function.body.findPlace(*instruction.destination);
         const lang::MirLoan *loan =
             function.body.findLoan(instruction.operands.front().loan);
+        const lang::MirLoan *dependency =
+            loan == nullptr ? nullptr
+                            : function.body.findLoan(loan->storedDependency);
         if (destination != nullptr && loan != nullptr &&
             destination->type.kind == lang::SemanticType::Reference &&
-            loan->kind == lang::MirLoanKind::Stored && loan->storedField == 0) {
+            loan->kind == lang::MirLoanKind::Local && dependency != nullptr &&
+            dependency->kind == lang::MirLoanKind::Stored &&
+            dependency->storedField == 0) {
+          const auto *runtimeSource =
+              function.body.findPlace(instruction.operands.front().place);
+          const bool previousAlias =
+              runtimeSource != nullptr &&
+              runtimeSource->root == lang::MirPlaceRootKind::Binding &&
+              runtimeSource->projections.size() == 1 &&
+              runtimeSource->projections.front().kind ==
+                  lang::MirProjectionKind::Dereference &&
+              std::any_of(aliases.begin(), aliases.end(), [&](auto alias) {
+                return function.body.findPlace(alias)->binding ==
+                       runtimeSource->binding;
+              });
+          expect((loan->source == instruction.operands.front().place ||
+                  previousAlias) &&
+                     std::find(loan->carriers.begin(), loan->carriers.end(),
+                               destination->binding) != loan->carriers.end() &&
+                     loan->source != dependency->source &&
+                     (provenance == 0 || provenance == dependency->id),
+                 "each alias retains the physical loan and binds from its "
+                 "source shell or an earlier checked reference alias");
           aliases.push_back(destination->id);
-          provenance = loan->id;
+          provenance = dependency->id;
         }
       }
     }
   }
   expect(entry != nullptr && aliases.size() == 2 && provenance != 0,
-         "both aliases should retain the stored provenance loan and their "
-         "exact physical source places");
+         "both aliases should retain physical-borrow authority separate from "
+         "the stored provenance dependency");
   if (entry == nullptr || aliases.size() != 2 || provenance == 0) {
     return;
   }

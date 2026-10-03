@@ -73,12 +73,24 @@ IDs are stable only inside one `HirProgram`; zero means no identity.
 Consuming `expected<T, E>::transform_error` receives the exact mapper identity
 and `expected<T, F>` result from semantics. HIR expands it into one state test,
 mutually exclusive active-alternative extraction/move paths, an ordinary
-ordered call to the selected `F(E)` function on the error path, an Unexpected
-wrapper, and an Expected-valued conditional join. The mapper's ordinary
+call to the selected `F(E)` function or concrete lambda on the error path, an
+Unexpected wrapper, and an Expected-valued conditional join. The mapper's ordinary
 defined-failure edge and the existing full-expression lifecycle pass govern
 cleanup. `void` success constructs the empty success alternative without a
 payload extraction. Synthetic values retain stable IDs; lowering does not keep
 pointers into the values vector across appends.
+The conditional's explicit `conditionalInputs` retain receiver-then-mapper
+evaluation before branching. They participate in full-expression assignment,
+module reachability, and parent-edge checks; synthetic default values cannot
+carry them. Plan verification ties the ordered pair to the selected semantic
+call's source expressions and rejects missing, reordered or unrelated inputs.
+MIR emits them once on the incoming path. Lambda target/environment identity,
+read invocation capability, and callable failure propagation reuse ordinary
+lambda call lowering, not a second callable ABI. A named environment is reused;
+fresh owning captures remain live for cleanup even when the error arm is skipped.
+An explicitly moved lambda receiver uses a `MoveValue` stage independently of
+its read-only invocation capability. Its value obligation retains cleanup for
+the full expression; the receiver stage does not transfer that obligation.
 
 When an owner has no generated-default construction route, each concrete source
 constructor selects its omitted declaration field defaults into its own HIR
@@ -393,7 +405,7 @@ target is concrete and non-intrinsic; argument cardinality exactly matches the
 selected parameters after caller-side default expansion; no pack expansion is
 present; and every
 parameter is either a supported scalar/reference form, an exact class value
-without borrowed state, or the narrowly scheduled constructor input described
+without borrowed state, or the narrowly scheduled borrowed input described
 below. Reusable mutable temporary permission remains confined to
 ordinary methods and reusable `operator()`; consuming value operators also
 receive a temporary stage with exact `Once` capability. Non-borrowing read-only
@@ -432,14 +444,16 @@ unwrapped producer, exact read-only parameter type, written parameter index,
 and enclosing full-expression identity. HIR rejects duplicate, omitted, or
 out-of-range semantic indices and never infers this role from a class-shaped
 argument on its own.
-An ordinary constructor may instead receive `MoveBorrowedTemporary` for an
+An ordinary call or constructor may instead receive `MoveBorrowedTemporary` for an
 exact fresh GTI call result whose class value carries borrowed state. This is a
-transfer into the selected constructor parameter, not a copy and not a loan of
+transfer into the selected parameter, not a copy and not a loan of
 the producer. The input retains the producer, parameter index, concrete
 parameter type, and full-expression identity so MIR can reparent the one
-source drop to the constructor parameter and verify single destruction. This
-bounded route is what permits a move-only iterator result such as
-`source.begin()` to initialize an inferred constructor parameter without
+source drop to the parameter and verify single destruction. The external
+owner dependency remains separate from the transferred carrier's cleanup.
+This bounded route permits a move-only iterator result such as
+`source.begin()` to initialize an inferred constructor parameter, and a fresh
+borrowed-view factory result to pass directly to an ordinary helper, without
 weakening ordinary class-value admission.
 This preserves a once-callable requirement even when exact overload selection
 legitimately falls back to a read or mutable target. Ordinary constructors
@@ -546,6 +560,15 @@ reference field symbol. A checked carrier or exact stored-referent return keeps
 value's concrete type. HIR does not turn a shell field or projection into that
 stored dependency; MIR lowering must transfer the entry loan explicitly, and
 MIR verification rechecks the transfer.
+
+References to carriers retain a separate `HirLoan.storedDependency` edge to
+the semantic stored-owner loan. The physical reference's place/access and
+parent remain distinct from that inherited authority. Body extraction closes
+over both parent and dependency identities; receiver-only abstract entries are
+selected by their declaring function, while function/lambda reference entries
+are selected through their concrete formal bindings. Lifetime endpoints sort
+both edge kinds child-first. HIR preserves these facts for independent MIR
+verification rather than deriving them from a carrier's backend layout.
 
 For shared multi-path carriers, `HirLoan.additionalDependencies` preserves
 every semantic owner place or opaque parameter field path in the same concrete
