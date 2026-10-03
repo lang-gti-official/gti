@@ -56,6 +56,22 @@ examples in four configurations. Its final comparison phase cannot run because
 not reported as a complete optional-audit pass; its failure artifacts are
 retained locally.
 
+## Practical quick-reference examples
+
+`practical_examples` builds examples 91–98 with the optimized host compiler at
+C++20/O0 and C++23/O3 and checks their output and exit status. The HTTP/JSON
+client is offline without arguments. Live GET/POST paths run against the
+bundled loopback-only Python demo server on an ephemeral port; status errors,
+malformed JSON, missing fields, unsupported URLs, and the response-size limit
+are checked without external services or credentials. The other examples cover
+JSON documents/codecs, encoding, explicit cloning and member requirements,
+error mapping, constexpr tables, and shared ownership.
+
+These examples also participate in both complete MIR/LoweredProgram inventories
+and the native two-endpoint corpus oracle. Adding them must not silently
+refresh counts for an existing example. No compiler semantics, standard-library
+API, parser, or editor protocol change is involved.
+
 ## Explicit cloning and Objective-C++ bridges
 
 `testMemberRequirementConcepts` covers named, relational, composed, and direct

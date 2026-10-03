@@ -4,6 +4,34 @@ These examples are a runnable introduction to GTI. Read them in numerical
 order: each file introduces one small group of language features and has its
 own `main` function.
 
+## Find a recipe
+
+You do not need to read the entire sequence to find an API pattern:
+
+| I want to… | Start here |
+| --- | --- |
+| Parse, inspect, build, and serialize JSON | [91: JSON documents](91-json-documents.gti) |
+| Map JSON to my own classes and report field errors | [92: JSON codecs](92-json-codecs.gti) |
+| Build URLs, GET JSON, or POST a JSON body | [93: HTTP/JSON client](93-http-json-client.gti), [local demo below](#http-and-json-without-an-external-service) |
+| Encode counted bytes as Base64 or hex | [94: binary-to-text encoding](94-binary-text-encoding.gti) |
+| Duplicate a vector of strings or constrain a generic member call | [95: explicit cloning](95-explicit-cloning.gti) |
+| Translate library errors into application errors | [96: error mapping](96-error-mapping.gti) |
+| Build and validate data at compile time | [97: constexpr tables](97-constexpr-tables.gti) |
+| Share an object's lifetime without deep-copying it | [98: shared ownership](98-shared-ownership.gti) |
+| Retain a lambda as a callback | [86: owning callbacks](86-owning-callbacks.gti) |
+| Model an absent value and initialize it later | [84: optional values](84-optional-values.gti) |
+| Read program arguments | [43: hosted arguments](43-program-arguments.gti) |
+| Traverse, search, or modify containers | [90: algorithms](90-generic-algorithms.gti), [87: dictionaries](87-associative-containers.gti) |
+| Model an owner and its checked views | [41: owner dependencies](41-owner-dependencies.gti), [42: reborrows](42-exclusive-reborrows.gti) |
+
+Each recipe is a complete program, includes the modules it names, checks
+recoverable errors, and returns nonzero if its demonstrated invariant fails.
+The numbered examples run without arguments or external services. The HTTP
+recipe opts into networking only when you supply a URL. Its local test server
+is a teaching helper, not a production server.
+
+## Numerical index
+
 | Example | Focus |
 | --- | --- |
 | `01-basics.gti` | bindings, primitive values, expressions, and output |
@@ -91,7 +119,19 @@ own `main` function.
 | `85-payload-enum-fields.gti` | ordinary class and struct fields that directly own active-cleanup payload enums |
 | `86-owning-callbacks.gti` | retained lambda callbacks, `std::function`, cloning/replacement, mutable state, move-only captures, and one-shot invocation |
 | `87-associative-containers.gti` | ordered and hashed dictionaries, nested borrowed insertion results, moves, and owner reactivation |
+| `88-consuming-builders.gti` | consuming builder methods and explicit receiver movement |
 | `89-library-workflow.gti` | numeric option parsing, string editing, filesystem queries, and owning work queues/history/sets |
+| `90-generic-algorithms.gti` | search, mutation, replacement, and filtered copying |
+| `91-json-documents.gti` | parsing, typed access, missing versus null, builders, array traversal, and deep cloning |
+| `92-json-codecs.gti` | exact codec specialization, owned application values, arrays, and JSON Pointer errors |
+| `93-http-json-client.gti` | encoded URLs, bounded GET/POST requests, transport/status/schema errors, and JSON responses |
+| `94-binary-text-encoding.gti` | Base64/hex round trips, embedded zero bytes, and strict decoding |
+| `95-explicit-cloning.gti` | vector/string cloning, ownership transfer, and exact member requirements |
+| `96-error-mapping.gti` | consuming `transform_error`, named mapper functions, and `?` propagation |
+| `97-constexpr-tables.gti` | constexpr constructors, methods, arrays, loops, and static assertions |
+| `98-shared-ownership.gti` | shared handles, explicit cloning versus moving, and final-owner cleanup |
+
+## Build and run
 
 Build and run an example from the repository root:
 
@@ -99,6 +139,50 @@ Build and run an example from the repository root:
 ./build/gti examples/01-basics.gti -o /tmp/gti-basics
 /tmp/gti-basics
 ```
+
+Use your installed `gti` instead of `./build/gti` if preferred. Development
+test runs must use a host-optimized compiler (Release/RelWithDebInfo/MinSizeRel);
+this is independent of the generated program's `-O0`/`-O3` setting.
+
+## HTTP and JSON without an external service
+
+Build the client, then start the bundled Python 3 server in another terminal:
+
+```sh
+gti examples/93-http-json-client.gti -o /tmp/http-json
+python3 examples/http-json-server.py
+```
+
+Run these from the first terminal:
+
+```sh
+/tmp/http-json                                      # offline URL-building recipe
+/tmp/http-json http://127.0.0.1:8765/user             # GET: prints "local demo"
+/tmp/http-json http://127.0.0.1:8765/user post        # POST JSON: prints "tea"
+/tmp/http-json http://127.0.0.1:8765/not-found        # status error; exits 6
+/tmp/http-json http://127.0.0.1:8765/invalid-json     # parse error; exits 7
+/tmp/http-json http://127.0.0.1:8765/missing-name     # schema error; exits 8
+```
+
+Stop the server with Ctrl-C. Use `--port 8766` if the default port is busy.
+Requests have explicit time and response-size limits. Plain HTTP is used only
+for this loopback demo; use HTTPS for remote services. GTI verifies HTTPS
+certificates and hostnames and does not automatically follow redirects. A
+transport success does **not** imply an HTTP success or valid application JSON.
+Never paste credentials into these examples. The platform libcurl shared
+library is required for actual requests.
+
+The codec example keeps schema decisions in application code; GTI does not
+infer JSON members from a class. Cloning examples distinguish independent
+string/document contents from `shared_ptr::clone()`, which shares the same
+pointee. The error-mapping example demonstrates an exact namespace-function
+mapper and explicit movement of a named Expected receiver.
+
+See the canonical [HTTP](../docs/language/http.md),
+[JSON](../docs/language/json.md), [encoding](../docs/language/encoding.md), and
+[Expected](../docs/language/expected.md) contracts for limits and details.
+
+## Language notes
 
 The compiler automatically loads the standard-library prelude, so
 `std::print` and `std::println` are available in every program. The language
