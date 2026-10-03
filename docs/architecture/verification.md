@@ -1433,6 +1433,8 @@ upstream code.
 | `issues_122_124_field_initializers_runtime` | grouped, unchecked and checked-conversion, and empty/non-empty payload-enum class-field initializers at O0/O2 under C++20/C++23, plus exact verified-MIR initializer spellings |
 | `typed_program_model` | deterministic serialization, evaluation, GTI/C++ source generation, metamorphic transforms, and complete feature census for the bounded scalar and four pairwise composition scenarios |
 | `typed_differential_smoke` | one fixed real-compiler differential batch comparing original/transformed GTI, the independent evaluator, and independent C++ at O0/O3, plus injected evaluator/reference/GTI drift and retained evidence |
+| `feature_interaction_model` | constrained pairwise/selected-triple and full three-way coverage, seeded typed source generation, independent value/effect/cleanup expectations, metamorphic renaming, failure classifiers, retained evidence, and predicate-preserving bounded reduction |
+| `feature_interaction_smoke` | three fixed interaction programs through the real optimized compiler at C++20/C++23 and O0/O3, original/renamed variants, repeated execution, exact destructor/call/output checks, and negative ownership admission controls |
 | `stdlib_surface_manifest` | complete stdlib-source fingerprints and executable/scaffold/unsupported classification; injected missing-source, stale-source, missing-case, and wrong-case-kind rejection |
 | `stdlib_surface` | every currently classified executable stdlib entry through the production compiler/native-driver path at O0/O3 with exact exit/stdout/stderr, including counted I/O create/write/seek/chunk-read/append/close, standard streams, and strict Base64/hexadecimal encoding and decoding over all byte values, plus bounded expected diagnostics for unsupported surfaces |
 | `stdlib_include_sweep` | every shipped `std` module independently reaches C++ emission from an include-only translation unit, including unused generic declarations |
@@ -2464,6 +2466,95 @@ git diff --check
 Use focused tests first; do not turn every change into the full audit matrix.
 
 ## Failure Capture And Opt-In Fuzzing
+
+`scripts/debug/feature_interactions.py` extends the earlier scalar model with
+a bounded typed value-flow grammar. Its ten boolean factors are generic
+transport, lambda invocation, Expected production, move-only values, payload
+enums, vector growth, explicit read-only borrowing, error propagation, visible
+cleanup, and nested calls. These features participate in the same producer,
+transport, observation, and destruction path. Both Expected alternatives run
+in every Expected case; vector growth relocates an active prefix; borrowed
+temporary arguments retire at their full-expression boundary. A user-defined
+`Ticket` supplies ordinary lifecycle behavior. Owning enums travel in an
+ordinary class envelope where direct enum transport across lambda/Expected
+boundaries is currently forbidden. Owned lambda captures use the supported
+explicit movement of a named local.
+
+The constrained covering array covers every admissible **on/off** pair, plus
+all admissible tuples for five selected three-feature groups. Prefix error
+propagation requires Expected; impossible tuples are removed before coverage
+is computed. `--strength 3` covers every admissible three-way tuple. A seed
+determines tie-breaking and bounded scalar data; `--extra-cases` revisits shapes
+with additional seeded data. This is a small grammar of supported shapes,
+not an independent type checker or arbitrary whole-language fuzz generator.
+When an intended valid case is rejected, it fails the campaign rather than
+being skipped. Documented exclusions belong in the generator's structural
+rules; newly found compiler defects must not become exclusions.
+
+The oracle independently computes integer values, observable call effects,
+full-expression and reverse resource cleanup, and active error destruction.
+The runner compares exact status/stdout/stderr at all four C++20/C++23 O0/O3
+configurations for original and renamed/parenthesized source. It repeats each
+execution to expose unstable observations. The existing scalar typed audit
+continues to supply an independent C++ comparison; the ownership oracle here
+does not claim C++ moved-from destructor behavior as GTI semantics.
+
+```sh
+python3 scripts/debug/feature_interactions.py generate \
+    --seed 20261003 --out /tmp/gti-interaction-sources
+python3 scripts/debug/feature_interactions.py run \
+    --gti build/gti --seed 20261003 --out /tmp/gti-interaction-run
+python3 scripts/debug/feature_interactions.py run \
+    --gti build/gti --strength 3 --extra-cases 20 --keep-going
+python3 scripts/debug/feature_interactions.py replay \
+    --gti build/gti --failure /tmp/gti-interaction-run/case-000/original-O0-c++20/failure.json
+python3 scripts/debug/feature_interactions.py reduce \
+    --gti build/gti --failure /tmp/gti-interaction-run/case-000/original-O0-c++20/failure.json \
+    --max-probes 40 --out /tmp/gti-interaction-reduced
+```
+
+Output directories must be new. Every run retains the cases, source hashes,
+oracle, exact command arguments, raw logs, compiler version, generated C++
+when available, and a machine-readable report. `planned_coverage` and
+`verified_coverage` are distinct: only cases passing the entire native and
+metamorphic matrix count as verified. Internal errors, signals, timeouts,
+ordinary rejection, missing artifacts, wrong output, and nondeterminism remain
+distinct. Replay reports reproduced, disappeared, or replaced failures using
+the current selected toolchain; saved command text is never executed.
+
+Typed reduction removes feature wrappers and shrinks bounded scalar data,
+regenerating a valid source and its oracle after each step. A candidate must
+retain the same failing configuration, metamorphic variant, stage, and failure
+signature. A semantic rejection cannot replace wrong code or an internal
+error. It preserves the diagnostic reason while normalizing private IDs and
+literal numbers. For wrong code it preserves the disagreeing observation
+channels, not a proof that the underlying root cause is unchanged. The final
+`failure.json` is replayable; `reduction.json` reports probe-budget exhaustion
+or a fixed point within this bounded candidate family. This does not claim
+globally minimal syntax. Arbitrary source-graph reduction remains the existing
+bundle reducer's responsibility below.
+
+CTest registers the generator/decision tests and a fixed three-program smoke
+(24 native outcomes plus two invalid ownership siblings). The smoke does not
+claim complete pairwise coverage. Wider covering arrays and seeded exploration
+remain opt-in, and compiler findings must receive minimal regressions in their
+owning suites.
+
+The initial Release/AppleClang 21/LLVM 22.1.8 run on macOS arm64 at
+`ca705977` generated 12 cases for seed `20261003`: eight passed all eight
+original/metamorphic and standard/optimization outcomes, while four failed
+C++ admission in every mode. Verified coverage was 193 of 219 required
+tuples; planned coverage was complete. The fixed smoke also fails on this
+baseline. These are compiler findings, not a complete passing gate:
+[#25](https://git.internal.howetotech.dev/gti-lang/gti/issues/25) records
+checked extraction of a copyable class from Expected, and
+[#26](https://git.internal.howetotech.dev/gti-lang/gti/issues/26) records direct
+and generic lambda class-result transport. Their minimal sources live in the
+three `tests/fixtures/feature_interaction_*_class.gti` fixtures. They pass
+verified MIR emission and must ultimately compile and exit zero. The smoke
+retains its ordinary pass expectation rather than excluding the failing
+shapes or treating their internal errors as expected behavior. Broader native
+validation remains incomplete until those compiler defects are corrected.
 
 The `Q-FUZZ-01` facilities support debugging beyond the deterministic suites
 (design record:
