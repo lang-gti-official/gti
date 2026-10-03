@@ -1,0 +1,20 @@
+#include <std/encoding>
+#include <std/string>
+
+int main() {
+  // string_view is counted bytes here, not a NUL-terminated C string.
+  std::string_view bytes = "A\0B";
+  auto base64 = std::encoding::base64::encode(bytes);
+  auto hex = std::encoding::hex::encode(bytes);
+  std::println(base64);
+  std::println(hex);
+  auto decoded = std::encoding::base64::decode(base64.view());
+  auto from_hex = std::encoding::hex::decode("410042");
+  if (!decoded || !from_hex || decoded.value().view() != bytes ||
+      from_hex.value().view() != bytes) { return 1; }
+  // Strict Base64 rejects nonzero padding bits and does not ignore whitespace.
+  auto invalid = std::encoding::base64::decode("Zh==");
+  if (invalid || invalid.error() != std::encoding::decode_errc::non_canonical_input) { return 2; }
+  // Encoding is not encryption. Never treat Base64 as protection for secrets.
+  return 0;
+}

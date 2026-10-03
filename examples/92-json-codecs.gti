@@ -1,0 +1,55 @@
+#include <std/json>
+#include <std/string>
+#include <std/vector>
+
+class User {
+  uint64_t id_;
+  std::string login_;
+public:
+  User(uint64_t id, std::string login) : id_(id), login_(std::move(login)) {}
+  uint64_t id() { return this.id_; }
+  std::string_view login() { return this.login_.view(); }
+};
+
+// Exact specialization for our own type, not reflection or implicit mapping.
+// Required keys, defaults, and schema evolution belong in this codec.
+class std::json::codec<User> {
+public:
+  expected<User, std::json::error> decode(std::json::value& input) {
+    auto id = input.get_uint64("id");
+    if (!id) { return unexpected(std::move(id).error()); }
+    auto login = input.get_string("login");
+    if (!login) { return unexpected(std::move(login).error()); }
+    std::string owned_login = std::move(login).value();
+    return User(id.value(), std::move(owned_login));
+  }
+  expected<std::json::value, std::json::error> encode(User& input) {
+    mut auto result = std::json::value::object();
+    auto id = result.set("id", input.id());
+    if (!id) { return unexpected(std::move(id).error()); }
+    auto login = result.set("login", input.login());
+    if (!login) { return unexpected(std::move(login).error()); }
+    return std::move(result);
+  }
+};
+
+int main() {
+  auto decoded = std::json::decode<User>("{\"id\":7,\"login\":\"alice\"}");
+  if (!decoded) { std::println(decoded.error().description()); return 1; }
+  auto user = std::move(decoded).value();
+  std::println(user.login());
+  auto encoded = std::json::encode<User>(user);
+  if (!encoded) { return 2; }
+  std::println(std::json::stringify(encoded.value()));
+
+  auto users = std::json::decode_array<User>(
+      "[{\"id\":1,\"login\":\"one\"},{\"id\":2,\"login\":\"two\"}]");
+  if (!users || users.value().size() != 2) { return 3; }
+  for (auto& account : users.value()) { std::println(account.login()); }
+
+  // An array decode error owns its path, including the failing element index.
+  auto invalid = std::json::decode_array<User>("[{\"id\":1}]");
+  if (invalid || invalid.error().path() != "/0/login") { return 4; }
+  std::println(invalid.error().path());
+  return 0;
+}
