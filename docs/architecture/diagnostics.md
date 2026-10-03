@@ -2,6 +2,32 @@
 
 Status: Current infrastructure and conventions.
 
+## Terminal colour
+
+The CLI accepts `--color=auto|always|never` (also `--color <mode>`), before a
+command or among its options. The default `auto` uses colour independently for
+stdout and stderr only when that destination is a terminal, `TERM` is not
+`dumb`, and `NO_COLOR` is absent or empty. An explicit `always` overrides those
+environment defaults; `never` disables GTI styling. Repeated options use the
+last value. Arguments after `--` and other options' operands remain untouched.
+
+Errors and their underlines are red, warnings yellow, notes/help cyan, and
+successful build/check/emission labels green. Diagnostic summaries are red
+when errors occurred, yellow for warnings alone, or green for a clean result.
+Severity words, codes, and counts remain visible without colour. Executed-program
+output is never restyled or filtered, and native tools retain their own colour
+policy. When a styled parallel build child's combined output must be replayed
+to a plain destination, SGR styling in that captured text is removed.
+
+`src/cli/terminal_style.*` owns ANSI presentation and terminal detection;
+Windows auto mode requires a console that accepts virtual-terminal processing.
+Diagnostic values, LSP messages, JSON metadata/build reports, generated source,
+and cached compilation artifacts never receive CLI styling. Captured parallel
+GTI build children inherit the parent's resolved colour requirement; replay to
+a plain destination removes their styling. The summary payload remains
+contiguous inside its colour wrapper so the existing child-count aggregation
+does not depend on ANSI parsing.
+
 `include/gti/diagnostic.h` defines the structured diagnostic contract shared by
 source loading, lexing, parsing, semantics, the driver, the backend, CLI, and
 LSP.
