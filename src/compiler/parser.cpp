@@ -58,6 +58,11 @@ public:
 
     while (!isAtEnd()) {
       try {
+        if (check(TokenKind::IMPORT) ||
+            (check(TokenKind::EXPORT) && peekAt(1).kind == TokenKind::IMPORT)) {
+          sourceUnitImport();
+          continue;
+        }
         declarations.emplace_back(declaration());
       } catch (const ParseError &) {
         synchronize(false, false, true);
@@ -89,6 +94,22 @@ public:
   }
 
 private:
+  // Resolution belongs to SourceLoader. Retain the directive through parsing
+  // so only this source-unit boundary can consume it: an import embedded in a
+  // declaration or expression must not disappear before its syntax is checked.
+  void sourceUnitImport() {
+    match({TokenKind::EXPORT});
+    consume(TokenKind::IMPORT, "Expect 'import' after 'export'.");
+    if (!match({TokenKind::STRING_LITERAL})) {
+      consume(TokenKind::IDENTIFIER, "Expect a module name after 'import'.");
+      if (match({TokenKind::DOT})) {
+        consume(TokenKind::IDENTIFIER,
+                "Expect a module name after the dependency alias.");
+      }
+    }
+    consume(TokenKind::SEMICOLON, "Expect ';' after a module import.");
+  }
+
   void reset() {
     current = 0;
     nestingDepth = 0;

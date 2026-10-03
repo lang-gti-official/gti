@@ -110,7 +110,10 @@ diagnostics or letting a backend message choose either identity.
 missing registration, name mismatch, duplicate interfaces, package escapes,
 inconsistent shared legacy-unit configuration, and include/import bypasses.
 Point at the source directive; relate the interface declaration for name
-mismatches or duplicates. Source cycles retain `GTI-I0001`. `GTI-S2098` owns
+mismatches or duplicates. Imports retain their tokens through parsing, so an
+import embedded in an otherwise unfinished declaration receives `GTI-P0001`
+at the unexpected token rather than being erased by loading. Source cycles
+retain `GTI-I0001`. `GTI-S2098` owns
 invalid declaration exports, including exports outside an interface and
 source-local static declarations. Visibility errors explain whether a
 declaration is private or its public interface was not imported; they must not

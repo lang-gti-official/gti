@@ -6003,7 +6003,7 @@ owned by the rows and domain plans above.
 | Project dependencies/cache | parallel toolchain | tests -> cache -> path/workspace -> Git/lock |
 | LSP project index/process isolation | client/risk-gated | project facts or stronger containment requirement |
 | Separate compilation/stable GTI ABI | later-breadth proposal | deterministic names, layout/ABI, package model, concrete emission |
-| Module vocabulary | Source-interface implementation proposed; acceptance pending | ADR 024 and its proposal PR add imports, explicit exports/re-exports and package maps for library APIs; legacy includes remain unchanged. Separate compilation and independent module linkage identities remain follow-up work. |
+| Module vocabulary | Source-interface reconciliation candidate; combined validation pending | ADR 024 defines imports, explicit exports/re-exports and package maps for library APIs; legacy includes remain unchanged. Separate compilation and independent module linkage identities remain follow-up work. |
 
 ## Deliberate Stop Conditions
 

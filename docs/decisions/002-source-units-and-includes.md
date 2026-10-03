@@ -30,7 +30,7 @@ package aliases implicitly.
 
 ## Consequences
 
-[ADR 024](024-source-module-interfaces.md) proposes an explicit source-module
+[ADR 024](024-source-module-interfaces.md) defines an explicit source-module
 interface and import/export vocabulary on top of this graph. It preserves the
 include contract above; interfaces must be imported rather than included, and
 only explicit re-exports add transitive visibility. It does not adopt C++ BMIs
