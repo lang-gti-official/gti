@@ -35,7 +35,19 @@
    character literals are literal content.
 *)
 
-source-file            = { include-directive | declaration } END_OF_FILE ;
+source-file            = [ module-declaration ]
+                         { include-directive | import-declaration | declaration }
+                         END_OF_FILE ;
+
+module-declaration     = "export" "module" IDENTIFIER ";" ;
+import-declaration     = [ "export" ] "import"
+                         ( IDENTIFIER [ "." IDENTIFIER ] | STRING_LITERAL ) ";" ;
+export-declaration     = "export" declaration ;
+(* Imports and the module header are unconditional source-unit-level syntax.
+   Exports apply to namespace-scope API declarations only and require a module
+   interface. Duplicate export modifiers and exported static declarations are
+   invalid. An exported namespace exports its child declarations, not private
+   imported dependencies. Class member access is unchanged. *)
 
 include-directive      = "#include"
                          ( STRING_LITERAL | angle-include-path )
@@ -63,6 +75,7 @@ angle-include-path     = "<" PATH_COMPONENT "/" PATH_COMPONENT
 program                = { declaration } END_OF_FILE ;
 
 declaration            = conditional-declaration
+                       | export-declaration
                        | configuration-directive
                        | compile-error-directive
                        | static-assert-declaration

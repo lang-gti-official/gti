@@ -35,11 +35,13 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "enum",
   "expected",
   "extern",
+  "export",
   "false",
   "float",
   "for",
   "if",
   "interface",
+  "import",
   "int",
   "int8_t",
   "int16_t",
@@ -50,6 +52,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "int32",
   "int64",
   "mut",
+  "module",
   "namespace",
   "nullptr",
   "nullptr_t",
@@ -113,10 +116,26 @@ module.exports = grammar({
     source_file: ($) =>
       seq(
         optional($._byte_order_mark),
-        repeat(choice($.include_directive, $.declaration)),
+        optional($.module_declaration),
+        repeat(choice($.include_directive, $.import_declaration, $.declaration)),
       ),
 
     _byte_order_mark: () => "\uFEFF",
+
+    module_declaration: ($) =>
+      seq("export", "module", field("name", $.identifier), ";"),
+
+    import_declaration: ($) =>
+      seq(
+        optional("export"),
+        "import",
+        field("path", choice($.module_name, $.string_literal)),
+        ";",
+      ),
+
+    module_name: ($) => seq($.identifier, optional(seq(".", $.identifier))),
+
+    export_declaration: ($) => seq("export", $.declaration),
 
     include_directive: ($) =>
       prec.right(
@@ -140,6 +159,7 @@ module.exports = grammar({
 
     declaration: ($) =>
       choice(
+        $.export_declaration,
         $.conditional_declaration,
         $.configuration_directive,
         $.compile_error_directive,

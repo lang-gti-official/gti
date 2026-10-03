@@ -3004,6 +3004,70 @@ file(WRITE "$ENV{GTI_BUILD_OUTPUT}" "version = 1\ncpp-sources = [\"bridge.mm\"]\
   }
 }
 
+void testModuleManifest() {
+  TemporaryDirectory temporary;
+  const auto root = temporary.root();
+  const auto manifest = root / "gti.toml";
+  const auto first = root / "src/api.gti";
+  const auto second = root / "src/other.gti";
+  expect(
+      writeFile(first,
+                "export module main; export int answer() { return 42; }\n") &&
+          writeFile(
+              second,
+              "export module main; export int answer() { return 43; }\n") &&
+          writeFile(root / "src/main.gti",
+                    "import main; int main() { return answer(); }\n"),
+      "module fixtures should be writable");
+  const std::string base = validManifest();
+  expect(writeFile(manifest, base + "\n[modules]\nmain = \"src/api.gti\"\n"),
+         "module manifest should be writable");
+  const auto loaded = lang::driver::loadProjectManifest(manifest);
+  expect(loaded.succeeded() && loaded.manifest->package().modules.size() == 1 &&
+             loaded.manifest->package().modules.front().second ==
+                 std::filesystem::canonical(first),
+         "module paths resolve once into immutable package inputs");
+  const auto workspace = lang::driver::resolveProjectWorkspace(root);
+  expect(workspace.succeeded() &&
+             !workspace.workspace->packageSourceRoots().front().modules.empty(),
+         "the resolved workspace forwards module maps to the compiler");
+  const std::string identity =
+      workspace.succeeded() ? workspace.workspace->modelIdentity() : "";
+  expect(writeFile(manifest, base + "\n[modules]\nmain = \"src/other.gti\"\n"),
+         "module registration should be editable");
+  const auto moved = lang::driver::resolveProjectWorkspace(root);
+  expect(moved.succeeded() && moved.workspace->modelIdentity() != identity,
+         "moving a public module changes project/cache identity");
+  for (const std::string registration :
+       {"main = 42", "main = \"missing.gti\"", "main = \"\"",
+        "main = \"/outside.gti\"", "main = \"C:/outside.gti\"",
+        "main = \"src/api.cpp\"", "main = \"src\"", "import = \"src/api.gti\"",
+        "\"bad.name\" = \"src/api.gti\"", "__gti_hidden = \"src/api.gti\"",
+        "main = \"src/api.gti\"\nother = \"src/api.gti\"",
+        "main = \"src/api.gti\"\nMAIN = \"src/other.gti\""}) {
+    expect(writeFile(manifest, base + "\n[modules]\n" + registration + "\n"),
+           "invalid module fixture should be writable");
+    const auto invalid = lang::driver::loadProjectManifest(manifest);
+    expect(!invalid.succeeded() && !invalid.diagnostics.empty(),
+           "invalid module map must fail before frontend entry: " +
+               registration);
+  }
+  TemporaryDirectory outside;
+  expect(writeFile(outside.root() / "api.gti", "export module main;"),
+         "external fixture exists");
+  std::error_code error;
+  std::filesystem::create_symlink(outside.root() / "api.gti",
+                                  root / "escape.gti", error);
+  if (!error) {
+    expect(writeFile(manifest, base + "\n[modules]\nmain = \"escape.gti\"\n"),
+           "escape fixture exists");
+    const auto escaped = lang::driver::loadProjectManifest(manifest);
+    expect(!escaped.succeeded() &&
+               findDiagnostic(escaped.diagnostics, "GTI-B1104") != nullptr,
+           "module registrations cannot escape their package through symlinks");
+  }
+}
+
 int main() {
   lang::installCrashHandlers("gti_project_tests");
   testDiscoveryParsingAndResolution();
@@ -3031,6 +3095,7 @@ int main() {
   testCrossToolchainFailClosed();
   testCrossToolchainManifestDiagnostics();
   testPackageBuildScripts();
+  testModuleManifest();
 
   if (failures != 0) {
     std::cerr << failures << " project test(s) failed\n";

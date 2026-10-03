@@ -87,9 +87,11 @@ auto SemanticVisitor::Impl::findGlobalBorrowStorage(
   }
   const GlobalBorrowStorageInfo *result = nullptr;
   for (const GlobalBorrowStorageInfo &candidate : found->second) {
-    const bool visible = candidate.internalLinkage
-                             ? candidate.sourceUnit == currentSourceUnit
-                             : sourceVisible(candidate.sourceUnit);
+    const bool visible =
+        candidate.internalLinkage
+            ? candidate.sourceUnit == currentSourceUnit
+            : declarationVisible(candidate.sourceUnit,
+                                 candidate.declaration->name());
     if (!visible || candidate.symbol == 0) {
       continue;
     }
@@ -164,10 +166,84 @@ auto SemanticVisitor::Impl::sourceUnitFor(const Token &token) const
                                 : sourceGraph->sourceUnitForPath(token.source);
 }
 
-auto SemanticVisitor::Impl::sourceVisible(SourceUnitId declaration) const
-    -> bool {
+bool SemanticVisitor::Impl::declarationVisible(SourceUnitId declaration,
+                                               const Token &name) const {
   return sourceGraph == nullptr ||
-         sourceGraph->isVisible(currentSourceUnit, declaration);
+         sourceGraph->isDeclarationVisible(currentSourceUnit, declaration,
+                                           name.position);
+}
+
+void SemanticVisitor::Impl::validateModuleExports(const StmtList &statements,
+                                                  bool inherited) {
+  const auto reject = [&](const Token &token, std::string message) {
+    diagnostics.push_back(
+        makeDiagnostic(DiagnosticId::InvalidModuleExport, token, {message}));
+  };
+  for (const StmtPtr &statement : statements) {
+    if (!statement) {
+      continue;
+    }
+    const bool exported = inherited || statement->exportKeyword().has_value();
+    if (statement->exportKeyword()) {
+      const Token &keyword = *statement->exportKeyword();
+      const SourceUnit *unit =
+          sourceGraph == nullptr
+              ? nullptr
+              : sourceGraph->findUnit(sourceUnitFor(keyword));
+      if (unit == nullptr || !unit->moduleDeclaration) {
+        reject(keyword, "An exported declaration requires an 'export module "
+                        "name;' interface.");
+      }
+    }
+    if (const auto *space = stmtAs<NamespaceDecl>(statement.get())) {
+      validateModuleExports(space->declarations(), exported);
+      continue;
+    }
+    if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
+      if (statement->exportKeyword()) {
+        reject(*statement->exportKeyword(),
+               "Export declarations inside a conditional branch, not the "
+               "conditional directive itself.");
+      }
+      if (const StmtList *branch = conditional->activeBranch(target)) {
+        validateModuleExports(*branch, inherited);
+      }
+      continue;
+    }
+    if (const auto *linkage = stmtAs<ExternCDecl>(statement.get())) {
+      validateModuleExports(linkage->declarations(), exported);
+      continue;
+    }
+    if (!exported) {
+      continue;
+    }
+    const Token *name = nullptr;
+    bool internal = false;
+    if (const auto *function = stmtAs<FunctionDecl>(statement.get())) {
+      name = &function->name();
+      internal = function->isStatic();
+    } else if (const auto *variable = stmtAs<VariableDecl>(statement.get())) {
+      name = &variable->name();
+      internal = variable->isStatic();
+    } else if (const auto *type = stmtAs<ClassDecl>(statement.get())) {
+      name = &type->name();
+    } else if (const auto *type = stmtAs<EnumDecl>(statement.get())) {
+      name = &type->name();
+    } else if (const auto *alias = stmtAs<TypeAliasDecl>(statement.get())) {
+      name = &alias->name();
+    } else if (const auto *alias =
+                   stmtAs<NamespaceAliasDecl>(statement.get())) {
+      name = &alias->name();
+    } else if (const auto *conceptDecl = stmtAs<ConceptDecl>(statement.get())) {
+      name = &conceptDecl->name();
+    }
+    if (internal && name != nullptr) {
+      reject(*name, "A source-local static declaration cannot be exported.");
+    } else if (name == nullptr && statement->exportKeyword()) {
+      reject(*statement->exportKeyword(),
+             "Only namespace-scope API declarations can be exported.");
+    }
+  }
 }
 
 auto SemanticVisitor::Impl::isCompilerTrustedUnit(SourceUnitId sourceUnit) const
@@ -279,18 +355,21 @@ auto SemanticVisitor::Impl::reportCompilerPrivateDeclaration(const Token &name)
 }
 
 auto SemanticVisitor::Impl::publishNamespace(const std::string &name,
-                                             SourceUnitId declaration) -> void {
+                                             SourceUnitId declaration,
+                                             const Token &token) -> void {
   forEachSourceConsumer(
-      declaration, isCompilerPrivateQualifiedName(name),
+      declaration, isCompilerPrivateQualifiedName(name), token.position,
       [&](SourceUnitId consumer) { visibleNamespaces[consumer].insert(name); });
 }
 
 auto SemanticVisitor::Impl::publishNamespaceAlias(
-    const std::string &name, const NamespaceAliasInfo &alias) -> void {
-  forEachSourceConsumer(
-      alias.sourceUnit, alias.compilerPrivate, [&](SourceUnitId consumer) {
-        visibleNamespaceAliases[consumer].insert_or_assign(name, alias);
-      });
+    const std::string &name, const NamespaceAliasInfo &alias,
+    const Token &token) -> void {
+  forEachSourceConsumer(alias.sourceUnit, alias.compilerPrivate, token.position,
+                        [&](SourceUnitId consumer) {
+                          visibleNamespaceAliases[consumer].insert_or_assign(
+                              name, alias);
+                        });
 }
 
 auto SemanticVisitor::Impl::publishTypeAlias(const std::string &name,
@@ -299,6 +378,7 @@ auto SemanticVisitor::Impl::publishTypeAlias(const std::string &name,
                                              bool compilerPrivate) -> void {
   forEachSourceConsumer(
       declaration, compilerPrivate || isCompilerPrivateQualifiedName(name),
+      typeAliases[id - 1].declaration->name().position,
       [&](SourceUnitId consumer) {
         visibleTypeAliasIds[consumer].insert_or_assign(name, id);
       });
@@ -306,26 +386,29 @@ auto SemanticVisitor::Impl::publishTypeAlias(const std::string &name,
 
 auto SemanticVisitor::Impl::publishConcept(const std::string &name,
                                            ConceptId id,
-                                           SourceUnitId declaration) -> void {
+                                           SourceUnitId declaration,
+                                           const Token &token) -> void {
   forEachSourceConsumer(declaration, isCompilerPrivateQualifiedName(name),
-                        [&](SourceUnitId consumer) {
+                        token.position, [&](SourceUnitId consumer) {
                           visibleConceptIds[consumer].insert_or_assign(name,
                                                                        id);
                         });
 }
 
 auto SemanticVisitor::Impl::publishClass(const std::string &name, ClassId id,
-                                         SourceUnitId declaration) -> void {
+                                         SourceUnitId declaration,
+                                         const Token &token) -> void {
   forEachSourceConsumer(declaration, isCompilerPrivateQualifiedName(name),
-                        [&](SourceUnitId consumer) {
+                        token.position, [&](SourceUnitId consumer) {
                           visibleClassIds[consumer].insert_or_assign(name, id);
                         });
 }
 
 auto SemanticVisitor::Impl::publishEnum(const std::string &name, EnumId id,
-                                        SourceUnitId declaration) -> void {
+                                        SourceUnitId declaration,
+                                        const Token &token) -> void {
   forEachSourceConsumer(declaration, isCompilerPrivateQualifiedName(name),
-                        [&](SourceUnitId consumer) {
+                        token.position, [&](SourceUnitId consumer) {
                           visibleEnumIds[consumer].insert_or_assign(name, id);
                         });
 }
@@ -354,8 +437,22 @@ auto SemanticVisitor::Impl::publishNamespaceSymbol(const std::string &name,
     return;
   }
   forEachSourceConsumer(
-      symbol.sourceUnit, symbol.compilerPrivate, [&](SourceUnitId consumer) {
+      symbol.sourceUnit, symbol.compilerPrivate, symbol.declaration.position,
+      [&](SourceUnitId consumer) {
         Symbol published = symbol;
+        if (published.type == SemanticType::Function &&
+            sourceGraph != nullptr) {
+          std::erase_if(published.overloads,
+                        [&](const CallableCandidate &overload) {
+                          return overload.declaration != nullptr &&
+                                 !sourceGraph->isDeclarationVisible(
+                                     consumer, overload.record().sourceUnit,
+                                     overload.declaration->name().position);
+                        });
+          if (published.overloads.empty()) {
+            return;
+          }
+        }
         if (!isCompilerTrustedUnit(consumer) &&
             published.type == SemanticType::Function) {
           std::erase_if(published.overloads,
@@ -518,7 +615,7 @@ auto SemanticVisitor::Impl::registerNamespaces(const StmtList &statements,
     if (rootCompilerPrivate && isPreludeUnit(currentSourceUnit)) {
       compilerPrivateNamespaceSymbol = symbol;
     }
-    publishNamespace(name, currentSourceUnit);
+    publishNamespace(name, currentSourceUnit, namespaceDecl->name());
     scope.emplace_back(namespaceDecl->name().lexeme);
     registerNamespaces(namespaceDecl->declarations(), scope);
     scope.pop_back();
@@ -575,7 +672,7 @@ auto SemanticVisitor::Impl::registerNamespaceAliases(
           recordToolingSymbol(alias->name(), SymbolKind::NamespaceAlias, name,
                               SemanticType::Unknown);
       namespaceToolingSymbols.try_emplace(name, symbol);
-      publishNamespaceAlias(name, info);
+      publishNamespaceAlias(name, info, alias->name());
     } else if (const auto *namespaceDecl =
                    stmtAs<NamespaceDecl>(statement.get())) {
       currentSourceUnit = sourceUnitFor(namespaceDecl->name());
@@ -799,7 +896,7 @@ auto SemanticVisitor::Impl::registerConcepts(const StmtList &statements,
       }
       conceptIds.emplace(qualified, id);
       conceptDeclIds.emplace(declaration, id);
-      publishConcept(qualified, id, currentSourceUnit);
+      publishConcept(qualified, id, currentSourceUnit, declaration->name());
       concepts.push_back({.id = id,
                           .sourceUnit = currentSourceUnit,
                           .declaration = declaration,
@@ -1467,7 +1564,7 @@ auto SemanticVisitor::Impl::registerEnums(const StmtList &statements,
 
     const EnumId id = enums.size() + 1;
     enumIds.emplace(qualified, id);
-    publishEnum(qualified, id, currentSourceUnit);
+    publishEnum(qualified, id, currentSourceUnit, enumDecl->name());
     enums.push_back(EnumInfo{.id = id,
                              .sourceUnit = currentSourceUnit,
                              .declaration = enumDecl,
@@ -2108,7 +2205,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       }
       classIds.emplace(qualified, id);
       publishClass(qualified, familyPrimary == 0 ? id : familyPrimary,
-                   currentSourceUnit);
+                   currentSourceUnit, classDecl->name());
       classDeclIds.emplace(classDecl, id);
       CompilerCapabilityTypeKind compilerCapability =
           CompilerCapabilityTypeKind::None;

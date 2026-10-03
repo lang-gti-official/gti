@@ -47,6 +47,15 @@ function queryCaptures(name, input = fixture) {
 }
 
 const captures = queryCaptures("highlights");
+const moduleCaptures = queryCaptures("highlights", path.join(__dirname, "modules.gti"));
+for (const [text, name] of [
+  ["export", "keyword.modifier"], ["module", "keyword.type"],
+  ["import", "keyword.import"], ["geometry", "module"], ["math", "module"],
+]) {
+  if (!moduleCaptures.some((capture) => capture.text === text && capture.name === name)) {
+    throw new Error(`Missing module @${name} capture for ${text}`);
+  }
+}
 const fixtureLines = fs.readFileSync(fixture, "utf8").split("\n");
 
 function requireCapture(row, text, name) {

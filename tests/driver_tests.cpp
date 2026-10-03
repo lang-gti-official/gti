@@ -2458,6 +2458,15 @@ void testBuildReportRecordRoundTrip() {
        .kind = lang::SourceDependencyKind::Prelude,
        .includeSpelling = "prelude.gti",
        .includeOccurrence = 0});
+  for (const auto kind : {lang::SourceDependencyKind::Import,
+                          lang::SourceDependencyKind::ExportImport}) {
+    recorded.source.dependencies.push_back(
+        {.source = 1,
+         .target = 2,
+         .kind = kind,
+         .includeSpelling = "dependency.main",
+         .includeOccurrence = 1});
+  }
   recorded.nativeCompilerExecutable = {.canonicalPath = "/usr/bin/c++",
                                        .bytes = 512,
                                        .sha256 = std::string(64, 'f')};

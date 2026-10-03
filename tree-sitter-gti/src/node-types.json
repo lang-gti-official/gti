@@ -32,6 +32,10 @@
         "named": true
       },
       {
+        "type": "export_declaration",
+        "named": true
+      },
+      {
         "type": "extern_c_declaration",
         "named": true
       },
@@ -2210,6 +2214,21 @@
     }
   },
   {
+    "type": "export_declaration",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "declaration",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "expression_statement",
     "named": true,
     "fields": {},
@@ -2912,6 +2931,26 @@
     }
   },
   {
+    "type": "import_declaration",
+    "named": true,
+    "fields": {
+      "path": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "module_name",
+            "named": true
+          },
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "include_directive",
     "named": true,
     "fields": {
@@ -3429,6 +3468,37 @@
       "types": [
         {
           "type": "pure_specifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "module_declaration",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "module_name",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
           "named": true
         }
       ]
@@ -4401,7 +4471,15 @@
           "named": true
         },
         {
+          "type": "import_declaration",
+          "named": true
+        },
+        {
           "type": "include_directive",
+          "named": true
+        },
+        {
+          "type": "module_declaration",
           "named": true
         }
       ]
@@ -5511,6 +5589,10 @@
     "named": false
   },
   {
+    "type": "export",
+    "named": false
+  },
+  {
     "type": "extern",
     "named": false
   },
@@ -5536,6 +5618,10 @@
   },
   {
     "type": "if",
+    "named": false
+  },
+  {
+    "type": "import",
     "named": false
   },
   {
@@ -5580,6 +5666,10 @@
   },
   {
     "type": "interface",
+    "named": false
+  },
+  {
+    "type": "module",
     "named": false
   },
   {
