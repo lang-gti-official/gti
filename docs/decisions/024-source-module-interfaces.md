@@ -1,8 +1,7 @@
 # 024: Explicit Source Module Interfaces
 
-Status: Accepted design; the reconciled implementation candidate awaits combined
-release validation. Separate compilation and independent module linkage remain
-outside this decision.
+Status: Accepted and implemented in 0.362.0, with combined release validation.
+Separate compilation and independent module linkage remain outside this decision.
 
 ## Outcome
 

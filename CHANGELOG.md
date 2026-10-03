@@ -9,10 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.362.0 — Source modules and discard quick fixes (candidate)
-
-Combined-release validation is pending; the 0.361.0 results below do not
-certify this candidate.
+## 0.362.0 — Source modules and discard quick fixes
 
 - Libraries can publish explicit source interfaces with `export module`,
   exported declarations, and `import`. Private helpers remain internal, and

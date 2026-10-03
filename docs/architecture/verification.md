@@ -2,14 +2,15 @@
 
 Status: Current test and audit structure.
 
-## Combined 0.362.0 reconciliation candidate
+## Combined 0.362.0 release validation
 
-The candidate combines the validated 0.361.0 receiver release (`be149354`)
-with source-module interfaces and the discard quick-fix PR. Its optimized
-compiler build and combined tests are pending. The preceding receiver release
-record remains evidence only for that source version, not for this candidate.
-Formatting, Python syntax, census JSON syntax, and diff checks have passed;
-none substitute for executable validation.
+The reconciled source at `3c2fe8fd` combines the validated 0.361.0 receiver
+release (`be149354`) with source-module interfaces and the discard quick-fix PR.
+After an all-target Release/Ninja build on macOS arm64 with AppleClang 21 and
+LLVM 22.1.8, all 381 registered CTests pass in one uninterrupted run with no
+failures or skips in 1274.80 seconds (12 compile jobs, eight test workers).
+The nine focused compiler, module, driver, cache, formatting and LSP gates
+also pass in 29.83 seconds. No production changes were needed during validation.
 
 The focused owning gates include module interface/resolution/configuration
 tests in `compiler_frontend`, the module manifest and driver tests,
@@ -18,9 +19,36 @@ code-action protocol test. Added regressions retain imports through parsing
 to reject misplaced directives, preserve configuration effects exactly once
 per module domain (including nested include history), and verify grouped
 UTF-16 discard edits, document versions, reparsing, and stale-action rejection.
-The combined production suite and applicable packaging/editor gates must run
-before publication. No compiler execution was performed in the isolated PR
-reconciliation worktree.
+The full suite includes both executable corpus oracles, independent MIR and
+optimizer checks, all 72 receiver outcomes, lambda error mapping, SIMD, the
+Foundation Objective-C++ bridge, and enabled ThreadSanitizer coverage.
+
+All 11 external consumers pass against the staged package. With build-tree
+resource overrides cleared and the working directory outside the checkout,
+the staged compiler and LSP pass the module runtime/project/cache and editor
+protocol fixtures; the staged receiver passes all nine C++23/O3 cases.
+A freshly staged archive passes checksum/extraction and headless Neovim
+compiler/LSP/parser checks without changing the active local installation.
+The initial manual archive check used an absolute filename in its checksum
+record; correcting that test invocation to the required basename passed with
+the unchanged archive and compiler.
+
+Tree-sitter ABI14 regeneration produces no differences. All 67 corpus cases,
+154 shipped sources, highlights/locals/rainbow and source-text checks pass,
+as do all three reference-highlighting tests. Formatting checks all 397
+first-party C/C++ files, and the release-version and diff checks pass.
+The saved reproductions for already-fixed issues 2, 3, 9, 11, 12, 13, 15 and 21
+also compile and exit successfully at C++23/O0 and O3 with the staged compiler
+(16 outcomes). The opaque-pointer reproduction links its required committed
+native stub; an earlier invocation omitting that stub failed at native linking,
+not at the compiler regression under test.
+
+The final follow-up commit records these results and reconciles documentation
+status only; executable source remains the tested source above. The optional
+full language audit was not repeated. These are local macOS results, not
+Linux/Windows execution or confirmation of asynchronous release CI. No compiler
+execution was performed in the separate PR-preparation worktree; the existing
+optimized build tree supplied the combined evidence.
 
 ## Ephemeral borrowed-carrier receivers
 
