@@ -3401,6 +3401,8 @@ private:
     ExplicitMove,
     NonConcreteRecord,
     BorrowedState,
+    UnstableBorrowOwner,
+    MultipleBorrowOwners,
     UnsupportedProducer,
   };
 
@@ -3417,17 +3419,21 @@ private:
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryValue(const ExprPtr &expression) const;
 
+  // Receiver-only extension. Temporary reference arguments retain the stricter
+  // self-contained-value rule in freshTemporaryValue.
+  [[nodiscard]] FreshTemporaryValueAssessment
+  freshTemporaryReceiverValue(const ExprPtr &expression);
+
   [[nodiscard]] bool
   freshTemporaryMethodSupported(const CallableCandidate &function) const;
 
   [[nodiscard]] CallReceiverMode receiverModeForObject(
       const ExprPtr &receiver, const CallableCandidate &function,
-      bool allowFreshTemporary, bool consumingReceiver = false) const;
+      bool allowFreshTemporary, bool consumingReceiver = false);
   [[nodiscard]] bool consumingReceiverValue(const ExprPtr &receiver) const;
 
   [[nodiscard]] CallReceiverMode
-  callReceiverMode(const ExprPtr &callee,
-                   const CallableCandidate &function) const;
+  callReceiverMode(const ExprPtr &callee, const CallableCandidate &function);
 
   [[nodiscard]] static bool receiverModeAllowsMutation(CallReceiverMode mode);
 

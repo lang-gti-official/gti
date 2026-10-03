@@ -2062,8 +2062,44 @@ non-escape traits, producer type, place type/access/source identity, and drop
 descriptor to agree. This is an explicit MIR borrow schedule, not a native
 rvalue convention.
 
-A read-only operator on a borrowed-class prvalue uses the ordinary ordered
-`Value` receiver stage instead. Its source has an explicit full-expression
+An admitted single-owner borrowed carrier reuses this materialization and drop
+schedule. `findMirTemporaryCarrierDependency` binds the exact producer/value,
+one nonescaping `Stored` loan, stable owner place, and full-expression value
+obligation. A separate `CallArgument` loan over the temporary's physical shell
+names that loan through `storedDependency`, not `parent`: the shell is not a
+subplace of the external owner, and mutable shell access cannot upgrade the
+external dependency. The receiver input records this physical loan and ends it
+after invocation or before failure cleanup. The stored dependency and required
+ancestors remain live until the carrier's drop. Lifecycle verification rejects
+early dependency retirement or transfer of the ephemeral receiver obligation;
+ordinary returned/stored carriers keep their independently verified transfer
+rules. Program verification checks the exact ordinary producer and selected
+non-borrowing method, and the backend consumes this same verified schedule.
+
+Calls inside conditional and short-circuit arms retain these dependencies
+through the arm's existing conditional value drop. Only dependencies proven
+against that drop, and their required ancestors, may have joined loan-state
+sets at the CFG merge. An executable loan use still requires definite active
+authority, and conflicts treat possibly live dependencies conservatively.
+Direct child-borrow creation also rejects joined conditional states instead
+of turning uncertain parent authority into an active child. Two-phase
+reservations remain distinct from active siblings: a reservation does not
+prevent a completed read sibling from reactivating their parent.
+Conditional retirement is permitted only after independent lifecycle flow has
+proved the carrier obligation inactive. This does not admit arbitrary
+conditionally initialized references or add runtime lifetime tracking.
+
+If construction fails after publishing a reference field, its stored loan
+remains live through the partial object's rollback. Lowering inventories those
+published loans separately from ordinary scope loans and retires them only
+after armed subobject obligations are inactive. Independent verification rejects
+early retirement, missing failure retirement, and retirement on the successful
+constructor path, which must export the dependency to its caller.
+
+A read-only operator on an eligible single-owner borrowed-class prvalue uses
+the same explicit `ReadTemporaryBorrow` schedule as an ordinary method. Other
+already-supported read-only borrowed-class operator observations retain their
+ordinary ordered `Value` receiver stage. Its source has an explicit full-expression
 materialization/lifetime obligation and retains its separately verified stored
 dependency loan. The stage aliases the source result without copying, moving,
 or transferring that obligation. Native emission requires the exact source

@@ -17,6 +17,8 @@ def reject_invalid_sources(compiler: pathlib.Path) -> None:
   int& second;
   PairView(int& a, int& b) : first(a), second(b) {}
   int sum() { return first + second; }
+  int sum_with(int other) { return first + second + other; }
+  int mutate_argument(mut int& other) { other = 9; return first + second; }
 };
 """
     cases = {
@@ -67,6 +69,24 @@ int main() {
   int a = 1; mut int b = 2;
   return inspect(PairView(a, b), change(b));
 }""",
+        "receiver-secondary-alias": """int main() {
+  int a = 1; mut int b = 2;
+  return PairView(a, b).mutate_argument(b);
+}""",
+        "later-method-argument-secondary-mutation": """int change(mut int& value) {
+  value = 9; return value;
+}
+int main() {
+  int a = 1; mut int b = 2;
+  return PairView(a, b).sum_with(change(b));
+}""",
+        "later-method-operand-secondary-mutation": """int change(mut int& value) {
+  value = 9; return value;
+}
+int main() {
+  int a = 1; mut int b = 2;
+  return PairView(a, b).sum() + change(b);
+}""",
         "missing-return-dependency": """PairView bad(int& a, int& b) {
   return PairView(a, a);
 }
@@ -88,6 +108,9 @@ int main() { int a = 1; int b = 2; auto view = bad(a, b); return view.sum(); }
         "dependency-reseat": "GTI-S2003",
         "call-secondary-alias": "GTI-S2017",
         "later-operand-secondary-mutation": "GTI-S2017",
+        "receiver-secondary-alias": "GTI-S2017",
+        "later-method-argument-secondary-mutation": "GTI-S2017",
+        "later-method-operand-secondary-mutation": "GTI-S2017",
         "missing-return-dependency": "GTI-S2045",
         "projected-reference-keeps-group": "GTI-S2017",
     }

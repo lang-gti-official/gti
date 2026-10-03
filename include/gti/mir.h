@@ -321,9 +321,10 @@ enum class MirLoanKind {
   Stored,
   Return,
   Parameter,
-  // A verifier-owned read-only loan from one materialized fresh value into
-  // one ordered call argument. Backends erase its representation, and every
-  // path ends it immediately after that invocation.
+  // A verifier-owned read-only loan for one fresh value argument, or a
+  // read/mutable physical-shell loan for a fresh borrowed-carrier receiver.
+  // The latter retains an independent Stored owner dependency. Backends erase
+  // its representation; every path ends it immediately after invocation.
   CallArgument,
 };
 
@@ -1002,6 +1003,28 @@ struct MirTemporaryMaterialization {
 [[nodiscard]] MirTemporaryMaterialization
 findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
                                 HirValueId sourceValue);
+
+// An uncarried borrowed class temporary keeps its exact producer's Stored
+// owner dependency until its full-expression value obligation is retired.
+// This derives lifetime authority from existing identities, not a second
+// cleanup flag. The published fullExpression id may still be pending while
+// lowering; hirFullExpression must already identify the source boundary.
+struct MirTemporaryCarrierDependency {
+  MirTemporaryMaterialization materialization;
+  const MirLoan *loan = nullptr;
+  const MirDropObligation *drop = nullptr;
+
+  [[nodiscard]] explicit operator bool() const {
+    return materialization && loan != nullptr && drop != nullptr;
+  }
+};
+
+[[nodiscard]] MirTemporaryCarrierDependency
+findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place);
+
+// Includes the loan itself and both physical-parent and stored-owner edges.
+[[nodiscard]] bool mirLoanRetainsDependency(const MirBody &body, MirLoanId loan,
+                                            MirLoanId dependency);
 
 [[nodiscard]] bool supportsMirFailureControlFlow(MirBodyKind kind);
 // Body-level refinement: a constructor whose lowering silently transferred a

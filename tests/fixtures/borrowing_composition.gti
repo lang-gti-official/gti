@@ -22,6 +22,15 @@ BorrowedPair forward_view(BorrowedPair view) {
   return view;
 }
 
+int observe_forwarded(BorrowedPair view) {
+  // Entry dependencies protect caller-owned referents, not this value shell.
+  return forward_view(view).sum();
+}
+
+int observe_forwarded_reference(BorrowedPair& view) {
+  return forward_view(view).sum();
+}
+
 BorrowedPair reversed_view(int& first, int& second) {
   return BorrowedPair(second, first);
 }
@@ -41,6 +50,8 @@ int main() {
   if (duplicated.sum() != 60) { return 6; }
   BorrowedPair final_pair{first, second};
   if (final_pair.sum() != 42) { return 3; }
+  if (observe_forwarded(final_pair) != 42) { return 7; }
+  if (observe_forwarded_reference(final_pair) != 42) { return 8; }
   auto factory = make_view(first, second);
   auto forwarded = forward_view(factory);
   if (reversed_view(first, second).sum() != 42) { return 5; }

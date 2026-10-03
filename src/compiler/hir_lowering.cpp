@@ -3112,8 +3112,7 @@ private:
         input = body.findValue(source);
       }
       if (input == nullptr || input->info.type.kind != SemanticType::Class ||
-          input->info.category != ValueCategory::Value ||
-          input->info.traits.containsBorrowedState) {
+          input->info.category != ValueCategory::Value) {
         return std::nullopt;
       }
       kind = receiverMode == CallReceiverMode::FreshTemporaryMutable

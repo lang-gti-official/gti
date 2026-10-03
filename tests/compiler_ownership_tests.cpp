@@ -18284,6 +18284,185 @@ int main() {
          "rejected");
 }
 
+void testEphemeralBorrowedCarrierReceivers() {
+  const std::string declarations = R"(
+class Resource {
+  mut int value = 0;
+public:
+  int add(int amount) mut { this.value += amount; return this.value; }
+  int read() { return this.value; }
+};
+class AuthService {
+  mut Resource& resource;
+public:
+  AuthService(mut Resource& source) : resource(source) {}
+  int create_access_token(int amount) mut {
+    return this.resource.add(amount);
+  }
+  int read() { return this.resource.read(); }
+  Resource& borrow() { return this.resource; }
+  int* pointer() { return nullptr; }
+};
+class RepositoryService {
+  mut Resource& resource;
+public:
+  RepositoryService(mut Resource& source) : resource(source) {}
+  int create(int amount) mut { return this.resource.add(amount); }
+};
+class Inspector {
+  Resource& resource;
+  mut int visits = 0;
+public:
+  Inspector(Resource& source) : resource(source) {}
+  int read() { return this.resource.read(); }
+  int visit(int amount) mut { this.visits += amount; return this.resource.read(); }
+};
+class Client {
+  mut Resource resource{};
+public:
+  AuthService auth() mut { return AuthService(this.resource); }
+  RepositoryService repositories() mut { return RepositoryService(this.resource); }
+  int read() { return this.resource.read(); }
+};
+AuthService make_service(mut Resource& resource) { return AuthService(resource); }
+int inspect_service(AuthService& service) { return service.read(); }
+int invalidate(Client owner) { return owner.read(); }
+class ReadPair {
+  Resource& first;
+  Resource& second;
+public:
+  ReadPair(Resource& left, Resource& right) : first(left), second(right) {}
+  int read() { return this.first.read() + this.second.read(); }
+  int touch() mut { return this.first.read() + this.second.read(); }
+};
+class CarrierGuard {
+public:
+  CarrierGuard() {}
+  ~CarrierGuard() {}
+};
+class CleanupReadPair {
+  CarrierGuard guard{};
+  Resource& first;
+  Resource& second;
+public:
+  CleanupReadPair(Resource& left, Resource& right) : first(left), second(right) {}
+  int read() { return this.first.read() + this.second.read(); }
+};
+class VirtualClient {
+  mut Resource resource{};
+public:
+  virtual AuthService auth() mut { return AuthService(this.resource); }
+};
+int combine(int first, int second) { return first + second; }
+Resource global_resource{};
+)";
+  for (const std::string &body : {std::string(R"(
+  mut Client api{};
+  int token = api.auth().create_access_token(3);
+  int after = api.read();
+  int repository = api.repositories().create(2);
+  int observed = api.auth().read();
+  { mut AuthService service = api.auth(); [[discard]] service.create_access_token(1); }
+  return api.read() + token + after + repository + observed;
+)"),
+                                  std::string(R"(
+  mut Resource resource{};
+  int direct = AuthService(resource).create_access_token(3);
+  int factory = make_service(resource).create_access_token(2);
+  int readonly = Inspector(resource).read();
+  Resource& shared = resource;
+  int inspected = Inspector(resource).visit(resource.read());
+  int retained = shared.read();
+  return resource.read() + direct + factory + readonly + inspected + retained;
+)"),
+                                  std::string(R"(
+  return Inspector(global_resource).read();
+)"),
+                                  std::string(R"(
+  Resource first{};
+  Resource second{};
+  return ReadPair(first, second).read();
+)")}) {
+    const auto frontend =
+        lang::Frontend().analyze("ephemeral-carrier-valid.gti",
+                                 declarations + "int main() {" + body + "}");
+    if (!frontend.canGenerateCode()) {
+      for (const auto &diagnostic : frontend.diagnostics)
+        std::cerr << "Unexpected ephemeral carrier diagnostic: "
+                  << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    expect(frontend.canGenerateCode(),
+           "single-owner borrowed temporaries support immediate readonly and "
+           "mutable method calls, preserving owner reuse between expressions");
+  }
+
+  struct InvalidCase {
+    std::string_view body;
+    std::string_view reason;
+    bool receiverDiagnostic = false;
+  };
+  const InvalidCase cases[] = {
+      {"mut Client api{}; return api.auth().create_access_token(api.read());",
+       "a later argument cannot read the exclusively borrowed owner"},
+      {"mut Client api{}; return api.auth().create_access_token("
+       "api.repositories().create(1));",
+       "overlapping service producers cannot share an exclusive dependency"},
+      {"mut Client api{}; return combine(api.auth().read(), api.read());",
+       "a completed receiver invocation retains its stored dependency until "
+       "the whole expression finishes"},
+      {"mut Client api{}; return api.auth().read() > 0 && api.read() > 0 ? 1 : "
+       "0;",
+       "short-circuit evaluation does not release a carrier owner early"},
+      {"mut Client api{}; AuthService& service = api.auth(); return 0;",
+       "a temporary service cannot be retained through a reference"},
+      {"mut Client api{}; [[discard]] api.auth().borrow(); return 0;",
+       "even a readonly immediate receiver cannot export a borrowed result",
+       true},
+      {"mut Client api{}; unsafe { [[discard]] api.auth().pointer(); } return "
+       "0;",
+       "an immediate borrowed receiver cannot export a pointer-like result",
+       true},
+      {"return Client().auth().create_access_token(1);",
+       "a temporary owner is not stable carrier storage", true},
+      {"Resource left{}; Resource right{}; return ReadPair(left, "
+       "right).touch();",
+       "a mutable temporary receiver with multiple independent owners is "
+       "outside the single-dependency slice",
+       true},
+      {"Resource left{}; Resource right{}; return CleanupReadPair(left, "
+       "right).read();",
+       "a cleanup-owning temporary receiver cannot use the passive "
+       "read-only multi-owner path",
+       true},
+      {"mut VirtualClient api{}; return api.auth().create_access_token(1);",
+       "a virtual producer is not an ordinary directly resolved producer",
+       true},
+      {"mut Client api{}; return inspect_service(api.auth());",
+       "receiver permission does not admit a temporary borrowed carrier as a "
+       "reference argument"},
+      {"mut Client api{}; return "
+       "api.auth().create_access_token(invalidate(std::move(api)));",
+       "a later argument cannot consume the borrowed owner"},
+  };
+  for (const auto &test : cases) {
+    const auto frontend = lang::Frontend().analyze(
+        "ephemeral-carrier-invalid.gti",
+        declarations + "int main() {" + std::string(test.body) + "}");
+    expect(!frontend.canGenerateCode(), std::string(test.reason));
+    if (test.receiverDiagnostic) {
+      const auto found =
+          std::find_if(frontend.diagnostics.begin(), frontend.diagnostics.end(),
+                       [](const lang::Diagnostic &diagnostic) {
+                         return diagnostic.code == "GTI-S2081";
+                       });
+      expect(found != frontend.diagnostics.end() && !found->related.empty() &&
+                 !found->hints.empty(),
+             "temporary carrier rejection retains the receiver diagnostic and "
+             "related declaration/hint");
+    }
+  }
+}
+
 void testMutableTemporaryReceivers() {
   const std::string source = R"(
 class Probe {
@@ -18650,7 +18829,7 @@ int main() {
                         "Mutable method requires a mutable receiver") &&
           countDiagnosticCode(invalid.diagnostics, "GTI-S2081") == 2 &&
           hasDiagnostic(invalid.diagnostics,
-                        "cannot produce a reference or value") &&
+                        "cannot produce a reference, pointer-like value") &&
           hasDiagnostic(invalid.diagnostics,
                         "Virtual dispatch on a temporary receiver") &&
           hasRelatedDiagnostic(invalid.diagnostics, "declared mutable here") &&
@@ -19835,6 +20014,8 @@ constexpr NamedTest kTests[] = {
      testOwnedParameterStageArmsRollback},
     {"testConstructorPartialRollbackRepresentation",
      testConstructorPartialRollbackRepresentation},
+    {"testEphemeralBorrowedCarrierReceivers",
+     testEphemeralBorrowedCarrierReceivers},
     {"testMutableTemporaryReceivers", testMutableTemporaryReceivers},
     {"testTemporaryArgumentBorrows", testTemporaryArgumentBorrows},
     {"testRetainedBorrowedCallResults", testRetainedBorrowedCallResults},

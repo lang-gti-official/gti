@@ -490,6 +490,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testGeneratedDefaultOwningFieldInitializer",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testExampleCorpusEmissionReadiness",
       "suite": "corpus"
     },

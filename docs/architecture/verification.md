@@ -2,6 +2,52 @@
 
 Status: Current test and audit structure.
 
+## Ephemeral borrowed-carrier receivers
+
+`compiler_ownership` covers the immediate service-facade spelling, direct and
+factory construction, read-only and mutable methods, sequential owner reuse,
+named equivalents, and global owners. Negative cases retain temporary-owner,
+mutable/cleanup-owning multi-origin, borrowed-result, overlapping-access and
+owner-move rejection. `borrowing_composition` preserves the existing passive
+read-only multi-owner value-receiver rule, including forwarding from by-value
+and reference parameters. Its 14 negative cases include conflicting access to
+the secondary owner as a method argument or later operand; these must receive
+`GTI-S2017`, not an internal MIR diagnostic.
+The LSP protocol test exercises valid, escaping, conflicting, incomplete and
+corrected snapshots, with the exact UTF-16 diagnostic span and selected-method
+hover.
+
+`ephemeral_carrier_mir` checks the distinct physical shell and external-owner
+loans, full-expression drops, conditional paths and independent mutations of
+dependency, origin, receiver authority and cleanup. It also preserves sibling
+reads during two-phase assignment reservation and rejects a forged child borrow
+that tries to turn a conditionally active parent into definite authority. The native
+`ephemeral_carrier_receiver_runtime` fixture adds owning fields to services and
+checks exact output on normal calls, constructor/argument/method failures,
+cleanup failure, error propagation and taken/skipped conditional calls. Its
+matrix uses C++20/C++23 at O0/O1/O3, disabled copy elision and ASan/UBSan.
+The final 0.361.0 candidate passes all 379 registered CTests on macOS arm64
+after an all-target Release/Ninja build with AppleClang 21 and LLVM 22.1.8
+(12 compile jobs, eight test workers). This is complete same-source coverage,
+not a claim of one uninterrupted timeout-free invocation: the initial run
+completed 102 passes before three unrelated runtime matrices timed out.
+`void_return_runtime`, `string_ordering_runtime`, and
+`borrowed_payload_pattern_runtime` all passed unchanged on retry in 19.67
+seconds. The remaining 274 tests then passed in 246.89 seconds. No production
+source or compiler binary changed between those runs; the combined pass
+inventory matches every registered test, with none omitted.
+
+This includes all 72 receiver execution cases, independent MIR mutations,
+both executable corpus checks, the compiler/optimizer suites and LSP protocols.
+All 11 external consumers pass against the freshly staged toolchain. Its
+compiler also passes the receiver's nine execution cases at C++23/O3 from
+outside the checkout with build-tree resource overrides cleared. Formatting
+checks all 397 first-party C/C++ files, and `git diff --check` passes. The
+feature adds no syntax or Tree-sitter grammar changes; the existing query
+gate passes as part of CTest. The optional full language audit was not repeated.
+These are local macOS results, not Linux/Windows execution or confirmation of
+asynchronous release CI. The preceding 0.360.0 results below predate this feature.
+
 ## Combined 0.360.0 release validation
 
 The final candidate reconciles canonical `main` through `0ff67a4e`. After an

@@ -274,12 +274,17 @@ the same ordered prepared-parameter schedule as class arguments: copying a
 copyable local or field creates a fresh owned stage, while moving retains the
 exact source ownership event. This applies to ordinary calls as well as packs;
 the stage, rather than an untracked backend copy, owns argument cleanup.
-Read-only overloaded operators on borrowed-class prvalues also receive an
-ordered `Value` receiver input. HIR gives the source carrier an explicit
+Eligible read-only overloaded operators and ordinary immediate methods on a
+semantically admitted single-owner borrowed carrier use
+`ReadTemporaryBorrow` or `MutableTemporaryBorrow`. HIR preserves the selected
+producer, its stored dependency and access, exact call target, receiver mode,
+and full-expression lifetime; MIR establishes the distinct physical shell loan.
+Already-supported read-only operator observations outside that contract retain
+their ordered `Value` receiver input. HIR gives that source carrier an explicit
 full-expression lifetime slot while retaining its existing dependency loan;
-the receiver stage is only an identity, not a copy or ownership transfer.
-This does not admit borrowed carriers to the separate fresh-owning-temporary
-receiver capability or permit mutable access that semantics rejected.
+the receiver stage is only an identity, not a copy or ownership transfer. It
+does not itself grant a temporary receiver borrow or permit mutable access
+that semantics rejected.
 Callable parameters and call values
 use an explicit boundary enum rather than a generic "non-escaping" boolean. The
 `Confined` boundary retains invocation/forwarding requirements. A confined

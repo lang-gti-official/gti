@@ -328,16 +328,52 @@ temporary place, begins the selected receiver borrow after successful
 production, ends that borrow after invocation, and retains ownership of the
 value until the enclosing full-expression cleanup. This ephemeral capability
 does not authorize a stored reference, address, field-assignment target, or
-mutable-reference argument. It is unavailable to a temporary containing
-tracked borrowed state, an explicit move from named storage, or a virtual
-method. A read-only ordinary method may return a read-only reference or
+mutable-reference argument. An explicit move from named storage or a virtual
+method does not gain this fresh-temporary capability. A read-only ordinary
+method on a self-contained temporary may return a read-only reference or
 `std::string_view` tied to that temporary receiver for immediate nonescaping
 use, such as `read(make_owner().get())` or `parse(make_text().view())`.
 The returned loan ends before the temporary is destroyed, including when a
 later argument or the consuming call fails. Binding that result beyond the
 full expression or returning it remains rejected; no temporary lifetime is
-extended. Mutable borrowed results and stored borrowed-state carriers are
-outside this temporary-receiver capability.
+extended. Mutable borrowed results remain outside this capability.
+
+A fresh class or struct containing one statically proven stored owner
+dependency may also supply one immediate ordinary read-only or mutable method
+receiver, for example `api.auth().create_access_token(...)`. Its producer must
+be a directly resolved ordinary GTI constructor or function with an exact
+borrow summary. The owner must have stable storage that survives the complete
+expression; the receiver method must return `void`, a non-pointer scalar, or a
+fully owned value. References, string views, C strings, raw pointers and native
+function values are excluded as results. This is a structural rule for
+user-defined services and views, not a special case for any library type.
+
+The compiler retains two distinct borrows: the carrier's stored dependency on
+its external owner, and the immediate receiver borrow of the carrier's own
+storage. The receiver borrow ends after invocation. The carrier is destroyed
+at the full-expression boundary, then its stored owner dependency ends. The
+same ordering applies to argument failure, method failure, and propagated
+errors. Consequently, a later argument or operand cannot read an exclusively
+borrowed owner merely because the immediate service method already returned.
+A mutable method on a carrier with a shared owner dependency may mutate its
+own fields; it does not upgrade that shared dependency to exclusive access.
+
+This permission does not allow retaining a reference or address to the
+temporary, exporting a borrowed result from its method, moving its owner while
+active, or passing the carrier as a temporary reference argument. Temporary
+owners, multiple owner dependencies, and unresolved/native/virtual producers
+remain excluded. A named carrier continues to use the ordinary stored-borrow
+rules below. A factory called on a complete object protects that complete
+receiver under its existing borrow summary; this feature does not infer a
+narrower private-field origin from the factory body.
+
+The earlier read-only value-receiver rule remains available for copyable,
+passively dropped carriers with several exact shared owner dependencies and
+non-borrowing results, such as `reversed_view(first, second).sum()`. It uses
+the existing value-receiver schedule and retains every shared dependency;
+it does not acquire mutable access to the carrier or introduce an owning
+cleanup obligation. This distinct case does not widen the new materialized
+receiver permission to mutable or cleanup-owning multi-owner services.
 
 A direct ordinary constructor or by-value GTI call may also produce a fresh,
 self-contained class or struct value for one exact read-only `T&` argument of
@@ -525,21 +561,14 @@ child.update();  // the read-only child ended after inspect
 parent.reset();  // the mutable child ended after update
 ```
 
-These are local loan transitions, not stored or escaping lifetime graphs.
-Mutable reference fields, returning any local child reborrow (mutable or
-read-only) directly or through a stored carrier, and mutable owner-tied carrier
-values remain rejected outside the compiler-generated range plan. This does
-not remove the existing receiver-tied mutable-reference return rule described
-above. L-RANGE-02 defines the narrow range-level and per-element exception: an
-exclusive parent covers the whole traversal, its one mutable element child is
-confined to the current iteration, and the parent fully reactivates only after
-that child ends.
-
-A local borrowed-state carrier may still retain the existing ordinary
-read-only owner dependency. It cannot retain a mutable parent loan or any child
-reborrow as an ordinary value; that shape may be consumed only as a
-non-retained full-expression temporary or as the compiler-generated mutable
-range iterator.
+These local loan transitions do not by themselves authorize arbitrary stored
+or escaping lifetime graphs. Reference fields and owner-dependent carrier
+values use the bounded stored-reference contracts below; returning a local
+child must satisfy the independently checked return-origin rule, not merely
+the fact that it is a valid local reborrow. L-RANGE-02 separately defines
+range-level and per-element reborrows: an exclusive parent covers the whole
+traversal, its one mutable element child is confined to the current iteration,
+and the parent fully reactivates only after that child ends.
 
 For a supported local loan, the compiler can end it after its final
 straight-line use, at a reachable `if` merge, or on a branch entry that does

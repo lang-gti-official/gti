@@ -367,6 +367,76 @@ findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
   return result;
 }
 
+MirTemporaryCarrierDependency
+findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place) {
+  if ((place.root != MirPlaceRootKind::Value &&
+       place.root != MirPlaceRootKind::Temporary) ||
+      place.type.kind != SemanticType::Class ||
+      !place.traits.containsBorrowedState ||
+      place.access != AccessMode::Mutable) {
+    return {};
+  }
+  const auto materialization =
+      findMirTemporaryMaterialization(body, place, place.sourceValue);
+  const auto *producer = materialization.producer;
+  const auto *loan = producer != nullptr && producer->loan
+                         ? body.findLoan(*producer->loan)
+                         : nullptr;
+  if (!materialization || producer->info.type != place.type ||
+      !producer->info.traits.containsBorrowedState ||
+      producer->info.category != ValueCategory::Value || loan == nullptr ||
+      loan->kind != MirLoanKind::Stored || loan->entry || loan->escapes ||
+      loan->lifecycleBound || !loan->carriers.empty() ||
+      !loan->additionalSources.empty() || loan->storedDependency != 0 ||
+      loan->producedBy != place.sourceValue || loan->storedField != 0 ||
+      !loan->designatedFields.empty()) {
+    return {};
+  }
+  const MirPlace *owner = body.findPlace(loan->source);
+  if (owner == nullptr || owner->root == MirPlaceRootKind::Value ||
+      owner->root == MirPlaceRootKind::Temporary) {
+    return {};
+  }
+  const MirDropObligation *drop = nullptr;
+  for (const auto &candidate : body.dropObligations) {
+    if (candidate.kind != MirDropObligationKind::Value ||
+        candidate.value != place.sourceValue) {
+      continue;
+    }
+    if (drop != nullptr || candidate.place != place.id ||
+        candidate.dropType.type != place.type ||
+        candidate.hirFullExpression == 0) {
+      return {};
+    }
+    drop = &candidate;
+  }
+  return drop == nullptr
+             ? MirTemporaryCarrierDependency{}
+             : MirTemporaryCarrierDependency{materialization, loan, drop};
+}
+
+bool mirLoanRetainsDependency(const MirBody &body, MirLoanId loan,
+                              MirLoanId dependency) {
+  if (dependency == 0 || body.findLoan(dependency) == nullptr)
+    return false;
+  std::vector<MirLoanId> pending{loan};
+  std::unordered_set<MirLoanId> visited;
+  while (!pending.empty()) {
+    const MirLoanId candidate = pending.back();
+    pending.pop_back();
+    if (candidate == 0 || !visited.insert(candidate).second)
+      continue;
+    const MirLoan *record = body.findLoan(candidate);
+    if (record == nullptr)
+      continue;
+    if (candidate == dependency)
+      return true;
+    pending.push_back(record->parent);
+    pending.push_back(record->storedDependency);
+  }
+  return false;
+}
+
 namespace {
 
 [[nodiscard]] MirVerificationResult
@@ -577,11 +647,22 @@ programConstantMatchesType(const ConstantValue &constant,
 }
 
 enum class MirLoanFlowState : std::uint8_t {
-  Inactive,
-  Reserved,
-  Active,
-  Suspended,
+  Inactive = 1,
+  Active = 2,
+  Suspended = 4,
+  Reserved = 8,
+  // Joins may carry these sets only for exact conditional temporary-carrier
+  // dependencies and their ancestors. No executable access accepts a set.
+  MaybeActive = 3,
+  MaybeSuspended = 5,
+  ActiveOrSuspended = 6,
+  MaybeActiveOrSuspended = 7,
 };
+
+[[nodiscard]] bool loanFlowContains(MirLoanFlowState state,
+                                    MirLoanFlowState member) {
+  return (static_cast<unsigned>(state) & static_cast<unsigned>(member)) != 0;
+}
 
 using MirLoanState = std::vector<MirLoanFlowState>;
 
@@ -1841,6 +1922,37 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
     }
   }
 
+  std::unordered_set<MirLoanId> conditionalDependencies;
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != MirInstructionKind::Drop ||
+          instruction.lifecycle.size() != 1 ||
+          !instruction.lifecycle.front().conditional)
+        continue;
+      const auto *drop =
+          body.findDropObligation(instruction.lifecycle.front().source);
+      const auto *place =
+          drop == nullptr ? nullptr : body.findPlace(drop->place);
+      const auto carrier =
+          place == nullptr ? MirTemporaryCarrierDependency{}
+                           : findMirTemporaryCarrierDependency(body, *place);
+      if (!carrier)
+        continue;
+      const bool receiver = std::any_of(
+          body.loans.begin(), body.loans.end(), [&](const MirLoan &loan) {
+            return loan.kind == MirLoanKind::CallArgument &&
+                   loan.source == place->id &&
+                   loan.storedDependency == carrier.loan->id;
+          });
+      if (!receiver)
+        continue;
+      for (const MirLoan &loan : body.loans) {
+        if (mirLoanRetainsDependency(body, carrier.loan->id, loan.id))
+          conditionalDependencies.insert(loan.id);
+      }
+    }
+  }
+
   std::vector<std::optional<MirLoanState>> blockEntries(body.blocks.size());
   MirLoanState entryState(body.loans.size(), MirLoanFlowState::Inactive);
   for (const MirLoan &loan : body.loans) {
@@ -1928,6 +2040,13 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
                            " is used while an exclusive child reborrow is "
                            "active in " +
                            context,
+                       block.id, instruction);
+      }
+      if (active[loan - 1] != MirLoanFlowState::Active) {
+        return failure(body, owner,
+                       "conditionally live temporary dependency cannot "
+                       "authorize an executable loan use in " +
+                           std::string(context),
                        block.id, instruction);
       }
       return requireStoredDependency(loan, context, instruction);
@@ -2048,8 +2167,8 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
           return invalid;
         }
         const MirLoanFlowState throughState = active[place.throughLoan - 1];
-        if (throughState == MirLoanFlowState::Inactive ||
-            throughState == MirLoanFlowState::Reserved) {
+        if (throughState != MirLoanFlowState::Active &&
+            throughState != MirLoanFlowState::Suspended) {
           if (auto invalid =
                   requireActive(place.throughLoan, context, instruction)) {
             return invalid;
@@ -2154,10 +2273,12 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
             MirInstructionId instruction =
                 0) -> std::optional<MirVerificationResult> {
       const MirInstruction *input = callInputDefinition(operand);
+      MirLoanId inputLoan = 0;
       if (input != nullptr && input->loan) {
         if (auto invalid = requireActive(*input->loan, context, instruction)) {
           return invalid;
         }
+        inputLoan = *input->loan;
       }
       const MirOperand &resolved = *callInputSource(operand);
       switch (resolved.kind) {
@@ -2178,7 +2299,8 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
       case MirOperandKind::Copy:
       case MirOperandKind::Address:
       case MirOperandKind::BorrowRead:
-        return checkPlace(resolved.place, false, context, instruction);
+        return checkPlace(resolved.place, false, context, instruction,
+                          inputLoan);
       case MirOperandKind::Move: {
         const MirPlace *moved = body.findPlace(resolved.place);
         if (moved != nullptr && moved->root == MirPlaceRootKind::Binding &&
@@ -2212,7 +2334,8 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
         return checkPlace(resolved.place, true, context, instruction);
       }
       case MirOperandKind::BorrowWrite:
-        return checkPlace(resolved.place, true, context, instruction);
+        return checkPlace(resolved.place, true, context, instruction,
+                          inputLoan);
       case MirOperandKind::Value:
       case MirOperandKind::Constant:
         return std::nullopt;
@@ -2261,6 +2384,10 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
           const MirCanonicalPlace place =
               canonicalPlace(body, resolved.place, bindingLoans, active);
           const bool write = resolved.kind == MirOperandKind::BorrowWrite;
+          const MirInstruction *stage = callInputDefinition(operand);
+          if (stage != nullptr && stage->loan) {
+            appendLoanSources(body.loans[*stage->loan - 1], write);
+          }
           borrows.push_back(
               {.place = place, .write = write, .input = inputIndex});
           if (place.throughLoan != 0 &&
@@ -2343,14 +2470,27 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
       }
       if (instruction.kind == MirInstructionKind::EndBorrow) {
         const MirLoanId loan = *instruction.loan;
+        const auto &record = body.loans[loan - 1];
+        if (body.kind == MirBodyKind::Constructor && record.escapes &&
+            record.kind == MirLoanKind::Stored && record.storedField != 0 &&
+            block.activeFailure == 0) {
+          return failure(body, owner,
+                         "constructor field dependency cannot retire on a "
+                         "successful construction path",
+                         block.id, instruction.id);
+        }
+        const MirLoanFlowState before = active[loan - 1];
+        const bool conditional = conditionalDependencies.contains(loan) &&
+                                 !body.loans[loan - 1].entry &&
+                                 body.loans[loan - 1].carriers.empty();
         const bool reserved = active[loan - 1] == MirLoanFlowState::Reserved;
-        if (active[loan - 1] == MirLoanFlowState::Inactive) {
+        if (active[loan - 1] == MirLoanFlowState::Inactive && !conditional) {
           return failure(body, owner,
                          "loan " + std::to_string(loan) +
                              " is ended while it is inactive",
                          block.id, instruction.id);
         }
-        if (active[loan - 1] == MirLoanFlowState::Suspended) {
+        if (loanFlowContains(active[loan - 1], MirLoanFlowState::Suspended)) {
           return failure(body, owner,
                          "loan " + std::to_string(loan) +
                              " is ended before its active child reborrow",
@@ -2379,6 +2519,8 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
         active[loan - 1] = MirLoanFlowState::Inactive;
         const MirLoanId parent = body.loans[loan - 1].parent;
         if (parent != 0) {
+          if (before == MirLoanFlowState::Inactive && conditional)
+            continue;
           if (reserved) {
             if (active[parent - 1] != MirLoanFlowState::Active) {
               return failure(body, owner,
@@ -2395,7 +2537,12 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
           const MirLoanFlowState expectedParent =
               suspendsParent ? MirLoanFlowState::Suspended
                              : MirLoanFlowState::Active;
-          if (active[parent - 1] != expectedParent) {
+          const bool conditionalParent =
+              conditional && conditionalDependencies.contains(parent) &&
+              !loanFlowContains(active[parent - 1],
+                                MirLoanFlowState::Reserved) &&
+              loanFlowContains(active[parent - 1], expectedParent);
+          if (active[parent - 1] != expectedParent && !conditionalParent) {
             return failure(body, owner,
                            "ending child loan " + std::to_string(loan) +
                                " finds parent loan " + std::to_string(parent) +
@@ -2406,11 +2553,19 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
             const bool siblingLive = std::any_of(
                 children[parent - 1].begin(), children[parent - 1].end(),
                 [&](MirLoanId child) {
-                  return active[child - 1] == MirLoanFlowState::Active ||
-                         active[child - 1] == MirLoanFlowState::Suspended;
+                  // A two-phase reservation permits sibling reads and does
+                  // not suspend its parent until activation. Conditional
+                  // active/suspended siblings still keep the parent suspended.
+                  return loanFlowContains(active[child - 1],
+                                          MirLoanFlowState::Active) ||
+                         loanFlowContains(active[child - 1],
+                                          MirLoanFlowState::Suspended);
                 });
             if (!siblingLive) {
-              active[parent - 1] = MirLoanFlowState::Active;
+              active[parent - 1] = loanFlowContains(active[parent - 1],
+                                                    MirLoanFlowState::Inactive)
+                                       ? MirLoanFlowState::MaybeActive
+                                       : MirLoanFlowState::Active;
             }
           }
         }
@@ -2508,6 +2663,13 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
                              " is created after parent loan " +
                              std::to_string(parent) + " has ended",
                          block.id, instruction.id);
+        }
+        if (active[parent - 1] != MirLoanFlowState::Active &&
+            active[parent - 1] != MirLoanFlowState::Suspended) {
+          if (auto invalid = requireActive(parent, "direct child reborrow",
+                                           instruction.id)) {
+            return *invalid;
+          }
         }
         if (body.loans[parent - 1].access != AccessMode::Mutable) {
           return failure(body, owner,
@@ -2921,15 +3083,28 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
       if (*entry == active) {
         continue;
       }
-      const auto mismatch =
-          std::mismatch(entry->begin(), entry->end(), active.begin());
-      const MirLoanId loan = static_cast<MirLoanId>(std::distance(
-                                 entry->begin(), mismatch.first)) +
-                             1;
-      return failure(body, owner,
-                     "loan " + std::to_string(loan) +
-                         " has inconsistent active/suspended state at CFG join",
-                     successor);
+      bool changed = false;
+      for (std::size_t index = 0; index < active.size(); ++index) {
+        if ((*entry)[index] == active[index])
+          continue;
+        const MirLoanId loan = index + 1;
+        if (!conditionalDependencies.contains(loan) ||
+            loanFlowContains((*entry)[index], MirLoanFlowState::Reserved) ||
+            loanFlowContains(active[index], MirLoanFlowState::Reserved)) {
+          return failure(
+              body, owner,
+              "loan " + std::to_string(loan) +
+                  " has inconsistent active/suspended state at CFG join",
+              successor);
+        }
+        const auto joined = static_cast<MirLoanFlowState>(
+            static_cast<unsigned>((*entry)[index]) |
+            static_cast<unsigned>(active[index]));
+        changed = changed || joined != (*entry)[index];
+        (*entry)[index] = joined;
+      }
+      if (changed)
+        pending.push(successor);
     }
   }
   return {};
@@ -2951,6 +3126,33 @@ joinLifecycleState(const MirLifecycleState &left,
                                                            std::size_t owner) {
   if (body.dropObligations.empty()) {
     return {};
+  }
+
+  std::unordered_map<MirLoanId, std::vector<MirDropObligationId>> carrierDrops;
+  std::unordered_set<MirDropObligationId> receiverCarrierDrops;
+  for (const MirDropObligation &drop : body.dropObligations) {
+    const MirPlace *place = body.findPlace(drop.place);
+    const auto carrier = place == nullptr
+                             ? MirTemporaryCarrierDependency{}
+                             : findMirTemporaryCarrierDependency(body, *place);
+    if (!carrier || carrier.drop->id != drop.id)
+      continue;
+    const bool receiver = std::any_of(
+        body.loans.begin(), body.loans.end(), [&](const MirLoan &loan) {
+          return loan.kind == MirLoanKind::CallArgument &&
+                 loan.source == place->id &&
+                 loan.storedDependency == carrier.loan->id;
+        });
+    // A returned/stored carrier may publish its dependency before the later
+    // ownership transfer. Only an ephemeral receiver promises to keep this
+    // exact, non-transferred shell until its value cleanup.
+    if (!receiver)
+      continue;
+    receiverCarrierDrops.insert(drop.id);
+    for (const MirLoan &loan : body.loans) {
+      if (mirLoanRetainsDependency(body, carrier.loan->id, loan.id))
+        carrierDrops[loan.id].push_back(drop.id);
+    }
   }
 
   MirLifecycleState initial(body.dropObligations.size(),
@@ -2981,7 +3183,40 @@ joinLifecycleState(const MirLifecycleState &left,
     };
 
     for (const MirInstruction &instruction : block.instructions) {
+      if (validate && instruction.kind == MirInstructionKind::EndBorrow &&
+          instruction.loan) {
+        const auto *loan = body.findLoan(*instruction.loan);
+        if (body.kind == MirBodyKind::Constructor && loan != nullptr &&
+            loan->kind == MirLoanKind::Stored && loan->escapes &&
+            loan->storedField != 0) {
+          for (const auto &drop : body.dropObligations) {
+            if (drop.kind == MirDropObligationKind::ConstructionRollback) {
+              if (auto invalid = require(
+                      drop.id, OwnershipState::Uninitialized,
+                      "constructor dependency retirement after rollback",
+                      instruction.id))
+                return *invalid;
+            }
+          }
+        }
+        const auto found = carrierDrops.find(*instruction.loan);
+        if (found != carrierDrops.end()) {
+          for (const auto drop : found->second) {
+            if (auto invalid = require(
+                    drop, OwnershipState::Uninitialized,
+                    "temporary carrier dependency retirement", instruction.id))
+              return *invalid;
+          }
+        }
+      }
       for (const MirLifecycleEvent &event : instruction.lifecycle) {
+        if (validate && receiverCarrierDrops.contains(event.source) &&
+            event.kind != MirLifecycleEventKind::Drop) {
+          return failure(body, owner,
+                         "ephemeral receiver carrier must retain its exact "
+                         "value obligation until cleanup",
+                         block.id, instruction.id);
+        }
         switch (event.kind) {
         case MirLifecycleEventKind::Initialize:
           if (auto invalid =
@@ -4723,8 +4958,13 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
       instruction.ownership->before == OwnershipStateSet::Available &&
       instruction.ownership->after == OwnershipStateSet::Available &&
       instruction.ownership->reachable;
+  const bool borrowedInvocation =
+      instruction.kind == MirInstructionKind::Call ||
+      (instruction.kind == MirInstructionKind::Construct &&
+       instruction.constructorTarget &&
+       instruction.constructorKind == ConstructorKind::Ordinary);
   const bool borrowedCallResult =
-      instruction.kind == MirInstructionKind::Call && instruction.loan &&
+      borrowedInvocation && instruction.loan &&
       instruction.borrowOrigin != BorrowOriginKind::None &&
       !instruction.successResultDrop &&
       (instruction.definedFailure.propagation != FailurePropagationKind::None ||
@@ -4737,7 +4977,7 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
           AccessMode::ReadOnly &&
       instruction.info.type.arguments.front().arguments.size() == 1;
   const bool transferredBorrowedCallResult =
-      instruction.kind == MirInstructionKind::Call && instruction.loan &&
+      borrowedInvocation && instruction.loan &&
       instruction.borrowOrigin != BorrowOriginKind::None &&
       instruction.successResultDrop && instruction.result &&
       (instruction.info.type.kind == SemanticType::Class ||
@@ -7210,7 +7450,6 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           !input.lifecycle.empty() ||
           input.info.type.kind != SemanticType::Class ||
           input.info.category != ValueCategory::Value ||
-          input.info.traits.containsBorrowedState ||
           operand.kind != expectedOperand) {
         return false;
       }
@@ -7221,6 +7460,31 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               : findMirTemporaryMaterialization(body, *place, input.hirValue);
       const MirValue *source = materialization.value;
       const MirInstruction *producer = materialization.producer;
+      if (input.info.traits.containsBorrowedState) {
+        const auto carrier =
+            place == nullptr ? MirTemporaryCarrierDependency{}
+                             : findMirTemporaryCarrierDependency(body, *place);
+        const auto *shell = body.findLoan(input.loan.value_or(0));
+        if (!carrier || shell == nullptr ||
+            shell->kind != MirLoanKind::CallArgument ||
+            shell->source != place->id || shell->parent != 0 ||
+            shell->storedDependency != carrier.loan->id ||
+            shell->producedBy != input.callSite ||
+            shell->access != (expectedOperand == MirOperandKind::BorrowWrite
+                                  ? AccessMode::Mutable
+                                  : AccessMode::ReadOnly) ||
+            !producer || producer->dispatch != CallDispatch::Static ||
+            producer->lambdaTarget ||
+            producer->intrinsic != IntrinsicKind::None ||
+            (producer->kind == MirInstructionKind::Call
+                 ? !producer->functionTarget
+                 : producer->kind != MirInstructionKind::Construct ||
+                       !producer->constructorTarget ||
+                       producer->constructorKind !=
+                           ConstructorKind::Ordinary)) {
+          return false;
+        }
+      }
       const bool ordinaryConstruction =
           producer != nullptr &&
           producer->kind == MirInstructionKind::Construct &&
@@ -7490,11 +7754,18 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       const bool temporaryArgument =
           instruction.callInputRole == MirCallInputRole::Argument &&
           instruction.callInputKind == HirCallInputKind::ReadTemporaryBorrow;
+      const bool temporaryCarrierReceiver =
+          instruction.callInputRole == MirCallInputRole::Receiver &&
+          instruction.info.traits.containsBorrowedState &&
+          (instruction.callInputKind == HirCallInputKind::ReadTemporaryBorrow ||
+           instruction.callInputKind ==
+               HirCallInputKind::MutableTemporaryBorrow);
       if (!noOperation || !hasResult ||
           (instruction.destination.has_value() !=
            instruction.preparedParameterDrop.has_value()) ||
           instruction.receiver ||
-          instruction.loan.has_value() != temporaryArgument ||
+          instruction.loan.has_value() !=
+              (temporaryArgument || temporaryCarrierReceiver) ||
           instruction.functionTarget || instruction.constructorTarget ||
           instruction.lambdaTarget || instruction.fullExpressionEnd != 0 ||
           instruction.cleanupBoundaryEnd != 0 ||
@@ -7921,7 +8192,6 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     if (loan.storedDependency != 0) {
       const MirLoan &dependency = body.loans[loan.storedDependency - 1];
       if (loan.kind == MirLoanKind::Stored ||
-          loan.kind == MirLoanKind::CallArgument ||
           dependency.kind != MirLoanKind::Stored ||
           dependency.storedDependency != 0 ||
           loan.storedDependency == loan.parent ||
@@ -8003,19 +8273,27 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
     if (loan.kind == MirLoanKind::CallArgument) {
       const MirPlace *source = body.findPlace(loan.source);
+      const auto carrier =
+          source == nullptr ? MirTemporaryCarrierDependency{}
+                            : findMirTemporaryCarrierDependency(body, *source);
+      const bool receiver =
+          carrier && loan.storedDependency == carrier.loan->id;
       if (loan.semanticLoan != 0 || loan.parent != 0 || loan.entry ||
-          loan.escapes || loan.access != AccessMode::ReadOnly ||
+          loan.escapes || (!receiver && loan.access != AccessMode::ReadOnly) ||
           loan.producedBy == 0 || !loan.carriers.empty() ||
-          loan.storedField != 0 || source == nullptr ||
-          source->root != MirPlaceRootKind::Value ||
+          loan.storedField != 0 || loan.lifecycleBound || loan.twoPhase ||
+          !loan.additionalSources.empty() || source == nullptr ||
+          (source->root != MirPlaceRootKind::Value &&
+           (!receiver || source->root != MirPlaceRootKind::Temporary)) ||
           !source->projections.empty() ||
           source->type.kind != SemanticType::Class ||
           source->access != AccessMode::Mutable ||
-          source->traits.containsBorrowedState) {
+          source->traits.containsBorrowedState != receiver ||
+          (!receiver && loan.storedDependency != 0)) {
         return failure(body, owner,
                        "call-argument loan " + std::to_string(loan.id) +
-                           " must be one non-escaping read loan over an exact "
-                           "fresh class value place");
+                           " must be one exact non-escaping temporary input "
+                           "loan with its required stored dependency");
       }
     }
     if (loan.entry) {
@@ -9869,6 +10147,21 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                    "cleanup sequence must have exactly one boundary marker");
   }
   std::unordered_map<MirInstructionId, std::size_t> bindingDropCoverage;
+  const auto temporaryDependencyEnd = [&](const MirInstruction &instruction) {
+    if (instruction.kind != MirInstructionKind::EndBorrow || !instruction.loan)
+      return false;
+    return std::any_of(
+        body.dropObligations.begin(), body.dropObligations.end(),
+        [&](const MirDropObligation &drop) {
+          const auto *place = body.findPlace(drop.place);
+          const auto carrier =
+              place == nullptr
+                  ? MirTemporaryCarrierDependency{}
+                  : findMirTemporaryCarrierDependency(body, *place);
+          return carrier && mirLoanRetainsDependency(body, carrier.loan->id,
+                                                     *instruction.loan);
+        });
+  };
   const auto precedingDropSequence = [&](const MirBlock &markerBlock,
                                          std::size_t markerIndex,
                                          std::size_t dropCount)
@@ -9886,7 +10179,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         const MirInstruction &candidate = cursor->instructions[cursorIndex - 1];
         if (candidate.kind == MirInstructionKind::EndBorrow) {
           const MirLoan *loan = body.findLoan(candidate.loan.value_or(0));
-          if (loan != nullptr && loan->lifecycleBound) {
+          // Lifecycle dataflow independently proves this exact carrier's
+          // obligation inactive before its dependency can end.
+          if (loan != nullptr &&
+              (loan->lifecycleBound || temporaryDependencyEnd(candidate))) {
             --cursorIndex;
             continue;
           }
@@ -11098,6 +11394,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     while (visited.insert(cursor->id).second) {
       while (cursorIndex != 0) {
         const MirInstruction &candidate = cursor->instructions[cursorIndex - 1];
+        if (temporaryDependencyEnd(candidate)) {
+          --cursorIndex;
+          continue;
+        }
         if (candidate.kind != MirInstructionKind::Drop) {
           std::reverse(reversed.begin(), reversed.end());
           return reversed;
