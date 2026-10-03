@@ -1188,8 +1188,16 @@ compiler library exposes the same semantic/HIR/MIR native-record contract.
 
 CI and release jobs default to two compile jobs and one CTest worker, separately
 overridable through `GTI_JOBS` and `GTI_TEST_JOBS`. Shared-host runner capacity
-and timeout are configured outside the repository. A small native sanitizer
-preflight fails early on a broken runner without skipping any GTI gates.
+and timeout are configured outside the repository. A small ASan/UBSan preflight
+fails early when that mandatory capability is broken. ThreadSanitizer execution
+is an explicit host capability controlled by
+`GTI_ENABLE_THREAD_SANITIZER_TESTS`, which defaults to enabled. The generic
+Gitea Docker runner disables it because its runtime cannot reserve the required
+shadow-memory mapping before any GTI code executes. Mixed runtime matrices keep
+their ordinary and ASan/UBSan modes; dedicated TSAN CTests report an explicit
+skip with return code 77. A compatible dedicated runner must pass the TSAN
+preflight and leave the option enabled before its result counts as race-checking
+evidence.
 Release build-tree tests derive their resource overrides from the final CTest
 inventory, including every CLI/LSP test; installed-consumer checks retain clean,
 relocatable discovery without those overrides. Their C

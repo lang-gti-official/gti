@@ -109,13 +109,14 @@ jobs:
           echo "platform=${platform}" >> "${GITEA_OUTPUT}"
 
       - name: Check runner sanitizer execution
-        run: python3 scripts/check_ci_sanitizers.py --sanitizer thread --sanitizer address,undefined
+        run: python3 scripts/check_ci_sanitizers.py --sanitizer address,undefined
 
       - name: Configure release build
         run: >-
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DGTI_RELEASE_BUILD=ON
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
 
       - name: Build
         run: cmake --build build --config Release --parallel "${GTI_JOBS}"

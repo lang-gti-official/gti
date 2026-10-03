@@ -173,22 +173,26 @@ target_link_libraries(gti_designated_construction_tests PRIVATE gti_cpp_backend)
 add_test(NAME designated_construction_pipeline COMMAND gti_designated_construction_tests)
 add_test(NAME designated_construction_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/designated_construction_runtime_test.py" $<TARGET_FILE:gti>)
-add_test(NAME designated_construction_lsp
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/designated_construction_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+if(TARGET gti_lsp)
+  add_test(NAME designated_construction_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/designated_construction_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+endif()
 
 add_executable(gti_collection_initialization_tests collection_initialization_tests.cpp)
 target_link_libraries(gti_collection_initialization_tests PRIVATE gti_cpp_backend)
 add_test(NAME collection_initialization_pipeline COMMAND gti_collection_initialization_tests)
 add_test(NAME collection_initialization_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/collection_initialization_runtime_test.py" $<TARGET_FILE:gti>)
-add_test(NAME collection_initialization_lsp
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/collection_initialization_lsp_test.py" $<TARGET_FILE:gti_lsp>)
-add_test(NAME member_requirement_lsp
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/member_requirement_lsp_test.py" $<TARGET_FILE:gti_lsp>)
-add_test(NAME nested_borrow_fields_lsp
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_borrow_fields_lsp_test.py" $<TARGET_FILE:gti_lsp>)
-add_test(NAME borrowing_composition_lsp
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/borrowing_composition_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+if(TARGET gti_lsp)
+  add_test(NAME collection_initialization_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/collection_initialization_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  add_test(NAME member_requirement_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/member_requirement_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  add_test(NAME nested_borrow_fields_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_borrow_fields_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  add_test(NAME borrowing_composition_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/borrowing_composition_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+endif()
 add_executable(gti_borrowing_composition_tests borrowing_composition_tests.cpp)
 target_link_libraries(gti_borrowing_composition_tests PRIVATE gti_cpp_backend)
 add_test(NAME borrowing_composition_pipeline COMMAND gti_borrowing_composition_tests)
@@ -944,6 +948,11 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/repository_hosting_test.py"
             "${PROJECT_SOURCE_DIR}"
+  )
+  add_test(
+    NAME ci_sanitizer_capability
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/sanitizer_support_test.py"
   )
   add_test(
     NAME ci_resources
@@ -1988,20 +1997,22 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(void_return_runtime PROPERTIES TIMEOUT 180)
-  add_test(
-    NAME function_signature_lsp
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/function_signature_lsp_test.py"
-            "$<TARGET_FILE:gti_lsp>"
-  )
-  set_tests_properties(function_signature_lsp PROPERTIES TIMEOUT 60)
-  add_test(
-    NAME executable_entry_cli_lsp
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/executable_entry_test.py"
-            "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_lsp>"
-  )
-  set_tests_properties(executable_entry_cli_lsp PROPERTIES TIMEOUT 180)
+  if(TARGET gti_lsp)
+    add_test(
+      NAME function_signature_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/function_signature_lsp_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(function_signature_lsp PROPERTIES TIMEOUT 60)
+    add_test(
+      NAME executable_entry_cli_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/executable_entry_test.py"
+              "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(executable_entry_cli_lsp PROPERTIES TIMEOUT 180)
+  endif()
     add_test(
       NAME owner_tied_by_value_argument_runtime
       COMMAND "${Python3_EXECUTABLE}"
@@ -2401,6 +2412,27 @@ if(Python3_Interpreter_FOUND)
               "${CMAKE_CXX_COMPILER}"
     )
     set_tests_properties(mutex_tsan PROPERTIES TIMEOUT 300)
+    if(GTI_ENABLE_THREAD_SANITIZER_TESTS)
+      set(gti_tsan_supported 1)
+    else()
+      set(gti_tsan_supported 0)
+    endif()
+    set_tests_properties(
+      cthread_runtime
+      cthread_sleep_runtime
+      cthread_mutex_runtime
+      cthread_condition_runtime
+      cthread_once_runtime
+      cthread_create_join_runtime
+      managed_thread_tsan
+      atomic_tsan
+      mutex_tsan
+      PROPERTIES ENVIRONMENT "GTI_TSAN_SUPPORTED=${gti_tsan_supported}"
+    )
+    set_tests_properties(
+      managed_thread_tsan atomic_tsan mutex_tsan
+      PROPERTIES SKIP_RETURN_CODE 77
+    )
     add_test(
       NAME domain_operator_runtime
       COMMAND "${Python3_EXECUTABLE}"
