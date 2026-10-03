@@ -799,6 +799,32 @@ type and lifecycle traits. Expression value category and access remain
 unchanged, preventing the receiver-only capability from authorizing general
 mutable-place operations.
 
+`freshTemporaryReceiverValue` extends that receiver assessment, but not
+`freshTemporaryValue`'s separate temporary-argument contract, to direct
+ordinary GTI construction/calls producing a class with one proven stable
+stored dependency. It reuses `storedBorrowDependencies`, the resolved producer
+summary, and the existing stable-storage query. Native, virtual, unresolved,
+multi-origin, or temporary-owner production fails closed. The selected method
+cannot export a reference, tracked borrowed result, or untracked pointer-like
+result. The stored dependency retains its producer-established access mode;
+mutating the carrier shell never upgrades a shared external-owner loan.
+Ordered call exclusivity retains that dependency through the complete
+expression, including later arguments and operands. Unsupported immediate
+receiver uses keep `GTI-S2081`, with the failed lifetime condition, selected
+declaration, and a named-storage hint. LSP consumes these same semantic facts
+and diagnostics without a separate receiver rule.
+
+The existing passive shared-carrier `Value` receiver remains distinct: a
+copyable carrier without active cleanup can observe multiple exact stable
+read-only dependencies through an ordinary method with a non-borrowing result.
+The stable-storage query also admits abstract caller-owned dependencies of
+carrier parameters; `protectsStorage` describes storage accounting, not whether
+such a dependency is valid.
+It does not gain a mutable physical-shell loan. Receiver-argument exclusivity
+and later-operand transient checks consume every stored owner dependency, not
+only the producer's primary origin, so a conflicting second owner receives
+`GTI-S2017` before MIR construction.
+
 Ordinary methods and arithmetic/bitwise value operators can declare a
 consuming receiver with trailing `&&`. Overload selection prefers this exact
 capability for an owned movable value or explicit `std::move` receiver, never

@@ -2,6 +2,49 @@
 
 namespace {
 
+void testGeneratedDefaultOwningFieldInitializer() {
+  const auto frontend = analyze("generated-default-owning-field.gti", R"(
+class Resource {
+  int value = 4;
+public:
+  ~Resource() {}
+};
+class Holder { Resource value{}; };
+int main() { Holder holder{}; return 0; }
+)");
+  expect(frontend.canGenerateCode(),
+         "generated default construction of an owning field must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  bool checked = false;
+  for (const auto &owner : frontend.hir.classInstances()) {
+    if (!owner.source || owner.source->name().lexeme != "Holder")
+      continue;
+    const lang::MirBodyAddress address{lang::MirBodyKind::FieldInitializers,
+                                       owner.id};
+    const auto schedule = emitter.initializerSchedule(address);
+    expect(schedule.supported && schedule.fields.size() == 1,
+           "braced default construction preserves the exact owning field "
+           "schedule");
+    auto malformed = frontend.mir;
+    auto *changed = const_cast<lang::MirClassInstance *>(
+        malformed.findClassInstance(owner.id));
+    expect(changed && changed->fieldInitializers.dropObligations.size() == 2,
+           "fixture retains both temporary and field rollback identities");
+    if (changed && changed->fieldInitializers.dropObligations.size() == 2) {
+      auto &drops = changed->fieldInitializers.dropObligations;
+      drops.front().place = drops.back().place;
+      const lang::CppMirBodyEmitter invalid(malformed, map);
+      expect(!invalid.initializerSchedule(address).supported,
+             "field publication cannot erase or conflate its source lifetime");
+    }
+    checked = true;
+  }
+  expect(checked, "fixture must reach Holder's field initializer body");
+}
+
 const lang::MirInstruction *testInstruction(const lang::MirBody &body,
                                             lang::MirInstructionId id) {
   for (const auto &block : body.blocks)
@@ -7322,11 +7365,24 @@ void testBorrowedTemporaryOperatorReceiver() {
     for (const auto &block : function.body.blocks) {
       for (const auto &instruction : block.instructions) {
         if (instruction.kind != lang::MirInstructionKind::CallInput ||
-            instruction.callInputKind != lang::HirCallInputKind::Value ||
+            instruction.callInputKind !=
+                lang::HirCallInputKind::ReadTemporaryBorrow ||
             instruction.callInputRole != lang::MirCallInputRole::Receiver ||
             !instruction.info.traits.containsBorrowedState)
           continue;
         ++receivers;
+        const auto *loan = function.body.findLoan(instruction.loan.value_or(0));
+        const auto *place =
+            loan == nullptr ? nullptr : function.body.findPlace(loan->source);
+        const auto dependency = place == nullptr
+                                    ? lang::MirTemporaryCarrierDependency{}
+                                    : lang::findMirTemporaryCarrierDependency(
+                                          function.body, *place);
+        expect(dependency && loan->storedDependency == dependency.loan->id &&
+                   loan->parent == 0 &&
+                   loan->access == lang::AccessMode::ReadOnly,
+               "eligible borrowed operators reuse the exact temporary shell "
+               "and stored-owner dependency schedule");
         expect(!instruction.destination && !instruction.preparedParameterDrop &&
                    instruction.lifecycle.empty(),
                "receiver identity stage must not copy, move, or own cleanup");
@@ -7354,7 +7410,7 @@ void testBorrowedTemporaryOperatorReceiver() {
     }
   }
   expect(receivers == 4, "grouped, conditional, and direct comparisons need "
-                         "ordered receiver stages");
+                         "ordered temporary-borrow receiver stages");
 }
 
 void testPassiveNestedConstructorArgument() {
@@ -8502,6 +8558,8 @@ constexpr NamedTest kTests[] = {
      testConstructedCallbackConditionalArgument},
     {"testErasedOwnedResultReturn", testErasedOwnedResultReturn},
     {"testFreshOwnedCallableArgument", testFreshOwnedCallableArgument},
+    {"testGeneratedDefaultOwningFieldInitializer",
+     testGeneratedDefaultOwningFieldInitializer},
 };
 
 } // namespace

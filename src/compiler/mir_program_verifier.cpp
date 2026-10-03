@@ -1013,6 +1013,21 @@ exactInPlaceConstructionRoles(const std::vector<SemanticType> &arguments,
          result.access == returnType.referenceAccess;
 }
 
+// Temporary argument borrows and borrowed-carrier receivers cannot export
+// reference-like results, including untracked raw/native address values.
+[[nodiscard]] bool
+supportsEphemeralBorrowResult(const MirFunctionInstance *target,
+                              const ExpressionInfo &result) {
+  return target != nullptr &&
+         target->returnType.kind != SemanticType::Reference &&
+         target->returnType.kind != SemanticType::StringView &&
+         target->returnType.kind != SemanticType::CString &&
+         target->returnType.kind != SemanticType::RawPointer &&
+         target->returnType.kind != SemanticType::NativeFunction &&
+         target->returnBorrowOrigin == BorrowOriginKind::None &&
+         !result.traits.containsBorrowedState;
+}
+
 [[nodiscard]] std::optional<MirPlaceId>
 borrowSourceForPlace(const MirBody &body, MirPlaceId placeId,
                      std::size_t depth) {
@@ -1415,6 +1430,8 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
                 : nullptr;
         const bool mutableInput = receiverInput->callInputKind ==
                                   HirCallInputKind::MutableTemporaryBorrow;
+        const bool borrowedCarrier =
+            receiverInput->info.traits.containsBorrowedState;
         const bool exactReceiverQualifier =
             functionTarget != nullptr &&
             ((mutableInput &&
@@ -1467,10 +1484,14 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
               producer->functionTarget
                   ? program.findFunctionInstance(*producer->functionTarget)
                   : nullptr;
-          exactProducer = target != nullptr &&
-                          target->linkage == LanguageLinkage::Gti &&
-                          target->returnType == receiverPlace->type &&
-                          target->returnBorrowOrigin == BorrowOriginKind::None;
+          exactProducer =
+              target != nullptr && target->linkage == LanguageLinkage::Gti &&
+              target->returnType == receiverPlace->type &&
+              (borrowedCarrier
+                   ? target->returnBorrowOrigin != BorrowOriginKind::None &&
+                         !target->virtualMethod &&
+                         producer->dispatch == CallDispatch::Static
+                   : target->returnBorrowOrigin == BorrowOriginKind::None);
           if (producer->lambdaTarget && !producer->functionTarget) {
             const MirLambdaInstance *lambda =
                 program.findLambda(*producer->lambdaTarget);
@@ -1527,7 +1548,9 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
                    ReceiverMutability::Consuming)) ||
             ownerClass->type != receiverPlace->type ||
             !exactReceiverQualifier || !exactProducer ||
-            receiverObligations != 1 || (!readObservation && !ownedResult)) {
+            receiverObligations != 1 || (!readObservation && !ownedResult) ||
+            (borrowedCarrier && !supportsEphemeralBorrowResult(
+                                    functionTarget, instruction.info))) {
           return verificationFailure(
               body, owner,
               "temporary receiver input does not match its exact "
@@ -1589,14 +1612,7 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
                           target->returnBorrowOrigin == BorrowOriginKind::None;
         }
         const bool supportedResult =
-            functionTarget != nullptr &&
-            functionTarget->returnType.kind != SemanticType::Reference &&
-            functionTarget->returnType.kind != SemanticType::StringView &&
-            functionTarget->returnType.kind != SemanticType::CString &&
-            functionTarget->returnType.kind != SemanticType::RawPointer &&
-            functionTarget->returnType.kind != SemanticType::NativeFunction &&
-            functionTarget->returnBorrowOrigin == BorrowOriginKind::None &&
-            !instruction.info.traits.containsBorrowedState;
+            supportsEphemeralBorrowResult(functionTarget, instruction.info);
         const std::size_t argumentObligations =
             argumentPlace == nullptr
                 ? 0
@@ -3129,6 +3145,10 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
     if (source->root == MirPlaceRootKind::Loan) {
       const auto *parent = body.findLoan(source->loan);
       expected = parent == nullptr ? 0 : parent->storedDependency;
+    } else if (source->root == MirPlaceRootKind::Value ||
+               source->root == MirPlaceRootKind::Temporary) {
+      const auto temporary = findMirTemporaryCarrierDependency(body, *source);
+      expected = temporary ? temporary.loan->id : 0;
     } else if (source->root == MirPlaceRootKind::Binding ||
                source->root == MirPlaceRootKind::This) {
       for (const auto &candidate : body.loans) {

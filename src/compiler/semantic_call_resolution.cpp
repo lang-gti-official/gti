@@ -3758,16 +3758,20 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
   const bool temporaryReceiver =
       receiverMode == CallReceiverMode::FreshTemporaryRead ||
       receiverMode == CallReceiverMode::FreshTemporaryMutable;
-  if (member != nullptr && !function.staticMember && !temporaryReceiver) {
+  if (member != nullptr && !function.staticMember) {
     std::optional<TransientBorrowProduction> production =
         transientBorrowProduction(member->object());
     if (production) {
       transientReceiver = true;
       receiverPlace = std::move(production->place);
-      if (production->access == AccessMode::Mutable) {
+      if (temporaryReceiver) {
+        // Mutability of the materialized carrier shell does not upgrade a
+        // stored shared dependency into exclusive access to its owner.
+        callReceiverAccess = production->access;
+      } else if (production->access == AccessMode::Mutable) {
         callReceiverAccess = AccessMode::Mutable;
       }
-    } else {
+    } else if (!temporaryReceiver) {
       receiverPlace = loanPlace(member->object());
     }
     receiverLoan = accessLoan(member->object());
@@ -3776,16 +3780,85 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
     receiverPlace = loanPlace(
         SemanticPlace{.root = receiverStateSymbol(), .receiver = true});
   }
+  const std::size_t exclusivityDiagnostics = diagnostics.size();
   validateCallPlaceExclusivity(function.parameterTypes, arguments, paren,
                                receiverPlace, callReceiverAccess,
                                transientReceiver);
-  if (receiverPlace && selectedReceiverAccess == AccessMode::Mutable) {
+  const ExpressionInfo *receiverInfo =
+      member == nullptr ? nullptr
+                        : semanticModel.findExpression(*member->object());
+  if (transientReceiver && receiverInfo != nullptr &&
+      receiverInfo->category == ValueCategory::Value &&
+      receiverInfo->traits.containsBorrowedState) {
+    // The primary transient production preserves its producer's access above.
+    // Independently stored owners have their own access and participate in
+    // the same receiver-before-arguments checks. Do not extend the lifetime
+    // of an existing named carrier or publish repeated argument diagnostics.
+    std::vector<SemanticLoanPlace> checkedPlaces;
+    if (receiverPlace) {
+      checkedPlaces.push_back(*receiverPlace);
+    }
+    for (const auto &dependency : storedBorrowDependencies(member->object())) {
+      if (diagnostics.size() != exclusivityDiagnostics) {
+        break;
+      }
+      if (std::find(checkedPlaces.begin(), checkedPlaces.end(),
+                    dependency.place) != checkedPlaces.end()) {
+        continue;
+      }
+      checkedPlaces.push_back(dependency.place);
+      validateCallPlaceExclusivity(function.parameterTypes, arguments, paren,
+                                   dependency.place, dependency.access, true);
+    }
+  }
+  if (receiverPlace && callReceiverAccess == AccessMode::Mutable) {
     recordMutableBindingUse(receiverPlace->root);
   }
 
   if (function.staticMember) {
     // Object-qualified static access is diagnosed while resolving Get.
     return true;
+  }
+
+  if (member != nullptr && receiverMode == CallReceiverMode::Value) {
+    const ExpressionInfo *receiver =
+        semanticModel.findExpression(*member->object());
+    if (receiver != nullptr && receiver->category == ValueCategory::Value &&
+        receiver->type.kind == SemanticType::Class &&
+        receiver->traits.containsBorrowedState) {
+      // Passive, shared multi-owner carriers already have a checked Value
+      // receiver path. Their complete dependency set survives the call, and
+      // ending that set before the inert shell drop cannot run user cleanup.
+      // Preserve that path without admitting mutable shells or extending the
+      // new single-owner temporary-borrow contract to multiple dependencies.
+      // As for stored initialization, entry dependencies may protect caller
+      // referents without protecting the local parameter shell itself.
+      const auto passiveSharedObservation = [&]() {
+        if (function.receiverMutability != ReceiverMutability::ReadOnly ||
+            !freshTemporaryMethodSupported(function) ||
+            !ephemeralBorrowTargetSupported(function) ||
+            !receiver->traits.copyable ||
+            requiresActiveCleanupFor(receiver->type) ||
+            !hasStableBorrowStorage(member->object()) ||
+            freshTemporaryReceiverValue(member->object()).failure !=
+                FreshTemporaryValueFailure::MultipleBorrowOwners) {
+          return false;
+        }
+        const auto dependencies = storedBorrowDependencies(member->object());
+        return dependencies.size() > 1 &&
+               std::all_of(dependencies.begin(), dependencies.end(),
+                           [](const SemanticLoanDependency &dependency) {
+                             return dependency.access == AccessMode::ReadOnly &&
+                                    (dependency.place.root != 0 ||
+                                     dependency.place.receiver);
+                           });
+      };
+      if (!passiveSharedObservation()) {
+        reportMutableReceiverFailure(member->object(), paren, function,
+                                     "Method");
+        return false;
+      }
+    }
   }
 
   if (member != nullptr &&
@@ -3820,7 +3893,7 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
         selectedReceiverAccess == AccessMode::Mutable &&
         isMoveOnlyOwnerType(receiverType);
     reportLoanPlaceConflict(
-        paren, *receiverPlace, selectedReceiverAccess,
+        paren, *receiverPlace, callReceiverAccess,
         moveOnlyReceiver
             ? "Mutable method cannot use move-only storage while a "
               "reference borrowed from it may still be live."

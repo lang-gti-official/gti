@@ -9601,11 +9601,14 @@ declarationInitializersScheduledInConstructors(const MirProgram &program,
   return true;
 }
 
+[[nodiscard]] const MirClassInstance *
+uniqueClassInstanceForType(const MirProgram &program, const SemanticType &type);
+
 // An owning in-class initializer may materialize a class temporary in MIR and
 // immediately reparent its obligation into the field. Native in-class
 // initialization constructs that same value directly in the field, so the
 // temporary and ConstructionRollback records are representation-only. Erase
-// them only for an exact ordinary Construct or targetless default Call,
+// them only for an exact ordinary Construct or targetless default construction,
 // followed by its one Initialize transfer. A fixed-array field adds one
 // mediating level: element temporaries transfer into an admitted owning
 // aggregate, whose own result obligation then takes the Initialize transfer.
@@ -9743,8 +9746,24 @@ directOwningFieldInitializerTransfers(const MirProgram &program,
         payloadElementTarget->definitionKind == MirDefinitionKind::Source &&
         payloadElementTarget->parameterTypes == producer->parameterTypes &&
         payloadElementOwner->type == producer->info.type;
-    const bool targetlessDefaultCall =
-        producer != nullptr && producer->kind == MirInstructionKind::Call &&
+    const MirClassInstance *defaultOwner =
+        producer == nullptr
+            ? nullptr
+            : uniqueClassInstanceForType(program, producer->info.type);
+    const bool generatedDefaultConstruct =
+        producer != nullptr &&
+        producer->kind == MirInstructionKind::Construct &&
+        producer->constructorKind == ConstructorKind::Ordinary &&
+        defaultOwner != nullptr &&
+        defaultOwner->defaultConstructor == SpecialMemberStatus::Generated &&
+        producer->parameterTypes.empty();
+    // Braced generated default construction has the same exact value-to-field
+    // transfer as the targetless call spelling. The program verifier binds it
+    // to this concrete owner's generated default constructor.
+    const bool targetlessDefaultConstruction =
+        producer != nullptr &&
+        (producer->kind == MirInstructionKind::Call ||
+         generatedDefaultConstruct) &&
         !producer->functionTarget && !producer->constructorTarget &&
         !producer->lambdaTarget && !producer->bodyTarget &&
         !producer->callableInvocation &&
@@ -9773,8 +9792,9 @@ directOwningFieldInitializerTransfers(const MirProgram &program,
         payloadResult && producer != nullptr && value != nullptr &&
         payloadEnumValueSlot(program, body, value->id) == temporary;
     if (temporary == nullptr || value == nullptr || producer == nullptr ||
-        (!ordinaryConstruct && !immediateConstruct && !targetlessDefaultCall &&
-         !owningAggregate && !owningPayload) ||
+        (!ordinaryConstruct && !immediateConstruct &&
+         !targetlessDefaultConstruction && !owningAggregate &&
+         !owningPayload) ||
         !producer->result || *producer->result != value->id ||
         producer->destination || producer->receiver ||
         producer->successResultDestination ||
@@ -11785,9 +11805,6 @@ inlineClassCallableArgument(const MirProgram &program, const MirBody &body,
 // consuming parameter that same object. Requiring either exact schedule and
 // the adjacent chain keeps evaluation order identical to MIR and prevents
 // this spelling from hiding an inner defined-failure edge or cleanup identity.
-[[nodiscard]] const MirClassInstance *
-uniqueClassInstanceForType(const MirProgram &program, const SemanticType &type);
-
 [[nodiscard]] InlineFailureConstructorArgument
 inlineFailureConstructorArgument(const MirProgram &program, const MirBody &body,
                                  MirValueId valueId) {
@@ -39960,6 +39977,23 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       std::size_t matches = 0;
       for (const MirBlock &block : body.blocks) {
         for (const MirInstruction &instruction : block.instructions) {
+          const DirectTemporaryBorrow receiver =
+              directTemporaryReceiver(body, instruction);
+          if (receiver && receiver.stage->loan == loan.id) {
+            const MirTemporaryCarrierDependency dependency =
+                findMirTemporaryCarrierDependency(body, *receiver.slot);
+            const AccessMode access =
+                receiver.stage->callInputKind ==
+                        HirCallInputKind::MutableTemporaryBorrow
+                    ? AccessMode::Mutable
+                    : AccessMode::ReadOnly;
+            if (dependency && loan.source == receiver.slot->id &&
+                loan.storedDependency == dependency.loan->id &&
+                loan.parent == 0 && loan.access == access &&
+                loan.producedBy == receiver.stage->callSite) {
+              ++matches;
+            }
+          }
           for (std::size_t index = 0; index < instruction.operands.size();
                ++index) {
             const DirectTemporaryBorrow temporary =
@@ -41640,11 +41674,23 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           const auto &condition = source->terminator.value;
           const MirInstruction *observation =
               condition ? definitionFor(body, *condition) : nullptr;
+          const bool materializedReceiver =
+              place != nullptr &&
+              stage->callInputRole == MirCallInputRole::Receiver &&
+              (stage->callInputKind == HirCallInputKind::ReadTemporaryBorrow ||
+               stage->callInputKind ==
+                   HirCallInputKind::MutableTemporaryBorrow) &&
+              bool(findMirTemporaryMaterialization(body, *place,
+                                                   stage->hirValue));
           // No address computation is deferred across the expected branch:
-          // this is one stable local binding, and the success block extracts
-          // the same carrier under the verifier's exact state-edge proof.
+          // this is one stable local binding or an already materialized
+          // receiver, and the success block extracts the same expected value
+          // under the verifier's exact state-edge proof. The receiver's MIR
+          // loan/drop schedule also covers the non-invoking error successor.
           if (source->terminator.kind != MirTerminatorKind::Branch ||
-              place == nullptr || place->root != MirPlaceRootKind::Binding ||
+              place == nullptr ||
+              (place->root != MirPlaceRootKind::Binding &&
+               !materializedReceiver) ||
               !place->projections.empty() || success == nullptr ||
               source->instructions.size() != 1 || observation == nullptr ||
               observation != &source->instructions.front() ||

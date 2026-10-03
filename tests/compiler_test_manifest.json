@@ -462,6 +462,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testEphemeralBorrowedCarrierReceivers",
+      "suite": "ownership"
+    },
+    {
       "name": "testMutableTemporaryReceivers",
       "suite": "ownership"
     },

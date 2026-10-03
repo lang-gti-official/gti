@@ -59,6 +59,9 @@ int main() {
 
 ## What GTI currently provides
 
+For a readable overview of recent capabilities and fixes, see the
+[changelog](CHANGELOG.md).
+
 - Explicit fixed-width integer types, checked conversions and indexing, and
   immutable-by-default bindings, plus explicit wrapping, saturating, and
   checked-result add/subtract/multiply operations, direct base-10
