@@ -394,9 +394,10 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   comments or whitespace.
 - `GTI-S2009` retains the error for an implicitly ignored non-void call result.
   Its `unused-result` group provides one non-preferred fix that inserts
-  `[[discard]]` before the expression. The edit preserves evaluation and makes
-  intent explicit, but is not preferred because using the value may be the
-  correct repair.
+  `[[discard]]` at the parser-recorded start of the complete expression. The
+  edit preserves evaluation, remains valid for qualified and nested calls, and
+  makes intent explicit, but is not preferred because using the value may be
+  the correct repair.
 - `GTI-S2055` also owns calls to `[[unsafe]]` GTI functions outside lexical
   unsafe context. Point at the call's closing parenthesis and relate the
   declaration attribute. Do not offer a fix-it that silently accepts a safety

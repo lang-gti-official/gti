@@ -1973,21 +1973,26 @@ private:
 
 class ExpressionStmt final : public StmtOfKind<StmtKind::ExpressionStmt> {
 public:
-  explicit ExpressionStmt(ExprPtr expression,
-                          std::optional<Token> discardAttribute = std::nullopt)
-      : expression_(std::move(expression)),
+  ExpressionStmt(Token expressionStart, ExprPtr expression,
+                 std::optional<Token> discardAttribute = std::nullopt)
+      : expressionStart_(std::move(expressionStart)),
+        expression_(std::move(expression)),
         discardAttribute_(std::move(discardAttribute)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitExpressionStmt(*this);
   }
 
+  [[nodiscard]] const Token &expressionStart() const {
+    return expressionStart_;
+  }
   [[nodiscard]] const ExprPtr &expression() const { return expression_; }
   [[nodiscard]] const std::optional<Token> &discardAttribute() const {
     return discardAttribute_;
   }
 
 private:
+  Token expressionStart_;
   ExprPtr expression_;
   std::optional<Token> discardAttribute_;
 };
