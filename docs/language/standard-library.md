@@ -187,7 +187,7 @@ The current implemented foundation includes:
 - `<std/vector>` `std::vector<T>` as a move-only dynamic owner with checked
   indexed access,
   reserve, resize, shrink-to-fit, clear, push/pop, indexed insertion/erasure,
-  read-only traversal, in-place emplacement, explicit copyable-element
+  read-only traversal, in-place emplacement, explicit cloneable-element
   cloning, and construction from one contextual fixed-array value such as
   `std::vector<int>({1, 2, 3})`; this constructor copies elements from its
   owned array parameter and therefore requires copyable `T` when used; and

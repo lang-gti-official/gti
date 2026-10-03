@@ -2929,18 +2929,42 @@ auto SemanticVisitor::Impl::appendTransientReadPlaces(
     return;
   }
 
-  if (std::optional<TransientBorrowProduction> production =
-          transientBorrowProduction(expression);
-      production &&
-      (production->place.root != 0 || production->place.receiver) &&
-      std::none_of(productions.begin(), productions.end(),
-                   [&](const TransientBorrowProduction &existing) {
-                     return existing.place == production->place &&
-                            existing.access == production->access &&
-                            existing.retainsValueCarrier ==
-                                production->retainsValueCarrier;
-                   })) {
-    productions.push_back(std::move(*production));
+  const auto appendProduction = [&](TransientBorrowProduction production) {
+    if (production.place.root == 0 && !production.place.receiver) {
+      return;
+    }
+    const auto existing =
+        std::find_if(productions.begin(), productions.end(),
+                     [&](const TransientBorrowProduction &candidate) {
+                       return candidate.place == production.place &&
+                              candidate.retainsValueCarrier ==
+                                  production.retainsValueCarrier;
+                     });
+    if (existing == productions.end()) {
+      productions.push_back(std::move(production));
+    } else {
+      // A stored shared reference must not erase the stronger access of the
+      // operation that produced it from a mutable receiver or parameter.
+      if (production.access == AccessMode::Mutable) {
+        existing->access = AccessMode::Mutable;
+      }
+      existing->globalStorage |= production.globalStorage;
+    }
+  };
+  if (auto production = transientBorrowProduction(expression)) {
+    appendProduction(std::move(*production));
+  }
+  const ExpressionInfo *info = semanticModel.findExpression(*expression);
+  if (info != nullptr && info->category == ValueCategory::Value &&
+      info->traits.containsBorrowedState) {
+    // A fresh composed carrier keeps every stored owner borrowed until the
+    // full expression ends, even if a nested method has already returned a
+    // scalar. Named Place carriers retain their ordinary last-use lifetime.
+    for (const auto &dependency : storedBorrowDependencies(expression)) {
+      appendProduction({.place = dependency.place,
+                        .access = dependency.access,
+                        .retainsValueCarrier = true});
+    }
   }
 
   // A place chain contributes only its deepest resolved place: reading

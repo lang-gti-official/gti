@@ -30,6 +30,9 @@ add_test(NAME charconv_runtime_boundary COMMAND gti_runtime_charconv_tests)
 add_executable(gti_mir_full_expression_tests mir_full_expression_tests.cpp)
 target_link_libraries(gti_mir_full_expression_tests PRIVATE gti_compiler)
 add_test(NAME mir_full_expression COMMAND gti_mir_full_expression_tests)
+add_executable(gti_ephemeral_carrier_mir_tests ephemeral_carrier_mir_tests.cpp)
+target_link_libraries(gti_ephemeral_carrier_mir_tests PRIVATE gti_compiler)
+add_test(NAME ephemeral_carrier_mir COMMAND gti_ephemeral_carrier_mir_tests)
 
 add_executable("gti_runtime_thread_tests" "${PROJECT_SOURCE_DIR}/tests/runtime_thread_tests.cpp")
 target_include_directories(
@@ -2154,6 +2157,14 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(mutable_temporary_receiver_runtime
                        PROPERTIES TIMEOUT 180)
+  add_test(
+    NAME ephemeral_carrier_receiver_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/ephemeral_carrier_receiver_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(ephemeral_carrier_receiver_runtime
+                       PROPERTIES TIMEOUT 300)
   add_test(
     NAME temporary_constructor_argument_runtime
     COMMAND "${Python3_EXECUTABLE}"

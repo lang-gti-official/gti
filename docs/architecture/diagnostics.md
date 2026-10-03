@@ -465,9 +465,12 @@ fix changes ownership intent. The LSP publishes these same frontend records.
 - `GTI-S2081` owns a class-value receiver that cannot use the bounded fresh
   temporary receiver capability. Point at the call/operator token and
   distinguish an explicit move from existing storage, an unsupported producer,
-  borrowed-state storage or result, non-concrete record, and virtual dispatch.
-  Relate the selected method/operator declaration and suggest an explicit
-  mutable local. Do not offer a fix-it because binding name, scope, and
+  unstable or multiple stored owner dependencies, borrowed or pointer-like results,
+  non-concrete record, and virtual dispatch. One proven stable dependency does
+  not itself reject an immediate ordinary receiver. Relate the selected
+  method/operator declaration and suggest a named carrier, or keeping its owner
+  in longer-lived named storage when that is the failed condition. Do not offer
+  a fix-it because binding name, scope, and
   ownership use require intent. Immutable named-place failures retain the
   existing mutable-receiver diagnostic rather than being reclassified as a
   temporary.

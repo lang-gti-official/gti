@@ -892,6 +892,8 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
                      "fresh temporary value.";
             break;
           case FreshTemporaryValueFailure::BorrowedState:
+          case FreshTemporaryValueFailure::UnstableBorrowOwner:
+          case FreshTemporaryValueFailure::MultipleBorrowOwners:
             reason = argumentLabel + std::to_string(index + 1) +
                      " contains tracked borrowed state and cannot be "
                      "borrowed as a temporary argument.";

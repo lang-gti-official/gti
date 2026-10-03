@@ -9750,6 +9750,7 @@ def main():
     test_rename_tooling(sys.argv[1], root)
     test_signature_help_tooling(sys.argv[1], root)
     test_mutable_temporary_receiver_tooling(sys.argv[1], root)
+    test_ephemeral_carrier_receiver_tooling(sys.argv[1], root)
     test_range_loan_tooling(sys.argv[1], root)
     test_expected_payload_range_tooling(sys.argv[1], root)
     test_mutable_stored_dependency_tooling(sys.argv[1], root)
@@ -10743,6 +10744,84 @@ def test_mutable_temporary_receiver_tooling(executable, root):
         assert signature and signature["signatures"][0]["label"].endswith(
             "inspect() mut"
         ), signature
+    finally:
+        session.close()
+
+
+def test_ephemeral_carrier_receiver_tooling(executable, root):
+    declarations = """\
+// Service calls use the compiler's stored-borrow contract.
+class Resource {
+  mut int value = 0;
+public:
+  int add(int amount) mut { this.value += amount; return this.value; }
+  int read() { return this.value; }
+};
+class Service {
+  mut Resource& resource;
+public:
+  Service(mut Resource& source) : resource(source) {}
+  int update(int amount) mut { return this.resource.add(amount); }
+  Resource& borrow() { return this.resource; }
+};
+class Client {
+  mut Resource resource{};
+public:
+  Service auth() mut { return Service(this.resource); }
+  int read() { return this.resource.read(); }
+};
+"""
+    valid = declarations + "int main() { mut Client api{}; return api.auth().update(1); }\n"
+    escaping = declarations + "int main() { /* 🌱 */ mut Client api{}; [[discard]] api.auth().borrow(); return 0; }\n"
+    conflicting = declarations + "int main() { mut Client api{}; return api.auth().update(api.read()); }\n"
+    incomplete = declarations + "int main() { mut Client api{}; return api.auth().update( }\n"
+    path = root / "ephemeral-carrier-receiver.gti"
+    path.write_text(valid, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    session = LspSession(executable)
+    try:
+        session.send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                      "params": {"capabilities": {"textDocument": {
+                          "publishDiagnostics": {"relatedInformation": True}}}}})
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        for version, text in enumerate((valid, escaping, conflicting, incomplete, valid), 1):
+            if version == 1:
+                method = "textDocument/didOpen"
+                params = {"textDocument": {"uri": uri, "languageId": "gti",
+                                            "version": version, "text": text}}
+            else:
+                method = "textDocument/didChange"
+                params = {"textDocument": {"uri": uri, "version": version},
+                          "contentChanges": [{"text": text}]}
+            session.send({"jsonrpc": "2.0", "method": method, "params": params})
+            published = session.receive_until(
+                lambda message: message.get("method") == "textDocument/publishDiagnostics"
+                and message["params"]["uri"] == uri
+                and message["params"].get("version") == version
+            )["params"]
+            diagnostics = published["diagnostics"]
+            if text == valid:
+                assert not has_error_diagnostics(published), diagnostics
+            elif text == escaping:
+                errors = [item for item in diagnostics if item.get("code") == "GTI-S2081"]
+                assert errors and "borrowed" in errors[0]["message"], diagnostics
+                assert errors[0].get("relatedInformation"), errors
+                offset = text.index("api.auth().borrow()") + len("api.auth().borrow(")
+                assert errors[0]["range"] == {
+                    "start": lsp_position(text, offset),
+                    "end": lsp_position(text, offset + 1),
+                }, errors
+            elif text == conflicting:
+                assert any(item.get("code") == "GTI-S2017" for item in diagnostics), diagnostics
+            else:
+                assert has_error_diagnostics(published), diagnostics
+        offset = valid.index("update(1)")
+        session.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover",
+                      "params": {"textDocument": {"uri": uri},
+                                 "position": lsp_position(valid, offset + 1)}})
+        hover = session.receive_until(lambda message: message.get("id") == 2)["result"]
+        assert hover and "update(int32_t amount) mut" in json.dumps(hover), hover
     finally:
         session.close()
 
