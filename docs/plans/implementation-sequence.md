@@ -3092,11 +3092,15 @@ Fetching now succeeds and the destination was reconciled before publication;
 the retained engine-embedding branch remains untouched. Repository CI fixes
 cover build-tree resource discovery in release tests, Linux linker wrapping
 for the C-thread yield oracle, the scalar CFG `char8_t` expectation, and bounded
-compile/test worker counts. Sanitizer preflights now fail early on incompatible
-runner hosts rather than disabling the checks. The reported Linux TSan mapping
-failure still requires runner-side resolution; no host configuration or
-security policy was changed. The supplied runner's capacity four and three-hour
-timeout also need operator review (recommended capacity one and six hours).
+compile/test worker counts. ASan/UBSan preflights fail early on incompatible
+runner hosts. The reported Linux TSAN mapping failure is now represented as an
+explicit runner capability: the generic Docker workflows disable TSAN
+execution, mixed matrices retain ordinary and ASan/UBSan coverage, and
+dedicated TSAN CTests report skipped rather than passed. A compatible dedicated
+runner must pass the TSAN preflight and enable the CMake option before its
+result counts as race-checking evidence. No host configuration or security
+policy was changed. The supplied runner's capacity four and three-hour timeout
+also need operator review (recommended capacity one and six hours).
 
 The local macOS Neovim installer stages a checksummed toolchain through the
 existing plugin installer and writes a backed-up local Lazy specification.

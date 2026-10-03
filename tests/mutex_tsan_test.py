@@ -10,6 +10,8 @@ import subprocess
 import sys
 import tempfile
 
+from sanitizer_support import SKIP_RETURN_CODE, thread_sanitizer_enabled
+
 
 def execute(
     command: list[str],
@@ -32,9 +34,9 @@ def main() -> int:
         raise SystemExit(
             "usage: mutex_tsan_test.py /path/to/gti concurrent.gti /path/to/c++"
         )
-    if sys.platform == "win32":
-        print("mutex ThreadSanitizer check skipped: unsupported host platform")
-        return 0
+    if not thread_sanitizer_enabled():
+        print("mutex ThreadSanitizer check skipped: unsupported runner")
+        return SKIP_RETURN_CODE
 
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source = pathlib.Path(sys.argv[2]).resolve()
@@ -60,7 +62,7 @@ def main() -> int:
                 "mutex ThreadSanitizer check skipped: native compiler does not "
                 "provide -fsanitize=thread"
             )
-            return 0
+            return SKIP_RETURN_CODE
 
         binary = root / "mutex_concurrent"
         build = execute(
