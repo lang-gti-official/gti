@@ -28,6 +28,14 @@ struct Counter {
 };
 
 struct Grid { mut uint16_t pixels[2][3] = {{1, 2, 3}, {4, 5, 6}}; };
+struct CalledIndex {
+  mut int cells[1] = {1};
+  mut int calls = 0;
+  mut int& operator[](uint64_t index) mut {
+    calls++;
+    return cells[index];
+  }
+};
 struct SignedCounter {
   mut int8_t value;
   SignedCounter(int8_t initial) : value(initial) {}
@@ -134,6 +142,10 @@ int main() {
   increase(frame, issue_index());
   if (issue_index_calls() != 1 || frame.grid.pixels[0][1] != uint16_t(4)) { return 6; }
   auto first = relay(31);
+  mut CalledIndex indexed{};
+  mut uint64_t called_index = 0;
+  indexed[called_index++] *= 3;
+  if (called_index != uint64_t(1) || indexed.calls != 1 || indexed.cells[0] != 3) { return 11; }
   auto passive = passive_relay();
   if (passive || passive.error().id != 41) { return 10; }
   ResourceError second{32};
