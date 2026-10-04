@@ -13,6 +13,7 @@
 #include "gti/support.h"
 #include "gti/target.h"
 #include "project_presentation.h"
+#include "terminal_style.h"
 
 #include <algorithm>
 #include <charconv>
@@ -36,6 +37,33 @@ namespace {
 #endif
 
 constexpr std::string_view version = GTI_VERSION;
+lang::cli::TerminalStyle terminalStyle;
+using lang::cli::Style;
+
+// Called only at option boundaries, never for another option's operand or
+// arguments following '--'. Explicit CLI policy overrides NO_COLOR.
+enum class ColorArgument { NotColor, Accepted, Invalid };
+ColorArgument parseColorArgument(int argc, char *argv[], int &index) {
+  const std::string_view argument = argv[index];
+  std::string_view value;
+  if (argument == "--color") {
+    if (++index >= argc) {
+      std::cerr << "gti: --color requires auto, always, or never\n";
+      return ColorArgument::Invalid;
+    }
+    value = argv[index];
+  } else if (argument.starts_with("--color=")) {
+    value = argument.substr(8);
+  } else {
+    return ColorArgument::NotColor;
+  }
+  if (!terminalStyle.setMode(value)) {
+    std::cerr << "gti: invalid --color value '" << value
+              << "'; expected auto, always, or never\n";
+    return ColorArgument::Invalid;
+  }
+  return ColorArgument::Accepted;
+}
 
 struct Options {
   std::filesystem::path input;
@@ -168,6 +196,11 @@ void printUsage(std::ostream &stream) {
          "[--target <triple>] [--sysroot <path>] [-I <dir>] [-D <macro>] "
          "[-U <macro>] [--allow <pattern>] [--deny <pattern>] "
          "[--rename <from>=<to>] [--array-return <fn>=<count>]\n"
+         "\n"
+         "Global presentation options:\n"
+         "      --color=auto|always|never\n"
+         "                       Terminal colour (default auto; honours "
+         "NO_COLOR).\n"
          "\n"
          "Direct compiler options:\n"
          "  -o, --output <path>  Set the executable or emitted artifact path.\n"
@@ -393,6 +426,13 @@ defaultNativeHeaderPath(const std::filesystem::path &input) {
 
 ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
   for (int index = 1; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
     const std::string argument = argv[index];
 
     if (argument == "--") {
@@ -677,6 +717,13 @@ bool buildsExecutable(ProjectCommand command) {
 ArgumentResult parseProjectArguments(int argc, char *argv[],
                                      ProjectOptions &options) {
   for (int index = 2; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
     const std::string argument = argv[index];
     if (argument == "-h" || argument == "--help") {
       printUsage(std::cout);
@@ -1018,6 +1065,13 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
 ArgumentResult parseFetchArguments(int argc, char *argv[],
                                    FetchOptions &options) {
   for (int index = 2; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
     const std::string argument = argv[index];
     if (argument == "-h" || argument == "--help") {
       printUsage(std::cout);
@@ -1035,6 +1089,13 @@ ArgumentResult parseFetchArguments(int argc, char *argv[],
 
 ArgumentResult parseCleanArguments(int argc, char *argv[]) {
   for (int index = 2; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
     const std::string argument = argv[index];
     if (argument == "-h" || argument == "--help") {
       printUsage(std::cout);
@@ -1049,6 +1110,13 @@ ArgumentResult parseCleanArguments(int argc, char *argv[]) {
 ArgumentResult parseMetadataArguments(int argc, char *argv[],
                                       MetadataOptions &options) {
   for (int index = 2; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
     const std::string argument = argv[index];
     if (argument == "-h" || argument == "--help") {
       printUsage(std::cout);
@@ -1102,6 +1170,13 @@ parseFormatConfigInitArguments(int argc, char *argv[],
 
   bool destinationSelected = false;
   for (int index = 3; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
     const std::string argument = argv[index];
     if (argument == "-h" || argument == "--help") {
       printUsage(std::cout);
@@ -1125,6 +1200,13 @@ parseFormatConfigInitArguments(int argc, char *argv[],
 ArgumentResult parseScaffoldArguments(int argc, char *argv[],
                                       ScaffoldOptions &options) {
   for (int index = 2; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
     const std::string argument = argv[index];
     if (argument == "-h" || argument == "--help") {
       printUsage(std::cout);
@@ -1188,8 +1270,10 @@ void reportLocation(const lang::SourceSpan &span, std::string_view level,
                     const lang::SourceManager &sources) {
   const lang::SourceLocation location = sources.locate(span);
   std::cerr << (span.source.empty() ? "<source>" : span.source) << ':'
-            << location.line << ':' << location.column << ": " << level << ": "
-            << message << '\n';
+            << location.line << ':' << location.column << ": "
+            << terminalStyle.code(std::cerr, Style::Note) << level
+            << terminalStyle.code(std::cerr, Style::Reset) << ": " << message
+            << '\n';
 
   const std::string_view sourceLine = sources.line(span);
   if (sourceLine.empty()) {
@@ -1208,24 +1292,31 @@ void reportLocation(const lang::SourceSpan &span, std::string_view level,
   const std::size_t end =
       std::min(location.lineEnd,
                std::max(span.end, std::min(span.start + 1, location.lineEnd)));
-  std::cerr << '^';
+  std::cerr << terminalStyle.code(std::cerr, Style::Note) << '^';
   if (end > start + 1) {
     std::cerr << std::string(end - start - 1, '~');
   }
-  std::cerr << '\n';
+  std::cerr << terminalStyle.code(std::cerr, Style::Reset) << '\n';
 }
 
 void reportDiagnostic(const lang::Diagnostic &diagnostic,
                       const lang::SourceManager &sources) {
+  const Style style = diagnostic.severity == lang::DiagnosticSeverity::Error
+                          ? Style::Error
+                      : diagnostic.severity == lang::DiagnosticSeverity::Warning
+                          ? Style::Warning
+                          : Style::Note;
   const lang::SourceLocation location = sources.locate(diagnostic.primary);
   std::cerr << (diagnostic.primary.source.empty() ? "<source>"
                                                   : diagnostic.primary.source)
             << ':' << location.line << ':' << location.column << ": "
+            << terminalStyle.code(std::cerr, style)
             << severityName(diagnostic.severity);
   if (!diagnostic.code.empty()) {
     std::cerr << '[' << diagnostic.code << ']';
   }
-  std::cerr << ": " << diagnostic.message << '\n';
+  std::cerr << terminalStyle.code(std::cerr, Style::Reset) << ": "
+            << diagnostic.message << '\n';
 
   const std::string_view sourceLine = sources.line(diagnostic.primary);
   if (!sourceLine.empty()) {
@@ -1242,21 +1333,25 @@ void reportDiagnostic(const lang::Diagnostic &diagnostic,
         location.lineEnd,
         std::max(diagnostic.primary.end,
                  std::min(diagnostic.primary.start + 1, location.lineEnd)));
-    std::cerr << '^';
+    std::cerr << terminalStyle.code(std::cerr, style) << '^';
     if (end > start + 1) {
       std::cerr << std::string(end - start - 1, '~');
     }
-    std::cerr << '\n';
+    std::cerr << terminalStyle.code(std::cerr, Style::Reset) << '\n';
   }
 
   for (const lang::RelatedDiagnostic &related : diagnostic.related) {
     reportLocation(related.span, "note", related.message, sources);
   }
   for (const std::string &hint : diagnostic.hints) {
-    std::cerr << "help: " << hint << '\n';
+    std::cerr << terminalStyle.code(std::cerr, Style::Note)
+              << "help:" << terminalStyle.code(std::cerr, Style::Reset) << ' '
+              << hint << '\n';
   }
   for (const lang::FixIt &fix : diagnostic.fixes) {
-    std::cerr << "help: " << fix.message << '\n';
+    std::cerr << terminalStyle.code(std::cerr, Style::Note)
+              << "help:" << terminalStyle.code(std::cerr, Style::Reset) << ' '
+              << fix.message << '\n';
   }
 }
 
@@ -1293,9 +1388,15 @@ void addDiagnosticSummary(DiagnosticSummary &destination,
 
 void reportDiagnosticSummary(std::ostream &stream,
                              const DiagnosticSummary &summary) {
-  stream << "Diagnostics: " << summary.errors
+  // Keep the summary payload contiguous: build --all reads child counts.
+  const Style style = summary.errors     ? Style::Error
+                      : summary.warnings ? Style::Warning
+                                         : Style::Success;
+  stream << terminalStyle.code(stream, style)
+         << "Diagnostics: " << summary.errors
          << (summary.errors == 1 ? " error, " : " errors, ") << summary.warnings
-         << (summary.warnings == 1 ? " warning\n" : " warnings\n");
+         << (summary.warnings == 1 ? " warning" : " warnings")
+         << terminalStyle.code(stream, Style::Reset) << '\n';
 }
 
 std::optional<DiagnosticSummary>
@@ -1672,7 +1773,9 @@ int runDirect(const Options &options, const char *driver) {
     if (!writeFile(options.output, artifact.contents)) {
       return exitCode(ExitStatus::Io);
     }
-    std::cout << "Emitted " << options.output << '\n';
+    std::cout << terminalStyle.code(std::cout, Style::Success) << "Emitted"
+              << terminalStyle.code(std::cout, Style::Reset) << ' '
+              << options.output << '\n';
     reportDiagnosticSummary(std::cout,
                             summarizeDiagnostics(compilation.diagnostics));
     return exitCode(ExitStatus::Success);
@@ -1723,7 +1826,9 @@ int runDirect(const Options &options, const char *driver) {
     }
   }
 
-  std::cout << "Built " << options.output << '\n';
+  std::cout << terminalStyle.code(std::cout, Style::Success) << "Built"
+            << terminalStyle.code(std::cout, Style::Reset) << ' '
+            << options.output << '\n';
   if (options.buildReport) {
     std::cout << "Build report " << *options.buildReport << '\n';
   }
@@ -1775,8 +1880,10 @@ void reportProjectPlan(const lang::driver::ProjectBuildPlan &plan,
 
 void reportProjectSuccess(std::ostream &stream, std::string_view action,
                           const lang::driver::ProjectBuildPlan &plan) {
-  stream << action << ' ' << plan.targetName() << " [" << plan.profileName()
-         << ", " << lang::driver::targetTriple(plan.target()) << "] -> "
+  stream << terminalStyle.code(stream, Style::Success) << action
+         << terminalStyle.code(stream, Style::Reset) << ' ' << plan.targetName()
+         << " [" << plan.profileName() << ", "
+         << lang::driver::targetTriple(plan.target()) << "] -> "
          << plan.output().string() << '\n';
 }
 
@@ -1785,7 +1892,9 @@ int invokeProjectProgram(const lang::driver::ProjectBuildPlan &plan,
   std::vector<std::string> command{plan.output().string()};
   command.insert(command.end(), options.programArguments.begin(),
                  options.programArguments.end());
-  std::cerr << (skippedBuild ? "Running existing " : "Running ")
+  std::cerr << terminalStyle.code(std::cerr, Style::Note)
+            << (skippedBuild ? "Running existing" : "Running")
+            << terminalStyle.code(std::cerr, Style::Reset) << ' '
             << plan.output().string();
   if (skippedBuild) {
     std::cerr << " (--no-build)";
@@ -1951,7 +2060,9 @@ int buildProjectPlan(
       if (options.verbose && !outcome.output.empty()) {
         std::cerr << outcome.output;
       }
-      std::cerr << (outcome.reused ? "Reused" : "Built")
+      std::cerr << terminalStyle.code(std::cerr, Style::Success)
+                << (outcome.reused ? "Reused" : "Built")
+                << terminalStyle.code(std::cerr, Style::Reset)
                 << " native dependency " << outcome.packageIdentity << '\n';
     }
   }
@@ -2045,10 +2156,14 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
               << boundedJobs << " parallel jobs\n";
   }
 
+  const bool childColor =
+      terminalStyle.enabled(std::cout) || terminalStyle.enabled(std::cerr);
   const auto childCommand = [&](const lang::driver::ProjectBuildPlan &plan) {
     std::vector<std::string> command{
         driver,   "build", plan.targetName(), "--profile", options.profile,
         "--jobs", "1"};
+    // Children are captured, so resolve auto against the parent's destinations.
+    command.emplace_back(childColor ? "--color=always" : "--color=never");
     if (options.package) {
       command.emplace_back("--package");
       command.push_back(*options.package);
@@ -2127,10 +2242,14 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
       ++diagnosticSummary.errors;
     }
     if (result.succeeded()) {
-      std::cout << result.output;
+      std::cout << (!childColor || terminalStyle.enabled(std::cout)
+                        ? result.output
+                        : lang::cli::withoutStyles(result.output));
       continue;
     }
-    std::cerr << result.output;
+    std::cerr << (!childColor || terminalStyle.enabled(std::cerr)
+                      ? result.output
+                      : lang::cli::withoutStyles(result.output));
     if (result.driverDiagnostic) {
       std::cerr << *result.driverDiagnostic << '\n';
     }
@@ -2141,9 +2260,10 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
     }
   }
   if (firstFailure == exitCode(ExitStatus::Success)) {
-    std::cout << "Built " << targetCount
-              << (targetCount == 1 ? " target" : " targets") << " ["
-              << options.profile << "]\n";
+    std::cout << terminalStyle.code(std::cout, Style::Success) << "Built"
+              << terminalStyle.code(std::cout, Style::Reset) << ' '
+              << targetCount << (targetCount == 1 ? " target" : " targets")
+              << " [" << options.profile << "]\n";
   }
   std::cerr.flush();
   reportDiagnosticSummary(std::cout, diagnosticSummary);
@@ -2287,8 +2407,9 @@ int runProject(const ProjectOptions &options, const char *driver) {
     if (directoryError || !writeFile(output, compilation.artifact->contents)) {
       return exitCode(ExitStatus::Io);
     }
-    std::cout << "Emitted MIR " << plan.targetName() << " ["
-              << plan.profileName() << ", "
+    std::cout << terminalStyle.code(std::cout, Style::Success) << "Emitted MIR"
+              << terminalStyle.code(std::cout, Style::Reset) << ' '
+              << plan.targetName() << " [" << plan.profileName() << ", "
               << lang::driver::targetTriple(plan.target()) << "] -> "
               << output.string() << '\n';
     reportDiagnosticSummary(std::cout,
@@ -2312,8 +2433,10 @@ int runProject(const ProjectOptions &options, const char *driver) {
       return exitCode(ExitStatus::Compilation);
     }
     reportDiagnostics(result.diagnostics, result.sources);
-    std::cout << "Checked " << plan.targetName() << " [" << plan.profileName()
-              << ", " << lang::driver::targetTriple(plan.target()) << "] -> "
+    std::cout << terminalStyle.code(std::cout, Style::Success) << "Checked"
+              << terminalStyle.code(std::cout, Style::Reset) << ' '
+              << plan.targetName() << " [" << plan.profileName() << ", "
+              << lang::driver::targetTriple(plan.target()) << "] -> "
               << plan.entry().string() << '\n';
     reportDiagnosticSummary(std::cout,
                             summarizeDiagnostics(result.diagnostics));
@@ -2561,7 +2684,9 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
     }
     if (process.succeeded()) {
       ++passed;
-      std::cerr << "Passed " << plan.targetName() << '\n';
+      std::cerr << terminalStyle.code(std::cerr, Style::Success) << "Passed"
+                << terminalStyle.code(std::cerr, Style::Reset) << ' '
+                << plan.targetName() << '\n';
       continue;
     }
 
@@ -2569,8 +2694,10 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
     if (firstFailure == exitCode(ExitStatus::Success)) {
       firstFailure = process.exitCode;
     }
-    std::cerr << "Failed " << plan.targetName() << " (exit code "
-              << process.exitCode << ")\n";
+    std::cerr << terminalStyle.code(std::cerr, Style::Error) << "Failed"
+              << terminalStyle.code(std::cerr, Style::Reset) << ' '
+              << plan.targetName() << " (exit code " << process.exitCode
+              << ")\n";
   }
 
   std::cerr << "Test result: " << passed << " passed";
@@ -2725,6 +2852,13 @@ int runFormatConfigInit(const FormatConfigInitOptions &options) {
 int runBindgen(int argc, char *argv[]) {
   BindgenCliOptions options;
   for (int index = 2; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return exitCode(ExitStatus::Usage);
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
     const std::string_view argument = argv[index];
     if (argument == "-o" || argument == "--output") {
       if (index + 1 >= argc) {
@@ -2993,6 +3127,23 @@ int runBindgen(int argc, char *argv[]) {
 
 int main(int argc, char *argv[]) {
   lang::installCrashHandlers(argc > 0 ? argv[0] : "gti");
+  // Also permit global colour options before a subcommand, without scanning
+  // through operands (e.g. an output file literally named --color=never).
+  int first = 1;
+  for (; first < argc; ++first) {
+    const auto color = parseColorArgument(argc, argv, first);
+    if (color == ColorArgument::Invalid) {
+      return exitCode(ExitStatus::Usage);
+    }
+    if (color == ColorArgument::NotColor) {
+      break;
+    }
+  }
+  std::vector<char *> arguments{argv[0]};
+  arguments.insert(arguments.end(), argv + first, argv + argc);
+  arguments.push_back(nullptr);
+  argc = static_cast<int>(arguments.size()) - 1;
+  argv = arguments.data();
   const std::string_view command =
       argc > 1 ? std::string_view(argv[1]) : std::string_view{};
   if (command == "build" || command == "check" || command == "run" ||
