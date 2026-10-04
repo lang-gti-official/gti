@@ -39,9 +39,14 @@ quick panic-adoption cases and the formatting-error missing-include LSP
 correction/reanalysis/stale-action check with build-tree resource overrides
 cleared. Clang-format and patch whitespace checks pass. The user's active
 installation is unchanged. These are macOS results; Linux/Windows execution
-and bundled-LLVM packaging were not run locally. Publication and remote issue
-closure remain pending because Gitea is unreachable while Tailscale reports
-`NeedsLogin`. The earlier checkpoint evidence below remains historical.
+and bundled-LLVM packaging were not run locally. The release reconciliation
+on 2026-10-04 confirmed canonical Gitea main is still `ca705977` and the six
+issues above are the complete open-issue inventory. Fix commit `318051e8`
+retains their closing references; the user's separate documentation commit
+`be253cb0` is preserved by merge `a610575c`. The 0.362.0-to-0.363.0 release-version
+gate passes. The canonical main push owns release dispatch; asynchronous
+packaging is not additional local validation. Earlier checkpoints below are
+historical, including their publication holds.
 
 ## Panic adoption in formatting and stdout
 

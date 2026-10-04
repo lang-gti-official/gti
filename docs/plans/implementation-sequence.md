@@ -32,8 +32,12 @@ are fixed and locally validated. All 389 optimized CTest gates have passing
 combined evidence after correcting the new regression's census registration;
 fresh installed-consumer and installed panic/LSP checks also pass. The user has
 authorized closing the bugs and publishing 0.363.0, superseding the earlier
-publication hold. Publication and remote issue closure await restored Gitea
-access (Tailscale reports `NeedsLogin`). Active installation is unchanged.
+publication hold. Gitea access is restored; reconciliation on 2026-10-04
+confirmed unchanged remote main and the same six open issues. Fix commit
+`318051e8` carries their closing references, and merge `a610575c` preserves the
+user's main-branch documentation work. The canonical main push dispatches the
+0.363.0 release; no CI wait or manual competing tag is required. Active
+installation is unchanged. Earlier publication holds below are historical.
 
 The fixes retain verified-MIR execution: concrete type-only alias identities,
 shared nested fixed-array receiver access, passive record copy/staging, exact
