@@ -91,7 +91,7 @@ int main() {
   target = std::move(source);
   return 0;
 }
-""", "Cannot assign a value"),
+""", "Move assignment is unavailable for type 'Envelope'"),
         ("stronger-concept", owner + """
 bool requires_assignment<std::movable T>(T& input) { return true; }
 int main() { Envelope input{}; return requires_assignment(input) ? 0 : 1; }

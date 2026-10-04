@@ -112,6 +112,48 @@ rendering a compiler column. It removes CR as well as LF from an accepted CRLF
 display line. Byte offsets remain authoritative and no normalized copy becomes
 diagnostic storage.
 
+## Source excerpts and explanations
+
+Terminal diagnostics keep the `file:line:column` heading, stable code, source
+caret, and separate `note:`/`help:` lines. The heading's column counts source
+scalars; the excerpt underline uses terminal display cells. Both primary and
+related excerpts expand tabs to four-cell stops, account for combining marks
+and wide Unicode scalars, and escape non-printable or malformed bytes as
+`\xNN`. These are generic Unicode terminal widths, not a promise about every
+terminal's font or multi-scalar emoji shaping. Exact source bytes and diagnostic
+spans are unchanged, and LSP ranges still use UTF-16 rather than display cells.
+
+The bounded ownership explanations answer what failed in the primary message,
+why it failed through existing semantic facts, where that cause occurred through
+related spans, and what intentional alternatives remain through hints:
+
+- Use-after-move `GTI-S2018` relates the transfer token, including projected
+  field transfers and unrestored receiver fields. Control-flow joins retain up
+  to four distinct transfer sites in deterministic source order. Restoration
+  clears old causes with the existing moved state; shadowed declarations do not
+  share causes. This private provenance does not decide availability or lifetime.
+- Retained-borrow `GTI-S2017` relates the borrowing origin and, when the flow
+  analysis proves one, the later required statement or structured control-flow
+  boundary. Advice distinguishes completing those uses from ending a
+  resource-bound carrier's scope: a mutex guard remains live until destruction,
+  not merely its last read. No edit automatically reorders effects.
+- Read-only field writes, fixed-array writes, and mutable method calls relate
+  the restricting declaration when it is provable through ordinary named places.
+  Hints distinguish an immutable owner, a read-only reference requiring exclusive
+  access, an immutable capture snapshot, and a constant. Calls, overloaded
+  projections, and raw pointers do not justify a guessed binding-mutability fix.
+  Concurrent globals and static fields are directed toward local storage or
+  synchronized mutation, never toward a forbidden mutable global declaration.
+- Exact move-only binding assignment `GTI-S2003` explains unavailable copying
+  or move assignment rather than reporting identical types as a mismatch. It
+  suggests explicit movement only when move assignment exists. Constants are
+  never advised to add the forbidden `mut constexpr` combination.
+
+These options are advisory, not ownership-changing fix-its. The LSP publishes
+the same compiler-owned notes and hints; it does not reconstruct explanations
+from diagnostic text. This is focused coverage, not a claim that every diagnostic
+family already has complete causal context.
+
 Current phase prefixes are `GTI-L` (lexing), `GTI-I` (source/include loading),
 `GTI-P` (parsing), `GTI-S` (semantics), and `GTI-B` (driver/backend families).
 Use the existing local family and number rather than inventing a parallel code

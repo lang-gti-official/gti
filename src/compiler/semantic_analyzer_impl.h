@@ -369,6 +369,8 @@ private:
   struct ProjectedValueState {
     std::vector<PlaceProjection> projections;
     ValueState state = ValueState::Available;
+    // Diagnostic provenance only; never participates in ownership decisions.
+    std::vector<SourceSpan> moveOrigins;
   };
 
   // The catalog owns exactly one declaration record for each source callable.
@@ -711,6 +713,8 @@ private:
     SourceUnitId sourceUnit = 0;
     bool assignable = false;
     ValueState valueState = ValueState::Available;
+    // Diagnostic provenance only; never participates in ownership decisions.
+    std::vector<SourceSpan> moveOrigins;
     std::vector<CallableCandidate> overloads;
     ClassId ownerClass = 0;
     Token declaration;
@@ -3521,7 +3525,15 @@ private:
 
   [[nodiscard]] SemanticPlace movedSourcePlace(const ExprPtr &expression);
 
-  void setProjectedValueState(const SemanticPlace &place, ValueState state);
+  void setProjectedValueState(const SemanticPlace &place, ValueState state,
+                              const Token &origin);
+  static std::vector<SourceSpan>
+  mergedMoveOrigins(const std::vector<SourceSpan> &left,
+                    const std::vector<SourceSpan> &right);
+  static void appendMoveContext(Diagnostic &diagnostic,
+                                const std::vector<SourceSpan> &origins);
+  void appendReadOnlyPlaceContext(Diagnostic &diagnostic,
+                                  const ExprPtr &expression) const;
 
   void reinitializePlace(const SemanticPlace &place);
 
