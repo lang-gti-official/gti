@@ -1,5 +1,0 @@
-{
-  "title": "Sort and deduplicate a linked list",
-  "description": "Orders nodes stably, removes adjacent duplicates, and drains the list from its front.",
-  "mode": "run"
-}

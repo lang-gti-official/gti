@@ -1,8 +1,0 @@
-#include <std/utility>
-
-int main() {
-  mut std::pair<int32_t, int64_t> value =
-      std::make_pair(int32_t(11), int64_t(13));
-  value.first = 12;
-  return value.first + int32_t(value.second) == 25 ? 0 : 1;
-}

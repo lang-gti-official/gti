@@ -1,6 +1,0 @@
-{
-  "title": "Round and classify binary32 values",
-  "description": "Uses rounding, square roots, and a checked NaN observation.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

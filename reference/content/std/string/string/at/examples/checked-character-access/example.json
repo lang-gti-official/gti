@@ -1,6 +1,0 @@
-{
-  "title": "Update a checked character",
-  "description": "Uses a mutable at borrow and ends it before reading the string again.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

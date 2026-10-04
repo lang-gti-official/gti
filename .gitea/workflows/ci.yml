@@ -76,15 +76,15 @@ jobs:
           npm run test:source-text
           git diff --exit-code -- src
 
-  reference:
-    name: Reference site
+  documentation-index:
+    name: Compiler documentation index
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out GTI
         uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
-      - name: Install Ninja, LLVM 18, libclang, and Clang
+      - name: Install Ninja, LLVM 18, and Clang
         shell: bash
         run: |
           apt=(apt-get)
@@ -93,7 +93,7 @@ jobs:
           fi
           "${apt[@]}" update
           "${apt[@]}" install -y --no-install-recommends \
-            clang cmake libclang-18-dev llvm-18-dev ninja-build
+            clang cmake libcurl4-openssl-dev llvm-18-dev ninja-build
           echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITEA_ENV}"
 
       - name: Configure runner resources
@@ -102,43 +102,23 @@ jobs:
           GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
         run: bash scripts/configure_ci_resources.sh
 
-      - name: Configure reference tools
+      - name: Configure compiler documentation producer
         run: >-
-          cmake -S . -B build-reference -G Ninja
+          cmake -S . -B build-documentation -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DGTI_BUILD_LSP=OFF
           -DBUILD_TESTING=OFF
 
-      - name: Build compiler-backed reference tools
+      - name: Build compiler documentation producer
         run: >-
-          cmake --build build-reference --config Release --parallel "${GTI_JOBS}"
-          --target gti_docgen gti
+          cmake --build build-documentation --config Release --parallel "${GTI_JOBS}"
+          --target gti_docgen
 
-      - name: Install pinned pnpm
+      - name: Verify deterministic API generation
         run: |
-          npm install --global --prefix "${RUNNER_TEMP}/gti-pnpm" pnpm@11.23.0
-          echo "${RUNNER_TEMP}/gti-pnpm/bin" >> "${GITEA_PATH}"
-
-      - name: Install reference dependencies
-        working-directory: reference
-        run: pnpm install --frozen-lockfile
-
-      - name: Generate compiler API index
-        working-directory: reference
-        run: pnpm api:generate -- --docgen ../build-reference/gti_docgen
-
-      - name: Verify content contract and examples
-        working-directory: reference
-        run: |
-          pnpm test
-          pnpm examples:verify -- --gti ../build-reference/gti
-          pnpm examples:contract-smoke -- --gti ../build-reference/gti
-
-      - name: Build static reference
-        working-directory: reference
-        run: |
-          pnpm typecheck
-          pnpm build
+          build-documentation/gti_docgen --stdlib stdlib --output build-documentation/documentation-index.json
+          build-documentation/gti_docgen --stdlib stdlib --output build-documentation/documentation-index-repeat.json
+          cmp build-documentation/documentation-index.json build-documentation/documentation-index-repeat.json
 
   build-and-test:
     name: Native toolchain

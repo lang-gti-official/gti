@@ -1,5 +1,0 @@
-{
-  "title": "Own and replace a scalar",
-  "description": "Allocates an exact integer value, mutates it, and reuses the owner after reset.",
-  "mode": "run"
-}

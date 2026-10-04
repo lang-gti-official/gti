@@ -582,7 +582,7 @@ target_compile_definitions(
 # Build-time producer for the reference site's compiler-owned API manifest.
 # It is intentionally not installed with the user-facing toolchain.
 add_executable("gti_docgen" EXCLUDE_FROM_ALL
-               "reference/tools/docgen_main.cpp")
+               "src/docgen/main.cpp")
 target_link_libraries("gti_docgen" PRIVATE gti_compiler)
 target_compile_definitions(
   "gti_docgen"

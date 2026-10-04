@@ -1,6 +1,0 @@
-{
-  "title": "A timed wait returns with the mutex locked",
-  "description": "An already expired condition deadline still releases and reacquires the mutex; explicitly unlock and destroy both manual resources.",
-  "mode": "run",
-  "executionProfile": "concurrent"
-}

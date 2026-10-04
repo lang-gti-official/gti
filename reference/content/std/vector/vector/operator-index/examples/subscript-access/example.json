@@ -1,6 +1,0 @@
-{
-  "title": "Use checked subscript syntax",
-  "description": "Reads and updates an element using the subscript operator.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

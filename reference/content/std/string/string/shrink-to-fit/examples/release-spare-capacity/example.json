@@ -1,6 +1,0 @@
-{
-  "title": "Release spare capacity",
-  "description": "Shrinks reserved storage to the current character count.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

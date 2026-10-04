@@ -1,6 +1,0 @@
-{
-  "title": "Test before and after insertion",
-  "description": "Checks an empty vector, appends one value, and checks it again.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

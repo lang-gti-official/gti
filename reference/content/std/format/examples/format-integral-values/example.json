@@ -1,6 +1,0 @@
-{
-  "title": "Format integral values",
-  "description": "Validates a heterogeneous format and writes it after successful formatting.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

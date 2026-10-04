@@ -1,6 +1,0 @@
-{
-  "title": "Clear while retaining capacity",
-  "description": "Removes every element from a reserved vector without releasing its storage.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

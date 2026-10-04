@@ -1,6 +1,0 @@
-{
-  "title": "Reserve before appending",
-  "description": "Establishes a capacity lower bound while keeping logical size unchanged.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}
