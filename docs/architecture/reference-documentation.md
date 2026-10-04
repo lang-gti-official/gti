@@ -208,7 +208,7 @@ than implicitly inheriting a broad or unrelated example.
 
 ## Build And Drift Gates
 
-This repository's compiler-documentation CI job builds `gti_docgen` in Release
+This repository's native CI job builds `gti_docgen` in its existing Release
 mode, analyzes the shipped library, and checks byte-identical repeated API
 generation. The `documentation_index` CTest retains independent compiler
 projection and malformed-input coverage. No Node dependencies or website build

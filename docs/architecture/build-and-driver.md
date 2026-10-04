@@ -164,10 +164,19 @@ Builds default to all detected logical CPUs (one if detection is unavailable),
 at normal process priority. `--jobs N` overrides the job count; the dry-run and
 normal output both report the selected parallelism.
 
-A `VERSION` change on Gitea `main` dispatches the stable workflow, which owns
-the matching immutable tag and versioned release. The `nightly` release is one
-mutable channel whose tag and `BUILD_ID` advance to each admitted Gitea `main`
-commit. Its publication step uploads the complete current asset set before a
+A single toolchain-release workflow builds, tests, stages, and smoke-tests each
+Gitea `main` commit once with bundled LLVM/Clang. That verified stage supplies
+nightly and, when `VERSION` changes, stable archives. Stable is archived before
+the nightly `BUILD_ID` stamp; the two channels retain separate artifact names.
+The stable publication job owns the matching immutable tag and versioned
+release. A manual dispatch may rebuild that exact tagged commit, but cannot
+move a stable tag to another commit. New main commits do not cancel stable
+publication.
+
+The `nightly` release is one mutable channel whose tag and `BUILD_ID` advance
+to each admitted Gitea `main` commit. Nightly publication is serialized and
+checks current remote main before changing the tag; a superseded build skips
+publication. Its publication step uploads the complete current asset set before a
 Gitea API pass removes any asset not produced by that build. This exact
 synchronization keeps retired platform archives from surviving a successful
 rolling publication while preserving current archives if upload is

@@ -110,7 +110,7 @@ def main() -> None:
         and "GITHUB_SHA" not in ci
         and "npm run test:source-text" in ci
         and "--target gti_docgen" in ci
-        and "cmp build-documentation/documentation-index.json" in ci
+        and "cmp build/documentation-index.json" in ci
         and "working-directory: reference" not in ci
         and "pnpm" not in ci,
         "CI lost Gitea revision, Tree-sitter, or compiler-documentation authority",
@@ -130,12 +130,17 @@ def main() -> None:
         and "Repository Ownership And Migration" in reference_ownership,
         "the standalone website's ownership/migration rationale is undocumented",
     )
-    nightly = text(root, ".gitea/workflows/nightly.yml")
+    release = text(root, ".gitea/workflows/release.yml")
     expect(
-        "branches:\n      - main" in nightly
+        not (root / ".gitea/workflows/nightly.yml").exists(),
+        "nightly and stable must reuse one bundled build, not duplicate workflows",
+    )
+    nightly = release.split("  publish-nightly:\n", 1)[-1]
+    expect(
+        "branches:\n      - main" in release
         and "git push --force origin refs/tags/nightly" in nightly
-        and "managed_thread_runtime_test.py" in nightly
-        and "atomic_runtime_test.py" in nightly,
+        and "admit-nightly" in nightly
+        and "group: gti-nightly-publication" in nightly,
         "nightly is not driven from authoritative Gitea main",
     )
     upload = nightly.find("uses: https://gitea.com/actions/gitea-release-action@")
@@ -145,10 +150,10 @@ def main() -> None:
         "nightly must upload current assets before pruning stale assets",
     )
 
-    release = text(root, ".gitea/workflows/release.yml")
     expect(
         "branches:\n      - main" in release
-        and "paths:\n      - VERSION" in release
+        and "scripts/resolve_release_source.py source" in release
+        and "if: needs.metadata.outputs.stable == 'true'" in release
         and "tag_name: ${{ needs.metadata.outputs.tag }}" in release
         and "managed_thread_runtime_test.py" in release
         and "atomic_runtime_test.py" in release,
@@ -162,7 +167,6 @@ def main() -> None:
     )
     for workflow, contents in (
         ("ci.yml", ci),
-        ("nightly.yml", nightly),
         ("release.yml", release),
     ):
         expect(

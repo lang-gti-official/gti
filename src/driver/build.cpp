@@ -1563,6 +1563,8 @@ resolveNativeFrameworks(const ExecutableBuildRequest &request,
     return std::nullopt;
   }
 #if !defined(__APPLE__)
+  (void)request;
+  (void)plan;
   return "name-resolved frameworks require an Apple linker resolution trace";
 #else
   std::vector<std::string> uniqueNames;
