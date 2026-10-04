@@ -9,6 +9,23 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.367.0 — Standard-library adoption and predictable algorithms
+
+- Support move-only results in whole-vector `std::transform`, transferring each
+  owned mapper result into the destination without cloning the input.
+- Replace comparator sort's quadratic insertion loop with iterative heapsort,
+  retaining one owning comparator and O(n log n) comparison growth.
+- Make duration/time-point constructors and pure chrono observers available
+  in constant evaluation, including negative Unix timestamp decomposition.
+- Diagnose `optional::value_or`'s copy-construction requirement at the call;
+  move-only optional payloads retain their other supported operations.
+- Remove three redundant URL view buffers and make internal construction
+  bridges private while preserving checked view lifetimes and URL behavior.
+- Simplify recoverable JSON, allocator and clock error pipelines using existing
+  propagation facilities, and fix backend admission of void-success Expected
+  propagation with an owning error. Error context and cleanup are preserved.
+- Add runnable owning-pipeline, asset-algorithm and frame-budget examples.
+
 ## 0.366.2 — Panic and runtime-failure colour
 
 - Colour runtime error headings and codes red for explicit panics, checked

@@ -9,6 +9,9 @@
     "07-generics.gti": 35,
     "08-expected.gti": 27,
     "09-target-selection.gti": 24,
+    "100-owned-error-pipelines.gti": 488,
+    "101-owned-algorithm-results.gti": 391,
+    "102-constexpr-frame-budget.gti": 181,
     "11-overloads.gti": 29,
     "12-fixed-arrays.gti": 28,
     "13-ownership.gti": 44,
@@ -97,5 +100,5 @@
     "98-shared-ownership.gti": 355,
     "99-borrowed-expected.gti": 347
   },
-  "total": 10914
+  "total": 11974
 }

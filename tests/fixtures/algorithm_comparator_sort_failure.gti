@@ -1,0 +1,41 @@
+#include <std/algorithm>
+#include <std/string>
+#include <std/vector>
+
+mut int mode = 0;
+
+class Guard {
+  std::string name;
+public:
+  Guard(std::string name) : name(std::move(name)) {}
+  ~Guard() { std::println(this.name.view()); }
+};
+
+class Ordering {
+  std::string name = std::string("comparator");
+  mut int calls = 0;
+public:
+  Ordering() {}
+  Ordering(Ordering& other) = delete;
+  Ordering(Ordering&& other) = default;
+  ~Ordering() {
+    std::println(this.name.view());
+    std::println(this.calls);
+    if (mode == 3) { int failure = 1 / (mode - 3); }
+  }
+  bool operator()(int& left, int& right) mut {
+    this.calls++;
+    Guard call{std::string("call")};
+    if (mode == 2 && this.calls == 4) { int failure = 1 / (mode - 2); }
+    return left < right;
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mode = argc;
+  Guard outer{std::string("outer")};
+  mut std::vector<int> values = {4, 3, 2, 1};
+  std::sort(values, Ordering());
+  for (auto& value : values) { std::println(value); }
+  return 0;
+}

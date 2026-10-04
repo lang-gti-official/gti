@@ -13,6 +13,51 @@ bool admitted(const lang::MirProgram &program,
 } // namespace
 
 int main() {
+  {
+    const auto path = std::filesystem::path(__FILE__).parent_path() /
+                      "fixtures/expected_void_owned_propagation.gti";
+    std::ifstream input(path);
+    expect(input.good(), "owning void propagation fixture exists");
+    const std::string source{std::istreambuf_iterator<char>(input),
+                             std::istreambuf_iterator<char>()};
+    const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+    expect(frontend.canGenerateCode() &&
+               lang::verifyMirProgram(frontend.mir).valid(),
+           "void propagation with a lexical owning error has verified MIR");
+    if (frontend.canGenerateCode()) {
+      const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+      std::size_t checked = 0;
+      for (const auto &function : frontend.mir.functionInstances()) {
+        const auto *hir = frontend.hir.findFunctionInstance(function.id);
+        if (!hir || !hir->source || hir->source->name().lexeme != "pipeline")
+          continue;
+        expect(
+            admitted(frontend.mir, rows, function),
+            "void Expected success and error observers share an emitted slot");
+        for (const auto &block : function.body.blocks) {
+          for (const auto &instruction : block.instructions) {
+            if (instruction.intrinsic != lang::IntrinsicKind::ExpectedValue ||
+                instruction.info.type != lang::SemanticType::Void)
+              continue;
+            ++checked;
+            expect(!instruction.result,
+                   "void success remains an explicit result-less observation");
+            auto malformed = frontend.mir;
+            auto *changed = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            for (auto &candidateBlock : changed->body.blocks)
+              for (auto &candidate : candidateBlock.instructions)
+                if (candidate.id == instruction.id)
+                  candidate.info.type = lang::SemanticType::Int32;
+            expect(!lang::verifyMirProgram(malformed).valid() &&
+                       !admitted(malformed, rows, *changed),
+                   "admission still rejects a forged void-success result type");
+          }
+        }
+      }
+      expect(checked == 1, "one void-success observation in the loop");
+    }
+  }
   const auto passive = analyzeWithStandardLibrary("passive_error.gti", R"(
 class Error {
 public:

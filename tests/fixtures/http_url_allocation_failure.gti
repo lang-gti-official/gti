@@ -1,0 +1,35 @@
+#include <std/http>
+#include <std/string>
+#include <std/vector>
+
+extern "C" {
+  void adoption_fail_at(uint64_t allocation);
+  void adoption_check_cleanup();
+}
+
+struct Guard {
+  int tag;
+  Guard(int tag) : tag(tag) {}
+  ~Guard() {
+    std::println(this.tag);
+    unsafe { adoption_check_cleanup(); }
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard outer{90};
+  if (argc == 1) {
+    unsafe { adoption_fail_at(uint64_t(3)); }
+    auto url = std::http::url::parse("https://example.com/base?q=value").expect("valid URL");
+    return 1;
+  }
+  mut auto url = std::http::url::parse("https://example.com/base?q=value").expect("valid URL");
+  if (argc == 2) {
+    unsafe { adoption_fail_at(uint64_t(3)); }
+    auto copy = url.clone();
+    return 2;
+  }
+  unsafe { adoption_fail_at(uint64_t(2)); }
+  url.push_path_segment("replacement");
+  return 3;
+}

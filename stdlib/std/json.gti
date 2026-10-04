@@ -944,11 +944,8 @@ public:
   }
 
   expected<void, error> set(string_view key, string_view input) mut {
-    mut expected<value, error> created = value::string(input);
-    if (!created) {
-      return unexpected(std::move(created).error());
-    }
-    return this.set(key, std::move(created).value());
+    value created = ?value::string(input);
+    return this.set(key, std::move(created));
   }
 
   expected<void, error> set(string_view key, bool input) mut {
@@ -972,11 +969,8 @@ public:
   }
 
   expected<void, error> push(string_view input) mut {
-    mut expected<value, error> created = value::string(input);
-    if (!created) {
-      return unexpected(std::move(created).error());
-    }
-    return this.push(std::move(created).value());
+    value created = ?value::string(input);
+    return this.push(std::move(created));
   }
 
   expected<void, error> push(bool input) mut {
@@ -1314,11 +1308,7 @@ class parser {
     }
     char current = this.peek();
     if (current == '"') {
-      mut expected<std::string, error> decoded = this.parse_string(path);
-      if (!decoded) {
-        return unexpected(std::move(decoded).error());
-      }
-      mut std::string text = std::move(decoded).value();
+      std::string text = ?this.parse_string(path);
       return value::string(text.view());
     }
     if (current == '-' || detail::is_digit(current)) {
@@ -1363,16 +1353,8 @@ class parser {
       mut size_t index = 0;
       while (true) {
         mut std::string child_path = this.child_index_path(path, index);
-        mut expected<value, error> child =
-            this.parse_value(depth + 1, child_path.view());
-        if (!child) {
-          return unexpected(std::move(child).error());
-        }
-        mut expected<void, error> appended =
-            result.push(std::move(child).value());
-        if (!appended) {
-          return unexpected(std::move(appended).error());
-        }
+        value child = ?this.parse_value(depth + 1, child_path.view());
+        ?result.push(std::move(child));
         index++;
         this.skip_whitespace();
         if (this.at_end()) {
@@ -1408,11 +1390,7 @@ class parser {
         if (this.peek() != '"') {
           return unexpected(this.make_error(errc::unexpected_token, path));
         }
-        mut expected<std::string, error> parsed_key = this.parse_string(path);
-        if (!parsed_key) {
-          return unexpected(std::move(parsed_key).error());
-        }
-        mut std::string key = std::move(parsed_key).value();
+        std::string key = ?this.parse_string(path);
         mut std::string child_path = this.child_key_path(path, key.view());
         if (result.contains(key.view())) {
           return unexpected(
@@ -1429,16 +1407,8 @@ class parser {
         }
         [[discard]] this.advance();
         this.skip_whitespace();
-        mut expected<value, error> child =
-            this.parse_value(depth + 1, child_path.view());
-        if (!child) {
-          return unexpected(std::move(child).error());
-        }
-        mut expected<void, error> inserted =
-            result.set(key.view(), std::move(child).value());
-        if (!inserted) {
-          return unexpected(std::move(inserted).error());
-        }
+        value child = ?this.parse_value(depth + 1, child_path.view());
+        ?result.set(key.view(), std::move(child));
         this.skip_whitespace();
         if (this.at_end()) {
           return unexpected(this.make_error(errc::unexpected_end, path));
@@ -1474,17 +1444,13 @@ public:
           this.make_error(errc::document_too_large, root_path.view()));
     }
     this.skip_whitespace();
-    mut expected<value, error> root =
-        this.parse_value(size_t(1), root_path.view());
-    if (!root) {
-      return unexpected(std::move(root).error());
-    }
+    value root = ?this.parse_value(size_t(1), root_path.view());
     this.skip_whitespace();
     if (!this.at_end()) {
       return unexpected(
           this.make_error(errc::trailing_characters, root_path.view()));
     }
-    return std::move(root).value();
+    return std::move(root);
   }
 };
 
@@ -1678,11 +1644,7 @@ public:
 };
 
 expected<T, error> decode<T>(string_view source) {
-  mut expected<value, error> parsed = parse(source);
-  if (!parsed) {
-    return unexpected(std::move(parsed).error());
-  }
-  mut value document = std::move(parsed).value();
+  value document = ?parse(source);
   codec<T> mapping{};
   return mapping.decode(document);
 }
@@ -1694,11 +1656,7 @@ expected<value, error> encode<T>(T& input) {
 
 expected<std::vector<T>, error> decode_array<std::movable T>(
     string_view source) {
-  mut expected<value, error> parsed = parse(source);
-  if (!parsed) {
-    return unexpected(std::move(parsed).error());
-  }
-  mut value document = std::move(parsed).value();
+  value document = ?parse(source);
   if (!document.is_array()) {
     return unexpected(error(errc::type_mismatch));
   }

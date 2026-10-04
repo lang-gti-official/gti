@@ -51,6 +51,12 @@ as a class field; an API wrapper normally stores one parsed base URL, clones it
 for each operation, appends endpoint components, and reuses one
 `std::http::client` for its connection pool.
 
+Component and rendered views borrow the URL's existing owning string fields;
+there are no duplicate view backing buffers. A retained view still protects
+the whole URL against mutation or consumption, and cannot escape a temporary
+URL. Internal construction bridges are private; public factories and `clone()`
+retain the parsing and ownership contract.
+
 ```gti
 mut auto parsed = std::http::url::https("gitea.example");
 if (!parsed) {

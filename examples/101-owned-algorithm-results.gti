@@ -1,0 +1,30 @@
+#include <std/algorithm>
+#include <std/string>
+#include <std/vector>
+
+// The input stays borrowed; the result is a new owner that transform moves
+// into the existing destination element. No string copy or clone is implicit.
+std::string compiled_name(std::string& source) {
+  mut std::string result = std::string(source.view());
+  result.append(".compiled");
+  return result;
+}
+
+class HighestPriority {
+public:
+  bool operator()(int& left, int& right) { return left > right; }
+};
+
+int main() {
+  std::vector<std::string> assets = {std::string("terrain"), std::string("player")};
+  mut std::vector<std::string> outputs = {std::string(""), std::string("")};
+  std::transform(assets, outputs, compiled_name);
+  for (auto& output : outputs) { std::println(output.view()); }
+
+  // Comparator sorting has O(n log n) comparison growth. Equal elements do
+  // not have a stable-order guarantee; choose a tie-breaker when it matters.
+  mut std::vector<int> priorities = {3, 1, 8, 3};
+  std::sort(priorities, HighestPriority());
+  for (auto& priority : priorities) { std::println(priority); }
+  return 0;
+}

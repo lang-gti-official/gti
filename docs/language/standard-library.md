@@ -318,7 +318,12 @@ The current implemented foundation includes:
   of that parameterized constructor until a static-lifetime contract can
   distinguish them. Empty construction performs no allocation; value
   construction, `emplace`, `reset`, `clone`, `has_value`, contextual `bool`, checked
-  `value`, dereference, arrow, and `value_or` are implemented. A move
+  `value`, dereference, arrow, and `value_or` are implemented. `value_or(T)`
+  requires `std::copy_constructible<T>`: an engaged value is copied, while an
+  empty optional moves the fallback. Copy assignment is not required. An
+  unsatisfied requirement is diagnosed at the call with its library contract,
+  not as a failed copy inside the implementation. Other members remain
+  available for move-only payloads. A move
   construction transfers an engaged payload and its cleanup obligation.
   Emplacement first resets the old value, constructs `T` through ordinary GTI,
   then moves the completed value into the inline slot. Constructor failure

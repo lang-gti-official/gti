@@ -1,5 +1,53 @@
 # Compiler Verification
 
+## Standard-library adoption campaign
+
+The source-only adoption clients are owning JSON/allocation/clock error
+pipelines, URL owner-backed views, move-only transformation results, optional
+method constraints, comparator heapsort, and passive chrono constants.
+The sole backend repair retains the existing resultless void-success observer
+alongside the owning Expected error arm in call-result admission; it adds no
+new semantic permission or AST/HIR execution route.
+
+`stdlib_adoption_runtime` passes 60 builds and 114 exact runtime outcomes across
+C++20/C++23 O0/O3, disabled elision and ASan/UBSan. It covers original error
+category/path/source metadata, exact owner/drop behavior, deterministic size
+overflow, measured URL allocation reduction, zero-allocation O(n log n)
+comparator sorting and failure cleanup. Deterministically injected allocation
+failures during URL parsing, cloning and rebuilding leave no audited allocation
+live after GTI cleanup. The optional frontend and LSP gates
+verify `GTI-S2029` call spans, related requirements, copy-only guidance and
+recovery. The constexpr library frontend group records 12 actual staged MIR
+executions for chrono; `constexpr_chrono_runtime` passes O0/O1/O3 under both
+native standards. Examples 100–102 are runnable clients, not just fixtures.
+
+The optimized Release/Makefiles all-target build passes with 12 build jobs on
+macOS arm64 (AppleClang 21, LLVM 22.1.8). The complete native corpus oracle
+passes all 99 examples at O0/C++20 and O3/C++23. The reviewed MIR inventory
+adds exactly 488/391/181 bodies for the three examples, totaling 11,974 emitted
+identities; pre-existing body counts do not change. LoweredProgram totals are
+33,741 declarations, 11,981 bodies and 2,524 generated items. Example 93 loses
+four declarations after the URL representation cleanup; its body/generated
+counts remain unchanged. Both inventories retain their independent oracles.
+
+A fresh isolated installation passes all eleven external CMake consumers and
+the ten-fixture/19-outcome O0 adoption matrix outside the checkout with resource
+overrides cleared. The owning error-pipeline example also passes installed
+C++23/O3. This does not update the user's active toolchain or establish unrun
+platform results. C/C++ formatting passes for all 406 first-party files.
+The broad run completed 395 tests: 392 initially passed. HTTP and practical
+examples passed their reruns with sandbox permission to bind localhost; the
+surface sweep passed all 60 executable entries and 116 cases after correcting
+unsorted new manifest cases without weakening expectations. The three excluded
+expensive corpus gates passed separately, providing combined passing evidence
+for all 398 registered gates. The feature-interaction smoke includes 24 native
+outcomes and two admission controls; this is not a claim of complete pairwise
+coverage of the language. Final integration with runtime-colour commit
+`977f7614` passes all seven selected CTest gates, including the complete
+60-build/114-outcome adoption matrix, runtime failure reports, CLI colour,
+optional LSP and release policy. The rebuilt installed stage repeats all
+nineteen adoption outcomes and eleven external consumers successfully.
+
 ## Borrowed Expected extraction and constructor publication
 
 The 0.366.0 slice supports prefix `?` and consuming `expect` on

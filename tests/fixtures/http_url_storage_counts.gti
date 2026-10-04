@@ -1,0 +1,51 @@
+#include <std/http>
+#include <std/string>
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+  uint64_t adoption_bytes();
+}
+
+void snapshot() {
+  mut uint64_t allocations = 0;
+  mut uint64_t bytes = 0;
+  unsafe {
+    adoption_count_end();
+    allocations = adoption_allocations();
+    bytes = adoption_bytes();
+  }
+  std::println(allocations);
+  std::println(bytes);
+}
+
+int measure(std::string_view source) {
+  unsafe { adoption_count_begin(); }
+  mut auto base = std::http::url::parse(source).expect("valid fixture URL");
+  snapshot();
+  if (base.view() != source || base.scheme() != "https" ||
+      base.host() != "example.com") { return 1; }
+  unsafe { adoption_count_begin(); }
+  auto cloned = base.clone();
+  snapshot();
+  if (cloned.view() != base.view()) { return 2; }
+  unsafe { adoption_count_begin(); }
+  base.push_path_segment("api");
+  snapshot();
+  unsafe { adoption_count_begin(); }
+  auto endpoint = base / "v1" / "users";
+  snapshot();
+  std::string rendered = base.string();
+  if (endpoint.host() != cloned.host() || endpoint.view() == base.view() ||
+      cloned.view() != source || rendered.view() != base.view()) { return 3; }
+  return 0;
+}
+
+int main() {
+  int short_result = measure("https://example.com/base?q=value");
+  if (short_result != 0) { return short_result; }
+  mut std::string long_url = std::string("https://example.com/");
+  for (mut int index = 0; index < 4096; index++) { long_url.push_back('a'); }
+  return measure(long_url.view());
+}

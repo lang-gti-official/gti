@@ -94,10 +94,9 @@ public:
 
   /// Returns a copy of the live value, or moves `fallback` when empty.
   ///
-  /// This member intentionally instantiates only when copying `T` is valid;
-  /// move-only payloads keep the rest of the optional surface and receive the
-  /// normal exact copy diagnostic if they call `value_or`.
-  T value_or(T fallback) {
+  /// Only copy construction is required, not copy assignment. Move-only
+  /// payloads keep the other members, including explicit `clone()`.
+  T value_or(T fallback) requires std::copy_constructible<T> {
     if (this.has_value()) {
       return this.value();
     }

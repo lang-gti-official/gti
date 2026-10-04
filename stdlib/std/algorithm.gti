@@ -191,13 +191,13 @@ void fill<Range, std::copyable T>(mut Range& values, T& value)
 // slot.
 // Reading and writing the same vector is rejected by borrow exclusivity at
 // the call site; an undersized destination raises its own checked failure.
-void transform<std::copyable T, Operation>(std::vector<T>& source,
+void transform<std::movable T, Operation>(std::vector<T>& source,
                                            mut std::vector<T>& destination,
                                            mut Operation operation)
   requires std::operation<Operation, T, T> {
   for (mut size_t index = size_t(0); index < source.size(); index++) {
     T produced = operation(source[index]);
-    destination[index] = produced;
+    destination[index] = std::move(produced);
   }
 }
 
@@ -265,26 +265,41 @@ void sort<std::copyable T>(mut std::vector<T>& values)
 // A complete-range comparator overload keeps one exact callable in the same
 // exclusive scope as the vector. The bounded relation guarantees an owned
 // bool result for two readable T values and rejects a consuming target because
-// sorting may compare zero or more times. Insertion sort keeps the first
-// comparator client iterative and deterministic without forwarding callable
-// state through recursive helpers.
+// sorting may compare zero or more times. Iterative heapsort keeps one owned
+// comparator, O(n log n) comparisons, and constant auxiliary storage. Neither
+// sort overload promises stability. Compare must define a strict weak order.
 void sort<std::copyable T, Compare>(mut std::vector<T>& values,
                                     mut Compare compare)
   requires std::comparator<Compare, T> {
-  for (mut size_t index = size_t(1); index < values.size(); index++) {
-    mut size_t current = index;
-    while (current > size_t(0)) {
-      size_t previous = current - size_t(1);
-      T current_value = values[current];
-      T previous_value = values[previous];
-      if (!compare(current_value, previous_value)) {
-        break;
+  mut size_t end = values.size();
+  mut size_t start = end / size_t(2);
+  while (end > size_t(1)) {
+    mut size_t root = size_t(0);
+    if (start > size_t(0)) {
+      start--;
+      root = start;
+    } else {
+      end--;
+      T largest = values[size_t(0)];
+      T last = values[end];
+      values[size_t(0)] = last;
+      values[end] = largest;
+    }
+    // root < end/2 proves 2*root+1 is an in-bounds child without overflow.
+    // An odd-sized heap's last parent also has children at root == end/2-1.
+    while (root < end / size_t(2)) {
+      mut size_t child = root * size_t(2) + size_t(1);
+      if (child + size_t(1) < end) {
+        T left = values[child];
+        T right = values[child + size_t(1)];
+        if (compare(left, right)) { child++; }
       }
-      T lower = values[current];
-      T upper = values[previous];
-      values[current] = upper;
-      values[previous] = lower;
-      current--;
+      T parent = values[root];
+      T selected = values[child];
+      if (!compare(parent, selected)) { break; }
+      values[root] = selected;
+      values[child] = parent;
+      root = child;
     }
   }
 }

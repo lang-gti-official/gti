@@ -135,6 +135,51 @@
         "thread_task_adapter": 0
       }
     },
+    "100-owned-error-pipelines.gti": {
+      "declarations": 1058,
+      "bodies": 488,
+      "generated_items": 70,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 18,
+        "callable_adapter": 21,
+        "lifecycle_cleanup": 0,
+        "native_interop_adapter": 0,
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 30
+      }
+    },
+    "101-owned-algorithm-results.gti": {
+      "declarations": 949,
+      "bodies": 391,
+      "generated_items": 91,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 18,
+        "callable_adapter": 22,
+        "lifecycle_cleanup": 0,
+        "native_interop_adapter": 0,
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 50
+      }
+    },
+    "102-constexpr-frame-budget.gti": {
+      "declarations": 605,
+      "bodies": 181,
+      "generated_items": 27,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 2,
+        "callable_adapter": 20,
+        "lifecycle_cleanup": 0,
+        "native_interop_adapter": 0,
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 4
+      }
+    },
     "11-overloads.gti": {
       "declarations": 93,
       "bodies": 29,
@@ -1336,7 +1381,7 @@
       }
     },
     "93-http-json-client.gti": {
-      "declarations": 1257,
+      "declarations": 1253,
       "bodies": 633,
       "generated_items": 83,
       "generated_kinds": {
@@ -1442,8 +1487,8 @@
     }
   },
   "totals": {
-    "declarations": 31133,
-    "bodies": 10921,
-    "generated_items": 2336
+    "declarations": 33741,
+    "bodies": 11981,
+    "generated_items": 2524
   }
 }

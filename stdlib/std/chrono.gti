@@ -24,16 +24,24 @@ enum class clock_errc {
   out_of_range,
 };
 
+namespace detail {
+// Elapsed subtraction deliberately maps arithmetic overflow into the clock
+// domain; an exact typed mapper keeps that conversion explicit.
+clock_errc elapsed_error(std::arithmetic_errc error) {
+  return clock_errc::out_of_range;
+}
+}
+
 /// An exact signed nanosecond duration.
 class nanoseconds {
   int64_t value;
 
 public:
-  nanoseconds() : value(int64_t(0)) {}
-  nanoseconds(int64_t count) : value(count) {}
+  constexpr nanoseconds() : value(int64_t(0)) {}
+  constexpr nanoseconds(int64_t count) : value(count) {}
 
   /// Returns the signed duration count.
-  int64_t count() {
+  constexpr int64_t count() {
     return this.value;
   }
 };
@@ -46,34 +54,31 @@ class steady_time_point {
   nanoseconds since_origin;
 
 public:
-  steady_time_point(nanoseconds value) : since_origin(value) {}
+  constexpr steady_time_point(nanoseconds value) : since_origin(value) {}
 
   /// Returns this implementation's opaque monotonic reading.
-  nanoseconds time_since_origin() {
+  constexpr nanoseconds time_since_origin() {
     return nanoseconds(this.since_origin.count());
   }
 
   /// Computes `this - earlier`, reporting signed-range overflow explicitly.
   expected<nanoseconds, clock_errc>
   elapsed_since(steady_time_point& earlier) {
-    expected<int64_t, std::arithmetic_errc> difference =
-        std::checked_sub(this.since_origin.count(),
-                         earlier.since_origin.count());
-    if (!difference) {
-      return unexpected(clock_errc::out_of_range);
-    }
-    return nanoseconds(difference.value());
+    int64_t difference = ?std::checked_sub(this.since_origin.count(),
+                                         earlier.since_origin.count())
+                              .transform_error(detail::elapsed_error);
+    return nanoseconds(difference);
   }
 
-  bool before(steady_time_point& other) {
+  constexpr bool before(steady_time_point& other) {
     return this.since_origin.count() < other.since_origin.count();
   }
 
-  bool after(steady_time_point& other) {
+  constexpr bool after(steady_time_point& other) {
     return this.since_origin.count() > other.since_origin.count();
   }
 
-  bool equals(steady_time_point& other) {
+  constexpr bool equals(steady_time_point& other) {
     return this.since_origin.count() == other.since_origin.count();
   }
 };
@@ -86,15 +91,15 @@ class system_time_point {
   nanoseconds since_epoch;
 
 public:
-  system_time_point(nanoseconds value) : since_epoch(value) {}
+  constexpr system_time_point(nanoseconds value) : since_epoch(value) {}
 
   /// Returns the exact signed count since 1970-01-01T00:00:00Z.
-  int64_t nanoseconds_since_unix_epoch() {
+  constexpr int64_t nanoseconds_since_unix_epoch() {
     return this.since_epoch.count();
   }
 
   /// Returns floor-based Unix seconds, including for pre-epoch values.
-  int64_t unix_seconds() {
+  constexpr int64_t unix_seconds() {
     int64_t value = this.since_epoch.count();
     mut int64_t result = value / int64_t(1000000000);
     if (value < int64_t(0) && value % int64_t(1000000000) != int64_t(0)) {
@@ -104,7 +109,7 @@ public:
   }
 
   /// Returns the normalized fractional second in [0, 1,000,000,000).
-  int32_t subsecond_nanoseconds() {
+  constexpr int32_t subsecond_nanoseconds() {
     mut int64_t value =
         this.since_epoch.count() % int64_t(1000000000);
     if (value < int64_t(0)) {
@@ -116,23 +121,21 @@ public:
   /// Computes `this - earlier`, reporting signed-range overflow explicitly.
   expected<nanoseconds, clock_errc>
   elapsed_since(system_time_point& earlier) {
-    expected<int64_t, std::arithmetic_errc> difference =
-        std::checked_sub(this.since_epoch.count(), earlier.since_epoch.count());
-    if (!difference) {
-      return unexpected(clock_errc::out_of_range);
-    }
-    return nanoseconds(difference.value());
+    int64_t difference = ?std::checked_sub(this.since_epoch.count(),
+                                         earlier.since_epoch.count())
+                              .transform_error(detail::elapsed_error);
+    return nanoseconds(difference);
   }
 
-  bool before(system_time_point& other) {
+  constexpr bool before(system_time_point& other) {
     return this.since_epoch.count() < other.since_epoch.count();
   }
 
-  bool after(system_time_point& other) {
+  constexpr bool after(system_time_point& other) {
     return this.since_epoch.count() > other.since_epoch.count();
   }
 
-  bool equals(system_time_point& other) {
+  constexpr bool equals(system_time_point& other) {
     return this.since_epoch.count() == other.since_epoch.count();
   }
 };

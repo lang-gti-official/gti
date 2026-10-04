@@ -353,10 +353,23 @@ iterator-pair spelling would either need a read borrow of the owner while its
 exclusive mutable cursor is live (`values.begin_mut()` and `values.end()` in
 one call) or retainable mutable cursors in ordinary bodies. Each form keeps one
 exclusive borrow for the whole rewrite and names the element type for locals.
-In-place element rewrites copy the element out and assign it back, so their
-element types require `std::copyable` until moving out of an indexed element is
-representable. `std::sort` orders by `operator<` through a partition exchange
-whose recursion always descends into the smaller side.
+`reverse` and both sort forms copy elements out and assign them back, so they
+require `std::copyable` until indexed movement is representable. `transform`
+instead borrows each source element, obtains an owned same-type result, and
+moves that result into the existing destination element. It requires
+`std::movable`, supports move-only resources and strings, and never moves from
+the source. Overlapping whole-owner access is rejected; an undersized
+destination fails at the checked write after evaluating that element's mapper.
+
+`std::sort(values)` orders by `operator<` through a partition exchange whose
+recursion always descends into the smaller side. `std::sort(values, compare)`
+uses iterative heapsort with O(n log n) comparisons and constant auxiliary
+storage, retaining one owned repeatable comparator throughout. The comparator
+must supply a strict weak order. Neither overload promises stability; equal
+elements may be reordered. This does not change the stable node-container
+sort contracts. Source comparisons, checked element accesses and cleanup keep
+their ordinary deterministic evaluation/failure behavior; a failed comparison
+does not roll back preceding permutations.
 
 `for_each` invokes its by-value callable zero or more times with the exact
 checked-reference type produced by dereference, then returns that same callable
