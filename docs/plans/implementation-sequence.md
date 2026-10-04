@@ -5304,10 +5304,13 @@ consumer, and release refreshes remain outstanding for the full campaign.
 
 ### L-CONST-01: Remaining Bounded Compile-Time Programming
 
-- **State/role:** the bounded aggregate initial release is implemented for the
-  ordinary `std::array<T, N>` constructor/observer and `std::gcd<T>` clients.
-  Default generic arguments remain a separate final slice requiring
-  declaration-owned exact identity.
+- **State/role:** the staged MIR constexpr foundation is implemented and locally
+  validated; publication is held at the user's request. It enables source-defined numeric helpers,
+  passive records and fixed-array metadata tables, including read-only text
+  inspection for game-engine asset descriptions. Declaration-owned generic
+  defaults retain exact identity through the same frontend-owned constant
+  model. The remaining AST interpreter is a compatibility path for unmigrated
+  profiles, not the intended endpoint for future execution facilities.
 - **Implemented scope:** The existing evaluator admits concrete non-pack type
   and `uint64_t` value-generic calls, exact scoped enums, concrete fixed arrays,
   fully initialized structural class/struct values, ordinary constexpr
@@ -5315,12 +5318,131 @@ consumer, and release refreshes remain outstanding for the full campaign.
   declaration/type/value identity through semantics and required HIR/MIR data;
   the backend only materializes an already-proven value. One shared 4096-step
   budget and 64-call-depth limit cover recursive/default aggregate work.
-- **Remaining scope:** Default generic arguments are a separate final slice.
-  References, allocation, aggregate-place mutation, payload enums, unions,
-  inherited or cleanup-owning aggregates, generic packs, constexpr operators,
-  mutable receivers, and polymorphism remain excluded. Do not widen exact
-  qualified specialization into partial specialization or introduce a
-  bytecode interpreter.
+- **Text-inspection slice (implemented):** Literal-backed string-view `size()`,
+  `empty()`, and checked unsigned-byte indexing now use backend-neutral constant
+  kernels selected by resolved intrinsic/type identity. Focused frontend and
+  O0/O1/O3, C++20/C++23 differential tests cover an asset-path inspector,
+  embedded NULs, non-ASCII bytes, bounds, runtime-input rejection, and shared
+  budgets. The early kernels share runtime operation meaning and are consumed
+  by the staged executor. A separate completed-body HIR boundary
+  now permits early scalar/text calls through canonical MIR while preserving
+  the ordinary whole-program seal. Continue extending this staged evaluator to
+  subsume the AST call/control-flow driver and reuse these text kernels, not
+  maintain a second text rule.
+- **MIR-execution foundation (implemented and locally verified):**
+  `mir_constant_evaluator` executes verified canonical MIR for scalar/text
+  functions, local mutation, CFG, and
+  recursive constexpr calls with shared limits and located failures. Conversion
+  policy has moved from the semantic AST driver into the shared constant
+  service. Differential tests cover existing frontend constants, integer and
+  floating domains, byte inspection, failed calls/arithmetic, malformed MIR, and
+  optimizer-independence. Completed free-function closures, including exact
+  concrete type/value generic instances, are now
+  wired into semantic constant requests using real source failure metadata.
+  Early-only tests prove array extents, static assertions, and branch selection
+  actually execute MIR; incomplete roots and whole-program publication reject.
+  Generic staging lazily forks semantic state, retaining enclosing scopes and
+  live loans and rejecting invalid concrete static assertions. It does not
+  reenter the caller's mutable body-analysis context.
+  Fixed-array local storage, default construction, nested indexed mutation,
+  independent copies, and by-value array parameters now execute through the
+  same MIR place model; element work and storage copying are budgeted.
+  Focused early-only, bounds/resource-negative, and native parity checks cover
+  this family. Passive structural record parameters, copies, field/index
+  mutation, and returned records now retain exact class/field identity through
+  staged catalogs and MIR. Recursive argument validation rejects incomplete or
+  mistyped records; passive lifetime bookkeeping cannot execute active cleanup.
+  Explicit completed constexpr constructors now retain semantic eligibility in
+  HIR/MIR and execute explicit field writes, including trivial fixed arrays.
+  Nested/generic construction and read-only receiver methods reuse ordinary
+  selected calls and `This` places; std::array construction/observers and
+  unrelated user records exercise both paths. Constructor failure locations
+  retain their original initializer expression. Direct constructor and
+  read-only/static method roots now use the same staging boundary, including
+  concrete generic owner identity. Generic constexpr declarations now permit
+  ordinary runtime-only owning substitutions without relaxing required constant
+  evaluation or normal ownership checks. Source-defined `min`, `max`, `clamp`,
+  `lcm`, `midpoint`, binary32 `abs`, and passive `pair`/`make_pair` now exercise
+  the foundation, with actual MIR execution and O0/O1/O3 C++20/C++23 parity.
+  Constant aggregate factories retain exact concrete type identity, preventing
+  runtime owning instances from inheriting native constexpr requirements.
+  Checked read-only reference parameters, local bindings, and returned
+  projections now execute through ordinary MIR loans, with immutable referent
+  observations and no persisted constant references. `std::array::at`, `front`,
+  and `back` and an unrelated record exercise the same boundary; mutable and
+  stored-reference facilities remain excluded. A game-engine-like asset table
+  now composes literal-path inspection, passive record construction, fixed-array
+  storage and checked reference traversal, with staged execution counts and
+  six native parity configurations. Passive array constructor failure proofs
+  now require their explicit field-write stage, matching the scalar rule;
+  an aggregate computation alone cannot stand in for object initialization.
+  Read-only arithmetic/bitwise, comparison, subscript, dereference, and call
+  operators now share the named constexpr-call staging boundary. Ordinary
+  selected targets, concrete generic owners, and read-only reference results
+  execute through MIR, including nested nominal call-operator invocation.
+  `std::array::operator[]` and unrelated math records exercise the same rules;
+  no operator body is added to the legacy AST evaluator. Arrow/contextual-bool
+  operators and mutable/consuming receivers remain outside this slice.
+  Declaration-owned default
+  schedules remain migration
+  work for library clients. Generated native construction is not proof of const
+  eligibility or completed semantic analysis. Value/type-dependent
+  `if constexpr` selection now defers only unselected arms and branch-dependent
+  flow proof in primary analysis; independent assertions and ordinary name/type
+  checks remain active. Concrete analysis reruns return, movement,
+  receiver-restoration and borrow checks, and HIR rejects an unselected branch.
+  Nested required predicates stage from the canonical base snapshot with a
+  shared execution budget and bounded staging depth. Focused fixtures cover
+  recursive generic calls, discarded invalid code, constructors, methods and
+  owner restoration. The combined production and installed-consumer validation
+  below covers this final slice alongside the reconciled library changes.
+  Unsupported profiles still retain the legacy driver; arithmetic/resource
+  failures never fall back. Completion requires the combined production,
+  installed-consumer and tooling gates in addition to these focused clients;
+  implementation of the staged bridge alone is not sufficient evidence.
+- **Foundation completion evidence (2026-10-01):** the combined Release build
+  has passing evidence for all 350 registered CTest gates: 348 passed in the
+  full run, the compiler aggregate passed after correcting two manifest entries'
+  order, and HTTP passed with the localhost socket access denied by the sandbox.
+  All 21 constexpr test groups, nine constexpr runtime gates, 11 clean installed
+  library consumers, staged asset-table/CLI/LSP/project checks, and Tree-sitter
+  corpus/highlight/source checks pass. The optional audit passes its contract,
+  differential, composition, malformed-source, and 87-example/four-variant
+  matrices, but its final comparison runner is absent; it is not a full audit
+  pass. This completes the reusable-foundation outcome, not every remaining
+  constexpr profile below. These are macOS arm64 results, not unrun platform or
+  release evidence.
+- **Proposed evaluator direction:** Semantics remains the authority for whether
+  an expression is permitted in a constant context and remains the consumer of
+  the resulting `ConstantValue`. Execution should progressively move out of the
+  semantic AST walker into a constant-evaluation service backed, where
+  coherent, by canonical unoptimized body-local MIR plus ordinary MIR
+  verification and an additional const-eligibility verifier. That profile must
+  reuse MIR operations, places, CFG, selected calls and constructors, concrete
+  generic identity, and source provenance; it must not introduce an unrelated
+  CTFE bytecode or second type system. Eligibility is structural over typed
+  operations and effects, not public `std::*` names, optimizer success, emitted
+  C++, or backend behavior.
+- **Phase constraint:** Full post-semantics MIR is too late for every constant
+  request. `if constexpr`, static assertions, array extents, and value-generic
+  arguments can determine which semantics and types are valid before complete
+  HIR/MIR exists. Migration therefore needs lazy or staged typed-body lowering,
+  or a deliberately small early constant kernel; it cannot merely append a MIR
+  interpreter after the existing frontend pipeline. The early kernel must not
+  grow into a second full execution engine.
+- **Extension rule:** Every new constexpr feature must audit the corresponding
+  runtime MIR rule and either migrate a coherent vertical slice to the proposed
+  service/profile or explain the blocking prerequisite for a bounded interim
+  AST-evaluator addition. Interim work retains target-correct checked
+  operations, exact identities, source-located diagnostics, deterministic
+  step/call-depth limits, and compile-time/runtime differential evidence. Its
+  plan must say how overlapping AST execution is removed or subsumed rather
+  than accepting two permanent meanings.
+- **Remaining scope:** Mutable/stored references, allocation, receiver mutation,
+  payload enums, unions, inherited or cleanup-owning aggregates, generic packs,
+  arrow/contextual-bool operators, consuming receivers, and polymorphism remain excluded. Do
+  not widen exact qualified specialization into partial specialization as a
+  side effect.
 - **Initial exit gate:** met by positive/negative identity and limit tests plus
   an O0/O3 and C++20/C++23 runtime-parity matrix whose result is independent of
   native C++ constant evaluation.
