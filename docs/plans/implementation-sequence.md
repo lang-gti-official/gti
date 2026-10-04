@@ -1234,6 +1234,29 @@ and an explicitly incomplete performance target live in
 [`performance-tooling.md`](performance-tooling.md). This work is included in the
 subsequently authorized combined publication.
 
+### C-TIME-02: Chip8 Build Latency And Successful Cache Reuse
+
+**State:** in progress. The user-supplied Chip8 project reopens C-TIME-01 with
+a representative approximately 39-second plain `gti build`, rather than a
+synthetic line-count target. Profile the optimized host compiler, remove
+measured redundant work without changing generated behavior, and separately
+measure fresh, edited, and unchanged project builds.
+
+The initial profile identifies backend ownership-pattern searches repeatedly
+probing unrelated scalar aggregate elements. The bounded implementation moves
+necessary structural exclusions before those searches; applicable ownership
+proofs and independent verification remain intact. Confirm byte-identical C++
+and paired clean-compilation results, plus positive and malformed-MIR admission
+coverage. A separate generated-derived-constructor linkage failure must be
+fixed without losing caller cleanup before claiming the original project
+builds or populates its success cache.
+
+The existing cache already returns successful control builds in approximately
+57 ms and correctly invalidates on source, configuration, and same-timestamp
+native-header edits. Do not add an incremental semantic cache or another
+native-result layer without a measured remaining client. Final evidence and
+limitations belong in the existing performance-tooling plan.
+
 ### Tea Constructor-Emission Follow-Up
 
 The release fix covers nonassignable empty-field placement and qualified or

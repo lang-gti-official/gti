@@ -1,5 +1,82 @@
 # GTI Performance Measurement And Optimization Tooling Proposal
 
+## C-TIME-02: Chip8 aggregate-admission latency (2026-10-04)
+
+Status: measured compiler improvement; combined constructor-fix validation and
+original-project successful-cache confirmation are still pending.
+
+The client is the user's approximately 876-line Chip8 project, including its
+3,584-element ROM initializer, under **plain `gti build`**, not `--release`.
+An unchanged temporary source snapshot reproduces approximately 40 seconds
+through C++ emission alone. The frontend trace totals approximately 159 ms;
+that trace does not include optimizer/backend time. Native C++ compilation is
+therefore not the original bottleneck.
+
+Process sampling first identified repeated
+`ownedExpectedClassExtractionProducer` searches from
+`expectedOwnedClassExtractionReceiverSlot`, then the corresponding direct
+extraction receiver search and payload-enum transport metadata search. These
+walked whole MIR bodies for scalar aggregate elements that could not satisfy
+their exact typed ownership patterns. The bounded fix moves necessary type,
+category and lifetime exclusions ahead of those searches/instruction lookups.
+It neither caches successful verification nor changes MIR, runtime checks,
+ownership, emitted representation, or optimization policy. Applicable values
+still undergo the complete existing proof. No new persistent cache or compiler
+subsystem is introduced.
+
+### Paired measurements
+
+Both compilers are host-optimized Release/Ninja builds on arm64 macOS 27.0,
+AppleClang 21/LLVM 22.1.8. The baseline is `ec2f7b27`; the candidate is that
+same source plus the retained emitter-only production diff. One warmup and
+five seeded (`20261004`) interleaved sequential pairs run with no concurrent
+build/test jobs, the same source paths and staged stdlib/runtime resources,
+and a warm filesystem. These are direct O0 emit-only invocations, not project
+cache hits. All twelve generated outputs are byte-identical (1,403,046 bytes,
+SHA-256 `b4faf79086f8448562fecff2b8bc8aa93a56a628731cf5fc87ee804f51d44cde`).
+
+| Operation | Baseline seconds | Candidate seconds | Evidence |
+| --- | ---: | ---: | --- |
+| Original Chip8, emit-only | 40.554 | 1.656 | median of five measured runs |
+| Successful control, uncached full build | 41.110 | 2.122 | one build per compiler |
+| Successful control, new comment edit | 41.020 | 2.100 | one fresh content key per compiler |
+| Successful control, unchanged rebuild | about 0.062 | about 0.060 | three no-op runs per compiler |
+
+Emit-only samples span 40.487–40.644 s before and 1.618–1.658 s after: a
+95.92% median reduction (24.49× faster). The full-build rows are supporting
+single-build observations, not five-sample statistical estimates. They omit
+only an unused `Chip9` construction in temporary copies: the untouched
+program exposes a separate generated-derived-constructor linkage failure.
+Failed builds correctly publish no success-cache entry. These rows must not
+be advertised as successful builds of the unmodified project until that fix
+is independently validated. The emulator's unbounded main loop is not run.
+
+The cache investigation also confirms content restoration reuses the original
+key, optimization changes miss, and same-size/same-timestamp native header and
+C-source edits miss and produce the changed executable behavior. Existing
+no-op caching is already fast; another cache layer is not justified here.
+
+Local raw evidence, harness, exact source/resource hashes, commands, logs and
+the measured diff live under
+`/private/tmp/gti-cache-investigation.fyiJ9u/paired-final/`; the report is
+`report.json`, the runner is the adjacent `../paired.py`, and the preserved
+candidate is `gti-measured`. Baseline compiler SHA-256 is
+`729f9280fad0e07b5b6caa6a4c7f757f57fd7fbb0386a31449fdccd548c0be2f`;
+candidate SHA-256 is
+`4479c64eaf0ce5927cf477c0844f8c984d4d206363003761c57e9c99b297fdf2`.
+The report records a documentation-only plan edit during timing; compiler,
+source, resource, production-diff and test-diff identities remained unchanged.
+This is an explicitly dirty-working-tree experiment, not clean exact-head
+evidence. Temporary records are not published CI storage.
+
+`testLargeScalarAggregateAdmission` provides a checked-in, threshold-free
+1,024-element reduction and malformed-aggregate rejection. Existing owning,
+cleanup-free, borrowed Expected and payload-enum transport suites retain the
+positive/negative applicable-pattern proofs. Do not add noisy CI wall-time
+thresholds or infer generic C++ compile-time parity from this one application.
+The C-TIME-01 comparison target remains open; this result establishes a large,
+bounded improvement, not a physical/practical lower bound.
+
 ## C-TIME-01: bounded compiler-latency investigation (2026-10-01)
 
 The client is the edit/build loop for ordinary container, numeric, and

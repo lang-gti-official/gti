@@ -276,6 +276,17 @@ Unsupported operations, places, lifetimes, failure edges, or representation
 facts reject the complete program before output; there is no AST/HIR body
 fallback.
 
+Admission queries reject structurally inapplicable values before performing
+body-wide ownership searches or instruction lookups. In particular, Expected
+class-extraction receiver searches require an Expected-typed receiver, their
+producer probes require the existing class/category/lifetime conditions, and
+payload-enum transport metadata requires enum-typed storage. These are
+necessary conditions of the existing exact proofs, not replacement proofs or
+cached admission decisions. This keeps unrelated scalar aggregate elements
+from repeatedly triggering whole-body searches; applicable values still pass
+the complete lifetime, publication, use, and failure-edge checks. Neither MIR
+semantics nor emitted C++ changes as a result of these early rejections.
+
 Each body plan owns its readiness and issues, canonical plain and failure text
 templates, the deduced-callable variants where target family spelling differs,
 boundary-declaration decision, initializer schedule and field spellings, and
