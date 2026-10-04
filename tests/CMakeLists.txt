@@ -661,6 +661,21 @@ add_test(NAME nested_receiver_array_runtime
                  $<TARGET_FILE:gti>)
 set_tests_properties(nested_receiver_array_runtime PROPERTIES TIMEOUT 300)
 
+add_executable(gti_issues_30_33_tests issues_30_33_tests.cpp)
+target_link_libraries(gti_issues_30_33_tests PRIVATE gti_cpp_backend)
+add_test(NAME issues_30_33 COMMAND gti_issues_30_33_tests)
+add_test(NAME issues_30_33_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/issues_30_33_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(issues_30_33_runtime PROPERTIES TIMEOUT 300)
+if(GTI_BUILD_LSP)
+  add_test(NAME issues_30_33_lsp
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/issues_30_33_lsp_test.py"
+                   $<TARGET_FILE:gti> $<TARGET_FILE:gti_lsp>)
+endif()
+
 add_test(NAME passive_record_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/passive_record_runtime_test.py"

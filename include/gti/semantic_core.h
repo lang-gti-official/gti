@@ -668,6 +668,9 @@ struct ExpressionInfo {
   ValueCategory category = ValueCategory::Value;
   AccessMode access = AccessMode::ReadOnly;
   SemanticTypeTraits traits{};
+  // The frontend-selected arithmetic domain of a built-in place update.
+  // Unknown for other expressions; distinct from the destination/result type.
+  SemanticType updateArithmeticType = SemanticType::Unknown;
 
   friend bool operator==(const ExpressionInfo &,
                          const ExpressionInfo &) = default;

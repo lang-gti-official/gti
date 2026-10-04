@@ -1525,10 +1525,27 @@ representation as local and module records. An exact sibling field place proves
 the array type, sealed field rows prove the nested path, and each dynamic
 dimension retains its checked failure operation. Reads, writes and replacements
 share this representation; the former single-field/single-index receiver-only
-route is removed. Generated passive record copies may contain positive concrete
+route is removed. Borrowed record parameters also admit one leading checked
+reference `Dereference` before the field chain; an exact root reference and
+sibling array place prove the path, without copying the owner or admitting a
+raw-pointer dereference. Read-only and mutable access still come from verified
+MIR and source loan analysis.
+
+Generated passive record copies may contain positive concrete
 fixed arrays of passive scalar/enum fields, including C-ABI records. Exact
 generated copy/destruction traits, field drop facts, and the absence of active
 cleanup or state-bearing bases remain required.
+
+A cleanup-free moved error returned through `unexpected` uses the existing
+representation-only class SSA slot: movement occurs at its MIR instruction,
+before the source shell ends, and the single wrapper/return consumes the slot.
+The proof requires generated failure-free movement, no active cleanup or
+borrowed state, one adjacent wrapper and only inert lifecycle/source-shell
+cleanup before return. It does not delay reading a moved source until return
+or invent a semantic destructor obligation. A consuming checked Expected
+extraction feeding that same single return consumer reuses the cleanup-free
+receiver proof and publishes into the slot only after the state check succeeds;
+the original carrier shell remains live until its MIR-authored cleanup.
 
 ### Declarations And ABI
 
