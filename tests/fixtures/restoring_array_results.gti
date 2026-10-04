@@ -1,0 +1,58 @@
+#include <std/string>
+#include <std/vector>
+#include <std/utility>
+#include <std/panic>
+
+class Resource {
+  int identity;
+  std::string storage;
+public:
+  Resource(int id) : identity(id), storage(std::string("owned")) {}
+  Resource(Resource& other) = delete;
+  ~Resource() { std::println(this.identity); }
+  int id() { return this.identity; }
+};
+
+class QuietResource {
+  int identity;
+public:
+  QuietResource(int id) : identity(id) {}
+  QuietResource(QuietResource& other) = delete;
+  int id() { return this.identity; }
+};
+
+T forward_exchange<T>(mut T& destination, T replacement) requires std::relocatable<T> {
+  return std::exchange(destination, std::move(replacement));
+}
+
+int later(bool fail) {
+  if (fail) { std::panic("later array argument"); }
+  return 0;
+}
+
+int inspect(Resource values[2], int argument) {
+  return values[0].id() == 1 && values[1].id() == 2 ? argument : 1;
+}
+
+int inspect_quiet(QuietResource values[2]) {
+  return values[0].id() == 11 && values[1].id() == 12 ? 0 : 1;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut QuietResource quiet[2] = {QuietResource(11), QuietResource(12)};
+  QuietResource quiet_next[2] = {QuietResource(13), QuietResource(14)};
+  if (inspect_quiet(std::exchange(quiet, std::move(quiet_next))) != 0) { return 3; }
+  QuietResource quiet_last[2] = {QuietResource(15), QuietResource(16)};
+  [[discard]] forward_exchange(quiet, std::move(quiet_last));
+  if (quiet[0].id() != 15 || quiet[1].id() != 16) { return 4; }
+  mut Resource values[2] = {Resource(1), Resource(2)};
+  Resource next[2] = {Resource(3), Resource(4)};
+  if (argc == 2) {
+    return inspect(std::exchange(values, std::move(next)), later(true));
+  }
+  if (inspect(std::exchange(values, std::move(next)), later(false)) != 0) { return 1; }
+  Resource last[2] = {Resource(5), Resource(6)};
+  [[discard]] forward_exchange(values, std::move(last));
+  if (values[0].id() != 5 || values[1].id() != 6) { return 2; }
+  return 0;
+}

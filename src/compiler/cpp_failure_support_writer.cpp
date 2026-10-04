@@ -701,6 +701,28 @@ mir_storage_destroy_v1(::gti_internal::backend::storage<T> &storage,
   return mir_failure_success_v1;
 }
 
+template <typename T, std::size_t N>
+inline mir_failure_status_v1
+mir_restoring_indexed_swap_v1(std::array<T, N> &storage,
+                              std::uint64_t left, std::uint64_t right) {
+  if (left >= N || right >= N)
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
+  if (left != right) mir_restoring_swap_v1(storage[left], storage[right]);
+  return mir_failure_success_v1;
+}
+
+template <typename T>
+inline mir_failure_status_v1
+mir_restoring_indexed_swap_v1(prefix_storage<T> &storage,
+                              std::uint64_t left, std::uint64_t right) {
+  if (left >= storage.length() || right >= storage.length())
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
+  if (left != right) mir_restoring_swap_v1(storage.read_mut(left), storage.read_mut(right));
+  return mir_failure_success_v1;
+}
+
 template <bool Bitwise = false, typename T>
 inline mir_failure_status_v1
 mir_storage_relocate_v1(::gti_internal::backend::storage<T> &source,

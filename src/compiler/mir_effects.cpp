@@ -411,6 +411,19 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.readsPlace = true, .writesPlace = true}, // SimdDivide
     MirEffectTraits{.readsPlace = true, .writesPlace = true}, // SimdEqual
     MirEffectTraits{.readsPlace = true, .writesPlace = true}, // SimdLess
+    MirEffectTraits{.readsPlace = true,
+                    .writesPlace = true,
+                    .movesValue = true,
+                    .initializesValue = true}, // RestoringExchange
+    MirEffectTraits{.readsPlace = true,
+                    .writesPlace = true,
+                    .movesValue = true}, // RestoringSwap
+    MirEffectTraits{.readsPlace = true,
+                    .writesPlace = true,
+                    .readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .mayTrap = true,
+                    .movesValue = true}, // RestoringIndexedSwap
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -638,6 +651,9 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "simd-divide",
     "simd-equal",
     "simd-less",
+    "restoring-exchange",
+    "restoring-swap",
+    "restoring-indexed-swap",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({
@@ -1606,7 +1622,7 @@ bool mirTypeRelocationIsDefinedFailureFree(const MirProgram &program,
     if (mirTypeMoveIsDefinedFailureFree(program, candidate))
       return true;
     if (candidate.kind == SemanticType::Array) {
-      return candidate.arguments.size() == 1 && candidate.arrayLength != 0 &&
+      return candidate.arguments.size() == 1 &&
              candidate.arrayLengthParameterId == 0 &&
              self(self, candidate.arguments.front());
     }

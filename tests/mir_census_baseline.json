@@ -10,8 +10,10 @@
     "08-expected.gti": 27,
     "09-target-selection.gti": 24,
     "100-owned-error-pipelines.gti": 488,
-    "101-owned-algorithm-results.gti": 391,
+    "101-owned-algorithm-results.gti": 392,
     "102-constexpr-frame-budget.gti": 181,
+    "103-resource-exchange.gti": 346,
+    "104-move-only-ordering.gti": 380,
     "11-overloads.gti": 29,
     "12-fixed-arrays.gti": 28,
     "13-ownership.gti": 44,
@@ -78,7 +80,7 @@
     "74-read-only-range-loans.gti": 41,
     "75-bounded-arena-pool.gti": 59,
     "76-scalar-atomics.gti": 66,
-    "77-callable-concepts.gti": 95,
+    "77-callable-concepts.gti": 97,
     "78-owning-payload-enums.gti": 30,
     "79-class-scoped-type-aliases.gti": 30,
     "80-function-items.gti": 96,
@@ -100,5 +102,5 @@
     "98-shared-ownership.gti": 355,
     "99-borrowed-expected.gti": 347
   },
-  "total": 11974
+  "total": 12703
 }

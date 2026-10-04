@@ -418,6 +418,25 @@ struct gti_failure_record_v2;
 
 namespace gti_internal::backend {
 
+// Called only for MIR-proven, failure-free structural relocation. Destruction
+// here ends inactive representation shells, not GTI cleanup obligations.
+template <typename T>
+T mir_restoring_exchange_v1(T &destination, T &&replacement) {
+  T previous(std::move(destination));
+  std::destroy_at(std::addressof(destination));
+  std::construct_at(std::addressof(destination), std::move(replacement));
+  return previous;
+}
+
+template <typename T>
+void mir_restoring_swap_v1(T &left, T &right) {
+  T previous(std::move(left));
+  std::destroy_at(std::addressof(left));
+  std::construct_at(std::addressof(left), std::move(right));
+  std::destroy_at(std::addressof(right));
+  std::construct_at(std::addressof(right), std::move(previous));
+}
+
 )";
   output << "inline bool mir_cleanup_emergency_abandonment() noexcept {\n"
          << (usesManagedThreads ? "  return "

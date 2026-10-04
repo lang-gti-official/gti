@@ -1,5 +1,55 @@
 # Compiler Verification
 
+## Restoring exchange and move-only ordering
+
+`restoring_exchange` verifies the sealed restoring-transfer contracts using an
+unrelated noncopyable resource, passive values, owner alternatives and lexical
+fixed arrays. Negative programs retain the restrictions on self-aliasing,
+immutable places, outstanding loans, owner-dependent view escape and arbitrary
+consumption through references or indexed elements. Independent MIR mutations
+remove or forge access, result publication, consuming transfer, bounds outcomes
+and pending-return cleanup; production representation checks also reject the
+array publication and transfer mutations.
+
+The three runtime gates cover 176 outcomes across C++20/C++23 at O0/O1/O3,
+disabled elision and ASan/UBSan. They check replacement preparation, discarded
+and forwarded array results, later-argument failure, partial construction,
+pending-return cleanup, secondary cleanup failure, both invalid indices and
+equal valid/invalid indices. Sorting checks ordering, exact permutation,
+duplicate counts, empty/singleton inputs, a comparison budget and a clone
+method that panics if called. Comparator failure preserves exactly-once
+cleanup; the indivisible restoring transfer cannot invoke user movement or
+cleanup and therefore has no interior failure point to inject.
+
+The focused compiler pipeline, lifecycle, constexpr array-construction,
+standard-library manifest and LSP gates pass with the Release/Ninja compiler
+on macOS arm64 (AppleClang 21, LLVM 22.1.8). The LSP gate covers constraints,
+exact ranges, hover/definition, incomplete-source recovery and formatting.
+A clean staged install passes eleven external CMake consumers, examples 103
+and 104, and the feature LSP gate with checkout resource overrides cleared.
+The native corpus oracle passes all 101 examples at O0/C++20 and O3/C++23
+against reviewed candidate inventories. Those inventories are now promoted:
+the three sealed prelude declarations extend every example's declaration
+closure, indexed-swap methods extend the relevant container closures, and
+algorithm examples 77/101 gain the required helper bodies. Examples 103/104
+provide the new exchange and move-only-ordering clients. No other existing
+example's body or generated-item counts change. All four registered corpus
+gates pass (279.07 seconds). Tree-sitter passes all 69 grammar cases,
+highlight/locals/rainbow captures, all 162 shipped sources and source-text
+checks. The full Release CTest run passes all 404 selected gates in 2324.97
+seconds; the four separately run corpus gates provide passing evidence for all
+408 registered gates. This is macOS arm64 evidence, not a claim of execution
+on other host platforms. Final integration with concurrent work is separate.
+
+The optional `local_language_audit.py --full` passes its 23 contract cases,
+24 generated differential programs, four composition programs, 100 malformed
+mutations and its 96-example/four-configuration matrix. It then fails because
+the historical `examples/gti-vs-cpp/verify.py` comparison runner is absent.
+Its two-digit example glob also omits examples 100 and above; this optional
+result is not evidence for those programs. The independent 101-example corpus
+gates and explicit new-example installed runs supply that coverage. The
+optional audit is not reported as a complete pass or used to replace any gate.
+
 ## Project include discovery and namespace paths
 
 The 0.368.0 include-suggestion gate covers ordinary project functions, class

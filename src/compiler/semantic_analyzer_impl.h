@@ -1597,6 +1597,7 @@ private:
 
   void analyzeUniqueOwnerIntrinsicCall(const Call &expr,
                                        IntrinsicKind intrinsic);
+  void analyzeRestoringIntrinsicCall(const Call &expr, IntrinsicKind intrinsic);
   void analyzeSharedOwnerIntrinsicCall(const Call &expr,
                                        const CallableCandidate &declaration);
 

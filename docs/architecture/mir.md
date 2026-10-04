@@ -273,6 +273,69 @@ verified proof. Existing intrinsic identities retain exclusive accesses,
 liveness/capacity failure sites, and source/destination lifetime behavior;
 there is no backend-only relocation operation. C++ representation traits may
 decline the bytewise candidate, never grant language eligibility.
+
+Restoring exchange and swap are separate sealed call intrinsics, bound to
+private prelude declarations. Semantics requires exact matching relocatable
+types and initialized writable places. HIR/MIR retain the ordinary exclusive
+loans, prepared replacement, owned result and lifecycle tokens. Program
+verification independently proves failure-free relocation and the exact
+reference/value/result shape; an owning replacement must transfer its prepared
+drop obligation. The result activates the old value's distinct obligation.
+Neither instruction drops a resource, invokes user code or has an internal
+failure edge. Replacement construction and later cleanup retain their ordinary
+failure paths outside the indivisible transfer. Optimization treats the
+operations as explicit mutable-memory/ownership barriers. The C++ consumer
+uses verified result slots and generated relocation; it does not grant
+reference consumption or use native move assignment as semantic authority.
+
+Checked indexed swap is a third sealed intrinsic over one mutable fixed-array
+or initialized-prefix storage reference and two staged `uint64_t` indices.
+Its one local `IndexOutOfBounds/PrivateStorage` outcome preflights both indices
+before mutation; valid equal indices are a no-op. MIR verifies exact storage,
+access, relocation, result and failure facts. Effects explicitly include
+mutable/unknown memory, ownership transfer and trapping. It never calls an
+element destructor, user comparator or custom movement operation internally.
+Comparators and their failure edges remain ordinary source-defined calls in
+the algorithm's MIR.
+
+Owning fixed-array aggregates used as exact by-value constructor arguments
+retain their value-rooted lifetime slots until the consuming call. Production
+lowering checks the aggregate's element transfers and result initialization,
+unique use, exact parameter type, and consuming `TransferOut` before taking
+the slot. This also applies to unrelated source-defined constructors. It does
+not default-construct or copy an array to transport it, and a missing ownership
+publication proof rejects the backend representation instead of falling back
+to passive scalar emission.
+
+Restoring call results use those same explicit object lifetimes. Owning
+Expected and payload-enum results activate the existing result-slot identity;
+fixed-array results construct the caller's uninitialized output storage and
+publish only after success. A cleanup-free move-only element still has a
+lexical lifetime and cannot be transported through invented default
+construction or assignment. Its exact binding initialization replaces a
+temporary cleanup-token reparent, since no active temporary cleanup exists.
+Pending array returns retain their verified return-result cleanup recipe if
+another local's destructor fails before return completion. Independent
+mutation tests reject removed result publication records.
+
+Raw-array call results also reuse the existing placement-result forwarding
+and value-rooted call-result proofs when returned directly, explicitly
+discarded, or consumed by another call. The success edge activates the exact
+result obligation, and a consuming call transfers it only after later
+arguments finish. A failure in those arguments cleans up the already-created
+array result. Cleanup-free record arrays instead reuse the representation-only
+SSA lifetime slot: no semantic cleanup obligation is invented, and no default
+construction or copying is introduced. The recursive MIR cleanup facts, not
+native type traits, distinguish these two cases.
+
+Cleanup-free fixed-array fields, including arrays of passive records, retain
+the same explicit constructor field-write stage as cleanup-free class fields.
+Their lexical type alone does not imply active cleanup. Program verification
+requires that exact stage and field identity; staged constant evaluation can
+therefore execute the ordinary MIR move and initialization without falling
+back to a separate AST interpretation of movement. Active-cleanup arrays still
+use their rollback-armed owning stages.
+
 Program v80/body v68 also serialize the resolved caller literal on each private
 source-location intrinsic. MIR verification requires the exact zero-argument,
 effect-free call shape, matching scalar/text result, and attached literal;

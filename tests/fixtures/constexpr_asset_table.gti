@@ -45,6 +45,12 @@ static_assert(assets.front().key != assets.back().key);
 
 int main() {
   AssetInfo runtime = inspect_asset("textures/player.png");
+  std::array<AssetInfo, 3> runtime_assets = std::array<AssetInfo, 3>({
+      inspect_asset("textures/player.png"),
+      inspect_asset("audio/menu.ogg"),
+      inspect_asset("textures/tiles.png")
+  });
   return runtime.key == assets.front().key && runtime.texture &&
-         texture_count(assets) == 2 ? 0 : 1;
+         texture_count(assets) == 2 && texture_count(runtime_assets) == 2 &&
+         runtime_assets.back().key == assets.back().key ? 0 : 1;
 }

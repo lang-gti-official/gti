@@ -2407,8 +2407,17 @@ void testConstexprReadOnlyReferences() {
       lang::Frontend({.workMetrics = &assetMetrics})
           .analyze(assetFixture, assetSource, {standardLibraryPrelude()}, {},
                    {standardLibraryRoot()});
+  // The passive record-array constructor now has an explicit field-write
+  // stage and executes through MIR too, instead of the AST fallback.
+  if (!assetTable.canGenerateCode() ||
+      assetMetrics.constexprMirExecutions != 10) {
+    std::cerr << "Asset table MIR executions: "
+              << assetMetrics.constexprMirExecutions << '\n';
+    for (const auto &diagnostic : assetTable.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+  }
   expect(!assetSource.empty() && assetTable.canGenerateCode() &&
-             assetMetrics.constexprMirExecutions == 9,
+             assetMetrics.constexprMirExecutions == 10,
          "compile-time asset metadata composes text inspection, record "
          "construction, fixed-array storage and checked reference traversal");
 }

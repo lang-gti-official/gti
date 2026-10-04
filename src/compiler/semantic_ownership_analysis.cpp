@@ -1826,6 +1826,15 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
   if (name == "index_bounds_check") {
     return IntrinsicKind::StorageBoundsCheck;
   }
+  if (name == "restoring_exchange") {
+    return IntrinsicKind::RestoringExchange;
+  }
+  if (name == "restoring_swap") {
+    return IntrinsicKind::RestoringSwap;
+  }
+  if (name == "restoring_indexed_swap") {
+    return IntrinsicKind::RestoringIndexedSwap;
+  }
   if (name == "require_key") {
     return IntrinsicKind::RequireKey;
   }
@@ -5471,9 +5480,103 @@ auto SemanticVisitor::Impl::analyzeSourceLocationIntrinsicCall(
       expr, ResolvedCallInfo{.returnType = result, .intrinsic = intrinsic});
 }
 
+auto SemanticVisitor::Impl::analyzeRestoringIntrinsicCall(
+    const Call &expr, IntrinsicKind intrinsic) -> void {
+  std::vector<SemanticType> arguments;
+  for (const ExprPtr &argument : expr.arguments()) {
+    arguments.push_back(analyze(argument));
+  }
+  for (const TypeRef &argument : expr.typeArguments()) {
+    validateType(argument);
+  }
+  const auto reject = [&](std::string message) {
+    report(expr.paren(), std::move(message), "GTI-S2018");
+    currentType = SemanticType::Unknown;
+  };
+  if (intrinsic == IntrinsicKind::RestoringIndexedSwap) {
+    if (!expr.typeArguments().empty() || arguments.size() != 3 ||
+        (arguments.front().kind != SemanticType::Array &&
+         arguments.front().kind != SemanticType::PrefixStorage) ||
+        arguments.front().arguments.size() != 1 ||
+        arguments[1] != SemanticType::UInt64 ||
+        arguments[2] != SemanticType::UInt64) {
+      reject("Indexed restoring swap requires initialized array or prefix "
+             "storage and two size_t indices.");
+      return;
+    }
+    const SemanticType element = arguments.front().arguments.front();
+    if (!satisfiesConstraint(
+            element, constraintBit(GenericConstraintKind::Relocatable))) {
+      reject(
+          "Indexed restoring swap requires structurally relocatable elements.");
+      return;
+    }
+    const auto *place = semanticModel.findExpression(*expr.arguments().front());
+    if (!place || place->category != ValueCategory::Place ||
+        place->access != AccessMode::Mutable) {
+      reject("Indexed restoring swap requires initialized writable storage.");
+      return;
+    }
+    arguments.front() =
+        SemanticType::referenceTo(arguments.front(), AccessMode::Mutable);
+    currentType = SemanticType::Void;
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = currentType,
+                               .parameterTypes = std::move(arguments),
+                               .typeArguments = {element},
+                               .intrinsic = intrinsic});
+    return;
+  }
+  if (!expr.typeArguments().empty() || arguments.size() != 2) {
+    reject("Restoring transfer requires two values and infers its exact type.");
+    return;
+  }
+  const SemanticType type = arguments.front();
+  if (type != arguments.back() ||
+      !satisfiesConstraint(type,
+                           constraintBit(GenericConstraintKind::Relocatable))) {
+    reject("Restoring transfer requires matching structurally relocatable "
+           "values; prepare an exact replacement before exchanging it.");
+    return;
+  }
+  const bool swap = intrinsic == IntrinsicKind::RestoringSwap;
+  for (const ExprPtr &argument : expr.arguments()) {
+    if (isOwnerDependentTextExpression(argument)) {
+      reportOwnerDependentTextStorage(argument,
+                                      "exchanged through a mutable reference");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+  }
+  for (std::size_t index = 0; index < (swap ? 2u : 1u); ++index) {
+    const ExpressionInfo *place =
+        semanticModel.findExpression(*expr.arguments()[index]);
+    if (place == nullptr || place->category != ValueCategory::Place ||
+        place->access != AccessMode::Mutable) {
+      report(expressionToken(expr.arguments()[index]),
+             "Restoring transfer requires an initialized writable place.",
+             "GTI-S2018");
+    }
+    arguments[index] = SemanticType::referenceTo(type, AccessMode::Mutable);
+  }
+  currentType = swap ? SemanticType::Void : type;
+  semanticModel.record(expr,
+                       ResolvedCallInfo{.returnType = currentType,
+                                        .parameterTypes = std::move(arguments),
+                                        .typeArguments = {type},
+                                        .intrinsic = intrinsic});
+}
+
 auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     const Call &expr, const CallableCandidate &declaration) -> void {
   const IntrinsicKind intrinsic = declaration.record().intrinsic;
+  if (intrinsic == IntrinsicKind::RestoringExchange ||
+      intrinsic == IntrinsicKind::RestoringSwap ||
+      intrinsic == IntrinsicKind::RestoringIndexedSwap) {
+    analyzeRestoringIntrinsicCall(expr, intrinsic);
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
   if (simdIntrinsic(intrinsic)) {
     std::vector<SemanticType> arguments;
     for (const ExprPtr &argument : expr.arguments()) {

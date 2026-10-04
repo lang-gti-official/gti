@@ -273,6 +273,12 @@ cppMirExpectedClassPlacementResult(const MirProgram &program,
                                    const CppMirBodyEmissionMap &representations,
                                    const SemanticType &type);
 
+// Lexical fixed arrays (including cleanup-free move-only elements) cannot
+// assume default/copy construction at an ABI boundary. Share their MIR-derived
+// placement contract with adapters.
+[[nodiscard]] bool cppMirOwningArrayPlacementResult(const MirProgram &program,
+                                                    const SemanticType &type);
+
 // The single spelling authority for a string-view literal: the exact
 // `std::string_view{"…", N}` braced form both backends spell, with the
 // data escaped byte-for-byte (embedded NULs included, so the explicit

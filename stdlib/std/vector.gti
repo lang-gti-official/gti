@@ -163,6 +163,14 @@ public:
     return this.reserved;
   }
 
+  /// Check both live indices before mutation; equal valid indices are a no-op.
+  void swap_elements(size_t left, size_t right) mut
+    requires std::relocatable<T> {
+    gti_internal::index_bounds_check(left, this.size());
+    gti_internal::index_bounds_check(right, this.size());
+    gti_internal::restoring_indexed_swap(this.data, left, right);
+  }
+
   /// Returns whether the vector contains no elements.
   bool empty() {
     return gti_internal::prefix_storage_length(this.data) == 0;

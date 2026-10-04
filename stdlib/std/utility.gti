@@ -41,6 +41,14 @@ namespace std {
     return pair<T, U>(std::move(first), std::move(second));
   }
 
-  void swap<T>(mut T& left, mut T& right);
-  T exchange<T, U>(mut T& object, U new_value);
+  /// Exchange disjoint initialized places without copying or running cleanup.
+  void swap<T>(mut T& left, mut T& right) requires std::relocatable<T> {
+    gti_internal::restoring_swap(left, right);
+  }
+
+  /// Prepare the replacement first; return the old value with its ownership.
+  T exchange<T>(mut T& object, T new_value) requires std::relocatable<T> {
+    T previous = gti_internal::restoring_exchange(object, std::move(new_value));
+    return std::move(previous);
+  }
 }

@@ -219,8 +219,7 @@ public:
                initializer.targetType == SemanticType::Double ||
                initializer.targetType == SemanticType::Bool ||
                initializer.targetType == SemanticType::Char ||
-               (initializer.targetType.kind == SemanticType::Array &&
-                field->info.traits.drop == DropKind::Trivial) ||
+               initializer.targetType.kind == SemanticType::Array ||
                initializer.targetType.kind == SemanticType::Class ||
                (initializer.targetType.kind == SemanticType::Enum &&
                 std::any_of(program.enumDeclarations().begin(),
@@ -231,13 +230,23 @@ public:
                                      !enumeration.payload;
                             }))) &&
               (field->info.traits.drop == DropKind::Trivial ||
-               (initializer.targetType.kind == SemanticType::Class &&
+               ((initializer.targetType.kind == SemanticType::Class ||
+                 initializer.targetType.kind == SemanticType::Array) &&
                 !field->requiresActiveCleanup)) &&
               (!field->info.traits.containsBorrowedState ||
                (constructor != nullptr &&
                 constructor->borrowOrigin == BorrowOriginKind::Argument &&
                 initializer.targetType.kind == SemanticType::Class));
-          if (explicitCleanupFreeFieldStage) {
+          const MirDropObligationId owningStageSource =
+              constructorRollbackStageEligible(initializer)
+                  ? dropObligationForValue(initializer.arguments.front())
+                  : 0;
+          const bool explicitOwningFieldStage =
+              owningStageSource != 0 && temporaryIsActive(owningStageSource);
+          // A lexical aggregate temporary can already carry a transfer token
+          // even when its fields require no active cleanup. Its owning stage
+          // is the sole publication; never initialize the same field twice.
+          if (explicitCleanupFreeFieldStage && !explicitOwningFieldStage) {
             const MirPlaceId destination =
                 appendPlace({.root = MirPlaceRootKind::This,
                              .projections = {{.kind = MirProjectionKind::Field,
@@ -265,12 +274,6 @@ public:
           // normal completion transfers them to the caller, so a
           // mid-construction defined failure can no longer leak a completed
           // subobject.
-          const MirDropObligationId owningStageSource =
-              constructorRollbackStageEligible(initializer)
-                  ? dropObligationForValue(initializer.arguments.front())
-                  : 0;
-          const bool explicitOwningFieldStage =
-              owningStageSource != 0 && temporaryIsActive(owningStageSource);
           if (explicitOwningFieldStage) {
             const MirPlaceId destination =
                 appendPlace({.root = MirPlaceRootKind::This,

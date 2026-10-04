@@ -5262,6 +5262,7 @@ public:
     const bool placementResult =
         instance.returnType.kind == SemanticType::Class ||
         instance.returnType.kind == SemanticType::Lambda ||
+        cppMirOwningArrayPlacementResult(mir, instance.returnType) ||
         cppMirExpectedClassPlacementResult(mir, *generalEmissionMap,
                                            instance.returnType);
     const MirFunctionInstance *root =
@@ -5454,6 +5455,7 @@ public:
     const bool placementResult =
         instance.returnType.kind == SemanticType::Class ||
         instance.returnType.kind == SemanticType::Lambda ||
+        cppMirOwningArrayPlacementResult(mir, instance.returnType) ||
         cppMirExpectedClassPlacementResult(mir, *generalEmissionMap,
                                            instance.returnType);
     writeIndent();

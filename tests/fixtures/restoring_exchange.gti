@@ -1,0 +1,42 @@
+#include <std/utility>
+#include <std/string>
+#include <std/vector>
+#include <std/panic>
+
+// This source-defined resource has no swap/exchange hooks and cannot copy.
+class Resource {
+  int identity;
+  std::string label;
+public:
+  Resource(int id) : identity(id), label(std::string("resource")) {
+    if (id == 4) { std::panic("replacement construction"); }
+  }
+  Resource(Resource& other) = delete;
+  ~Resource() {
+    std::println(this.identity);
+    if (this.identity == 5) { std::panic("resource cleanup"); }
+  }
+  int id() { return this.identity; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut int first = 11;
+  mut int second = 22;
+  std::swap(first, second);
+  int previous = std::exchange(first, 33);
+  if (first != 33 || second != 11 || previous != 22) { return 1; }
+  mut Resource left = Resource(1);
+  mut Resource right = Resource(2);
+  if (argc == 2) {
+    Resource old = std::exchange(left, Resource(4));
+    return 3;
+  }
+  if (argc == 3) {
+    Resource old = std::exchange(left, Resource(5));
+    std::panic("after exchange");
+  }
+  std::swap(left, right);
+  Resource old = std::exchange(left, Resource(3));
+  if (left.id() != 3 || right.id() != 1 || old.id() != 2) { return 2; }
+  return 0;
+}

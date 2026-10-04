@@ -854,6 +854,21 @@ become live, and string terminators are repaired using the existing prefix
 policy. Resource owners are never byte-copied. Public `storage.relocate_to`
 is an ordinary GTI wrapper over the same verified private operation.
 
+Utility `swap` and `exchange` are ordinary constrained GTI wrappers over
+private restoring-transfer declarations in the prelude. Declaration identity,
+not a public library spelling, selects the capability. The backend helper
+performs only MIR-proven failure-free structural movement and ends inactive
+native shells; it never calls replacement assignment or destroys a live GTI
+resource. Existing MIR call-input staging and result slots own preparation,
+publication, and cleanup on both ordinary and failure exits.
+
+`array::swap` uses whole-array structural transfer. Array/vector
+`swap_elements` perform public bounds checks then invoke the sealed checked
+indexed transfer; its own preflight remains mandatory. Reverse and heapsort
+are ordinary GTI over these APIs, with read-only comparison scopes ending
+before each mutation. No public container or algorithm name grants compiler
+authority, and neither the library nor backend adds a copy/clone pivot.
+
 **Current gap:** The generated C++ support prelude still contains terminal
 integrity and low-level capability helpers that call `std::abort()`. These are
 representation guards and legacy terminal operations, not an alternate source-

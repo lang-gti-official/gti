@@ -1,0 +1,24 @@
+#include <std/string>
+#include <std/utility>
+
+// A source-defined move-only resource: no custom movement or swap hooks.
+struct Asset {
+  std::string name;
+  Asset(std::string name) : name(std::move(name)) {}
+  Asset(Asset& other) = delete;
+};
+
+int main() {
+  mut Asset active = Asset(std::string("scene-a"));
+  mut Asset standby = Asset(std::string("scene-b"));
+  std::swap(active, standby);
+
+  // The replacement is prepared first. The old asset remains owned by retired
+  // until its normal scope cleanup, independently of active's new value.
+  Asset retired = std::exchange(active, Asset(std::string("scene-c")));
+  std::println(active.name);
+  std::println(standby.name);
+  std::println(retired.name);
+  return active.name == "scene-c" && standby.name == "scene-a" &&
+         retired.name == "scene-b" ? 0 : 1;
+}

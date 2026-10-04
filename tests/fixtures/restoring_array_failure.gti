@@ -1,0 +1,44 @@
+#include <std/utility>
+#include <std/string>
+#include <std/vector>
+#include <std/panic>
+
+class Resource {
+  int identity;
+  std::string storage;
+public:
+  Resource(int id) : identity(id), storage(std::string("resource")) {
+    if (id == 99) { std::panic("array replacement construction"); }
+  }
+  Resource(Resource& other) = delete;
+  ~Resource() {
+    std::println(this.identity);
+    if (this.identity == 5) { std::panic("array resource cleanup"); }
+  }
+  int id() { return this.identity; }
+};
+
+class Guard {
+  bool fail;
+public:
+  Guard(bool should_fail) : fail(should_fail) {}
+  ~Guard() {
+    if (this.fail) { std::panic("array return cleanup"); }
+  }
+};
+
+T replace<T>(mut T& destination, T replacement, bool fail) requires std::relocatable<T> {
+  Guard guard{fail};
+  T previous = std::exchange(destination, std::move(replacement));
+  return std::move(previous);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut Resource destination[2] = {Resource(argc == 5 ? 5 : 1), Resource(2)};
+  Resource replacement[2] = {Resource(3), Resource(argc == 2 ? 99 : 4)};
+  auto previous = replace(destination, std::move(replacement), argc >= 4);
+  if (previous[0].id() != 1 || previous[1].id() != 2 ||
+      destination[0].id() != 3 || destination[1].id() != 4) { return 1; }
+  if (argc == 3) { std::panic("after array exchange"); }
+  return 0;
+}
