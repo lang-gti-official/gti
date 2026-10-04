@@ -2911,6 +2911,18 @@ without changing its census.
 
 ## Development And Completion Cadence
 
+`source_debug_info` exercises opt-in statement mappings, escaped paths,
+multi-line expansion resets, C++20/C++23 emission, native execution, project
+profile/CLI overrides, cache bypass, report policy, and Darwin bundle ownership
+and rebuild publication. `source_debug_lldb` (registered when LLDB is found)
+launches the emitted executable, stops at a GTI file/line breakpoint, displays
+that source, and continues to a successful exit. Hosts explicitly prohibiting
+debugger attachment report a skip; missing/misleading mappings fail the test.
+The lowered-contract, driver, and project suites also verify detached metadata,
+exact native arguments, report policy round trips, and profile defaults. These
+tests use an optimized host compiler; the tested program intentionally uses
+`-O0`. Parser/semantics/formatter/Tree-sitter/LSP syntax is unchanged.
+
 The source-module slice is owned by `testSourceModuleInterfaces`,
 `testSourceModuleResolution`, and `testSourceModuleConfigurationDomains` in
 `compiler_frontend`, `testModuleManifest` in

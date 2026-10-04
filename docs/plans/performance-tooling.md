@@ -1909,11 +1909,16 @@ method, constructor, destructor, lambda, and instantiated generic. Paths and
 spans come from compiler-owned source provenance. Do not infer names by parsing
 generated C++.
 
-Longer term, emit native debug information that maps machine instructions to
-GTI source locations. `#line` directives alone are insufficient because some
-generated helpers have no direct source line and misleading mappings can make
-backend failures harder to diagnose. Keep the sidecar map until native debug
-metadata has an explicit backend contract.
+The first native-debug slice is now implemented: opt-in `-g`/profile debug
+info carries sealed statement locations through `LoweredProgram`, uses
+`#line` plus native compiler DWARF, and keeps generated glue under a synthetic
+source name. See the [backend contract](../architecture/backend.md#opt-in-source-debug-locations)
+and [debug workflow](../architecture/build-and-driver.md#source-level-debug-builds).
+This supplies file/line breakpoints, not source-level variable/type inspection
+or a profiler-friendly GTI symbol-name map. The sidecar proposal above remains
+unimplemented; precise expression locations, names/types, relocation, and
+synthetic-frame hiding remain follow-up work. Do not infer that `#line` alone
+has completed source-level debugging.
 
 ## Code Size And Generated C++
 

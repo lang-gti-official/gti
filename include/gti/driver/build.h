@@ -225,6 +225,8 @@ struct BuildProjectProvenance {
 
 struct BuildProvenance {
   int schema = currentBuildProvenanceSchema;
+  // Additive schema-2 policy field. Older reports imply false.
+  bool debugInfo = false;
   BuildFileProvenance producerExecutable;
   CompilerBuildIdentity compilerBuild;
   std::optional<BuildProjectProvenance> project;

@@ -144,13 +144,15 @@ public:
       std::string compiler, std::filesystem::path generatedSource,
       std::filesystem::path output, CppStandard standard,
       OptimizationLevel optimization, NativeInputs inputs,
-      std::optional<std::filesystem::path> dependencyFile = std::nullopt);
+      std::optional<std::filesystem::path> dependencyFile = std::nullopt,
+      bool debugInfo = false);
 
   [[nodiscard]] const std::string &compiler() const;
   [[nodiscard]] const std::filesystem::path &generatedSource() const;
   [[nodiscard]] const std::filesystem::path &output() const;
   [[nodiscard]] CppStandard standard() const;
   [[nodiscard]] OptimizationLevel optimization() const;
+  [[nodiscard]] bool debugInfo() const;
   [[nodiscard]] const NativeInputs &inputs() const;
   [[nodiscard]] const std::optional<std::filesystem::path> &
   dependencyFile() const;
@@ -163,6 +165,7 @@ private:
   OptimizationLevel optimizationLevel;
   NativeInputs nativeInputs;
   std::optional<std::filesystem::path> nativeDependencyFile;
+  bool sourceDebugInfo = false;
 };
 
 class NativeCCompileRequest final {

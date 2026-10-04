@@ -521,7 +521,7 @@ def main():
         configuration_metadata = json.loads(
             run([gti, "metadata"], cwd=configuration_project).stdout
         )
-        assert configuration_metadata["schemaVersion"] == 12
+        assert configuration_metadata["schemaVersion"] == 13
         assert configuration_metadata["targets"][0]["outputs"][0][
             "defines"
         ] == ["MANIFEST_FLAG"]
@@ -704,7 +704,7 @@ def main():
         )
         metadata = run([gti, "metadata"], cwd=check_project)
         metadata_document = json.loads(metadata.stdout)
-        assert metadata_document["schemaVersion"] == 12
+        assert metadata_document["schemaVersion"] == 13
         assert metadata_document["manifestVersion"] == 1
         assert metadata_document["package"]["name"] == "sample"
         assert metadata_document["profiles"] == [
@@ -715,6 +715,7 @@ def main():
                 "executionProfile": "single-threaded",
                 "disabledWarnings": [],
                 "keepCpp": False,
+                "debugInfo": False,
             },
             {
                 "name": "release",
@@ -723,6 +724,7 @@ def main():
                 "executionProfile": "concurrent",
                 "disabledWarnings": ["unused-mut"],
                 "keepCpp": False,
+                "debugInfo": False,
             },
         ]
         assert metadata_document["targets"][0]["outputs"][1]["profile"] == "release"
@@ -779,7 +781,7 @@ def main():
         test_metadata = json.loads(
             run([gti, "metadata"], cwd=test_project).stdout
         )
-        assert test_metadata["schemaVersion"] == 12
+        assert test_metadata["schemaVersion"] == 13
         assert [
             (target["name"], target["kind"])
             for target in test_metadata["targets"]
@@ -990,7 +992,7 @@ def main():
         assert repeated_native_metadata.stdout == native_metadata.stdout
         native_document = json.loads(native_metadata.stdout)
         native_inputs = native_document["targets"][0]["outputs"][0]["native"]
-        assert native_document["schemaVersion"] == 12
+        assert native_document["schemaVersion"] == 13
         assert native_inputs["cSources"] == [str(native_implementation.resolve())]
         assert native_inputs["cStandard"] == "c17"
         assert native_inputs["cCompileArguments"] == [
@@ -1314,7 +1316,7 @@ def main():
         workspace_metadata = json.loads(
             run([gti, "metadata", "--package", "app"], cwd=workspace).stdout
         )
-        assert workspace_metadata["schemaVersion"] == 12
+        assert workspace_metadata["schemaVersion"] == 13
         assert workspace_metadata["workspace"]["declared"] is True
         assert workspace_metadata["workspace"]["selectedPackage"] == "app"
         assert [
@@ -2584,7 +2586,7 @@ def main():
         scripted_metadata = json.loads(
             run([gti, "metadata"], cwd=scripted_app).stdout
         )
-        assert scripted_metadata["schemaVersion"] == 12
+        assert scripted_metadata["schemaVersion"] == 13
         assert scripted_metadata["build"]["allowBuildScripts"] == [
             "scripted-native@0.1.0"
         ]
@@ -2737,7 +2739,7 @@ def main():
         composed_native = composed_metadata["targets"][0]["outputs"][0][
             "native"
         ]
-        assert composed_metadata["schemaVersion"] == 12
+        assert composed_metadata["schemaVersion"] == 13
         assert [
             (group["package"], group["cMacroDefinitions"])
             for group in composed_native["dependencyNative"]

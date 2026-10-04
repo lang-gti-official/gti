@@ -132,7 +132,8 @@ def main() -> int:
     emitter_header = (root / "include/gti/cpp_emitter.h").read_text(encoding="utf-8")
     emitter_code = without_comments(emitter_header)
     if not re.search(
-        r"CppEmitter\s*\(\s*const\s+LoweredProgram\s*&\s*program\s*,\s*CppStandard\s+standard\s*\)",
+        r"CppEmitter\s*\(\s*const\s+LoweredProgram\s*&\s*program\s*,\s*"
+        r"CppStandard\s+standard\s*,\s*bool\s+debugInfo\s*\)",
         emitter_code,
     ):
         failures.append("include/gti/cpp_emitter.h: CppEmitter construction is not lowered-only")

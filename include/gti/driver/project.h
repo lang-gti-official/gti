@@ -17,6 +17,7 @@ struct ProjectBuildOverrides {
   std::optional<CppStandard> cppStandard;
   std::optional<ExecutionProfile> executionProfile;
   std::optional<bool> keepCpp;
+  std::optional<bool> debugInfo;
   ConfigurationFlags configurationFlags;
   WarningPolicy warningPolicy;
 };
@@ -154,7 +155,8 @@ public:
                    std::string projectModelIdentity,
                    std::vector<BindgenImportPlan> bindgenImports = {},
                    std::vector<BuildScriptPlan> buildScripts = {},
-                   ResolvedProjectToolchain toolchain = {});
+                   ResolvedProjectToolchain toolchain = {},
+                   bool debugInfo = false);
 
   [[nodiscard]] const std::filesystem::path &manifestPath() const;
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
@@ -171,6 +173,7 @@ public:
   [[nodiscard]] OptimizationLevel optimization() const;
   [[nodiscard]] CppStandard cppStandard() const;
   [[nodiscard]] bool keepCpp() const;
+  [[nodiscard]] bool debugInfo() const;
   [[nodiscard]] const NativeInputs &nativeInputs() const;
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
@@ -204,6 +207,7 @@ private:
   std::vector<BindgenImportPlan> resolvedBindgenImports;
   std::vector<BuildScriptPlan> resolvedBuildScripts;
   ResolvedProjectToolchain resolvedToolchain;
+  bool sourceDebugInfo = false;
 };
 
 class ProjectMetadata final {

@@ -11,8 +11,9 @@ namespace lang {
 
 class CppEmitter::Impl final {
 public:
-  explicit Impl(const LoweredProgram &program, CppStandard standard)
-      : plan(buildCppProgramEmissionPlan(program, standard)) {}
+  explicit Impl(const LoweredProgram &program, CppStandard standard,
+                bool debugInfo)
+      : plan(buildCppProgramEmissionPlan(program, standard, debugInfo)) {}
 
   [[nodiscard]] std::string emit() const {
     return writeCppProgramEmissionPlan(plan);
@@ -22,8 +23,9 @@ private:
   CppProgramEmissionPlan plan;
 };
 
-CppEmitter::CppEmitter(const LoweredProgram &program, CppStandard standard)
-    : impl(std::make_unique<Impl>(program, standard)) {}
+CppEmitter::CppEmitter(const LoweredProgram &program, CppStandard standard,
+                       bool debugInfo)
+    : impl(std::make_unique<Impl>(program, standard, debugInfo)) {}
 
 CppEmitter::~CppEmitter() = default;
 CppEmitter::CppEmitter(CppEmitter &&) noexcept = default;

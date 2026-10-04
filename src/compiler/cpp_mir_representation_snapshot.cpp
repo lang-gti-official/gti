@@ -1014,7 +1014,7 @@ void appendLoweredDeclarationRows(const LoweredProgram &program,
 
 CppMirRepresentationSnapshotBuild
 buildCppMirRepresentationSnapshot(const LoweredProgram &program,
-                                  CppStandard standard) {
+                                  CppStandard standard, bool debugInfo) {
   CppMirRepresentationSnapshotBuild build;
   const std::vector<LoweredProgramIssue> loweredIssues =
       verifyLoweredProgram(program);
@@ -1117,7 +1117,10 @@ buildCppMirRepresentationSnapshot(const LoweredProgram &program,
     const CppMirBodyEmissionMapRows emissionRows =
         buildCppMirBodyEmissionMapRows(program, standard);
     const CppMirBodyEmissionMap emissionMap(emissionRows);
-    CppMirBodyEmitter bodyEmitter(program.mir(), emissionMap);
+    CppMirBodyEmitter bodyEmitter(
+        program.mir(), emissionMap, nullptr,
+        debugInfo ? std::span<const LoweredBody>(program.bodies())
+                  : std::span<const LoweredBody>{});
     emissionPlan = bodyEmitter.buildProgramPlan();
     const CppMirProgramEmissionAnalysis emission = emissionPlan->analysis();
     bool emissionReady = emission.ready();

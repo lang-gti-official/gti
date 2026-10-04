@@ -99,6 +99,7 @@ struct Options {
   bool emitMir = false;
   bool emitNativeHeader = false;
   bool keepCpp = false;
+  bool debugInfo = false;
   bool optimizationRemarks = false;
   bool verbose = false;
 };
@@ -138,6 +139,7 @@ struct ProjectOptions {
   std::optional<lang::OptimizationLevel> optimization;
   std::optional<lang::ExecutionProfile> executionProfile;
   std::optional<bool> keepCpp;
+  std::optional<bool> debugInfo;
   std::optional<std::filesystem::path> buildReport;
   bool emitMir = false;
   bool buildAll = false;
@@ -226,6 +228,9 @@ void printUsage(std::ostream &stream) {
          "header.\n"
          "      --keep-cpp       Keep the generated C++ beside the "
          "executable.\n"
+         "  -g, --debug-info     Emit GTI source line mappings and native "
+         "debug symbols.\n"
+         "      --no-debug-info  Disable source-level debug info.\n"
          "      --cxx <path>     Select the native C++ compiler.\n"
          "      --std <version>  Select c++20 or c++23 (default: c++23).\n"
          "      --execution-profile <name>\n"
@@ -285,6 +290,9 @@ void printUsage(std::ostream &stream) {
          "directory.\n"
          "      --no-keep-cpp    Remove generated C++ after a successful "
          "build.\n"
+         "  -g, --debug-info     Emit GTI source line mappings and native "
+         "debug symbols.\n"
+         "      --no-debug-info  Disable the profile's debug-info setting.\n"
          "      --no-cache       Build without reading or updating the "
          "project cache.\n"
          "      --no-build       Run an existing managed executable without "
@@ -601,6 +609,11 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
       options.keepCpp = true;
       continue;
     }
+    if (argument == "-g" || argument == "--debug-info" ||
+        argument == "--no-debug-info") {
+      options.debugInfo = argument != "--no-debug-info";
+      continue;
+    }
     if (argument == "-v" || argument == "--verbose") {
       options.verbose = true;
       continue;
@@ -623,6 +636,10 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
   }
   if (options.input.extension() != ".gti") {
     std::cerr << "gti: input file must use the .gti extension\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if (options.debugInfo && (options.emitMir || options.emitNativeHeader)) {
+    std::cerr << "gti: debug info requires executable or C++ output\n";
     return ArgumentResult::ExitFailure;
   }
   if ((options.emitCpp || options.emitNativeHeader || options.emitMir) &&
@@ -973,6 +990,16 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       options.keepCpp = false;
       continue;
     }
+    if (argument == "-g" || argument == "--debug-info" ||
+        argument == "--no-debug-info") {
+      if (!buildsExecutable(options.command)) {
+        std::cerr << "gti: debug-info overrides are not valid for gti "
+                  << projectCommandName(options.command) << '\n';
+        return ArgumentResult::ExitFailure;
+      }
+      options.debugInfo = argument != "--no-debug-info";
+      continue;
+    }
     if (argument == "--no-cache") {
       if (!buildsExecutable(options.command)) {
         std::cerr << "gti: --no-cache is not valid for gti "
@@ -1032,6 +1059,10 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
     std::cerr << "gti: --emit-mir and --keep-cpp cannot be used together\n";
     return ArgumentResult::ExitFailure;
   }
+  if (options.emitMir && options.debugInfo.value_or(false)) {
+    std::cerr << "gti: --emit-mir and debug info cannot be used together\n";
+    return ArgumentResult::ExitFailure;
+  }
   if (options.buildAll && options.target) {
     std::cerr << "gti: --all cannot be combined with a target selection\n";
     return ArgumentResult::ExitFailure;
@@ -1051,8 +1082,8 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
   }
   if (options.noBuild &&
       (options.cxx || options.cc || options.standard || options.optimization ||
-       options.executionProfile || options.keepCpp || options.jobs ||
-       !options.configurationFlags.empty() ||
+       options.executionProfile || options.keepCpp || options.debugInfo ||
+       options.jobs || !options.configurationFlags.empty() ||
        !options.disabledWarnings.empty() || !options.useCache)) {
     std::cerr << "gti: --no-build cannot be combined with compiler, build, "
                  "cache, or configuration overrides\n";
@@ -1793,7 +1824,7 @@ int runDirect(const Options &options, const char *driver) {
         options.input, toolchain.standardLibrary, target, options.optimization,
         options.standard, {}, configuration.configurationFlags(),
         optimizationOutputRequest(options),
-        lang::WarningPolicy(options.disabledWarnings));
+        lang::WarningPolicy(options.disabledWarnings), options.debugInfo);
     const lang::driver::CompilationResult compilation =
         options.emitNativeHeader
             ? lang::driver::compileToNativeHeader(request)
@@ -1844,7 +1875,7 @@ int runDirect(const Options &options, const char *driver) {
               options.optimization, options.standard, {},
               configuration.configurationFlags(),
               optimizationOutputRequest(options),
-              lang::WarningPolicy(options.disabledWarnings)),
+              lang::WarningPolicy(options.disabledWarnings), options.debugInfo),
           toolchain, generatedSource, options.output,
           lang::driver::discoverNativeCompiler(options.cxx),
           std::move(nativeInputs), options.keepCpp, false, options.verbose,
@@ -1913,7 +1944,8 @@ void reportProjectPlan(const lang::driver::ProjectBuildPlan &plan,
             << lang::cli::cppStandardName(plan.cppStandard())
             << ", execution-profile="
             << lang::executionProfileName(plan.target().executionProfile)
-            << ", keep-cpp=" << (plan.keepCpp() ? "true" : "false") << '\n';
+            << ", keep-cpp=" << (plan.keepCpp() ? "true" : "false")
+            << ", debug-info=" << (plan.debugInfo() ? "true" : "false") << '\n';
   if (!plan.configurationFlags().empty()) {
     std::cerr << "gti: defines";
     for (const std::string &flag : plan.configurationFlags()) {
@@ -2145,7 +2177,7 @@ int buildProjectPlan(
           lang::driver::CompilationRequest(
               plan.entry(), toolchain.standardLibrary, plan.target(),
               plan.optimization(), plan.cppStandard(), plan.packageSources(),
-              plan.configurationFlags(), {}, plan.warnings()),
+              plan.configurationFlags(), {}, plan.warnings(), plan.debugInfo()),
           toolchain, plan.generatedSource(), plan.output(), cppCompiler,
           nativeInputs, plan.keepCpp(), true, options.verbose,
           lang::driver::ManagedOutputPolicy{.trustedRoot = plan.workspaceRoot(),
@@ -2179,6 +2211,7 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
   overrides.cppStandard = options.standard;
   overrides.executionProfile = options.executionProfile;
   overrides.keepCpp = options.keepCpp;
+  overrides.debugInfo = options.debugInfo;
   overrides.configurationFlags = options.configurationFlags;
   overrides.warningPolicy = lang::WarningPolicy(options.disabledWarnings);
   const ProjectTargetSelection selection = selectProjectTarget(options);
@@ -2246,6 +2279,10 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
     }
     if (options.keepCpp) {
       command.emplace_back(*options.keepCpp ? "--keep-cpp" : "--no-keep-cpp");
+    }
+    if (options.debugInfo) {
+      command.emplace_back(*options.debugInfo ? "--debug-info"
+                                              : "--no-debug-info");
     }
     for (const std::string &flag : options.configurationFlags) {
       command.emplace_back("-D");
@@ -2379,6 +2416,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
   overrides.cppStandard = options.standard;
   overrides.executionProfile = options.executionProfile;
   overrides.keepCpp = options.keepCpp;
+  overrides.debugInfo = options.debugInfo;
   overrides.configurationFlags = options.configurationFlags;
   overrides.warningPolicy = lang::WarningPolicy(options.disabledWarnings);
   const ProjectTargetSelection selection = selectProjectTarget(options);
@@ -2573,6 +2611,7 @@ int runProjectVerify(const ProjectOptions &options, const char *driver) {
   overrides.cppStandard = options.standard;
   overrides.executionProfile = options.executionProfile;
   overrides.keepCpp = options.keepCpp;
+  overrides.debugInfo = options.debugInfo.value_or(recorded->debugInfo);
   overrides.configurationFlags = options.configurationFlags;
   overrides.warningPolicy = lang::WarningPolicy(options.disabledWarnings);
   // The record names the target it was built for. Reproducing it on the
@@ -2675,6 +2714,7 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   overrides.cppStandard = options.standard;
   overrides.executionProfile = options.executionProfile;
   overrides.keepCpp = options.keepCpp;
+  overrides.debugInfo = options.debugInfo;
   overrides.configurationFlags = options.configurationFlags;
   overrides.warningPolicy = lang::WarningPolicy(options.disabledWarnings);
   const ProjectTargetSelection selection = selectProjectTarget(options);

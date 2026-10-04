@@ -12,6 +12,8 @@
 
 namespace lang {
 
+struct LoweredBody;
+
 // Spell one verified cleanup recipe against an existing live representation.
 // The caller owns ending that representation's lifetime. Collection recipes
 // supply this same operation recursively to their reverse-live-element loop.
@@ -597,9 +599,10 @@ class CppMirBodyEmitter {
 public:
   CppMirBodyEmitter(const MirProgram &program,
                     const CppMirBodyEmissionMap &representations,
-                    CppMirBodyEmissionMetrics *metrics = nullptr)
-      : program_(program), representations_(representations),
-        metrics_(metrics) {}
+                    CppMirBodyEmissionMetrics *metrics = nullptr,
+                    std::span<const LoweredBody> debugBodies = {})
+      : program_(program), representations_(representations), metrics_(metrics),
+        debugBodies_(debugBodies) {}
 
   [[nodiscard]] CppMirBodyEmissionAnalysis
   analyze(MirBodyAddress address) const;
@@ -693,6 +696,7 @@ private:
   const MirProgram &program_;
   const CppMirBodyEmissionMap &representations_;
   CppMirBodyEmissionMetrics *metrics_ = nullptr;
+  std::span<const LoweredBody> debugBodies_;
 };
 
 } // namespace lang

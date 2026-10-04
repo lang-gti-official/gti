@@ -26,7 +26,8 @@ private:
 
   // CppBackend is the only construction boundary. The emitter derives all
   // C++-private plans and spelling rows from this sealed lowered program.
-  CppEmitter(const LoweredProgram &program, CppStandard standard);
+  CppEmitter(const LoweredProgram &program, CppStandard standard,
+             bool debugInfo);
 
   class Impl;
   std::unique_ptr<Impl> impl;

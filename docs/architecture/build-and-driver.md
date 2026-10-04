@@ -307,6 +307,68 @@ path after publication, and a `project` section that is `null` for a direct
 build. Schema 1 records carry neither and are refused rather than partially
 interpreted.
 
+## Source-level Debug Builds
+
+Direct compilation and executable project commands (`build`, `run`, `test`)
+accept `-g` / `--debug-info`. `--no-debug-info` disables it; the last explicit
+selection wins. Profiles accept the Boolean `debug-info` field, defaulting to
+false in both built-in profiles. A CLI override wins over the profile. Debug
+info is independent of optimization: use `-O0` for predictable breakpoints.
+Metadata schema 13 reports `debugInfo` in each profile and resolved output plan.
+Analysis-only `check` and MIR/native-header emission do not enable debug
+output. Direct `--emit-cpp -g` emits mappings for a separately invoked native
+compiler, which must also receive `-g`.
+
+```toml
+[profiles.dev]
+optimization = 0
+debug-info = true
+```
+
+```sh
+gti build -g -O0
+lldb build/gti/dev/<host-triple>/<target-name>
+```
+
+At the LLDB prompt, use the real source file and an executable statement:
+
+```text
+breakpoint set --file main.gti --line 12
+run
+frame info
+next
+continue
+```
+
+For a standalone program, `gti main.gti -g -O0 -o app` followed by `lldb ./app`
+uses the same path. No generated C++ file needs to remain beside the binary.
+The C++ backend's [source debug contract](backend.md#opt-in-source-debug-locations)
+describes the first-phase limits: statement lines work, but GTI variable names,
+rich types, and expression evaluation are not yet provided.
+
+The immutable compilation and native requests carry the debug policy; the
+native command adds `-g` after forwarded arguments. On ELF toolchains symbols
+remain in the executable. On Darwin, Clang's `.dSYM` bundle (or a `dsymutil`
+fallback) is published beside the executable before link staging is cleaned
+up. Keep the executable and matching bundle together. Rebuilds replace only a
+GTI-marked bundle, refusing symlinks, unowned destinations, and loaded-source
+collisions. Bundle publication is recoverable but not a transaction with the
+separately atomic executable replacement. A non-debug build does not delete
+an existing bundle; the debugger checks native UUIDs before using it.
+
+Debug builds bypass the executable cache in this first slice: native metadata
+retains absolute source/checkout paths, and cached symbol sidecars are not yet
+modeled. Debug builds are not promised byte-reproducible native artifacts.
+Schema-2 build reports add `debug_info` (absent in old reports means false);
+the artifact fingerprint still covers the executable, not the `.dSYM` contents.
+The benchmark harness accepts old and new non-debug reports, validates the
+optional Boolean field, and rejects a source-debug policy it did not request.
+`verify` reuses that recorded policy and compares it, rather than silently
+rebuilding without source mappings. Debug artifacts can still report native
+byte differences. Raw native `-- -g` alone is not the GTI source-debug option.
+An explicit debug-info override on `verify` is also compared, not ignored.
+Syntax, ownership, LSP analysis, and runtime behavior are unchanged.
+
 ## Project Mode
 
 The implemented manifest path discovers `gti.toml`, parses schema version 1,
@@ -331,7 +393,7 @@ An optional top-level `[build]` table accepts
 they are sorted and deduplicated. Repeatable project-command `-D NAME` values
 are added to the manifest set. The effective set is immutable in every
 `ProjectBuildPlan`, participates in its model identity, and is passed through
-the shared frontend request. Metadata schema 12 reports that effective `defines`
+the shared frontend request. Metadata schema 13 reports that effective `defines`
 array beside each target/profile output plan.
 
 `gti build --all` builds every declared executable and test target of the
@@ -1270,7 +1332,7 @@ The same table may set `disabled-warnings = ["unused-mut", ...]`; validated
 command-line warning suppressions are unioned with that profile policy and
 carried through the resolved build plan. Warning policy does not change emitted
 program semantics, while the ordinary project model identity still
-conservatively covers manifest changes. Metadata schema 12 publishes both
+conservatively covers manifest changes. Metadata schema 13 publishes both
 profile fields for every profile plus the selected workspace and sorted
 package/dependency graph. The execution profile selects static language policy
 only; the independently selected runtime profile derives the target/runtime
