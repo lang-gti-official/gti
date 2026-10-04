@@ -199,7 +199,7 @@ int main() {
 class Label {
   mut std::string text = std::string("abc");
 public:
-  std::string_view view() { return this.text.view(); }
+  std::string_view view() { return text.view(); }
   void edit() mut { this.text.clear(); }
 };
 )";
@@ -213,7 +213,8 @@ int main() {
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(ownerRelay.canGenerateCode(),
+  expect(ownerRelay.canGenerateCode() &&
+             lang::verifyMirProgram(ownerRelay.mir).valid(),
          "a text view can relay a checked nested owner dependency");
   for (const std::string &body :
        {std::string("int main() { mut Label value{}; auto view = value.view(); "
@@ -223,7 +224,10 @@ int main() {
         std::string(
             "std::string_view bad(Label value) { return value.view(); }"),
         std::string("int main() { auto view = Label().view(); return "
-                    "int(view.size()); }")}) {
+                    "int(view.size()); }"),
+        std::string(
+            "int main() { Label value{}; auto view = value.view(); "
+            "auto moved = std::move(value); return int(view.size()); }")}) {
     const auto rejected = lang::Frontend().analyze(
         "invalid-nested-owner-view.gti", textOwner + body,
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
@@ -241,6 +245,67 @@ int main() {
            "nested text-owner relays must reject invalidation, local escape, "
            "by-value ownership escape, and temporary owners");
   }
+
+  for (const std::string &method :
+       {std::string("std::string_view view() { std::string text{\"local\"}; "
+                    "return text.view(); }"),
+        std::string(
+            "std::string_view view(std::string text) { return text.view(); }"),
+        std::string(
+            "static std::string_view view() { return text.view(); }")}) {
+    const auto rejected = lang::Frontend().analyze(
+        "shadowed-field-view.gti",
+        "#include <std/string>\nclass Owner { std::string text{\"field\"}; "
+        "public: " +
+            method + " };",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!rejected.canGenerateCode() &&
+               (hasDiagnosticCode(rejected.diagnostics, "GTI-S2045") ||
+                hasDiagnosticCode(rejected.diagnostics, "GTI-S2039")),
+           "implicit-field predeclaration must not authorize local, by-value "
+           "parameter or static receiver escape: " +
+               method);
+  }
+
+  const auto parameterShadow = lang::Frontend().analyze(
+      "parameter-shadow-field.gti", R"(
+#include <std/string>
+class Owner {
+  mut std::string text{"field"};
+public:
+  std::string_view view(std::string& text) { return text.view(); }
+  void edit() mut { text.clear(); }
+};
+int main() {
+  mut Owner owner{};
+  std::string text{"argument"};
+  auto view = owner.view(text);
+  owner.edit();
+  return int(view.size());
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(parameterShadow.canGenerateCode() &&
+             lang::verifyMirProgram(parameterShadow.mir).valid(),
+         "a same-named read-only parameter retains its own origin, not this");
+
+  const auto staticText = lang::Frontend().analyze("static-field-view.gti", R"(
+#include <std/string>
+class StaticText {
+  static std::string_view text = "static";
+public:
+  std::string_view view() { return text; }
+};
+int main() {
+  auto text = StaticText().view();
+  return int(text.size());
+}
+)",
+                                                   {standardLibraryPrelude()},
+                                                   {}, {standardLibraryRoot()});
+  expect(staticText.canGenerateCode() &&
+             lang::verifyMirProgram(staticText.mir).valid(),
+         "a literal-backed static field must not gain a receiver dependency");
 
   const lang::FrontendResult escapedTextView = lang::Frontend().analyze(
       "escaped-string-view.gti",
