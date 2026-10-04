@@ -177,7 +177,7 @@ int main() {
 
   expect(cpp.find("extern \"C\" std::int32_t "
                   "__gti_native_callback_") != std::string::npos &&
-             cpp.find("gti_rt_failure_terminate_v1") != std::string::npos &&
+             cpp.find("gti_rt_failure_terminate_v2") != std::string::npos &&
              cpp.find("catch (...)") != std::string::npos &&
              cpp.find("std::terminate()") != std::string::npos &&
              cpp.find("(&::__gti_program::__gti_native_callback_") !=

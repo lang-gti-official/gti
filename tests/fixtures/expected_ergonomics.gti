@@ -1,0 +1,277 @@
+#include <std/string>
+#include <std/vector>
+#include <std/panic>
+
+struct Owned {
+  int id;
+  int divisor;
+  Owned(int value, int denominator = 1) : id(value), divisor(denominator) {}
+  ~Owned() {
+    std::println(id);
+    int checked = 1 / divisor;
+  }
+};
+
+expected<Owned, Owned> produce(bool fail, int divisor = 1) {
+  std::println(1);
+  if (fail) {
+    return unexpected(Owned(20, divisor));
+  }
+  return Owned(10);
+}
+
+Owned map(Owned value) {
+  std::println(2);
+  return Owned(value.id + 100);
+}
+
+expected<Owned, Owned> next(Owned value) {
+  std::println(3);
+  return Owned(value.id + 1000);
+}
+
+int later(int divisor) {
+  std::println(4);
+  return 1 / divisor;
+}
+
+int combine(Owned value, int other) {
+  return value.id + other;
+}
+
+expected<void, Owned> perform(bool fail) {
+  std::println(5);
+  if (fail) {
+    return unexpected(Owned(20));
+  }
+  return;
+}
+
+void finish() {
+  std::println(6);
+}
+
+expected<void, Owned> next_void() {
+  std::println(7);
+  return;
+}
+
+std::string_view context_message() {
+  std::println(8);
+  return "named result";
+}
+
+[[noreturn, track_caller]]
+void terminal_mapper(Owned value) {
+  std::panic("terminal mapper");
+}
+
+expected<std::string, int> source_text(bool fail) {
+  if (fail) { return unexpected(41); }
+  return std::string("alpha");
+}
+
+std::vector<std::string> collect_words(std::string value) {
+  std::println("collect");
+  mut std::vector<std::string> words{};
+  words.push_back(std::move(value));
+  words.push_back(std::string("beta"));
+  return words;
+}
+
+expected<std::vector<std::string>, int> validate_words(std::vector<std::string> words) {
+  std::println("validate");
+  return std::move(words);
+}
+
+// No default constructor or observable cleanup: the moved Expected receiver
+// remains an exact source binding even when the selected alternative is scalar.
+struct Ticket {
+  int identity;
+  Ticket(int value) : identity(value) {}
+};
+
+expected<Ticket, int> issue_ticket(bool fail) {
+  if (fail) { return unexpected(17); }
+  return Ticket(7);
+}
+
+expected<int, int> read_ticket(bool fail) {
+  auto ticket = issue_ticket(fail);
+  if (!ticket) { return unexpected(std::move(ticket).error()); }
+  auto item = std::move(ticket).value();
+  return item.identity;
+}
+
+enum class Packet { text(std::string value), idle };
+struct Envelope {
+  Packet packet;
+  Envelope(std::string text) : packet(Packet::text(std::move(text))) {}
+};
+
+expected<Envelope, int> source_packet(bool fail) {
+  if (fail) { return unexpected(51); }
+  return Envelope(std::string("message"));
+}
+
+expected<Owned, int> source_owned_ticket(bool fail) {
+  if (fail) { return unexpected(71); }
+  return Owned(70);
+}
+
+Envelope map_packet(Envelope value) {
+  std::println("map packet");
+  return std::move(value);
+}
+
+expected<Envelope, int> validate_packet(Envelope value) {
+  std::println("validate packet");
+  return std::move(value);
+}
+
+void print_packet(Packet& packet) {
+  switch (packet) {
+    case Packet::text(auto& text): std::println(text); break;
+    case Packet::idle: break;
+  }
+}
+
+expected<Owned, int> fresh_argument(int id) {
+  return Owned(id);
+}
+
+void consume_expected_arguments(expected<Owned, int> first,
+    expected<Owned, int> second, int value) {
+  std::println(9);
+}
+
+Owned fresh_owned_argument(int id) { return Owned(id); }
+
+void consume_mixed_arguments(expected<Owned, int> first, Owned second,
+    Owned third, int value) {
+  std::println(9);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Owned outer{99};
+  if (argc == 2 || argc == 4) {
+    auto value = produce(true, argc == 4 ? 0 : 1)
+        .transform(map).and_then(next).expect("required application value");
+    return value.id;
+  }
+  if (argc == 3) {
+    auto value = produce(false).transform([argc](Owned input) -> Owned {
+      std::println(2);
+      return Owned(1 / (argc - 3));
+    }).expect("mapper result");
+    return value.id;
+  }
+  if (argc == 5) {
+    return combine(produce(false).expect("argument value"), later(argc - 5));
+  }
+  if (argc == 6) {
+    perform(false).transform(finish).and_then(next_void).expect("void work");
+    perform(false).transform([]() -> Owned { return Owned(30); })
+        .and_then([](Owned input) -> expected<void, Owned> {
+          std::println(input.id);
+          return;
+        }).expect("owned to void");
+    return 0;
+  }
+  if (argc == 7) {
+    Owned capture{80};
+    auto value = produce(true).transform(
+        [held = std::move(capture)](Owned input) -> Owned {
+          return Owned(input.id + held.id);
+        }).expect("skipped mapper");
+    return value.id;
+  }
+  if (argc == 8) {
+    auto named = produce(false);
+    auto value = std::move(named).expect(context_message());
+    std::println(value.id);
+    return 0;
+  }
+  if (argc == 9) {
+    perform(true).transform(finish).and_then(next_void).expect("failed void work");
+    return 0;
+  }
+  if (argc == 10) {
+    [[discard]] produce(false).transform(terminal_mapper);
+    return 0;
+  }
+  if (argc == 11) {
+    auto result = produce(true).transform(terminal_mapper);
+    std::println(result.error().id);
+    return 0;
+  }
+  if (argc == 12) {
+    // The fresh success payload exists before the parameter's failing cleanup;
+    // it must be destroyed once without publishing a result to this caller.
+    [[discard]] next(Owned(40, 0));
+    return 0;
+  }
+  if (argc == 13 || argc == 14) {
+    auto words = source_text(argc == 14).transform(collect_words)
+        .and_then(validate_words).expect("required words");
+    std::println(words[std::size_t(0)]);
+    std::println(words[std::size_t(1)]);
+    return 0;
+  }
+  if (argc == 15) {
+    std::println(read_ticket(false).value());
+    std::println(read_ticket(true).error());
+    return 0;
+  }
+  if (argc == 16) {
+    auto ticket = issue_ticket(false);
+    [[discard]] std::move(ticket).error();
+    return 0;
+  }
+  if (argc == 17 || argc == 18) {
+    auto envelope = source_packet(argc == 18).transform(map_packet)
+        .and_then(validate_packet).expect("required packet");
+    print_packet(envelope.packet);
+    return 0;
+  }
+  if (argc == 19) {
+    auto packet = source_packet(true);
+    std::println(std::move(packet).error());
+    return 0;
+  }
+  if (argc == 20) {
+    auto ticket = source_owned_ticket(false);
+    [[discard]] std::move(ticket).error();
+    return 0;
+  }
+  if (argc == 21) {
+    auto ticket = source_owned_ticket(true);
+    std::println(std::move(ticket).error());
+    return 0;
+  }
+  if (argc == 22) {
+    [[discard]] read_ticket(true).value();
+    return 0;
+  }
+  if (argc == 23 || argc == 24) {
+    // Both complete results remain owned by this expression until the call.
+    // A failing later argument must retire them without entering the callee.
+    consume_expected_arguments(fresh_argument(81), fresh_argument(82),
+        later(24 - argc));
+    return 0;
+  }
+  if (argc == 25 || argc == 26) {
+    consume_mixed_arguments(fresh_argument(81), fresh_owned_argument(82),
+        fresh_owned_argument(83), later(26 - argc));
+    return 0;
+  }
+  if (argc == 27 || argc == 28) {
+    consume_mixed_arguments(fresh_argument(81), Owned(82), Owned(83),
+        later(28 - argc));
+    return 0;
+  }
+  auto value = produce(false).transform(map).and_then(next)
+      .expect("required application value");
+  std::println(value.id);
+  return 0;
+}

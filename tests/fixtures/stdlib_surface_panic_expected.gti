@@ -1,0 +1,33 @@
+#include <std/panic>
+
+// The surface census exercises successful control flow. The panic runtime
+// matrix separately checks terminal status, exact reports and cleanup.
+[[track_caller]]
+void require_ready(bool ready) {
+  if (!ready) {
+    std::panic("not ready");
+  }
+}
+
+[[track_caller]]
+void require_code(bool ready, int code) {
+  if (!ready) {
+    std::panic("not ready: {}", code);
+  }
+}
+
+expected<int, int> initial() { return 40; }
+
+int increment(int value) { return value + 1; }
+
+expected<int, int> validate(int value) {
+  if (value < 0) { return unexpected(1); }
+  return value + 1;
+}
+
+int main() {
+  require_ready(true);
+  require_code(true, 7);
+  int answer = initial().transform(increment).and_then(validate).expect("invalid answer");
+  return answer == 42 ? 0 : 1;
+}

@@ -1,0 +1,58 @@
+#include <std/panic>
+#include <std/memory>
+#include <std/mutex>
+#include <std/optional>
+#include <std/thread>
+#include <std/string>
+#include <std/vector>
+
+struct Guard {
+  int id;
+  bool fails;
+  Guard(int value, bool failure = false) : id(value), fails(failure) {}
+  ~Guard() {
+    std::println(id);
+    if (fails) {
+      std::panic("cleanup failed"); // cleanup-site
+    }
+  }
+};
+
+expected<Guard, int> worker_result() { return Guard(91); }
+
+std::vector<Guard> worker_sequence() {
+  mut std::vector<Guard> result{};
+  result.push_back(Guard(92));
+  return result;
+}
+
+void worker_double_failure(
+    std::unique_ptr<Guard> owner, std::optional<Guard> optional,
+    expected<Guard, int> result, std::vector<Guard> sequence,
+    std::mutex<int> gate, bool emergency) {
+  std::mutex_guard<int> held = gate.lock();
+  Guard skipped{83};
+  Guard worker{82, emergency};
+  std::panic("worker primary failure"); // worker-primary-site
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard parent{90};
+  bool emergency = argc > 1;
+  auto started = std::thread::start([emergency]() -> void {
+    Guard caller{84};
+    auto owner = std::make_unique<Guard>(88, false);
+    std::optional<Guard> optional{Guard(89)};
+    auto result = worker_result();
+    auto sequence = worker_sequence();
+    std::mutex<int> gate{0};
+    worker_double_failure(std::move(owner), std::move(optional),
+                          std::move(result), std::move(sequence),
+                          std::move(gate), emergency);
+  });
+  if (!started) { return 99; }
+  mut std::thread worker = std::move(started).value();
+  auto joined = worker.join();
+  if (!joined) { return 98; }
+  return 0;
+}

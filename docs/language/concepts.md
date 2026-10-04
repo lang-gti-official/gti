@@ -121,6 +121,45 @@ separate design rather than silently weakening the declared requirement.
 GTI therefore retains the exact unique-match rule from
 [ADR 003](../decisions/003-exact-overload-resolution.md).
 
+## Library contract diagnostics
+
+An unsatisfied source-defined contract is a compile-time API error, not a
+recoverable runtime result. Its diagnostic preserves the public concept's
+concrete application, the nested requirement that failed, and its declaration
+location. For example, an ordinary library can declare:
+
+```gti
+concept readable<T> = requires(T& value) { { value.read() } -> int; };
+int inspect<T>(int label, T& value) requires readable<T> {
+  return value.read();
+}
+```
+
+When `inspect(1, item)` receives a type without `read()`, `GTI-S2029` names
+argument 2 and `readable<Item>`, relates the requirement, and explains the
+missing member. An existing inaccessible method, inexact result, or unsupported
+receiver/parameter shape receives its corresponding explanation instead.
+Concrete applications remain available through nested concepts, including
+reordered parameters. The compiler follows resolved generic-parameter identity;
+it does not guess the responsible argument by comparing equal concrete types.
+When several arguments contribute the same parameter, a closed requirement
+does not depend on an argument, or a disjunction has distinct causes, the
+primary remains at the call rather than arbitrarily blaming one argument.
+For an attributable argument, the primary highlights its representative source
+token; it does not promise to underline an entire compound expression.
+The compiler and LSP publish the same structured explanation and do not offer
+an automatic edit that invents an implementation or changes ownership.
+
+This facility is independent of any public library name. It does not by itself
+define a formatter protocol or reject a supported function's dynamic input at
+compile time. A future externally specialized formatter adapter still needs
+general requirements for its static/member operation and argument types, plus
+constraints on heterogeneous packs; the existing nullary read-member query is
+not a substitute for those capabilities. Literal-format validation separately
+needs general call-site constant validation and must reuse the canonical
+constant-evaluation direction, not an optimizer-dependent check or a second
+format grammar embedded in the compiler.
+
 ## Exact read-only member requirements
 
 Library authors can describe a public, safe, read-only zero-argument instance

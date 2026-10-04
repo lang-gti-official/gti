@@ -3,16 +3,16 @@
 #include <std/string>
 
 int main() {
-  mut auto zero = std::format("plain");
-  mut auto one = std::format("value={}", 7);
-  mut auto many = std::format("a={} b={} c={}", 1, uint64_t(2), -3);
+  mut auto zero = std::try_format("plain");
+  mut auto one = std::try_format("value={}", 7);
+  mut auto many = std::try_format("a={} b={} c={}", 1, uint64_t(2), -3);
 
   std::print(zero.has_value() ? 1 : 0); std::print(" ");
   std::print(std::move(zero).value().view()); std::print(" ");
   std::print(std::move(one).value().view()); std::print(" ");
   std::print(std::move(many).value().view()); std::print(" ");
 
-  mut auto bad = std::format("missing {} {}", 1);
+  mut auto bad = std::try_format("missing {} {}", 1);
   std::println(bad.has_value() ? 1 : 0);
   return 0;
 }

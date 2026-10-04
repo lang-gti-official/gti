@@ -145,6 +145,109 @@ the callable immediately returns `unexpected(error)` after cleaning up the
 live full-expression and lexical obligations on that path. Propagation never
 performs an implicit error conversion.
 
+## Requiring a successful owned result
+
+`expect(message)` is explicit consuming extraction with panic-on-error policy:
+
+```gti
+int required = load(false).expect("The initial value is required");
+
+auto result = load(false);
+int another = std::move(result).expect("Cannot continue without the value");
+
+initialise(false).expect("Initialisation is required");
+```
+
+On success, `expected<T, E>::expect` moves out its owned `T`; for `T = void`
+it completes as `void`. A fresh receiver or explicitly moved named receiver
+is required, even when both alternatives happen to be copyable. Ordinary
+`has_value()`, `value()`, and `error()` remain the nonconsuming observer APIs.
+The named expected is unavailable after explicit consumption, while a
+move-only success needs no clone or copy.
+
+On error, `expect` invokes the same terminal panic operation as `std::panic`,
+with category `GTI-R0017`, the supplied message, and the caller's source site.
+It does not extract the inactive success, use `GTI-R0009`, throw an exception,
+or automatically stringify an arbitrary `E`. The active error and remaining
+full-expression resources retain normal deterministic cleanup. A cleanup
+failure follows the existing primary/secondary failure contract. A tracked
+wrapper can forward its caller site in the same manner as a direct panic.
+
+The message is exactly one `std::string_view`, interpreted as raw text. Receiver
+evaluation precedes message evaluation, and both happen once before selecting
+the active alternative. This means that message-producing expressions also
+execute on success. Panic snapshots the counted message before cleanup can
+invalidate its storage. No include is needed for the built-in expected member;
+the `<std/panic>` public function and its formatted overloads are separate APIs.
+
+The first consuming extraction slice requires movable owned alternatives and
+excludes `expected<T&, E>` and alternatives carrying checked borrowed state.
+Use explicit state inspection and a normal checked observer for those values;
+`expect` does not invent a loan-transfer contract or detach a referent lifetime.
+
+## Mapping and chaining owned successes
+
+`transform` maps one successful value into another, preserving the error type:
+
+```gti
+auto adjusted = load(false).transform([](int value) -> int {
+  return value + 1;
+});
+```
+
+For `expected<T, E>`, an exact mapper `U(T)` produces `expected<U, E>`.
+If `T` is `void`, the mapper has no parameters. If `U` is `void`, successful
+mapper completion publishes the empty success alternative. On error the
+mapper is skipped and the original `E` is moved into the result.
+
+`and_then` composes a next recoverable operation without nesting expected
+values:
+
+```gti
+expected<int, std::string_view> validate(int value) {
+  if (value < 0) { return unexpected("negative value"); }
+  return value;
+}
+
+auto checked = load(false).and_then(validate);
+int required = std::move(checked).expect("A valid value is required");
+```
+
+Its mapper must return `expected<U, E>` with exactly the source error type.
+Use `transform_error` for an explicit error conversion. `T` and `U` may each
+be `void`: a void source calls a nullary mapper, and a void result remains an
+ordinary `expected<void, E>`. On source error, `and_then` moves that error
+forward without invoking the mapper; on success, it returns the mapper's
+complete expected result. Neither combinator propagates from the enclosing
+function implicitly; prefix `?` remains available for that explicit policy.
+
+Both members consume their receiver, following the same temporary/explicit
+`std::move` rule as `transform_error`. They accept one explicitly typed lambda
+or one unambiguous, safe, non-generic namespace-scope GTI function with a body.
+Mapper inputs are exact by-value types, without conversions. Results and
+source alternatives must be movable owned values (or void successes), without
+checked borrowed state or lambda components in the mapped result. Stored
+callable classes, C function pointers, reference parameters/results, generic
+function-item selection, and fallible-borrow receivers remain outside this
+bounded surface.
+
+The existing result-carrier containment boundary also applies to inferred
+combinator results: an owning payload enum cannot be a direct `expected`
+alternative. Such a mapping receives `GTI-S2067` at the mapper rather than
+reaching backend generation. An ordinary class or struct may own that enum
+through its verified field lifecycle; this is the same structural boundary as
+an explicitly declared expected return or local, not a mapper-specific type
+exception.
+
+Receiver evaluation, then mapper-expression evaluation, precede the state
+test. Capture construction is therefore eager even when invocation is skipped.
+The selected mapper runs at most once. Named lambdas retain their environment;
+fresh or explicitly moved environments retain full-expression cleanup. These
+operations use the ordinary static/lambda call path and introduce neither type
+erasure nor an allocation of their own. A defined failure in the producer,
+capture construction, mapper, or a later expression follows the normal cleanup
+schedule, not an expected recovery path.
+
 ## Mapping an owned error
 
 `transform_error` explicitly changes an owned expected's error type without

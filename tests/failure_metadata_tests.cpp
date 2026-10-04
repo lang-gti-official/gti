@@ -255,7 +255,7 @@ int main() {
 
   const std::string snapshot = lang::MirPrinter().print(frontend.mir);
   const bool validSnapshot =
-      snapshot.starts_with("mir-v84 ") &&
+      snapshot.starts_with("mir-v85 ") &&
       snapshot.find("failure-metadata artifact=" +
                     metadata.artifactIdentity().hex()) != std::string::npos &&
       snapshot.find("failure-site @1 source=8:main.gti") != std::string::npos &&
@@ -1578,6 +1578,137 @@ int main() { return checked(1); }
              edge->includeSpelling == "\"../shared.gti\"" &&
              edge->includeOccurrence == 0,
          "the source graph should retain exact non-path include-route facts");
+}
+
+void testCallerLocationAssignments() {
+  const std::string source = "int target(int value) { return value + 1; }\n"
+                             "int main() { return target(3); }\n";
+  const auto frontend =
+      lang::Frontend().analyze("/tmp/gti-caller-sites/main.gti", source);
+  expect(frontend.canGenerateCode(),
+         "caller metadata source fixture reaches verified MIR");
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+    return;
+  }
+  const auto mainId = functionInstance(frontend, "main");
+  expect(mainId.has_value(), "caller metadata fixture contains main");
+  if (!mainId) {
+    return;
+  }
+  auto hir = frontend.hir;
+  auto *main = const_cast<lang::HirFunctionInstance *>(
+      hir.findFunctionInstance(*mainId));
+  auto call = std::find_if(main->body.values.begin(), main->body.values.end(),
+                           [](const lang::HirValue &value) {
+                             return value.kind == lang::HirValueKind::Call &&
+                                    value.functionTarget;
+                           });
+  expect(call != main->body.values.end(),
+         "caller metadata fixture contains a direct call");
+  if (call == main->body.values.end()) {
+    return;
+  }
+  const std::size_t start = source.find("target(3)");
+  const lang::CallerLocationOrigin origin{.sourceUnit = main->sourceUnit,
+                                          .start = start,
+                                          .end = start + 9,
+                                          .line = 2};
+  // Exercise the metadata consumer independently of the frontend's attribute
+  // transport. This call remains propagation-only, with no local detector.
+  call->callerLocation = origin;
+  const auto originalFailure = call->definedFailure;
+  const auto built = rebuildFailureMetadata(frontend, hir);
+  expect(built.valid() && lang::verifyFailureMetadata(built.metadata).valid(),
+         "caller attribution should build a verified reporting site");
+  if (!built.valid()) {
+    return;
+  }
+  const auto site = built.metadata.callerSiteFor(origin);
+  expect(site && built.metadata.callerAssignments().size() == 1 &&
+             built.metadata.assignments() ==
+                 frontend.failureMetadata.assignments() &&
+             call->definedFailure == originalFailure &&
+             originalFailure.localOrigins.empty(),
+         "caller attribution must not manufacture detector assignments or "
+         "local failures");
+  const lang::DefinedFailureOrigin forgedDetector{
+      .outcomes = {{lang::DefinedFailureCode::Panic,
+                    lang::DefinedFailureDetail::ExplicitPanic}},
+      .sourceUnit = origin.sourceUnit,
+      .start = origin.start,
+      .end = origin.end,
+      .line = origin.line};
+  expect(!built.metadata.siteFor(forgedDetector),
+         "report admission alone must not resolve as a detector origin");
+  const auto *descriptor = site ? built.metadata.findSite(*site) : nullptr;
+  expect(descriptor && descriptor->outcomes == forgedDetector.outcomes &&
+             descriptor->logicalSource == "main.gti" && descriptor->line == 2,
+         "caller site reports the exact caller anchor with bounded panic "
+         "admission");
+  auto wrongLine = origin;
+  ++wrongLine.line;
+  expect(!built.metadata.callerSiteFor(wrongLine),
+         "caller site lookup must reject inconsistent source lines");
+  call->callerLocation = wrongLine;
+  expect(!rebuildFailureMetadata(frontend, hir).valid(),
+         "caller source lines must match their exact input bytes");
+  call->callerLocation = origin;
+  for (int mutation = 0; mutation < 5; ++mutation) {
+    auto malformed = built.metadata;
+    auto &assignments =
+        const_cast<std::vector<lang::CallerLocationAssignment> &>(
+            malformed.callerAssignments());
+    switch (mutation) {
+    case 0:
+      assignments.clear();
+      break;
+    case 1:
+      assignments.push_back(assignments.front());
+      break;
+    case 2:
+      assignments.front().site = 0;
+      break;
+    case 3:
+      ++assignments.front().origin.line;
+      break;
+    case 4:
+      ++assignments.front().origin.start;
+      break;
+    }
+    expect(
+        !lang::verifyFailureMetadata(malformed).valid(),
+        "independent metadata verification rejects forged caller assignment " +
+            std::to_string(mutation));
+  }
+
+  // Shared physical spans can admit both real detector and caller reporting
+  // roles. Their union must never expand the local detector's own vocabulary.
+  const auto &local = frontend.failureMetadata.assignments().front();
+  const lang::CallerLocationOrigin shared{.sourceUnit = local.sourceUnit,
+                                          .start = local.start,
+                                          .end = local.end,
+                                          .line = local.line};
+  call->callerLocation = shared;
+  const auto combined = rebuildFailureMetadata(frontend, hir);
+  expect(combined.valid() &&
+             combined.metadata.sites().size() ==
+                 frontend.failureMetadata.sites().size() &&
+             combined.metadata.assignments().front().outcomes ==
+                 local.outcomes &&
+             combined.metadata.sites().front().outcomes.size() ==
+                 local.outcomes.size() + 1,
+         "a shared reporting span unions admissions without changing detector "
+         "authority");
+  if (combined.valid()) {
+    auto missingCaller = combined.metadata;
+    const_cast<std::vector<lang::CallerLocationAssignment> &>(
+        missingCaller.callerAssignments())
+        .clear();
+    expect(!lang::verifyFailureMetadata(missingCaller).valid(),
+           "a still-referenced detector site cannot retain unaccounted panic "
+           "admission");
+  }
 }
 
 void testMetadataAndSiteVerifierMutations() {
@@ -3355,6 +3486,7 @@ int main() {
   testHostedProgramEntryMetadata();
   testExternalSourceRouteIdentity();
   testMetadataAndSiteVerifierMutations();
+  testCallerLocationAssignments();
   testCheckedIntegerOperationVerifierContracts();
   testUniqueOwnerBorrowFailureEdges();
   testScalarUniqueAllocationContracts();

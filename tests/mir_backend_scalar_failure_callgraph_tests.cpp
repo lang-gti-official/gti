@@ -305,7 +305,7 @@ void expectHiddenFailureAbi(std::string_view definition,
           signature.find(sourceName) != std::string_view::npos &&
           signature.find("std::int32_t *__gti_mir_out_result") !=
               std::string_view::npos &&
-          signature.find("::gti_failure_record_v1 *__gti_mir_failure_record") !=
+          signature.find("::gti_failure_record_v2 *__gti_mir_failure_record") !=
               std::string_view::npos,
       "each selected body should expose the exact bool/out-result/record "
       "hidden ABI");
@@ -316,7 +316,7 @@ void expectHiddenFailureAbi(std::string_view definition,
                  expectedReturns &&
              countSubstring(definition, "return true;") == expectedReturns &&
              definition.find("return false;") != std::string_view::npos &&
-             definition.find("gti_rt_failure_terminate_v1") ==
+             definition.find("gti_rt_failure_terminate_v2") ==
                  std::string_view::npos,
          "a hidden body should return success/failure without containing the "
          "hosted process boundary");
@@ -376,7 +376,7 @@ void expectSelected(std::string_view generated,
                     const lang::MirFunctionInstance &entry) {
   expect(countSubstring(generated, marker) == 3,
          "the atomic hosted component should select leaf, caller, and entry");
-  expect(generated.find("::gti_failure_record_v1 *") !=
+  expect(generated.find("::gti_failure_record_v2 *") !=
                  std::string_view::npos &&
              generated.find("GTI_FAILURE_CODE_INTEGER_OVERFLOW_V1") !=
                  std::string_view::npos &&
@@ -384,7 +384,7 @@ void expectSelected(std::string_view generated,
                  std::string_view::npos,
          "the hidden ABI should carry an exact fixed record and detector");
   expect(
-      generated.find("gti_rt_failure_terminate_v1") != std::string_view::npos &&
+      generated.find("gti_rt_failure_terminate_v2") != std::string_view::npos &&
           generated.find("GTI_FAILURE_EXIT_STATUS") != std::string_view::npos &&
           generated.find("catch (...)") != std::string_view::npos,
       "the hosted entry should terminate through the runtime and contain "
@@ -435,9 +435,9 @@ void expectSelected(std::string_view generated,
       "  }";
   expect(
       !nativeMain.empty() &&
-          countSubstring(generated, "::gti_rt_failure_terminate_v1(") == 1 &&
+          countSubstring(generated, "::gti_rt_failure_terminate_v2(") == 1 &&
           nativeMain.find(firewall) != std::string_view::npos &&
-          nativeMain.find("::gti_failure_record_v1 "
+          nativeMain.find("::gti_failure_record_v2 "
                           "__gti_failure_record{};") !=
               std::string_view::npos &&
           nativeMain.find("::__gti_program::__gti_entry__gti_mir_failure(") !=
@@ -596,7 +596,7 @@ void testFailureGraph(const std::filesystem::path &fixture) {
                               lang::DefinedFailureDetail::Subtraction, 26, 561,
                               562) == 1,
          "the hosted component should own two exact immutable failure sites");
-  expect(lang::MirPrinter().print(frontend.mir).starts_with("mir-v84 "),
+  expect(lang::MirPrinter().print(frontend.mir).starts_with("mir-v85 "),
          "the failure-capable family should consume the verified v24 schema");
 
   const lang::OptimizationPipeline pipeline;

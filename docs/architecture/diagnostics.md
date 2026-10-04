@@ -132,6 +132,18 @@ diagnostics or letting a backend message choose either identity.
 
 ## Production Rules
 
+`GTI-S2097` reports an invalid built-in expected mapper contract, naming the
+selected combinator and its exact required signature. It points at the mapper
+expression and retains candidate declarations when function-item selection
+fails. `transform`, `and_then`, and `transform_error` share the same checker;
+an `and_then` result with a different error type explains the explicit
+`transform_error` alternative. `GTI-S2018` reports implicit consumption of a
+named expected by those members or `expect`, and suggests explicit movement
+without an automatic ownership-changing fix. Invalid `expect` messages use
+`GTI-S2016`; unsupported checked-borrow extraction uses `GTI-S2045`. The LSP
+publishes these frontend records and receives member completion signatures
+from the same semantic expected surface, including consuming `&&` qualifiers.
+
 `GTI-I0012` owns invalid source-module headers and imports: placement, syntax,
 missing registration, name mismatch, duplicate interfaces, package escapes,
 inconsistent shared legacy-unit configuration, and include/import bypasses.
@@ -152,6 +164,20 @@ selected OS. Unselected platform fragments produce no diagnostic. No fix-it
 changes target selection or rewrites a source language. Approved build-script
 outputs use their existing `GTI-B2005` invalid-output family for this same
 target boundary.
+
+`GTI-S2099` owns invalid function contracts: duplicate or unknown attributes,
+unsupported native, polymorphic, operator or bodyless declarations, caller tracking on
+the hosted entry point, reachable normal completion of a terminal function,
+and loss of caller-location transport at a native callback boundary.
+The normal-return diagnostic points at the `return` keyword; fallthrough
+points at the function name. A body with an earlier semantic error does not
+receive a speculative terminal-flow cascade. The LSP publishes the same
+diagnostic and no automatic edit guesses whether to remove the contract or
+change the implementation.
+Incomplete bracketed declaration attributes retain parser-owned `GTI-P0001`
+at the first unexpected token. The missing-`]]` message is declaration-neutral,
+and recovery retains following declarations with the existing exact delimiter
+insertion fix, without changing the declared contract.
 
 `GTI-S2094` owns an executable request without a resolved global `main`
 definition in its entry source unit. It is opt-in executable policy, checked
@@ -656,6 +682,26 @@ Exact read-member requirements also use `GTI-S2029`. Named concepts retain
 their declared name; a direct requirement names the missing member and relates
 its written receiver/result signature rather than inventing a concept name.
 The hint requires a public, safe, read-only member with the exact owned result.
+Semantic viability preserves the outer-to-inner concrete concept applications
+and the read-member failure. The read-member selection routine supplies the
+reason (missing member, invalid shape, ambiguity, access, unsafe access,
+inexact/borrowed result, unproven contract, or recursive/dependent requirement)
+to the reporter; the reporter does not repeat lookup or evaluate requirements.
+When an otherwise matching member fails its own `requires` clause, the reason
+identifies that unsatisfied member contract; it does not yet recursively expose
+the underlying failure within that member's clause.
+Call diagnostics map that leaf through concept parameter maps and the generic
+parameter identity to a unique written argument when possible. Equal concrete
+types in unrelated parameters do not establish provenance. Closed constraints,
+shared inference origins, and multi-cause disjunctions retain the call primary.
+Both concrete public applications and leaf locations are structured related
+information, including across source units. No public library spelling selects
+diagnostic behavior.
+When several overloads fail their requirements, the existing no-exact-overload
+diagnostic retains each candidate's constraint explanation and leaf notes as
+related information; it does not replace these causes with a conversion-only
+hint. Failures on rejected candidates remain silent when a viable overload is
+selected.
 Malformed requirement syntax, including a consuming `T&&` receiver, remains
 `GTI-P0001`; no fix-it changes ownership or adds a clone implementation.
 
@@ -780,7 +826,9 @@ a type argument alone is not evidence of contained ownership. Unsupported
 polymorphic/native by-value boundaries point at their type declaration and
 suggest a checked reference. Direct enum captures, fixed arrays, restricted
 field owners, and direct result-carrier alternatives name their exact storage
-boundary before MIR. No fix-it is offered
+boundary before MIR. Expected combinators apply that same containment check to
+their inferred result, anchoring a rejected mapped alternative at the mapper
+expression. No fix-it is offered
 when choosing a payload type, binding, transport, or missing-arm behavior
 requires program intent.
 

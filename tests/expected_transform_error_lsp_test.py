@@ -100,6 +100,10 @@ int main() {
             transform = next((item for item in items if item["label"] == "transform_error"), None)
             assert transform is not None, items
             assert "&&" in transform.get("detail", ""), transform
+            for name in ("transform", "and_then", "expect"):
+                candidate = next((item for item in items if item["label"] == name), None)
+                assert candidate is not None, items
+                assert "&&" in candidate.get("detail", ""), candidate
 
             change(5, source)
             assert not diagnostics(5)
@@ -122,6 +126,54 @@ int main() {
             assert "exact by-value" in error["message"], error
             change(9, lambda_source)
             assert not diagnostics(9)
+
+            # The new members use the same snapshot-owned semantic records.
+            ergonomic = """expected<int, int> read() { return 7; }
+int main() {
+  /*😀*/ return read().transform([](int value) -> int { return value + 1; })
+      .and_then([](int value) -> expected<int, int> { return value; })
+      .expect("required value");
+}
+"""
+            change(10, ergonomic)
+            assert not diagnostics(10)
+            wrong_error = ergonomic.replace("-> expected<int, int>", "-> expected<int, bool>")
+            change(11, wrong_error)
+            errors = diagnostics(11)
+            error = next((d for d in errors if d.get("code") == "GTI-S2097"), None)
+            assert error is not None, errors
+            start = wrong_error.rindex("[](")
+            assert error["range"] == {"start": lsp_position(wrong_error, start),
+                                      "end": lsp_position(wrong_error, start + 1)}, error
+            assert "source error type" in error["message"], error
+            wrong_message = ergonomic.replace('"required value"', "42")
+            change(12, wrong_message)
+            errors = diagnostics(12)
+            error = next((d for d in errors if d.get("code") == "GTI-S2016"), None)
+            assert error is not None, errors
+            start = wrong_message.rindex("42")
+            assert error["range"] == {"start": lsp_position(wrong_message, start),
+                                      "end": lsp_position(wrong_message, start + 2)}, error
+            assert "std::string_view" in error["message"], error
+            change(13, ergonomic)
+            assert not diagnostics(13)
+            owning_enum = """struct Resource { ~Resource() {} };
+enum class Packet { item(Resource value), idle };
+expected<int, int> read() { return 7; }
+Packet map(int input) { return Packet::item(Resource()); }
+int main() { /*😀*/ [[discard]] read().transform(map); return 0; }
+"""
+            change(14, owning_enum)
+            errors = diagnostics(14)
+            error = next((d for d in errors if d.get("code") == "GTI-S2067"), None)
+            assert error is not None, errors
+            start = owning_enum.rindex("map)")
+            assert error["range"] == {"start": lsp_position(owning_enum, start),
+                                      "end": lsp_position(owning_enum, start + 3)}, error
+            assert "expected mapping result" in error["message"], error
+            assert "ordinary class or struct" in error["message"], error
+            change(15, ergonomic)
+            assert not diagnostics(15)
         finally:
             session.close()
 

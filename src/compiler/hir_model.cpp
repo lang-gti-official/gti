@@ -162,6 +162,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     const auto *declaration = semantics.findFunction(instance.declaration);
     if (declaration == nullptr ||
         instance.requiresUnsafe != declaration->requiresUnsafe ||
+        instance.neverReturns != declaration->neverReturns ||
+        instance.tracksCaller != declaration->tracksCaller ||
         instance.cThreadOperation != declaration->cThreadOperation) {
       result.errors.emplace_back(
           "HIR function unsafe contract differs from its semantic declaration");
@@ -249,11 +251,73 @@ verifyHirProgramPlans(const SemanticModel &semantics,
 
   const auto verifyCallableValues = [&](const HirBody &body) {
     for (const HirValue &value : body.values) {
+      const HirFunctionInstance *contractTarget =
+          value.kind == HirValueKind::Call && value.functionTarget
+              ? program.findFunctionInstance(*value.functionTarget)
+              : nullptr;
+      const bool panic = value.kind == HirValueKind::Call &&
+                         value.intrinsic == IntrinsicKind::Panic;
+      const bool expectedTerminal =
+          panic || (contractTarget != nullptr && contractTarget->neverReturns);
+      const bool expectedTracking =
+          panic || (contractTarget != nullptr && contractTarget->tracksCaller);
+      const CallerLocationOrigin *origin =
+          value.source == nullptr ? nullptr
+                                  : semantics.findCallerLocation(*value.source);
+      if (value.neverReturns != expectedTerminal ||
+          value.tracksCaller != expectedTracking ||
+          value.callerLocation.has_value() != expectedTracking ||
+          (value.callerLocation &&
+           (origin == nullptr || *value.callerLocation != *origin))) {
+        result.errors.emplace_back(
+            "HIR call terminal/caller contract differs from its selected "
+            "declaration or semantic source origin");
+      }
+      std::unordered_set<HirValueId> sequenced;
+      for (const HirValueId inputId : value.sequencedInputs) {
+        const HirValue *input = body.findValue(inputId);
+        if (input == nullptr || input->info.type != SemanticType::Void ||
+            input->neverReturns ||
+            input->fullExpression != value.fullExpression ||
+            value.programConstantSubstitution ||
+            !sequenced.insert(inputId).second) {
+          result.errors.emplace_back(
+              "sequenced HIR inputs must be distinct normally completing void "
+              "evaluations in the same full expression");
+        }
+        std::unordered_set<HirValueId> visited;
+        std::vector<HirValueId> pending{inputId};
+        while (!pending.empty()) {
+          const HirValueId id = pending.back();
+          pending.pop_back();
+          if (id == value.id) {
+            result.errors.emplace_back("sequenced HIR inputs contain a cycle");
+            break;
+          }
+          if (!visited.insert(id).second) {
+            continue;
+          }
+          const HirValue *dependency = body.findValue(id);
+          if (dependency == nullptr) {
+            result.errors.emplace_back(
+                "sequenced HIR input references a missing value");
+            continue;
+          }
+          pending.insert(pending.end(), dependency->operands.begin(),
+                         dependency->operands.end());
+          pending.insert(pending.end(), dependency->conditionalInputs.begin(),
+                         dependency->conditionalInputs.end());
+          pending.insert(pending.end(), dependency->sequencedInputs.begin(),
+                         dependency->sequencedInputs.end());
+          if (dependency->receiver) {
+            pending.push_back(*dependency->receiver);
+          }
+        }
+      }
       const auto *sourceCall = exprAs<Call>(value.source);
       const auto *transform =
-          sourceCall == nullptr
-              ? nullptr
-              : semantics.findExpectedTransformError(*sourceCall);
+          sourceCall == nullptr ? nullptr
+                                : semantics.findExpectedCombinator(*sourceCall);
       if (!value.conditionalInputs.empty() ||
           (value.kind == HirValueKind::Conditional && transform != nullptr)) {
         const auto *member = sourceCall == nullptr
@@ -283,6 +347,84 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                 ungroup(sourceCall->arguments().front().get())) {
           result.errors.emplace_back("conditional eager inputs differ from the "
                                      "selected source call order");
+        }
+        if (transform != nullptr && value.operands.size() == 3) {
+          const HirValue *success = body.findValue(value.operands[1]);
+          const HirValue *failure = body.findValue(value.operands[2]);
+          // The owning semantic record can be from a generic primary. Check
+          // the concrete HIR relationship instead of comparing its resolved
+          // result to an unsubstituted base-model type parameter.
+          const bool ownedSource =
+              receiver != nullptr &&
+              receiver->info.type.kind == SemanticType::Expected &&
+              receiver->info.type.arguments.size() == 2;
+          const bool expectedResult =
+              value.info.type.kind == SemanticType::Expected &&
+              value.info.type.arguments.size() == 2;
+          const bool validResult =
+              ownedSource &&
+              (transform->kind == ExpectedCombinatorKind::Expect
+                   ? value.info.type == receiver->info.type.arguments.front()
+                   : expectedResult &&
+                         value.info.type.arguments
+                                 [transform->kind ==
+                                          ExpectedCombinatorKind::TransformError
+                                      ? 0
+                                      : 1] ==
+                             receiver->info.type.arguments
+                                 [transform->kind ==
+                                          ExpectedCombinatorKind::TransformError
+                                      ? 0
+                                      : 1]);
+          if (!validResult || success == nullptr || failure == nullptr) {
+            result.errors.emplace_back(
+                "expected conditional lost its selected result or arms");
+          } else if (transform->kind == ExpectedCombinatorKind::Expect) {
+            if (failure->intrinsic != IntrinsicKind::Panic ||
+                failure->info.type != SemanticType::Void ||
+                !failure->neverReturns || !failure->tracksCaller ||
+                failure->operands.size() != 1 || mapper == nullptr ||
+                failure->operands.front() != mapper->id ||
+                failure->parameterTypes !=
+                    std::vector<SemanticType>{SemanticType::StringView} ||
+                failure->source != sourceCall ||
+                failure->definedFailure.localOrigins.empty()) {
+              result.errors.emplace_back("expected expect failure arm lost its "
+                                         "selected terminal panic");
+            }
+          } else if (transform->kind == ExpectedCombinatorKind::Transform &&
+                     expectedResult &&
+                     value.info.type.arguments.front() == SemanticType::Void) {
+            const HirValue *mapped =
+                success->neverReturns ? success
+                : success->sequencedInputs.size() == 1
+                    ? body.findValue(success->sequencedInputs.front())
+                    : nullptr;
+            const HirFunctionInstance *function =
+                mapped != nullptr && mapped->functionTarget
+                    ? program.findFunctionInstance(*mapped->functionTarget)
+                    : nullptr;
+            const HirLambda *lambda =
+                mapped != nullptr && mapped->lambdaTarget
+                    ? program.findLambda(*mapped->lambdaTarget)
+                    : nullptr;
+            if (success->kind != HirValueKind::Call ||
+                (!success->neverReturns &&
+                 success->info.type != value.info.type) ||
+                mapped == nullptr || mapped->kind != HirValueKind::Call ||
+                mapped->info.type != SemanticType::Void ||
+                mapped->source != sourceCall ||
+                (transform->mapper != 0 &&
+                 (function == nullptr ||
+                  function->declaration != transform->mapper)) ||
+                (transform->lambda != 0 &&
+                 (lambda == nullptr ||
+                  lambda->declaration != transform->lambda))) {
+              result.errors.emplace_back(
+                  "void expected transformation must complete its selected "
+                  "mapper before publishing success");
+            }
+          }
         }
       }
       if (value.kind != HirValueKind::FunctionItem) {
@@ -815,6 +957,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                          value->operands.end());
     pendingValues.insert(pendingValues.end(), value->conditionalInputs.begin(),
                          value->conditionalInputs.end());
+    pendingValues.insert(pendingValues.end(), value->sequencedInputs.begin(),
+                         value->sequencedInputs.end());
   }
   if (program.module().values.size() != reachableValues.size() ||
       std::any_of(program.module().values.begin(),
@@ -831,6 +975,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       valueParents[operand].push_back(&parent);
     }
     for (const HirValueId input : parent.conditionalInputs) {
+      valueParents[input].push_back(&parent);
+    }
+    for (const HirValueId input : parent.sequencedInputs) {
       valueParents[input].push_back(&parent);
     }
   }
@@ -931,8 +1078,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     return value.source == nullptr &&
            value.unsafeOperation == UnsafeOperationKind::None &&
            value.operands.empty() && value.conditionalInputs.empty() &&
-           value.parameterTypes.empty() && !value.operation &&
-           !value.constant && !value.programConstantSubstitution &&
+           value.sequencedInputs.empty() && value.parameterTypes.empty() &&
+           !value.operation && !value.constant &&
+           !value.programConstantSubstitution &&
            value.intrinsic == IntrinsicKind::None &&
            value.synchronization == SynchronizationOperation{} &&
            value.definedFailure.empty() &&
@@ -968,7 +1116,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         value.info.access != AccessMode::ReadOnly ||
         value.unsafeOperation != UnsafeOperationKind::None ||
         !value.parameterTypes.empty() || !value.conditionalInputs.empty() ||
-        value.operation || value.constant ||
+        !value.sequencedInputs.empty() || value.operation || value.constant ||
         value.programConstantSubstitution ||
         value.intrinsic != IntrinsicKind::None ||
         value.synchronization != SynchronizationOperation{} ||

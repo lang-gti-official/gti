@@ -334,6 +334,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testPassiveRecordComposition",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testPassiveFixedArrayFailureClosure",
       "suite": "lifecycle"
     },

@@ -244,6 +244,8 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::RequireKey:
   case IntrinsicKind::RequireContainerArgument:
     return barrier("defined failure without a discharge proof family");
+  case IntrinsicKind::Panic:
+    return barrier("explicit terminal failure with bounded message capture");
   case IntrinsicKind::Count:
     break;
   }
@@ -374,6 +376,8 @@ MirOptimizationCoverage optimizationCoverage(DefinedFailureCode code) {
   case DefinedFailureCode::InvalidContainerArgument:
     return barrier(
         "unsupported failure discharge family; retain exact outcome");
+  case DefinedFailureCode::Panic:
+    return barrier("explicit terminal failure; preserve message and cleanup");
   case DefinedFailureCode::Count:
     break;
   }
@@ -422,6 +426,8 @@ MirOptimizationCoverage optimizationCoverage(DefinedFailureDetail detail) {
   case DefinedFailureDetail::SharedOwner:
     return supported(
         "exact failure identity; code/operation determine proof eligibility");
+  case DefinedFailureDetail::ExplicitPanic:
+    return barrier("explicit terminal failure; preserve message and cleanup");
   case DefinedFailureDetail::Count:
     break;
   }

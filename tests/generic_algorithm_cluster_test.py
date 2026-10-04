@@ -293,7 +293,7 @@ def main() -> int:
                 "generic_algorithm_bad_sentinel.gti",
                 "GTI-S2029",
                 (
-                    "Generic arguments do not satisfy concept 'std::sentinel_for'.",
+                    "satisfy concept 'std::sentinel_for",
                     "std::sentinel_for<Sentinel, Iterator>",
                 ),
             ),
@@ -301,7 +301,7 @@ def main() -> int:
                 "generic_algorithm_bad_dereference.gti",
                 "GTI-S2029",
                 (
-                    "Generic arguments do not satisfy concept 'std::dereferences_to'.",
+                    "satisfy concept 'std::dereferences_to",
                     "std::dereferences_to<Iterator, T>",
                 ),
             ),
@@ -309,7 +309,7 @@ def main() -> int:
                 "generic_algorithm_bad_equality.gti",
                 "GTI-S2029",
                 (
-                    "does not satisfy generic constraint 'std::equality_comparable'",
+                    "does not satisfy concept 'std::equality_comparable<",
                     "Constraint on generic parameter 'T' is declared here.",
                 ),
             ),
@@ -347,8 +347,7 @@ def main() -> int:
                 "generic_algorithm_for_each_bad_argument.gti",
                 "GTI-S2029",
                 (
-                    "Generic arguments do not satisfy concept "
-                    "'std::indirect_operation'.",
+                    "satisfy concept 'std::indirect_operation",
                     "std::indirect_operation<Function, Iterator, void>",
                     "iterator's read-only dereference result",
                 ),
@@ -357,8 +356,7 @@ def main() -> int:
                 "generic_algorithm_for_each_bad_return.gti",
                 "GTI-S2029",
                 (
-                    "Generic arguments do not satisfy concept "
-                    "'std::indirect_operation'.",
+                    "satisfy concept 'std::indirect_operation",
                     "std::indirect_operation<Function, Iterator, void>",
                     "returning the required owned result type",
                 ),

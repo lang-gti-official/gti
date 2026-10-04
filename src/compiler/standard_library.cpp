@@ -102,6 +102,7 @@ standardLibraryIncludeForType(std::string_view qualifiedName) {
       Entry{"std::parse_errc", "std/charconv"},
       Entry{"std::pool", "std/memory"},
       Entry{"std::pool_errc", "std/memory"},
+      Entry{"std::print_errc", "std/format"},
       Entry{"std::process::command", "std/process"},
       Entry{"std::process::errc", "std/process"},
       Entry{"std::process::exit_status", "std/process"},

@@ -2328,6 +2328,14 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
       }
 
       const MirFunctionInstance *target = nullptr;
+      if (instruction.callerLocation &&
+          program.failureMetadata().callerSiteFor(
+              *instruction.callerLocation) != instruction.callerLocationSite) {
+        return verificationFailure(
+            body, owner,
+            "call's caller location differs from canonical source metadata",
+            block.id, instruction.id);
+      }
       if (instruction.unsafeOperation ==
               UnsafeOperationKind::DeclaredUnsafeCall &&
           (instruction.kind != MirInstructionKind::Call ||
@@ -2350,6 +2358,14 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
              UnsafeOperationKind::DeclaredUnsafeCall)) {
           return verificationFailure(
               body, owner, "call does not retain its target's unsafe contract",
+              block.id, instruction.id);
+        }
+        if (instruction.kind == MirInstructionKind::Call &&
+            (target->neverReturns != instruction.neverReturns ||
+             target->tracksCaller != instruction.tracksCaller)) {
+          return verificationFailure(
+              body, owner,
+              "call does not retain its target's terminal/caller contract",
               block.id, instruction.id);
         }
         if (!target->owner && instruction.receiver &&
@@ -4996,7 +5012,8 @@ namespace {
 [[nodiscard]] bool hasCanonicalBodylessDefinition(
     const MirBody &body, MirBodyKind kind, const SemanticType &returnType,
     const std::vector<SemanticType> &parameterTypes,
-    const std::vector<HirBindingId> &parameterBindings) {
+    const std::vector<HirBindingId> &parameterBindings,
+    bool neverReturns = false) {
   if (body.kind != kind || body.returnType != returnType || body.entry != 1 ||
       body.blocks.size() != 1 ||
       body.places.size() != parameterBindings.size() || !body.loans.empty() ||
@@ -5008,9 +5025,10 @@ namespace {
 
   MirBlock expectedBlock;
   expectedBlock.id = 1;
-  expectedBlock.terminator.kind = returnType == SemanticType::Void
-                                      ? MirTerminatorKind::Return
-                                      : MirTerminatorKind::Unreachable;
+  expectedBlock.terminator.kind =
+      !neverReturns && returnType == SemanticType::Void
+          ? MirTerminatorKind::Return
+          : MirTerminatorKind::Unreachable;
   expectedBlock.reachable = true;
   if (body.blocks.front() != expectedBlock) {
     return false;
@@ -9651,6 +9669,25 @@ verifyMirProgramContracts(const MirProgram &program) {
     const MirFunctionInstance &instance = program.functionInstances()[index];
     verifyCallableBodySignature(instance.body, MirBodyKind::Function,
                                 instance.returnType, instance.id);
+    if (instance.body.hasCallerLocation != instance.tracksCaller) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Function,
+           .owner = instance.id,
+           .message = "function body caller parameter does not match its "
+                      "declaration contract"});
+    }
+    if (instance.neverReturns &&
+        instance.definitionKind == MirDefinitionKind::Source &&
+        std::any_of(instance.body.blocks.begin(), instance.body.blocks.end(),
+                    [](const MirBlock &block) {
+                      return block.reachable &&
+                             block.terminator.kind == MirTerminatorKind::Return;
+                    })) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Function,
+           .owner = instance.id,
+           .message = "terminal source function has a reachable return"});
+    }
     if (instance.requiresUnsafe &&
         (instance.owner || instance.entryKind != ProgramEntryKind::None ||
          instance.linkage != LanguageLinkage::Gti ||
@@ -9682,7 +9719,8 @@ verifyMirProgramContracts(const MirProgram &program) {
     if (instance.definitionKind != MirDefinitionKind::Source &&
         !hasCanonicalBodylessDefinition(
             instance.body, MirBodyKind::Function, instance.returnType,
-            instance.parameterTypes, instance.parameterBindings)) {
+            instance.parameterTypes, instance.parameterBindings,
+            instance.neverReturns)) {
       result.errors.push_back(
           {.bodyKind = MirBodyKind::Function,
            .owner = instance.id,

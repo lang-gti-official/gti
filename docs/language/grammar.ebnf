@@ -88,6 +88,7 @@ declaration            = conditional-declaration
                        | extern-c-declaration
                        | native-function-attributes function-declaration
                        | unsafe-function-attribute function-declaration
+                       | function-contract-attributes function-declaration
                        | [ runtime-binding ] function-declaration
                        | static-variable-declaration
                        | variable-declaration
@@ -100,6 +101,17 @@ unsafe-function-attribute = "[[" "unsafe" "]]" ;
    bindings, extern-C declarations or hosted main. Every call requires a
    lexical unsafe block. The attribute grants no unsafe permission to the body
    and cannot be erased by callback or safe function-item conversion. *)
+
+function-contract-attributes = function-contract-attribute
+                              { function-contract-attribute } ;
+function-contract-attribute = "[[" function-contract-name
+                              { "," function-contract-name } "]]" ;
+function-contract-name = "noreturn" | "track_caller" ;
+(* Defined, non-polymorphic GTI functions only, except trusted compiler
+   intrinsic declarations; operator annotations are rejected semantically.
+   noreturn forbids normal returns and reachable
+   fallthrough. track_caller propagates the external caller location through
+   direct calls. Neither changes the declared result type. *)
 
 conditional-declaration
                        = conditional-start { declaration }

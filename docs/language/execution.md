@@ -557,6 +557,41 @@ across movement.
 
 ## 4.5 Control Flow
 
+### Function contracts
+
+`[[noreturn]]` declares that a function cannot complete normally. Its body
+must neither reach its end nor execute an ordinary `return`; a return whose
+expression itself never returns is permitted. This is a checked semantic
+contract, not an optimizer assumption about an unchecked user promise. A
+resolved terminal call ends its evaluated path, including when it occurs in
+an initializer, a required call argument or a control-flow condition. A call
+in an unselected short-circuit or conditional operand does not terminate the
+whole expression. The attribute does not introduce a bottom type or permit
+`void` in a value context.
+
+`[[track_caller]]` requests caller-location transport for exact GTI calls.
+The attributes can share a list, as in `[[noreturn, track_caller]]`, or occur
+in consecutive lists. They apply to defined non-polymorphic GTI functions
+and trusted compiler intrinsic declarations, not native declarations,
+virtual dispatch, or operator declarations. Operator-call metadata and native
+operator adapters do not yet preserve these annotation contracts end-to-end;
+an ordinary operator body may still call `std::panic` or another terminal
+function. The hosted entry point has no GTI caller and cannot use
+`track_caller`. A caller-tracked function cannot become a native callback in
+this slice: the foreign signature cannot carry the hidden caller parameter.
+Exact function items retain their identity, including inside source-defined
+owning callable wrappers. An ordinary wrapper or lambda establishes a new
+call site; it does not magically preserve its external caller. Explicit
+tracked wrappers forward the incoming location instead.
+
+Terminal-flow checking retains the existing switch boundary: a `default`
+arm or a semantically exhaustive closed payload-enum switch covers every
+path. Listing all named values of an ordinary integral enum does not prove
+that its underlying value always matches one of them. Terminal wrappers over
+such a switch need a `default` arm or a terminal fallback after the switch.
+
+### Statements
+
 `if`, loops, `switch`, `break`, `continue`, and `return` follow their grammar
 and static control-flow requirements. `continue` in a structural range loop
 executes the selected iterator increment before the next condition test.
@@ -861,7 +896,8 @@ signature alone.
 ## 4.10 Defined Runtime Failure
 
 A defined runtime failure is a non-resumable GTI control effect raised during
-a well-formed GTI invocation when a dynamic checked condition fails. The
+a well-formed GTI invocation when a dynamic checked condition fails or the
+program explicitly calls `std::panic`. The
 invocation begins before GTI module/static initialization and includes checked
 hosted setup before source `main`, so an initializer or malformed but safely
 detected entry state is covered even when the entry body has not run.
@@ -875,9 +911,21 @@ An ordinary failure carries one immutable fixed-size, versioned, copyable,
 allocation-free record containing:
 
 - one stable `GTI-Rnnnn` code and category;
-- one bounded category-specific detail; and
+- one bounded category-specific detail;
 - a source-site token consisting of a deterministic artifact identity and an
-  artifact-local site index.
+  artifact-local site index; and
+- for explicit panic, a bounded owned message and a truncation flag.
+
+The version-two record stores up to 512 message bytes. Capture completes before
+failure cleanup starts, performs no allocation, and never retains the input
+view or another pointer into storage that cleanup could destroy. A valid UTF-8
+scalar is not split at the capacity boundary; malformed input is preserved as
+bytes for escaped reporting. Capture zeroes unused bytes and sets the truncation
+flag exactly when it did not retain the complete input. Non-panic records have
+zero message length, flags, and bytes. Record copying, propagation, and managed-
+task handoff preserve the entire captured payload. The version-one record
+layout remains frozen; a new record version does not change the immutable
+version-one artifact/site descriptor protocol.
 
 The exceptional `GTI-R0014` case uses a separate fixed-size emergency envelope
 containing exactly the original ordinary record and the first ordinary record
@@ -887,7 +935,7 @@ is process-terminal and is never returned from an embedding boundary.
 An immutable artifact descriptor resolves the token to a logical source unit,
 zero-based half-open UTF-8 byte coordinates `[start, end)`, and a one-based
 source line. Artifact identity is the 256-bit SHA-256 digest of the canonical
-descriptor serialization below and is rendered in reports as 64 lowercase
+descriptor serialization below; its textual encoding is 64 lowercase
 hexadecimal digits. An implementation must reject, rather than silently merge,
 unequal loaded descriptors with the same identity. Equal descriptors may share
 an identity because their site lookup is interchangeable; unequal descriptors
@@ -929,7 +977,11 @@ failure descriptor, not of unrelated code bytes, and is derived as follows:
 2. The byte stream starts with ASCII `GTI-FAILURE-ARTIFACT-V1` followed by one
    zero byte.
 3. After concrete semantic/HIR discovery but before optimization, one
-   descriptor site is interned for each local checked-failure origin. Origins
+   descriptor site is interned for each local checked-failure origin and each
+   selected caller-location anchor. Caller assignments are a separate mapping
+   from detector assignments: they admit the reporting outcome
+   `panic/explicit_panic` without granting a call local failure authority.
+   Overlapping reporting anchors union their admitted outcomes. Origins
    at the same generic definition anchor coalesce and union their outcome pairs
    rather than creating an instance-specific site. Sites are sorted by unsigned
    UTF-8 bytes of the logical source name, then start, end, then their sorted
@@ -939,7 +991,8 @@ failure descriptor, not of unrelated code bytes, and is derived as follows:
    Its one-based position is the artifact-local site index; zero is reserved
    for no source site. The stored line is one plus the number of LF bytes
    (`0x0A`) before `start`. Calls and joins that merely propagate a record add
-   no site.
+   no detector site and never rewrite its token. A tracked call may separately
+   carry a caller-location site before any record is created.
    A code is serialized as its unsigned numeric `R` suffix and a detail as its
    length-prefixed ASCII identifier; outcome pairs sort by that number and then
    unsigned detail bytes.
@@ -959,6 +1012,12 @@ host operations; and the source `main` name for a synthetic hosted-entry check.
 The token's exact half-open byte span is recorded. A checked operation in a
 generic body identifies its definition site, and a trusted standard-library
 check identifies its lexical library operation rather than its caller.
+Explicit panic uses the location transported by the `[[track_caller]]`
+contract in Section 4.5: tracked wrappers forward the incoming token, while an
+untracked caller establishes the exact source call anchor. The panic detector
+selects that token when creating the original record. Subsequent propagation
+does not re-site it. This is caller attribution, not a captured call stack;
+ordinary failures in arguments or wrapper bodies keep their own lexical sites.
 
 The initial category vocabulary is:
 
@@ -980,12 +1039,15 @@ The initial category vocabulary is:
 | `GTI-R0014` | `failure_during_cleanup` | second failure during failure cleanup |
 | `GTI-R0015` | `key_not_found` | required associative-container key is absent |
 | `GTI-R0016` | `invalid_container_argument` | invalid argument to a checked container operation |
+| `GTI-R0017` | `panic` | explicit non-resumable termination requested by the program or a source-defined API |
 
 Codes and category meanings are stable identities. Existing codes are never
 renumbered or reused; unassigned codes are reserved. Ordinary records use
-`GTI-R0001` through `GTI-R0013`, `GTI-R0015`, and `GTI-R0016`; their details are stable snake-case
-identifiers from this bounded vocabulary and are printed exactly, rather than
-replaced by backend prose:
+`GTI-R0001` through `GTI-R0013` and `GTI-R0015` through `GTI-R0017`; their
+details are stable snake-case identifiers from this bounded vocabulary.
+Non-panic reports print the detail exactly, rather than replacing it with
+backend prose. Panic reports print the captured message while retaining
+`explicit_panic` in the structured record:
 
 | Category | Stable detail identifiers |
 | --- | --- |
@@ -998,11 +1060,12 @@ replaced by backend prose:
 | `empty_owner_access` | `dereference`, `member_access` |
 | `invalid_expected_access` | `value_on_error`, `error_on_value` |
 | `invalid_storage_state` | `duplicate_construction`, `uninitialized_access`, `relocation_capacity`, `invalid_relocation_source`, `occupied_relocation_destination` |
-| `allocation_failure` | `unique_owner`, `private_storage`, `element_construction`, `hosted_arguments` |
+| `allocation_failure` | `unique_owner`, `shared_owner`, `private_storage`, `element_construction`, `hosted_arguments` |
 | `infallible_host_operation_failed` | `stdout_write`, `automatic_join`, `mutex_lock` |
 | `hosted_runtime_contract_failure` | `negative_argument_count`, `recursive_thread_local_initialization` |
 | `key_not_found` | `key_lookup` |
 | `invalid_container_argument` | `container_argument` |
+| `panic` | `explicit_panic` |
 
 `GTI-R0014` is not stored in an ordinary record and therefore has no ordinary
 detail identifier. It is the effective category of the emergency envelope;
@@ -1029,7 +1092,9 @@ detail, site, and source anchor owned by that callee. The adapter must not
 re-site those records or emit `hosted_arguments` unless a future adapter-owned
 allocation operation is specified.
 
-Only a local checked-failure origin selects a code, detail, and site. A direct
+Only a local detector creates a code, detail, and site. The explicit panic
+detector may select its verified incoming caller token as described above; a
+reporting-site admission alone never grants detector authority. A direct
 or virtual GTI call, constructor call, managed-task join, or callback-forwarding
 edge may propagate an already formed ordinary record, but it preserves every
 field byte-for-byte and does not add a caller site or transitive category set.
@@ -1132,33 +1197,47 @@ or status.
 The hosted runtime emits exactly one UTF-8 report line:
 
 ```text
-GTI runtime failure [<code>] <category> in <artifact> at "<source>":<line>@<start>..<end>: <detail>\n
+<source>:<line>: runtime error[<code>]: <category> in <detail>\n
 ```
 
-`<artifact>` is the record's 64-digit lowercase hexadecimal artifact identity.
-`<line>`, `<start>`, and `<end>` are unsigned base-10 ASCII integers with no
-leading zeroes except the single digit `0`.
-The quoted logical source name preserves only printable Unicode scalar values,
+For explicit panic, the shape is instead:
+
+```text
+<source>:<line>: runtime error[GTI-R0017]: panic: "<message>"\n
+```
+
+A truncated message adds exactly ` [truncated]` after its closing quote and
+before the final LF. The artifact identity and exact byte span remain available
+in the structured record and descriptor; the compact human report does not
+print them. `<line>` is an unsigned base-10 ASCII integer with no leading zeroes
+except the single digit `0`.
+The logical source name and quoted message preserve only printable Unicode
+scalar values,
 using the Unicode 15.1 `General_Category` values `L*`, `M*`, `N*`, `P*`, `S*`,
 and `Zs`; ASCII space is included. Backslash, quote, CR, LF, and tab use the
-exact escapes `\\`, `\"`, `\r`, `\n`, and `\t`. Every other UTF-8 source byte,
+exact escapes `\\`, `\"`, `\r`, `\n`, and `\t`. Every other UTF-8 input byte,
 including a byte from invalid UTF-8 or a scalar outside the allowlist, is
 escaped separately as uppercase `\xHH`. This byte-wise fallback prevents NEL,
 line/paragraph separators, bidi controls, and future Unicode reclassification
 from creating or disguising another physical line. Category/detail identifiers
 come from bounded ASCII runtime tables. An unavailable site uses an all-zero
-artifact identity and `"<runtime>":0@0..0`. The runtime formats without
-allocation. The final `\n` is exactly one LF byte (`0x0A`), independent of host
+artifact identity and the display location `<runtime>:0`. The runtime formats
+without allocation. The final `\n` is exactly one LF byte (`0x0A`), independent of host
 text-mode newline translation.
 Failure to write the report does not change status `70` or recursively report.
 Concurrent terminal failures select one process-wide report/observer winner
 before immediate termination. A normal user `main` may also return 70; the
 report and structured record distinguish that return from failure.
 
-`GTI-R0014` uses the secondary record's artifact and site in the standard
-`in`/`at` fields and the detail `failure during cleanup; primary
-[<primary-code>] in <primary-artifact> at
-"<primary-source>":<line>@<start>..<end>; secondary [<secondary-code>]`.
+`GTI-R0014` uses the secondary record's source and line as its prefix:
+
+```text
+<secondary-source>:<line>: runtime error[GTI-R0014]: failure_during_cleanup; primary [<primary-code>] at <primary-source>:<line>; secondary [<secondary-code>]\n
+```
+
+Each panic record appends ` message="<message>"` and its optional truncation
+marker after its own fields, so a secondary panic cannot overwrite the primary
+reason. Both messages use the same escaped, bounded representation.
 Later secondary failures are suppressed; formatting or write failure causes
 immediate status-70 termination.
 
@@ -1192,9 +1271,14 @@ catch-all.
 [ADR 007](../decisions/007-defined-runtime-failure.md) records the rationale
 for this normative contract.
 
-**Implementation status:** the runtime exposes the fixed version-one C record,
-site/artifact descriptors, allowed site outcomes, and emergency envelope. Its
-allocation-free reporter implements the exact Unicode-15.1 escaping and
+**Implementation status:** the runtime retains the fixed version-one C boundary
+and exposes version-two records, emergency envelopes, observers, and reporting
+and terminal entry points for bounded panic messages. Site/artifact descriptors
+and their allowed outcomes retain version one. Generated code uses version-two
+failure and managed-task join channels; a legacy native join that cannot carry
+a panic fails closed with the complete version-two terminal report rather than
+discarding its message. The allocation-free reporter implements the exact
+Unicode-15.1 escaping and
 ordinary/emergency line shapes; its hosted terminal primitive protects the
 original record across observer re-entry, mutation, or native exception,
 arbitrates one process-wide winner, completes partial/interrupted report
@@ -1203,9 +1287,9 @@ artifact/site token resolves to the normative runtime sentinel. Semantics and
 HIR carry the stable local failure vocabulary and
 snapshot-local source anchors. The pre-optimization metadata builder now
 constructs the canonical logical source table, one-based artifact-local sites,
-descriptor serialization, and SHA-256 identity; MIR retains exact detector
-site mappings plus distinct direct, virtual, constructor, and callable
-propagation channels. MIR now gives eligible full-expression-root scalar
+descriptor serialization, and SHA-256 identity; MIR retains exact detector and
+separate caller-attribution site mappings plus distinct direct, virtual,
+constructor, and callable propagation channels. MIR now gives eligible full-expression-root scalar
 operations in function and lambda bodies explicit normal/failure successors,
 one fixed-record parameter, reverse-construction failure cleanup, and an exact
 record-preserving propagation endpoint. An exact later scalar ordinary-call
@@ -1226,9 +1310,10 @@ exact report, exits 70, and immediately exits 70 if a native exception crosses
 the generated boundary without forging a GTI record. Program initialization
 executes through the verified `Module/0` schedule inside that containment.
 
-This is not full callback, embedding, or task containment. Double-failure
-control flow and operation families without an explicit MIR propagation and
-cleanup contract remain open. Generated C++ terminal integrity helpers are not
+Managed-task handoff and cleanup double-failure envelopes use this same
+contract. General embedding and arbitrary foreign-thread callback containment
+remain future work, as do operation families without an explicit MIR
+propagation and cleanup contract. Generated C++ terminal integrity helpers are not
 an alternate source-body failure authority. The frontend still rejects
 recursively cleanup-owning namespace globals and static fields.
 

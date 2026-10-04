@@ -41,7 +41,7 @@ def repository_path(repository: pathlib.Path, value: object, label: str) -> path
 
 def stdlib_sources(repository: pathlib.Path) -> list[pathlib.Path]:
     return [repository / "stdlib" / "prelude.gti", *sorted(
-        (repository / "stdlib" / "std").glob("*.gti")
+        (repository / "stdlib" / "std").rglob("*.gti")
     )]
 
 

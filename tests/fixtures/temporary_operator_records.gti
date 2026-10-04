@@ -1,0 +1,37 @@
+extern "C" {
+  int gti_test_mode();
+  int gti_test_zero();
+  void gti_test_trace(int value);
+}
+
+struct Guard {
+  int identity;
+  Guard(int value) : identity(value) {}
+  ~Guard() { gti_test_trace(identity); }
+};
+
+struct Counter {
+  mut int value;
+  Counter(int input) : value(input) {}
+  void operator+=(Counter other) mut { this.value += other.value; }
+  Counter operator+(Counter other) { return Counter(this.value + other.value); }
+  int operator*(Counter other) { return this.value * other.value; }
+  void add(Counter other, int tail) mut { this.value += other.value + tail; }
+};
+
+int mark(int value) { gti_test_trace(value); return value; }
+
+int main() {
+  Guard outer{1};
+  Guard inner{2};
+  mut Counter value{1};
+  value += Counter(2);
+  value = value + Counter(4);
+  if (value * Counter(3) != 21) { return 1; }
+  if (gti_test_mode() != 0) {
+    value.add(Counter(mark(7)), 10 / gti_test_zero()); // late-argument-failure
+    return 2;
+  }
+  value.add(Counter(mark(5)), mark(6));
+  return value.value - 18;
+}

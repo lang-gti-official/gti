@@ -36,7 +36,18 @@ consists of:
 - one bounded category-specific detail chosen by the compiler or trusted
   library operation; and
 - one GTI source-site token containing a deterministic artifact identity and
-  artifact-local site index.
+  artifact-local site index; and
+- for an explicit panic, a bounded owned message captured before cleanup.
+
+The panic extension uses a separately versioned record rather than changing
+the published version-one layout. Its 512-byte inline payload is allocation-
+free to capture and propagate, has an explicit truncation flag, and never
+borrows caller storage. Valid UTF-8 is not split at the truncation boundary;
+invalid bytes and unsafe control characters are escaped during reporting.
+Other failure categories carry no message. The immutable artifact descriptor
+protocol remains version one; a new record version does not reinterpret its
+site table. Both primary and secondary records retain their messages during
+cleanup failure and managed-worker handoff.
 
 The ordinary record always describes one primary failure. A separate
 fixed-size emergency envelope contains exactly two ordinary records—primary
@@ -60,8 +71,12 @@ line/column presentation may be derived from the table, but an absolute build
 path, generated C++ location, native address, snapshot-local source-unit ID,
 HIR/MIR ID, or process-global counter is never part of the record. A check
 inside a generic body identifies the generic definition site. A trusted
-standard-library check identifies the lexical GTI operation in that library;
-call-stack or caller attribution is a later diagnostic extension. Generated
+standard-library check identifies the lexical GTI operation in that library.
+Explicit panic additionally consumes the general `[[track_caller]]` call-site
+token: exact tracked wrappers forward it, while an ordinary wrapper anchors a
+new token at its own call. This selects the original panic record at detection;
+it never rewrites a record during propagation and does not capture a call stack.
+Other checked operations retain their lexical detector sites. Generated
 program-entry checks use a synthetic operation anchored to the selected source
 `main` declaration.
 
@@ -79,8 +94,9 @@ Hosted artifact construction assigns logical display names as follows:
 
 The artifact identity is the SHA-256 digest of the canonical pre-optimization
 failure-site descriptor serialization specified by execution semantics.
-Reports render it as 64 lowercase hexadecimal digits. Target
-selection affects the digest only when it changes that descriptor; two builds
+The structured record retains this identity even though the compact human
+report uses only its resolved source and line. Target selection affects the
+digest only when it changes that descriptor; two builds
 with byte-identical failure descriptors may share an identity. Unequal
 descriptors with the same identity are rejected rather than silently merged.
 
@@ -205,14 +221,17 @@ hangs, aborts, long-jumps, or otherwise prevents control from returning.
 The hosted runtime emits exactly one UTF-8 report line:
 
 ```text
-GTI runtime failure [<code>] <category> in <artifact> at "<source>":<line>@<start>..<end>: <detail>\n
+<source>:<line>: runtime error[<code>]: <category> in <detail>\n
 ```
 
-`<artifact>` is the record's 64-digit lowercase hexadecimal identity and
-`<source>` is its logical display name. The normative Unicode allowlist,
-byte-wise fallback escapes, half-open byte coordinates, runtime-site sentinel,
-and single-LF terminator are defined in execution semantics. The runtime
-formats without allocation.
+`<source>` is its escaped logical display name. Explicit panic instead writes
+`<source>:<line>: runtime error[GTI-R0017]: panic: "<message>"`, followed by
+` [truncated]` only when capture truncated the input and one LF. The normative
+Unicode allowlist, byte-wise fallback escapes, half-open machine coordinates,
+runtime-site sentinel, and single-LF terminator are defined in execution
+semantics. The runtime formats without allocation; messages cannot inject a
+second physical report line. Source identity and spans remain available in
+the structured record/descriptor even though the human report is compact.
 A failed report write does not change the exit status or cause recursive
 reporting. When concurrent terminal failures race,
 one process-wide winner invokes the observer and emits the report before
@@ -221,14 +240,15 @@ report. Status 70 may also be an ordinary value returned by user `main`; the
 report and structured record distinguish failure from a normal return.
 
 The emergency `GTI-R0014` report uses the same escaping and one-line rule, with
-the secondary record's artifact and site as its primary `in`/`at` fields and
-this exact detail shape:
+the secondary record's source and line as its prefix and this detail shape:
 
 ```text
-failure during cleanup; primary [<primary-code>] in <primary-artifact> at "<primary-source>":<line>@<start>..<end>; secondary [<secondary-code>]
+failure_during_cleanup; primary [<primary-code>] at <primary-source>:<line>; secondary [<secondary-code>]
 ```
 
-Later secondary failures are suppressed. Failure while formatting or writing
+Each panic record appends ` message="<message>"` and its optional truncation
+marker after its own fields, preserving both reasons rather than replacing
+the original failure. Later secondary failures are suppressed. Failure while formatting or writing
 this emergency line terminates immediately with status 70.
 
 ### Recoverable And Terminating Operations

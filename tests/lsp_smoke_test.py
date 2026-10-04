@@ -6019,6 +6019,196 @@ def test_static_assertion_tooling(executable, root):
         session.close()
 
 
+def test_function_contract_diagnostics(executable, root):
+    source = "[[noreturn]] void stop() { /* 😀 */ return; }\nint main() { return 0; }\n"
+    path = root / "function-contract.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    session = LspSession(executable)
+    try:
+        session.send({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"capabilities": {"textDocument": {
+                "publishDiagnostics": {"dataSupport": True}
+            }}},
+        })
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didOpen",
+            "params": {"textDocument": {"uri": uri, "languageId": "gti",
+                                         "version": 1, "text": source}},
+        })
+        publication = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )["params"]
+        diagnostic = next(item for item in publication["diagnostics"]
+                          if item.get("code") == "GTI-S2099")
+        start = source.index("return;")
+        assert diagnostic["range"] == {
+            "start": lsp_position(source, start),
+            "end": lsp_position(source, start + len("return")),
+        }, diagnostic
+        assert diagnostic["data"]["phase"] == "semantics", diagnostic
+        assert "cannot return normally" in diagnostic["message"], diagnostic
+        assert not diagnostic["data"].get("fixes"), diagnostic
+        corrected = source.replace("return;", "while (true) {}")
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 2},
+                       "contentChanges": [{"text": corrected}]},
+        })
+        cleared = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )["params"]
+        assert not has_error_diagnostics(cleared), cleared
+
+        incomplete = "/* 😀 */ [[track_caller] void broken() {}\nint main() { return 0; }\n"
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 3},
+                       "contentChanges": [{"text": incomplete}]},
+        })
+        broken = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+        )["params"]
+        malformed = next(item for item in broken["diagnostics"]
+                         if item.get("code") == "GTI-P0001")
+        unexpected = incomplete.index("void")
+        assert malformed["range"] == {
+            "start": lsp_position(incomplete, unexpected),
+            "end": lsp_position(incomplete, unexpected + len("void")),
+        }, malformed
+        assert malformed["data"]["phase"] == "parsing", malformed
+        assert "after declaration attributes" in malformed["message"], malformed
+        fixes = malformed["data"]["fixes"]
+        assert len(fixes) == 1, fixes
+        fix = fixes[0]
+        assert fix["replacement"] == "]" and fix["uri"] == uri, fix
+        assert fix["range"] == {
+            "start": lsp_position(incomplete, unexpected),
+            "end": lsp_position(incomplete, unexpected),
+        }, fix
+
+        repaired = incomplete[:unexpected] + fix["replacement"] + incomplete[unexpected:]
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 4},
+                       "contentChanges": [{"text": repaired}]},
+        })
+        repaired_publication = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 4
+        )["params"]
+        assert not has_error_diagnostics(repaired_publication), repaired_publication
+    finally:
+        session.close()
+
+
+def test_constraint_failure_provenance(executable, root):
+    contract = (
+        "namespace library {\n"
+        "concept snapshot_as<R, T> = requires(T& value) "
+        "{ { value.snapshot() } -> R; };\n"
+        "concept readable<T> = snapshot_as<int, T>;\n"
+        "int read<A, B>(A& unrelated, B& value) requires readable<B> "
+        "{ return value.snapshot(); }\n"
+        "}\n"
+    )
+    library_path = root / "constraint-contract.gti"
+    library_path.write_text(contract, encoding="utf-8")
+    source = (
+        '#include "constraint-contract.gti"\n'
+        "struct Item {};\n"
+        "int main() { Item first{}; Item target{}; "
+        "return library::read(first, /* 😀 */ target); }\n"
+    )
+    path = root / "constraint-provenance.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    session = LspSession(executable)
+    try:
+        session.send({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"capabilities": {"textDocument": {
+                "publishDiagnostics": {"relatedInformation": True,
+                                       "dataSupport": True}
+            }}},
+        })
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didOpen",
+            "params": {"textDocument": {"uri": uri, "languageId": "gti",
+                                         "version": 1, "text": source}},
+        })
+        publication = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )["params"]
+        diagnostic = next(item for item in publication["diagnostics"]
+                          if item.get("code") == "GTI-S2029")
+        assert "Argument 2 has type 'Item'" in diagnostic["message"], diagnostic
+        assert "library::readable<Item>" in diagnostic["message"], diagnostic
+        target = source.index("target);")
+        assert diagnostic["range"] == {
+            "start": lsp_position(source, target),
+            "end": lsp_position(source, target + len("target")),
+        }, diagnostic
+        assert diagnostic["data"]["phase"] == "semantics", diagnostic
+        assert diagnostic["data"]["hints"], diagnostic
+        assert not diagnostic["data"].get("fixes"), diagnostic
+        related = diagnostic["relatedInformation"]
+        assert any("has no member 'snapshot()'" in item["message"]
+                   and item["location"]["uri"] == library_path.resolve().as_uri()
+                   for item in related), diagnostic
+        assert any("library::snapshot_as<int32_t, Item>" in item["message"]
+                   for item in related), diagnostic
+
+        # The same source contract now finds a member but rejects its result.
+        wrong_result = source.replace(
+            "struct Item {};", "struct Item { bool snapshot() { return true; } };")
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 2},
+                       "contentChanges": [{"text": wrong_result}]},
+        })
+        changed = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )["params"]
+        mismatch = next(item for item in changed["diagnostics"]
+                        if item.get("code") == "GTI-S2029")
+        assert any("returns 'bool'" in item["message"]
+                   and item["location"]["uri"] == uri
+                   for item in mismatch["relatedInformation"]), mismatch
+
+        valid = source.replace(
+            "struct Item {};", "struct Item { int snapshot() { return 7; } };")
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 3},
+                       "contentChanges": [{"text": valid}]},
+        })
+        cleared = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+        )["params"]
+        assert not has_error_diagnostics(cleared), cleared
+    finally:
+        session.close()
+
+
 def test_concrete_generic_diagnostics(executable, root):
     source = (
         "class Bound<T, uint64_t N> {\n"
@@ -9605,7 +9795,7 @@ def main():
         raise SystemExit(
             "usage: lsp_smoke_test.py /path/to/gti_lsp "
             "[allocator-policy|atomic|mutex|constexpr-aggregate|"
-            "expected-payload-range|io|mutable-stored|owner-dependent-views]"
+            "expected-payload-range|constraint-provenance|function-contracts|io|mutable-stored|owner-dependent-views]"
         )
 
     if len(sys.argv) == 3:
@@ -9649,6 +9839,14 @@ def main():
                     sys.argv[1], pathlib.Path(root)
                 )
             print("GTI mutable stored dependency LSP test passed")
+        elif sys.argv[2] == "constraint-provenance":
+            with tempfile.TemporaryDirectory(prefix="gti-lsp-constraints-") as root:
+                test_constraint_failure_provenance(sys.argv[1], pathlib.Path(root))
+            print("GTI constraint provenance LSP test passed")
+        elif sys.argv[2] == "function-contracts":
+            with tempfile.TemporaryDirectory(prefix="gti-lsp-contracts-") as root:
+                test_function_contract_diagnostics(sys.argv[1], pathlib.Path(root))
+            print("GTI function contract LSP test passed")
         elif sys.argv[2] == "io":
             with tempfile.TemporaryDirectory(prefix="gti-lsp-io-") as root:
                 test_io_tooling_boundary(sys.argv[1], pathlib.Path(root))
@@ -9719,6 +9917,9 @@ def main():
         test_missing_standard_library_include_code_action(
             sys.argv[1], root, symbol, None, "std/charconv"
         )
+    test_missing_standard_library_include_code_action(
+        sys.argv[1], root, "print_errc", None, "std/format"
+    )
     for symbol in ("function", "move_only_function"):
         test_missing_standard_library_include_code_action(
             sys.argv[1], root, symbol, "void()", "std/functional"
@@ -9728,6 +9929,8 @@ def main():
     test_expected_propagation_tooling(sys.argv[1], root)
     test_static_assertion_tooling(sys.argv[1], root)
     test_concrete_generic_diagnostics(sys.argv[1], root)
+    test_constraint_failure_provenance(sys.argv[1], root)
+    test_function_contract_diagnostics(sys.argv[1], root)
     test_constructor_ownership_diagnostic(sys.argv[1], root)
     test_expected_success_ownership_diagnostic(sys.argv[1], root)
     test_read_only_receiver_diagnostic(sys.argv[1], root)
@@ -10160,10 +10363,10 @@ def main():
         and "std::numeric" in diagnostic["message"]
     )
     constraint_call = source.index("constrained(\"text\")")
-    constraint_close = source.index(")", constraint_call)
+    constraint_argument = source.index('"text"', constraint_call)
     assert constraint_diagnostic["range"] == {
-        "start": lsp_position(source, constraint_close),
-        "end": lsp_position(source, constraint_close + 1),
+        "start": lsp_position(source, constraint_argument),
+        "end": lsp_position(source, constraint_argument + len('"text"')),
     }
     constraint_name = source.index("numeric", source.index("std::numeric T"))
     assert constraint_diagnostic["relatedInformation"][0]["location"]["range"] == {

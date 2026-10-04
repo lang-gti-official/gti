@@ -1,9 +1,9 @@
 #include <std/format>
+#include <std/string>
 
 int main() {
-  mut auto rendered = std::format("count={} mask={}", int32_t(-3),
-                                  uint8_t(7));
-  if (!rendered || rendered.value() != "count=-3 mask=7") {
+  auto rendered = std::format("count={} mask={}", int32_t(-3), uint8_t(7));
+  if (rendered != "count=-3 mask=7") {
     return 1;
   }
   auto written = std::try_println("count={} mask={}", int32_t(-3),

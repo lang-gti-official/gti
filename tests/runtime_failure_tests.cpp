@@ -174,9 +174,133 @@ void testDescriptorOutcomeValidation() {
          "a zero artifact identity should require site zero");
 }
 
+void testPanicCapture() {
+  gti_failure_record_v2 record{.abi_version = GTI_FAILURE_ABI_VERSION_V2,
+                               .code = GTI_FAILURE_CODE_PANIC_V2,
+                               .detail = GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2};
+  char text[] = "failed locally";
+  expect(gti_rt_failure_capture_panic_v2(
+             &record, {.data = text, .length = sizeof(text) - 1}) ==
+             GTI_FAILURE_REPORT_OK_V1,
+         "panic capture should accept a counted message");
+  std::memset(text, 'x', sizeof(text));
+  expect(record.message_size == 14 && record.message_flags == 0 &&
+             std::memcmp(record.message, "failed locally", 14) == 0,
+         "panic owns its message independently of source cleanup");
+  const auto snapshot = record;
+  expect(gti_rt_failure_capture_panic_v2(&record,
+                                         {.data = nullptr, .length = 1}) ==
+                 GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1 &&
+             std::memcmp(&record, &snapshot, sizeof(record)) == 0,
+         "malformed capture arguments leave the record untouched");
+  char large[520];
+  std::memset(large, 'a', sizeof(large));
+  large[511] = char(0xCE);
+  large[512] = char(0xBB);
+  expect(
+      gti_rt_failure_capture_panic_v2(
+          &record, {.data = large, .length = sizeof(large)}) ==
+              GTI_FAILURE_REPORT_OK_V1 &&
+          record.message_size == 511 &&
+          record.message_flags == GTI_FAILURE_MESSAGE_TRUNCATED_V2 &&
+          record.message[511] == 0,
+      "truncation must not split a valid UTF-8 scalar and clears tail bytes");
+  expect(gti_rt_failure_capture_panic_v2(
+             &record,
+             {.data = reinterpret_cast<const char *>(record.message) + 500,
+              .length = 11}) == GTI_FAILURE_REPORT_OK_V1 &&
+             record.message_size == 11 && record.message_flags == 0 &&
+             record.message[11] == 0,
+         "bounded capture safely snapshots overlapping source storage");
+  expect(gti_rt_failure_capture_panic_v2(&record,
+                                         {.data = nullptr, .length = 0}) ==
+                 GTI_FAILURE_REPORT_OK_V1 &&
+             record.message_size == 0 && record.message[0] == 0,
+         "empty panic messages need no source storage");
+  record.code = GTI_FAILURE_CODE_INTEGER_OVERFLOW_V1;
+  record.detail = GTI_FAILURE_DETAIL_ADDITION_V1;
+  expect(gti_rt_failure_capture_panic_v2(&record, {.data = "x", .length = 1}) ==
+             GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1,
+         "only the panic category may capture a message");
+  record.message_size = 1;
+  record.message[0] = 'x';
+  expect(gti_rt_failure_write_report_v2(&record, nullptr) ==
+             GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1,
+         "ordinary failure records reject arbitrary message payloads");
+  record.code = GTI_FAILURE_CODE_PANIC_V2;
+  record.detail = GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2;
+  record.message_size = 513;
+  expect(gti_rt_failure_write_report_v2(&record, nullptr) ==
+             GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1,
+         "reporting rejects message lengths outside the bounded record");
+  record.message_size = 1;
+  record.message_flags = 2;
+  expect(gti_rt_failure_write_report_v2(&record, nullptr) ==
+             GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1,
+         "reporting rejects unknown message flags");
+  record.message_flags = 0;
+  record.message[511] = 'x';
+  expect(gti_rt_failure_write_report_v2(&record, nullptr) ==
+             GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1,
+         "reporting rejects noncanonical uncaptured tail bytes");
+}
+
+void testPanicDescriptorValidation() {
+  const gti_failure_outcome_descriptor_v1 outcome{
+      .code = GTI_FAILURE_CODE_PANIC_V2,
+      .detail = GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2};
+  const gti_failure_site_descriptor_v1 site{
+      .logical_source = {.data = "caller.gti", .length = 10},
+      .line = 8,
+      .start = 17,
+      .end = 24,
+      .outcomes = &outcome,
+      .outcome_count = 1};
+  const std::uint8_t descriptor[] = {1};
+  gti_failure_artifact_descriptor_v1 artifact{
+      .abi_version = GTI_FAILURE_ABI_VERSION_V1,
+      .artifact_identity = {1},
+      .sites = &site,
+      .site_count = 1,
+      .canonical_descriptor = descriptor,
+      .canonical_descriptor_size = 1};
+  gti_failure_record_v2 record{.abi_version = GTI_FAILURE_ABI_VERSION_V2,
+                               .code = GTI_FAILURE_CODE_PANIC_V2,
+                               .detail = GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2,
+                               .site_index = 1,
+                               .artifact_identity = {1}};
+  (void)gti_rt_failure_capture_panic_v2(&record,
+                                        {.data = "reason", .length = 6});
+  expect(gti_rt_failure_validate_v2(&record, &artifact) ==
+             GTI_FAILURE_REPORT_OK_V1,
+         "v2 panic uses the unchanged v1 source descriptor protocol");
+  artifact.abi_version = GTI_FAILURE_ABI_VERSION_V2;
+  expect(gti_rt_failure_validate_v2(&record, &artifact) ==
+             GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1,
+         "record ABI version must not silently change the descriptor protocol");
+  artifact.abi_version = GTI_FAILURE_ABI_VERSION_V1;
+  record.artifact_identity[0] = 2;
+  expect(gti_rt_failure_validate_v2(&record, &artifact) ==
+             GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1,
+         "panic attribution rejects a mismatched artifact identity");
+  record.artifact_identity[0] = 1;
+  record.detail = GTI_FAILURE_DETAIL_NONE_V1;
+  expect(gti_rt_failure_validate_v2(&record, &artifact) ==
+             GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1,
+         "panic cannot forge another detail or bypass admitted outcomes");
+}
+
 } // namespace
 
 static_assert(sizeof(gti_failure_record_v1) == 48);
+static_assert(sizeof(gti_failure_record_v2) == 568);
+static_assert(alignof(gti_failure_record_v2) == 4);
+static_assert(offsetof(gti_failure_record_v2, message_size) == 48);
+static_assert(offsetof(gti_failure_record_v2, message_flags) == 52);
+static_assert(offsetof(gti_failure_record_v2, message) == 56);
+static_assert(sizeof(gti_failure_emergency_v2) == 1144);
+static_assert(std::is_standard_layout_v<gti_failure_record_v2> &&
+              std::is_trivially_copyable_v<gti_failure_record_v2>);
 static_assert(alignof(gti_failure_record_v1) == 4);
 static_assert(offsetof(gti_failure_record_v1, abi_version) == 0);
 static_assert(offsetof(gti_failure_record_v1, code) == 4);
@@ -218,5 +342,7 @@ int main() {
   testWriteAll();
   testUnicodeTableBoundaries();
   testDescriptorOutcomeValidation();
+  testPanicCapture();
+  testPanicDescriptorValidation();
   return failures == 0 ? 0 : 1;
 }

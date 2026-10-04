@@ -640,6 +640,13 @@ requireCapture(unsafeFunctionRow, "unsafe", "attribute");
 requireCaptureCount(unsafeFunctionRow, "unsafe", "keyword", 0);
 requireCapture(unsafeFunctionRow, "retain_context_highlight", "function");
 
+const functionContractRow = fixtureLines.findIndex((line) =>
+  line.includes("void terminal_highlight"),
+);
+requireCapture(functionContractRow, "noreturn", "attribute");
+requireCapture(functionContractRow, "track_caller", "attribute");
+requireCapture(functionContractRow, "terminal_highlight", "function");
+
 const memberRequirementRow = fixtureLines.findIndex((line) =>
   line.includes("requires(T& item)"),
 );
