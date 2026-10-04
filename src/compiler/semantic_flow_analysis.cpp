@@ -1641,6 +1641,9 @@ auto SemanticVisitor::Impl::addCompoundConversionFailure(
       token, target, right, leftExpression, rightExpression);
   if (intermediate != SemanticType::Unknown &&
       numericConversionMayFail(intermediate, target)) {
+    DefinedFailureOrigin conversion = operation.localOrigins.back();
+    conversion.outcomes.clear();
+    operation.localOrigins.push_back(std::move(conversion));
     addFailureOutcome(operation,
                       DefinedFailureCode::NumericConversionOutOfRange,
                       DefinedFailureDetail::NumericCast);
@@ -2078,6 +2081,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         addIntegerOperationFailures(operation, unary->oper().kind,
                                     promotedInteger(operandType));
         if (numericConversionMayFail(promotedInteger(info.type), info.type)) {
+          anchor(unary->oper());
           addFailureOutcome(operation,
                             DefinedFailureCode::NumericConversionOutOfRange,
                             DefinedFailureDetail::NumericCast);
@@ -2093,6 +2097,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
       addIntegerOperationFailures(operation, postfix->oper().kind,
                                   promotedInteger(operandType));
       if (numericConversionMayFail(promotedInteger(info.type), info.type)) {
+        anchor(postfix->oper());
         addFailureOutcome(operation,
                           DefinedFailureCode::NumericConversionOutOfRange,
                           DefinedFailureDetail::NumericCast);
@@ -2178,6 +2183,31 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   expr.accept(*this);
   SemanticType result = currentType;
   ExpressionInfo info = classifyExpression(expr, result);
+  if (semanticModel.findOperator(expr) == nullptr && isNumeric(result)) {
+    const auto compound = [&](TokenKind token, const ExprPtr &right) {
+      if (token != TokenKind::EQUAL) {
+        info.updateArithmeticType = compoundIntermediateType(
+            token, result, semanticModel.typeOf(*right), nullptr, right.get());
+      }
+    };
+    if (const auto *unary = exprAs<Unary>(&expr);
+        unary != nullptr && (unary->oper().kind == TokenKind::PLUS_PLUS ||
+                             unary->oper().kind == TokenKind::MINUS_MINUS)) {
+      info.updateArithmeticType =
+          isInteger(result) ? promotedInteger(result) : result;
+    } else if (expr.exprKind() == ExprKind::Postfix) {
+      info.updateArithmeticType =
+          isInteger(result) ? promotedInteger(result) : result;
+    } else if (const auto *assign = exprAs<Assign>(&expr)) {
+      compound(assign->oper().kind, assign->value());
+    } else if (const auto *set = exprAs<Set>(&expr)) {
+      compound(set->oper().kind, set->value());
+    } else if (const auto *set = exprAs<IndexSet>(&expr)) {
+      compound(set->oper().kind, set->value());
+    } else if (const auto *set = exprAs<DereferenceSet>(&expr)) {
+      compound(set->oper().kind, set->value());
+    }
+  }
   semanticModel.record(expr, info);
   semanticModel.recordDefinedFailure(expr, classifyDefinedFailure(expr, info));
   // Keep a source token for calls, including source operations that select an

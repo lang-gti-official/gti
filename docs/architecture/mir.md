@@ -2370,15 +2370,19 @@ the count domain is signed. Negation requires a signed result domain and names
 `integer_overflow:negation`. An integer conversion names
 `numeric_conversion_out_of_range:numeric_cast` exactly when the complete
 source domain is not contained in the destination; a widening/safe-domain
-conversion must carry no stale origin, site, or record. Float conversions and the
-narrowing compound place schedule are deliberately outside this bounded
-verifier family. A same-domain compound assignment or increment/decrement is
-no longer a closed operation: it lowers to an ordered `Load`/`Compute`/`Assign`
-schedule whose arithmetic satisfies this contract directly. A narrowing form
-keeps its closed `Assign`/`Modify` instruction because semantics folds the
-arithmetic and the checked conversion into one HIR-authored origin, and MIR may
-not split that origin across stages; per-stage origins are the prerequisite for
-completing the convert stage. The general C++ MIR emitter consumes every
+conversion must carry no stale origin, site, or record. Float conversions remain
+outside this bounded integer verifier family. Built-in integer compound
+assignment and increment/decrement lower to an ordered
+`Load`/`Compute`/`Compute(Convert)`/`Assign` schedule, omitting the conversion
+when the arithmetic and destination domains agree. Semantics records the
+promoted arithmetic domain in `ExpressionInfo::updateArithmeticType` and
+authors separate arithmetic and narrowing failure origins at the source
+operator. HIR retains those facts; MIR never splits or invents an origin.
+The prior destination is read before the right operand, and the only write
+occurs after both checks succeed. Postfix retains the original narrow value;
+prefix and compound assignment retain the committed narrow result. Bare
+instance-field destinations and explicit receiver projections use the same
+primitive schedule. The general C++ MIR emitter consumes every
 operation in this fixed-integer allowlist only after both MIR verification and
 representation preflight.
 

@@ -7354,7 +7354,29 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
 
 auto SemanticVisitor::Impl::visitUnexpectedExpr(const Unexpected &expr)
     -> void {
-  currentType = SemanticType(SemanticType::Unexpected, {analyze(expr.error())});
+  const SemanticType errorType = analyze(expr.error());
+  if (!isOwnershipAssignable(errorType, errorType, expr.error())) {
+    const ExpressionInfo *payload = semanticModel.findExpression(*expr.error());
+    const bool moving =
+        payload != nullptr && payload->category == ValueCategory::Value;
+    const auto *call = exprAs<Call>(expr.error().get());
+    const Token token = call != nullptr ? callableToken(call->callee())
+                                        : expressionToken(expr.error());
+    report(token,
+           "Cannot " + std::string(moving ? "move" : "copy") +
+               " error payload of type '" + typeSpelling(errorType) +
+               "' into unexpected: that construction is unavailable.",
+           "GTI-S2003");
+    if (!moving && typeTraits(errorType).movable) {
+      diagnostics.back().hints.emplace_back(
+          "Transfer the error with explicit std::move, or clone it when the "
+          "source must be preserved. For an expected observer, move the "
+          "carrier before calling error().");
+    }
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  currentType = SemanticType(SemanticType::Unexpected, {errorType});
 }
 
 auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {

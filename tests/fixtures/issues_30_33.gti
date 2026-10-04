@@ -1,0 +1,143 @@
+#include <std/string>
+#include <std/panic>
+
+extern "C" {
+  int issue_mode();
+  void issue_trace(int value);
+  uint64_t issue_index();
+  int issue_index_calls();
+}
+
+struct Guard {
+  int id;
+  Guard(int value) : id(value) {}
+  ~Guard() { issue_trace(this.id); }
+};
+
+struct Counter {
+  mut uint8_t value;
+  Counter(uint8_t initial) : value(initial) {}
+  ~Counter() { issue_trace(int(value)); }
+  void increment() mut { value++; } // increment
+  void decrement() mut { --value; } // decrement
+  void add(uint16_t amount) mut { value += amount; } // add
+  void divide(int amount) mut { value /= amount; } // divide
+  uint8_t replace() mut { value = uint8_t(100); return uint8_t(2); }
+  void ordered() mut { value += this.replace(); }
+  uint8_t read() { return value; }
+};
+
+struct Grid { mut uint16_t pixels[2][3] = {{1, 2, 3}, {4, 5, 6}}; };
+struct SignedCounter {
+  mut int8_t value;
+  SignedCounter(int8_t initial) : value(initial) {}
+  ~SignedCounter() { issue_trace(int(value)); }
+  void up() mut { ++value; } // signed-up
+  void down() mut { value--; } // signed-down
+};
+struct WideCounter {
+  mut uint16_t value = 65535;
+  ~WideCounter() { issue_trace(int(value)); }
+  void multiply() mut { value *= uint16_t(65535); } // arithmetic-overflow
+};
+struct Frame { mut Grid grid{}; };
+uint16_t read(Frame& frame, uint64_t row, uint64_t column) {
+  return frame.grid.pixels[row][column]; // read
+}
+void write(mut Frame& frame, uint64_t row, uint64_t column, uint16_t value) {
+  frame.grid.pixels[row][column] = value; // write
+}
+void increase(mut Frame& frame, uint64_t column) {
+  frame.grid.pixels[0][column] += uint16_t(2); // array-add
+}
+
+int narrow<T>() requires std::integral<T> {
+  mut T value = T(4);
+  mut T old = value++;
+  mut T updated = ++value;
+  if (old != T(4) || updated != T(6)) { return 1; }
+  old = value--;
+  updated = --value;
+  if (old != T(6) || updated != T(4) || value != T(4)) { return 2; }
+  value += T(2);
+  value *= T(3);
+  value /= T(2);
+  value %= T(7);
+  value <<= T(2);
+  value >>= T(1);
+  value |= T(1);
+  value &= T(7);
+  value ^= T(1);
+  return int(value) - 4;
+}
+
+struct ResourceError {
+  std::string text;
+  int id;
+  ResourceError(int value) : text(std::string("error")), id(value) {
+    if (value == 99) { std::panic("error construction"); } // error-construction
+  }
+  ResourceError(ResourceError& other) = delete;
+  ~ResourceError() { issue_trace(this.id); }
+};
+struct PassiveError {
+  int id;
+  PassiveError(int value) : id(value) {}
+  PassiveError(PassiveError& other) = delete;
+};
+expected<int, PassiveError> passive_error() {
+  PassiveError error{41};
+  return unexpected(std::move(error));
+}
+expected<int, PassiveError> passive_relay() {
+  auto result = passive_error();
+  return unexpected(std::move(result).error());
+}
+expected<int, ResourceError> fail(int id) { return unexpected(ResourceError(id)); }
+expected<int, ResourceError> relay(int id) {
+  auto error = fail(id);
+  return unexpected(std::move(error).error());
+}
+int consume(expected<int, ResourceError> result) {
+  return result ? 1 : 0;
+}
+
+int main() {
+  Guard outer{91};
+  Guard inner{92};
+  int mode = issue_mode();
+  if (mode == 1) { mut Counter counter{uint8_t(255)}; counter.increment(); }
+  if (mode == 2) { mut Counter counter{uint8_t(0)}; counter.decrement(); }
+  if (mode == 3) { mut Counter counter{uint8_t(254)}; counter.add(uint16_t(2)); }
+  if (mode == 4) { mut Counter counter{uint8_t(12)}; counter.divide(0); }
+  mut Frame frame{};
+  if (mode == 5) { return int(read(frame, uint64_t(2), uint64_t(0))); }
+  if (mode == 6) { write(frame, uint64_t(1), uint64_t(3), uint16_t(42)); }
+  if (mode == 7) { increase(frame, uint64_t(3)); }
+  if (mode == 8) { auto failure = relay(99); return failure ? 1 : 2; }
+  if (mode == 9) { mut SignedCounter counter{int8_t(127)}; counter.up(); }
+  if (mode == 10) { mut SignedCounter counter{int8_t(-128)}; counter.down(); }
+  if (mode == 11) { mut WideCounter counter{}; counter.multiply(); }
+  if (narrow<uint8_t>() != 0 || narrow<int8_t>() != 0 ||
+      narrow<uint16_t>() != 0 || narrow<int16_t>() != 0) { return 3; }
+  for (mut uint8_t index = 0; index < uint8_t(4); index++) {}
+  mut uint16_t mixed = 2;
+  mixed += uint32_t(3);
+  if (mixed != uint16_t(5)) { return 4; }
+  {
+    mut Counter ordered{uint8_t(5)};
+    ordered.ordered();
+    if (ordered.read() != uint8_t(7)) { return 9; }
+  }
+  write(frame, uint64_t(1), uint64_t(2), uint16_t(42));
+  if (read(frame, uint64_t(1), uint64_t(2)) != uint16_t(42)) { return 5; }
+  increase(frame, issue_index());
+  if (issue_index_calls() != 1 || frame.grid.pixels[0][1] != uint16_t(4)) { return 6; }
+  auto first = relay(31);
+  auto passive = passive_relay();
+  if (passive || passive.error().id != 41) { return 10; }
+  ResourceError second{32};
+  expected<int, ResourceError> wrapped = unexpected(std::move(second));
+  if (consume(fail(33)) != 0) { return 7; }
+  return first || wrapped ? 8 : 0;
+}
