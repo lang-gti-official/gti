@@ -34,6 +34,16 @@ reviewed inventories. All 68 Tree-sitter corpus cases and shipped-source
 parsing pass. These results do not claim Linux/Windows execution or an update
 to the user's active toolchain.
 
+Reconciliation includes the separately reviewed `gti init --git` feature.
+Its review added pre-mutation rejection of repository-location environment
+overrides and ownership-based metadata rollback. All eight scoped CLI/driver
+gates pass before integration; all 12 combined compiler/CLI/LSP gates pass
+after integration (114.32 seconds). The final isolated installation passes
+all 11 external CMake consumers and the quick borrowed-extraction runtime and
+LSP checks. Formatting and whitespace checks pass. The active installation
+and unrelated local planning-document edits remain unchanged; asynchronous
+Gitea packaging is not additional local validation.
+
 ## Required examples for new language features
 
 Every new language feature **must include an accompanying runnable example

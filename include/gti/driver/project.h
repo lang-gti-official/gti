@@ -305,20 +305,27 @@ enum class ProjectScaffoldMode {
   ExistingDirectory,
 };
 
+struct ProjectScaffoldGit final {
+  std::string executable;
+};
+
 class ProjectScaffoldRequest final {
 public:
   ProjectScaffoldRequest(ProjectScaffoldMode mode,
                          std::filesystem::path destination,
-                         std::optional<std::string> packageName = std::nullopt);
+                         std::optional<std::string> packageName = std::nullopt,
+                         std::optional<ProjectScaffoldGit> git = std::nullopt);
 
   [[nodiscard]] ProjectScaffoldMode mode() const;
   [[nodiscard]] const std::filesystem::path &destination() const;
   [[nodiscard]] const std::optional<std::string> &packageName() const;
+  [[nodiscard]] const std::optional<ProjectScaffoldGit> &git() const;
 
 private:
   ProjectScaffoldMode scaffoldMode;
   std::filesystem::path destinationPath;
   std::optional<std::string> requestedPackageName;
+  std::optional<ProjectScaffoldGit> requestedGit;
 };
 
 enum class ProjectScaffoldStatus {
@@ -326,6 +333,7 @@ enum class ProjectScaffoldStatus {
   InvalidRequest,
   Conflict,
   FilesystemFailure,
+  ToolFailure,
 };
 
 struct ProjectScaffoldResult {
@@ -333,6 +341,8 @@ struct ProjectScaffoldResult {
   std::filesystem::path packageRoot;
   std::string packageName;
   bool createdSource = false;
+  bool initializedGit = false;
+  bool createdGitIgnore = false;
   std::vector<Diagnostic> diagnostics;
 
   [[nodiscard]] bool succeeded() const {
