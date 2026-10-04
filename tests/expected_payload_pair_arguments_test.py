@@ -29,7 +29,21 @@ if __name__ == "__main__":
         return (f"{cleanup.name}:{line}: runtime error[GTI-R0009]: "
                 "invalid_expected_access in value_on_error\n")
 
-    main(names=("expected_payload_pair_arguments", cleanup.stem), cases={
+    passive = fixtures / "expected_passive_payload_arguments.gti"
+    passive_lines = passive.read_text().splitlines()
+    passive_cases = [((), (0, "9\n", "")),
+                     (("error", "success", "mode"), (0, "9\n", ""))]
+    for intrinsic, reason, counts in (("value", "value_on_error", (1, 2)),
+                                      ("error", "error_on_value", (4, 5))):
+        for receiver, count in zip(("first", "second"), counts):
+            line = next(i + 1 for i, text in enumerate(passive_lines)
+                        if f"std::move({receiver}).{intrinsic}()" in text)
+            diagnostic = (f"{passive.name}:{line}: runtime error[GTI-R0009]: "
+                          f"invalid_expected_access in {reason}\n")
+            passive_cases.append((("arg",) * count, (70, "9\n", diagnostic)))
+
+    main(names=("expected_payload_pair_arguments", cleanup.stem, passive.stem), cases={
+        passive.stem: passive_cases,
         "expected_payload_pair_arguments": [((), (0, "", ""))],
         cleanup.stem: [
             ((), (0, "7\n2\n1\n9\n", "")),

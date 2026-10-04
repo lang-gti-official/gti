@@ -45,7 +45,15 @@ one-off implementation-note or redesign files when an existing category fits.
 5. Update the canonical architecture or language document when implementation
    behavior changes. Update a plan when its status changes; do not describe
    planned behavior as current.
-6. Keep generated, vendored, and unrelated user files out of task diffs.
+6. Every new language feature must ship with an accompanying runnable example
+   under `examples/` in the same change. Add a focused example or extend an
+   existing one to demonstrate the feature explicitly, including its intended
+   use and important supported boundaries. Test fixtures and documentation
+   snippets alone do not satisfy this requirement. Validate the example with
+   an optimized GTI compiler and update the applicable example index, corpus
+   registration, and census expectations. A feature is not complete without
+   its example and passing example evidence.
+7. Keep generated, vendored, and unrelated user files out of task diffs.
 
 ## Release Channels And VERSION
 

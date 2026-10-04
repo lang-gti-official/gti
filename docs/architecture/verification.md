@@ -1,5 +1,28 @@
 # Compiler Verification
 
+## Required examples for new language features
+
+Every new language feature **must include an accompanying runnable example
+under `examples/` in the same change**. This is a completion requirement, not
+an optional follow-up. A focused new program or an explicit extension of an
+existing example is acceptable; a regression fixture or a documentation-only
+snippet is not a substitute.
+
+The example must show the supported syntax in a useful program, explain the
+intended behavior and important boundaries, and provide a checked result where
+the feature has observable behavior. Keep intentionally invalid programs in
+negative tests rather than breaking the runnable example. Link the example
+from the applicable language documentation and update the example index,
+corpus registration, and MIR/LoweredProgram census expectations where affected.
+Compile and run it with an optimized host GTI compiler and the applicable
+backend/optimization configurations, recording the evidence before marking the
+feature complete. Examples complement, rather than replace, focused positive,
+negative, ownership, and failure tests.
+
+An internal refactor or bug fix with no new language feature does not require
+an unrelated new example; it still needs regression coverage, and affected
+existing examples must remain correct.
+
 ## Release bug closure after panic adoption
 
 The optimized 0.363.0 compiler now compiles the original reductions for Gitea
@@ -2775,8 +2798,8 @@ three issue #25/#26 fixtures now compile and exit zero in all four C++20/C++23
 O0/O3 configurations. The optimized compiler is Release, AppleClang 21,
 LLVM 22.1.8 on macOS arm64. No compiler semantics changed in this PR.
 
-The expanded eleven-factor seed `20261003` campaign is **not fully passing**:
-11 of 12 cases pass, with 96 attempted native outcomes and 270 of 275 required
+The first expanded eleven-factor seed `20261003` campaign passed 11 of 12
+cases, with 96 attempted native outcomes and 270 of 275 required
 interaction tuples verified. Case 6 (Expected, vector, nested call, and control
 flow; copyable payload without visible cleanup) raises `GTI-B0001` in all eight
 original/renamed configurations. Independent triage accepts verified MIR but
@@ -2784,9 +2807,26 @@ rejects C++ emission for `exercise`; this identifies a measured boundary, not
 the underlying root cause. Regenerate this seed with the checked-in generator
 to reproduce it. Local raw evidence is retained at
 `/private/tmp/gti-pr27-reconciled-20261004` and
-`/private/tmp/gti-pr27-triage-20261004`. This optional campaign finding remains
-open; it is not suppressed or converted to an expected failure. The bounded
-CTest smoke is passing, but does not claim full campaign coverage.
+`/private/tmp/gti-pr27-triage-20261004`.
+
+The follow-up `0.364.1` fix reduces this to checked extraction of a cleanup-free
+class directly into a prepared argument; loops and vectors are not required.
+It shares the existing receiver and class-result staging proofs. The unchanged
+campaign now passes **12/12 cases, 96 native outcomes, and 275/275 required
+tuples**, with evidence at `/private/tmp/gti-pr27-fixed-campaign-20261004`.
+`expected_payload_pair_emitter` checks argument identity, slot activation,
+receiver movement, consuming transfer, and failure-edge/cleanup corruption
+for both owning and cleanup-free payloads. The native argument suite covers
+success plus failure at either `.value()`/`.error()` argument, unchanged caller
+cleanup, C++20/C++23 at O0/O1/O3, no-elide, and ASan/UBSan. The bounded CTest
+smoke remains deliberately smaller than the complete optional campaign.
+
+Local follow-up validation passed four focused gates (72.02 seconds) and all
+36 selected compiler/backend/MIR/Expected/policy gates (132.21 seconds),
+including both corpus sweeps. The final seven-mutation emitter test also passed
+after rebuilding it. Clang-format 22.1.8 checked all 404 first-party C/C++ files;
+patch whitespace checks passed. These are optimized macOS arm64 results, not a
+new full-suite run or Linux/Windows execution claim.
 
 The `Q-FUZZ-01` facilities support debugging beyond the deterministic suites
 (design record:

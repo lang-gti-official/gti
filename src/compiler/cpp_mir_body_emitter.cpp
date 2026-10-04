@@ -3173,6 +3173,10 @@ struct OwnedExpectedClassExtractionProducer {
 [[nodiscard]] OwnedExpectedClassExtractionProducer
 ownedExpectedClassExtractionProducer(const MirBody &body, MirValueId valueId);
 
+[[nodiscard]] bool
+cleanupFreeExpectedClassExtractionProducer(const MirBody &body,
+                                           MirValueId valueId);
+
 // Class payloads are published as an address because their lvalue identity is
 // semantically relevant and the failure ABI cannot assign them into an SSA
 // local. Scalar payloads use the ordinary value carrier but their rooted place
@@ -3855,6 +3859,8 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
   const OwnedExpectedClassExtractionProducer ownedExpectedProducer =
       ownedExpectedClassExtractionProducer(body, sourceId);
   const bool ownedExpectedCallProducer = ownedExpectedProducer.call == producer;
+  const bool cleanupFreeExpectedCallProducer =
+      cleanupFreeExpectedClassExtractionProducer(body, sourceId);
   const bool constructorFailureContained =
       producer != nullptr && producer->constructorTarget &&
       producer->definedFailure.propagation ==
@@ -3904,7 +3910,8 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
   if (source == nullptr || source->info.type.kind != SemanticType::Class ||
       producer == nullptr ||
       (!functionCallProducer && !ownedExpectedCallProducer &&
-       !ordinaryConstructionProducer && !defaultConstructionProducer) ||
+       !cleanupFreeExpectedCallProducer && !ordinaryConstructionProducer &&
+       !defaultConstructionProducer) ||
       !producer->result || *producer->result != sourceId ||
       producer->info.type != source->info.type) {
     return {};
@@ -4121,7 +4128,7 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
                     }) != 1) {
     return {};
   }
-  if (ownedExpectedCallProducer) {
+  if (ownedExpectedCallProducer || cleanupFreeExpectedCallProducer) {
     const std::size_t parameterIndex = stage->callInputIndex;
     const MirBlock *producerBlock = body.findBlock(source->definitionBlock);
     const MirBlock *stageBlock = body.findBlock(stagedValue->definitionBlock);
@@ -15121,6 +15128,40 @@ struct DirectExpectedClassExtraction {
   }
 };
 
+// Reuse the cleanup-free receiver proof for a checked class result whose sole
+// consumer is a prepared call argument. The staging proof owns destination,
+// activation, dominance and transfer; this predicate owns only the producer.
+[[nodiscard]] bool
+cleanupFreeExpectedClassExtractionProducer(const MirBody &body,
+                                           MirValueId valueId) {
+  const auto *value = body.findValue(valueId);
+  const auto *call = value ? findInstruction(body, value->definition) : nullptr;
+  if (!value || value->info.type.kind != SemanticType::Class ||
+      value->info.category != ValueCategory::Value ||
+      value->info.traits.drop != DropKind::Lexical ||
+      !value->info.traits.movable || value->info.traits.containsBorrowedState ||
+      !call || call->kind != MirInstructionKind::Call ||
+      call->result != valueId || call->info.type != value->info.type ||
+      call->destination || call->successResultDrop ||
+      call->successResultDestination || !call->receiver ||
+      !call->operands.empty() || call->functionTarget ||
+      call->constructorTarget || call->lambdaTarget || call->bodyTarget ||
+      call->callableInvocation || !call->callableArguments.empty() ||
+      (call->intrinsic != IntrinsicKind::ExpectedValue &&
+       call->intrinsic != IntrinsicKind::ExpectedError) ||
+      call->receiver->type.arguments.size() != 2 ||
+      call->dispatch != CallDispatch::Static ||
+      call->dispatchOwner != call->receiver->type ||
+      call->localFailureSites.size() != 1 ||
+      call->definedFailure.localOrigins.size() != 1 ||
+      call->definedFailure.propagation != FailurePropagationKind::None ||
+      !call->lifecycle.empty() || !cleanupFreeExpectedReceiver(body, *call))
+    return false;
+  const std::size_t payload =
+      call->intrinsic == IntrinsicKind::ExpectedValue ? 0u : 1u;
+  return call->receiver->type.arguments[payload] == value->info.type;
+}
+
 // A cleanup-free owning Expected shell does not need the intermediate lifetime
 // slot used by ownedExpectedClassExtractionProducer(). MIR can instead route
 // the checked extraction straight into its binding and activate that binding
@@ -15141,11 +15182,10 @@ directExpectedClassExtraction(const MirProgram &program, const MirBody &body,
     return {};
   }
   if (call->kind != MirInstructionKind::Call || call->result != valueId ||
-      call->destination || !call->successResultDestination ||
-      call->successResultDrop || !call->receiver || !call->operands.empty() ||
-      call->functionTarget || call->constructorTarget || call->lambdaTarget ||
-      call->bodyTarget || call->callableInvocation ||
-      !call->callableArguments.empty() ||
+      call->destination || call->successResultDrop || !call->receiver ||
+      !call->operands.empty() || call->functionTarget ||
+      call->constructorTarget || call->lambdaTarget || call->bodyTarget ||
+      call->callableInvocation || !call->callableArguments.empty() ||
       (call->intrinsic != IntrinsicKind::ExpectedValue &&
        call->intrinsic != IntrinsicKind::ExpectedError)) {
     return {};
@@ -15204,6 +15244,21 @@ directExpectedClassExtraction(const MirProgram &program, const MirBody &body,
   }
 
   const std::vector<MirValueUse> uses = nonRootRecordUses(body, valueId);
+  if (!copying && !call->successResultDestination) {
+    const auto staged = stagedClassResultForSource(body, valueId);
+    const auto *success = body.findBlock(value->definitionBlock);
+    success = success ? body.findBlock(success->terminator.target) : nullptr;
+    if (staged.producer != call || !staged.slot || !staged.drop ||
+        staged.drop->dropType.requiresActiveCleanup || !success ||
+        success->instructions.empty() ||
+        success->instructions.front().id != staged.stage->id)
+      return {};
+    return {.value = value,
+            .call = call,
+            .receiverMove = receiverMove,
+            .receiverSource = receiverSource,
+            .destination = staged.slot};
+  }
   if (copying && body.usesOf(valueId).size() != uses.size()) {
     return {};
   }
