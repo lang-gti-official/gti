@@ -1,0 +1,19 @@
+// Expected exit status: 0. Reduced from the seed-20261003 interaction campaign.
+#include <std/utility>
+
+class Ticket {
+public:
+  Ticket(int32_t input) : identity(input) {}
+  Ticket(Ticket&& other) = default;
+  int32_t get() { return this.identity; }
+private:
+  int32_t identity;
+};
+
+T apply<T, F>(F action, T value) { return action(std::move(value)); }
+
+int main() {
+  auto action = [](Ticket value) -> Ticket { return std::move(value); };
+  Ticket item = apply(std::move(action), Ticket(7));
+  return item.get() == 7 ? 0 : 1;
+}
