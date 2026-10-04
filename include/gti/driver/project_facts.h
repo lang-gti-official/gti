@@ -3,6 +3,7 @@
 #include "gti/driver/compilation.h"
 #include "gti/driver/manifest.h"
 #include "gti/driver/workspace.h"
+#include "gti/include_suggestions.h"
 #include "gti/source_graph.h"
 
 #include <filesystem>
@@ -166,5 +167,10 @@ struct ProjectFactsResult {
 // workspace for another purpose reuse it instead of resolving twice.
 [[nodiscard]] ProjectFacts
 projectFactsFromWorkspace(const ProjectWorkspace &workspace);
+
+// Search authority for editor include discovery: the selected package and
+// declared direct dependency aliases only. No acquisition or recursive walk.
+[[nodiscard]] std::vector<IncludeSearchRoot>
+projectIncludeSearchRoots(const ProjectFacts &facts);
 
 } // namespace lang::driver

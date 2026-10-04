@@ -3318,10 +3318,6 @@ private:
                                   const Token &declaration,
                                   SourceUnitId declarationUnit);
 
-  static void addStandardLibraryIncludeFix(Diagnostic &diagnostic,
-                                           const Token &use,
-                                           std::string_view include);
-
   bool reportInvisibleSymbol(const Token &use, std::string name,
                              const Symbol *symbol);
 

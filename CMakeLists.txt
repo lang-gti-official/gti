@@ -359,6 +359,7 @@ add_library(
   "src/compiler/format_config.cpp"
   "src/compiler/formatter.cpp"
   "src/compiler/frontend.cpp"
+  "src/compiler/include_suggestions.cpp"
   "src/compiler/frontend_cache.cpp"
   "src/compiler/hir.cpp"
   "src/compiler/hir_model.cpp"

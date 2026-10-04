@@ -162,6 +162,11 @@ add_executable("gti_driver_tests" "${PROJECT_SOURCE_DIR}/tests/driver_tests.cpp"
 target_link_libraries("gti_driver_tests" PRIVATE gti_driver)
 add_test(NAME driver_pipeline COMMAND gti_driver_tests)
 
+add_executable(gti_include_suggestions_tests
+               "${PROJECT_SOURCE_DIR}/tests/include_suggestions_tests.cpp")
+target_link_libraries(gti_include_suggestions_tests PRIVATE gti_driver)
+add_test(NAME include_suggestions COMMAND gti_include_suggestions_tests)
+
 add_executable(gti_executable_entry_tests
                "${PROJECT_SOURCE_DIR}/tests/executable_entry_tests.cpp")
 target_link_libraries(gti_executable_entry_tests PRIVATE gti_driver)
@@ -2647,6 +2652,13 @@ if(Python3_Interpreter_FOUND)
 
 
   if(TARGET gti_lsp)
+    add_test(
+      NAME lsp_include_suggestions
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/lsp_include_suggestions_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(lsp_include_suggestions PROPERTIES TIMEOUT 120)
     add_test(
       NAME lsp_project_facts
       COMMAND "${Python3_EXECUTABLE}"

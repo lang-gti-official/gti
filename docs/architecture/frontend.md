@@ -190,6 +190,15 @@ scan written comment ranges separately.
 
 ## Parser And AST
 
+Qualified namespace declarations (`namespace outer::inner { ... }`) expand
+directly into the same nested `NamespaceDecl` nodes as explicit blocks. Each
+component retains its original name token and a declaration extent ending at
+the shared closing brace; the outer extent also includes `namespace`. Every
+component consumes the existing nesting-depth budget, so shorthand cannot
+bypass the parser's bounded recursion contract. Semantics, export visibility,
+HIR/MIR, and tooling therefore use ordinary nested-namespace facts, without a
+second namespace representation or backend interpretation of source spelling.
+
 `Parser` in `include/gti/parser.h` owns grammar, precedence, AST construction,
 recovery, and synchronization through a narrow facade. Its algorithms and
 request-local parser state are compiled once in `src/compiler/parser.cpp`;

@@ -4364,37 +4364,10 @@ auto SemanticVisitor::Impl::reportInvisibleDeclaration(
     return true;
   }
   if (requester != nullptr && target != nullptr) {
-    if (target->standardLibraryName) {
-      diagnostic.hints.emplace_back("Add '#include <" +
-                                    *target->standardLibraryName +
-                                    ">' to this source file.");
-      addStandardLibraryIncludeFix(diagnostic, use,
-                                   *target->standardLibraryName);
-    } else {
-      std::filesystem::path relative =
-          target->path.lexically_relative(requester->path.parent_path());
-      if (relative.empty()) {
-        relative = target->path.filename();
-      }
-      diagnostic.hints.emplace_back("Add '#include \"" +
-                                    relative.generic_string() +
-                                    "\"' to this source file.");
-    }
+    diagnostic.missingIncludeName = use.lexeme;
   }
   diagnostics.push_back(std::move(diagnostic));
   return true;
-}
-
-void SemanticVisitor::Impl::addStandardLibraryIncludeFix(
-    Diagnostic &diagnostic, const Token &use, std::string_view include) {
-  SourceSpan insertion = tokenSpan(use);
-  insertion.start = 0;
-  insertion.end = 0;
-  insertion.line = 1;
-  diagnostic.fixes.push_back(
-      {.span = std::move(insertion),
-       .replacement = "#include <" + std::string(include) + ">\n",
-       .message = "Add #include <" + std::string(include) + ">"});
 }
 
 auto SemanticVisitor::Impl::reportInvisibleSymbol(const Token &use,

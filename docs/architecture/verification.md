@@ -1,5 +1,34 @@
 # Compiler Verification
 
+## Project include discovery and namespace paths
+
+The 0.368.0 include-suggestion gate covers ordinary project functions, class
+types, aliases, constants, enumerators, static calls, namespace aliases,
+generic declarations and concepts. Every proposed edit is reapplied through
+HIR. Negative cases cover wrong qualification, inaccessible members,
+incompatible overloads, new semantic errors, inactive declarations, modules,
+undeclared nested packages (including unsaved files), generated/hidden inputs
+and symlink escapes. Other cases check direct dependency aliases, alternative
+headers, dirty overlays, deletion, and BOM/CRLF insertion.
+
+`lsp_include_suggestions` checks versioned code actions and exact UTF-16 ranges
+for a function in an unincluded project header outside `src/`; it edits,
+closes, deletes and recreates candidate files, rejects stale actions, applies
+the resulting include, and requests a standard-library function's include.
+The same protocol check passes against an isolated installation with resource
+overrides cleared. The optimized compiler pipeline, LSP protocol, driver and
+project-model suites, loaded-unit/cache, SIMD include advice, source modules,
+scalability smoke and release policy pass; CLI/project CLI workflows pass too.
+
+Namespace path coverage extends `testNamespacesAndAliases`: nested AST/source
+identities, semantic equivalence and reopening, alias conflicts, module
+exports/privacy, navigation, formatting, recovery and nesting limits. Example
+06 runs at C++20/C++23 O0/O3 with unchanged output and MIR/LoweredProgram
+inventories. Tree-sitter's 69 corpus cases, captures, shipped-source parsing,
+source-text/query gates and deterministic regeneration pass. This is focused
+compiler/editor validation on macOS arm64, not a claim that the entire runtime
+or every platform matrix was rerun.
+
 ## Implicit receiver text-view relay repair
 
 The 0.367.1 fix gives an implicit instance-field text accessor the same

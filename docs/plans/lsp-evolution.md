@@ -15,6 +15,14 @@ shared model instead of building feature-specific semantic systems.
 
 ## Near-Term Priorities
 
+### General missing-include actions — implemented
+
+Project, direct-dependency and standard-library declarations now share compiler
+discovery and speculative frontend validation. The fixed standard-type header
+table is removed. Current scope, snapshot invalidation and conservative limits
+are recorded in the canonical LSP architecture document. This does not provide
+workspace-wide references/rename or a persistent project index.
+
 ### 0. Make the crash boundary state-safe - implemented
 
 `runIsolatedAnalysis` now guards only analysis and snapshot construction. It
@@ -188,7 +196,7 @@ lexical fallbacks are acceptable only when clearly less authoritative.
 
 ## Deferred clangd Complexity
 
-Preambles/PCH, compile-command borrowing, header insertion, macro expansion
+Preambles/PCH, compile-command borrowing, macro expansion
 locations, per-file workers, AST LRUs, adaptive debounce, remote indexes, and
 memory accounting solve C++/clang scale. Adopt none without a measured GTI
 problem.

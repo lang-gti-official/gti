@@ -653,6 +653,7 @@ auto SemanticVisitor::Impl::registerNamespaceAliases(
           resolveNamespacePath(alias->target(), scope);
       if (!targetNamespace) {
         report(alias->target().last(), "Unknown namespace in alias target.");
+        diagnostics.back().missingIncludeName = alias->target().last().lexeme;
         continue;
       }
 
@@ -1142,6 +1143,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         report(requirement.name.last(),
                "Unknown concept '" + pathSpelling(requirement.name) + "'.",
                "GTI-S2049");
+        diagnostics.back().missingIncludeName = requirement.name.last().lexeme;
         valid = false;
         continue;
       }

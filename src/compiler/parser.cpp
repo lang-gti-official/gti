@@ -289,6 +289,24 @@ private:
       return std::make_shared<NamespaceAliasDecl>(name, std::move(target));
     }
 
+    return namespaceBody(std::move(name));
+  }
+
+  StmtPtr namespaceBody(Token name) {
+    if (match({TokenKind::SCOPE})) {
+      Token childName =
+          consume(TokenKind::IDENTIFIER, "Expect namespace name after '::'.");
+      // Shorthand retains the ordinary nested namespace representation and
+      // depth budget, including each component's exact declaration token.
+      const NestingGuard nesting = enterNesting(childName);
+      StmtPtr child = namespaceBody(childName);
+      stampExtent(child, childName);
+      StmtList declarations;
+      declarations.emplace_back(std::move(child));
+      return std::make_shared<NamespaceDecl>(std::move(name),
+                                             std::move(declarations));
+    }
+
     consume(TokenKind::LEFT_BRACE, "Expect '{' before namespace body.");
     StmtList declarations;
     while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {

@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.368.0 — Project include actions and namespace shorthand
+
+- Offer missing-include code actions for actual project and direct-dependency
+  declarations, including functions, types, aliases and constants. Standard
+  library declarations use the same mechanism, replacing the fixed type list.
+  Candidate edits are checked by the compiler, use current unsaved buffers,
+  and refresh when files change. Ambiguous headers remain explicit choices.
+- Accept `namespace outer::inner { ... }` as shorthand for nested namespaces,
+  with matching formatter, navigation, highlighting and parser coverage.
+
 ## 0.367.1 — Implicit receiver text-view relays
 
 - Fix valid text-view and C-string accessor returns using an implicit instance

@@ -67,6 +67,10 @@ struct Diagnostic {
   std::vector<FixIt> fixes;
   std::vector<std::string> hints;
   std::vector<DiagnosticTag> tags;
+  // Compiler-owned unresolved declaration query. Discovery may use this leaf
+  // name to find candidates, but only ordinary frontend reanalysis can prove
+  // an include fixes the lookup in its actual scope. Never parse message text.
+  std::string missingIncludeName;
 };
 
 [[nodiscard]] inline bool

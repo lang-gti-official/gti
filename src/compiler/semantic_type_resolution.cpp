@@ -3467,19 +3467,8 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
       }
     }
     const std::string spelling = pathSpelling(type.name);
-    if (const std::optional<std::string_view> include =
-            standardLibraryIncludeForType(spelling)) {
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2089", DiagnosticPhase::Semantics, type.name.last(),
-          "Type '" + spelling + "' is unavailable because <" +
-              std::string(*include) + "> is not included.");
-      diagnostic.hints.emplace_back("Add '#include <" + std::string(*include) +
-                                    ">' to this source file.");
-      addStandardLibraryIncludeFix(diagnostic, type.name.last(), *include);
-      diagnostics.emplace_back(std::move(diagnostic));
-      return;
-    }
     report(type.name.last(), "Unknown type '" + spelling + "'.");
+    diagnostics.back().missingIncludeName = type.name.last().lexeme;
     return;
   }
   const ClassInfo &declaration = classInfo(*classId);
@@ -5217,6 +5206,8 @@ auto SemanticVisitor::Impl::makeGenericParameters(
                      "'. Concepts must be declared or made visible through "
                      "the prelude or a direct #include.",
                  "GTI-S2029");
+          diagnostics.back().missingIncludeName =
+              parameter.constraint->last().lexeme;
         }
         constraints = constraintBit(GenericConstraintKind::Invalid);
       }
@@ -5745,6 +5736,7 @@ auto SemanticVisitor::Impl::resolveRequirements(
                "Unknown concept '" + pathSpelling(application.name) +
                    "' in requires clause.",
                "GTI-S2049");
+        diagnostics.back().missingIncludeName = application.name.last().lexeme;
       }
       continue;
     }

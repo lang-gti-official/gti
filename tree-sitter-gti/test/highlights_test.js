@@ -655,6 +655,13 @@ requireCaptureCount(memberRequirementRow, "item", "variable.parameter", 2);
 requireCapture(memberRequirementRow, "snapshot", "function.method");
 requireCapture(memberRequirementRow, "->", "operator");
 
+const namespacePathRow = fixtureLines.findIndex((line) =>
+  line.includes("namespace qualified_outer::"),
+);
+for (const component of ["qualified_outer", "qualified_inner", "qualified_leaf"]) {
+  requireCapture(namespacePathRow, component, "module");
+}
+
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",
 );

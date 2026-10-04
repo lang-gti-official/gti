@@ -6877,6 +6877,7 @@ artifact policy stay in `gti_driver`, never `gti_compiler` or the LSP.
 | `T-LSP-04` | complete | Analysis and completion consume driver-owned `ProjectFacts` without fetching/building, publish project-resolution failures, preserve standalone mode, watch manifest/lock changes, and keep dirty dependency buffers authoritative. |
 | `T-LSP-05` | measured defer | A durable project index only after unopened-file references/rename proves a client. |
 | `T-LSP-06` | measured defer | Process-isolated analysis only if in-process crash recovery must guarantee containment of heap corruption. The current guard is state-safe, not process isolation. |
+| `T-LSP-07` | complete | Missing-include actions discover actual declarations across the selected project, direct package aliases and public standard-library units. Structured semantic lookup requests, canonical parsing, exact definition identity and speculative frontend reanalysis replace the hardcoded standard-type catalog. Dirty/new/deleted files invalidate discovery results; module/private/incompatible candidates fail closed. No durable project index is introduced. |
 
 Every new syntax/semantic feature still updates formatter, Tree-sitter, LSP
 tokens/queries, shipped-source parsing, and documentation in its own row.

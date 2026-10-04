@@ -309,6 +309,7 @@ module.exports = grammar({
       seq(
         "namespace",
         field("name", $.identifier),
+        repeat(seq("::", field("name", $.identifier))),
         field("body", $.namespace_body),
       ),
 

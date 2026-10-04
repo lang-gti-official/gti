@@ -160,7 +160,12 @@ static-assert-declaration
    declaration is evaluated once for each canonical concrete instance. *)
 
 namespace-declaration  = "namespace" IDENTIFIER
-                         ( namespace-body | namespace-alias ) ;
+                         ( { "::" IDENTIFIER } namespace-body
+                         | namespace-alias ) ;
+
+(* A namespace path is shorthand for nested namespace declarations, with
+   each component counting toward the ordinary parser nesting limit.
+   Namespace alias declarations still introduce a single identifier. *)
 
 namespace-body         = "{" { declaration } "}" ;
 

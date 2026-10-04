@@ -6731,6 +6731,7 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
                                resolveQualifiedGlobally(expr.name()))) {
       report(expr.name().last(),
              "Undefined qualified name '" + pathSpelling(expr.name()) + "'.");
+      diagnostics.back().missingIncludeName = expr.name().last().lexeme;
     }
     currentType = SemanticType::Unknown;
     return;
@@ -7365,6 +7366,7 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
                                resolveGlobally(expr.name()))) {
       report(expr.name(), "Undefined name '" + expr.name().lexeme + "'.",
              "GTI-S2001");
+      diagnostics.back().missingIncludeName = expr.name().lexeme;
     }
     currentType = SemanticType::Unknown;
     return;

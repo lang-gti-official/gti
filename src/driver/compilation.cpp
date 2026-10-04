@@ -21,13 +21,17 @@ FrontendResult analyze(const CompilationRequest &request,
   // Compilation and `check` consume diagnostics, semantics, and symbols; only
   // editor position queries read the occurrence table, so it is not built on
   // this path.
-  FrontendResult result =
-      Frontend({.target = request.target(),
-                .toolingOccurrences = false,
-                .requireEntryPoint = request.requiresEntryPoint()})
-          .analyzeLoaded(request.entry(), std::move(inputs.sourceGraph),
-                         std::move(inputs.sources),
-                         std::move(inputs.diagnostics), inputs.sourceValid);
+  const FrontendOptions options{
+      .target = request.target(),
+      .configurationFlags = request.configurationFlags(),
+      .toolingOccurrences = false,
+      .requireEntryPoint = request.requiresEntryPoint()};
+  FrontendResult result = Frontend(options).analyzeLoaded(
+      request.entry(), std::move(inputs.sourceGraph), std::move(inputs.sources),
+      std::move(inputs.diagnostics), inputs.sourceValid);
+  addIncludeSuggestions(
+      result, options, request.entry(), {request.standardLibrary().prelude}, {},
+      {request.standardLibrary().root}, request.packageSources());
   std::erase_if(result.diagnostics, [&](const Diagnostic &diagnostic) {
     return request.warnings().suppresses(diagnostic);
   });
