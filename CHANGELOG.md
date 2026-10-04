@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.363.0 — Coloured terminal output
+## 0.364.0 — Coloured terminal output
 
 - Compiler errors, warnings, underlines, notes/help, build status, and final
   diagnostic totals now use colour automatically in terminals.
