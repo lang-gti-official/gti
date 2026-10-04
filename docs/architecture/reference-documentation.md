@@ -2,20 +2,41 @@
 
 Status: Current.
 
-The reference application under `reference/` is a statically exported
-Next.js site with a compiler-backed content pipeline. An author can add one
-trustworthy language or library page, bind it to current compiler
-declarations, give it dedicated examples, and have CI reject structural,
-semantic-binding, compilation, or rendering drift. The implemented site
-publishes 90 authored pages and verifies 71 displayed programs. Its complete
-member-page families cover `std::array`, `std::string`, and `std::vector`,
-including a canonical child route for every constructor/member group shown by
-those type pages. Compiler-bound header pages additionally cover every
-currently implemented slice in `algorithm`, `cmath`, `cstdio`, `cthread`,
-`filesystem`, `format`, `forward_list`, `functional`, `iterator`, `memory`, `numeric`,
-`random`, `span`, `tcp`, `thread`, and `utility`, while explicitly excluding
-bodyless scaffolds. The site also publishes an authored tooling section for
-direct/project compilation, manifests, C bindgen, formatting, and the LSP.
+The sole home of the reference website is
+[`gti-lang/gti-reference`](https://git.internal.howetotech.dev/gti-lang/gti-reference).
+It owns authored MDX, page-owned examples, the Next.js static-export application,
+content/render validation, and website CI/CD. The compiler repository owns
+language semantics, canonical implementation documentation, and the
+compiler-backed API projection consumed by that site.
+
+## Repository Ownership And Migration
+
+The former `reference/` application was reconciled into the organisation
+repository and removed from this repository. The port preserves the organisation
+repository's standalone API snapshot and deployment setup while carrying forward
+newer library pages, examples, explicit execution-profile validation, and module
+highlighting. It also adds the import/export reference and checked multi-file
+module examples.
+
+There must not be two independently editable or deployable copies. Keeping both
+caused content and validation to drift, and copying the compiler-tree application
+over the standalone repository could overwrite its deployment work. Website
+changes now belong in `gti-reference`; this repository does not automatically
+copy, mirror, or deploy them. Its historical copy remains recoverable in Git.
+The build-only API producer moved to `src/docgen/main.cpp`, rather than being
+deleted with the website.
+
+When a compiler change affects documented APIs or example behavior:
+
+1. Land and validate its implementation and canonical language/architecture docs.
+2. In `gti-reference`, update `GTI_VERSION`, `api/source.json`, and the generated
+   `api/documentation-index.json` together against one exact compiler revision.
+3. Reconcile affected prose, bindings, and examples in that repository.
+4. Run its example, content, TypeScript, static-build, and render gates.
+
+The website's main-branch CI/CD owns publication. It pins a compiler revision;
+it never silently uses an arbitrary compiler checkout or overwrites this
+repository's semantic documentation.
 
 The foundation separates three authorities:
 
@@ -63,7 +84,7 @@ build/gti_docgen --stdlib stdlib --output documentation-index.json
 
 ## Authored Content Graph
 
-Publishable content lives below `reference/content/`. A page directory maps
+Publishable content lives below `content/` in `gti-reference`. A page directory maps
 directly to its route and contains one `page.mdx`. Frontmatter declares a
 page kind, title, summary, compiler API group keys, and page-local example IDs.
 `tooling` and `command` pages use the same validated content graph without
@@ -76,7 +97,7 @@ accepts current semantic release labels such as `0.301.0` and reserves edition
 labels such as `gti-20` for a future language-version model. This is authored
 release history rather than a compiler semantic fact.
 
-`reference/src/content/contract.ts` validates the complete graph before
+`src/content/contract.ts` in that repository validates the complete graph before
 development, type checking, or production builds. It rejects:
 
 - invalid or duplicate route segments, API bindings, and example IDs;
@@ -172,6 +193,14 @@ selected profile to the same compiler invocation and the displayed example
 shows its required CLI option. The C-thread mutex example exercises this
 concurrent-profile path.
 
+Multi-file examples additionally declare their displayed `files`. The contract
+accepts contained, non-symlink `.gti` and `gti.toml` paths and rejects traversal,
+duplicates, and missing files. A project example explicitly selects
+`build: project` and lists its manifest and local module/dependency inputs.
+The runner copies exactly the displayed files into an owned temporary directory,
+builds offline, and checks output or source diagnostics without mutating the
+authored content tree.
+
 `scripts/verify-examples.ts` invokes an actual `gti` executable for every
 authored example and runs binaries in owned temporary directories. A
 `std::vector` page therefore receives a purpose-written vector program rather
@@ -179,20 +208,26 @@ than implicitly inheriting a broad or unrelated example.
 
 ## Build And Drift Gates
 
-The reference CI job:
+This repository's compiler-documentation CI job builds `gti_docgen` in Release
+mode, analyzes the shipped library, and checks byte-identical repeated API
+generation. The `documentation_index` CTest retains independent compiler
+projection and malformed-input coverage. No Node dependencies or website build
+remain in compiler CI.
 
-1. builds `gti_docgen` and `gti`;
-2. compiles the current standard library into the API index;
-3. runs content-contract tests;
-4. compiles/runs page-owned examples;
-5. type-checks the generated registry; and
-6. completes the Next.js static production build; and
-7. inspects representative exported pages for rendered tables, syntax-token
-   markup, and the intentionally compact home index.
+The organisation website CI:
 
-Reference-only changes run this job without forcing the general compiler
-matrix. Any compiler/toolchain-visible change also runs it, because semantic
-or signature drift can invalidate existing reference bindings and examples.
+1. validates the pinned compiler version/revision and reviewed API snapshot;
+2. runs content-contract and deployment-script tests and checks TypeScript;
+3. builds `gti` and `gti_docgen` in Release mode from that exact source revision;
+4. compares its generated index byte-for-byte with the reviewed snapshot;
+5. compiles/runs every page-owned example and the contract fixture;
+6. builds the static production site and inspects representative rendered pages;
+7. packages the export and uses its existing health-checked deployment path.
+
+Building the pinned source makes website validation independent of asynchronous
+stable-release asset publication. Changing compiler main does not silently
+advance the website's documented version; updating the downstream contract is
+an explicit, reviewable step.
 
 Complete language coverage, member-detail expansion for the broad header
 pages, richer overload and constraint presentation, and ranked symbol search

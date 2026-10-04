@@ -1,6 +1,0 @@
-{
-  "title": "Append a string view",
-  "description": "Grows an owner with characters borrowed from a literal view.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

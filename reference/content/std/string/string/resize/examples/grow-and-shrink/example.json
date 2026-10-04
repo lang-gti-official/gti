@@ -1,6 +1,0 @@
-{
-  "title": "Grow and shrink text",
-  "description": "Value-initializes a new position, writes it, and then removes a trailing character.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

@@ -1,6 +1,0 @@
-{
-  "title": "Observe character count",
-  "description": "Reads logical string length independently of spare capacity.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

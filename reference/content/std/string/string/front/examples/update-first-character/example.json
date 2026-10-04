@@ -1,6 +1,0 @@
-{
-  "title": "Update the first character",
-  "description": "Mutates the character returned by front and then prints the owner.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

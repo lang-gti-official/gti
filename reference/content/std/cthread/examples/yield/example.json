@@ -1,5 +1,0 @@
-{
-  "title": "Offer a scheduling opportunity",
-  "description": "Checks stable thread identity around yield without assuming another thread runs or a delay elapses.",
-  "mode": "run"
-}

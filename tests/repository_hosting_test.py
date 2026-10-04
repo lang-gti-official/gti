@@ -109,8 +109,26 @@ def main() -> None:
         "GTI_HEAD_SHA: ${{ gitea.sha }}" in ci
         and "GITHUB_SHA" not in ci
         and "npm run test:source-text" in ci
-        and "pnpm examples:contract-smoke" in ci,
-        "CI lost Gitea revision, Tree-sitter, or reference-site authority",
+        and "--target gti_docgen" in ci
+        and "cmp build-documentation/documentation-index.json" in ci
+        and "working-directory: reference" not in ci
+        and "pnpm" not in ci,
+        "CI lost Gitea revision, Tree-sitter, or compiler-documentation authority",
+    )
+    expect(
+        not any(relative.startswith("reference/") for relative in tracked),
+        "the website must live only in gti-lang/gti-reference, not compiler source",
+    )
+    expect(
+        (root / "src/docgen/main.cpp").is_file()
+        and '"src/docgen/main.cpp"' in text(root, "CMakeLists.txt"),
+        "the compiler-owned documentation producer was lost with the website",
+    )
+    reference_ownership = text(root, "docs/architecture/reference-documentation.md")
+    expect(
+        "gti-lang/gti-reference" in reference_ownership
+        and "Repository Ownership And Migration" in reference_ownership,
+        "the standalone website's ownership/migration rationale is undocumented",
     )
     nightly = text(root, ".gitea/workflows/nightly.yml")
     expect(

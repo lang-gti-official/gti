@@ -62,6 +62,12 @@ int main() {
 For a readable overview of recent capabilities and fixes, see the
 [changelog](CHANGELOG.md).
 
+The [reference website source](https://git.internal.howetotech.dev/gti-lang/gti-reference)
+lives in its own organisation repository, including the
+[import/export reference](https://git.internal.howetotech.dev/gti-lang/gti-reference/src/branch/main/content/language/modules/page.mdx).
+See [reference documentation ownership](docs/architecture/reference-documentation.md)
+for the compiler API boundary and why the former in-tree website was removed.
+
 - Explicit fixed-width integer types, checked conversions and indexing, and
   immutable-by-default bindings, plus explicit wrapping, saturating, and
   checked-result add/subtract/multiply operations, direct base-10
