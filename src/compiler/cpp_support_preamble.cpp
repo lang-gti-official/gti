@@ -54,6 +54,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "simd_binary",
       "vector_size",
       "mir_lambda_identity_v",
+      "mir_cleanup_emergency_abandonment",
       "add",
       "add_assign",
       "allocate",
@@ -413,9 +414,18 @@ void writeCppSupportPreamble(std::ostream &output,
 
 // The lifetime-slot template only transports this ABI record by pointer, so
 // the lowered translation unit needs the type name but not the definition.
-struct gti_failure_record_v1;
+struct gti_failure_record_v2;
 
 namespace gti_internal::backend {
+
+)";
+  output << "inline bool mir_cleanup_emergency_abandonment() noexcept {\n"
+         << (usesManagedThreads ? "  return "
+                                  "::gti_runtime_detail::managed_cleanup_"
+                                  "emergency_handoff_active();\n"
+                                : "  return false;\n")
+         << "}\n";
+  output << R"(
 
 template <typename T>
 inline constexpr std::uint64_t mir_lambda_identity_v = [] {
@@ -581,7 +591,7 @@ static_assert(sizeof(double) == sizeof(std::uint64_t) &&
 // disarmed representation and release its allocation exactly once.
 template <typename T>
 [[nodiscard]] bool mir_unique_owner_drop_with_failure_v1(
-    std::unique_ptr<T> &owner, ::gti_failure_record_v1 *failure_record) {
+    std::unique_ptr<T> &owner, ::gti_failure_record_v2 *failure_record) {
   if (!owner) {
     return true;
   }
@@ -589,7 +599,11 @@ template <typename T>
   try {
     success = owner->__gti_mir_destruct_failure(failure_record);
   } catch (...) {
-    owner.reset();
+    if (mir_cleanup_emergency_abandonment()) {
+      (void)owner.release();
+    } else {
+      owner.reset();
+    }
     throw;
   }
   owner.reset();
@@ -601,28 +615,28 @@ template <typename T>
 // is retained while remaining steps drain, and a second one terminates.
 class mir_cleanup_sequence_v1 {
 public:
-  mir_cleanup_sequence_v1(::gti_failure_record_v1 *record, bool unwinding,
+  mir_cleanup_sequence_v1(::gti_failure_record_v2 *record, bool unwinding,
       const ::gti_failure_artifact_descriptor_v1 *artifact)
       : record_(record), unwinding_(unwinding), artifact_(artifact) {}
-  ::gti_failure_record_v1 *record() { return success_ ? record_ : &secondary_; }
+  ::gti_failure_record_v2 *record() { return success_ ? record_ : &secondary_; }
   bool unwinding() const { return unwinding_ || !success_; }
   bool step(bool success) {
     if (!success && unwinding_) return false;
     if (!success && !success_) {
-      const ::gti_failure_emergency_v1 emergency{
-          GTI_FAILURE_ABI_VERSION_V1, UINT32_C(0), *record_, secondary_};
-      ::gti_rt_failure_terminate_cleanup_v1(&emergency, artifact_, artifact_);
+      const ::gti_failure_emergency_v2 emergency{
+          GTI_FAILURE_ABI_VERSION_V2, UINT32_C(0), *record_, secondary_};
+      ::gti_rt_failure_terminate_cleanup_v2(&emergency, artifact_, artifact_);
     }
     success_ = success_ && success;
     return true;
   }
   bool success() const { return success_; }
 private:
-  ::gti_failure_record_v1 *record_;
+  ::gti_failure_record_v2 *record_;
   bool unwinding_;
   const ::gti_failure_artifact_descriptor_v1 *artifact_;
   bool success_ = true;
-  ::gti_failure_record_v1 secondary_{};
+  ::gti_failure_record_v2 secondary_{};
 };
 
 // The verified array recipe visits immediate elements in reverse order. It
@@ -630,7 +644,7 @@ private:
 // now-inert array representation after successful (or primary-failure) cleanup.
 template <std::size_t Extent, typename Array, typename Cleanup>
 [[nodiscard]] bool mir_array_cleanup_with_failure_v1(
-    Array &array, ::gti_failure_record_v1 *record, bool unwinding,
+    Array &array, ::gti_failure_record_v2 *record, bool unwinding,
     const ::gti_failure_artifact_descriptor_v1 *artifact, Cleanup cleanup) {
   static_assert(std::tuple_size_v<std::remove_cvref_t<Array>> == Extent);
   mir_cleanup_sequence_v1 sequence(record, unwinding, artifact);
@@ -643,7 +657,7 @@ template <std::size_t Extent, typename Array, typename Cleanup>
 
 template <std::size_t Instance, typename T>
 [[nodiscard]] bool mir_unique_aggregate_owner_drop_with_failure_v1(
-    std::unique_ptr<T> &owner, ::gti_failure_record_v1 *record, bool unwinding) {
+    std::unique_ptr<T> &owner, ::gti_failure_record_v2 *record, bool unwinding) {
   if (!owner) return true;
   const bool success =
       owner->template __gti_mir_unique_cleanup_failure<Instance>(record, unwinding);
@@ -661,7 +675,7 @@ template <std::size_t Instance, typename T>
 // preserves the destination allocation's existing selection.
 class mir_polymorphic_cleanup_binding_v1 {
 public:
-  using function_type = bool (*)(void *, ::gti_failure_record_v1 *, bool);
+  using function_type = bool (*)(void *, ::gti_failure_record_v2 *, bool);
   mir_polymorphic_cleanup_binding_v1() = default;
   mir_polymorphic_cleanup_binding_v1(const mir_polymorphic_cleanup_binding_v1 &) noexcept {}
   mir_polymorphic_cleanup_binding_v1(mir_polymorphic_cleanup_binding_v1 &&) noexcept {}
@@ -671,7 +685,7 @@ public:
     if (selected == nullptr || (function_ != nullptr && function_ != selected)) std::abort();
     function_ = selected;
   }
-  bool run(void *object, ::gti_failure_record_v1 *record, bool unwinding) const {
+  bool run(void *object, ::gti_failure_record_v2 *record, bool unwinding) const {
     if (function_ == nullptr) std::abort();
     return function_(object, record, unwinding);
   }
@@ -681,7 +695,7 @@ private:
 
 template <typename T>
 [[nodiscard]] bool mir_polymorphic_owner_drop_with_failure_v1(
-    std::unique_ptr<T> &owner, ::gti_failure_record_v1 *record, bool unwinding) {
+    std::unique_ptr<T> &owner, ::gti_failure_record_v2 *record, bool unwinding) {
   if (!owner) return true;
   const bool success =
       owner->__gti_mir_polymorphic_cleanup_failure(record, unwinding);
@@ -703,6 +717,12 @@ public:
 
   ~mir_lifetime_slot() {
     if (!engaged_) {
+      return;
+    }
+    // A verified cleanup-emergency edge explicitly stopped source cleanup.
+    // The private worker handoff only retires native stack frames; neither
+    // representation policy may manufacture an omitted GTI Drop here.
+    if (mir_cleanup_emergency_abandonment()) {
       return;
     }
     if constexpr (DestroyRepresentationAtScopeExit) {
@@ -766,7 +786,7 @@ public:
   }
 
   [[nodiscard]] bool
-  destroy_with_failure(::gti_failure_record_v1 *failure_record) {
+  destroy_with_failure(::gti_failure_record_v2 *failure_record) {
     if (!engaged_) {
       storage_error("verified MIR lifetime slot was dropped while empty");
     }
@@ -776,7 +796,7 @@ public:
     try {
       success = value->__gti_mir_destruct_failure(failure_record);
     } catch (...) {
-      std::destroy_at(value);
+      if (!mir_cleanup_emergency_abandonment()) std::destroy_at(value);
       throw;
     }
     // The transformed helper ran the source destructor body and disarmed its
@@ -789,12 +809,12 @@ public:
 
   [[nodiscard]] bool
   destroy_with_failure_if_engaged(
-      ::gti_failure_record_v1 *failure_record) {
+      ::gti_failure_record_v2 *failure_record) {
     return !engaged_ || destroy_with_failure(failure_record);
   }
 
   [[nodiscard]] bool destroy_unique_with_failure(
-      ::gti_failure_record_v1 *failure_record) {
+      ::gti_failure_record_v2 *failure_record) {
     if (!engaged_) {
       storage_error("verified MIR unique owner was dropped while empty");
     }
@@ -804,7 +824,7 @@ public:
     try {
       success = mir_unique_owner_drop_with_failure_v1(*owner, failure_record);
     } catch (...) {
-      std::destroy_at(owner);
+      if (!mir_cleanup_emergency_abandonment()) std::destroy_at(owner);
       throw;
     }
     std::destroy_at(owner);
@@ -812,13 +832,13 @@ public:
   }
 
   [[nodiscard]] bool destroy_unique_with_failure_if_engaged(
-      ::gti_failure_record_v1 *failure_record) {
+      ::gti_failure_record_v2 *failure_record) {
     return !engaged_ || destroy_unique_with_failure(failure_record);
   }
 
   template <std::size_t Instance>
   [[nodiscard]] bool destroy_unique_aggregate_with_failure(
-      ::gti_failure_record_v1 *failure_record, bool conditional, bool unwinding) {
+      ::gti_failure_record_v2 *failure_record, bool conditional, bool unwinding) {
     if (!engaged_) {
       if (conditional) return true;
       storage_error("verified MIR unique aggregate was dropped while empty");
@@ -829,7 +849,7 @@ public:
     try {
       success = value->template __gti_mir_unique_cleanup_failure<Instance>(failure_record, unwinding);
     } catch (...) {
-      std::destroy_at(value);
+      if (!mir_cleanup_emergency_abandonment()) std::destroy_at(value);
       throw;
     }
     if (!success && unwinding) return false;
@@ -839,7 +859,7 @@ public:
 
   template <std::size_t Instance>
   [[nodiscard]] bool destroy_unique_aggregate_owner_with_failure(
-      ::gti_failure_record_v1 *record, bool conditional, bool unwinding) {
+      ::gti_failure_record_v2 *record, bool conditional, bool unwinding) {
     if (!engaged_) {
       if (conditional) return true;
       storage_error("verified MIR unique aggregate owner was dropped while empty");
@@ -855,7 +875,7 @@ public:
 
   template <typename Cleanup>
   [[nodiscard]] bool destroy_cleanup_with_failure(
-      ::gti_failure_record_v1 *record, bool conditional, bool unwinding,
+      ::gti_failure_record_v2 *record, bool conditional, bool unwinding,
       Cleanup cleanup) {
     if (!engaged_) {
       if (conditional) return true;
@@ -874,7 +894,7 @@ public:
   // in reverse order without invoking std::array's recursive destructor.
   template <std::size_t... Extents>
   [[nodiscard]] bool destroy_fixed_array_with_failure(
-      ::gti_failure_record_v1 *failure_record, bool cleanup_failure,
+      ::gti_failure_record_v2 *failure_record, bool cleanup_failure,
       const ::gti_failure_artifact_descriptor_v1 *artifact) {
     static_assert(sizeof...(Extents) != 0);
     if (!engaged_) {
@@ -906,7 +926,7 @@ public:
 private:
   template <std::size_t Extent, std::size_t... Rest, typename Array>
   [[nodiscard]] static bool destroy_fixed_array_level(
-      Array &array, ::gti_failure_record_v1 *failure_record,
+      Array &array, ::gti_failure_record_v2 *failure_record,
       bool cleanup_failure,
       const ::gti_failure_artifact_descriptor_v1 *artifact, bool &success) {
     static_assert(std::tuple_size_v<std::remove_cvref_t<Array>> == Extent);
@@ -921,9 +941,9 @@ private:
           return false;
         }
       } else {
-        ::gti_failure_record_v1 secondary{};
+        ::gti_failure_record_v2 secondary{};
         const bool already_cleaning = !success;
-        ::gti_failure_record_v1 *element_record =
+        ::gti_failure_record_v2 *element_record =
             already_cleaning ? &secondary : failure_record;
         const bool element_success =
             element.__gti_mir_destruct_failure(element_record);
@@ -932,10 +952,10 @@ private:
           return false;
         }
         if (!element_success && already_cleaning) {
-          const ::gti_failure_emergency_v1 emergency{
-              GTI_FAILURE_ABI_VERSION_V1, UINT32_C(0), *failure_record,
+          const ::gti_failure_emergency_v2 emergency{
+              GTI_FAILURE_ABI_VERSION_V2, UINT32_C(0), *failure_record,
               secondary};
-          ::gti_rt_failure_terminate_cleanup_v1(&emergency, artifact,
+          ::gti_rt_failure_terminate_cleanup_v2(&emergency, artifact,
                                                 artifact);
         }
         success = success && element_success;
@@ -971,11 +991,13 @@ public:
     return *this;
   }
 
-  ~storage() { release(); }
+  ~storage() {
+    if (!mir_cleanup_emergency_abandonment()) release();
+  }
 
   template <typename Cleanup>
   [[nodiscard]] bool destroy_elements_with_failure(
-      ::gti_failure_record_v1 *record, bool unwinding,
+      ::gti_failure_record_v2 *record, bool unwinding,
       const ::gti_failure_artifact_descriptor_v1 *artifact, Cleanup cleanup) {
     mir_cleanup_sequence_v1 sequence(record, unwinding, artifact);
     for (std::size_t index = capacity_; index > 0; --index) {
@@ -1058,7 +1080,7 @@ public:
 
   template <typename Cleanup>
   [[nodiscard]] bool destroy_with_failure(std::uint64_t index,
-      ::gti_failure_record_v1 *record, Cleanup cleanup) {
+      ::gti_failure_record_v2 *record, Cleanup cleanup) {
     const std::size_t offset = checked_initialized_index(index);
     initialized_[offset] = 0;
     T *element = std::launder(slot(offset));
@@ -1406,7 +1428,9 @@ public:
 
   optional_storage &operator=(optional_storage &&) = delete;
 
-  ~optional_storage() { reset(); }
+  ~optional_storage() {
+    if (!mir_cleanup_emergency_abandonment()) reset();
+  }
 
   [[nodiscard]] bool has_value() const noexcept { return engaged_; }
 
@@ -1458,7 +1482,7 @@ public:
   [[nodiscard]] T &unchecked_read_mut() { return *std::launder(slot()); }
 
   template <typename Cleanup>
-  [[nodiscard]] bool reset_with_failure(::gti_failure_record_v1 *record,
+  [[nodiscard]] bool reset_with_failure(::gti_failure_record_v2 *record,
                                         Cleanup cleanup,
                                         bool unwinding = false) {
     if (!engaged_) {
@@ -1558,11 +1582,13 @@ public:
     }
     return *this;
   }
-  ~prefix_storage() { release(); }
+  ~prefix_storage() {
+    if (!mir_cleanup_emergency_abandonment()) release();
+  }
 
   template <typename Cleanup>
   [[nodiscard]] bool destroy_elements_with_failure(
-      ::gti_failure_record_v1 *record, bool unwinding,
+      ::gti_failure_record_v2 *record, bool unwinding,
       const ::gti_failure_artifact_descriptor_v1 *artifact, Cleanup cleanup) {
     mir_cleanup_sequence_v1 sequence(record, unwinding, artifact);
     while (length_ != 0) {
@@ -1632,7 +1658,7 @@ public:
   }
 
   template <typename Cleanup>
-  [[nodiscard]] bool pop_with_failure(::gti_failure_record_v1 *record,
+  [[nodiscard]] bool pop_with_failure(::gti_failure_record_v2 *record,
                                      Cleanup cleanup) {
     if (length_ == 0) {
       storage_error("prefix storage pop on an empty prefix");
@@ -1726,7 +1752,7 @@ public:
 
   template <typename Cleanup>
   [[nodiscard]] bool erase_with_failure(std::uint64_t index,
-      ::gti_failure_record_v1 *record,
+      ::gti_failure_record_v2 *record,
       const ::gti_failure_artifact_descriptor_v1 *artifact, Cleanup cleanup) {
     if (index >= length_) {
       storage_error("prefix storage erase outside the live prefix");
@@ -2076,6 +2102,7 @@ public:
     return *this;
   }
   ~shared_owner() {
+    if (mir_cleanup_emergency_abandonment()) return;
     if (state_ != nullptr || view_ != nullptr) std::abort();
   }
   explicit operator bool() const noexcept { return state_ != nullptr; }
@@ -2125,7 +2152,7 @@ public:
     return destination;
   }
   template <typename Cleanup>
-  bool release_with_failure(::gti_failure_record_v1 *record, bool unwinding,
+  bool release_with_failure(::gti_failure_record_v2 *record, bool unwinding,
                             Cleanup cleanup) {
     shared_owner_block *released = std::exchange(state_, nullptr);
     T *released_view = std::exchange(view_, nullptr);
@@ -2202,15 +2229,15 @@ public:
 
   explicit mutex_value(
       const mir_empty_state_constructor_tag_v1 &) noexcept
-      : value_(std::nullopt) {}
+      : value_(std::nullopt) { mutex_.construct(); }
 
   explicit mutex_value(T value) noexcept
-      : value_(std::in_place, std::move(value)) {}
+      : value_(std::in_place, std::move(value)) { mutex_.construct(); }
 
   template <std::uint64_t Constructor>
   explicit mutex_value(
       const mir_failure_constructor_tag_v1<Constructor> &, T value,
-      bool *success, ::gti_failure_record_v1 *) noexcept
+      bool *success, ::gti_failure_record_v2 *) noexcept
       : mutex_value(std::move(value)) {
     if (success == nullptr) {
       std::terminate();
@@ -2222,6 +2249,7 @@ public:
 
   mutex_value(mutex_value &&other) noexcept
       : value_(std::move(other.value_)) {
+    mutex_.construct();
     if (!value_.has_value()) {
       std::terminate();
     }
@@ -2241,11 +2269,11 @@ public:
     if (!value_.has_value()) {
       std::terminate();
     }
-    mutex_.lock();
+    mutex_.get().lock();
   }
   void unlock() const noexcept {
     try {
-      mutex_.unlock();
+      mutex_.get().unlock();
     } catch (...) {
       std::terminate();
     }
@@ -2260,8 +2288,8 @@ public:
 
   template <typename Cleanup>
   [[nodiscard]] bool destroy_value_with_failure(
-      ::gti_failure_record_v1 *record, bool unwinding,
-      Cleanup &&cleanup) noexcept {
+      ::gti_failure_record_v2 *record, bool unwinding,
+      Cleanup &&cleanup) {
     if (!value_.has_value()) {
       std::terminate();
     }
@@ -2269,6 +2297,7 @@ public:
     try {
       success = static_cast<Cleanup &&>(cleanup)(*value_, record, unwinding);
     } catch (...) {
+      if (mir_cleanup_emergency_abandonment()) throw;
       std::terminate();
     }
     // A second defined failure is terminal at the calling MIR edge.  Keep the
@@ -2282,7 +2311,9 @@ public:
   }
 
 private:
-  mutable std::mutex mutex_;
+  // A skipped lock Drop on a cleanup emergency leaves the native mutex
+  // locked. Its representation must not destroy that mutex during handoff.
+  mutable mir_lifetime_slot<std::mutex, true> mutex_;
   mutable std::optional<T> value_;
 };
 
@@ -2298,6 +2329,7 @@ public:
   mutex_lock_token &operator=(mutex_lock_token &&) = delete;
 
   ~mutex_lock_token() {
+    if (mir_cleanup_emergency_abandonment()) return;
     if (owner_ != nullptr) {
       std::terminate();
     }
@@ -2394,6 +2426,12 @@ public:
   }
 
   ~thread_handle() {
+    if (mir_cleanup_emergency_abandonment()) {
+      // Preserve mandatory-join ownership until the terminal report. This
+      // does not detach or invoke the abandoned source join operation.
+      if (state_ != nullptr) quarantine_for_terminal_failure();
+      return;
+    }
     // The source-defined thread destructor must discharge this obligation.
     // Reaching the representation destructor with a live state would detach
     // ownership from the language's mandatory-join policy.
@@ -2442,13 +2480,19 @@ template <std::uint64_t Adapter> struct managed_thread_task_adapter;
 }
 
 inline bool zero_thread_failure_record(
-    const ::gti_failure_record_v1 &record) noexcept {
+    const ::gti_failure_record_v2 &record) noexcept {
   if (record.abi_version != 0 || record.code != GTI_FAILURE_CODE_NONE_V1 ||
       record.detail != GTI_FAILURE_DETAIL_NONE_V1 || record.site_index != 0 ||
-      record.reserved != 0) {
+      record.reserved != 0 || record.message_size != 0 ||
+      record.message_flags != 0) {
     return false;
   }
   for (const std::uint8_t byte : record.artifact_identity) {
+    if (byte != 0) {
+      return false;
+    }
+  }
+  for (const std::uint8_t byte : record.message) {
     if (byte != 0) {
       return false;
     }
@@ -2457,7 +2501,7 @@ inline bool zero_thread_failure_record(
 }
 
 inline bool zero_thread_cleanup_failure(
-    const ::gti_failure_emergency_v1 &failure) noexcept {
+    const ::gti_failure_emergency_v2 &failure) noexcept {
   return failure.abi_version == 0 && failure.reserved == 0 &&
          zero_thread_failure_record(failure.primary) &&
          zero_thread_failure_record(failure.secondary);
@@ -2479,7 +2523,7 @@ inline bool valid_thread_join_status(
 }
 
 inline bool valid_thread_join_payload(
-    const ::gti_thread_join_result_v1 &result) noexcept {
+    const ::gti_thread_join_result_v2 &result) noexcept {
   if (result.status != GTI_THREAD_JOIN_WORKER_FAILURE_V1) {
     return result.failure_kind == GTI_THREAD_WORKER_FAILURE_NONE_V1 &&
            zero_thread_failure_record(result.failure) &&
@@ -2488,25 +2532,23 @@ inline bool valid_thread_join_payload(
            result.secondary_artifact == nullptr;
   }
   if (result.failure_kind == GTI_THREAD_WORKER_FAILURE_ORDINARY_V1) {
-    return result.failure.abi_version == GTI_FAILURE_ABI_VERSION_V1 &&
-           result.failure.reserved == 0 &&
+    return ::gti_rt_failure_validate_v2(&result.failure,
+                                      result.primary_artifact) ==
+               GTI_FAILURE_REPORT_OK_V1 &&
            zero_thread_cleanup_failure(result.cleanup_failure) &&
-           result.primary_artifact != nullptr &&
            result.secondary_artifact == nullptr;
   }
   if (result.failure_kind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1) {
     return zero_thread_failure_record(result.failure) &&
            result.cleanup_failure.abi_version ==
-               GTI_FAILURE_ABI_VERSION_V1 &&
+               GTI_FAILURE_ABI_VERSION_V2 &&
            result.cleanup_failure.reserved == 0 &&
-           result.cleanup_failure.primary.abi_version ==
-               GTI_FAILURE_ABI_VERSION_V1 &&
-           result.cleanup_failure.primary.reserved == 0 &&
-           result.cleanup_failure.secondary.abi_version ==
-               GTI_FAILURE_ABI_VERSION_V1 &&
-           result.cleanup_failure.secondary.reserved == 0 &&
-           result.primary_artifact != nullptr &&
-           result.secondary_artifact != nullptr;
+           ::gti_rt_failure_validate_v2(&result.cleanup_failure.primary,
+                                       result.primary_artifact) ==
+               GTI_FAILURE_REPORT_OK_V1 &&
+           ::gti_rt_failure_validate_v2(&result.cleanup_failure.secondary,
+                                       result.secondary_artifact) ==
+               GTI_FAILURE_REPORT_OK_V1;
   }
   return false;
 }
@@ -2578,13 +2620,13 @@ managed_thread_spawn_value(thread_handle &handle, Task &&task) {
   return static_cast<std::int32_t>(result.status);
 }
 
-inline ::gti_thread_join_result_v1
+inline ::gti_thread_join_result_v2
 managed_thread_join(thread_handle &handle) noexcept {
   const bool wasJoinable = handle.joinable();
-  const ::gti_thread_join_result_v1 result =
-      ::gti_rt_thread_join_v1(handle.state_address());
+  const ::gti_thread_join_result_v2 result =
+      ::gti_rt_thread_join_v2(handle.state_address());
   const bool isJoinable = handle.joinable();
-  if (result.abi_version != GTI_THREAD_ABI_VERSION_V1 ||
+  if (result.abi_version != GTI_THREAD_ABI_VERSION_V2 ||
       result.reserved != 0 || !valid_thread_join_status(result.status) ||
       !valid_thread_join_payload(result)) {
     malformed_thread_runtime_result();
@@ -2603,7 +2645,7 @@ managed_thread_join(thread_handle &handle) noexcept {
 }
 
 inline bool valid_thread_value_join_payload(
-    const ::gti_thread_value_join_result_v1 &result) noexcept {
+    const ::gti_thread_value_join_result_v2 &result) noexcept {
   if (!valid_thread_join_payload(result.join)) {
     return false;
   }
@@ -2617,13 +2659,13 @@ inline bool valid_thread_value_join_payload(
                                                      : ownsNothing;
 }
 
-inline ::gti_thread_value_join_result_v1
+inline ::gti_thread_value_join_result_v2
 managed_thread_join_value(thread_handle &handle) noexcept {
   const bool wasJoinable = handle.joinable();
-  ::gti_thread_value_join_result_v1 result =
-      ::gti_rt_thread_join_value_v1(handle.state_address());
+  ::gti_thread_value_join_result_v2 result =
+      ::gti_rt_thread_join_value_v2(handle.state_address());
   const bool isJoinable = handle.joinable();
-  if (result.join.abi_version != GTI_THREAD_ABI_VERSION_V1 ||
+  if (result.join.abi_version != GTI_THREAD_ABI_VERSION_V2 ||
       result.join.reserved != 0 ||
       !valid_thread_join_status(result.join.status) ||
       !valid_thread_value_join_payload(result)) {
@@ -2645,7 +2687,7 @@ managed_thread_join_value(thread_handle &handle) noexcept {
 
 template <typename Result, typename Error>
 inline expected_result<Result, Error> managed_thread_take_join_result(
-    ::gti_thread_value_join_result_v1 &joined) {
+    ::gti_thread_value_join_result_v2 &joined) {
   if (joined.join.status == GTI_THREAD_JOIN_NOT_JOINABLE_V1) {
     return make_unexpected_result(static_cast<Error>(2));
   }
@@ -2675,7 +2717,7 @@ inline expected_result<Result, Error> managed_thread_take_join_result(
 }
 
 inline void managed_thread_abandon_join_result(
-    ::gti_thread_value_join_result_v1 &joined) noexcept {
+    ::gti_thread_value_join_result_v2 &joined) noexcept {
   if (joined.join.status != GTI_THREAD_JOIN_OK_V1 ||
       joined.result_context == nullptr || joined.take_result == nullptr ||
       joined.abandon_result == nullptr) {

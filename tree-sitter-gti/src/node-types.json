@@ -2390,6 +2390,11 @@
     }
   },
   {
+    "type": "function_contract_attribute",
+    "named": true,
+    "fields": {}
+  },
+  {
     "type": "function_declaration",
     "named": true,
     "fields": {
@@ -2397,6 +2402,10 @@
         "multiple": true,
         "required": false,
         "types": [
+          {
+            "type": "function_contract_attribute",
+            "named": true
+          },
           {
             "type": "native_c_array_attribute",
             "named": true
@@ -3331,6 +3340,16 @@
     "type": "method_declaration",
     "named": true,
     "fields": {
+      "attribute": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "function_contract_attribute",
+            "named": true
+          }
+        ]
+      },
       "body": {
         "multiple": false,
         "required": false,
@@ -3755,6 +3774,16 @@
     "type": "operator_declaration",
     "named": true,
     "fields": {
+      "attribute": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "function_contract_attribute",
+            "named": true
+          }
+        ]
+      },
       "body": {
         "multiple": false,
         "required": false,
@@ -5681,6 +5710,10 @@
     "named": false
   },
   {
+    "type": "noreturn",
+    "named": false
+  },
+  {
     "type": "nullptr",
     "named": false
   },
@@ -5754,6 +5787,10 @@
   },
   {
     "type": "this",
+    "named": false
+  },
+  {
+    "type": "track_caller",
     "named": false
   },
   {

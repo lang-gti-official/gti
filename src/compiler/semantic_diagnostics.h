@@ -16,6 +16,33 @@
 
 namespace lang {
 
+enum class MemberRequirementFailureKind {
+  None,
+  Unproven,
+  Recursive,
+  Missing,
+  Shape,
+  Ambiguous,
+  Inaccessible,
+  Unsafe,
+  Result,
+  BorrowedResult,
+  Constraints,
+};
+
+struct SemanticMemberRequirementFailure {
+  MemberRequirementFailureKind kind = MemberRequirementFailureKind::None;
+  std::optional<Token> declaration;
+  SemanticType actualResult = SemanticType::Unknown;
+  SemanticType requiredResult = SemanticType::Unknown;
+};
+
+struct SemanticConstraintContext {
+  std::string name;
+  std::vector<SemanticType> arguments;
+  Token location;
+};
+
 // The facts of one generic-constraint failure, assembled by overload and
 // requirement analysis and quoted verbatim by the reporter.
 struct SemanticConstraintFailure {
@@ -29,6 +56,17 @@ struct SemanticConstraintFailure {
   const Token *disjunction = nullptr;
   std::vector<SemanticConstraintFailure> alternatives;
   std::string memberName;
+  // Outermost source contract first; preserve its concrete application while
+  // retaining the leaf that actually failed. This is not a second evaluator.
+  std::vector<SemanticConstraintContext> context;
+  const ConceptApplication *leafApplication = nullptr;
+  std::optional<std::size_t> applicationArgumentIndex;
+  GenericParameterId parameterId = 0;
+  std::optional<SemanticMemberRequirementFailure> memberFailure;
+  std::optional<std::size_t> callArgumentIndex;
+  std::optional<Token> callArgument;
+  SemanticType callArgumentType = SemanticType::Unknown;
+  std::optional<Token> candidate;
 };
 
 class SemanticDiagnosticReporter {

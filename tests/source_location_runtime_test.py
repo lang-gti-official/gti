@@ -114,8 +114,13 @@ def main() -> int:
             "source-line",
             "source-column",
         ):
+            # Terminal/caller-contract fields also appear on the instruction;
+            # select this instruction's source location without assuming that
+            # it immediately follows the intrinsic kind.
             matches = re.findall(
-                rf"intrinsic={intrinsic} source-location=([^ ]+)", mir
+                rf"\bintrinsic={intrinsic} [^\n]*? "
+                r"source-location=([^\n]*?) synchronization=",
+                mir,
             )
             if len(matches) != 2:
                 raise AssertionError(

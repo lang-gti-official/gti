@@ -98,6 +98,113 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
 
 void SemanticDiagnosticReporter::reportConstraintFailure(
     const Token &site, const SemanticConstraintFailure &failure) {
+  const auto applicationSpelling = [&](const SemanticConstraintContext &item) {
+    std::string spelling = item.name + "<";
+    for (std::size_t index = 0; index < item.arguments.size(); ++index) {
+      if (index != 0)
+        spelling += ", ";
+      spelling += typeSpelling(item.arguments[index]);
+    }
+    return spelling + ">";
+  };
+  const auto appendMemberReason = [&](Diagnostic &diagnostic,
+                                      const SemanticConstraintFailure &leaf) {
+    if (!leaf.memberFailure)
+      return;
+    const auto &detail = *leaf.memberFailure;
+    std::string reason;
+    switch (detail.kind) {
+    case MemberRequirementFailureKind::Missing:
+      reason = "Type '" + typeSpelling(leaf.argument) + "' has no member '" +
+               leaf.memberName + "()'.";
+      break;
+    case MemberRequirementFailureKind::Shape:
+      reason = "Member '" + leaf.memberName +
+               "' is not a read-only, nongeneric instance method taking no "
+               "arguments.";
+      break;
+    case MemberRequirementFailureKind::Ambiguous:
+      reason = "More than one member matches the required '" + leaf.memberName +
+               "()' call.";
+      break;
+    case MemberRequirementFailureKind::Inaccessible:
+      reason = "Member '" + leaf.memberName + "()' is not publicly accessible.";
+      break;
+    case MemberRequirementFailureKind::Unsafe:
+      reason = "Member '" + leaf.memberName + "()' requires unsafe access.";
+      break;
+    case MemberRequirementFailureKind::Result:
+      reason = "Member '" + leaf.memberName + "()' returns '" +
+               typeSpelling(detail.actualResult) +
+               "', but the required exact "
+               "result is '" +
+               typeSpelling(detail.requiredResult) + "'.";
+      break;
+    case MemberRequirementFailureKind::BorrowedResult:
+      reason = "Member '" + leaf.memberName +
+               "()' returns a reference or tracked borrowed state; this "
+               "requirement needs an owned result.";
+      break;
+    case MemberRequirementFailureKind::Constraints:
+      reason = "Member '" + leaf.memberName +
+               "()' has unsatisfied requirements of its own.";
+      break;
+    case MemberRequirementFailureKind::Recursive:
+      reason = "Checking member '" + leaf.memberName +
+               "()' reaches a recursive requirement or the requirement depth "
+               "limit.";
+      break;
+    case MemberRequirementFailureKind::Unproven:
+      reason = "The enclosing generic requirements do not prove member '" +
+               leaf.memberName + "()' with the required exact result.";
+      break;
+    case MemberRequirementFailureKind::None:
+      return;
+    }
+    const Token *location = detail.declaration ? &*detail.declaration : nullptr;
+    if (location == nullptr && leaf.leafApplication != nullptr &&
+        leaf.leafApplication->memberRequirement != nullptr) {
+      location = &leaf.leafApplication->memberRequirement->member();
+    }
+    if (location != nullptr)
+      diagnostic.related.push_back({tokenSpan(*location), std::move(reason)});
+    else
+      diagnostic.hints.push_back(std::move(reason));
+  };
+  const auto publish = [&](Diagnostic diagnostic) {
+    if (failure.callArgument && failure.callArgumentIndex) {
+      diagnostic.primary = tokenSpan(*failure.callArgument);
+      std::string prefix =
+          "Argument " + std::to_string(*failure.callArgumentIndex + 1) +
+          " has type '" + typeSpelling(failure.callArgumentType) + "'";
+      prefix +=
+          failure.callArgumentType == failure.argument
+              ? ", which "
+              : "; its inferred type '" + typeSpelling(failure.argument) + "' ";
+      if (!failure.context.empty()) {
+        diagnostic.message = prefix + "does not satisfy concept '" +
+                             applicationSpelling(failure.context.front()) +
+                             "'.";
+      } else if (failure.structural == StructuralConstraintKind::ReadMember) {
+        diagnostic.message = prefix + "does not satisfy required member '" +
+                             failure.memberName + "()'.";
+      } else {
+        diagnostic.message =
+            prefix + "does not satisfy generic constraint '" +
+            (failure.constraintName
+                 ? semantic_spelling::pathSpelling(*failure.constraintName)
+                 : "the declared constraint") +
+            "'.";
+      }
+    }
+    for (const auto &context : failure.context) {
+      diagnostic.related.push_back(
+          {tokenSpan(context.location),
+           "Required application '" + applicationSpelling(context) + "'."});
+    }
+    appendMemberReason(diagnostic, failure);
+    diagnostics.emplace_back(std::move(diagnostic));
+  };
   if (!failure.alternatives.empty()) {
     const std::string constraint =
         failure.constraintName
@@ -145,6 +252,13 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
                    : "Alternative concept '" + alternativeName +
                          "' is not satisfied by type '" +
                          typeSpelling(alternative.argument) + "'."});
+          for (const auto &context : alternative.context) {
+            diagnostic.related.push_back(
+                {tokenSpan(context.location), "Unsatisfied alternative '" +
+                                                  applicationSpelling(context) +
+                                                  "'."});
+          }
+          appendMemberReason(diagnostic, alternative);
         };
     for (const SemanticConstraintFailure &alternative : failure.alternatives) {
       appendAlternatives(alternative);
@@ -152,14 +266,14 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     diagnostic.hints.emplace_back(
         "At least one complete '||' branch must be satisfied; capabilities "
         "from different alternatives are not combined.");
-    diagnostics.emplace_back(std::move(diagnostic));
+    publish(std::move(diagnostic));
     return;
   }
   if (failure.structural != StructuralConstraintKind::None) {
     const MemberRequirement *memberQuery =
-        failure.application == nullptr
+        failure.leafApplication == nullptr
             ? nullptr
-            : failure.application->memberRequirement.get();
+            : failure.leafApplication->memberRequirement.get();
     const std::string constraint =
         failure.constraintName
             ? semantic_spelling::pathSpelling(*failure.constraintName)
@@ -177,7 +291,7 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     }
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2029", DiagnosticPhase::Semantics, site,
-        memberQuery != nullptr
+        memberQuery != nullptr && !failure.constraintName
             ? "Generic arguments do not satisfy required member '" +
                   memberQuery->member().lexeme + "()'."
             : "Generic arguments do not satisfy concept '" + constraint + "'.");
@@ -338,7 +452,7 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     case StructuralConstraintKind::None:
       break;
     }
-    diagnostics.emplace_back(std::move(diagnostic));
+    publish(std::move(diagnostic));
     return;
   }
   const std::string constraint =
@@ -429,7 +543,7 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
   case GenericConstraintKind::FloatingPoint:
     break;
   }
-  diagnostics.emplace_back(std::move(diagnostic));
+  publish(std::move(diagnostic));
 }
 
 void SemanticDiagnosticReporter::reportConstexprConditionFailure(

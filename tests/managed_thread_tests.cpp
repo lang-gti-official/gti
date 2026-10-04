@@ -399,7 +399,7 @@ void testPublicPipelineAndInventory() {
       cpp20.find("managed_thread_spawn<") != std::string::npos &&
           cpp20.find("managed_thread_join(") != std::string::npos &&
           cpp23.find("managed_thread_task_adapter<") != std::string::npos &&
-          cpp23.find("gti_rt_failure_terminate_v1") != std::string::npos,
+          cpp23.find("gti_rt_failure_terminate_v2") != std::string::npos,
       "both C++ standards should consume lowered task and failure authority");
 }
 
@@ -470,7 +470,7 @@ int main() {
                  std::string::npos &&
              cpp20.find("managed_thread_take_join_result<") !=
                  std::string::npos &&
-             cpp23.find("gti_rt_thread_join_value_v1") != std::string::npos &&
+             cpp23.find("gti_rt_thread_join_value_v2") != std::string::npos &&
              cpp23.find("managed_thread_abandon_join_result(") !=
                  std::string::npos,
          "both C++ standards should emit typed spawn, join, and abandon "

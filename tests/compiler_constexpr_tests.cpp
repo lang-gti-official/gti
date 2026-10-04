@@ -791,7 +791,7 @@ int main() {
 #include <std/string>
 int main() {
   mut auto formatted =
-      std::format("left={} right={} count={}", int8_t(-8), uint64_t(9), 3);
+      std::try_format("left={} right={} count={}", int8_t(-8), uint64_t(9), 3);
   if (!formatted) { return 1; }
   if (formatted.value() != "left=-8 right=9 count=3") { return 2; }
   return 0;
@@ -836,13 +836,12 @@ int main() {
   const lang::FrontendResult invalidFloatOutput = lang::Frontend().analyze(
       entry, "int main() { std::print(1.5); return 0; }",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(
-      !invalidFloatOutput.canGenerateCode() &&
-          hasDiagnosticCode(invalidFloatOutput.diagnostics, "GTI-S2029") &&
-          hasDiagnostic(invalidFloatOutput.diagnostics,
-                        "does not satisfy generic constraint 'std::integral'"),
-      "the bounded integer-output slice should not silently claim "
-      "floating-point formatting");
+  expect(!invalidFloatOutput.canGenerateCode() &&
+             hasDiagnosticCode(invalidFloatOutput.diagnostics, "GTI-S2029") &&
+             hasDiagnostic(invalidFloatOutput.diagnostics,
+                           "does not satisfy concept 'std::integral<float>'"),
+         "the bounded integer-output slice should not silently claim "
+         "floating-point formatting");
 }
 
 void testLogicalOperatorSpellings() {

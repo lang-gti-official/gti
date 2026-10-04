@@ -51,6 +51,8 @@ public:
       return "GTI_FAILURE_CODE_KEY_NOT_FOUND_V1";
     case DefinedFailureCode::InvalidContainerArgument:
       return "GTI_FAILURE_CODE_INVALID_CONTAINER_ARGUMENT_V1";
+    case DefinedFailureCode::Panic:
+      return "GTI_FAILURE_CODE_PANIC_V2";
     case DefinedFailureCode::None:
     case DefinedFailureCode::Count:
       break;
@@ -134,6 +136,8 @@ public:
       return "GTI_FAILURE_DETAIL_CONTAINER_ARGUMENT_V1";
     case DefinedFailureDetail::SharedOwner:
       return "GTI_FAILURE_DETAIL_SHARED_OWNER_V1";
+    case DefinedFailureDetail::ExplicitPanic:
+      return "GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2";
     case DefinedFailureDetail::None:
     case DefinedFailureDetail::Count:
       break;
@@ -290,7 +294,7 @@ struct mir_contained_constructor_tag_v1 {};
 
 struct mir_contained_constructor_state_v1 {
   bool success = false;
-  ::gti_failure_record_v1 record{};
+  ::gti_failure_record_v2 record{};
 };
 
 struct mir_empty_state_constructor_tag_v1 {};
@@ -550,7 +554,9 @@ public:
   mir_object_allocation_v1() = default;
   mir_object_allocation_v1(const mir_object_allocation_v1 &) = delete;
   mir_object_allocation_v1 &operator=(const mir_object_allocation_v1 &) = delete;
-  ~mir_object_allocation_v1() { if (storage_ != nullptr) std::abort(); }
+  ~mir_object_allocation_v1() {
+    if (storage_ != nullptr && !mir_cleanup_emergency_abandonment()) std::abort();
+  }
   mir_failure_status_v1 allocate() noexcept {
     if (storage_ != nullptr) std::abort();
     if constexpr (alignof(T) > __STDCPP_DEFAULT_NEW_ALIGNMENT__) {
@@ -679,7 +685,7 @@ mir_storage_destroy_v1(::gti_internal::backend::storage<T> &storage,
 template <typename T, typename Cleanup>
 inline mir_failure_status_v1
 mir_storage_destroy_v1(::gti_internal::backend::storage<T> &storage,
-                       std::uint64_t index, ::gti_failure_record_v1 *record,
+                       std::uint64_t index, ::gti_failure_record_v2 *record,
                        Cleanup cleanup) {
   if (index >= storage.capacity()) {
     return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
@@ -828,7 +834,7 @@ mir_prefix_append_v1(::gti_internal::backend::prefix_storage<T> &storage,
 template <typename T, typename Constructor>
 inline mir_failure_status_v1 mir_prefix_construct_v1(
     ::gti_internal::backend::prefix_storage<T> &storage,
-    ::gti_failure_record_v1 *record, Constructor construct) {
+    ::gti_failure_record_v2 *record, Constructor construct) {
   if (!storage.append_with_constructor(construct)) {
     return {record->code, record->detail, true};
   }
@@ -859,7 +865,7 @@ mir_prefix_pop_v1(::gti_internal::backend::prefix_storage<T> &storage) {
 template <typename T, typename Cleanup>
 inline mir_failure_status_v1
 mir_prefix_pop_v1(::gti_internal::backend::prefix_storage<T> &storage,
-                  ::gti_failure_record_v1 *record, Cleanup cleanup) {
+                  ::gti_failure_record_v2 *record, Cleanup cleanup) {
   if (storage.length() == 0) {
     return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
             GTI_FAILURE_DETAIL_UNINITIALIZED_ACCESS_V1};
@@ -925,7 +931,7 @@ mir_prefix_erase_v1(::gti_internal::backend::prefix_storage<T> &storage,
 template <typename T, typename Cleanup>
 inline mir_failure_status_v1
 mir_prefix_erase_v1(::gti_internal::backend::prefix_storage<T> &storage,
-                    std::uint64_t index, ::gti_failure_record_v1 *record,
+                    std::uint64_t index, ::gti_failure_record_v2 *record,
                     const ::gti_failure_artifact_descriptor_v1 *artifact,
                     Cleanup cleanup) {
   if (index >= storage.length()) {

@@ -1,0 +1,58 @@
+==================
+Terminal and caller-tracked functions
+==================
+
+[[noreturn, track_caller]] void stop() { while (true) {} }
+[[track_caller]] [[noreturn]] void forward<T>(T value) { stop(); }
+struct Guard {
+  [[track_caller]] void check() { stop(); }
+};
+
+---
+
+(source_file
+  (function_declaration
+    (function_contract_attribute)
+    (type)
+    (identifier)
+    (parameter_clause)
+    (block
+      (while_statement
+        (primary_expression
+          (literal
+            (boolean_literal)))
+        (block))))
+  (function_declaration
+    (function_contract_attribute)
+    (function_contract_attribute)
+    (type)
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier)))
+        (identifier)))
+    (block
+      (expression_statement
+        (call_expression
+          (primary_expression
+            (identifier))
+          (argument_list)))))
+  (class_declaration
+    (identifier)
+    (class_body
+      (method_declaration
+        (function_contract_attribute)
+        (type)
+        (identifier)
+        (parameter_clause)
+        (block
+          (expression_statement
+            (call_expression
+              (primary_expression
+                (identifier))
+              (argument_list))))))))

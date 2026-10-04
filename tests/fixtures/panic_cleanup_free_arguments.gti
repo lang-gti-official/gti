@@ -1,0 +1,59 @@
+#include <std/panic>
+#include <std/string>
+#include <std/vector>
+
+struct Guard {
+  int id;
+  Guard(int value) : id(value) {}
+  ~Guard() { std::println(id); }
+};
+
+// Neither argument shell has a source destructor or owns a resource.
+struct Plain {
+  int value;
+  Plain(int input) : value(input) {}
+};
+
+struct Marker {
+  int value;
+  Marker(int input, bool fails) : value(input) {
+    std::println(input);
+    if (fails) {
+      std::panic("constructor failed"); // constructor-site
+    }
+  }
+};
+
+expected<Guard, int> first() { return Guard(1); }
+
+int last(bool fails) {
+  std::println(3);
+  if (fails) {
+    std::panic("later argument failed"); // argument-site
+  }
+  return 3;
+}
+
+void plain(expected<Guard, int> owner, Plain item, int tail) {
+  std::println(owner.value().id + item.value + tail);
+}
+
+void marked(expected<Guard, int> owner, Marker item, int tail) {
+  std::println(owner.value().id + item.value + tail);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard parent{90};
+  if (argc == 1) {
+    plain(first(), Plain(2), last(false));
+  } else if (argc == 2) {
+    plain(first(), Plain(2), last(true));
+  } else if (argc == 3) {
+    marked(first(), Marker(2, false), last(false));
+  } else if (argc == 4) {
+    marked(first(), Marker(2, true), last(false));
+  } else {
+    marked(first(), Marker(2, false), last(true));
+  }
+  return 0;
+}

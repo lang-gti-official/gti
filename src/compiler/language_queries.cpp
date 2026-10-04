@@ -30,6 +30,12 @@ SignaturePrinter::function(const FunctionInfo &info,
   const std::vector<SemanticType> &parameterTypes =
       selected == nullptr ? info.parameterTypes : selected->parameterTypes;
   std::string result;
+  if (info.neverReturns) {
+    result += "[[noreturn]] ";
+  }
+  if (info.tracksCaller) {
+    result += "[[track_caller]] ";
+  }
   if (info.requiresUnsafe) {
     result += "[[unsafe]] ";
   }

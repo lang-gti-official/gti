@@ -1,0 +1,14 @@
+#include <std/panic>
+
+[[track_caller]]
+T identity<T>(T value) { return value; }
+
+[[noreturn, track_caller]]
+void generic_leaf<T>(T value) { std::panic("generic tracked panic"); }
+
+[[noreturn, track_caller]]
+void generic_outer<T>(T value) { generic_leaf(value); }
+
+int main() {
+  generic_outer(identity(7)); // generic-direct-site
+}

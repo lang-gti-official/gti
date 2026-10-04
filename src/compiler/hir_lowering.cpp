@@ -470,6 +470,8 @@ private:
          .internalLinkage = declaration.internalLinkage,
          .constexprFunction = declaration.constexprFunction,
          .requiresUnsafe = declaration.requiresUnsafe,
+         .neverReturns = declaration.neverReturns,
+         .tracksCaller = declaration.tracksCaller,
          .cThreadOperation = declaration.cThreadOperation,
          .linkage = declaration.linkage,
          .externalSymbol = declaration.externalSymbol,
@@ -2136,6 +2138,9 @@ private:
     for (const HirValueId input : found->conditionalInputs) {
       assignFullExpression(body, input, fullExpression, visited);
     }
+    for (const HirValueId input : found->sequencedInputs) {
+      assignFullExpression(body, input, fullExpression, visited);
+    }
     if (found->receiver) {
       assignFullExpression(body, *found->receiver, fullExpression, visited);
     }
@@ -2189,6 +2194,24 @@ private:
     for (HirValue &value : body.values) {
       value.fullExpression = 0;
       value.dropObligation.reset();
+      if (value.kind == HirValueKind::Call && value.functionTarget) {
+        const HirFunctionInstance *callee =
+            output.program.findFunctionInstance(*value.functionTarget);
+        if (callee != nullptr) {
+          value.neverReturns = callee->neverReturns;
+          value.tracksCaller = callee->tracksCaller;
+        }
+      }
+      if (value.tracksCaller) {
+        const CallerLocationOrigin *origin =
+            value.source == nullptr ? nullptr
+                                    : model.findCallerLocation(*value.source);
+        if (origin == nullptr) {
+          lifecycleValid = false;
+        } else {
+          value.callerLocation = *origin;
+        }
+      }
     }
 
     struct PendingFullExpression {
@@ -3650,11 +3673,117 @@ private:
     return id;
   }
 
-  [[nodiscard]] std::optional<HirValueId> lowerExpectedTransformError(
-      const Call &expression, const ExpectedTransformErrorInfo &transform,
+  [[nodiscard]] std::optional<HirValueId> lowerExpectedExpect(
+      const Call &expression, const ExpectedCombinatorInfo &expect,
       const SemanticModel &model,
       const std::vector<SemanticType> &classArguments,
       const std::vector<CompileTimeValue> &classValueArguments, HirBody &body) {
+    const auto *member = exprAs<Get>(expression.callee().get());
+    const ExpressionInfo *resultInfo = model.findExpression(expression);
+    const DefinedFailureOperation *failure =
+        model.findDefinedFailure(expression);
+    if (member == nullptr || expression.arguments().size() != 1 ||
+        resultInfo == nullptr || failure == nullptr ||
+        expect.sourceType.kind != SemanticType::Expected ||
+        expect.sourceType.arguments.size() != 2 ||
+        expect.resultType != expect.sourceType.arguments.front() ||
+        expect.resultType != resultInfo->type || expect.mapper != 0 ||
+        expect.lambda != 0 || expect.mapperType != SemanticType::StringView) {
+      lifecycleValid = false;
+      return std::nullopt;
+    }
+    const auto receiver = lowerExpression(
+        member->object(), model, classArguments, classValueArguments, body);
+    const auto message =
+        lowerExpression(expression.arguments().front(), model, classArguments,
+                        classValueArguments, body);
+    const HirValue *receiverValue =
+        receiver ? body.findValue(*receiver) : nullptr;
+    const HirValue *messageValue = message ? body.findValue(*message) : nullptr;
+    if (receiverValue == nullptr || messageValue == nullptr ||
+        receiverValue->info.type != expect.sourceType ||
+        receiverValue->info.category != ValueCategory::Value ||
+        messageValue->info.type != SemanticType::StringView) {
+      lifecycleValid = false;
+      return std::nullopt;
+    }
+
+    const auto appendObserver = [&](IntrinsicKind intrinsic,
+                                    const SemanticType &type,
+                                    ValueCategory category) {
+      const HirValueId id = nextValueId++;
+      body.values.push_back(
+          {.id = id,
+           .kind = HirValueKind::Call,
+           .info = {.type = type,
+                    .category = category,
+                    .access = AccessMode::Mutable,
+                    .traits = instanceProvider->traitsFor(type)},
+           .operands = {*receiver},
+           .intrinsic = intrinsic,
+           .receiver = *receiver});
+      return id;
+    };
+    const HirValueId hasValue =
+        appendObserver(IntrinsicKind::ExpectedHasValue, SemanticType::Bool,
+                       ValueCategory::Value);
+    const SemanticType valueType = expect.resultType;
+    const HirValueId extraction =
+        appendObserver(IntrinsicKind::ExpectedValue, valueType,
+                       valueType == SemanticType::Void ? ValueCategory::Value
+                                                       : ValueCategory::Place);
+    HirValueId success = extraction;
+    if (valueType != SemanticType::Void) {
+      success = nextValueId++;
+      body.values.push_back({.id = success,
+                             .kind = HirValueKind::Move,
+                             .info = *resultInfo,
+                             .operands = {extraction},
+                             .intrinsic = IntrinsicKind::Move});
+    }
+    const auto arguments =
+        orderedArguments({*message}, {SemanticType::StringView}, body, 1);
+    if (!arguments) {
+      lifecycleValid = false;
+      return std::nullopt;
+    }
+    const HirValueId panic = nextValueId++;
+    body.values.push_back(
+        {.id = panic,
+         .kind = HirValueKind::Call,
+         .source = &expression,
+         .info = {.type = SemanticType::Void,
+                  .category = ValueCategory::Value,
+                  .access = AccessMode::ReadOnly,
+                  .traits = instanceProvider->traitsFor(SemanticType::Void)},
+         .operands = {*message},
+         .parameterTypes = {SemanticType::StringView},
+         .intrinsic = IntrinsicKind::Panic,
+         .neverReturns = true,
+         .tracksCaller = true,
+         .definedFailure = *failure,
+         .callPlan =
+             HirCallPlan{.receiver = std::nullopt, .arguments = *arguments}});
+    const HirValueId id = nextValueId++;
+    body.values.push_back({.id = id,
+                           .kind = HirValueKind::Conditional,
+                           .source = &expression,
+                           .info = *resultInfo,
+                           .operands = {hasValue, success, panic},
+                           .conditionalInputs = {*receiver, *message}});
+    output.program.sourceValueIds[&expression].push_back(id);
+    return id;
+  }
+
+  [[nodiscard]] std::optional<HirValueId> lowerExpectedCombinator(
+      const Call &expression, const ExpectedCombinatorInfo &transform,
+      const SemanticModel &model,
+      const std::vector<SemanticType> &classArguments,
+      const std::vector<CompileTimeValue> &classValueArguments, HirBody &body) {
+    if (transform.kind == ExpectedCombinatorKind::Expect) {
+      return lowerExpectedExpect(expression, transform, model, classArguments,
+                                 classValueArguments, body);
+    }
     const auto *member = exprAs<Get>(expression.callee().get());
     const ExpressionInfo *resultInfo = model.findExpression(expression);
     if (member == nullptr || expression.arguments().size() != 1 ||
@@ -3698,10 +3827,24 @@ private:
 
     const SemanticType valueType = transform.sourceType.arguments[0];
     const SemanticType errorType = transform.sourceType.arguments[1];
-    const SemanticType mappedError = transform.resultType.arguments[1];
+    const bool mapsError =
+        transform.kind == ExpectedCombinatorKind::TransformError;
+    const bool chainsExpected =
+        transform.kind == ExpectedCombinatorKind::AndThen;
+    const SemanticType mappedType =
+        chainsExpected ? transform.resultType
+                       : transform.resultType.arguments[mapsError ? 1 : 0];
+    const SemanticType inputType = mapsError ? errorType : valueType;
     // Appending synthetic values can reallocate body.values. Retain the
     // selected instance identity, never a pointer into that growing vector.
     const auto mapperTarget = mapperValue->functionTarget;
+    const HirFunctionInstance *mapperFunction =
+        mapperTarget ? output.program.findFunctionInstance(*mapperTarget)
+                     : nullptr;
+    const bool mapperNeverReturns =
+        mapperFunction != nullptr && mapperFunction->neverReturns;
+    const bool mapperTracksCaller =
+        mapperFunction != nullptr && mapperFunction->tracksCaller;
     std::optional<HirLambdaId> mapperLambda;
     if (transform.lambda != 0) {
       if (const auto target = lambdaTargets.find(transform.lambda);
@@ -3762,42 +3905,50 @@ private:
          .intrinsic = IntrinsicKind::ExpectedHasValue,
          .receiver = *operand});
 
-    HirValueId successArm = 0;
-    if (valueType == SemanticType::Void) {
-      successArm = nextValueId++;
-      body.values.push_back({.id = successArm,
+    const auto appendVoidSuccess = [&]() {
+      const HirValueId success = nextValueId++;
+      body.values.push_back({.id = success,
                              .kind = HirValueKind::Call,
                              .info = {.type = transform.resultType,
                                       .category = ValueCategory::Value,
                                       .access = AccessMode::ReadOnly,
                                       .traits = instanceProvider->traitsFor(
                                           transform.resultType)}});
-    } else {
-      const HirValueId successExtraction =
-          appendExtraction(IntrinsicKind::ExpectedValue, valueType);
-      successArm = appendMove(successExtraction, valueType);
-    }
+      return success;
+    };
 
-    const HirValueId errorExtraction =
-        appendExtraction(IntrinsicKind::ExpectedError, errorType);
-    const HirValueId errorValue = appendMove(errorExtraction, errorType);
+    std::vector<HirValueId> mapperInputs;
+    std::vector<SemanticType> mapperParameters;
+    if (inputType != SemanticType::Void) {
+      const HirValueId extraction =
+          appendExtraction(mapsError ? IntrinsicKind::ExpectedError
+                                     : IntrinsicKind::ExpectedValue,
+                           inputType);
+      mapperInputs.push_back(appendMove(extraction, inputType));
+      mapperParameters.push_back(inputType);
+    }
+    std::vector<HirValueId> mapperOperands{*mapper};
+    mapperOperands.insert(mapperOperands.end(), mapperInputs.begin(),
+                          mapperInputs.end());
 
     const HirValueId mapped = nextValueId++;
     HirValue mapperCall{
         .id = mapped,
         .kind = HirValueKind::Call,
         .source = &expression,
-        .info = {.type = mappedError,
+        .info = {.type = mappedType,
                  .category = ValueCategory::Value,
                  .access = AccessMode::ReadOnly,
-                 .traits = instanceProvider->traitsFor(mappedError)},
-        .operands = {*mapper, errorValue},
-        .parameterTypes = {errorType},
+                 .traits = instanceProvider->traitsFor(mappedType)},
+        .operands = std::move(mapperOperands),
+        .parameterTypes = mapperParameters,
+        .neverReturns = mapperNeverReturns,
+        .tracksCaller = mapperTracksCaller,
         .functionTarget = mapperTarget,
         .lambdaTarget = mapperLambda,
     };
     const std::optional<std::vector<HirCallArgument>> mapperArguments =
-        orderedArguments({errorValue}, {errorType}, body, 1);
+        orderedArguments(mapperInputs, mapperParameters, body, 1);
     if (!mapperArguments) {
       lifecycleValid = false;
       return std::nullopt;
@@ -3816,16 +3967,37 @@ private:
     }
     body.values.push_back(std::move(mapperCall));
 
-    const SemanticType unexpectedType(SemanticType::Unexpected, {mappedError});
-    const HirValueId unexpected = nextValueId++;
-    body.values.push_back(
-        {.id = unexpected,
-         .kind = HirValueKind::Unexpected,
-         .info = {.type = unexpectedType,
-                  .category = ValueCategory::Value,
-                  .access = AccessMode::ReadOnly,
-                  .traits = instanceProvider->traitsFor(unexpectedType)},
-         .operands = {mapped}});
+    HirValueId successArm = mapped;
+    HirValueId errorValue = mapped;
+    if (mapsError) {
+      successArm =
+          valueType == SemanticType::Void
+              ? appendVoidSuccess()
+              : appendMove(
+                    appendExtraction(IntrinsicKind::ExpectedValue, valueType),
+                    valueType);
+    } else {
+      errorValue = appendMove(
+          appendExtraction(IntrinsicKind::ExpectedError, errorType), errorType);
+      if (mappedType == SemanticType::Void && !mapperNeverReturns) {
+        successArm = appendVoidSuccess();
+        body.values.back().sequencedInputs = {mapped};
+      }
+    }
+    const SemanticType unexpectedType(SemanticType::Unexpected,
+                                      {mapsError ? mappedType : errorType});
+    HirValueId unexpected = mapped;
+    if (!mapsError || !mapperNeverReturns) {
+      unexpected = nextValueId++;
+      body.values.push_back(
+          {.id = unexpected,
+           .kind = HirValueKind::Unexpected,
+           .info = {.type = unexpectedType,
+                    .category = ValueCategory::Value,
+                    .access = AccessMode::ReadOnly,
+                    .traits = instanceProvider->traitsFor(unexpectedType)},
+           .operands = {errorValue}});
+    }
 
     const HirValueId id = nextValueId++;
     body.values.push_back({.id = id,
@@ -3919,11 +4091,10 @@ private:
                                       classValueArguments, body);
     }
     if (const auto *call = exprAs<Call>(&expression)) {
-      if (const ExpectedTransformErrorInfo *transform =
-              model.findExpectedTransformError(*call)) {
-        return lowerExpectedTransformError(*call, *transform, model,
-                                           classArguments, classValueArguments,
-                                           body);
+      if (const ExpectedCombinatorInfo *transform =
+              model.findExpectedCombinator(*call)) {
+        return lowerExpectedCombinator(*call, *transform, model, classArguments,
+                                       classValueArguments, body);
       }
     }
     const Expr *raw = &expression;
@@ -4511,6 +4682,8 @@ private:
     if (const auto *call = exprAs<Call>(raw)) {
       if (const ResolvedCallInfo *resolved = model.findCall(*call)) {
         value.intrinsic = resolved->intrinsic;
+        value.neverReturns = resolved->neverReturns;
+        value.tracksCaller = resolved->tracksCaller;
         if (sourceLocationIntrinsic(value.intrinsic)) {
           value.sourceLocation = activeDefaultSourceLocation
                                      ? activeDefaultSourceLocation

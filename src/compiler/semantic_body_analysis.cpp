@@ -1320,7 +1320,8 @@ auto SemanticVisitor::Impl::visitExpressionStmt(const ExpressionStmt &stmt)
   }
 
   if (call != nullptr && resultType != SemanticType::Void &&
-      resultType != SemanticType::Unknown) {
+      resultType != SemanticType::Unknown &&
+      !expressionNeverReturns(stmt.expression().get())) {
     Diagnostic diagnostic =
         makeDiagnostic(DiagnosticId::IgnoredReturnValue, call->paren());
     SourceSpan insertion = tokenSpan(stmt.expressionStart());
@@ -1618,6 +1619,36 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   }
   const bool intrinsicDeclaration =
       functionInfo != nullptr && functionInfo->intrinsic != IntrinsicKind::None;
+  const auto reportContract = [&](const Token &where, std::string message) {
+    diagnostics.push_back(makeDiagnostic(DiagnosticId::InvalidFunctionContract,
+                                         where, {std::move(message)}));
+  };
+  std::unordered_set<std::string> functionAttributeNames;
+  for (const Token &attribute : stmt.functionAttributes()) {
+    if (attribute.lexeme != "noreturn" && attribute.lexeme != "track_caller") {
+      reportContract(attribute, "Unknown GTI function attribute '" +
+                                    attribute.lexeme + "'.");
+    } else if (!functionAttributeNames.insert(attribute.lexeme).second) {
+      reportContract(attribute, "Duplicate function attribute '" +
+                                    attribute.lexeme + "'.");
+    } else if (isEntryPoint && attribute.lexeme == "track_caller") {
+      reportContract(attribute,
+                     "The hosted entry point has no GTI caller location and "
+                     "cannot use [[track_caller]].");
+    } else if (stmt.operatorName()) {
+      reportContract(
+          attribute,
+          "Function contracts are not yet supported on operator "
+          "declarations; use an ordinary named GTI method or function.");
+    } else if (stmt.hasCLinkage() || stmt.runtimeBinding() ||
+               stmt.isVirtual() || stmt.isOverride() || stmt.isPure() ||
+               (functionInfo != nullptr && functionInfo->virtualMethod) ||
+               (!stmt.body() && !intrinsicDeclaration)) {
+      reportContract(attribute,
+                     "This attribute requires a defined, non-polymorphic GTI "
+                     "function.");
+    }
+  }
   if (sourceGraph != nullptr && currentSourceUnit != 0 &&
       currentSourceUnit != sourceGraph->entryUnit() &&
       currentNamespace.empty() && !currentClass && functionDepth == 0 &&
@@ -1901,11 +1932,24 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
 
   // A function body owns the parameter scope, so do not add another scope.
   analyze(stmt.body()->statements());
-  const bool canFallThrough =
-      summarizeFlow(stmt.body()->statements()).canFallThrough;
+  const FlowSummary functionFlow = summarizeFlow(stmt.body()->statements());
+  const bool canFallThrough = functionFlow.canFallThrough;
+  if (functionInfo != nullptr && functionInfo->neverReturns &&
+      !loanFlow.deferredConstexprSelection &&
+      !hasErrorDiagnostics(
+          std::span(diagnostics).subspan(functionDiagnosticStart)) &&
+      (canFallThrough || functionFlow.normalReturn != nullptr)) {
+    reportContract(
+        functionFlow.normalReturn != nullptr
+            ? functionFlow.normalReturn->keyword()
+            : functionToken,
+        "A [[noreturn]] function cannot return normally or reach the end "
+        "of its body.");
+  }
   if (currentReturnType != SemanticType::Void &&
       currentReturnType != SemanticType::Unknown && !isEntryPoint &&
-      canFallThrough && !loanFlow.deferredConstexprSelection) {
+      canFallThrough && !loanFlow.deferredConstexprSelection &&
+      (functionInfo == nullptr || !functionInfo->neverReturns)) {
     const Token &location =
         stmt.operatorName() ? stmt.operatorName()->keyword : stmt.name();
     report(location,
@@ -2496,9 +2540,9 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
           arm.labels.empty() ? stmt.keyword() : arm.labels.back().keyword,
           "Switch arm can reach its boundary without an explicit "
           "terminator.");
-      diagnostic.hints.emplace_back(
-          "End every switch arm with 'break', 'return', or 'continue' "
-          "when the switch is inside a loop.");
+      diagnostic.hints.emplace_back("End every switch arm with a terminal "
+                                    "call, 'break', 'return', or 'continue' "
+                                    "when the switch is inside a loop.");
       diagnostics.emplace_back(std::move(diagnostic));
     }
   }
@@ -4514,7 +4558,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         exactMatches.emplace_back(&match.function);
       }
       reportOverloadResolutionFailure(expr, *callee, argumentTypes,
-                                      exactMatches);
+                                      exactMatches, constraintFailures);
     }
     currentType = SemanticType::Unknown;
     return;
@@ -5300,7 +5344,9 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
   if (objectType.kind == SemanticType::Expected) {
     if (expr.name().lexeme == "has_value" || expr.name().lexeme == "value" ||
         expr.name().lexeme == "error" || expr.name().lexeme == "value_or" ||
-        expr.name().lexeme == "transform_error") {
+        expr.name().lexeme == "transform_error" ||
+        expr.name().lexeme == "transform" || expr.name().lexeme == "and_then" ||
+        expr.name().lexeme == "expect") {
       if (!analyzingCallCallee) {
         report(expr.name(),
                "Function names must be called; function values are not "
@@ -9734,6 +9780,93 @@ auto SemanticVisitor::Impl::constantBoolean(const ExprPtr &expression)
   return std::nullopt;
 }
 
+auto SemanticVisitor::Impl::expressionNeverReturns(const Expr *expression) const
+    -> bool {
+  // Only evaluated subexpressions contribute. In particular, a lambda body,
+  // type query, or an unselected short-circuit operand cannot terminate its
+  // enclosing expression. The resolved declaration, never its spelling, owns
+  // the terminal-call fact.
+  const auto anyTerminal = [&](const ExprList &values) {
+    return std::any_of(values.begin(), values.end(), [&](const ExprPtr &value) {
+      return expressionNeverReturns(value.get());
+    });
+  };
+  if (const auto *group = exprAs<Grouping>(expression)) {
+    return expressionNeverReturns(group->expression().get());
+  }
+  if (const auto *call = exprAs<Call>(expression)) {
+    const auto *resolved = semanticModel.findCall(*call);
+    return (resolved != nullptr && resolved->neverReturns) ||
+           expressionNeverReturns(call->callee().get()) ||
+           anyTerminal(call->arguments());
+  }
+  if (const auto *binary = exprAs<Binary>(expression)) {
+    if (expressionNeverReturns(binary->left().get())) {
+      return true;
+    }
+    if (binary->oper().kind == TokenKind::AND ||
+        binary->oper().kind == TokenKind::OR) {
+      const auto left = constantBoolean(binary->left());
+      const bool evaluatesRight =
+          (binary->oper().kind == TokenKind::AND && left == true) ||
+          (binary->oper().kind == TokenKind::OR && left == false);
+      return evaluatesRight && expressionNeverReturns(binary->right().get());
+    }
+    return expressionNeverReturns(binary->right().get());
+  }
+  if (const auto *conditional = exprAs<ConditionalExpr>(expression)) {
+    if (expressionNeverReturns(conditional->condition().get())) {
+      return true;
+    }
+    if (const auto selected = constantBoolean(conditional->condition())) {
+      return expressionNeverReturns(*selected
+                                        ? conditional->thenExpression().get()
+                                        : conditional->elseExpression().get());
+    }
+    return expressionNeverReturns(conditional->thenExpression().get()) &&
+           expressionNeverReturns(conditional->elseExpression().get());
+  }
+  if (const auto *unary = exprAs<Unary>(expression)) {
+    return expressionNeverReturns(unary->right().get());
+  }
+  if (const auto *conversion = exprAs<Conversion>(expression)) {
+    return expressionNeverReturns(conversion->value().get());
+  }
+  if (const auto *assignment = exprAs<Assign>(expression)) {
+    return expressionNeverReturns(assignment->value().get());
+  }
+  if (const auto *member = exprAs<Get>(expression)) {
+    return expressionNeverReturns(member->object().get());
+  }
+  if (const auto *member = exprAs<Set>(expression)) {
+    return expressionNeverReturns(member->object().get()) ||
+           expressionNeverReturns(member->value().get());
+  }
+  if (const auto *index = exprAs<Index>(expression)) {
+    return expressionNeverReturns(index->object().get()) ||
+           expressionNeverReturns(index->index().get());
+  }
+  if (const auto *index = exprAs<IndexSet>(expression)) {
+    return expressionNeverReturns(index->object().get()) ||
+           expressionNeverReturns(index->index().get()) ||
+           expressionNeverReturns(index->value().get());
+  }
+  if (const auto *assignment = exprAs<DereferenceSet>(expression)) {
+    return expressionNeverReturns(assignment->object().get()) ||
+           expressionNeverReturns(assignment->value().get());
+  }
+  if (const auto *initializer = exprAs<DirectInitializer>(expression)) {
+    return anyTerminal(initializer->arguments());
+  }
+  if (const auto *initializer = exprAs<ArrayInitializer>(expression)) {
+    return anyTerminal(initializer->elements());
+  }
+  if (const auto *unexpected = exprAs<Unexpected>(expression)) {
+    return expressionNeverReturns(unexpected->error().get());
+  }
+  return false;
+}
+
 auto SemanticVisitor::Impl::summarizeFlow(const StmtList &statements) const
     -> FlowSummary {
   FlowSummary result;
@@ -9747,6 +9880,9 @@ auto SemanticVisitor::Impl::summarizeFlow(const StmtList &statements) const
         result.breaksEnclosingControl || next.breaksEnclosingControl;
     result.continuesEnclosingLoop =
         result.continuesEnclosingLoop || next.continuesEnclosingLoop;
+    if (result.normalReturn == nullptr) {
+      result.normalReturn = next.normalReturn;
+    }
   }
   return result;
 }
@@ -9756,8 +9892,19 @@ auto SemanticVisitor::Impl::summarizeFlow(const Stmt *statement) const
   if (statement == nullptr) {
     return {};
   }
-  if (stmtAs<ReturnStmt>(statement) != nullptr) {
-    return {.canFallThrough = false};
+  if (const auto *returned = stmtAs<ReturnStmt>(statement)) {
+    return {.canFallThrough = false,
+            .normalReturn = expressionNeverReturns(returned->value().get())
+                                ? nullptr
+                                : returned};
+  }
+  if (const auto *expression = stmtAs<ExpressionStmt>(statement)) {
+    return {.canFallThrough =
+                !expressionNeverReturns(expression->expression().get())};
+  }
+  if (const auto *declaration = stmtAs<VariableDecl>(statement)) {
+    return {.canFallThrough =
+                !expressionNeverReturns(declaration->initializer().get())};
   }
   if (const auto *control = stmtAs<LoopControlStmt>(statement)) {
     return {.canFallThrough = false,
@@ -9774,6 +9921,9 @@ auto SemanticVisitor::Impl::summarizeFlow(const Stmt *statement) const
     return branch == nullptr ? FlowSummary{} : summarizeFlow(*branch);
   }
   if (const auto *ifStatement = stmtAs<IfStmt>(statement)) {
+    if (expressionNeverReturns(ifStatement->condition().get())) {
+      return {.canFallThrough = false};
+    }
     if (ifStatement->isConstexpr()) {
       if (const std::optional<bool> selected =
               semanticModel.findConstexprBranch(*ifStatement)) {
@@ -9794,31 +9944,53 @@ auto SemanticVisitor::Impl::summarizeFlow(const Stmt *statement) const
             .breaksEnclosingControl = thenFlow.breaksEnclosingControl ||
                                       elseFlow.breaksEnclosingControl,
             .continuesEnclosingLoop = thenFlow.continuesEnclosingLoop ||
-                                      elseFlow.continuesEnclosingLoop};
+                                      elseFlow.continuesEnclosingLoop,
+            .normalReturn = thenFlow.normalReturn != nullptr
+                                ? thenFlow.normalReturn
+                                : elseFlow.normalReturn};
   }
   if (const auto *switchStatement = stmtAs<SwitchStmt>(statement)) {
+    if (expressionNeverReturns(switchStatement->expression().get())) {
+      return {.canFallThrough = false};
+    }
     bool coversEveryValue = semanticModel.isExhaustiveSwitch(*switchStatement);
     bool reachesAfterSwitch = false;
     bool continuesEnclosingLoop = false;
+    const ReturnStmt *normalReturn = nullptr;
     for (const SwitchArm &arm : switchStatement->arms()) {
       for (const SwitchLabel &label : arm.labels) {
         coversEveryValue = coversEveryValue || label.isDefault();
       }
       const FlowSummary armFlow = summarizeFlow(arm.statements);
+      if (normalReturn == nullptr) {
+        normalReturn = armFlow.normalReturn;
+      }
       reachesAfterSwitch = reachesAfterSwitch || armFlow.canFallThrough ||
                            armFlow.breaksEnclosingControl;
       continuesEnclosingLoop =
           continuesEnclosingLoop || armFlow.continuesEnclosingLoop;
     }
     return {.canFallThrough = !coversEveryValue || reachesAfterSwitch,
-            .continuesEnclosingLoop = continuesEnclosingLoop};
+            .continuesEnclosingLoop = continuesEnclosingLoop,
+            .normalReturn = normalReturn};
   }
   if (const auto *forStatement = stmtAs<ForStmt>(statement)) {
+    const FlowSummary initializer =
+        summarizeFlow(forStatement->initializer().get());
+    if (!initializer.canFallThrough) {
+      return initializer;
+    }
+    if (expressionNeverReturns(forStatement->condition().get())) {
+      return {.canFallThrough = false};
+    }
     const FlowSummary body = summarizeFlow(forStatement->body().get());
     const bool repeatsForever =
         !forStatement->condition() ||
         constantBoolean(forStatement->condition()) == true;
-    return {.canFallThrough = !repeatsForever || body.breaksEnclosingControl};
+    return {.canFallThrough = !repeatsForever || body.breaksEnclosingControl,
+            .normalReturn = constantBoolean(forStatement->condition()) == false
+                                ? nullptr
+                                : body.normalReturn};
   }
   if (const auto *rangeFor = stmtAs<RangeForStmt>(statement)) {
     return summarizeFlow(rangeFor->lowered().get());
@@ -9827,15 +9999,25 @@ auto SemanticVisitor::Impl::summarizeFlow(const Stmt *statement) const
     const FlowSummary body = summarizeFlow(doWhile->body().get());
     const bool reachesCondition =
         body.canFallThrough || body.continuesEnclosingLoop;
-    return {.canFallThrough = body.breaksEnclosingControl ||
-                              (reachesCondition &&
-                               constantBoolean(doWhile->condition()) != true)};
+    return {.canFallThrough =
+                body.breaksEnclosingControl ||
+                (reachesCondition &&
+                 !expressionNeverReturns(doWhile->condition().get()) &&
+                 constantBoolean(doWhile->condition()) != true),
+            .normalReturn = body.normalReturn};
   }
   if (const auto *whileStatement = stmtAs<WhileStmt>(statement)) {
+    if (expressionNeverReturns(whileStatement->condition().get())) {
+      return {.canFallThrough = false};
+    }
     const FlowSummary body = summarizeFlow(whileStatement->body().get());
     return {.canFallThrough =
                 constantBoolean(whileStatement->condition()) != true ||
-                body.breaksEnclosingControl};
+                body.breaksEnclosingControl,
+            .normalReturn =
+                constantBoolean(whileStatement->condition()) == false
+                    ? nullptr
+                    : body.normalReturn};
   }
   return {};
 }

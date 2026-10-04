@@ -366,8 +366,12 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     // MutexLockFailure: enters the defined-failure runtime path.
     MirEffectTraits{.invokesRuntime = true, .mayTrap = true},
     MirEffectTraits{}, // ExactTypeParameterConstruction: scalar identity.
-    MirEffectTraits{.mayTrap = true},          // RequireKey
-    MirEffectTraits{.mayTrap = true},          // RequireContainerArgument
+    MirEffectTraits{.mayTrap = true}, // RequireKey
+    MirEffectTraits{.mayTrap = true}, // RequireContainerArgument
+    // Panic snapshots a borrowed message into the explicit failure channel.
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true},          // Panic
     MirEffectTraits{.initializesValue = true}, // SharedOwnerEmpty
     // Promotion consumes the unique owner. Allocation rollback may execute
     // the pointee's source cleanup through the explicit failure channel.
@@ -615,6 +619,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "exact-type-parameter-construction",
     "require-key",
     "require-container-argument",
+    "panic",
     "shared-owner-empty",
     "shared-owner-from-unique",
     "shared-owner-clone",

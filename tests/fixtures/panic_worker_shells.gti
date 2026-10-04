@@ -1,0 +1,46 @@
+#include <std/panic>
+#include <std/memory>
+#include <std/thread>
+#include <std/string>
+#include <std/vector>
+
+struct Guard {
+  int id;
+  bool fails;
+  Guard(int value, bool failure = false) : id(value), fails(failure) {}
+  ~Guard() {
+    std::println(id);
+    if (fails) {
+      std::panic("cleanup failed"); // cleanup-site
+    }
+  }
+};
+
+void worker_failure(bool emergency) {
+  auto shared = std::make_shared<Guard>(93, false);
+  std::allocator allocator{};
+  auto allocated = allocator.try_storage<Guard>(std::size_t(1));
+  if (!allocated) { std::panic("storage allocation failed"); }
+  mut std::storage<Guard> storage = std::move(allocated).value();
+  storage.construct(std::size_t(0), Guard(94));
+  auto nested_started = std::thread::start([]() -> void {});
+  if (!nested_started) { std::panic("nested worker start failed"); }
+  std::thread nested = std::move(nested_started).value();
+  Guard skipped{83};
+  Guard failing{82, emergency};
+  std::panic("shell primary failure"); // shell-primary-site
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard parent{90};
+  bool emergency = argc > 1;
+  auto started = std::thread::start([emergency]() -> void {
+    Guard caller{84};
+    worker_failure(emergency);
+  });
+  if (!started) { return 99; }
+  mut std::thread worker = std::move(started).value();
+  auto joined = worker.join();
+  if (!joined) { return 98; }
+  return 0;
+}

@@ -11,6 +11,40 @@ alone is not the complete backend API.
 
 ## Representation
 
+### Terminal calls and caller locations
+
+Concrete functions and calls retain semantic `neverReturns` and `tracksCaller`
+contracts. A terminal call has an explicit `Unreachable` normal continuation;
+its defined-failure successor uses the ordinary failure record and reverse-order
+cleanup. Enclosing expressions do not manufacture an SSA result or evaluate
+later arguments after a terminal operand. The impossible normal continuation
+may retain lifetime bookkeeping and the primary full-expression boundary, but
+not ordinary computation or a return. Independent verification checks both
+the selected declaration contract and that continuation. A terminal source
+function cannot contain a reachable `Return`.
+
+Caller transport is a separate fact from failure effects. A tracked MIR call
+contains the exact semantic `CallerLocationOrigin`, its canonical artifact-local
+site ID, and whether the enclosing tracked function forwards its incoming token.
+`MirBody::hasCallerLocation` must agree with its concrete function declaration.
+`FailureMetadata` binds caller anchors separately from actual detector origins;
+the artifact descriptor admits the union of genuine detector outcomes and the
+explicit-panic outcome at caller anchors. A caller anchor does not invent a
+local failure or make a failure-free wrapper fallible.
+
+The trusted `Panic` intrinsic reads one text view and is terminal, caller-tracked,
+and a conservative optimizer barrier. At detection it selects the caller token
+and snapshots the message into the version-two runtime record before cleanup.
+The local detector origin remains independently verified. Calls, joins, and
+cleanup propagate that record unchanged. No public `std::panic` spelling,
+ambient thread-local caller state, native unwinding, or backend-inferred control
+flow supplies authority. Deterministic MIR serialization records the declaration,
+instruction, body, and caller-assignment facts (`mir-v85`, `mir-body-v72`).
+
+The first caller-token consumer is panic. This does not change
+`source_location::current()` to inspect an incoming dynamic token, extend
+tracking through native function pointers, or implement a call stack.
+
 ### Constant-execution foundation
 
 `mir_constant_evaluator` provides a bounded execution service over
@@ -178,7 +212,7 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v84`/`mir-body-v71`.
+The deterministic serialization is currently `mir-v85`/`mir-body-v72`.
 The prefix-construction capacity check and its exact append identity are
 serialized for deterministic evidence and independent replay.
 The new loan contract separates a physical carrier reference from its inherited
@@ -1071,7 +1105,12 @@ A `MirBody` owns:
   construction retains its separate exact source-place path. Every checkpoint's
   single result has exactly one executable use by the matching `Call` or
   `Construct`, so the invocation consumes only prepared inputs rather than
-  reevaluating a source operand;
+  reevaluating a source operand. The sole zero-use exception is an interrupted
+  invocation: every remaining normal CFG path must reach an explicit terminal
+  call before the full-expression boundary. A bare unreachable edge, a cycle,
+  or a later statement's terminal call is not evidence. Failure-edge loan and
+  drop checks still apply independently; an abandoned prepared owner is never
+  transferred to a nonexistent callee;
 - expanded constructor arguments retain the concrete selected parameter type.
   An exact read-only reference parameter borrows the projected pack element
   instead of inheriting its source pack's by-value copy/move role. This is a

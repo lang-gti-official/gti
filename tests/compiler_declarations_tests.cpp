@@ -3595,33 +3595,32 @@ int use() {
   expect(!invalid.canGenerateCode(),
          "unsupported operations and concrete constraint violations should "
          "fail before backend entry");
-  expect(
-      hasDiagnosticCode(invalid.diagnostics, "GTI-S2029") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "does not satisfy generic constraint") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "Unknown generic concept 'std::mystery'") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "requires the numeric capability") &&
-          hasDiagnostic(invalid.diagnostics, "'std::ordered'") &&
-          hasDiagnostic(invalid.diagnostics, "'std::integral'") &&
-          hasDiagnostic(invalid.diagnostics, "'std::signed_numeric'") &&
-          hasDiagnostic(invalid.diagnostics, "'std::signed_integral'") &&
-          hasDiagnostic(invalid.diagnostics, "'std::unsigned_integral'") &&
-          hasDiagnostic(invalid.diagnostics, "'std::floating_point'") &&
-          hasDiagnostic(invalid.diagnostics, "'std::equality_comparable'") &&
-          hasDiagnostic(invalid.diagnostics, "'std::totally_ordered'") &&
-          hasDiagnostic(invalid.diagnostics, "'std::copy_constructible'") &&
-          hasDiagnostic(invalid.diagnostics, "'std::copyable'") &&
-          hasDiagnostic(invalid.diagnostics, "'std::movable'") &&
-          hasDiagnostic(invalid.diagnostics, "'std::default_initializable'") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "requires the default-initialization capability") &&
-          hasDiagnostic(invalid.diagnostics, "signed numeric value") &&
-          hasDiagnostic(invalid.diagnostics, "requires integer operands") &&
-          hasDiagnostic(invalid.diagnostics, "numeric operands"),
-      "constraint diagnostics should cover declarations, propagation, "
-      "calls, conversions, and required operator capabilities");
+  expect(hasDiagnosticCode(invalid.diagnostics, "GTI-S2029") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "does not satisfy generic constraint") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Unknown generic concept 'std::mystery'") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "requires the numeric capability") &&
+             hasDiagnostic(invalid.diagnostics, "std::ordered") &&
+             hasDiagnostic(invalid.diagnostics, "std::integral") &&
+             hasDiagnostic(invalid.diagnostics, "std::signed_numeric") &&
+             hasDiagnostic(invalid.diagnostics, "std::signed_integral") &&
+             hasDiagnostic(invalid.diagnostics, "std::unsigned_integral") &&
+             hasDiagnostic(invalid.diagnostics, "std::floating_point") &&
+             hasDiagnostic(invalid.diagnostics, "std::equality_comparable") &&
+             hasDiagnostic(invalid.diagnostics, "std::totally_ordered") &&
+             hasDiagnostic(invalid.diagnostics, "std::copy_constructible") &&
+             hasDiagnostic(invalid.diagnostics, "std::copyable") &&
+             hasDiagnostic(invalid.diagnostics, "std::movable") &&
+             hasDiagnostic(invalid.diagnostics, "std::default_initializable") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "requires the default-initialization capability") &&
+             hasDiagnostic(invalid.diagnostics, "signed numeric value") &&
+             hasDiagnostic(invalid.diagnostics, "requires integer operands") &&
+             hasDiagnostic(invalid.diagnostics, "numeric operands"),
+         "constraint diagnostics should cover declarations, propagation, "
+         "calls, conversions, and required operator capabilities");
   expect(hasDiagnosticHint(invalid.diagnostics,
                            "public, read-only bool operator==") &&
              hasDiagnosticHint(invalid.diagnostics,
@@ -3781,16 +3780,17 @@ int main() {
       invalid.diagnostics.begin(), invalid.diagnostics.end(),
       [](const auto &item) {
         return item.code == "GTI-S2029" &&
-               item.message.find("Type 'Frozen'") != std::string::npos;
+               item.message.find("type 'Frozen'") != std::string::npos;
       });
-  const auto closingParen = invalidSource.find("constructible(frozen)") +
-                            std::string("constructible(frozen").size();
-  expect(failure != invalid.diagnostics.end() &&
-             failure->primary.start == closingParen &&
-             failure->primary.end == closingParen + 1 &&
-             !failure->related.empty() && failure->fixes.empty(),
-         "move-construction failure points at the call, relates its contract, "
-         "and offers no ownership-changing automatic fix");
+  const auto argument = invalidSource.find("constructible(frozen)") +
+                        std::string("constructible(").size();
+  expect(
+      failure != invalid.diagnostics.end() &&
+          failure->primary.start == argument &&
+          failure->primary.end == argument + std::string("frozen").size() &&
+          !failure->related.empty() && failure->fixes.empty(),
+      "move-construction failure points at the argument, relates its contract, "
+      "and offers no ownership-changing automatic fix");
 }
 
 void testFiniteWrapperTraits() {
@@ -4105,8 +4105,8 @@ int main() {
   expect(
       !invalid.canGenerateCode() &&
           countDiagnosticCode(invalid.diagnostics, "GTI-S2029") >= 7 &&
-          hasDiagnostic(invalid.diagnostics, "'std::transferable'") &&
-          hasDiagnostic(invalid.diagnostics, "'std::shareable'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::transferable<") &&
+          hasDiagnostic(invalid.diagnostics, "'std::shareable<") &&
           hasDiagnosticHint(invalid.diagnostics,
                             "state and cleanup that can safely move") &&
           hasDiagnosticHint(invalid.diagnostics,
@@ -4167,6 +4167,171 @@ int main() {
              lang::Formatter().format(formatted) == formatted,
          "concurrency capability attributes should format idempotently with "
          "C++-familiar declaration placement");
+}
+
+void testConstraintFailureProvenance() {
+  const std::string prefix = R"(
+namespace library {
+concept snapshot_as<R, T> = requires(T& value) { { value.snapshot() } -> R; };
+concept readable<T> = snapshot_as<int, T>;
+int read<A, B>(A& unrelated, B& value) requires readable<B> {
+  return value.snapshot();
+}
+}
+)";
+  const std::vector<std::pair<std::string, std::string>> rejected{
+      {"struct Item {};", "has no member 'snapshot()'"},
+      {"struct Item { bool snapshot() { return true; } };",
+       "returns 'bool', but the required exact result is 'int32_t'"},
+      {"class Item { int snapshot() { return 1; } };",
+       "not publicly accessible"},
+      {"struct Item { int snapshot() mut { return 1; } };",
+       "not a read-only, nongeneric instance method"},
+  };
+  for (const auto &[definition, reason] : rejected) {
+    const std::string source = prefix + definition + R"(
+int main() {
+  Item unrelated{};
+  Item target{};
+  return library::read(unrelated, target);
+}
+)";
+    const auto result = lang::Frontend().analyze(
+        "constraint-provenance.gti", source, {standardLibraryPrelude()});
+    const auto *diagnostic =
+        findDiagnosticByCode(result.diagnostics, "GTI-S2029");
+    const auto argument = source.find("target);", source.find("int main"));
+    expect(
+        !result.canGenerateCode() && diagnostic != nullptr &&
+            diagnostic->message.find("Argument 2 has type 'Item'") !=
+                std::string::npos &&
+            diagnostic->message.find("library::readable<Item>") !=
+                std::string::npos &&
+            diagnostic->primary.source.ends_with("constraint-provenance.gti") &&
+            diagnostic->primary.start == argument &&
+            diagnostic->primary.end == argument + 6 &&
+            diagnostic->fixes.empty() &&
+            hasRelatedDiagnostic(result.diagnostics,
+                                 "library::snapshot_as<int32_t, Item>") &&
+            hasRelatedDiagnostic(result.diagnostics, reason) &&
+            hasDiagnosticHint(result.diagnostics, "public, safe, read-only"),
+        "a nested reordered contract must preserve its concrete public "
+        "application, exact second argument, leaf reason and safe guidance");
+  }
+  const std::string accepted = prefix + R"(
+struct Item { int snapshot() { return 7; } };
+int main() { Item value{}; return library::read(value, value); }
+)";
+  const auto valid = lang::Frontend().analyze(
+      "constraint-provenance-valid.gti", accepted, {standardLibraryPrelude()});
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "contract diagnostic provenance must not change valid member "
+         "selection or introduce backend policy");
+
+  const std::string closed = R"(
+concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
+concept impossible<T> = snapshots<int>;
+int read<T>(T value) requires impossible<T> { return 0; }
+int main() { return read(true); }
+)";
+  const auto closedFailure = lang::Frontend().analyze(
+      "closed-constraint-provenance.gti", closed, {standardLibraryPrelude()});
+  const auto *closedDiagnostic =
+      findDiagnosticByCode(closedFailure.diagnostics, "GTI-S2029");
+  expect(
+      closedDiagnostic != nullptr &&
+          closedDiagnostic->message.find("Argument") == std::string::npos &&
+          hasRelatedDiagnostic(closedFailure.diagnostics,
+                               "Type 'int32_t' has no member") &&
+          hasRelatedDiagnostic(closedFailure.diagnostics, "impossible<bool>"),
+      "a closed requirement must not blame an unrelated inferred argument "
+      "or replace the failed leaf type with the enclosing concept argument");
+
+  const std::string shared = R"(
+concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
+int read<T>(T& first, T& second) requires snapshots<T> { return first.snapshot(); }
+struct Item {};
+int main() { Item value{}; return read(value, value); }
+)";
+  const auto sharedFailure = lang::Frontend().analyze(
+      "shared-constraint-provenance.gti", shared, {standardLibraryPrelude()});
+  const auto *sharedDiagnostic =
+      findDiagnosticByCode(sharedFailure.diagnostics, "GTI-S2029");
+  expect(sharedDiagnostic != nullptr &&
+             sharedDiagnostic->message.find("Argument") == std::string::npos &&
+             hasRelatedDiagnostic(sharedFailure.diagnostics, "snapshots<Item>"),
+         "multiple occurrences of one inferred parameter retain a call-site "
+         "diagnostic instead of arbitrarily blaming its first argument");
+
+  const auto nestedArgument =
+      lang::Frontend().analyze("nested-argument-constraint-provenance.gti", R"(
+concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
+struct Holder<T> {};
+struct Item {};
+int read<T>(Holder<T>& value) requires snapshots<T> { return 0; }
+int main() { Holder<Item> value{}; return read(value); }
+)",
+                               {standardLibraryPrelude()});
+  expect(hasDiagnostic(nestedArgument.diagnostics,
+                       "Argument 1 has type 'Holder<Item>'") &&
+             hasDiagnostic(nestedArgument.diagnostics,
+                           "its inferred type 'Item'") &&
+             hasRelatedDiagnostic(nestedArgument.diagnostics,
+                                  "has no member 'snapshot()'"),
+         "nested generic inference must distinguish the actual argument type "
+         "from the leaf type it supplies");
+
+  const std::string alternatives = R"(
+concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
+concept serializes<T> = requires(T& value) { { value.serialize() } -> int; };
+concept readable<T> = snapshots<T> || serializes<T>;
+int read<T>(T& value) requires readable<T> { return 0; }
+struct Item {};
+int main() { Item value{}; return read(value); }
+)";
+  const auto disjunction =
+      lang::Frontend().analyze("disjunction-constraint-provenance.gti",
+                               alternatives, {standardLibraryPrelude()});
+  expect(!disjunction.canGenerateCode() &&
+             hasDiagnostic(disjunction.diagnostics, "any alternative") &&
+             hasRelatedDiagnostic(disjunction.diagnostics,
+                                  "has no member 'snapshot()'") &&
+             hasRelatedDiagnostic(disjunction.diagnostics,
+                                  "has no member 'serialize()'") &&
+             hasRelatedDiagnostic(disjunction.diagnostics, "readable<Item>"),
+         "each failed disjunction branch must retain its own exact leaf "
+         "explanation without combining unrelated proof facts");
+
+  const std::string overloads = R"(
+concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
+concept serializes<T> = requires(T& value) { { value.serialize() } -> int; };
+int read<T>(T& value) requires snapshots<T> { return value.snapshot(); }
+int read<T>(T& value, int mode = 0) requires serializes<T> {
+  return value.serialize();
+}
+struct Item {};
+int main() { Item value{}; return read(value); }
+)";
+  const auto overloadFailure =
+      lang::Frontend().analyze("overload-constraint-provenance.gti", overloads,
+                               {standardLibraryPrelude()});
+  expect(!overloadFailure.canGenerateCode() &&
+             hasDiagnosticCode(overloadFailure.diagnostics, "GTI-S2012") &&
+             hasRelatedDiagnostic(overloadFailure.diagnostics,
+                                  "Candidate rejected: Argument 1") &&
+             hasRelatedDiagnostic(overloadFailure.diagnostics,
+                                  "has no member 'snapshot()'") &&
+             hasRelatedDiagnostic(overloadFailure.diagnostics,
+                                  "has no member 'serialize()'"),
+         "multiple rejected overloads must retain their contract explanations "
+         "rather than replace all causes with a conversion suggestion");
+  const auto selected = lang::Frontend().analyze(
+      "overload-constraint-valid.gti",
+      overloads + "\nint read(Item& value) { return 0; }\n",
+      {standardLibraryPrelude()});
+  expect(selected.canGenerateCode(),
+         "constraint failures on rejected overloads must not leak diagnostics "
+         "when another exact candidate is viable");
 }
 
 void testMemberRequirementConcepts() {
@@ -4240,7 +4405,7 @@ int main() {
             "int main() { Item item{}; auto copy = read(item); return 0; }",
         {standardLibraryPrelude()});
     expect(!invalid.canGenerateCode() &&
-               hasDiagnostic(invalid.diagnostics, "do not satisfy concept"),
+               hasDiagnostic(invalid.diagnostics, "satisfy concept"),
            "missing, mismatched, mutable, consuming, static and inaccessible "
            "members must fail the declared concept");
   }
@@ -4442,8 +4607,8 @@ int main() {
                                {standardLibraryPrelude()});
   expect(!concreteFailure.canGenerateCode() &&
              hasDiagnostic(concreteFailure.diagnostics,
-                           "does not satisfy generic constraint "
-                           "'signed_value'"),
+                           "does not satisfy concept "
+                           "'signed_value<uint64_t>'"),
          "concrete arguments should be checked against composed concepts with "
          "the source concept name in diagnostics");
 
@@ -4879,12 +5044,12 @@ int main() {
     const lang::FrontendResult result = lang::Frontend().analyze(
         std::string(name), source, {standardLibraryPrelude()}, {},
         {standardLibraryRoot()});
-    expect(!result.canGenerateCode() &&
-               hasDiagnostic(result.diagnostics,
-                             std::string("do not satisfy concept '") +
-                                 std::string(conceptName) + "'") &&
-               hasDiagnosticHint(result.diagnostics, std::string(hintFragment)),
-           std::string(message));
+    expect(
+        !result.canGenerateCode() &&
+            hasDiagnostic(result.diagnostics, std::string("satisfy concept '") +
+                                                  std::string(conceptName)) &&
+            hasDiagnosticHint(result.diagnostics, std::string(hintFragment)),
+        std::string(message));
   };
 
   rejects("domain-operator-missing-add.gti", R"(
@@ -10328,7 +10493,238 @@ int main() {
          "idempotent");
 }
 
+void testFunctionContracts() {
+  const std::string prefix = R"(
+[[noreturn]] void stop() { while (true) {} }
+[[noreturn]] int stop_number() { while (true) {} }
+[[noreturn]] bool stop_test() { while (true) {} }
+int identity(int value) { return value; }
+)";
+  const std::vector<std::pair<std::string, std::string>> accepted{
+      {"direct", "[[noreturn]] void run() { stop(); }"},
+      {"unused-terminal-result", "[[noreturn]] void run() { stop_number(); }"},
+      {"grouped", "[[noreturn]] void run() { (stop()); }"},
+      {"return-expression",
+       "[[noreturn]] int run() { return stop_number() + 1; }"},
+      {"initializer", "[[noreturn]] void run() { int value = stop_number(); }"},
+      {"argument",
+       "[[noreturn]] int run() { return identity(stop_number()); }"},
+      {"if-condition", "[[noreturn]] void run() { if (stop_test()) {} }"},
+      {"while-condition", "[[noreturn]] void run() { while (stop_test()) {} }"},
+      {"do-condition",
+       "[[noreturn]] void run() { do {} while (stop_test()); }"},
+      {"for-condition", "[[noreturn]] void run() { for (; stop_test();) {} }"},
+      {"switch-condition", "[[noreturn]] void run() { switch (stop_number()) { "
+                           "default: break; } }"},
+      {"conditional", "[[noreturn]] int run(bool select) { return select ? "
+                      "stop_number() : stop_number(); }"},
+      {"exhaustive-arms", "[[noreturn]] void run(int value) { switch (value) { "
+                          "case 1: stop(); default: stop(); } }"},
+      {"generic", "[[noreturn]] void run<T>(T value) { stop(); } void "
+                  "instantiate() { run(1); }"},
+      {"tracked-method",
+       "struct Guard { [[track_caller]] void check() { stop(); } };"},
+      {"tracked-direct-item",
+       "[[track_caller]] int compute(int value) { return value; } int run() { "
+       "auto target = compute; return target(1); }"},
+  };
+  for (const auto &[name, body] : accepted) {
+    const auto result =
+        lang::Frontend().analyze("function-contract-" + name + ".gti",
+                                 prefix + body + "\nint main() { return 0; }",
+                                 {standardLibraryPrelude()});
+    if (!result.canGenerateCode()) {
+      for (const auto &diagnostic : result.diagnostics) {
+        std::cerr << name << " [" << diagnostic.code
+                  << "]: " << diagnostic.message << '\n';
+      }
+    }
+    expect(result.canGenerateCode(),
+           "general terminal flow must accept " + name);
+  }
+
+  const std::vector<std::pair<std::string, std::string>> rejected{
+      {"fallthrough", "[[noreturn]] void run() {}"},
+      {"normal-return", "[[noreturn]] void run() { return; }"},
+      {"conditional-return",
+       "[[noreturn]] void run(bool value) { if (value) return; stop(); }"},
+      {"short-circuit", "[[noreturn]] void run(bool value) { bool result = "
+                        "value && stop_test(); }"},
+      {"unselected-branch", "[[noreturn]] int run(bool value) { return value ? "
+                            "1 : stop_number(); }"},
+      {"loop-break", "[[noreturn]] void run() { while (true) { break; } }"},
+      {"ordinary-enum",
+       "enum class State { first, second }; [[noreturn]] void run(State value) "
+       "{ switch (value) { case State::first: stop(); case State::second: "
+       "stop(); } }"},
+      {"duplicate", "[[noreturn, noreturn]] void run() { stop(); }"},
+      {"tracked-operator", "struct Index { [[track_caller]] int "
+                           "operator[](std::size_t index) { return 0; } };"},
+      {"terminal-operator",
+       "struct Action { [[noreturn]] void operator()() { stop(); } };"},
+      {"unknown", "[[noreturn, surprise]] void run() { stop(); }"},
+      {"bodyless", "[[track_caller]] void run();"},
+      {"virtual",
+       "class Guard { public: [[track_caller]] virtual void check() {} };"},
+      {"native", "extern \"C\" { [[track_caller]] void run(); }"},
+  };
+  for (const auto &[name, body] : rejected) {
+    const auto result =
+        lang::Frontend().analyze("function-contract-rejected-" + name + ".gti",
+                                 prefix + body + "\nint main() { return 0; }",
+                                 {standardLibraryPrelude()});
+    expect(!result.canGenerateCode() &&
+               hasDiagnosticCode(result.diagnostics, "GTI-S2099"),
+           "function contract diagnostic must reject " + name);
+  }
+
+  const std::string returned = "[[noreturn]] void run() { return; }";
+  const auto trackedEntry = lang::Frontend().analyze(
+      "tracked-entry.gti", "[[track_caller]] int main() { return 0; }",
+      {standardLibraryPrelude()});
+  expect(!trackedEntry.canGenerateCode() &&
+             hasDiagnosticCode(trackedEntry.diagnostics, "GTI-S2099") &&
+             hasDiagnostic(trackedEntry.diagnostics, "hosted entry point"),
+         "the hosted entry point cannot demand a nonexistent GTI caller");
+  const auto invalidBody = lang::Frontend().analyze(
+      "invalid-terminal-body.gti",
+      "[[noreturn]] void run() { missing(); }\nint main() { return 0; }",
+      {standardLibraryPrelude()});
+  expect(!invalidBody.canGenerateCode() &&
+             !hasDiagnosticCode(invalidBody.diagnostics, "GTI-S2099"),
+         "an invalid terminal body must retain its original error without a "
+         "speculative flow cascade");
+  const auto invalid = lang::Frontend().analyze(
+      "function-contract-span.gti", returned + "\nint main() { return 0; }",
+      {standardLibraryPrelude()});
+  const auto *diagnostic =
+      findDiagnosticByCode(invalid.diagnostics, "GTI-S2099");
+  expect(diagnostic != nullptr &&
+             diagnostic->primary.start == returned.find("return;") &&
+             diagnostic->primary.end == returned.find("return;") + 6 &&
+             diagnostic->fixes.empty() &&
+             diagnostic->group == "function-contract",
+         "terminal normal-return diagnostic must point at the actual return "
+         "without inventing a fix");
+
+  const auto native =
+      lang::Frontend().analyze("tracked-native-callback.gti", R"(
+using Callback = () -> void;
+extern "C" { void accept(Callback callback); }
+[[track_caller]] void callback() {}
+int main() { unsafe { accept(callback); } return 0; }
+)",
+                               {standardLibraryPrelude()});
+  expect(!native.canGenerateCode() &&
+             hasDiagnosticCode(native.diagnostics, "GTI-S2099") &&
+             hasDiagnostic(native.diagnostics, "native callback"),
+         "native callback conversion must not erase hidden caller-location "
+         "transport");
+
+  const auto owned = lang::Frontend().analyze("tracked-owned-callback.gti", R"(
+#include <std/functional>
+[[track_caller]] int callback(int value) { return value; }
+int main() { std::function<int(int)> erased{callback}; return erased(1); }
+)",
+                                              {standardLibraryPrelude()}, {},
+                                              {standardLibraryRoot()});
+  expect(owned.canGenerateCode(), "source-defined callable wrappers retain "
+                                  "exact tracked function identity");
+  const auto customOwned =
+      lang::Frontend().analyze("tracked-custom-wrapper.gti", R"(
+[[track_caller]] int callback(int value) { return value; }
+struct Holder<F> {
+  F callback;
+  Holder(F value) : callback(value) {}
+  int invoke(int value) { return callback(value); }
+};
+Holder<F> retain<F>(F value) { return Holder<F>(value); }
+int main() { auto holder = retain(callback); return holder.invoke(1); }
+)",
+                               {standardLibraryPrelude()});
+  expect(customOwned.canGenerateCode(),
+         "unrelated source-defined owning wrappers retain exact function "
+         "identity too");
+
+  const std::string unsafeSource = R"(
+[[noreturn, track_caller]] [[unsafe]] void halt() { while (true) {} }
+void invoke() { unsafe { halt(); } }
+int main() { return 0; }
+)";
+  const auto unsafeContract = lang::Frontend().analyze(
+      "unsafe-function-contract.gti", unsafeSource, {standardLibraryPrelude()});
+  expect(unsafeContract.canGenerateCode(),
+         "terminal and caller-tracked contracts can precede an unsafe "
+         "namespace function attribute");
+  const lang::LanguageQueries queries;
+  const auto unsafeUnit = unsafeContract.sourceGraph.entryUnit();
+  const std::string expectedSignature =
+      "[[noreturn]] [[track_caller]] [[unsafe]] void halt()";
+  for (const auto offset :
+       {unsafeSource.find("halt()"), unsafeSource.rfind("halt();")}) {
+    const auto hover = queries.hover(unsafeContract, unsafeUnit, offset + 1);
+    expect(hover && hover->signature == expectedSignature,
+           "declaration and selected-call queries must print contract "
+           "attributes before the final unsafe attribute");
+    if (hover) {
+      const auto roundTrip = lang::Frontend().analyze(
+          "unsafe-function-contract-signature.gti",
+          hover->signature + " { while (true) {} }\nint main() { return 0; }\n",
+          {standardLibraryPrelude()});
+      expect(roundTrip.canGenerateCode(),
+             "a copied contract-bearing query signature must parse and "
+             "retain valid semantics");
+    }
+  }
+
+  for (const std::string attribute : {"[[noreturn", "[[track_caller]"}) {
+    const std::string malformed =
+        attribute + " void broken() {}\nint recovered() { return 0; }\n";
+    lang::Lexer lexer;
+    lang::Parser parser(lexer.scan(malformed, "incomplete-contract.gti"));
+    const auto recovered = parser.parse();
+    const auto *error = findDiagnosticByCode(parser.errors(), "GTI-P0001");
+    const auto unexpected = malformed.find("void");
+    expect(parser.hadError() && error != nullptr &&
+               error->phase == lang::DiagnosticPhase::Parsing &&
+               error->severity == lang::DiagnosticSeverity::Error &&
+               error->message.find("after declaration attributes") !=
+                   std::string::npos &&
+               error->primary.source.ends_with("incomplete-contract.gti") &&
+               error->primary.start == unexpected &&
+               error->primary.end == unexpected + 4 &&
+               error->fixes.size() == 1 &&
+               error->fixes.front().span.source == error->primary.source &&
+               error->fixes.front().span.start == unexpected &&
+               error->fixes.front().span.end == unexpected &&
+               error->fixes.front().replacement == "]" &&
+               findTopLevelFunction(recovered, "recovered") != nullptr,
+           "incomplete function attributes retain a declaration-neutral "
+           "parser error, precise delimiter insertion and recovered functions");
+    if (attribute.ends_with("]") && error != nullptr &&
+        error->fixes.size() == 1) {
+      std::string repaired = malformed;
+      repaired.insert(error->fixes.front().span.start,
+                      error->fixes.front().replacement);
+      const auto fixed = lang::Frontend().analyze(
+          "repaired-contract.gti", repaired + "int main() { return 0; }\n",
+          {standardLibraryPrelude()});
+      expect(fixed.canGenerateCode(),
+             "the supplied missing-bracket fix restores the complete "
+             "declaration without changing its function contract");
+    }
+  }
+
+  const std::string formatted = lang::Formatter().format(
+      "[[noreturn,track_caller]] void stop(){while(true){}}");
+  expect(formatted.find("[[noreturn, track_caller]]") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "the formatter preserves and spaces general function-contract "
+         "attributes");
+}
+
 constexpr NamedTest kTests[] = {
+    {"testFunctionContracts", testFunctionContracts},
     {"testContainerScaffoldSurfaces", testContainerScaffoldSurfaces},
     {"testMovedLoopLocalRedeclarations", testMovedLoopLocalRedeclarations},
     {"testInferredVoidGenericArguments", testInferredVoidGenericArguments},
@@ -10358,6 +10754,7 @@ constexpr NamedTest kTests[] = {
     {"testConcurrencyTypeCapabilities", testConcurrencyTypeCapabilities},
     {"testSourceDefinedConcepts", testSourceDefinedConcepts},
     {"testMemberRequirementConcepts", testMemberRequirementConcepts},
+    {"testConstraintFailureProvenance", testConstraintFailureProvenance},
     {"testRequiresDisjunction", testRequiresDisjunction},
     {"testStructuralRequiresAndAccumulate",
      testStructuralRequiresAndAccumulate},

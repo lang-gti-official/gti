@@ -13,6 +13,13 @@ static_assert(
         lang::DefinedFailureDetail::RecursiveThreadLocalInitialization) ==
     GTI_FAILURE_DETAIL_RECURSIVE_THREAD_LOCAL_INITIALIZATION_V1);
 static_assert(sizeof(gti_failure_record_v1) == 48);
+static_assert(static_cast<std::uint16_t>(lang::DefinedFailureCode::Panic) ==
+              GTI_FAILURE_CODE_PANIC_V2);
+static_assert(
+    static_cast<std::uint16_t>(lang::DefinedFailureDetail::ExplicitPanic) ==
+    GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2);
+static_assert(sizeof(gti_failure_record_v2) == 568);
+static_assert(std::is_trivially_copyable_v<gti_failure_record_v2>);
 static_assert(std::is_trivially_copyable_v<gti_failure_record_v1>);
 
 int main() {

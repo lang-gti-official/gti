@@ -885,6 +885,8 @@ verifyLoweredProgram(const LoweredProgram &program) {
     if (instance.id != index + 1 || instance.id != mir.id ||
         instance.declaration != mir.declaration || declaration == nullptr ||
         declaration->requiresUnsafe != mir.requiresUnsafe ||
+        declaration->neverReturns != mir.neverReturns ||
+        declaration->tracksCaller != mir.tracksCaller ||
         declaration->cThreadOperation != mir.cThreadOperation ||
         (declaration->cThreadOperation != CThreadRuntimeOperation::None &&
          !declaration->compilerPrivate) ||

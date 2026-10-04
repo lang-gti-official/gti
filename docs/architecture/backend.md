@@ -53,6 +53,21 @@ generated construction and broader subobject rollback remain migration work.
 
 ## Backend Contract
 
+Terminal and caller-tracking contracts are sealed declaration facts, also
+checked against the embedded MIR. Lowered-program serialization version 10
+includes both flags. The C++ representation passes an explicit artifact-local
+caller-site parameter through supported tracked signatures and calls. An
+untracked caller supplies the verified call-site constant; a tracked caller
+forwards its incoming parameter. The backend does not consult source spellings
+or recover caller policy from a C++ function name.
+
+The private panic instruction produces a version-two failure record and copies
+its bounded text payload before following MIR cleanup. Its successful path is
+unreachable; ordinary failure propagation, hosted containment and managed-thread
+handoff retain the complete record. The artifact descriptor remains version one,
+and the separately preserved runtime version-one interfaces are not silently
+reinterpreted as larger records.
+
 `include/gti/backend.h` defines one executable-backend operation:
 
 ```cpp
@@ -356,6 +371,10 @@ its local lifetime slot: failure destroys that slot, not the caller's still
 uninitialized `expected` output. The envelope is constructed only at successful
 publication. Extra work, a cyclic continuation, or a changed activation,
 reparent, or handoff fails the representation proof.
+The producer may activate its Value obligation directly after a failure-free
+constructor, or on the success edge of a fallible call. Both forms keep the
+payload in its local slot while later parameter cleanup runs; a failure-free
+constructor does not justify publishing early across a fallible destructor.
 
 Owning error alternatives use the same placement-result boundary as owning
 success alternatives, including `expected<int, Error>` and
@@ -526,6 +545,18 @@ prepared slot, and unsupported, aliased, duplicated, projected, or mismatched
 shapes remain rejected rather than receiving backend-invented storage or
 cleanup.
 
+A complete fresh owning Expected or class result can also transfer directly
+from its success-activated value slot into one exact static source-GTI function
+parameter; Expected additionally admits the proved constructor consumer.
+An owning class constructor result uses the same proof, with exact publication
+either on its checked success edge or its infallible instruction activation.
+These consumers share the same slot-use and CFG proof:
+one typed by-value operand, one matching unconditional `TransferOut`, producer
+success dominating the consumer, and exact cleanup on intervening argument
+failures. The function declaration's parameter and return identities must match;
+member receivers, native calls and dynamic dispatch are not inferred from this
+route. The value is taken from its sealed slot only at the proved handoff.
+
 The prepared extraction may precede another checked argument, including another
 owning extraction. A dominating, acyclic CFG proof requires every normal path
 to reach the sole consuming call without reading or changing the slot, and each
@@ -563,6 +594,19 @@ borrow-carrying payloads and user-defined copy constructors are not folded into
 this route. The wrong-state check precedes construction, so failure never
 activates the destination. Consuming observers retain their separate verified
 movement and cleanup rules.
+
+A one-use moved Expected with a cleanup-free source binding may fuse its
+receiver move into either a direct class extraction or a trivial scalar/enum
+observer. Both use the same proof: exact source-binding/drop/type identity,
+no move lifecycle effects, no active cleanup, and exactly one receiver use.
+The scalar path retains the checked wrong-state failure edge and reads that
+binding directly instead of default-constructing a second Expected. Owning
+receivers requiring cleanup continue to require their explicit lifetime slot.
+Their existing value-rooted moved-Expected slot admits either its one state
+test or a sole checked scalar observer, preserving the same source-to-value
+drop transfer and full-expression destruction. Trivial scalar-only Expected
+SSA receivers can be read directly; neither path introduces a loan or bypasses
+the checked inactive-alternative failure.
 
 A temporary expected class result observed only through `has_value()` uses
 the same proved lifetime slot as propagation, without requiring payload
@@ -641,6 +685,17 @@ single-field projection; a trivial scalar copy load; and no active cleanup,
 lifecycle, borrowed-state, or drop obligation. Additional consumers, nested or
 non-field projections, cleanup-owning temporaries, and incoherent type rows
 reject body emission rather than falling back to native temporary behavior.
+
+An ordinary cleanup-free construction may instead feed one exact by-value
+parameter of a selected static/free source GTI call. The same uninitialized
+slot preserves construction at its MIR position rather than moving it into
+the native argument list. Exact target/type/operand identities, sole use, and
+dominance from successful construction to consumption are required; no
+value-root place, active cleanup, borrowed state, or semantic drop may be
+invented for this representation-only shell. A later argument failure still
+uses the existing MIR cleanup of preceding owning arguments. Unrelated
+user-defined constructors exercise both infallible and failing construction,
+ordered subsequent arguments, and early failure before call entry.
 
 Constructor initializer lists and ABI-shaped wrappers may be assembled by
 `CppEmitter`, but their executable operations, ordering, cleanup, and failure
@@ -730,6 +785,16 @@ a different C++ class from the digest-named `Wrapper<int>` addressed by concrete
 MIR. Fully concrete declaration references do not force this propagation.
 This is representation coherence only; executable methods still come from the
 selected concrete verified MIR bodies.
+
+Type-only aliases also require forward declarations for any direct concrete
+class names in their resolved type argument graph, even when no executable
+MIR class instance uses them. Declaration planning uses the same concrete-name
+authority as runtime uses and emits each forward identity once before aliases.
+It does not instantiate layouts, constructors, or methods merely for an alias,
+and does not recursively expand the alias members of a referenced generic
+class. Dependent aliases retain their existing native-template spelling. This
+keeps recursive alias families finite and unused aliases ABI-consistent with
+any later executable use.
 
 Closure-typed (unnameable) free-function instances retain separate artifact-local
 C++ symbols keyed by their exact lowered/MIR instance identity. Each symbol's
@@ -1045,6 +1110,13 @@ immovable element's address from its constructor onward. Class-call results
 and non-adjacent publication retain the value-rooted lifetime-slot route and
 its separate transfer proof. The ordinary C++ route uses factory construction
 so it never names an undeclared SSA value.
+If a constructor has no reachable normal `Return`, its initialized fields never
+transfer to a completed object. The field-slot proof permits zero final object
+publications only after recomputing CFG reachability and proving that absence;
+it does not trust the stored reachable flag alone. Field initialization,
+reparenting, rollback Drops, and emergency termination remain unchanged. A
+constructor with a normal completion still requires its exact publication
+event; a terminal constructor does not invent one to satisfy native lowering.
 Nested receiver-field access is emitted only when every projection resolves
 through an exact class field and representation row. Missing or additional
 lifecycle uses reject the body rather than changing source evaluation order.
@@ -1371,6 +1443,14 @@ its exact argument index, call site, type, prepared slot and obligation, once
 each. Those input handoffs neither activate the result early nor discharge its
 replacement-failure cleanup.
 
+A later terminal argument can prevent the enclosing invocation entirely.
+The backend reuses MIR's full-expression/CFG proof for a zero-use prepared
+input, then independently checks that every intervening failure edge destroys
+the exact prepared slot once. The producer still constructs before later
+argument evaluation; no callee handoff or `TransferOut` is invented. Both
+arms of a conditional terminal argument must satisfy this rule. The impossible
+normal continuation is not permission to omit failure cleanup.
+
 The publication has four destination families, distinguished by which
 obligation owns the storage being replaced. A bare mutable binding owns its
 own cleanup obligation, so the `Replace` transfers into that obligation and
@@ -1396,9 +1476,23 @@ it names one. Every other destination, a bare-binding, field or loan publication
 a failure site, an incomplete two-phase loan schedule, extra uses, and any
 additional lifecycle event on the staging obligation also fail closed.
 
-A cleanup-free class prvalue has no staging obligation at all: no place or
-drop obligation owns the constructed value and the discarded assignment result
-is metadata only, so the construction spells directly in the value position of
+A cleanup-free ordinary-constructor result used as an exact by-value argument
+retains representation-only storage at its MIR construction point, for both
+free functions and borrowed-receiver methods/operators. The receiver proof
+accepts either an exact `CallInput` borrow or the direct typed borrow retained
+by operator MIR; it still verifies owner identity, access and receiver capability.
+No owning lifetime or receiver consumption is inferred from native syntax.
+A passive error record immediately wrapped in `Unexpected` and returned uses
+the same storage when construction has an Invoke edge. Only its unique success
+continuation may wrap and return it; intervening executable work, additional
+uses, borrowed state and active cleanup remain outside this passive proof.
+The constructor executes before the wrapper, and failure leaves the caller's
+Expected result uninitialized.
+
+For the adjacent-assignment proof, a cleanup-free class prvalue has no staging
+obligation: no place or drop obligation owns the constructed value and the
+discarded assignment result is metadata only, so construction spells directly in
+the value position of
 its one adjacent assignment — into a checked fixed-array element, a bare
 mutable binding, or the referent of a mutable borrow, which is what an
 overloaded subscript yields. A loan referent's storage belongs to whatever
@@ -1412,6 +1506,16 @@ other work or incoming edge may intervene, apart from the exact boundary- and
 effect-free two-phase loan activation. A genuinely fallible or status-only
 constructor cannot use this representation. The MIR failure edge is preserved;
 no cleanup or failure semantics are inferred from the generated C++.
+
+Fixed-array access through a receiver uses the same field-chain/index-chain
+representation as local and module records. An exact sibling field place proves
+the array type, sealed field rows prove the nested path, and each dynamic
+dimension retains its checked failure operation. Reads, writes and replacements
+share this representation; the former single-field/single-index receiver-only
+route is removed. Generated passive record copies may contain positive concrete
+fixed arrays of passive scalar/enum fields, including C-ABI records. Exact
+generated copy/destruction traits, field drop facts, and the absence of active
+cleanup or state-bearing bases remain required.
 
 ### Declarations And ABI
 
@@ -1429,6 +1533,11 @@ and does not emit a native primary/specialization pair. A retained physical
 carrier instead receives the already-selected full specialization and orders
 it after its primary. Neither route matches source arguments or chooses between
 the primary and specialization.
+Retaining a native carrier (including the lexical-callable template overlay)
+must retain full definitions of its exact specializations as well as their
+forward declarations. The source and direct-concrete definition schedules are
+exclusive for each selected instance; a primary application and an exact
+application in the same program cannot silently select different carrier ABIs.
 
 C++ type syntax, include selection, helper names, failure ABI syntax, and
 representation choices remain inside the C++ backend. C++ source fragments do
@@ -1522,6 +1631,11 @@ body, a sole executable return use, and the paired success activation and final
 transfer of the result obligation. The backend does not introduce an intermediate
 copy or infer ownership from the public callback wrapper's name. This direct
 return proof does not admit arbitrary local class-valued lambda result bindings.
+When the class result is passive and has no semantic drop, both ordinary calls
+and exact lambda calls share the same inert-success-tail proof. Only lifetime
+or loan boundaries and exact passive binding drops may precede Return; the
+absence of a result obligation does not permit early publication across active
+cleanup or other executable work.
 
 A resolved nominal `operator()` uses the same exact class-result placement
 proof as another function-target call, both for argument preparation and local
@@ -1585,7 +1699,8 @@ it once and destroys it on the worker. A typed adapter additionally constructs
 one result box and supplies exact take and abandon callbacks: successful
 explicit join transfers that box once, while automatic join destroys it once.
 The entry catches only the runtime's in-process failure-handoff sentinel after
-MIR cleanup and terminates on any unrelated native exception. Neither the
+MIR cleanup completes or an explicit cleanup-emergency terminal edge stops
+further cleanup, and terminates on any unrelated native exception. Neither the
 opaque runtime state nor a C++ `std::thread` type appears in public GTI source
 or `LoweredProgram`.
 
@@ -1594,9 +1709,25 @@ Spawn and join retain their synchronization records; explicit and automatic
 join translate native status separately from an ordinary worker record or
 cleanup-emergency envelope. The latter two are reintroduced into the joining
 body's existing MIR failure channel with their descriptor pointers unchanged.
-Task-object/capture destruction remains inside the worker boundary and may
-publish the first failure or the second record of an emergency envelope without
-throwing through a native `noexcept` destructor. A recoverable explicit join
+Task-object/capture destruction uses exact failure-aware cleanup helpers
+inside the same reference-capturing adapter firewall. An ordinary failure can
+publish the first failure or a second record of an emergency envelope. An
+internal MIR cleanup-emergency terminator always takes its terminal runtime
+edge: it never returns a fabricated success from a destructor helper. The
+cleanup helpers themselves permit the private handoff to reach the adapter;
+native `noexcept` destructor wrappers remain representation backstops, not
+another source Drop schedule.
+
+During that exact emergency handoff, a worker-local marker prevents native
+stack retirement from running source lifecycle bodies, payload storage loops,
+shared releases, unlocks, or joins omitted by the verified emergency path.
+Native expected/variant/array/closure/unique shells recursively reach guarded
+GTI payload/carrier boundaries; their scalar storage deallocation does not
+authorize additional source cleanup. Live thread states are quarantined and
+locked mutex representations are left undestroyed. The generated and defensive
+runtime adapter catches clear the marker before separately gated task-box
+handling. Ordinary failure, an unrelated native exception, and a merely stored
+pending failure do not authorize this abandonment. A recoverable explicit join
 failure retains the handle for retry. The same status during automatic join
 has no return channel: the backend transfers the still-coherent native state
 to a private terminal quarantine before propagating `GTI-R0012`, preventing a

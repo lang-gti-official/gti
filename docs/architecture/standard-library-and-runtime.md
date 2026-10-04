@@ -52,8 +52,25 @@ boundary example. Digit extraction, built-in argument adapters, brace
 validation, exact argument counting, owning-string construction, and format
 errors are ordinary GTI source. The frontend's bounded comma-pack fold supplies
 only exact ordered calls over a pack; it does not recognize any public
-formatting or string name or parse a format string. Counted literal writes and
-scalar dynamic-code-unit writes are the only host operations.
+formatting or string name or parse a format string. Counted literal/formatted
+writes and scalar dynamic-code-unit writes are the only host output operations.
+
+The panic-adoption layer remains source-defined: `try_format` and
+`try_format_to` own recoverable formatting, plain formatting translates their
+errors to panic, and `try_print`/`try_println` add stdout submission status in
+`print_errc`. Formatted `println` submits the text and newline together. Existing
+raw output helpers check their status instead of discarding it. They remain
+literal-output operations, independent of optional header visibility.
+
+`<std/panic>` owns the public panic overloads. Its raw wrapper and the formatting
+failure-policy helpers share `std/detail/panic.gti`, a non-formatting core over
+the identity-bound panic capability; this avoids a format/panic include cycle.
+The core is implementation detail, not a second failure protocol. Every wrapper
+that owns panic policy is `[[track_caller]]`, so the existing semantic caller
+token survives through HIR/MIR; neither backend nor runtime guesses a public
+function name. Allocation-free capture does not imply allocation-free formatting,
+raw owning-string conversion, or user cleanup. The surface census includes
+nested implementation units as well as public units.
 
 `<std/encoding>` is another entirely source-defined boundary. Base64 and
 hexadecimal operate over counted string views and construct owning strings;
@@ -73,7 +90,7 @@ method from the spelling `push_back`.
 
 `tests/stdlib_surface_manifest.json` is the reviewed evidence ledger for the
 shipped source surface. It fingerprints `stdlib/prelude.gti` and every
-`stdlib/std/*.gti` unit, then classifies each inventoried public operation as
+`stdlib/std/**/*.gti` unit, then classifies each inventoried operation as
 `executable`, an intentional declaration `scaffold`, or currently
 `unsupported`. A changed or added source unit therefore requires an explicit
 surface review; the manifest does not parse GTI or become API authority.
@@ -204,7 +221,7 @@ exceptions or errno. No public parsing function receives compiler recognition.
 Floating output uses the sibling bounded
 `gti_rt_format_f32_v1`/`gti_rt_format_f64_v1` ABI. GTI parses replacement
 fields, selects argument adapters, enforces the precision bound, and owns the
-transactional `format`/`format_to` error policy. The host operation performs
+transactional `try_format`/`try_format_to` error policy. The host operation performs
 only locale-independent `to_chars` conversion plus field-local sign,
 alternate, width, fill, and alignment composition into caller-owned storage.
 It reports invalid requests and insufficient capacity without publishing a
@@ -683,16 +700,70 @@ flow. A generated boundary/runtime pair may serialize,
 observe, return, or terminate with the completed record, but it may not infer a
 category, choose caller cleanup, or use a generated/native source location.
 
-`runtime/include/gti/runtime_failure.h` now provides the version-one C
-boundary. Its
-stable code and detail ordinals exactly match the compiler vocabulary. On the
-supported 64-bit runtime ABI, the ordinary record is 48 bytes, an allowed
-outcome is 8 bytes, a site descriptor is 56 bytes, an artifact descriptor is
-72 bytes, and the two-record emergency envelope is 104 bytes. Every reserved
+`runtime/include/gti/runtime_failure.h` provides versioned C boundaries. Its
+stable code and detail ordinals exactly match the compiler vocabulary. The
+frozen version-one record remains 48 bytes and its emergency envelope remains
+104 bytes. The version-two record is 568 bytes: the same header fields followed
+by a 32-bit message length, 32-bit flags, and 512 owned message bytes. Its
+two-record emergency envelope is 1144 bytes. Both are trivially copyable;
+neither retains a message pointer. The descriptor protocol is still version
+one: an allowed outcome is 8 bytes, a site descriptor is 56 bytes, and an
+artifact descriptor is 72 bytes on supported 64-bit runtime targets. Every reserved
 field must be zero. A nonzero record identity and one-based site must match the
 artifact descriptor and the site's exact allowed `(code, detail)` set. The
 all-zero identity with site zero is the sole descriptor-free runtime sentinel
 and resolves to `"<runtime>":0@0..0`.
+
+Only `panic` / `explicit_panic` (`GTI-R0017`, detail 37) admits a message.
+Generated code prepares its exact record header, then calls
+`gti_rt_failure_capture_panic_v2` before starting language cleanup. Capture
+copies at most 512 bytes without allocation and does not split a valid UTF-8
+scalar at the truncation boundary. Invalid UTF-8 remains byte-exact for later
+escaping. The only message flag means truncation; uncaptured bytes are zero.
+The report renders a quoted message and an explicit `[truncated]` marker when
+needed. Ordinary failure records have zero message length, flags, and bytes.
+`gti_rt_failure_validate_v2` checks this complete invariant together with the
+existing descriptor/outcome contract, without producing output. The generated
+managed-thread join validator reuses it instead of reimplementing the failure
+vocabulary or permitting unchecked message lengths.
+
+The runtime stores version-two records in its opaque managed-worker state.
+Version-two join and value-join results transport them byte-for-byte, including
+both messages in a cleanup emergency. Spawn, task callbacks, and the opaque
+state handle retain their version-one signatures. Legacy failures promote to
+the new record without changing category or source. Legacy join entry points
+still return representable old failures; if a new panic crosses such a native
+compatibility boundary, they terminate with its full version-two report rather
+than discard the message or return a false success. New generated programs use
+the version-two failure and join channels throughout. This compatibility rule
+does not establish a mixed-version GTI callable ABI or add source recovery.
+
+A worker cleanup emergency retains the existing join-time propagation policy.
+After storing both records, its private native handoff marks an exact
+worker-local representation-abandonment window. Only the explicit runtime
+emergency-handoff entry point enables that window; generated calls originate
+at verified MIR emergency terminal edges. An ordinary pending failure or a
+foreign native exception does not enable it. The handoff copies the envelope;
+the complete record/descriptor validation still occurs at final reporting,
+not before that private transfer. During that transfer, lifetime slots (including
+representation-only slots), generated lifecycle wrappers, and private
+storage/owner/lock carriers do not invent the GTI cleanup that MIR deliberately
+stopped. Native expected, variant, array, closure, and unique-owner shells may
+retire representation storage, but their payloads recursively reach those
+same guarded lifecycle boundaries. A locked native mutex is carried in raw
+lifetime storage so its destructor cannot run on an abandoned lock. Any live
+native thread handle reached on that path is quarantined, never detached or
+joined as an extra cleanup action. Unpublished allocation resources likewise
+remain abandoned until process termination.
+
+The generated adapter catch and defensive runtime entry catch clear that
+window before task-object handling. Generated adapter invocation closures are
+non-owning references; their catch has no trailing GTI-owned capture teardown.
+The task box remains governed by the separate exact cleanup-emergency state,
+which prohibits remaining task/capture cleanup. Ordinary failure propagation
+still requires every scheduled Drop and retains all lifetime integrity
+assertions. The private native transfer is therefore not an alternative
+language unwinder or a recoverable panic boundary.
 
 The production C++ backend now emits one immutable ABI-v1 artifact descriptor
 from the exact verified MIR metadata snapshot. Internal constant tables retain
@@ -721,7 +792,7 @@ completion, context guards, and record return/storage. This boundary does not ma
 failure record the ABI of a public GTI class and does not establish a general
 callable ABI.
 
-Quoted source names use a strict UTF-8 decoder and a checked-in interval table
+Source names and quoted panic messages use a strict UTF-8 decoder and a checked-in interval table
 for Unicode 15.1 `L*`, `M*`, `N*`, `P*`, `S*`, and `Zs`. The table is generated
 from the official `DerivedGeneralCategory.txt` whose pinned SHA-256 is
 `760720ac034f96b630a3055879a744e0907184e8aa811e89ba34583a7a487e85`:

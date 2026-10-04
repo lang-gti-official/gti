@@ -27,6 +27,7 @@ enum class DefinedFailureCode : std::uint16_t {
   // 14 belongs exclusively to the failure-during-cleanup emergency envelope.
   KeyNotFound = 15,
   InvalidContainerArgument = 16,
+  Panic = 17,
   Count,
 };
 
@@ -68,6 +69,7 @@ enum class DefinedFailureDetail : std::uint8_t {
   KeyLookup,
   ContainerArgument,
   SharedOwner,
+  ExplicitPanic,
   Count,
 };
 
@@ -88,6 +90,18 @@ struct DefinedFailureOrigin {
 
   friend bool operator==(const DefinedFailureOrigin &,
                          const DefinedFailureOrigin &) = default;
+};
+
+// A source-selected caller token is not a failure effect. Tracked calls pass
+// this location to a callee; only a detector may use it to originate a record.
+struct CallerLocationOrigin {
+  SourceUnitId sourceUnit = 0;
+  std::size_t start = 0;
+  std::size_t end = 0;
+  int line = 1;
+
+  friend bool operator==(const CallerLocationOrigin &,
+                         const CallerLocationOrigin &) = default;
 };
 
 enum class FailurePropagationKind : std::uint8_t {
@@ -186,6 +200,8 @@ validDefinedFailureOutcome(DefinedFailureOutcome outcome) {
     return outcome.detail == DefinedFailureDetail::KeyLookup;
   case DefinedFailureCode::InvalidContainerArgument:
     return outcome.detail == DefinedFailureDetail::ContainerArgument;
+  case DefinedFailureCode::Panic:
+    return outcome.detail == DefinedFailureDetail::ExplicitPanic;
   case DefinedFailureCode::None:
   case DefinedFailureCode::Count:
     return false;
@@ -226,6 +242,8 @@ definedFailureCodeName(DefinedFailureCode code) {
     return "key_not_found";
   case DefinedFailureCode::InvalidContainerArgument:
     return "invalid_container_argument";
+  case DefinedFailureCode::Panic:
+    return "panic";
   case DefinedFailureCode::None:
   case DefinedFailureCode::Count:
     return "none";
@@ -304,6 +322,8 @@ definedFailureDetailName(DefinedFailureDetail detail) {
     return "container_argument";
   case DefinedFailureDetail::SharedOwner:
     return "shared_owner";
+  case DefinedFailureDetail::ExplicitPanic:
+    return "explicit_panic";
   case DefinedFailureDetail::NegativeArgumentCount:
     return "negative_argument_count";
   case DefinedFailureDetail::RecursiveThreadLocalInitialization:
