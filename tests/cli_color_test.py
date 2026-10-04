@@ -18,6 +18,7 @@ def main():
     source_root = Path(__file__).resolve().parents[1]
     env = dict(os.environ, TERM="xterm-256color", GTI_STDLIB_PATH=str(source_root / "stdlib"))
     env.pop("NO_COLOR", None)
+    env.pop("GTI_COLOR", None)
     with tempfile.TemporaryDirectory(prefix="gti-cli-color-") as directory:
         root = Path(directory)
 
@@ -238,6 +239,60 @@ def main():
         assert "\x1b[1;31merror[GTI-" in result.stderr
         assert "Testing " not in ANSI.sub("", result.stderr)
         assert "Test result:" not in ANSI.sub("", result.stderr)
+
+        # GTI runtime reports style themselves; the CLI forwards only an
+        # explicit mode via the child environment, never rewrites its streams.
+        root = project.parent / "runtime-project"
+        root.mkdir()
+        (root / "gti.toml").write_text(
+            'manifest-version = 1\n[package]\nname = "runtime-colours"\n'
+            'version = "0.1.0"\n'
+            '[targets.app]\nkind = "executable"\nroot = "panic.gti"\n'
+            '[targets.bounds]\nkind = "test"\nroot = "bounds.gti"\n'
+            '[targets.panic]\nkind = "test"\nroot = "panic.gti"\n')
+        (root / "panic.gti").write_text(
+            '#include <std/panic>\nint main() {\n'
+            '  std::println("before-panic");\n'
+            '  std::panic("colour test panic");\n}\n')
+        (root / "bounds.gti").write_text(
+            '#include <std/string>\n#include <std/vector>\n'
+            'int main(int argc, std::vector<std::string> argv) {\n'
+            '  int values[1] = {42};\n  std::println("before-bounds");\n'
+            '  return values[argc];\n}\n')
+        run(["run", "--color=never"], 70)
+        plain = run(["run", "--no-build", "--color=never"], 70)
+        assert plain.stdout == "before-panic\n" and "\x1b" not in plain.stderr
+        assert 'runtime error[GTI-R0017]: panic: "colour test panic"' in plain.stderr
+        for flags, extra, expected in (
+            (["--color=always"], {"NO_COLOR": "1", "TERM": "dumb", "GTI_COLOR": "never"}, True),
+            (["--color=never"], {"GTI_COLOR": "always"}, False),
+            (["--color=auto"], {"GTI_COLOR": "always"}, False),
+            (["--color=always", "--color=never"], {"GTI_COLOR": "always"}, False),
+            ([], {"GTI_COLOR": "always"}, True),
+        ):
+            result = run(["run", "--no-build", *flags], 70, extra)
+            assert result.stdout == plain.stdout
+            assert ANSI.sub("", result.stderr) == plain.stderr
+            assert ("\x1b[1;31mruntime error[GTI-R0017]\x1b[0m" in result.stderr) == expected
+        plain = run(["test", "--color=never"], 70)
+        assert plain.stdout == "before-bounds\nbefore-panic\n"
+        assert "runtime error[GTI-R0007]" in plain.stderr
+        assert "runtime error[GTI-R0017]" in plain.stderr
+        assert "Test result: 0 passed, 2 failed" in plain.stderr
+        coloured = run(["test", "--color=always"], 70, {"NO_COLOR": "1", "GTI_COLOR": "never"})
+        assert coloured.stdout == plain.stdout and ANSI.sub("", coloured.stderr) == plain.stderr
+        for code in ("GTI-R0007", "GTI-R0017"):
+            assert f"\x1b[1;31mruntime error[{code}]\x1b[0m" in coloured.stderr
+        result = run(["test", "--color=never"], 70, {"GTI_COLOR": "always"})
+        assert result.stdout == plain.stdout and result.stderr == plain.stderr
+        if os.name != "nt":
+            output, captured = terminal_run(["run", "--no-build"], terminal_stdout=False, status=70)
+            assert captured == b"before-panic\n"
+            assert "\x1b[1;31mruntime error[GTI-R0017]\x1b[0m" in output
+            output, captured = terminal_run(["test"], terminal_stdout=False, status=70)
+            assert captured == plain.stdout.encode()
+            assert "\x1b[1;31mruntime error[GTI-R0007]\x1b[0m" in output
+            assert "\x1b[1;31mruntime error[GTI-R0017]\x1b[0m" in output
         print("CLI colour: direct, project, parallel, test, redirected and terminal output passed")
 
 

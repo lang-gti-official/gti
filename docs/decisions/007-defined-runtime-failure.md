@@ -218,7 +218,7 @@ re-entry; that host violation does not replace the original GTI record with
 `GTI-R0014`. GTI cannot guarantee a report or status when observer code itself
 hangs, aborts, long-jumps, or otherwise prevents control from returning.
 
-The hosted runtime emits exactly one UTF-8 report line:
+The hosted runtime emits exactly one UTF-8 report line, with this unstyled form:
 
 ```text
 <source>:<line>: runtime error[<code>]: <category> in <detail>\n
@@ -232,6 +232,10 @@ runtime-site sentinel, and single-LF terminator are defined in execution
 semantics. The runtime formats without allocation; messages cannot inject a
 second physical report line. Source identity and spans remain available in
 the structured record/descriptor even though the human report is compact.
+Optional terminal colour wraps only the runtime error heading; removing its
+SGR wrappers yields the same report form. This presentation policy is specified
+in execution semantics and does not enter the structured record or failure
+control effect.
 A failed report write does not change the exit status or cause recursive
 reporting. When concurrent terminal failures race,
 one process-wide winner invokes the observer and emits the report before

@@ -89,6 +89,9 @@ namespace {
 using gti::runtime::detail::WriteAttempt;
 using gti::runtime::detail::WriteFunction;
 
+// Reserved for the emergency report, never an ordinary record category.
+constexpr gti_failure_code_v1 kCleanupFailureReportCode = 14;
+
 constexpr std::string_view kFailureCategories[] = {
     "",
     "integer_overflow",
@@ -158,6 +161,19 @@ struct ReportOutput {
   WriteFunction write = nullptr;
   void *context = nullptr;
   bool valid = true;
+  bool color = false;
+  bool errorStyleActive = false;
+
+  ~ReportOutput() {
+    if (errorStyleActive) {
+      // A partial report must not leave the terminal styled. This final
+      // best-effort write neither recurses nor changes the report result.
+      constexpr char reset[] = "\033[0m";
+      (void)gti::runtime::detail::writeAll(
+          write, context, reinterpret_cast<const std::uint8_t *>(reset),
+          sizeof(reset) - 1);
+    }
+  }
 
   bool bytes(const void *data, std::size_t size) {
     if (!valid) {
@@ -174,6 +190,25 @@ struct ReportOutput {
 
   template <std::size_t Size> bool literal(const char (&value)[Size]) {
     return bytes(value, Size - 1);
+  }
+
+  bool beginErrorStyle() {
+    if (!color) {
+      return true;
+    }
+    errorStyleActive = true;
+    return literal("\033[1;31m");
+  }
+
+  bool endErrorStyle() {
+    if (!color) {
+      return true;
+    }
+    if (!literal("\033[0m")) {
+      return false;
+    }
+    errorStyleActive = false;
+    return true;
   }
 };
 
@@ -508,10 +543,15 @@ bool writeSourcePrefix(ReportOutput &output, const ResolvedFailure &failure) {
   return writeSourceLocation(output, failure) && output.literal(": ");
 }
 
+bool writeErrorHeading(ReportOutput &output, gti_failure_code_v1 code) {
+  return output.beginErrorStyle() && output.literal("runtime error[") &&
+         writeFailureCode(output, code) && output.literal("]") &&
+         output.endErrorStyle() && output.literal(": ");
+}
+
 bool writeOrdinaryReport(ReportOutput &output, const ResolvedFailure &failure) {
   if (!(writeSourcePrefix(output, failure) &&
-        output.literal("runtime error[") &&
-        writeFailureCode(output, failure.code) && output.literal("]: ") &&
+        writeErrorHeading(output, failure.code) &&
         output.text(kFailureCategories[failure.code]))) {
     return false;
   }
@@ -538,8 +578,8 @@ bool writeCleanupMessage(ReportOutput &output, const ResolvedFailure &failure) {
 bool writeCleanupReport(ReportOutput &output, const ResolvedFailure &primary,
                         const ResolvedFailure &secondary) {
   return writeSourcePrefix(output, secondary) &&
-         output.literal("runtime error[GTI-R0014]: failure_during_cleanup; "
-                        "primary [") &&
+         writeErrorHeading(output, kCleanupFailureReportCode) &&
+         output.literal("failure_during_cleanup; primary [") &&
          writeFailureCode(output, primary.code) && output.literal("] at ") &&
          writeSourceLocation(output, primary) &&
          writeCleanupMessage(output, primary) &&
@@ -551,6 +591,14 @@ bool writeCleanupReport(ReportOutput &output, const ResolvedFailure &primary,
 #if defined(_WIN32)
 struct NativeWriteContext {
   HANDLE handle;
+  DWORD originalMode = 0;
+  bool restoreMode = false;
+
+  ~NativeWriteContext() {
+    if (restoreMode) {
+      (void)SetConsoleMode(handle, originalMode);
+    }
+  }
 };
 
 WriteAttempt nativeWrite(void *opaque, const std::uint8_t *data,
@@ -644,6 +692,33 @@ NativeWriteContext nativeStderrContext() {
 }
 #endif
 
+bool nativeColorEnabled(NativeWriteContext &context) {
+  const char *mode = std::getenv("GTI_COLOR");
+  if (mode != nullptr && std::string_view(mode) == "never") {
+    return false;
+  }
+  const bool always = mode != nullptr && std::string_view(mode) == "always";
+  if (!always) {
+    const char *noColor = std::getenv("NO_COLOR");
+    const char *term = std::getenv("TERM");
+    if ((noColor != nullptr && *noColor != '\0') ||
+        (term != nullptr && std::string_view(term) == "dumb")) {
+      return false;
+    }
+  }
+#if defined(_WIN32)
+  if (!GetConsoleMode(context.handle, &context.originalMode) ||
+      !SetConsoleMode(context.handle, context.originalMode |
+                                          ENABLE_VIRTUAL_TERMINAL_PROCESSING)) {
+    return always;
+  }
+  context.restoreMode = true;
+  return true;
+#else
+  return always || isatty(context.descriptor) != 0;
+#endif
+}
+
 template <typename Record>
 gti_failure_report_result_v1
 writeOrdinaryNative(const Record *record,
@@ -653,7 +728,9 @@ writeOrdinaryNative(const Record *record,
     return GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1;
   }
   NativeWriteContext context = nativeStderrContext();
-  ReportOutput output{.write = nativeWrite, .context = &context};
+  ReportOutput output{.write = nativeWrite,
+                      .context = &context,
+                      .color = nativeColorEnabled(context)};
   return writeOrdinaryReport(output, resolved) ? GTI_FAILURE_REPORT_OK_V1
                                                : GTI_FAILURE_REPORT_IO_ERROR_V1;
 }
@@ -677,7 +754,9 @@ gti_failure_report_result_v1 writeCleanupNative(
     return GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1;
   }
   NativeWriteContext context = nativeStderrContext();
-  ReportOutput output{.write = nativeWrite, .context = &context};
+  ReportOutput output{.write = nativeWrite,
+                      .context = &context,
+                      .color = nativeColorEnabled(context)};
   return writeCleanupReport(output, primary, secondary)
              ? GTI_FAILURE_REPORT_OK_V1
              : GTI_FAILURE_REPORT_IO_ERROR_V1;

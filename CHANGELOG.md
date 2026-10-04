@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.366.2 — Panic and runtime-failure colour
+
+- Colour runtime error headings and codes red for explicit panics, checked
+  failures and failures during cleanup. Standalone programs detect stderr
+  terminals and respect `NO_COLOR` and `TERM=dumb`; `GTI_COLOR=auto|always|never`
+  selects a runtime override.
+- Forward explicit `gti run/test --color` choices only to the executed program.
+  Reports remain allocation-free; plain report text, failure records, program
+  stdout, cleanup, observers and status 70 are unchanged.
+
 ## 0.366.1 — Consistent test-runner colour
 
 - Colour `gti test` build/run progress and the final passed/failed counts using
