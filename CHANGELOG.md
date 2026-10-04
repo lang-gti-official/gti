@@ -9,6 +9,12 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.364.1 — Checked Expected payload argument fix
+
+- Fix an internal compiler error when a moved Expected's cleanup-free class
+  value or error is passed directly as a function argument. Checked state
+  failures, argument evaluation order, and cleanup remain MIR-controlled.
+
 ## 0.364.0 — Coloured terminal output
 
 - Compiler errors, warnings, underlines, notes/help, build status, and final

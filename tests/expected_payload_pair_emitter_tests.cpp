@@ -2,7 +2,8 @@
 
 namespace {
 
-void testStagedExtraction(std::string_view name) {
+void testStagedExtraction(std::string_view name,
+                          std::size_t expectedCallers = 1) {
   const auto path = std::filesystem::path(__FILE__).parent_path() / "fixtures" /
                     std::string(name);
   std::ifstream input(path);
@@ -19,7 +20,8 @@ void testStagedExtraction(std::string_view name) {
     std::vector<const lang::MirInstruction *> extractions;
     for (const auto &block : function.body.blocks)
       for (const auto &instruction : block.instructions)
-        if (instruction.intrinsic == lang::IntrinsicKind::ExpectedValue &&
+        if ((instruction.intrinsic == lang::IntrinsicKind::ExpectedValue ||
+             instruction.intrinsic == lang::IntrinsicKind::ExpectedError) &&
             instruction.info.type.kind == lang::SemanticType::Class &&
             instruction.result && instruction.receiver &&
             instruction.receiver->kind == lang::MirOperandKind::Value)
@@ -48,14 +50,17 @@ void testStagedExtraction(std::string_view name) {
     if (emitter.supportsFailureBodyText(address)) {
       const auto text =
           emitter.emitFailureBodyText(address, "expected-pair", 1).text;
-      const auto first = text.find("mir_expected_value_move_v1");
+      const std::string helper =
+          extractions.front()->intrinsic == lang::IntrinsicKind::ExpectedValue
+              ? "mir_expected_value_move_v1"
+              : "mir_expected_error_move_v1";
+      const auto first = text.find(helper);
       expect(first != std::string::npos &&
-                 text.find("mir_expected_value_move_v1", first + 1) !=
-                     std::string::npos,
+                 text.find(helper, first + 1) != std::string::npos,
              "both checked extractions must execute separately into prepared "
              "slots");
     }
-    for (int mutation = 0; mutation != 4; ++mutation) {
+    for (int mutation = 0; mutation != 7; ++mutation) {
       auto malformed = frontend.mir;
       auto *body = lang::findMirBody(malformed, address);
       bool changed = false;
@@ -67,6 +72,25 @@ void testStagedExtraction(std::string_view name) {
           changed = true;
         }
         for (auto &instruction : block.instructions) {
+          if (mutation == 4 && instruction.id == stage->id) {
+            instruction.lifecycle.clear();
+            changed = true;
+          }
+          if (mutation == 5 &&
+              instruction.kind == lang::MirInstructionKind::Call &&
+              instruction.callSite == stage->callSite) {
+            for (auto &event : instruction.lifecycle)
+              if (event.source == *stage->preparedParameterDrop) {
+                event.source = 999999;
+                changed = true;
+              }
+          }
+          if (mutation == 6 &&
+              instruction.result == extractions.front()->receiver->value &&
+              instruction.kind == lang::MirInstructionKind::Move) {
+            instruction.operands.front().kind = lang::MirOperandKind::Copy;
+            changed = true;
+          }
           if (mutation == 0 && instruction.id == stage->id) {
             instruction.callInputIndex = 1;
             changed = true;
@@ -98,8 +122,8 @@ void testStagedExtraction(std::string_view name) {
           "representation proof must independently reject malformed staging");
     }
   }
-  expect(tested == 1,
-         "fixture must exercise exactly one two-extraction caller");
+  expect(tested == expectedCallers,
+         "fixture must exercise the expected two-extraction callers");
 }
 
 } // namespace
@@ -107,6 +131,7 @@ void testStagedExtraction(std::string_view name) {
 int main() {
   testStagedExtraction("expected_payload_pair_arguments.gti");
   testStagedExtraction("expected_payload_pair_cleanup.gti");
+  testStagedExtraction("expected_passive_payload_arguments.gti", 2);
   if (failures != 0)
     return 1;
   std::cout << "expected payload pair emitter mutations passed\n";

@@ -608,6 +608,15 @@ drop transfer and full-expression destruction. Trivial scalar-only Expected
 SSA receivers can be read directly; neither path introduces a loan or bypasses
 the checked inactive-alternative failure.
 
+The cleanup-free class extraction route also admits an exact prepared argument
+slot, not only a named binding. It reuses the class-result staging proof for
+the sole call/constructor consumer, parameter identity, successful Invoke edge,
+slot activation, dominance, failure cleanup, and ownership transfer. The
+checked extraction constructs that slot before later arguments execute; a
+wrong-state failure leaves it inactive. Source MIR still owns consumption of
+the original Expected. No native default construction, public-name exception,
+or delayed extraction at the final C++ call is introduced.
+
 A temporary expected class result observed only through `has_value()` uses
 the same proved lifetime slot as propagation, without requiring payload
 extraction. Short-circuit evaluation may instead give it a conditional
