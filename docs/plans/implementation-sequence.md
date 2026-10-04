@@ -1236,26 +1236,30 @@ subsequently authorized combined publication.
 
 ### C-TIME-02: Chip8 Build Latency And Successful Cache Reuse
 
-**State:** in progress. The user-supplied Chip8 project reopens C-TIME-01 with
-a representative approximately 39-second plain `gti build`, rather than a
-synthetic line-count target. Profile the optimized host compiler, remove
-measured redundant work without changing generated behavior, and separately
-measure fresh, edited, and unchanged project builds.
+**State:** complete as a bounded improvement. The user-supplied Chip8 project
+reopens C-TIME-01 with a representative approximately 39-second plain
+`gti build`, rather than a synthetic line-count target. The optimized host
+compiler profile identifies redundant work; fresh, edited and unchanged
+project builds are measured separately.
 
 The initial profile identifies backend ownership-pattern searches repeatedly
 probing unrelated scalar aggregate elements. The bounded implementation moves
 necessary structural exclusions before those searches; applicable ownership
-proofs and independent verification remain intact. Confirm byte-identical C++
-and paired clean-compilation results, plus positive and malformed-MIR admission
-coverage. A separate generated-derived-constructor linkage failure must be
-fixed without losing caller cleanup before claiming the original project
-builds or populates its success cache.
+proofs and independent verification remain intact. Five interleaved paired
+measurements reduce emit-only time from 40.554 s to 1.656 s with byte-identical
+C++, backed by positive and malformed-MIR admission coverage. The separate
+generated-derived-constructor linkage failure is fixed through ordinary
+semantic/HIR/MIR constructor scheduling without losing caller cleanup. The
+unmodified original project now builds successfully in 1.989 s, and a genuine
+comment edit builds in 1.992 s.
 
-The existing cache already returns successful control builds in approximately
-57 ms and correctly invalidates on source, configuration, and same-timestamp
-native-header edits. Do not add an incremental semantic cache or another
-native-result layer without a measured remaining client. Final evidence and
-limitations belong in the existing performance-tooling plan.
+The existing cache returns the original project's unchanged builds in 51 ms
+and correctly invalidates on source, configuration, and same-timestamp
+native-header edits. No additional cache layer is justified. All 413 combined
+CTest gates and eleven isolated installed consumers pass; existing vector and
+game-update controls show no material regression. Final evidence and
+limitations live in the existing performance-tooling plan. General C++
+compile-time comparability remains an open target, not a claim of this slice.
 
 ### Tea Constructor-Emission Follow-Up
 

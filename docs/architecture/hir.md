@@ -131,9 +131,17 @@ body. Explicit initializers override defaults; the combined schedule remains
 base-first and field-declaration-ordered. Each selected initializer has a distinct
 full-expression before constructor body statements. The declaration initializer
 catalog remains available, but is not a second execution site for these owners.
-Owners with generated default construction retain the existing declaration
-schedule until generated constructors have explicit body-local execution and
-failure propagation; they are not silently given source-constructor semantics.
+Most owners with generated default construction retain the existing declaration
+schedule. A bounded generated-derived family now has explicit body-local
+execution: a nongeneric derived class with no instance fields or destructor,
+whose nongeneric state-bearing base selects an exact zero-parameter source
+constructor. `ClassLifecycleInfo::generatedDefaultBaseConstructor` supplies the
+semantic selection. HIR discovers that base and records a source-free
+`generatedDefault` constructor instance, with zero declaration identity and
+one exact base initializer. It does not fabricate an AST constructor. HIR
+verification binds the empty generated body, concrete owner/base identity and
+constructor target to semantics, and rejects erasure of the target/failure
+propagation together. Other generated shapes keep their existing route.
 
 Struct designated construction is resolved in semantics to a compiler-owned,
 full-field construction declaration that is not a source-callable overload.
@@ -550,9 +558,10 @@ validity, or infer that vector position alone is sufficient for every
 expression kind.
 
 An explicitly defaulted default constructor retains its written declaration in
-semantic selection, but HIR represents the construction with the same absent
-source-body target and generated lifecycle status as an implicit structural
-default. A defaulted destructor creates no `HirDestructorInstance`; only a
+semantic selection, but HIR uses the same generated lifecycle route as an
+implicit structural default: normally no body target, or the explicit
+source-free generated-base schedule described above when eligible.
+A defaulted destructor creates no `HirDestructorInstance`; only a
 destructor with a source cleanup body has executable HIR and active-drop state.
 
 `HirValueKind::LayoutQuery` preserves layout-query provenance while carrying

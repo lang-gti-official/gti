@@ -1,5 +1,36 @@
 # Compiler Verification
 
+## Chip8 aggregate admission and generated base construction
+
+`testLargeScalarAggregateAdmission` admits a 1,024-element scalar initializer
+through the full compiler and production backend, then rejects a missing MIR
+operand. Existing Expected and payload-enum tests retain the applicable
+ownership-pattern checks after cheap necessary type exclusions move ahead of
+body-wide searches. Paired measurements produce byte-identical generated C++;
+the measurements and cache-invalidation controls are recorded in
+`docs/plans/performance-tooling.md` under C-TIME-02.
+
+The lifecycle suite verifies the selected source-free generated constructor,
+base discovery without a separate direct base construction, and rejection of
+forged owner/source identity or erased constructor/failure metadata.
+`generated_base_constructor_runtime` checks ordinary and fallible base
+construction, trivial-cleanup and owning bases, and implicit/explicitly
+defaulted derived constructors. Its eight C++20/C++23, O0/O1/O3, no-elide and
+ASan/UBSan modes preserve original failure identity, base-local cleanup,
+exactly-once member cleanup and caller cleanup. No terminal native adapter
+substitutes for caller-visible propagation.
+
+The combined Release/Ninja build uses AppleClang 21 and LLVM 22.1.8 on macOS
+arm64. All 413 first-party C/C++ files pass clang-format 22.1.8. A fresh isolated
+0.369.1 installation passes all eleven external CMake consumers; its O3/C++23
+owning-base executable passes both success and failure cases with checkout
+resource overrides cleared. The failure retains exit status 70 and the exact
+division source, with cleanup output `3, 1, 9`. The user's active installation
+is unchanged. All 413 registered CTests pass together in 2351.85 seconds with
+six jobs, including the corpus/oracle, optimizer, runtime, standard-library
+surface and LSP gates. This is local macOS arm64 evidence; it does not claim
+Linux/Windows execution or completion of asynchronous Gitea release jobs.
+
 ## Restoring exchange and move-only ordering
 
 `restoring_exchange` verifies the sealed restoring-transfer contracts using an
