@@ -29,6 +29,16 @@ DEPENDENCY_INJECTING_NATIVE_ENVIRONMENT = (
     "LIB",
 )
 
+GIT_REPOSITORY_ENVIRONMENT = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_IMPLICIT_WORK_TREE",
+)
+
 
 def run(arguments, expected=0, cwd=None, env=None):
     result = subprocess.run(
@@ -96,12 +106,17 @@ def main():
     if resolved_gti is None:
         raise AssertionError(f"could not resolve GTI executable: {arguments.gti}")
     gti = str(resolved_gti)
+    git = shutil.which("git")
+    if git is None:
+        raise AssertionError("project CLI Git initialization requires git")
     # Cache checks need a deterministic environment. Some hosted Python
     # launchers inject SDK/include/library search paths before this script
     # starts; the driver correctly treats those mutable roots as a cache
     # bypass. Explicit environment-bypass coverage below adds CPATH back for
     # the command that owns that behavior.
     for variable in DEPENDENCY_INJECTING_NATIVE_ENVIRONMENT:
+        os.environ.pop(variable, None)
+    for variable in GIT_REPOSITORY_ENVIRONMENT:
         os.environ.pop(variable, None)
     scaffold_source = (
         "#include <std/string>\n"
@@ -181,6 +196,119 @@ def main():
             default_init.joinpath("src/main.gti").read_text(encoding="utf-8")
             == scaffold_source
         )
+
+        git_init = root / "git-init"
+        git_init.mkdir()
+        initialized_git = run([gti, "init", str(git_init), "--git"])
+        assert "Initialized package 'git-init'" in initialized_git.stdout
+        assert "Initialized Git repository and wrote .gitignore" in (
+            initialized_git.stdout
+        )
+        assert (git_init / ".git").is_dir()
+        assert (git_init / ".gitignore").read_text(encoding="utf-8") == (
+            "# GTI build output\n/build/\n"
+        )
+        top_level = run(
+            [git, "-C", str(git_init), "rev-parse", "--show-toplevel"]
+        )
+        assert pathlib.Path(top_level.stdout.strip()).resolve() == git_init.resolve()
+        ignored_build_file = git_init / "build" / "probe.txt"
+        ignored_build_file.parent.mkdir()
+        ignored_build_file.write_text("ignored\n", encoding="utf-8")
+        run(
+            [
+                git,
+                "-C",
+                str(git_init),
+                "check-ignore",
+                "--quiet",
+                "build/probe.txt",
+            ]
+        )
+
+        new_with_git = run(
+            [gti, "new", str(root / "new-with-git"), "--git"],
+            expected=64,
+        )
+        assert "--git is supported only by gti init" in new_with_git.stderr
+        assert not (root / "new-with-git").exists()
+
+        duplicate_git = root / "duplicate-git"
+        duplicate_git.mkdir()
+        duplicate_git_option = run(
+            [gti, "init", str(duplicate_git), "--git", "--git"],
+            expected=64,
+        )
+        assert "--git may be specified only once" in duplicate_git_option.stderr
+        assert not (duplicate_git / "gti.toml").exists()
+
+        existing_ignore = root / "existing-ignore"
+        existing_ignore.mkdir()
+        (existing_ignore / ".gitignore").write_text(
+            "user-owned\n", encoding="utf-8"
+        )
+        refused_ignore = run(
+            [gti, "init", str(existing_ignore), "--git"], expected=64
+        )
+        assert "error[GTI-B1503]" in refused_ignore.stderr
+        assert (existing_ignore / ".gitignore").read_text(
+            encoding="utf-8"
+        ) == "user-owned\n"
+        assert not (existing_ignore / "gti.toml").exists()
+
+        failed_git = root / "failed-git"
+        failed_git.mkdir()
+        missing_git_environment = os.environ.copy()
+        missing_git_environment["GTI_GIT"] = str(root / "missing-git")
+        git_failure = run(
+            [gti, "init", str(failed_git), "--git"],
+            expected=78,
+            env=missing_git_environment,
+        )
+        assert "error[GTI-B1504]" in git_failure.stderr
+        assert "Failed to initialize the Git repository" in git_failure.stderr
+        assert not (failed_git / "gti.toml").exists()
+        assert not (failed_git / "src").exists()
+        assert not (failed_git / ".gitignore").exists()
+        assert not (failed_git / ".git").exists()
+
+        external_git = root / "external-git-state"
+        external_git.mkdir()
+        sentinel = external_git / "sentinel"
+        sentinel.write_text("user-owned\n", encoding="utf-8")
+        for variable in GIT_REPOSITORY_ENVIRONMENT:
+            for value in (str(external_git), ""):
+                protected_init = root / "environment-protected-init"
+                protected_init.mkdir(exist_ok=True)
+                environment = os.environ.copy()
+                environment[variable] = value
+                # Environment rejection must precede even executable discovery
+                # failure, and must not initialize or rewrite either directory.
+                environment["GTI_GIT"] = str(root / "missing-git")
+                refused = run(
+                    [gti, "init", str(protected_init), "--git"],
+                    expected=64,
+                    env=environment,
+                )
+                assert "error[GTI-B1500]" in refused.stderr
+                assert variable in refused.stderr
+                assert "unset that environment variable" in refused.stderr
+                assert list(protected_init.iterdir()) == []
+                assert list(external_git.iterdir()) == [sentinel]
+                assert sentinel.read_text(encoding="utf-8") == "user-owned\n"
+
+        # An existing Git directory is not scaffold-owned, even on failure.
+        protected_repository = root / "protected-repository"
+        metadata = protected_repository / ".git"
+        metadata.mkdir(parents=True)
+        git_sentinel = metadata / "sentinel"
+        git_sentinel.write_text("repository-owned\n", encoding="utf-8")
+        refused_repository = run(
+            [gti, "init", str(protected_repository), "--git"], expected=64
+        )
+        assert "error[GTI-B1503]" in refused_repository.stderr
+        assert git_sentinel.read_text(encoding="utf-8") == "repository-owned\n"
+        assert not (protected_repository / "gti.toml").exists()
 
         format_root = root / "format-root"
         format_root.mkdir()

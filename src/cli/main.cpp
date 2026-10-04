@@ -6,6 +6,7 @@
 #include "gti/driver/build_report.h"
 #include "gti/driver/build_script.h"
 #include "gti/driver/compilation.h"
+#include "gti/driver/dependencies.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"
 #include "gti/driver/project.h"
@@ -148,6 +149,7 @@ struct ScaffoldOptions {
       lang::driver::ProjectScaffoldMode::NewPackage;
   std::filesystem::path destination;
   std::optional<std::string> packageName;
+  bool initializeGit = false;
 };
 
 struct MetadataOptions {
@@ -187,7 +189,7 @@ void printUsage(std::ostream &stream) {
          "       gti test [target] [options]\n"
          "       gti verify --build-report <path> [options]\n"
          "       gti new <path> [--name <name>]\n"
-         "       gti init [path] [--name <name>]\n"
+         "       gti init [path] [--name <name>] [--git]\n"
          "       gti fetch [--offline]\n"
          "       gti clean\n"
          "       gti metadata [--format json] [--package <name>]\n"
@@ -311,7 +313,7 @@ void printUsage(std::ostream &stream) {
          "Project commands:\n"
          "  new                  Create a new executable package.\n"
          "  init                 Initialize an existing directory as a "
-         "package.\n"
+         "package; --git also creates a repository and .gitignore.\n"
          "  check                Analyze a target without C++ emission or "
          "native compilation.\n"
          "  run                  Build and run a target, or use --no-build to "
@@ -1222,6 +1224,19 @@ ArgumentResult parseScaffoldArguments(int argc, char *argv[],
         return ArgumentResult::ExitFailure;
       }
       options.packageName = argv[index];
+      continue;
+    }
+    if (argument == "--git") {
+      if (options.mode !=
+          lang::driver::ProjectScaffoldMode::ExistingDirectory) {
+        std::cerr << "gti: --git is supported only by gti init\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (options.initializeGit) {
+        std::cerr << "gti: --git may be specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.initializeGit = true;
       continue;
     }
     if (!argument.empty() && argument.front() == '-') {
@@ -2814,15 +2829,25 @@ int runMetadata(const MetadataOptions &options) {
 }
 
 int runScaffold(const ScaffoldOptions &options) {
+  std::optional<lang::driver::ProjectScaffoldGit> git;
+  if (options.initializeGit) {
+    git = lang::driver::ProjectScaffoldGit{
+        .executable = lang::driver::discoverGitExecutable()};
+  }
   const lang::driver::ProjectScaffoldResult result =
       lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
-          options.mode, options.destination, options.packageName));
+          options.mode, options.destination, options.packageName,
+          std::move(git)));
   if (!result.succeeded()) {
     reportDiagnostics(result.diagnostics, {});
-    return result.status ==
-                   lang::driver::ProjectScaffoldStatus::FilesystemFailure
-               ? exitCode(ExitStatus::Io)
-               : exitCode(ExitStatus::Usage);
+    if (result.status ==
+        lang::driver::ProjectScaffoldStatus::FilesystemFailure) {
+      return exitCode(ExitStatus::Io);
+    }
+    if (result.status == lang::driver::ProjectScaffoldStatus::ToolFailure) {
+      return exitCode(ExitStatus::ToolchainConfiguration);
+    }
+    return exitCode(ExitStatus::Usage);
   }
 
   std::cout << (options.mode == lang::driver::ProjectScaffoldMode::NewPackage
@@ -2830,6 +2855,9 @@ int runScaffold(const ScaffoldOptions &options) {
                     : "Initialized")
             << " package '" << result.packageName << "' at "
             << result.packageRoot.string() << '\n';
+  if (result.initializedGit) {
+    std::cout << "Initialized Git repository and wrote .gitignore\n";
+  }
   return exitCode(ExitStatus::Success);
 }
 
