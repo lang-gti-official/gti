@@ -1,0 +1,36 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+mut int32_t divisor = 1;
+
+class Guard {
+  int32_t identity;
+public:
+  Guard(int32_t value) : identity(value) {}
+  ~Guard() { std::println(this.identity); }
+};
+
+class Reading {
+  std::unique_ptr<Guard> retained;
+  mut int32_t value = 0;
+public:
+  Reading() : retained(std::make_unique<Guard>(1)) {
+    Guard inside = Guard(3);
+    this.value = 7 / divisor;
+  }
+  int32_t read() { return this.value; }
+};
+
+class Sensor : public Reading {
+public:
+  Sensor() = default;
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  divisor = argc == 1 ? 1 : 0;
+  Guard outer = Guard(9);
+  Sensor sensor = Sensor();
+  std::println(sensor.read());
+  return 0;
+}

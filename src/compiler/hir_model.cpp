@@ -169,6 +169,113 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           "HIR function unsafe contract differs from its semantic declaration");
     }
   }
+  for (const auto &instance : program.constructorInstances()) {
+    if ((instance.declaration == 0) != instance.generatedDefault ||
+        (instance.source == nullptr) != instance.generatedDefault)
+      result.errors.emplace_back(
+          "constructor source identity disagrees with its generated status");
+    if (!instance.generatedDefault)
+      continue;
+    const auto *owner =
+        instance.owner != 0 && instance.owner <= program.classInstances().size()
+            ? &program.classInstances()[instance.owner - 1]
+            : nullptr;
+    const auto *lifecycle = owner != nullptr && owner->source != nullptr
+                                ? semantics.findClassLifecycle(*owner->source)
+                                : nullptr;
+    const auto *initializer = instance.initializers.size() == 1
+                                  ? &instance.initializers.front()
+                                  : nullptr;
+    const auto *target =
+        initializer != nullptr && initializer->constructorTarget
+            ? program.findConstructorInstance(*initializer->constructorTarget)
+            : nullptr;
+    const auto *targetOwner =
+        target != nullptr && target->owner != 0 &&
+                target->owner <= program.classInstances().size()
+            ? &program.classInstances()[target->owner - 1]
+            : nullptr;
+    if (instance.declaration != 0 || instance.source != nullptr ||
+        !instance.parameterTypes.empty() || lifecycle == nullptr ||
+        !instance.parameterBindings.empty() ||
+        !instance.typeArguments.empty() || !instance.valueArguments.empty() ||
+        !instance.initializerValues.empty() ||
+        !instance.body.bindings.empty() || !instance.body.loans.empty() ||
+        !instance.body.fullExpressions.empty() ||
+        !instance.body.dropObligations.empty() ||
+        !instance.body.values.empty() || !instance.body.statements.empty() ||
+        !instance.body.roots.empty() || !owner->fields.empty() ||
+        owner->destructor || !owner->type.arguments.empty() ||
+        !owner->type.valueArguments.empty() ||
+        lifecycle->defaultConstructor != SpecialMemberStatus::Generated ||
+        target == nullptr ||
+        lifecycle->generatedDefaultBaseConstructor != target->declaration ||
+        targetOwner == nullptr ||
+        initializer->targetType != targetOwner->type ||
+        std::count_if(owner->bases.begin(), owner->bases.end(),
+                      [&](const auto &base) {
+                        return !base.interface &&
+                               base.instance == target->owner &&
+                               base.type == initializer->targetType;
+                      }) != 1 ||
+        initializer->kind != ConstructorInitializerTargetKind::Base ||
+        initializer->base != target->owner || !initializer->arguments.empty() ||
+        initializer->field != 0 || initializer->generatedDefault ||
+        initializer->storesReference || initializer->ownedParameter ||
+        initializer->explicitArgumentCount != 0)
+      result.errors.emplace_back(
+          "generated constructor differs from its selected semantic base");
+  }
+  const auto verifyGeneratedConstructionValues = [&](const HirBody &body) {
+    for (const auto &value : body.values) {
+      if (value.kind != HirValueKind::Call &&
+          value.kind != HirValueKind::DirectInitializer)
+        continue;
+      const auto *construction = value.source != nullptr
+                                     ? semantics.findConstruction(*value.source)
+                                     : nullptr;
+      const auto *type =
+          construction != nullptr && construction->generatedDefault
+              ? semantics.findClassType(construction->constructedType.classId)
+              : nullptr;
+      const auto *lifecycle =
+          type != nullptr && type->declaration != nullptr
+              ? semantics.findClassLifecycle(*type->declaration)
+              : nullptr;
+      if (lifecycle == nullptr ||
+          lifecycle->generatedDefaultBaseConstructor == 0)
+        continue;
+      const auto *target =
+          value.constructorTarget
+              ? program.findConstructorInstance(*value.constructorTarget)
+              : nullptr;
+      const auto *owner =
+          target != nullptr && target->owner != 0 &&
+                  target->owner <= program.classInstances().size()
+              ? &program.classInstances()[target->owner - 1]
+              : nullptr;
+      if (target == nullptr || !target->generatedDefault || owner == nullptr ||
+          owner->type != construction->constructedType ||
+          value.info.type != owner->type ||
+          value.definedFailure.propagation !=
+              FailurePropagationKind::Constructor)
+        result.errors.emplace_back("generated construction value lost its "
+                                   "selected constructor and failure edge");
+    }
+  };
+  verifyGeneratedConstructionValues(program.module());
+  for (const auto &owner : program.classInstances()) {
+    verifyGeneratedConstructionValues(owner.fieldInitializers);
+    verifyGeneratedConstructionValues(owner.staticFieldInitializers);
+  }
+  for (const auto &function : program.functionInstances())
+    verifyGeneratedConstructionValues(function.body);
+  for (const auto &constructor : program.constructorInstances())
+    verifyGeneratedConstructionValues(constructor.body);
+  for (const auto &destructor : program.destructorInstances())
+    verifyGeneratedConstructionValues(destructor.body);
+  for (const auto &lambda : program.lambdaInstances())
+    verifyGeneratedConstructionValues(lambda.body);
   for (std::size_t index = 0; index < program.nativeCallbackAdapters().size();
        ++index) {
     const HirNativeCallbackAdapter &adapter =
@@ -1143,7 +1250,17 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             : &program.classInstances()[target->owner - 1];
     const bool exactTarget =
         construction != nullptr &&
-        ((construction->generatedDefault && !value.constructorTarget) ||
+        ((construction->generatedDefault && ([&] {
+            const auto *lifecycle =
+                owner != nullptr && owner->source != nullptr
+                    ? semantics.findClassLifecycle(*owner->source)
+                    : nullptr;
+            return lifecycle != nullptr &&
+                           lifecycle->generatedDefaultBaseConstructor != 0
+                       ? target != nullptr && target->generatedDefault &&
+                             targetOwner == owner
+                       : !value.constructorTarget;
+          }())) ||
          (!construction->generatedDefault && construction->constructor != 0 &&
           target != nullptr && targetOwner == owner &&
           target->declaration == construction->constructor));
@@ -1164,8 +1281,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
            value.operands.size() == value.parameterTypes.size() &&
            value.constructorKind == construction->kind &&
            value.definedFailure.propagation ==
-               (construction->constructor != 0 &&
-                        !construction->generatedDefault
+               ((construction->constructor != 0 &&
+                 !construction->generatedDefault) ||
+                        (target != nullptr && target->generatedDefault)
                     ? FailurePropagationKind::Constructor
                     : FailurePropagationKind::None);
   };

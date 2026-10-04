@@ -3071,7 +3071,35 @@ public:
       output << (status == SpecialMemberStatus::Generated ? " = default;\n"
                                                           : " = delete;\n");
     };
-    if (declaration.defaultConstructor != SpecialMemberStatus::Declared) {
+    const MirConstructorInstance *generatedConstructor = nullptr;
+    for (const LoweredConstructorInstance &candidate :
+         loweredProgram.constructorInstances()) {
+      const MirClassInstance *owner = mir.findClassInstance(candidate.owner);
+      if (candidate.declaration == 0 && owner != nullptr &&
+          owner->declaration == declaration.id) {
+        if (generatedConstructor != nullptr || !owner->type.arguments.empty() ||
+            !owner->type.valueArguments.empty())
+          throw std::logic_error(
+              "generated base constructor needs one concrete owner");
+        generatedConstructor = mir.findConstructorInstance(candidate.id);
+      }
+    }
+    if (generatedConstructor != nullptr) {
+      const auto &plan =
+          generalMirBodyPlan({.kind = MirBodyKind::Constructor,
+                              .owner = generatedConstructor->id});
+      if (plan.supportsPlainText()) {
+        writeIndent();
+        output << classRow.name << "();\n";
+      }
+      if (plan.supportsFailureText()) {
+        writeIndent();
+        output << classRow.name << '(';
+        emitLoweredConstructorParameters(*generatedConstructor, true);
+        output << ");\n";
+      }
+    } else if (declaration.defaultConstructor !=
+               SpecialMemberStatus::Declared) {
       writeIndent();
       output << classRow.name << "()";
       if (incompletePointeeCarrier &&
@@ -6333,6 +6361,39 @@ public:
   }
 
   void emitLoweredMemberDefinitions() {
+    for (const LoweredConstructorInstance &candidate :
+         loweredProgram.constructorInstances()) {
+      if (candidate.declaration != 0)
+        continue;
+      const MirConstructorInstance *constructor =
+          mir.findConstructorInstance(candidate.id);
+      const MirClassInstance *instance = mir.findClassInstance(candidate.owner);
+      const LoweredDeclaration *owner =
+          instance == nullptr ? nullptr
+                              : loweredClassRow(instance->declaration);
+      if (constructor == nullptr || owner == nullptr)
+        throw std::logic_error("generated constructor lost its concrete owner");
+      const std::size_t namespaceCount =
+          emitLoweredNamespaceOpen(owner->namespaceScope);
+      const auto &plan = generalMirBodyPlan(
+          {.kind = MirBodyKind::Constructor, .owner = constructor->id});
+      for (const bool failure : {false, true}) {
+        if (!(failure ? plan.supportsFailureText() : plan.supportsPlainText()))
+          continue;
+        writeIndent();
+        output << loweredPrimaryClassSpelling(*owner) << "::" << owner->name
+               << '(';
+        emitLoweredConstructorParameters(*constructor, failure);
+        output << ')';
+        emitGeneralMirConstructorInitializerList(*constructor, failure);
+        output << ' ';
+        if (failure)
+          emitGeneralFailureConstructorBodyText(*constructor);
+        else
+          emitGeneralMirConstructorBodyText(*constructor);
+      }
+      emitLoweredNamespaceClose(namespaceCount);
+    }
     for (const LoweredDeclaration *row : loweredDeferredMembers) {
       const LoweredDeclaration *owner = loweredClassRow(row->ownerClass);
       if (owner == nullptr) {

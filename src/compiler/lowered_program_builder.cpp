@@ -71,8 +71,14 @@ bodyDefinition(MirDefinitionKind definition) {
   case MirBodyKind::Constructor:
     if (const HirConstructorInstance *instance =
             hir.findConstructorInstance(address.owner);
-        instance != nullptr && instance->source != nullptr) {
-      return tokenSpan(instance->source->name());
+        instance != nullptr) {
+      if (instance->source != nullptr)
+        return tokenSpan(instance->source->name());
+      if (instance->generatedDefault) {
+        const auto *owner = findHirClass(hir, instance->owner);
+        if (owner != nullptr && owner->source != nullptr)
+          return tokenSpan(owner->source->name());
+      }
     }
     return {};
   case MirBodyKind::Destructor:
@@ -830,6 +836,19 @@ private:
        ++index) {
     const HirConstructorInstance &source = hir.constructorInstances()[index];
     const MirConstructorInstance &lowered = mir.constructorInstances()[index];
+    const HirClassInstance *owner = findHirClass(hir, source.owner);
+    if (source.generatedDefault &&
+        (source.source != nullptr || source.declaration != 0 ||
+         !source.parameterTypes.empty() || owner == nullptr ||
+         owner->defaultConstructor != SpecialMemberStatus::Generated ||
+         !owner->fields.empty() || owner->destructor ||
+         source.initializers.size() != 1 ||
+         source.initializers.front().kind !=
+             ConstructorInitializerTargetKind::Base ||
+         lowered.definitionKind != MirDefinitionKind::Source))
+      return reject("generated constructor instance " +
+                    std::to_string(index + 1) +
+                    " has an invalid structural schedule");
     if (source.id != lowered.id || source.owner != lowered.owner ||
         source.constexprConstructor != lowered.constexprConstructor ||
         source.constexprConstructor !=

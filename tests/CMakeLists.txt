@@ -1021,6 +1021,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(inherited_unique_allocation_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME generated_base_constructor_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/generated_base_constructor_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(generated_base_constructor_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME unique_pointee_cleanup_failure_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/unique_pointee_cleanup_failure_test.py"

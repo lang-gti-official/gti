@@ -1,0 +1,37 @@
+#include <std/string>
+#include <std/vector>
+
+mut int32_t divisor = 1;
+
+class Guard {
+  int32_t identity;
+public:
+  Guard(int32_t value) : identity(value) {}
+  ~Guard() { std::println(this.identity); }
+};
+
+class Reading {
+  mut int32_t value = 0;
+public:
+  Reading() {
+    Guard inside = Guard(3);
+    this.value = 7 / divisor;
+  }
+  int32_t read() { return this.value; }
+};
+
+// The base constructor must be discovered through this generated operation;
+// no source expression constructs Reading directly.
+class Sensor : public Reading {
+public:
+  static int32_t label = 11;
+  bool ready() { return this.read() == 7; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  divisor = argc == 1 ? 1 : 0;
+  Guard outer = Guard(9);
+  Sensor sensor = Sensor();
+  std::println(sensor.read());
+  return sensor.ready() && Sensor::label == 11 ? 0 : 1;
+}

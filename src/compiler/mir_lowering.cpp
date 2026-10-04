@@ -400,7 +400,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
          .borrowAccess = instance.borrowAccess,
          .borrowParameters = instance.borrowParameters,
          .definitionKind =
-             instance.source != nullptr && instance.source->body() != nullptr
+             instance.generatedDefault || (instance.source != nullptr &&
+                                           instance.source->body() != nullptr)
                  ? MirDefinitionKind::Source
                  : MirDefinitionKind::Declaration,
          .mayRaiseDefinedFailure =

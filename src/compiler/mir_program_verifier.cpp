@@ -10514,8 +10514,7 @@ verifyMirProgramContracts(const MirProgram &program) {
                  target->mayRaiseDefinedFailure &&
                  target->parameterTypes.empty() && base != nullptr &&
                  target->owner == base->id &&
-                 base->type == initializer.targetType &&
-                 base->requiresActiveCleanup && !base->destructor &&
+                 base->type == initializer.targetType && !base->destructor &&
                  !base->requiresActiveDropState &&
                  std::any_of(constructorOwner->bases.begin(),
                              constructorOwner->bases.end(),
@@ -10555,6 +10554,9 @@ verifyMirProgramContracts(const MirProgram &program) {
                   ? instance.body.findDropObligation(
                         *instruction.successResultDrop)
                   : nullptr;
+          const MirClassInstance *baseOwner =
+              initializer.base ? program.findClassInstance(*initializer.base)
+                               : nullptr;
           exactInitializerStages =
               exactInitializerStages && stagedBaseInitializer(initializer) &&
               block.id == instance.body.entry &&
@@ -10572,7 +10574,9 @@ verifyMirProgramContracts(const MirProgram &program) {
               destination->type == initializer.targetType &&
               rollback != nullptr && rollback->place == destination->id &&
               rollback->dropType.classInstance == initializer.base &&
-              rollback->dropType.requiresActiveCleanup &&
+              baseOwner != nullptr &&
+              rollback->dropType.requiresActiveCleanup ==
+                  baseOwner->requiresActiveCleanup &&
               (!rollback->dropType.destructor ||
                rollback->dropType.uniquePointeeClass) &&
               !rollback->initiallyActive;
