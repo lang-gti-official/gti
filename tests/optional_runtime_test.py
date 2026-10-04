@@ -78,14 +78,14 @@ def main() -> int:
         if not expect_rejected(
             compiler,
             fixtures / "optional_copy_assignment_rejected.gti",
-            "Cannot assign a value",
+            "error[GTI-S2003]: Cannot copy assign move-only type 'std::optional<int32_t>'",
             root / "assignment-rejected",
         ):
             return 1
         if not expect_rejected(
             compiler,
             fixtures / "optional_move_assignment_rejected.gti",
-            "Cannot assign a value",
+            "error[GTI-S2003]: Move assignment is unavailable for type 'std::optional<int32_t>'",
             root / "move-assignment-rejected",
         ):
             return 1

@@ -41,6 +41,12 @@ seconds; the four separately run corpus gates provide passing evidence for all
 408 registered gates. This is macOS arm64 evidence, not a claim of execution
 on other host platforms. Final integration with concurrent work is separate.
 
+Reconciliation with Main's ownership-diagnostic changes (`19402f62`) passes
+the all-target Release build and all twelve selected compiler, lifecycle,
+restoring-transfer, optional/vector, diagnostic, LSP and release-policy gates
+(120.68 seconds). The issue 30–33 fixes are not part of that integration
+evidence and require their own combined validation before publication.
+
 The optional `local_language_audit.py --full` passes its 23 contract cases,
 24 generated differential programs, four composition programs, 100 malformed
 mutations and its 96-example/four-configuration matrix. It then fails because
@@ -49,6 +55,45 @@ Its two-digit example glob also omits examples 100 and above; this optional
 result is not evidence for those programs. The independent 101-example corpus
 gates and explicit new-example installed runs supply that coverage. The
 optional audit is not reported as a complete pass or used to replace any gate.
+
+## Ownership diagnostic explanations
+
+`testOwnershipAndMissingIncludeDiagnostics` covers exact move origins, branch
+joins, reinitialization, user-defined projected owners, restored receiver
+fields, shadowing, and the deterministic four-origin bound. It also checks
+straight-line last-use ending against later-use conflicts, resource-bound
+mutex guards and lexical release, ordinary/read-only-reference/array/capture
+mutation causes, concurrent-global policy, constexpr advice, and unavailable
+move assignment for both explicit movement and fresh values. The admitted
+and rejected programs retain their existing ownership behavior and codes;
+intent-changing fixes remain absent.
+
+`diagnostic_explanations` runs the same compiler errors through terminal and
+LSP presentation. It checks source-scalar heading columns, wide and combining
+Unicode display cells, expanded tabs, escaped control/invalid bytes, and
+colour/plain parity. Protocol checks require exact UTF-16 primary/related
+ranges, plain hints, correction on the next overlay version, and rejection of
+a stale action. `lsp_protocol` additionally checks the later required statement
+for an owner-dependent span. The architecture and LLVM-adoption documents
+record the private terminal-width boundary; public diagnostic types do not
+gain terminal- or LLVM-specific fields.
+
+The 0.368.1 all-target Release build passes on macOS arm64 with AppleClang 21
+and LLVM 22.1.8. The full 404-test run initially passes 399 checks. The two
+localhost HTTP checks pass with socket permission; the construction-only
+vector matrix passes after updating its rejected-assignment expectation to the
+new specific message. The generic owning-sum matrix passes at lower contention
+with its existing 300-second timeout unchanged. The repository-hosting gate
+passes against an isolated staged-source snapshot: the active checkout retains
+unrelated, untracked generated website files that its inventory intentionally
+rejects. These reruns provide combined passing evidence for all 404 registered
+checks without weakening or excluding a gate.
+
+All eleven external CMake consumers pass against a fresh isolated installation.
+The same terminal/LSP explanation regression and CLI colour checks pass outside
+the checkout with resource overrides cleared. Formatting checks all 410
+first-party C/C++ files using clang-format 22.1.8. The user's active installation
+is untouched; this is not Linux/Windows or bundled-LLVM execution evidence.
 
 ## Project include discovery and namespace paths
 
