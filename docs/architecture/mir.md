@@ -2371,7 +2371,7 @@ the count domain is signed. Negation requires a signed result domain and names
 `numeric_conversion_out_of_range:numeric_cast` exactly when the complete
 source domain is not contained in the destination; a widening/safe-domain
 conversion must carry no stale origin, site, or record. Float conversions remain
-outside this bounded integer verifier family. Built-in integer compound
+outside this bounded integer verifier family. Physical-place integer compound
 assignment and increment/decrement lower to an ordered
 `Load`/`Compute`/`Compute(Convert)`/`Assign` schedule, omitting the conversion
 when the arithmetic and destination domains agree. Semantics records the
@@ -2383,8 +2383,13 @@ occurs after both checks succeed. Postfix retains the original narrow value;
 prefix and compound assignment retain the committed narrow result. Bare
 instance-field destinations and explicit receiver projections use the same
 primitive schedule. The general C++ MIR emitter consumes every
-operation in this fixed-integer allowlist only after both MIR verification and
-representation preflight.
+physical-place operation in this family. A non-array indexed class projection
+still denotes a selected subscript call, not a physical element address; it
+retains the checked closed compound boundary until one exact returned
+reference can be staged. Splitting that projection into read/write would
+duplicate the accessor or require an unselected overload. The emitter admits
+each operation in this fixed-integer allowlist only after both MIR verification
+and representation preflight.
 
 The bounded `Invoke` family accepts a trivial scalar result, an eligible
 cleanup-free nominal call result, or the exact cleanup-owning result obligation

@@ -6739,9 +6739,20 @@ private:
     const MirPlace *place = output.findPlace(destination);
     const bool arrayElement =
         place != nullptr && fixedArrayElementPlace(*place);
+    // A class subscript projection still denotes a selected user call, not a
+    // physical element address. Splitting it into a Load and Assign would
+    // invoke the accessor twice (and may require an unselected overload).
+    // Keep that closed compound boundary until its call result is staged as
+    // one exact reference. Ordinary field/reference paths remain primitive.
+    const bool calledSubscript =
+        place != nullptr && !arrayElement &&
+        std::any_of(place->projections.begin(), place->projections.end(),
+                    [](const MirPlaceProjection &projection) {
+                      return projection.kind == MirProjectionKind::Index;
+                    });
     const bool floating = semanticFloatFormat(value.info.type).has_value();
     const SemanticType arithmeticType = value.info.updateArithmeticType;
-    if (place == nullptr ||
+    if (place == nullptr || calledSubscript ||
         (!fixedWidthIntegerType(value.info.type) && !floating) ||
         (!fixedWidthIntegerType(arithmeticType) && !floating) ||
         place->type != value.info.type ||

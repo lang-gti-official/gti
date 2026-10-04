@@ -89,8 +89,8 @@ the same vertical slice. It does not mean the missing capability exists.
 | 4 / `L-UP-04` | complete in 0.367.0 | current ordinary-method constraints and diagnostics | Invalid library calls fail at their API contract, starting with optional `value_or`. |
 | 5 / `L-UP-05` | complete in 0.367.0 | current comparator contract; copyable elements | Comparator sorting with bounded O(n log n) comparison growth. |
 | 6 / `L-UP-06` | complete in 0.367.0 | completed passive-record MIR constant profile | Compile-time duration/time-point constants and pure observers. |
-| 7 / `L-UP-07` | implemented / locally validated | current places, lifecycle and failure authority | Sound generic exchange/swap of eligible initialized writable places. |
-| 8 / `L-UP-08` | implemented / locally validated | `L-UP-07`, checked disjoint indexed exchange | Array swap and move-only vector reverse/sort without cloning elements. |
+| 7 / `L-UP-07` | complete in 0.369.0 | current places, lifecycle and failure authority | Sound generic exchange/swap of eligible initialized writable places. |
+| 8 / `L-UP-08` | complete in 0.369.0 | `L-UP-07`, checked disjoint indexed exchange | Array swap and move-only vector reverse/sort without cloning elements. |
 | 9 / `L-UP-09` | complete in 0.366.0 | current checked borrowed Expected and loan facts | Propagation/extraction of a checked borrowed success without a manual wrapper dance. |
 | 10 / `L-UP-10` | ready / correctness prerequisite | existing constructor-pack implementation and retained failure | Borrowed constructor-pack composition succeeds end to end. |
 | 11 / `L-UP-11` | blocked | `L-UP-10` | Node-container emplacement constructs immovable mapped values at their final address. |
@@ -325,7 +325,7 @@ coordinate integration and select an independent adoption row.
 
 ### L-UP-07: General Restoring Exchange And Swap
 
-- **Implemented and locally validated:** `codex/restoring-exchange` adds
+- **Complete in 0.369.0:** `codex/restoring-exchange` adds
   source-defined utility wrappers over sealed MIR restoring transfers. Focused
   scalar/resource, loan-rejection and verifier-mutation tests pass, as does the
   replacement/cleanup failure matrix (C++20/C++23, O0/O1/O3, disabled elision,
@@ -348,8 +348,9 @@ coordinate integration and select an independent adoption row.
   modes. A clean staged install passes all 11 library consumers, both new
   examples and the feature LSP check. All 404 broad CTests and four separate
   corpus gates pass on the final implementation. Examples 103/104, editor
-  checks and canonical contracts accompany the feature. Publication and
-  reconciliation with concurrent work remain separate from this local proof.
+  checks and canonical contracts accompany the feature. Reconciliation with
+  Main's diagnostics and issue 30–33 fixes passes all 412 combined gates,
+  including targeted reruns after the checked-update/subscript repairs.
 - **Pre-implementation adoption audit (2026-10-04):** a new semantic capability, not a
   stale library workaround. A current optimized-compiler probe over an
   unrelated `exchange<T>(mut T&, T)` rejects `std::move(target)` with
@@ -378,7 +379,7 @@ coordinate integration and select an independent adoption row.
 
 ### L-UP-08: Checked Indexed Exchange And Move-Only Algorithms
 
-- **Implemented and locally validated:** a sealed indexed-swap intrinsic,
+- **Complete in 0.369.0:** a sealed indexed-swap intrinsic,
   checked `swap_elements` methods, array swap and source-defined move-only
   heapsort/reverse execute through verified MIR in `codex/restoring-exchange`.
   Move-only resource/string arrays
@@ -393,7 +394,8 @@ coordinate integration and select an independent adoption row.
   construction through the existing MIR evaluator rather than adding AST
   movement interpretation. Installed-consumer verification and all 408
   registered gates pass, including four separately run corpus gates.
-  Publication and reconciliation with concurrent work remain separate.
+  The final diagnostics/issue reconciliation passes all 412 combined gates,
+  including targeted reruns after the checked-update/subscript repairs.
 - **Original prerequisite/client:** `L-UP-07`; the bodyless
   [`array::swap`](../../stdlib/std/array.gti) and copy-based vector
   `reverse`/`sort` are the public clients.

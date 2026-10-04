@@ -4457,10 +4457,12 @@ int mutate(mut Indexed& indexed) {
   return indexed[uint64_t(0)];
 }
 
+int observe(Indexed& indexed) { return indexed[uint64_t(0)]; }
+
 int main() {
   mut Indexed indexed = Indexed();
   indexed[uint64_t(0)] += 1;
-  return mutate(indexed) - 4;
+  return mutate(indexed) - observe(indexed);
 }
 )");
   expect(frontend.canGenerateCode(),
@@ -4473,18 +4475,25 @@ int main() {
   const lang::CppMirBodyEmissionMap map(
       buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   std::size_t selectedBoundaries = 0;
+  std::size_t readOnlyInstances = 0;
   for (const lang::MirFunctionInstance &function :
        frontend.mir.functionInstances()) {
-    if (function.overloadedOperator &&
-        *function.overloadedOperator == lang::OverloadedOperator::Subscript &&
-        lang::cppMirNeedsTerminalSubscriptBoundaryWrapper(frontend.mir, map,
+    if (!function.overloadedOperator ||
+        *function.overloadedOperator != lang::OverloadedOperator::Subscript)
+      continue;
+    readOnlyInstances +=
+        function.receiverMutability == lang::ReceiverMutability::ReadOnly;
+    if (lang::cppMirNeedsTerminalSubscriptBoundaryWrapper(frontend.mir, map,
                                                           function.id)) {
       ++selectedBoundaries;
+      expect(function.receiverMutability == lang::ReceiverMutability::Mutable,
+             "closed compound places need only their selected mutable accessor "
+             "boundary");
     }
   }
-  expect(selectedBoundaries == 2,
-         "the compatibility places should select the exact read-only and "
-         "mutable subscript boundary instances");
+  expect(selectedBoundaries == 1 && readOnlyInstances == 1,
+         "the explicit read-only call remains ordinary MIR while compound "
+         "places select one mutable boundary");
 
   const lang::BackendArtifact artifact = gti_test::emitCpp(frontend);
   std::size_t normalDefinitions = 0;
@@ -4497,51 +4506,36 @@ int main() {
         line.find(" {") != std::string::npos;
     checkedReferenceCompound =
         checkedReferenceCompound ||
-        line.find("mir_checked_multiply_v1(") != std::string::npos;
+        (line.find("mir_checked_compound_multiply_v1(") != std::string::npos &&
+         line.find("___gti_operator_subscript(") != std::string::npos);
   }
-  expect(normalDefinitions == 2,
-         "the C++ artifact should define both ordinary subscript boundaries "
-         "instead of leaving compatibility calls unresolved");
+  expect(normalDefinitions == 1,
+         "the C++ artifact should define the required mutable subscript "
+         "boundary without inventing a second accessor call");
   expect(checkedReferenceCompound,
          "a reference-projected class subscript should preserve the checked "
-         "arithmetic in its primitive read/compute/commit schedule");
+         "single-call compound boundary instead of duplicating its accessor");
   bool checkedSchedule = false;
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
       for (const auto &instruction : block.instructions) {
-        if (instruction.kind != lang::MirInstructionKind::Compute ||
-            instruction.operation != lang::MirOperation::Multiply ||
-            instruction.operands.size() != 2 || !instruction.result)
+        if (instruction.kind != lang::MirInstructionKind::Assign ||
+            instruction.operation != lang::MirOperation::MultiplyAssign ||
+            instruction.operands.size() != 1 || !instruction.destination)
           continue;
-        const auto *read =
-            function.body.findValue(instruction.operands.front().value);
-        const auto *readBlock =
-            read ? function.body.findBlock(read->definitionBlock) : nullptr;
-        const auto loaded =
-            readBlock ? std::find_if(readBlock->instructions.begin(),
-                                     readBlock->instructions.end(),
-                                     [&](const auto &item) {
-                                       return item.id == read->definition;
-                                     })
-                      : block.instructions.end();
-        if (!readBlock || loaded == readBlock->instructions.end() ||
-            loaded->kind != lang::MirInstructionKind::Load ||
-            loaded->operands.size() != 1)
-          continue;
-        for (const auto &success : function.body.blocks)
-          for (const auto &commit : success.instructions)
-            checkedSchedule |=
-                commit.kind == lang::MirInstructionKind::Assign &&
-                commit.destination == loaded->operands.front().place &&
-                commit.operands.size() == 1 &&
-                commit.operands.front().value == *instruction.result &&
-                block.terminator.kind == lang::MirTerminatorKind::Invoke &&
-                block.terminator.target == success.id;
+        const auto *place = function.body.findPlace(*instruction.destination);
+        checkedSchedule |=
+            place && !place->projections.empty() &&
+            place->projections.back().kind == lang::MirProjectionKind::Index &&
+            instruction.localFailureSites.size() == 1 &&
+            instruction.definedFailure.localOrigins.size() == 1 &&
+            block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+            block.terminator.invokeInstruction == instruction.id;
       }
     }
   }
-  expect(checkedSchedule, "subscript compound commit occurs only after the "
-                          "checked multiply succeeds");
+  expect(checkedSchedule,
+         "called subscript update retains its checked MIR compound boundary");
 }
 
 constexpr NamedTest kTests[] = {

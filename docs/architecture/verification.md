@@ -57,6 +57,22 @@ absent or cleared. The system-LLVM consumer configuration names the same
 LLVM 22.1.8 package as the compiler build. Formatting passes all 413 first-party
 C/C++ files. This does not update the user's active toolchain.
 
+Final 0.369.0 reconciliation runs all 412 registered CTests, including the four
+corpus gates, in 2111.47 seconds. That run passes 410 checks and identifies two
+repairs: a stale borrowed-field lifecycle assertion and an overly broad
+primitive-update schedule for called class subscripts. The lifecycle test now
+proves the exact read/add/success-commit chain and retains forged-projection
+rejection. Non-array class subscripts retain their existing single-call checked
+compound boundary; a mutable-only user accessor and side-effecting index each
+execute once. The optimized all-target rebuild and all 24 affected gates pass
+after these repairs (23 in the 141.24-second rerun, with the corrected exact
+subscript-wrapper census passing its full seven-second preflight suite).
+Together these runs provide passing evidence for all 412 gates without
+weakening or excluding a gate. The refreshed isolated install also passes the
+reduced vector-scaling client, examples 103/104 and both feature/ownership LSP
+checks with checkout resource overrides cleared. The active user installation
+is unchanged. No Gitea CI completion is assumed by this local evidence.
+
 The optional `local_language_audit.py --full` passes its 23 contract cases,
 24 generated differential programs, four composition programs, 100 malformed
 mutations and its 96-example/four-configuration matrix. It then fails because
@@ -72,13 +88,16 @@ optional audit is not reported as a complete pass or used to replace any gate.
 fresh/moved/copyable errors, passive consuming Expected relays, and unchanged
 use-after-move, read-only, escape and live-loan rules. It verifies promoted
 arithmetic followed by checked narrowing and rejects malformed failure
-contracts, payload identities and move ownership. The subscript preflight test
-checks that the primitive multiplication commits to the original place only
-on its success edge.
+contracts, payload identities and move ownership. The borrowed-field lifecycle
+test checks that a primitive addition commits to the original place only on
+its success edge. The subscript preflight test separately preserves the
+checked closed compound boundary for a selected overloaded accessor, which
+must not be duplicated into independent read/write calls.
 
 `issues_30_33_runtime` runs 120 outcomes across C++20/C++23 O0/O1/O2/O3,
 disabled elision and ASan/UBSan. Cases cover signed/unsigned narrow limits,
 prefix/postfix results, mixed-width compounds, read-before-RHS ordering,
+one invocation of a mutable-only user subscript and a side-effecting index,
 borrowed nested array reads/writes, exact first-failure locations, unchanged
 destinations after failed checks, reverse-order cleanup and move-only error
 construction/relay. `issues_30_33_lsp` checks CLI/LSP agreement, exact Unicode
