@@ -1194,7 +1194,7 @@ that itself hangs, aborts, long-jumps, or otherwise prevents control from
 returning is a host contract violation for which GTI cannot guarantee a report
 or status.
 
-The hosted runtime emits exactly one UTF-8 report line:
+The hosted runtime emits exactly one UTF-8 report line. Its unstyled form is:
 
 ```text
 <source>:<line>: runtime error[<code>]: <category> in <detail>\n
@@ -1205,6 +1205,16 @@ For explicit panic, the shape is instead:
 ```text
 <source>:<line>: runtime error[GTI-R0017]: panic: "<message>"\n
 ```
+
+Terminal presentation may wrap only the `runtime error[<code>]` heading in
+red ANSI SGR and a reset. Removing those wrappers yields exactly the unstyled
+form above, including the final LF. The hosted runtime defaults to stderr
+terminal detection and honours nonempty `NO_COLOR` and `TERM=dumb`.
+`GTI_COLOR=auto|always|never` selects a runtime override; unknown values use
+auto. Explicit `gti run/test --color` choices override that child's runtime
+setting, without modifying arguments or filtering program output. Styling is
+allocation-free, applies equally to cleanup-emergency reports below, and never
+changes a structured failure record, cleanup, observer or exit status.
 
 A truncated message adds exactly ` [truncated]` after its closing quote and
 before the final LF. The artifact identity and exact byte span remain available

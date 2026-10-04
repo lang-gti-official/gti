@@ -244,6 +244,27 @@ Status: Current test and audit structure.
 
 ## CLI terminal colour
 
+`runtime_failure_subprocess` independently checks ordinary v1 failures, v2
+panics, cleanup emergencies, protected observers, legacy worker handoff and
+terminal races with forced red headings. ANSI-stripped text, stdout and status
+match the plain protocol. POSIX pseudo-terminals cover stderr-only detection,
+redirected stdout, `NO_COLOR` (empty and nonempty), `TERM=dumb`, and all runtime
+`GTI_COLOR` modes; invalid modes fall back to auto. Invalid records and closed
+or broken report sinks still produce no misleading output or recursive failure.
+`cli_color` additionally compiles panic and bounds-error targets and checks
+automatic runtime styling, child-only CLI overrides, inherited runtime policy,
+repeated options, `run --no-build`, and test continuation/status after failure.
+
+The 0.366.2 follow-up passes five focused colour/runtime/ABI gates in 23.83
+seconds and eight CLI/driver/project/version gates in 130.37 seconds using a
+clean macOS arm64 Release/Ninja compiler with AppleClang 21 and LLVM 22.1.8.
+The quick panic runtime suite passes 39 outcomes including cleanup and worker
+failures; the freshly installed toolchain passes the expanded colour regression
+and all eleven installed-library gates. Clang-format checks all 405 first-party
+C/C++ files. No language execution rule or backend schedule changes in this
+patch; the full language/optimization matrix and native Windows console
+detection were not rerun.
+
 `cli_color` checks direct diagnostics, source underlines, hints, successful
 status, summaries, metadata, option validation/operand boundaries, project
 check/run, and captured parallel build success/failure counts. It compares

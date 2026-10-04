@@ -792,6 +792,16 @@ completion, context guards, and record return/storage. This boundary does not ma
 failure record the ABI of a public GTI class and does not establish a general
 callable ABI.
 
+Runtime report headings use red ANSI styling when stderr is a supported
+terminal, unless `NO_COLOR` is nonempty or `TERM=dumb`. Runtime-only
+`GTI_COLOR=auto|always|never` overrides that policy; explicit CLI `run/test
+--color` choices reach it through the child environment. Formatting remains
+allocation-free, and both ordinary/panic and emergency reports use the same
+heading helper. A partially written styled heading makes one best-effort reset
+attempt before returning an I/O error. Failure records, source/message
+escaping, observer arbitration, language cleanup and terminal status are
+unchanged. The CLI never filters executed-program streams.
+
 Source names and quoted panic messages use a strict UTF-8 decoder and a checked-in interval table
 for Unicode 15.1 `L*`, `M*`, `N*`, `P*`, `S*`, and `Zs`. The table is generated
 from the official `DerivedGeneralCategory.txt` whose pinned SHA-256 is

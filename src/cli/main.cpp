@@ -40,6 +40,14 @@ namespace {
 constexpr std::string_view version = GTI_VERSION;
 lang::cli::TerminalStyle terminalStyle;
 using lang::cli::Style;
+std::optional<std::string> runtimeColorOverride;
+
+std::vector<std::pair<std::string, std::string>> programColorEnvironment() {
+  if (runtimeColorOverride) {
+    return {{"GTI_COLOR", *runtimeColorOverride}};
+  }
+  return {};
+}
 
 // Called only at option boundaries, never for another option's operand or
 // arguments following '--'. Explicit CLI policy overrides NO_COLOR.
@@ -63,6 +71,7 @@ ColorArgument parseColorArgument(int argc, char *argv[], int &index) {
               << "'; expected auto, always, or never\n";
     return ColorArgument::Invalid;
   }
+  runtimeColorOverride = value;
   return ColorArgument::Accepted;
 }
 
@@ -1918,7 +1927,8 @@ int invokeProjectProgram(const lang::driver::ProjectBuildPlan &plan,
   const lang::driver::ProcessResult process = lang::driver::invokeProcess(
       command, {.outputMode = lang::driver::ProcessOutputMode::Inherit,
                 .captureSuccessfulOutput = false,
-                .description = "program"});
+                .description = "program",
+                .environment = programColorEnvironment()});
   if (process.driverDiagnostic) {
     std::cerr << *process.driverDiagnostic << '\n';
   }
@@ -2699,7 +2709,8 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
         {plan.output().string()},
         {.outputMode = lang::driver::ProcessOutputMode::Inherit,
          .captureSuccessfulOutput = false,
-         .description = "test target '" + plan.targetName() + "'"});
+         .description = "test target '" + plan.targetName() + "'",
+         .environment = programColorEnvironment()});
     if (process.driverDiagnostic) {
       std::cerr << *process.driverDiagnostic << '\n';
     }

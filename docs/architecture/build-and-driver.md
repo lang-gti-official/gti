@@ -34,6 +34,13 @@ stdout and stderr remain inherited and are never restyled or filtered. The
 same `auto`, `always`, `never`, and `NO_COLOR` policy applies to test output.
 Parallel build target-failure labels are red under that policy as well.
 
+An explicit `run/test --color` choice is passed only to the executed program as
+a `GTI_COLOR` environment override, using the existing process invocation API.
+The runtime applies it to panic/checked-failure reports, not arbitrary program
+text. With no explicit choice, the child's environment and automatic stderr
+detection remain authoritative. This includes `run --no-build`; no colour
+choice enters a compilation request, manifest, executable or cache key.
+
 - `gti_compiler` contains reusable frontend, IR, optimizer, backend contracts,
   and compiler-owned language queries. It does not depend on manifests, TOML,
   native processes, or project output policy.

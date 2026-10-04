@@ -31,6 +31,19 @@ a plain destination removes their styling. The summary payload remains
 contiguous inside its colour wrapper so the existing child-count aggregation
 does not depend on ANSI parsing.
 
+The runtime owns presentation of panic and checked-failure reports, separately
+from compiler diagnostics. `runtime/src/failure.cpp` colours only the
+`runtime error[GTI-Rxxxx]` heading red, including cleanup emergencies. It uses
+stderr terminal detection, `NO_COLOR` and `TERM=dumb` without allocation;
+`GTI_COLOR=auto|always|never` overrides runtime policy (unknown values use auto).
+An explicit `gti run/test --color` choice is forwarded through the child
+environment; without one, the program inherits its existing runtime policy.
+The CLI never rewrites the program's output. Standalone binaries use the same
+runtime policy. Record/descriptor bytes and unstyled report text are unchanged,
+and source/message controls remain escaped rather than interpreted as styling.
+Windows auto mode enables virtual-terminal processing for the report and
+restores the original console mode afterwards.
+
 `include/gti/diagnostic.h` defines the structured diagnostic contract shared by
 source loading, lexing, parsing, semantics, the driver, the backend, CLI, and
 LSP.
