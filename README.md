@@ -301,6 +301,11 @@ running build scripts, compiling, or consulting the cache. It rejects missing
 or unsafe managed artifacts and deliberately does not claim the executable is
 fresh; use ordinary `gti run` when source changes must be reflected.
 
+Build status and diagnostics use colour automatically in terminals. Use
+`gti build --color=never` to disable it, `--color=always` to retain it in captured
+output, or set `NO_COLOR=1` to disable automatic colour. Redirected output is
+plain by default; JSON output and your program's output are not decorated.
+
 `gti build --all` builds every declared target concurrently with a bounded job
 count (`--jobs <count>`), deterministic name-ordered output, and byte-identical
 artifacts whether built serially or in parallel.

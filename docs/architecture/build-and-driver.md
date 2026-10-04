@@ -21,6 +21,14 @@ gti build|check|run|test|clean|metadata project mode
 
 ## Target Boundaries
 
+Terminal status and diagnostic colour is CLI-only, not a manifest or build-cache
+input. Use `gti build --color=always` to retain ANSI styling in captured output,
+or `gti build --color=never` to disable it. Automatic terminal detection and
+`NO_COLOR` handling are described in [Diagnostics](diagnostics.md#terminal-colour).
+For `gti run`, build status remains on stderr and the program's stdout is left
+unchanged. Parallel `build --all` preserves both coloured child diagnostics and
+their aggregated counts without adding presentation policy to driver requests.
+
 - `gti_compiler` contains reusable frontend, IR, optimizer, backend contracts,
   and compiler-owned language queries. It does not depend on manifests, TOML,
   native processes, or project output policy.

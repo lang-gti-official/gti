@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.364.0 — Coloured terminal output
+
+- Compiler errors, warnings, underlines, notes/help, build status, and final
+  diagnostic totals now use colour automatically in terminals.
+- `--color=auto|always|never` controls presentation. Auto honours `NO_COLOR`,
+  `TERM=dumb`, and redirection independently for stdout and stderr.
+- Parallel builds retain correct diagnostic totals. JSON metadata, build
+  reports, generated artifacts, LSP diagnostics, and program output remain
+  unaffected by CLI styling.
+
 ## 0.362.0 — Source modules and discard quick fixes
 
 - Libraries can publish explicit source interfaces with `export module`,
