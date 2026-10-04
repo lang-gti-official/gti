@@ -17399,8 +17399,10 @@ valueRootedExpectedClassCallResultSlot(
       }
     }
   }
-  const std::size_t alternatives =
-      value->info.type.arguments.front().kind == SemanticType::Void ? 1 : 2;
+  // Prefix propagation emits ExpectedValue even for a void success: it is a
+  // state-checked, result-less observation, not an absent success arm. Count
+  // both that observer and ExpectedError when admitting the one owned shell.
+  const std::size_t alternatives = 2;
   if (consumingCall != nullptr)
     return observers == 0
                ? ValueRootedExpectedClassCallResultSlot{.value = value,

@@ -351,6 +351,11 @@ checked elapsed subtraction, comparison, and Unix decomposition contain no
 compiler or backend name recognition. Exact `std::checked_sub` supplies the
 recoverable duration-overflow decision.
 
+Passive duration/time-point constructors and pure observers are source-defined
+`constexpr` clients of staged canonical MIR. Clock reads and Expected-returning
+elapsed subtraction are not const-eligible. The adoption adds no evaluator
+opcode, native constexpr authority, or public-name recognition.
+
 The two `gti_rt_chrono_*_now_v1` entries expose only a stable status and one
 `int64_t` output. The runtime converts host clock readings into a floor-based
 seconds plus normalized nanosecond remainder, proves the joined value fits,
@@ -496,10 +501,13 @@ public streaming or socket abstraction.
 owned value tree, exact number lexemes, deterministic serializer, limits,
 structured errors, and explicit `codec<T>` customization are all GTI source.
 This is an intentional proof that a format library can remain portable policy
-once the ordinary string and vector ownership primitives are sufficient. Its
-current native blocker is a general C++ representation defect for
-`expected<T, E>` with a string-owning `E`, tracked as issue #11, rather than a
-request for a JSON-specific compiler intrinsic or runtime parser.
+once the ordinary string and vector ownership primitives are sufficient.
+String-owning errors execute through verified MIR in both native Expected
+representations. The parser and builders use ordinary exact-error propagation;
+conversion branches that add JSON Pointer context remain explicit source code.
+Arena/pool factories use the same propagation rule, while elapsed clock
+subtraction deliberately maps arithmetic errors through a typed
+`transform_error` function. None changes recoverable errors into panic.
 
 The hosted runtime independently serializes each stdout and stderr entry with
 one process-wide mutex per stream. The bytes of one call do not interleave with

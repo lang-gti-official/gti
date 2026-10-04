@@ -20,6 +20,9 @@ def main():
 #include <std/string>
 """
     negatives = {
+        "overlapping-transform": 'int main() { mut std::vector<int> x = {1}; std::transform(x, x, [](int& n) -> int { return n + 1; }); return 0; }',
+        "readonly-transform": 'int main() { std::vector<int> x = {1}; std::vector<int> y = {0}; std::transform(x, y, [](int& n) -> int { return n; }); return 0; }',
+        "wrong-transform-result": 'int main() { std::vector<int> x = {1}; mut std::vector<int> y = {0}; std::transform(x, y, [](int& n) -> double { return double(n); }); return 0; }',
         "wrong-element": 'int main() { std::list<int> x = {1}; double key = 1.0; return std::contains(x, key) ? 1 : 0; }',
         "bad-predicate": 'int main() { mut std::vector<int> x = {1}; int value = 2; std::replace_if(x, [](int& n) -> int { return n; }, value); return 0; }',
         "readonly-output": 'int main() { std::vector<int> x = {1}; std::vector<int> y = {0}; std::copy_n(x.begin(), std::size_t(1), y.begin()); return 0; }',

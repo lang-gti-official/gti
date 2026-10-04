@@ -14,6 +14,17 @@ through `count()`. This first slice does not implement C++ ratio-based duration
 templates, implicit unit conversions, floating durations, or duration
 arithmetic operators.
 
+Both nanosecond constructors and `count()` are `constexpr`. Construction and
+pure observation of steady/system time points, including their comparisons,
+Unix seconds and fractional decomposition, are also eligible for the existing
+passive-record constant evaluator. Semantics stages and executes canonical MIR;
+native C++ constant evaluation does not decide validity. The shared step/depth
+limits still apply. When observing a duration returned from
+`time_since_origin()` in a constant function, bind it to a local before calling
+`count()`; direct temporary-receiver composition remains outside the current
+staging profile. Clock reads and recoverable `elapsed_since` operations remain
+runtime-only. See [the frame-budget example](../../examples/102-constexpr-frame-budget.gti).
+
 The representable interval is exactly the `int64_t` nanosecond range. Operations
 that could exceed it return `clock_errc::out_of_range`; they do not wrap and do
 not use host C++ overflow behavior.

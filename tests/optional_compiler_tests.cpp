@@ -824,10 +824,73 @@ int main() {
   }
 }
 
+void testValueOrContract() {
+  const std::string source = R"(
+#include <std/optional>
+struct Resource {
+  Resource() {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+};
+int main() {
+  std::optional<Resource> value{};
+  auto result = value.value_or(Resource());
+  return 0;
+}
+)";
+  const auto invalid = lang::Frontend().analyze("optional-value-or.gti", source,
+                                                {standardLibraryPrelude()}, {},
+                                                {standardLibraryRoot()});
+  const auto *diagnostic =
+      findDiagnosticByCode(invalid.diagnostics, "GTI-S2029");
+  const auto call = source.find("));") + 1;
+  expect(!invalid.canGenerateCode() && diagnostic != nullptr &&
+             diagnostic->primary.source.ends_with("optional-value-or.gti") &&
+             diagnostic->primary.start == call &&
+             diagnostic->primary.end == call + 1 &&
+             diagnostic->message.find("std::copy_constructible") !=
+                 std::string::npos &&
+             diagnostic->fixes.empty() &&
+             hasRelatedDiagnostic(
+                 invalid.diagnostics,
+                 "Required application 'std::copy_constructible<Resource>'") &&
+             hasDiagnosticHint(invalid.diagnostics,
+                               "copy assignment is not required"),
+         "value_or diagnoses its source API contract at the call, with the "
+         "copy-construction requirement and no misleading fix");
+
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/optional_value_or_contract.gti";
+  std::ifstream input(path);
+  expect(input.good(), "optional API contract fixture exists");
+  const std::string fixture{std::istreambuf_iterator<char>(input),
+                            std::istreambuf_iterator<char>()};
+  const auto valid = lang::Frontend().analyze(
+      "optional-value-or-valid.gti", fixture, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "value_or permits a copyable user payload and leaves "
+         "move-only optional's other members usable");
+  bool recordChecked = false;
+  for (const auto &instance : valid.mir.classInstances()) {
+    const auto hir = std::find_if(
+        valid.hir.classInstances().begin(), valid.hir.classInstances().end(),
+        [&](const auto &item) { return item.id == instance.id; });
+    if (hir != valid.hir.classInstances().end() && hir->source &&
+        hir->source->name().lexeme == "Record") {
+      recordChecked = true;
+      expect(instance.copyConstructor == lang::SpecialMemberStatus::Generated,
+             "the positive payload retains generated copy construction");
+    }
+  }
+  expect(recordChecked, "the positive record is retained in concrete MIR");
+}
+
 } // namespace
 
 int main() {
   testOptionalCompilerContract();
+  testValueOrContract();
   testOptionalResetCleanup();
   testNestedOptionalConstruction();
   testStoragePayloadAdmission();

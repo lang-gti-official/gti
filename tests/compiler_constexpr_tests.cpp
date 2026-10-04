@@ -2414,6 +2414,51 @@ void testConstexprReadOnlyReferences() {
 }
 
 void testConstexprLibrary() {
+  const auto chronoPath = std::filesystem::path(__FILE__).parent_path() /
+                          "fixtures/constexpr_chrono.gti";
+  std::ifstream chronoInput(chronoPath);
+  const std::string chronoSource((std::istreambuf_iterator<char>(chronoInput)),
+                                 std::istreambuf_iterator<char>());
+  lang::FrontendWorkMetrics chronoMetrics;
+  const auto chrono =
+      lang::Frontend({.workMetrics = &chronoMetrics})
+          .analyze(chronoPath, chronoSource, {standardLibraryPrelude()}, {},
+                   {standardLibraryRoot()});
+  if (!chrono.canGenerateCode() || chronoMetrics.constexprMirExecutions != 12) {
+    std::cerr << "Chrono MIR executions: "
+              << chronoMetrics.constexprMirExecutions << '\n';
+    for (const auto &diagnostic : chrono.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+  }
+  expect(!chronoSource.empty() && chrono.canGenerateCode() &&
+             chronoMetrics.constexprMirExecutions == 12 &&
+             lang::verifyMirProgram(chrono.mir).valid(),
+         "chrono constants, signed boundary decomposition and exact distinct "
+         "time-point observers execute staged MIR, not native constexpr");
+  for (const std::string &source :
+       {"constexpr auto value = std::chrono::system_clock::now();",
+        "constexpr int budget() { mut int total = 0; "
+        "for (mut int i = 0; i < 5000; i++) { "
+        "std::chrono::nanoseconds n{int64_t(i)}; total += int(n.count()); } "
+        "return total; } constexpr int value = budget();",
+        "constexpr int depth(int i) { std::chrono::nanoseconds n{int64_t(i)}; "
+        "if (n.count() == int64_t(0)) { return 0; } return depth(i - 1); } "
+        "constexpr int value = depth(100);"}) {
+    const auto invalid = lang::Frontend().analyze(
+        "constexpr-chrono-invalid.gti", "#include <std/chrono>\n" + source,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!invalid.canGenerateCode() &&
+               hasDiagnosticCode(invalid.diagnostics, "GTI-S2057"),
+           "chrono adoption preserves runtime-only clocks and shared constant "
+           "evaluation resource/depth limits: " +
+               source);
+    if (source.find("budget()") != std::string::npos)
+      expect(hasDiagnostic(invalid.diagnostics, "execution-step limit"),
+             "the chrono loop really reaches the shared MIR step limit");
+    if (source.find("depth(100)") != std::string::npos)
+      expect(hasDiagnostic(invalid.diagnostics, "call depth exceeded"),
+             "the chrono recursion really reaches the shared call-depth limit");
+  }
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/constexpr_library_positive.gti";
   std::ifstream input(fixture);

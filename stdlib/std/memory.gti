@@ -437,12 +437,7 @@ public:
 expected<arena<T>, alloc_errc>
 try_make_arena<std::movable T>(size_t capacity) {
   allocator source = allocator();
-  mut expected<storage<T>, alloc_errc> allocated =
-      source.try_storage<T>(capacity);
-  if (!allocated) {
-    return unexpected(allocated.error());
-  }
-  mut storage<T> backing = std::move(allocated).value();
+  mut storage<T> backing = ?source.try_storage<T>(capacity);
   gti_internal::empty_storage_adoption token =
       gti_internal::empty_storage_adoption::trusted;
   mut arena<T> result = arena<T>(std::move(token), std::move(backing));
@@ -453,12 +448,7 @@ try_make_arena<std::movable T>(size_t capacity) {
 expected<pool<T>, alloc_errc>
 try_make_pool<std::movable T>(size_t capacity) {
   allocator source = allocator();
-  mut expected<storage<T>, alloc_errc> allocated =
-      source.try_storage<T>(capacity);
-  if (!allocated) {
-    return unexpected(allocated.error());
-  }
-  mut storage<T> backing = std::move(allocated).value();
+  mut storage<T> backing = ?source.try_storage<T>(capacity);
   gti_internal::empty_storage_adoption token =
       gti_internal::empty_storage_adoption::trusted;
   mut pool<T> result = pool<T>(std::move(token), std::move(backing));

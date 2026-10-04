@@ -28,6 +28,22 @@ int main() {
         "read-only-mutation": '''
   base /= "api";
 ''',
+        "component-view-owner-mutation": '''
+  mut auto mutable_url = base.clone();
+  auto host = mutable_url.host();
+  mutable_url.push_path_segment("api");
+  std::println(host);
+''',
+        "component-view-owner-consumption": '''
+  auto scheme = base.scheme();
+  auto moved = std::move(base);
+  std::println(scheme);
+''',
+        "temporary-owner-view": '''
+  auto dangling = std::http::url::parse("https://example.com")
+      .expect("valid fixture URL").view();
+  std::println(dangling);
+''',
     }
     with tempfile.TemporaryDirectory(prefix="gti-url-operators-") as temporary:
         for name, body in cases.items():

@@ -2,12 +2,12 @@
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
     "stdlib/prelude.gti": "96bc29566eee732519bc1191560c6c8ab2ac0758bf25206b4029848c82c48efb",
-    "stdlib/std/algorithm.gti": "9af861e6832ca068e28076d3556258a695b8c6c8f2940f904a4da61163d7b657",
+    "stdlib/std/algorithm.gti": "e4545de11a8ad92f45e53f7b313b8a068fa66991c3d769cc64d70c3f08216ca8",
     "stdlib/std/array.gti": "93925b89feef1498cb17f5c952e1c3aaeaa6b8657be6a03e1e1bfd1434c61f2a",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
     "stdlib/std/charconv.gti": "925dbda69d2eacd4d70525cae5261c46174660e4245eb5a2489e45a7e5af5809",
-    "stdlib/std/chrono.gti": "49cbaca555eed6f825680a28366c3528f39cfdfc9a39f4c60e5b154b9cb88309",
+    "stdlib/std/chrono.gti": "cd8448851fa4e487b0c62c0db24d429d31d195863bc74a1290839c484470c75a",
     "stdlib/std/cmath.gti": "ce64a3e07f35f48079a95b6784d4e5aa11c7829691f6436d18a3932319e2773d",
     "stdlib/std/cstdio.gti": "4fdc4c99e067c1870d6dadd7b3dc14f8ae8ad817abdd082d2e54c583754ea13d",
     "stdlib/std/cthread.gti": "4b583b04dd052f5f05d0af2444718360eb12c2da546d4c6f1eddc05a39e8858f",
@@ -18,15 +18,15 @@
     "stdlib/std/format.gti": "260feb05085a38e6097831d034afd96084c6ff601bbe9a21ffa2bbb3d54c9228",
     "stdlib/std/forward_list.gti": "2152aab44209cfa14a3b1709f6250c3ef85db78e1e665d5bc8299f3cb353a4bf",
     "stdlib/std/functional.gti": "2fa13a7b511a42cb3cd87d6ca1a6550e77c77109320b5457f5292bb3e5333540",
-    "stdlib/std/http.gti": "3a99fd4a109627769f86d89b16348dbd25431960163e7b9aa016ce72c127954d",
+    "stdlib/std/http.gti": "f0064d96b5f74a391dd41e009be1fe76bea7e358067b5ebaad37b74cfceeff44",
     "stdlib/std/iterator.gti": "2c67bfceaaaa2c79ce474434d5e9962ce15bd08127ce175c97efe8b05ebcd1f1",
-    "stdlib/std/json.gti": "c73b68761f0194bd11596403c3ef70f56f2d5db8be6e311fb98ba23c79f6239a",
+    "stdlib/std/json.gti": "3de0a06f6b25109551714c74f21f62fe9421f97e520efd73a428178dc8af21f9",
     "stdlib/std/list.gti": "f208f55111c02facf979574b9eceab97ab9676bb91cb8e52ff5a27ee09ca8244",
     "stdlib/std/map.gti": "39a314ff20943e99786f0165a77baca5d9276a73c6b31d253d8a5967647d706b",
-    "stdlib/std/memory.gti": "202d23c12c1eef2c2fa743a47dff76f4eb315efabd7fab6c261dfe6ece2a200c",
+    "stdlib/std/memory.gti": "2b6874edf04c2f9a167f6ac2d42959d2f2fce71394617757bc9dd45156b3cdce",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2fe329a8585d1eee0a1be02f42b9cb6d388c80e898a3f58d34e9de12989388fb",
-    "stdlib/std/optional.gti": "3b7739f20a768cc511326382ec675bb0bd098d8852a50141c040aadf3879f5be",
+    "stdlib/std/optional.gti": "0e4556056be7121c4abd6ed1a416c259b7a210f9e46cbbec12620c084405fae9",
     "stdlib/std/paired_span.gti": "3657f5994dd7880c8de9796e1c6c08bba5f507b492406eb685d529c1c6b0e3ae",
     "stdlib/std/panic.gti": "37db8f4dc0a6cefb0f6959030cdd601a151a84dcb684e861cec34af4a20da5ae",
     "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
@@ -63,6 +63,20 @@
       "id": "algorithm-mutation",
       "mode": "run",
       "source": "tests/fixtures/algorithm_mutation.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "algorithm-owned-example",
+      "mode": "run",
+      "source": "examples/101-owned-algorithm-results.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "terrain.compiled\nplayer.compiled\n8\n3\n3\n1\n", "stderr": ""}
+    },
+    {
+      "id": "algorithm-owned-transform",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_transform_owned.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -335,6 +349,13 @@
         "stdout": "",
         "stderr": ""
       }
+    },
+    {
+      "id": "constexpr-chrono",
+      "mode": "run",
+      "source": "tests/fixtures/constexpr_chrono.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
       "id": "constexpr-library",
@@ -668,6 +689,20 @@
       "id": "optional-nested",
       "mode": "run",
       "source": "tests/fixtures/optional_nested.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "optional-value-or-contract",
+      "mode": "run",
+      "source": "tests/fixtures/optional_value_or_contract.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "owned-error-pipelines",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_owned_error_pipelines.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -1071,7 +1106,7 @@
         "std::transform",
         "std::upper_bound"
       ],
-      "case_ids": ["algorithm", "algorithm-boundaries", "algorithm-mutation", "algorithm-search", "algorithm-user-types", "constexpr-library"],
+      "case_ids": ["algorithm", "algorithm-boundaries", "algorithm-mutation", "algorithm-search", "algorithm-user-types", "constexpr-library", "algorithm-owned-transform", "algorithm-owned-example"],
       "required_instantiations": ["audit_iterator/audit_iterator/int32_t predicates and exact value", "move-only iterator/distinct sentinel/int32_t", "std::vector<int32_t>::iterator/sentinel/int32_t", "read- and mut-callable for_each clients", "application-defined and fixed-array predicate/operation/mutable complete-range clients"],
       "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "tests/fixtures/generic_algorithm_find_count.gti", "tests/fixtures/generic_algorithm_for_each.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_algorithm_cluster_test.py", "tests/generic_callable_concepts_runtime_test.py", "tests/generic_algorithm_breadth_test.py", "tests/generic_algorithm_errors_test.py", "stdlib/std/algorithm.gti"]
     },
@@ -1214,7 +1249,7 @@
         "std::chrono::system_time_point::system_time_point",
         "std::chrono::system_time_point::unix_seconds"
       ],
-      "case_ids": ["chrono"],
+      "case_ids": ["chrono", "constexpr-chrono", "owned-error-pipelines"],
       "required_instantiations": [
         "int64 minimum/maximum elapsed subtraction",
         "negative Unix nanosecond decomposition",
@@ -1673,7 +1708,7 @@
       "source": "stdlib/std/json.gti",
       "status": "executable",
       "operations": ["std::json public surface"],
-      "case_ids": ["json", "json-codec", "json-owning-error-backend"],
+      "case_ids": ["json", "json-codec", "json-owning-error-backend", "owned-error-pipelines"],
       "required_instantiations": [],
       "evidence": [
         "docs/language/json.md",
@@ -1835,7 +1870,7 @@
         "std::try_make_arena<T>",
         "std::try_make_pool<T>"
       ],
-      "case_ids": ["allocator-storage", "arena-pool", "structural-relocation"],
+      "case_ids": ["allocator-storage", "arena-pool", "structural-relocation", "owned-error-pipelines"],
       "required_instantiations": [
         "std::alignment(64)",
         "std::arena<int32_t>",
@@ -1967,7 +2002,7 @@
       "source": "stdlib/std/optional.gti",
       "status": "executable",
       "operations": ["std::optional::clone", "std::optional::emplace", "std::optional::has_value", "std::optional::operator bool", "std::optional::operator*", "std::optional::operator->", "std::optional::optional", "std::optional::reset", "std::optional::value", "std::optional::value_or"],
-      "case_ids": ["optional", "optional-clone", "optional-nested", "optional-expected-composition", "vector-construction-only"],
+      "case_ids": ["optional", "optional-clone", "optional-nested", "optional-expected-composition", "vector-construction-only", "optional-value-or-contract"],
       "required_instantiations": ["std::optional<int32_t>", "std::optional<move_only>", "std::optional<std::optional<std::string>>"],
       "evidence": ["tests/fixtures/optional_lifecycle.gti", "tests/fixtures/optional_value.gti", "tests/fixtures/optional_clone.gti", "tests/fixtures/optional_nested.gti", "tests/fixtures/optional_expected_composition.gti", "tests/fixtures/expected_constructor_payload.gti", "tests/fixtures/optional_constructor_failure.gti", "tests/fixtures/optional_reset_failure.gti", "tests/constructor_field_publication_test.py", "tests/optional_compiler_tests.cpp", "tests/optional_runtime_test.py", "stdlib/std/optional.gti"]
     },

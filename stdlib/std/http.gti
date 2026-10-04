@@ -589,10 +589,7 @@ namespace std {
     /// spelling; builder inputs are encoded as individual path/query components.
     class url {
       mut std::string scheme_text;
-      mut std::string host_text; // Direct storage preserves receiver-tied views until compiler issue #13 can
-      // recognize std::string::view() relayed through a field of `this`.
-      mut gti_internal::prefix_storage<char> scheme_view_data;
-      mut gti_internal::prefix_storage<char> host_view_data;
+      mut std::string host_text;
       bool explicit_port;
       uint16_t port_number;
       mut std::string port_text;
@@ -600,39 +597,14 @@ namespace std {
       mut bool query_present;
       mut std::string query_text;
       mut std::string rendered_text;
-      mut gti_internal::prefix_storage<char> rendered_view_data;
 
-      // These construction bridges are implementation-only despite their access:
-      // the gti_internal parameters are outside the supported application API.
-      // Compiler issue #12 tracks restoring private failure-aware construction.
-    public:
-      url(string_view source, gti_internal::http_detail::url_analysis& parts) : scheme_text(gti_internal::http_detail::url_scheme_text(parts.secure())), host_text(gti_internal::http_detail::copy_text_range(source, parts.host_start(), parts.host_finish())), scheme_view_data(gti_internal::allocate_prefix_storage<char>(uint64_t(0))), host_view_data(gti_internal::allocate_prefix_storage<char>(uint64_t(0))), explicit_port(parts.has_port()), port_number(parts.port()), port_text(gti_internal::http_detail::url_port_text(source, parts)), path_text(gti_internal::http_detail::copy_text_range(source, parts.authority_finish(), parts.query_at())), query_present(parts.has_query()), query_text(gti_internal::http_detail::url_query_text(source, parts)), rendered_text(std::string()), rendered_view_data(gti_internal::allocate_prefix_storage<char>(uint64_t(0))) {
-        mut gti_internal::prefix_storage<char> next_scheme = gti_internal::allocate_prefix_storage<char>(this.scheme_text.size());
-        for (mut size_t index = size_t(0); index < this.scheme_text.size(); index++) {
-          gti_internal::prefix_storage_append(next_scheme, this.scheme_text[index]);
-        }
-        this.scheme_view_data = std::move(next_scheme);
-
-        mut gti_internal::prefix_storage<char> next_host = gti_internal::allocate_prefix_storage<char>(this.host_text.size());
-        for (mut size_t index = size_t(0); index < this.host_text.size(); index++) {
-          gti_internal::prefix_storage_append(next_host, this.host_text[index]);
-        }
-        this.host_view_data = std::move(next_host);
+      // Only the checked factories and explicit clone may construct the
+      // component state directly.
+      url(string_view source, gti_internal::http_detail::url_analysis& parts) : scheme_text(gti_internal::http_detail::url_scheme_text(parts.secure())), host_text(gti_internal::http_detail::copy_text_range(source, parts.host_start(), parts.host_finish())), explicit_port(parts.has_port()), port_number(parts.port()), port_text(gti_internal::http_detail::url_port_text(source, parts)), path_text(gti_internal::http_detail::copy_text_range(source, parts.authority_finish(), parts.query_at())), query_present(parts.has_query()), query_text(gti_internal::http_detail::url_query_text(source, parts)), rendered_text(std::string()) {
         this.rebuild();
       }
 
-      url(url& other, gti_internal::http_detail::url_clone_tag tag) : scheme_text(other.scheme_text.clone()), host_text(other.host_text.clone()), scheme_view_data(gti_internal::allocate_prefix_storage<char>(uint64_t(0))), host_view_data(gti_internal::allocate_prefix_storage<char>(uint64_t(0))), explicit_port(other.explicit_port), port_number(other.port_number), port_text(other.port_text.clone()), path_text(other.path_text.clone()), query_present(other.query_present), query_text(other.query_text.clone()), rendered_text(std::string()), rendered_view_data(gti_internal::allocate_prefix_storage<char>(uint64_t(0))) {
-        mut gti_internal::prefix_storage<char> next_scheme = gti_internal::allocate_prefix_storage<char>(this.scheme_text.size());
-        for (mut size_t index = size_t(0); index < this.scheme_text.size(); index++) {
-          gti_internal::prefix_storage_append(next_scheme, this.scheme_text[index]);
-        }
-        this.scheme_view_data = std::move(next_scheme);
-
-        mut gti_internal::prefix_storage<char> next_host = gti_internal::allocate_prefix_storage<char>(this.host_text.size());
-        for (mut size_t index = size_t(0); index < this.host_text.size(); index++) {
-          gti_internal::prefix_storage_append(next_host, this.host_text[index]);
-        }
-        this.host_view_data = std::move(next_host);
+      url(url& other, gti_internal::http_detail::url_clone_tag tag) : scheme_text(other.scheme_text.clone()), host_text(other.host_text.clone()), explicit_port(other.explicit_port), port_number(other.port_number), port_text(other.port_text.clone()), path_text(other.path_text.clone()), query_present(other.query_present), query_text(other.query_text.clone()), rendered_text(std::string()) {
         this.rebuild();
       }
 
@@ -654,11 +626,6 @@ namespace std {
         }
         this.rendered_text.swap(replacement);
 
-        mut gti_internal::prefix_storage<char> next_rendered = gti_internal::allocate_prefix_storage<char>(this.rendered_text.size());
-        for (mut size_t index = size_t(0); index < this.rendered_text.size(); index++) {
-          gti_internal::prefix_storage_append(next_rendered, this.rendered_text[index]);
-        }
-        this.rendered_view_data = std::move(next_rendered);
       }
 
     public:
@@ -735,11 +702,11 @@ namespace std {
       }
 
       string_view scheme() {
-        return gti_internal::prefix_storage_text_view(this.scheme_view_data);
+        return this.scheme_text.view();
       }
 
       string_view host() {
-        return gti_internal::prefix_storage_text_view(this.host_view_data);
+        return this.host_text.view();
       }
 
       bool has_explicit_port() {
@@ -825,7 +792,7 @@ namespace std {
       }
 
       string_view view() {
-        return gti_internal::prefix_storage_text_view(this.rendered_view_data);
+        return this.rendered_text.view();
       }
 
       std::string string() {

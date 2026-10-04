@@ -25,6 +25,663 @@ files under `docs/plans/`. The documents under
 [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
+## Stdlib Capability Adoption And Upgrade Campaign
+
+**Checkpoint: 2026-10-04, reviewed source baseline `c427474d` / 0.364.1.**
+Two independent source reviews compared the current compiler contracts with
+stdlib implementations. This section schedules implementation; it does not
+claim the proposed rewrites have been compiled, benchmarked, or released.
+Subsequent changes on `main` must be reconciled before executing a row.
+
+**Adoption delivery checkpoint: 0.367.0.** Rows 1–6 have been implemented and
+validated; row 9 was already delivered in 0.366.0. The other rows were checked
+against current source and focused optimized-compiler probes, rather than
+assumed blocked from the original review. Their remaining prerequisites below
+are real new capabilities or retained correctness defects, not source-only
+adoption work. See the [verification record](../architecture/verification.md#standard-library-adoption-campaign).
+
+**Outcome:** make the existing library use the language GTI now has, rather
+than preserve obsolete workarounds or grow new APIs around them. The named
+clients are a Tea-style HTTP/JSON command-line application and an asset/game
+workload with move-only resources, large sorted tables, and compile-time
+metadata. They are acceptance workloads, not nominal compiler exceptions.
+
+This is the current adoption schedule within this document's sole queue.
+Older Phase L checkpoints below retain historical evidence; this campaign
+does not restart completed facilities or supersede an explicitly active
+compiler campaign. Before expanding a stdlib family, check its row here and
+the canonical [library contract](../language/standard-library.md).
+
+### Reviewed Capability Map
+
+| Implemented facility and boundary | Library consequence | Adoption owner |
+| --- | --- | --- |
+| Owned Expected propagation, `expect`, `transform`, `and_then`, and `transform_error`; exact error identity and consuming receiver rules remain. Version 0.366.0 also supports checked read-only `expected<T&, E>` extraction through `?` and `expect`; borrowed combinators remain excluded. | Simplify owned fallible pipelines and checked borrowed lookups now. | `L-UP-01`, `L-UP-09`; [Expected](../language/expected.md). |
+| Explicit movement, bounded implicit return of an exact whole move-only local, generated lifecycle policy, and immediate borrowed-carrier receivers. None permits unrestricted consumption through references or dynamic indices. | Move owned mapper results now; do not infer that generic swap or move-only sorting is solved. | `L-UP-03`, `L-UP-07/08`; [ownership](../language/ownership-and-lifetimes.md). |
+| Nested owner-tied text relay, shared multi-origin carriers, checked exclusive access, storage shift/relocation, and source-defined explicit cloning. Multi-owner projections remain conservative. | Remove duplicate URL view backing; retain owner invalidation. Precise range projection and proxy iteration remain separate work. | `L-UP-02`, `L-UP-16`; [relay fixture](../../tests/fixtures/text_owner_relay.gti). |
+| Exact operation/comparator concepts, bounded ordinary-method requirements, exact class specialization, nullary read-member requirements, and attributable contract diagnostics. Argument-bearing/static member queries, pack constraints, and conditional operators are not implemented. | Improve ordinary API constraints now; custom formatting and conditional indexing require general compiler extensions. | `L-UP-04`, `L-UP-13/15`; [concepts](../language/concepts.md). |
+| Constructor-local type packs and final-field construction have positive immovable-node evidence. Borrowed argument forwarding still has a recorded backend composition blocker. Optional publication currently transfers a completed payload. | Finish that correctness slice, then adopt node emplacement. Direct inline emplacement is not a forwarding-only rewrite. | `L-UP-10/11/12`; [existing emplacement checkpoint](#active-request-complete-the-existing-standard-library). |
+| Staged verified-MIR constant evaluation supports passive records, constructors, read-only methods, fixed arrays and literal-backed text. Allocation, owning aggregates, general Expected/payload execution, packs and mutable receivers are outside the completed profile; the older bounded checked-integer constant-result family already exists. | Add eligible pure chrono observers now. Automatic literal-format checking still needs a general call-site contract. | `L-UP-06/14`; [`L-CONST-01`](#l-const-01-remaining-bounded-compile-time-programming). |
+| Exact function items, source-defined owning callable erasure, modules, panic/caller tracking, managed threads, atomic order tags and mutex guards are implemented within documented bounds. | Do not schedule these as absent. Measure callback erasure costs; preserve host error and concurrency policies. Modules do not require a global include-to-import rewrite. | [callable checkpoint](#l-call-02-source-defined-owning-function-wrappers), [concurrency](../language/concurrency.md), [module contract](../language/programs-and-targets.md). |
+| Typed feature-interaction generation, differential configurations, metamorphic renaming and bounded reduction are available. | Add composition cases for each adoption; single-feature tests alone do not close a row. | [verification](../architecture/verification.md#failure-capture-and-opt-in-fuzzing). |
+
+AVL `map`, bucketed `unordered_map`, explicit vector/optional cloning, payload
+enums, JSON codecs, HTTP URLs, clocks, processes and recoverable file operations
+already exist. Their limitations must be reviewed against source, not inferred
+from an old audit's absence list. In particular, do not reintroduce withdrawn
+custom copy/move constructor bodies, make optional implicitly allocating or
+copyable, or resume deferred C-style thread completion in this campaign.
+
+### Execution Order And Readiness
+
+**Ready / adoption** means the enabling general contract is implemented and
+the rewrite is a source-inspection-supported candidate; it still needs its own
+composition and runtime evidence. **Ready / new capability** means no earlier
+row is required: adopt the bounded contract and implement its first client in
+the same vertical slice. It does not mean the missing capability exists.
+**Blocked** rows cannot be marked complete by a source-only workaround.
+
+| Order / ID | State | Hard prerequisite | User-facing result |
+| --- | --- | --- | --- |
+| 1 / `L-UP-01` | complete in 0.367.0 | current owned Expected contract | Shorter owned JSON/allocation/clock error pipelines without losing error context. |
+| 2 / `L-UP-02` | complete in 0.367.0 | current nested owner-view relay | URL component/rendered views without three duplicate backing buffers. |
+| 3 / `L-UP-03` | complete in 0.367.0 | current owned call results and writable replacement | `transform` accepts suitable move-only output elements instead of copying each result. |
+| 4 / `L-UP-04` | complete in 0.367.0 | current ordinary-method constraints and diagnostics | Invalid library calls fail at their API contract, starting with optional `value_or`. |
+| 5 / `L-UP-05` | complete in 0.367.0 | current comparator contract; copyable elements | Comparator sorting with bounded O(n log n) comparison growth. |
+| 6 / `L-UP-06` | complete in 0.367.0 | completed passive-record MIR constant profile | Compile-time duration/time-point constants and pure observers. |
+| 7 / `L-UP-07` | ready / new capability | current places, lifecycle and failure authority | Sound generic exchange/swap of eligible initialized writable places. |
+| 8 / `L-UP-08` | blocked | `L-UP-07`, checked disjoint indexed exchange | Array swap and move-only vector reverse/sort without cloning elements. |
+| 9 / `L-UP-09` | complete in 0.366.0 | current checked borrowed Expected and loan facts | Propagation/extraction of a checked borrowed success without a manual wrapper dance. |
+| 10 / `L-UP-10` | ready / correctness prerequisite | existing constructor-pack implementation and retained failure | Borrowed constructor-pack composition succeeds end to end. |
+| 11 / `L-UP-11` | blocked | `L-UP-10` | Node-container emplacement constructs immovable mapped values at their final address. |
+| 12 / `L-UP-12` | blocked | `L-UP-10`; selected-constructor/final-slot initialization contract | Direct sparse/inline emplacement for currently eligible payloads, without an intermediate T temporary/move. |
+| 13 / `L-UP-13` | ready / new capability | current exact concepts and diagnostic facts | Public user-defined formatter protocol and compile-time unsupported-type diagnostics. |
+| 14 / `L-UP-14` | ready / new capability, staged | current literal-text/passive-record MIR constant profile; shared validator before call-site admission | Bad literal format strings fail before execution; dynamic strings stay recoverable. |
+| 15 / `L-UP-15` | ready / new capability | current validity-only requirements and operator selection | Conditionally available map indexing without imposing default construction on every mapped type. |
+| 16 / `L-UP-16` | ready / new capability | current multi-origin shared-carrier facts | Precisely projected read-only views retain only their actual owner dependencies. |
+| 17 / `L-UP-17` | ready / new capability | typed allocation status, lifecycle rollback and exact owner publication | Recoverable unique-owner allocation rather than terminal allocation failure only. |
+| 18 / `L-UP-18` | blocked | `L-UP-12`; separate storage-element and generated-wrapper lifecycle eligibility proofs | Address-stable immovable storage and a deliberately bounded immovable inline optional. |
+
+The order is priority, not an artificial dependency chain. Rows 1–6 can land
+independently; do not wait for exchange to repair sort complexity or for a new
+borrow engine to remove URL copies. Complete one coherent row, update its
+state/evidence here, then choose the earliest unfinished eligible row.
+`L-UP-10` is a nearest prerequisite for a named library outcome, not a new
+general infrastructure campaign. If another agent owns that compiler boundary,
+coordinate integration and select an independent adoption row.
+
+### L-UP-01: Adopt Owned Error-Pipeline Helpers
+
+- **Implementation (2026-10-04):** JSON string insertion, recursive parser
+  propagation and codec document loading now use exact-error `?`. Typed getter
+  and array-codec error branches that prepend JSON Pointer context remain
+  explicit. Arena/pool allocation factories propagate the same `alloc_errc`;
+  elapsed subtraction maps arithmetic errors to `clock_errc` through a typed
+  `transform_error` mapper. No recoverable operation becomes terminal.
+  Adoption exposed a general backend admission defect: a void-success
+  `ExpectedValue` observer was not counted alongside `ExpectedError` for an
+  owning error shell. Admission now retains both existing verified MIR arms;
+  the unrelated `Value`/`Error` loop fixture covers success, recoverable error,
+  terminal failure and exact cleanup, with a forged-result verifier mutation.
+  Example 100 demonstrates an owning application error and a JSON pipeline.
+  Focused JSON, arena/pool, propagation, owning mapper and backend tests pass;
+  the new adoption matrix covers C++20/C++23 O0/O3, no-elide and ASan/UBSan.
+  Installed-consumer, census and broad campaign verification pass.
+- **Original client/evidence:** JSON text insertion, arena/pool factories, and
+  elapsed clock conversion contained check-then-move code in
+  [`json.gti`](../../stdlib/std/json.gti),
+  [`memory.gti`](../../stdlib/std/memory.gti), and
+  [`chrono.gti`](../../stdlib/std/chrono.gti).
+- **Steps:** inventory these bounded paths; use `?` for exact same-error
+  extraction and `transform_error` with an eligible typed mapper where a
+  deliberate category conversion already exists. Keep straightforward control
+  flow where mapping needs custom path/location context. Do not remove a move
+  into Expected merely because exact whole-local returns now move implicitly.
+- **Boundary:** parsing, I/O, HTTP, randomness, allocation and thread startup
+  remain recoverable. Plain formatting/stdout panic adoption is already done;
+  do not convert ordinary domain errors or bounds failures into generic panic.
+- **Exit:** original error categories and JSON paths/locations match; exact
+  once-only evaluation, success/error movement and reverse cleanup match for
+  owning errors, nested calls and terminal mapper failures. Include an unrelated
+  application error type and an installed fallible-pipeline example.
+
+### L-UP-02: Remove Obsolete URL View Storage
+
+- **Implementation (2026-10-04):** views borrow the existing owned strings;
+  all three mirror buffers and copy loops are removed. Ordinary private
+  factory/clone constructors now compile, so the former public bridges are
+  private. The view-mutation, consumption and temporary-escape negatives remain
+  rejected. The runtime allocation fixture measures parse/clone/append/chaining
+  with exact rendered-output checks under C++20/C++23 O0/O3, no-elide and
+  ASan/UBSan. The short URL has 32 bytes; the long URL has 4,116 bytes.
+
+  | Input / operation | Before allocations / bytes | After allocations / bytes |
+  | --- | --- | --- |
+  | short parse or clone | 12 / 192 | 9 / 141 |
+  | short append | 7 / 169 | 6 / 132 |
+  | short two-segment chain | 25 / 595 | 20 / 454 |
+  | long parse or clone | 10 / 12,403 | 7 / 8,268 |
+  | long append | 6 / 16,472 | 5 / 12,351 |
+  | long two-segment chain | 21 / 37,196 | 16 / 24,803 |
+
+  Source-derived eliminated mirror-byte appends (not total measured memory
+  traffic) are respectively 48/48/36/136 for short parse/clone/append/chain and
+  4,132/4,132/4,120/12,388 for long inputs. Allocation bytes include terminators.
+  Injected parse/clone/rebuild allocation failures preserve cleanup and leave
+  no audited allocation live. Installed-consumer and broad validation pass.
+  A separate implicit-field spelling defect remains: `return field.view()`
+  loses the receiver summary where `return this.field.view()` works. CLI and
+  LSP reproduce it alike; this adoption uses the correctly checked explicit
+  receiver and does not claim to repair implicit-receiver inference.
+- **Original client/evidence:** `url` kept strings plus `scheme_view_data`,
+  `host_view_data`, and `rendered_view_data` with byte-copy loops in
+  [`http.gti`](../../stdlib/std/http.gti). Its issue-#13 comment predates the
+  implemented [nested text relay](../../tests/fixtures/text_owner_relay.gti).
+- **Steps:** return views of the existing owned fields; remove only the three
+  mirrored buffers and their maintenance. Keep `string()`/`clone()` ownership,
+  URL parsing, encoding, chaining and rendering contracts unchanged. Audit the
+  separate issue-#12 public construction-bridge workaround with a focused
+  private-factory probe; a remaining construction defect is not permission to
+  infer that visibility can already be tightened.
+- **Boundary:** preserve receiver-origin and full-owner invalidation. No
+  unchecked pointer view, temporary-owner escape, independently mutable
+  backing, or URL-name compiler exception. If this exact composition fails,
+  minimize the general field-origin/lowering defect before rewriting around it.
+- **Exit:** parse/clone/append/render output equivalence, embedded-byte policy,
+  view lifetime negatives and failure cleanup. Record allocation and copied-byte
+  counts before/after, including long URLs; latency is supporting evidence, not
+  an assumed speedup. Private bridge cleanup is a separately evidenced substep.
+
+### L-UP-03: Move Owned Transformation Results
+
+- **Implementation (2026-10-04):** `transform` explicitly moves its owned
+  mapper result into the destination and requires `movable<T>`. User resource
+  and string fixtures prove unchanged source values, zero clones and exact
+  replacement drops. Failure fixtures cover mapper failure, replaced-element
+  destructor failure and undersized destination cleanup across standards,
+  optimization, no-elide and sanitizers; overlap, read-only output and wrong
+  result types remain frontend errors. Example 101 is the asset-build client.
+  Broad campaign integration and the installed client pass.
+- **Original client/evidence:** [`algorithm.gti`](../../stdlib/std/algorithm.gti)
+  constructed an owned `produced` then copied it into `destination[index]`;
+  `transform` consequently required `copyable<T>`.
+- **Steps:** move that owned local into the destination and express only the
+  actual construction/assignment requirements. Prove the rule with a
+  user-defined move-only resource and mapper, then owning strings.
+- **Boundary:** source access remains read-only; this does not move from a
+  dynamic indexed element or broaden the existing same-element-type API.
+  Same-owner source/destination conflict and
+  undersized-destination behavior remain checked.
+- **Exit:** correct output, zero accidental clones, exact replacement drops,
+  mapper and old-element destructor failure cleanup, and invalid overlap
+  rejection. Do not loosen the concept unless the implementation proves it.
+
+### L-UP-04: Make Existing Method Contracts Explicit
+
+- **Implementation (2026-10-04):** `value_or` declares
+  `requires std::copy_constructible<T>`. Positive user-record and move-only
+  optional-other-member fixtures pass the native matrix. The existing
+  `GTI-S2029` facts locate failure at the call, retain the concrete required
+  application and library declaration, and explain that assignment is not
+  required. Frontend/LSP tests cover the same spans and facts, UTF-16, absence
+  of an unsafe fix, incomplete member completion and correction. No new
+  compiler diagnostic or editor syntax is needed. The ordinary-method audit
+  found cloning, container resize/fill, callable copy-erasure construction and
+  replacement, ordering/equality clients and map policy construction already
+  constrained. Pack emplacement and conditional operators remain separate
+  rows, not additional `value_or` exceptions. Broad integration passes.
+- **Original client/evidence:** [`optional.gti`](../../stdlib/std/optional.gti)
+  documented the copy requirement of `value_or`, but let a failed copy surface
+  from inside its body. Current requirements and `GTI-S2029` already explain
+  attributable source contracts.
+- **Steps:** start with the actual copy-construction requirement on `value_or`,
+  not unnecessary copy assignment. Audit ordinary methods in existing value,
+  container and callable APIs for similarly unstated expressible requirements;
+  split any independent family into a bounded follow-up rather than inventing
+  missing parameter-pack or arbitrary expression predicates.
+- **Boundary:** move-only optional remains usable through its other methods.
+  Explicit clone/reset/emplace policy is unchanged. Do not synthesize custom
+  lifecycle bodies or schedule implicit optional copying as a diagnostics fix.
+- **Exit:** positive copyable and negative move-only user types; primary error
+  at the attributable argument/call with related contract declaration; identical
+  structured CLI/LSP facts and completion continuing on erroneous source.
+
+### L-UP-05: Remove Comparator Sort's Quadratic Workaround
+
+- **Implementation (2026-10-04):** iterative source-defined heapsort retains
+  one mutable owning comparator, checked element access and copyable elements.
+  Neither whole-vector sort had a documented stability guarantee; their
+  instability is now explicit. Stable list sorts are unchanged. A frequency
+  oracle verifies the permutation independently from ordering for empty,
+  singleton, reverse, sorted, equal, organ-pipe, nearly sorted and shuffled
+  inputs in both directions. Every case checks a `2*n*(ceil(log2(n))+1)`
+  comparison bound and zero allocations within the sort. Comparator state and
+  exactly-once cleanup survive normal completion, comparison failure and
+  destructor failure across both standards/optimizations, no-elide and
+  ASan/UBSan.
+  Reverse-input comparisons for n=128/256/512/1024 changed from
+  8,128/32,640/130,816/523,776 to 1,294/3,106/7,203/16,407. Source-level copies
+  and assignments are bounded per sift step, hence O(n log n), rather than
+  per inversion; these are not instrumented custom copy-constructor counts.
+  Matching pre/post O3 binaries of the 48-case oracle (before adding its
+  allocation/bound assertions), one warmup and nine interleaved runs on macOS
+  arm64, measured median process times 8.971ms/3.059ms, ranges
+  8.881–9.467ms/2.924–3.251ms, and executable sizes 509,920/512,064 bytes.
+  These short process-level timings are supporting evidence, not a general
+  application speedup claim. Separately, three current Release-compiler O3
+  measurements of the instrumented fixture during broad-test contention gave
+  medians 7.399s for C++ emission and 9.798s for the complete native build;
+  these include contention and are not an isolated compile-time comparison.
+  The source algorithm digest is
+  `e4545de11a8ad92f45e53f7b313b8a068fa66991c3d769cc64d70c3f08216ca8`
+  on base `4ea7d42e` plus this campaign's changes, with AppleClang 21 and LLVM
+  22.1.8. Broad campaign integration and the installed client pass.
+- **Original client/evidence:** comparator `sort` in
+  [`algorithm.gti`](../../stdlib/std/algorithm.gti) used insertion sort to
+  avoid recursive forwarding of an owned comparator.
+- **Steps:** freeze current ordering, stability promise and comparison/copy
+  counts. Implement iterative heapsort or bounded iterative introsort while
+  retaining one `mut Compare`. Keep the copyable-element boundary for this row;
+  no callable-reference feature or indexed movement is required. Preserve any
+  documented stability contract, or explicitly decide it before changing it.
+- **Boundary:** comparator signature, repeated mutable invocation, permutation,
+  borrow exclusivity and defined-failure behavior remain exact. Native C++ sort
+  must not become execution authority.
+- **Exit:** independent sorted/permutation oracle; empty, equal, reverse,
+  nearly sorted and adversarial inputs; owning comparator state and failure
+  cleanup. Comparison growth must establish O(n log n) scaling, with
+  allocations/copies and compiler/runtime cost recorded separately.
+
+### L-UP-06: Adopt Eligible Pure Constant Evaluation
+
+- **Implementation (2026-10-04):** duration/time-point constructors, read-only
+  comparison and Unix observers now use the existing `constexpr` profile.
+  The frontend fixture records exactly 12 staged MIR executions, covering
+  signed extrema, negative floor/remainder, constructor and receiver identity;
+  runtime results match in O0/O1/O3 and C++20/C++23. Host clock reads remain
+  rejected in constants; depth/step exhaustion remains `GTI-S2057`.
+  Example 102 composes frame budgets with passive asset metadata. Direct
+  observation of a returned duration temporary remains a staging limitation;
+  binding it to an ordinary local works without a new interpreter path.
+  Scalar numeric helpers, pair and fixed-array observers already have constexpr
+  adoption; allocation, checked-result elapsed subtraction and mutable
+  receivers have not been relabeled constexpr. Broad integration and the
+  installed frame-budget client pass.
+- **Original client/evidence:** passive duration/time-point constructors and
+  scalar observers in [`chrono.gti`](../../stdlib/std/chrono.gti) were not constexpr,
+  despite the implemented record/constructor/read-method constant profile.
+- **Steps:** begin with `nanoseconds` construction/count, then eligible pure
+  time-point construction, comparison and Unix decomposition. Build a small
+  compile-time frame-budget/asset-metadata example. Inventory other pure value
+  helpers only after this client passes; arrays, pair and numeric helpers
+  already have substantial constexpr adoption.
+- **Boundary:** clock reads, allocation, owning strings, checked-result
+  Expected execution and mutable receiver methods do not become constant
+  merely by adding a keyword. Follow [`L-CONST-01`](#l-const-01-remaining-bounded-compile-time-programming):
+  semantics decides eligibility and staged canonical MIR performs execution.
+- **Exit:** compile-time/runtime parity, signed boundaries, pre-epoch floor and
+  remainder cases, shared budget/depth failures, exact identities and proof that
+  tests exercised the MIR evaluator rather than native C++ constexpr behavior.
+
+### L-UP-07: General Restoring Exchange And Swap
+
+- **Adoption audit (2026-10-04):** still a new semantic capability, not a
+  stale library workaround. A current optimized-compiler probe over an
+  unrelated `exchange<T>(mut T&, T)` rejects `std::move(target)` with
+  `GTI-S2018` (cannot consume a reference). The public utility declarations
+  remain bodyless. Existing relocation does not establish restoration or
+  two-place disjointness, so row 8 is not newly unlocked.
+- **Client/evidence:** generic `swap`/`exchange` in
+  [`utility.gti`](../../stdlib/std/utility.gti) are declarations, not complete
+  implementations. Existing reborrows do not permit arbitrary consumption
+  through `mut T&`.
+- **General rule/steps:** represent a bounded exchange of an initialized
+  writable place with a prepared replacement. State origin, permitted access,
+  escape boundary, endpoint and transfer/drop identities. Stage replacement
+  before retiring old liveness; transfer the old value without destroying it;
+  publish the new live value only on success. Then define two-place swap,
+  including exact self/alias policy and required disjointness proof.
+- **Ownership:** semantics owns the protocol; HIR carries exact selected places
+  and construction; MIR verifies restoration and normal/failure obligations;
+  LoweredProgram preserves those facts. Backend casts or temporary reference
+  consumption cannot establish safety. Reuse existing owned transfer operations
+  where sufficient rather than creating a second lifecycle engine.
+- **Exit:** unrelated owning Resource plus passive values; aliases, overlapping
+  loans and forbidden escapes rejected; exact self behavior; construction,
+  movement and secondary cleanup failures. Independent verifier mutations must
+  reject missing restoration, forged identity and premature publication.
+
+### L-UP-08: Checked Indexed Exchange And Move-Only Algorithms
+
+- **Prerequisite/client:** `L-UP-07`; the bodyless
+  [`array::swap`](../../stdlib/std/array.gti) and copy-based vector
+  `reverse`/`sort` are the public clients.
+- **Steps:** establish a sealed exchange of two initialized checked indices,
+  validating both bounds before mutation and proving disjointness or exact
+  self-alias. Preserve the initialized-prefix invariant without an observable
+  hole. Adopt array swap, vector reverse, then sorting one substep at a time;
+  reuse `L-UP-05` where completed, but that source-only sort upgrade is not a
+  prerequisite for the exchange proof.
+- **Boundary:** structural eligibility and conservative owner loans remain;
+  this is not permission for arbitrary `std::move(values[i])`, iterator escape
+  or mutation while an element reference is live. Storage relocation alone
+  does not provide swapping semantics. Replace copied pivot/element staging,
+  not only assignments: move-only ordering inspects eligible read-only
+  references. Reuse the algorithmic structure of `L-UP-05`, not its copyable
+  implementation unchanged.
+- **Exit:** move-only resource/string arrays and vectors; exact moves/drops,
+  zero clones, alias/bounds/borrow negatives and failure cleanup at every
+  transfer stage. Sorting retains ordering/permutation and comparison evidence.
+
+### L-UP-09: Preserve Loans When Extracting Borrowed Results
+
+- **Completed before this campaign:** released as 0.366.0 in `77b83a8f`,
+  reconciled on main by `8b9252e3`. Prefix `?` and consuming `.expect` preserve
+  the external owner's read-only loan across carrier cleanup without moving
+  or copying the referent. Mutable successes, stored fallible carriers and
+  borrowed combinators remain outside the bounded contract. Example 99,
+  semantic/IR mutations, LSP tests and 42 runtime outcomes across seven native
+  configurations cover this slice; see the canonical Expected contract.
+  The original prerequisite description below records the design rationale,
+  not a remaining absence of these two extraction operations.
+- **Original client/evidence:** [Expected](../language/expected.md) admitted
+  checked read-only `expected<T&, E>`, but `?`/consuming helpers required owned
+  success alternatives. Borrowed lookup pipelines therefore retained manual
+  carrier checks and `.value()` extraction.
+- **General rule/steps:** select a bounded read-only success family with an
+  eligible owned error. Explicitly transfer the referent origin/path, complete
+  owner dependencies and loan endpoint across extraction and wrapper cleanup.
+  Start with prefix propagation; admit `expect` only when it preserves that
+  same rule. An unrelated user-defined checked lookup must prove the contract.
+- **Boundary:** never move the referent or leave a loan anchored only to a
+  consumed wrapper. Error propagation preserves exact E and cleanup; the error
+  branch cannot publish a success loan. Reference-producing transforms,
+  mutable results and wider borrowed-state alternatives need separate evidence.
+- **Exit:** safe owner-tied local/return composition, rejected local-owner and
+  temporary-owner escape, blocked owner move/mutation during the loan, once-only
+  cleanup and independently verified origin/endpoint transport. LSP must explain
+  an invalid lifetime rather than publish a backend internal error.
+
+### L-UP-10: Close Borrowed Constructor-Pack Staging
+
+- **Current-head check (2026-10-04):** the optimized 0.366.0 compiler still
+  rejects `forward_list_emplacement_borrowed.gti` during C++ emission of the
+  concrete `make_unique` body (`GTI-B0001`). The completed constructor-field
+  publication fix does not close this separate pack composition. Rows 11/12
+  are therefore not newly unlocked source-only adoptions.
+- **Client/evidence:** the retained
+  [`forward_list_emplacement_borrowed.gti`](../../tests/fixtures/forward_list_emplacement_borrowed.gti)
+  is recorded as failing constructor-field backend admission in the
+  [existing emplacement checkpoint](#active-request-complete-the-existing-standard-library).
+  Reproduce on current main first; that historical failure is not a fresh test.
+- **Steps:** reduce to an unrelated generic node constructor forwarding an
+  owned pack element into an exact read-only constructor argument. Repair only
+  the missing general selected-constructor/call-input representation. Carry
+  borrow roles, argument order, pack place identities and lifetime obligations
+  through HIR, verified MIR and lowered representation.
+- **Boundary:** no native variadic forwarding fallback, extra move, missing
+  owning-pack drop, or a forward-list-specific exemption. If already repaired,
+  close this row with current passing evidence and reuse it in the next row.
+- **Exit:** retained fixture enters the passing runtime matrix; empty/mixed/
+  repeated pack forwarding, immovable final fields, later-argument/constructor/
+  destructor failures and forged borrow/move/order identities all have coverage.
+
+### L-UP-11: Adopt Node-Container Direct Emplacement
+
+- **Prerequisite/client:** `L-UP-10`; `map`/`unordered_map` currently construct
+  a completed mapped value then move it through entry/node stages in
+  [`map.gti`](../../stdlib/std/map.gti) and
+  [`unordered_map.gti`](../../stdlib/std/unordered_map.gti).
+- **Steps:** reuse ordinary constructor-local packs and tagged in-place
+  final-field construction; remove the redundant V temporary in one container,
+  then the other. Preserve key ownership, comparator/hash exactness, stable
+  addresses and success-only node publication.
+- **Boundary:** duplicate `try_emplace` must not construct V, but invocation
+  arguments still evaluate eagerly. Do not promise lazy argument evaluation,
+  change copy/clone policy or redesign the container's representation.
+- **Exit:** immovable mapped Resource at a stable final address; owning keys,
+  borrowed constructor inputs, duplicate insertion and rehash/tree rotation;
+  allocation/constructor/cleanup failures. Count constructors, moves and
+  allocations, and prove no unpublished entry survives a failed insertion.
+
+### L-UP-12: True Sparse And Inline Emplacement
+
+- **Prerequisite/client:** `L-UP-10` plus a general final-slot protocol. Public
+  [`storage::construct`](../../stdlib/std/memory.gti) accepts a completed
+  payload; [`optional::emplace`](../../stdlib/std/optional.gti) deliberately
+  constructs a temporary before one-slot publication. The existing optional
+  capability rejects hidden constructor targets.
+- **Steps:** audit the selected-constructor path of private sparse storage;
+  expose a bounded source-policy emplacement using exact constructor identities
+  and verified argument stages. Then extend that same initialization/rollback
+  contract to an empty inline slot, eliminating intermediate movement for
+  currently eligible optional payloads. Do not make a variadic intrinsic
+  secretly execute a source constructor or invent another representation-specific
+  lifetime system.
+- **Boundary:** optional resets the old value before construction and remains
+  empty on failure; preserve its original failure record and partial-field
+  cleanup. Allocation, argument evaluation and construction are distinct
+  stages. Keep the present movable-element constraints in this first slice;
+  `L-UP-18` owns immovable storage/inline eligibility. Vector growth only admits
+  immovable elements if a separate relocation proof exists; inplace construction
+  cannot imply relocatability.
+- **Exit:** zero-intermediate-move final-slot construction, empty/engaged reset,
+  partial construction and secondary cleanup failures; poisoned publication/order/
+  constructor/drop metadata rejected. Compare temporary/move counts. Optional
+  copy and assignment policy is explicitly not expanded by this row.
+
+### L-UP-13: General Formatter Contracts And Useful Type Errors
+
+- **Adoption audit (2026-10-04):** still needs new contracts. The current
+  parser's `memberRequirement` requires exactly a read-only receiver and a
+  nullary call; the source writer needs arguments and output policy. The
+  private primary writer still reports `unsupported`. No general all-pack
+  public formatter contract was discovered; exposing private specializations
+  would not satisfy this row.
+- **Client/evidence:** [`format.gti`](../../stdlib/std/format.gti) has a
+  closed private `format_argument_writer<T>` whose default reports
+  `unsupported` at runtime even for a statically known unsupported argument.
+  Existing nullary member requirements cannot describe its operation.
+- **General rule/steps:** add bounded exact argument-bearing/static member
+  requirements and all-element heterogeneous-pack contracts sufficient for a
+  public source-defined formatter customization protocol. Prove the requirement
+  with an unrelated application serializer/validator; do not broaden overload
+  ranking or infer associated types. Co-deliver custom formatting for an asset
+  handle/error type and rejection of an unsupported argument at the call site.
+- **Boundary:** preserve counted text, ordinary source grammar/parser ownership,
+  exact return/borrow modes, dynamic format errors and panic-versus-try policy.
+  Decide borrowed adapter inputs explicitly; avoiding a clone is not permission
+  to retain a caller's owner. Do not expose the private detail namespace as the
+  supported extension API or recognize `std::format` in semantics.
+- **Exit:** positive custom formatters, inaccessible/inexact/wrong-access
+  adapters and pack-element attribution; declaration-related CLI/LSP errors,
+  cleanup and installed consumers. Dynamic unsupported presentation remains a
+  runtime domain error; literal validation is the next distinct row.
+
+### L-UP-14: Validate Literal Patterns Through One Parser
+
+- **Adoption audit (2026-10-04):** passive text/record constexpr execution is
+  available (and used by row 6), but `validate_format_pattern` returns Expected
+  and current required constant evaluation does not execute that general
+  result shape. There is no general required call-site literal-validation
+  contract. Adding constexpr to a wrapper alone would not make invalid
+  literal calls diagnostic, so this remains a new-capability row.
+- **Prerequisite/client:** the current literal-text/passive-record MIR profile.
+  Substep A is a shared constant-eligible validator; substep B's call-site
+  validation remains blocked until A passes. Adopt the general explicit
+  call-site constant-validation rule with that client, not as unowned future work.
+  `L-UP-13` is needed only if the accepted contract also validates user argument
+  adapters; pure pattern validation need not wait for formatter customization.
+- **Steps:** isolate pure pattern validation from output allocation while
+  retaining the same grammar and error categories. Establish a constant-eligible
+  passive result rather than assuming Expected/packs already execute in CTFE.
+  Prove compile-time/runtime parity, then adopt the bounded call-site/literal
+  carrier contract and make invalid literal patterns source diagnostics.
+- **Boundary:** current `constexpr` alone does not require literal arguments to
+  be evaluated at a call. The rule must apply to an unrelated validated-literal
+  API, run at the correct semantic query stage using canonical verified MIR,
+  and preserve deterministic resource limits. No second format grammar inside
+  the compiler, optimizer-only check, or native C++ compile-time authority.
+- **Exit:** invalid brace/index/specifier/argument-count cases at source spans,
+  valid literal examples and identical dynamic `try_format` errors; custom
+  adapter cases when in scope. Dynamic strings remain supported and recoverable.
+
+### L-UP-15: Conditionally Available Member Operators
+
+- **Adoption audit (2026-10-04):** still explicitly rejected by semantic
+  declaration analysis with `GTI-S2049` for an operator's trailing requirement.
+  Existing ordinary-method constraints used by `get_or_insert` do not remove
+  that boundary; row 4 does not silently widen it.
+- **Client/evidence:** associative containers supply `get_or_insert` guarded
+  by `default_initializable<V>`; conditional `operator[]` remains excluded by
+  [concepts](../language/concepts.md) and
+  [`L-CONT-02`](#l-cont-02-associative-containers).
+- **General rule/steps:** extend exact validity-only requirements to bounded
+  non-polymorphic member operators; preserve the condition through selection,
+  concrete instances, MIR/lowering and tooling. Prove a generic user-defined
+  operator family before adding map indexing.
+- **Boundary:** no constraint-based ranking, C++ implicit key conversion or
+  global default-construction requirement. Indexing inserts only when the
+  source API's exact default-value contract applies; `at`/lookup and explicit
+  fallible insertion retain distinct meanings. Review eager key ownership and
+  returned exclusive-loan restrictions in the public example.
+- **Exit:** default-constructible and non-default/move-only mapped types;
+  missing/duplicate keys, exact key matching, forbidden overlapping mutation,
+  attributable diagnostics and coherent operator representation. Conditional
+  special-member copying is not implicitly part of this feature.
+
+### L-UP-16: Precise Borrowed Projections Before Proxy Ranges
+
+- **Adoption audit (2026-10-04):** an unrelated `PairView` storing two spans,
+  returning only its left element, still prevents mutation of the right owner
+  while that projection is live (`GTI-S2017`). This current-head probe confirms
+  conservative multi-owner retention remains; row 2's single-owner relay is
+  not evidence of precise projection summaries.
+- **Client/evidence:** [`paired_span.gti`](../../stdlib/std/paired_span.gti)
+  provides indexed views; its projections conservatively retain both owners.
+  Canonical [ownership](../language/ownership-and-lifetimes.md) does not infer
+  arbitrary callee-internal field transforms or extract a reference path from
+  a multi-path by-value carrier.
+- **General rule/steps:** begin with an unrelated two-owner PairView. Define
+  semantic origin-plus-projection summaries carrying access, complete owner
+  dependencies, loan endpoint, physical carrier lifetime and body-change
+  invalidation. Preserve them through HIR/MIR; release only genuinely unrelated
+  dependencies. Only the projected result's dependency set narrows: a still-live
+  complete carrier or full copy continues to protect both owners. Adopt
+  independently useful read-only paired-span projections.
+- **Boundary:** no mixed/exclusive multi-origin expansion, mutable zip or
+  backend-inferred referent. Zip-style proxy values require a separate general
+  iterator-yield contract: current structural dereference expects a checked
+  reference. Projection precision alone does not make zip iteration possible.
+- **Exit:** unrelated-owner mutation allowed only after the last full-carrier
+  use and the projection proof; reject mutation when the complete carrier is
+  used again after projection. Reject actual owner invalidation/escape and
+  verify copies/moves/returned carriers and summary-cache changes. Broader proxy
+  range work needs a named next client and its
+  own row; do not hide it in this adoption.
+
+### L-UP-17: Recoverable Owned Allocation
+
+- **Adoption audit (2026-10-04):** `make_unique` still calls the terminal
+  declaration-bound `allocate_unique_owner`, and no recoverable unique-owner
+  factory or corresponding status-returning publication path exists. Typed
+  recoverable storage allocation is real, but cannot safely adopt raw storage
+  into a unique owner. This remains a distinct capability, not a source-only
+  `try_` alias.
+- **Client/evidence:** `try_storage` reports typed allocation status, but
+  `make_unique` is still type-level infallible and `try_make_unique` is absent.
+  This is the recoverable-factory sub-slice of
+  [`L-OWN-01`](#l-own-01-shared-and-weak-ownership), not a second ownership plan.
+- **General rule/steps:** distinguish recoverable allocation failure from
+  constructor/argument defined failure; preserve exact selected construction,
+  unpublished owner state and failure rollback. Add a declaration-bound typed
+  owner-allocation result path if ordinary GTI cannot safely express it.
+  Co-deliver `try_make_unique` with the existing factory as the eventual parity
+  target and an unrelated fallible application owner. State the
+  first supported constructor shapes explicitly: a completed movable-value
+  starting slice must record direct immovable construction and other pack
+  compositions as remaining parity work, not claim full factory coverage.
+- **Boundary:** no public raw-pointer adoption, implicit copy hooks or swallowed
+  constructor panic. Constructor-pack families depend on `L-UP-10` when their
+  exact composition is involved; a completed-value bounded factory need not
+  wait for inline emplacement. Shared promotion/weak lifetime and object/control
+  block co-allocation require separately evidenced substeps of `L-OWN-01`.
+- **Exit:** forced allocation failures, size/alignment status, once-only
+  arguments, constructor/secondary-cleanup failure, no leaked unpublished
+  allocation, exact Expected transport and installed consumers. Memory pressure
+  is not a reliable substitute for deterministic failure injection.
+
+### L-UP-18: Immovable Payload Eligibility After Direct Construction
+
+- **Prerequisite/client:** `L-UP-12`. The public storage owner requires
+  `movable<T>`; public/private optional requires `move_constructible<T>` and its
+  private traits currently permit generated movement. Direct emplacement alone
+  cannot remove those restrictions. The clients are a fixed-address Resource
+  in stable allocated storage and a locally constructed inline optional of it.
+- **Steps:** first separate stable allocation-owner movement from element
+  movement. Widen only eligible storage elements and constrain operations that
+  actually relocate them. Then decide and represent the inline wrapper's
+  generated lifecycle: an engaged optional cannot move an immovable T, so its
+  movement must remain unavailable. Co-deliver empty/engaged observation,
+  reset/direct emplacement and exactly-once drop without by-value transport.
+- **Boundary:** this is a general storage/lifecycle eligibility extension, not
+  `L-UP-15`'s conditional ordinary operators. Preserve structural type facts
+  through semantics, HIR/MIR and lowering. Do not mechanically remove both
+  constraints, hide a native copy, add custom copy/move bodies or alter explicit
+  clone policy. Broader optional assignment is a separate decision.
+- **Exit:** prove stable owner movement leaves element addresses untouched;
+  inline wrapper movement/relocation is rejected. Test unrelated immovable
+  owners, construction/reset/secondary failure cleanup, forged lifecycle facts,
+  and generic/installed compositions within the stated non-transporting profile.
+
+### Measured Follow-Ups, Not Automatic Rewrites
+
+| Candidate | Evidence needed before scheduling | Hard semantic boundary |
+| --- | --- | --- |
+| Callback small-buffer storage / borrowed `function_ref` | Measure model allocation, registration, clone/reset and invocation separately against direct constrained generic calls; owning wrappers in [`functional.gti`](../../stdlib/std/functional.gti) allocate today. | Inline erasure needs target layout/alignment, move/clone/drop and allocation fallback. Borrowed erasure additionally needs exact origin/escape proof. Existing exact-receiver optimization does not automatically devirtualize owning allocated models. |
+| Bulk byte I/O / response filling | Allocation/copied-byte and throughput evidence for [`cstdio.gti`](../../stdlib/std/cstdio.gti)'s bounded stack-buffer/per-byte append path and real HTTP clients. | Writable capacity, initialized length, native write bounds and success-only prefix publication must be represented; no exposing untracked storage or losing TLS/error policy. |
+| Flat/pool container representations and shared-owner co-allocation | Allocation/cache/lookup measurements against current AVL/bucket implementations and separate shared object/control-block allocation. | Stable entry addresses, immovable elements, borrow invalidation, last-owner cleanup and future weak-owner lifetime remain authoritative. Indexed links are not inherently a language workaround. |
+| Cached/preparsed formatting and lower-cost source locations | Measure repeated pattern parsing/argument scans and owned location construction; separate runtime cost from compiler latency. | One parser, bounded CTFE profile and source-owned representation; literal descriptor lifetime/pinning is not interchangeable with owned `source_location` or hidden caller tokens. |
+| Further numeric/SIMD, coroutine/async, module linkage or concurrency breadth | A real client plus existing row prerequisites, not C++ API parity or LLVM availability. | Keep exact arithmetic/failure, target support, ownership and published concurrency contracts; the existing scoped-thread/weak-owner/freestanding gaps are not closed by adoption. |
+
+### Common Implementation And Completion Gates
+
+1. Reconcile current main, preserve unrelated work, and reproduce the selected
+   workaround with a compiler built in Release, RelWithDebInfo or MinSizeRel.
+   Freeze old observable behavior and operation/allocation counters before
+   changing code. A source comment, declaration or this review is not runtime
+   evidence that a composition works or still fails.
+2. For an adoption row, try ordinary GTI first. For a new compiler facility,
+   state the rule without a stdlib name, prove it using an unrelated user type,
+   and carry one authoritative set of identities/lifetime/failure facts through
+   the applicable phases. Unsupported source gets an owning-layer diagnostic,
+   not accepted syntax followed by `GTI-B0001` or an AST/native escape hatch.
+3. Add positive and negative contracts, independent verifier mutations for
+   changed proof metadata, and once-only movement/drop/failure tests. Exercise
+   selected pairs/triples such as generic + move-only + Expected, pack + borrow
+   + cleanup, and view + mutation + temporary with the
+   [interaction facilities](../architecture/verification.md#failure-capture-and-opt-in-fuzzing).
+   Extend that bounded generator only for the row's actual supported grammar;
+   retain and minimize failures instead of silently filtering them out.
+4. Run focused compiler/library and C++20/C++23 O0/O3 execution gates, relevant
+   no-elide/sanitizer cases, syntax/formatter/LSP checks when surfaces change,
+   and an installed consumer plus a runnable user example. Validate performance
+   using semantic counters and controlled measurements, not shorter source or
+   presumed native optimization. Broader relevant optimized CTest and corpus/
+   surface registration gates are required before declaring a row complete.
+5. Update canonical contracts when behavior changes, the restriction ledger
+   when a gap closes, and this row with exact scope/evidence and remaining
+   boundaries. Follow normal compatibility/VERSION policy for observable
+   changes; initiating the normal release path does not require waiting for
+   asynchronous CI/CD. This documentation-only review changes no runtime API
+   and requires no VERSION advance.
+
+**Recommended next implementation prompt:** `L-UP-10`, the retained compiler
+correctness prerequisite before more emplacement APIs are built around the
+unresolved borrowed-pack composition. Rows 1–6 no longer need adoption work;
+the independent `L-UP-07` exchange facility remains the next new capability by
+the original priority order.
+
 ## Release Bug Closure
 
 **State:** the six open Gitea bug reproductions (#20, #23, #25, #26, #28, #29)
@@ -889,6 +1546,12 @@ work completed its original scope before the reconciled `main` commit activated
 the exclusive structural gate. That gate has now passed; its preserved record
 is the
 [archived structural-refactor plan](archive/compiler-structural-refactor.md).
+
+The current user-requested stdlib modernization order is the
+[capability adoption campaign](#stdlib-capability-adoption-and-upgrade-campaign)
+above. Its readiness table and detailed `L-UP` rows live here, not in a second
+queue. They distinguish ordinary adoption from missing general compiler proofs;
+completed structural/performance rows below are historical prerequisites.
 
 The structural sequence completed on 2026-08-28. Its detailed measurements and
 exact equivalence evidence are retained in the
@@ -3203,6 +3866,12 @@ schemes.
 These rows validate the execution/lifetime foundations in ordinary GTI. Public
 containers and algorithms remain source-defined and must not gain compiler
 name recognition.
+
+For the 2026-10-04 stdlib review, follow the
+[capability adoption campaign](#stdlib-capability-adoption-and-upgrade-campaign)
+above. It refines the next implementation prompts using today's source; the
+older completion checkpoints below are not an instruction to redo shipped
+facilities or to infer that all constructor-pack compositions now pass.
 
 ### Active Request: Complete The Existing Standard Library
 

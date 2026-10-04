@@ -884,6 +884,11 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures"
   )
   set_tests_properties(json_stdlib PROPERTIES TIMEOUT 2400)
+  add_test(NAME stdlib_adoption_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/stdlib_adoption_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(stdlib_adoption_runtime PROPERTIES TIMEOUT 1200)
   add_test(
     NAME cthread_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -1318,6 +1323,13 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_readonly_references.gti"
+  )
+  add_test(
+    NAME constexpr_chrono_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_chrono.gti"
   )
   add_test(
     NAME constexpr_library_runtime
@@ -2660,6 +2672,12 @@ if(Python3_Interpreter_FOUND)
       NAME expected_payload_range_lsp
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"
               "$<TARGET_FILE:gti_lsp>" expected-payload-range
+    )
+    add_test(
+      NAME optional_contract_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/optional_contract_lsp_test.py"
+              "$<TARGET_FILE:gti_lsp>"
     )
     add_test(
       NAME expected_transform_error_lsp
