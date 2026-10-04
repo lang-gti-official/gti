@@ -14,6 +14,9 @@ last value. Arguments after `--` and other options' operands remain untouched.
 Errors and their underlines are red, warnings yellow, notes/help cyan, and
 successful build/check/emission labels green. Diagnostic summaries are red
 when errors occurred, yellow for warnings alone, or green for a clean result.
+Test build/run progress labels are cyan; passed test labels and summary counts
+are green, while failed labels and counts are red. Parallel build target-failure
+labels are red. These use the same destination-specific policy as diagnostics.
 Severity words, codes, and counts remain visible without colour. Executed-program
 output is never restyled or filtered, and native tools retain their own colour
 policy. When a styled parallel build child's combined output must be replayed

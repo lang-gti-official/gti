@@ -1286,6 +1286,9 @@ Acceptance criteria:
 - **Complete:** accept manifest `test` targets, build each selected root as an
   independent whole program, execute them in deterministic target-name order,
   continue after runtime failures, and propagate the first failing status.
+- **Complete:** test progress and pass/fail summary counts use the shared CLI
+  terminal-colour policy. Captured/default or explicitly uncoloured output keeps
+  the existing text; test-program streams and first-failure status are unchanged.
 - **Complete:** add workspace membership, shared collision-free output, and
   explicit package selection. Lockfile state begins with Milestone 7.
 - **Complete:** treat canonical workspace members as local packages without

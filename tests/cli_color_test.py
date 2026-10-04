@@ -166,11 +166,79 @@ def main():
         result = run(["build", "--all", "--jobs", "2", "--no-cache", "--color=always"], 65)
         assert "Diagnostics: 2 errors, 0 warnings" in ANSI.sub("", result.stdout)
         assert "\x1b[1;31merror[GTI-" in result.stderr
+        assert "\x1b[1;31mfailed\x1b[0m with exit code 65" in result.stderr
         if os.name != "nt":
             output, captured = terminal_run(["build", "--all"], terminal_stdout=False, status=65)
             assert "\x1b[1;31merror[GTI-" in output
             assert b"\x1b" not in captured
-        print("CLI colour: direct, project, parallel, redirected and terminal output passed")
+
+        # Test execution inherits its streams: style only the runner's status,
+        # never the test program's data, and keep going after a failing target.
+        root = project.parent / "test-project"
+        root.mkdir()
+        (root / "gti.toml").write_text(
+            'manifest-version = 1\n[package]\nname = "color-tests"\n'
+            'version = "0.1.0"\n'
+            '[targets.a_failure]\nkind = "test"\nroot = "failure.gti"\n'
+            '[targets.b_success]\nkind = "test"\nroot = "success.gti"\n')
+        failure = root / "failure.gti"
+        failure.write_text(
+            '#include <std/string>\nint main() {\n'
+            '  std::println("failure-program-output"); return 7;\n}\n')
+        (root / "success.gti").write_text(
+            '#include <std/string>\nint main() {\n'
+            '  std::println("success-program-output"); return 0;\n}\n')
+        plain = run(["test"], 7)
+        assert "\x1b" not in plain.stdout + plain.stderr
+        assert "Test result: 1 passed, 1 failed" in plain.stderr
+        assert plain.stdout == "failure-program-output\nsuccess-program-output\n"
+        colored = run(["test", "--color=always"], 7)
+        assert colored.stdout == plain.stdout
+        assert ANSI.sub("", colored.stderr) == plain.stderr
+        assert "\x1b[1;36mBuilding test\x1b[0m a_failure" in colored.stderr
+        assert "\x1b[1;36mTesting\x1b[0m b_success" in colored.stderr
+        assert "\x1b[1;31mFailed\x1b[0m a_failure (exit code 7)" in colored.stderr
+        assert "\x1b[1;32mPassed\x1b[0m b_success" in colored.stderr
+        assert "\x1b[1;32m1 passed\x1b[0m, \x1b[1;31m1 failed\x1b[0m" in colored.stderr
+        result = run(["test", "--color=never"], 7)
+        assert result.stdout == plain.stdout and result.stderr == plain.stderr
+        result = run(["test", "--color=auto"], 7, extra={"NO_COLOR": "1"})
+        assert result.stdout == plain.stdout and result.stderr == plain.stderr
+        result = run(["test", "b_success", "--color", "always"],
+                     extra={"NO_COLOR": "1", "TERM": "dumb"})
+        assert result.stdout == "success-program-output\n"
+        assert "\x1b[1;32m1 passed\x1b[0m" in result.stderr
+        assert "failed" not in result.stderr
+        result = run(["test", "a_failure", "--color=always"], 7)
+        assert "\x1b[1;32m0 passed\x1b[0m, \x1b[1;31m1 failed\x1b[0m" in result.stderr
+
+        if os.name != "nt":
+            for extra, expected in [({}, True), ({"NO_COLOR": "1"}, False),
+                                    ({"NO_COLOR": ""}, True), ({"TERM": "dumb"}, False)]:
+                output, captured = terminal_run(["test", "b_success"], extra,
+                                                terminal_stdout=False)
+                assert captured == b"success-program-output\n"
+                assert ("\x1b[1;36mBuilding test" in output) == expected
+                assert ("\x1b[1;32m1 passed" in output) == expected
+                if not expected:
+                    assert "\x1b" not in output
+            output, captured = terminal_run(["test", "--color=never"],
+                                            terminal_stdout=False, status=7)
+            assert "\x1b" not in output
+            assert captured == plain.stdout.encode()
+            output, captured = terminal_run(["test"], terminal_stdout=False, status=7)
+            assert "\x1b[1;31mFailed\x1b[0m a_failure" in output
+            assert "\x1b[1;32m1 passed\x1b[0m, \x1b[1;31m1 failed\x1b[0m" in output
+            assert captured == plain.stdout.encode()
+
+        # Compilation failure still stops test execution and has no misleading
+        # runtime result summary. The existing diagnostic renderer owns it.
+        failure.write_text("int main() { return missing; }\n")
+        result = run(["test", "--color=always"], 65)
+        assert "\x1b[1;31merror[GTI-" in result.stderr
+        assert "Testing " not in ANSI.sub("", result.stderr)
+        assert "Test result:" not in ANSI.sub("", result.stderr)
+        print("CLI colour: direct, project, parallel, test, redirected and terminal output passed")
 
 
 if __name__ == "__main__":
