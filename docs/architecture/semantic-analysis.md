@@ -76,6 +76,14 @@ This ordering prevents declaration-order dependence. A new declaration kind may
 need registration, source-unit publication, tooling-symbol creation, body
 analysis, and finalization—not only a visitor method.
 
+Text-return relay predeclaration consults the owning class's registered instance
+fields for implicit receiver spellings as well as explicit `this` paths.
+Parameter names take precedence; static fields/methods do not nominate a
+receiver. This is a candidate contract, not a body-local lifetime proof:
+ordinary body lookup and return-borrow validation must confirm the actual
+origin, rejecting local shadowing and unrelated borrowed call results. HIR/MIR
+and the LSP consume the same validated receiver/argument summary.
+
 Dependent generic type defaults retain their resolved symbolic semantic type.
 Only while resolving that default, constraints on open type arguments defer;
 name lookup, arity, and closed constraints remain checked immediately. Selecting

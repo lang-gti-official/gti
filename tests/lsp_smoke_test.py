@@ -11641,6 +11641,39 @@ def test_owner_dependent_span_tooling(executable, root):
             and message["params"].get("version") == 8
             and not has_error_diagnostics(message["params"])
         )
+        field_source = '''#include <std/string>
+class Token {
+  mut std::string _token{"secret"};
+public:
+  std::string_view view() { /*😀*/ return _token.view(); }
+  void clear() mut { _token.clear(); }
+};
+int main() {
+  mut Token token{};
+  auto text = token.view();
+  return int(text.size());
+}
+'''
+        for version, text, code in (
+            (9, field_source, None),
+            (10, field_source.replace("return _token.view()", "return this._token.view()"), None),
+            (11, field_source.replace("return int(text.size());", "token.clear(); return int(text.size());"), "GTI-S2017"),
+            (12, field_source.replace("return _token.view();", 'std::string _token{"local"}; return _token.view();'), "GTI-S2045"),
+            (13, field_source.replace("return _token.view();", "return _token.;"), "GTI-P0001"),
+            (14, field_source, None),
+        ):
+            session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
+                          "params": {"textDocument": {"uri": uri, "version": version},
+                                     "contentChanges": [{"text": text}]}})
+            published = session.receive_until(lambda message:
+                message.get("method") == "textDocument/publishDiagnostics"
+                and message["params"].get("uri") == uri
+                and message["params"].get("version") == version)["params"]
+            if code is None:
+                assert not has_error_diagnostics(published), published
+            else:
+                assert any(item.get("code") == code
+                           for item in published["diagnostics"]), published
     finally:
         session.close()
 

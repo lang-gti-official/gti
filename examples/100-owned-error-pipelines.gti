@@ -7,7 +7,8 @@ class ConfigError {
   std::string description;
 public:
   ConfigError(std::string description) : description(std::move(description)) {}
-  std::string_view message() { return this.description.view(); }
+  // Implicit this retains the same checked owner dependency as this.description.
+  std::string_view message() { return description.view(); }
 };
 
 ConfigError config_error(std::json::error error) {

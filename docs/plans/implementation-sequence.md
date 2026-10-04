@@ -169,10 +169,10 @@ coordinate integration and select an independent adoption row.
   4,132/4,132/4,120/12,388 for long inputs. Allocation bytes include terminators.
   Injected parse/clone/rebuild allocation failures preserve cleanup and leave
   no audited allocation live. Installed-consumer and broad validation pass.
-  A separate implicit-field spelling defect remains: `return field.view()`
-  loses the receiver summary where `return this.field.view()` works. CLI and
-  LSP reproduce it alike; this adoption uses the correctly checked explicit
-  receiver and does not claim to repair implicit-receiver inference.
+  The separately diagnosed implicit-field spelling defect is repaired in
+  0.367.1: `return field.view()` and `return this.field.view()` retain the same
+  checked receiver summary. Shadowing and lifetime rejection remain enforced;
+  this does not broaden the single-origin relay contract.
 - **Original client/evidence:** `url` kept strings plus `scheme_view_data`,
   `host_view_data`, and `rendered_view_data` with byte-copy loops in
   [`http.gti`](../../stdlib/std/http.gti). Its issue-#13 comment predates the

@@ -1743,7 +1743,11 @@ deliberately unsupported. These restrictions are semantic and survive through
 HIR and verified MIR; emitted C++ does not decide the lifetime.
 
 An owning wrapper may relay a field's text accessor, for example
-`return this.text.view();`. The summary names the enclosing receiver (or one
+`return text.view();` or `return this.text.view();`. Both spellings retain
+the same enclosing receiver dependency when `text` names an instance field.
+A same-named parameter takes precedence; a shadowing local owner still cannot
+escape, and static methods do not acquire an implicit receiver.
+The summary names the enclosing receiver (or one
 read-only reference parameter for a free relay); body analysis must validate
 that the selected call actually returns a borrow from that source. Merely
 calling a method on an owner does not prove this. Local owners, by-value owning

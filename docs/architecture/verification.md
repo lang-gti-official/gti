@@ -1,5 +1,27 @@
 # Compiler Verification
 
+## Implicit receiver text-view relay repair
+
+The 0.367.1 fix gives an implicit instance-field text accessor the same
+predeclared receiver summary as an explicit `this` path. Body validation still
+owns the actual origin proof. `testContainerScaffoldSurfaces` verifies MIR for
+valid relays and rejects local/by-value shadowing, static instance access,
+temporary/local escape and live-view invalidation or movement. A same-named
+read-only parameter retains its own dependency; literal-backed static fields
+do not gain a receiver loan.
+
+`text_owner_relay.gti` compares both spellings, C-string accessors, nested user
+wrappers and a concrete generic owner. The string-operation runtime gate runs
+both fixtures in C++20/C++23 at O0/O1/O3 plus disabled elision and ASan/UBSan.
+The owner-dependent-view LSP test switches between valid spellings, mutation,
+shadowing and incomplete syntax, then verifies recovery on the next version.
+All thirteen selected optimized CTest gates pass, including compiler_pipeline,
+the full LSP protocol, borrowing/Expected checks, backend preflight, MIR census,
+HTTP operators and release policy. Formatting checks all 406 first-party C/C++
+files. An isolated installed toolchain passes the C++23/O3 relay executable and
+the same LSP regression with checkout resource overrides cleared. Active user
+installations are not changed by this verification.
+
 ## Standard-library adoption campaign
 
 The source-only adoption clients are owning JSON/allocation/clock error

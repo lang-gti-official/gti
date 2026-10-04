@@ -5044,6 +5044,21 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
                 .parameter = index};
       }
     }
+    if (function.ownerClass != 0 && !function.staticMember) {
+      const MemberInfo *member = findMember(
+          SemanticType::classType(function.ownerClass), variable->name());
+      if (member != nullptr && member->symbol.variableDeclaration != nullptr &&
+          !member->symbol.staticMember) {
+        // Like explicit this.field, an implicit instance field can nominate
+        // the receiver for the predeclared relay contract. Parameters take
+        // precedence above. This is not a resolved body-local origin: body
+        // analysis must still reject a shadowing local or an unrelated call
+        // result through validateCurrentReturnBorrowSource.
+        return {.known = true,
+                .ownerDependent = true,
+                .origin = BorrowOriginKind::Receiver};
+      }
+    }
     return {};
   }
   if (const auto *grouping = exprAs<Grouping>(expression.get())) {

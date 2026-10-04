@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.367.1 — Implicit receiver text-view relays
+
+- Fix valid text-view and C-string accessor returns using an implicit instance
+  field, such as `return _token.view()`. They now retain the same checked owner
+  dependency as `this._token.view()` in both compiler and LSP analysis, while
+  shadowed local owners, temporary escapes and live-borrow invalidation remain
+  rejected.
+
 ## 0.367.0 — Standard-library adoption and predictable algorithms
 
 - Support move-only results in whole-vector `std::transform`, transferring each
