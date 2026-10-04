@@ -9544,6 +9544,165 @@ int main() {
          "unknown namespace paths should be rejected");
   expect(invalidSemantic.errors().size() == 2,
          "alias targets and qualified calls should both be diagnosed");
+
+  std::string shorthand = source;
+  const std::string opening = "namespace engine {\nnamespace graphics {";
+  shorthand.replace(shorthand.find(opening), opening.size(),
+                    "namespace engine::graphics {");
+  const std::string closing = "}\n}\n\nnamespace gfx";
+  shorthand.replace(shorthand.find(closing), closing.size(),
+                    "}\n\nnamespace gfx");
+  const lang::FrontendResult compact =
+      lang::Frontend().analyze("namespace-shorthand.gti", shorthand);
+  expect(compact.canGenerateCode(),
+         "namespace shorthand should complete the same verified MIR pipeline "
+         "as nested blocks");
+  const auto *outer = compact.program.declarations().empty()
+                          ? nullptr
+                          : lang::stmtAs<lang::NamespaceDecl>(
+                                compact.program.declarations().front().get());
+  const auto *inner = outer == nullptr || outer->declarations().empty()
+                          ? nullptr
+                          : lang::stmtAs<lang::NamespaceDecl>(
+                                outer->declarations().front().get());
+  expect(outer != nullptr && inner != nullptr &&
+             outer->name().lexeme == "engine" &&
+             inner->name().lexeme == "graphics" &&
+             outer->name().position == shorthand.find("engine") &&
+             inner->name().position == shorthand.find("graphics") &&
+             outer->extent() && inner->extent() &&
+             outer->extent()->start == shorthand.find("namespace") &&
+             inner->extent()->start == shorthand.find("graphics") &&
+             outer->extent()->end == inner->extent()->end,
+         "expanded namespace nodes must preserve each written token and "
+         "nested source extent");
+  const lang::LanguageQueries queries;
+  const auto definition =
+      queries.definition(compact, compact.sourceGraph.entryUnit(),
+                         shorthand.find("engine::graphics::render") + 9);
+  expect(definition && definition->target.start == shorthand.find("graphics") &&
+             definition->target.end == shorthand.find("graphics") + 8,
+         "qualified namespace uses should navigate to the exact shorthand "
+         "component");
+  const auto symbols =
+      queries.documentSymbols(compact, compact.sourceGraph.entryUnit());
+  expect(!symbols.empty() && symbols.front().name == "engine" &&
+             !symbols.front().children.empty() &&
+             symbols.front().children.front().name == "graphics" &&
+             symbols.front().children.front().selectionRange.start ==
+                 shorthand.find("graphics"),
+         "document symbols should retain the ordinary nested hierarchy and "
+         "exact shorthand name ranges");
+
+  const lang::FrontendResult reopened =
+      lang::Frontend().analyze("namespace-shorthand-reopen.gti", R"(
+namespace outer::inner { int original() { return 3; } }
+namespace outer {
+  namespace inner::detail { int value() { return original(); } }
+}
+namespace outer::inner::detail {
+  int forward() { return value(); }
+}
+namespace shortcut = outer::inner::detail;
+int main() { return shortcut::forward() - 3; }
+)");
+  expect(reopened.canGenerateCode(),
+         "mixed shorthand and explicit blocks should reopen the same "
+         "namespaces and retain parent-scope lookup and alias targets");
+  const lang::FrontendResult collision = lang::Frontend().analyze(
+      "namespace-shorthand-collision.gti",
+      "class outer {}; namespace outer::inner {} int main() { return 0; }");
+  expect(collision.syntaxValid && !collision.semanticValid,
+         "namespace shorthand must not bypass existing declaration conflicts");
+
+  const auto moduleRoot =
+      std::filesystem::temp_directory_path() / "gti-namespace-shorthand";
+  const auto modulePath =
+      std::filesystem::weakly_canonical(moduleRoot / "api.gti").string();
+  const std::unordered_map<std::string, std::string> modules{
+      {modulePath,
+       "export module api;\n"
+       "export namespace public_api::nested { int value() { return 3; } }\n"
+       "namespace private_api::nested { int secret() { return 4; } }\n"}};
+  const auto exported = lang::Frontend().analyze(
+      moduleRoot / "main.gti",
+      "import \"api.gti\"; int main() { return public_api::nested::value(); }",
+      {}, modules);
+  expect(exported.canGenerateCode(),
+         "an exported shorthand namespace should export its ordinary nested "
+         "declarations");
+  const auto privateMember =
+      lang::Frontend().analyze(moduleRoot / "main.gti",
+                               "import \"api.gti\"; int main() { return "
+                               "private_api::nested::secret(); }",
+                               {}, modules);
+  expect(privateMember.syntaxValid && !privateMember.semanticValid,
+         "shorthand must not export private module declarations");
+
+  const std::string formatted =
+      lang::Formatter().format("namespace outer :: inner{namespace "
+                               "detail::api{int value(){return 3;}}}");
+  expect(formatted == "namespace outer::inner {\n"
+                      "  namespace detail::api {\n"
+                      "    int value() {\n      return 3;\n    }\n  }\n}\n" &&
+             lang::Formatter().format(formatted) == formatted,
+         "formatting should preserve shorthand with canonical scope spacing "
+         "and idempotent namespace indentation");
+
+  const std::string missingName = "namespace outer:: {}";
+  lang::Parser missingComponent(
+      lexer.scan(missingName, "namespace-missing-component.gti"));
+  (void)missingComponent.parse();
+  expect(!missingComponent.errors().empty() &&
+             missingComponent.errors().front().code == "GTI-P0001" &&
+             missingComponent.errors().front().phase ==
+                 lang::DiagnosticPhase::Parsing &&
+             missingComponent.errors().front().message ==
+                 "Expect namespace name after '::'." &&
+             missingComponent.errors().front().primary.source ==
+                 "namespace-missing-component.gti" &&
+             missingComponent.errors().front().primary.start ==
+                 missingName.find('{') &&
+             missingComponent.errors().front().primary.end ==
+                 missingName.find('{') + 1 &&
+             missingComponent.errors().front().fixes.empty(),
+         "a missing path component should diagnose its exact boundary without "
+         "guessing a namespace name");
+
+  for (const std::string_view invalid :
+       {"namespace outer:: {}", "namespace outer::::inner {}",
+        "namespace ::outer {}", "namespace outer::inner = target;"}) {
+    lang::Parser malformed(
+        lexer.scan(std::string(invalid) + " int recovered() { return 0; }"));
+    const lang::Program recovered = malformed.parse();
+    expect(malformed.hadError() &&
+               std::any_of(
+                   recovered.declarations().begin(),
+                   recovered.declarations().end(),
+                   [](const lang::StmtPtr &statement) {
+                     const auto *function =
+                         lang::stmtAs<lang::FunctionDecl>(statement.get());
+                     return function && function->name().lexeme == "recovered";
+                   }),
+           "malformed namespace paths should diagnose and preserve later "
+           "declarations");
+  }
+  std::string deep = "namespace n";
+  for (int index = 1; index < 64; ++index) {
+    deep += "::n";
+  }
+  lang::Parser bounded(lexer.scan(deep + " {}"));
+  (void)bounded.parse();
+  expect(!bounded.hadError(),
+         "64 empty namespace levels should fit the existing parser budget");
+  lang::Parser excessive(lexer.scan(deep + "::n {}"));
+  (void)excessive.parse();
+  expect(excessive.hadError() &&
+             std::any_of(excessive.errors().begin(), excessive.errors().end(),
+                         [](const lang::Diagnostic &diagnostic) {
+                           return diagnostic.code == "GTI-P0005";
+                         }),
+         "shorthand components must not bypass the parser nesting limit");
 }
 
 void testExternCInterop() {

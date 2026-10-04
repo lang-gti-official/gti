@@ -1057,6 +1057,15 @@ while the build path resolves them, and the two silently disagree. A build
 plan's model identity extends the workspace-graph identity these facts publish
 with its configuration flags and bindgen imports.
 
+`projectIncludeSearchRoots` derives editor include-discovery authority from
+these same facts: the selected package root (excluding nested other packages)
+and each direct dependency's source root with its declared alias. The compiler
+then discovers and validates declarations; the driver does not interpret GTI
+names. Project-resolution errors never authorize a partial dependency search.
+The direct compilation driver retains standard-library include advice by
+calling the same compiler suggestion service after its loaded-input frontend;
+it does not need a second header catalog or a project scan on successful builds.
+
 ## Whole-Program Project Cache
 
 `gti build`, `gti run`, and `gti test` use a workspace-local,

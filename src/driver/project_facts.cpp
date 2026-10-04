@@ -5,6 +5,28 @@
 
 namespace lang::driver {
 
+std::vector<IncludeSearchRoot>
+projectIncludeSearchRoots(const ProjectFacts &facts) {
+  const auto &selected = facts.selectedPackage();
+  IncludeSearchRoot own{selected.packageRoot, std::nullopt, {}};
+  for (const auto &package : facts.packages()) {
+    if (package.identity != selected.identity) {
+      const auto relative =
+          package.packageRoot.lexically_relative(selected.packageRoot);
+      if (!relative.empty() && *relative.begin() != ".." && relative != ".") {
+        own.excludedDirectories.push_back(package.packageRoot);
+      }
+    }
+  }
+  std::vector<IncludeSearchRoot> roots{std::move(own)};
+  for (const auto &dependency : selected.dependencies) {
+    if (const auto *package = facts.findPackage(dependency.targetIdentity)) {
+      roots.push_back({package->sourceRoot, dependency.alias, {}});
+    }
+  }
+  return roots;
+}
+
 namespace {
 
 // The profile a project command selects when none is named. Derived from the

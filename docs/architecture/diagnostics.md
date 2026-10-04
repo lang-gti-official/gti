@@ -606,16 +606,19 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   `?std::move(result)` only for a named move-only expected. Do not offer a
   mechanical fix-it because consuming a named result or choosing a borrow
   lifetime changes program intent.
-- `GTI-S2089` owns an unresolved exact qualified public standard-library
-  nominal type whose canonical `<std/...>` unit is known. Point at the final
-  type-name segment, name the missing unit, and attach one zero-width compiler
-  fix-it that inserts its `#include` at byte zero of the requesting source.
-  The insertion is intentionally independent of comment and conditional
-  structure and therefore remains mechanically safe. Unknown application or
-  third-party names keep the ordinary unknown-type diagnostic and never
-  receive a guessed include. When the declaration is already loaded elsewhere
-  but invisible from this unit, `GTI-S2024` remains the owning diagnostic and
-  carries the same standard-library include fix.
+- `GTI-S2089` owns an unresolved declaration for which compiler discovery has
+  proved a defining include. Preserve the unresolved source-name span and
+  message, add the verified include hints and zero-width edits. The same rule
+  handles project and dependency declarations and public standard-library units;
+  no nominal type-to-header catalog remains. `missingIncludeName` is structured
+  compiler lookup metadata, not text extracted from a diagnostic message.
+  Reanalysis must resolve the exact occurrence to the proposed file without
+  introducing new errors. Otherwise retain the original unknown-name diagnostic
+  without a speculative fix. Edits insert after a leading BOM or required
+  module header and preserve CRLF. Several valid files are alternative fixes,
+  none preferred. Already-loaded but invisible declarations keep `GTI-S2024`
+  and acquire fixes through the same proof; module privacy/import diagnostics
+  never request an include that would bypass their boundary.
 - `GTI-S2091` owns struct designated construction: eligibility, unknown,
   duplicate or out-of-order fields, missing required fields, and incompatible
   values. Point at the offending field name (or opening brace for an omitted

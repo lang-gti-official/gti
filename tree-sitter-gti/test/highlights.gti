@@ -304,3 +304,5 @@ uint64_t default_extent_highlight<uint64_t N = 3,
 
 concept snapshot_highlight<T> =
     requires(T& item) { { item.snapshot() } -> T; };
+
+namespace qualified_outer::qualified_inner::qualified_leaf {}

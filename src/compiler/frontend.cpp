@@ -251,7 +251,14 @@ FrontendResult Frontend::analyze(
   result.sources = sourceLoader.sources();
   append(result.diagnostics, sourceLoader.errors());
   result.sourceValid = !sourceLoader.hadError();
-  return finishAnalysis(entryPath, std::move(result));
+  result = finishAnalysis(entryPath, std::move(result));
+  if (options.suggestIncludes && !options.completionOffset &&
+      options.stopAfter != FrontendPhase::Parsing) {
+    addIncludeSuggestions(result, options, entryPath, preludePaths,
+                          sourceOverrides, standardLibraryRoots,
+                          packageSourceRoots);
+  }
+  return result;
 }
 
 // Continues the canonical frontend pipeline from a graph produced by the
@@ -363,6 +370,9 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   }
   result.program = Program(std::move(declarations));
   result.syntaxValid = syntaxValid;
+  if (options.stopAfter == FrontendPhase::Parsing) {
+    return result;
+  }
   if (!result.syntaxValid && !options.analyzeRecoveredProgram) {
     return result;
   }

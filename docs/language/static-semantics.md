@@ -252,7 +252,14 @@ reference elements and fully general stored signature-based invocation remain
 incomplete.
 
 Namespaces, namespace aliases, and qualified `::` names use lexical declaration
-and source-unit visibility. Namespace- and class-scoped
+and source-unit visibility. `namespace outer::inner { ... }` is shorthand for
+`namespace outer { namespace inner { ... } }`; it can reopen existing
+namespaces and nest inside another namespace. Every component denotes an
+ordinary namespace, not a namespace alias. Alias declarations retain a single
+declared name (`namespace short_name = outer::inner;`). An exported shorthand
+namespace exports its nested declarations under the ordinary module rules.
+[The namespaces example](../../examples/06-namespaces.gti) demonstrates the
+shorthand, qualification, and alias spelling. Namespace- and class-scoped
 `using Name = Type;` aliases are declaration-order independent within their
 direct declaring scope after cycle validation. Every class-like body (`class`,
 `struct`, `interface`, and `union`) admits aliases as type members. An alias

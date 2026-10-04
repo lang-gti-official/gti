@@ -1516,6 +1516,7 @@ struct AnalysisRequest {
   std::string source;
   std::optional<std::int64_t> version;
   std::uint64_t generation = 0;
+  std::uint64_t includeDiscoveryGeneration = 0;
   std::unordered_map<std::string, std::string> sourceOverrides;
   std::unordered_map<std::string, std::uint64_t> documentGenerations;
   lang::lsp::FrontendSourceSnapshot frontendSources;
@@ -1595,6 +1596,7 @@ struct ProjectAnalysisInputs {
   lang::SourceManager sources;
   std::vector<lang::Diagnostic> diagnostics;
   bool requireEntryPoint = false;
+  std::vector<lang::IncludeSearchRoot> includeSearchRoots;
 };
 
 ProjectAnalysisInputs resolveProjectAnalysisInputs(
@@ -1614,6 +1616,9 @@ ProjectAnalysisInputs resolveProjectAnalysisInputs(
     if (project.status != lang::driver::ProjectFactsStatus::DiscoveryFailure) {
       result.sources = std::move(project.sources);
       result.diagnostics = std::move(project.diagnostics);
+    } else {
+      result.includeSearchRoots.push_back(
+          {entryPath.parent_path(), std::nullopt, {}});
     }
     return result;
   }
@@ -1637,6 +1642,7 @@ ProjectAnalysisInputs resolveProjectAnalysisInputs(
         result.configuration.configurationFlags());
   }
   result.packageSourceRoots = facts.packageSourceRoots();
+  result.includeSearchRoots = lang::driver::projectIncludeSearchRoots(facts);
   for (const auto &target : facts.targets()) {
     if (canonicalPath(target.root) == canonicalPath(entryPath)) {
       result.requireEntryPoint = true;
@@ -1833,6 +1839,7 @@ private:
   // to the cache's global LRU instead of destroying ASTs on the protocol
   // thread while the editor is sending a change.
   void invalidateFrontendSourceLocked(std::string_view canonicalPath) {
+    ++includeDiscoveryGeneration;
     frontendSnapshots.invalidate(canonicalPath);
   }
 
@@ -2821,6 +2828,7 @@ private:
     frontendOptions.target = project.configuration.target();
     frontendOptions.configurationFlags =
         project.configuration.configurationFlags();
+    frontendOptions.includeSearchRoots = project.includeSearchRoots;
     for (const lang::Diagnostic &diagnostic : project.diagnostics) {
       result.diagnostics.push_back(convertDiagnostic(
           diagnostic, project.sources, rootPath, uri, source));
@@ -2868,6 +2876,7 @@ private:
                             .source = documents.at(uri),
                             .version = version,
                             .generation = generation};
+    request.includeDiscoveryGeneration = includeDiscoveryGeneration;
     for (const auto &[documentUri, documentSource] : documents) {
       const std::optional<std::filesystem::path> path =
           filePathFromUri(documentUri);
@@ -2888,7 +2897,12 @@ private:
                                   std::unordered_set<std::string> &affected,
                                   std::vector<AnalysisRequest> &requests) {
     for (const auto &[rootUri, dependencies] : dependenciesByRoot) {
-      if (rootUri == changedUri || !dependencies.contains(changedUri)) {
+      const auto snapshot = analysisSnapshots.find(rootUri);
+      const bool discovering =
+          snapshot != analysisSnapshots.end() &&
+          snapshot->second.frontend->includeSuggestionsRequested;
+      if (rootUri == changedUri ||
+          (!dependencies.contains(changedUri) && !discovering)) {
         continue;
       }
       if (const auto previous = diagnosticsByRoot.find(rootUri);
@@ -3335,7 +3349,9 @@ private:
         return;
       }
 
-      bool dependencyChanged = false;
+      bool dependencyChanged =
+          analysis.frontend && analysis.frontend->includeSuggestionsRequested &&
+          request.includeDiscoveryGeneration != includeDiscoveryGeneration;
       for (const std::string &dependency : analysis.dependencies) {
         if (!documents.contains(dependency)) {
           continue;
@@ -3651,6 +3667,7 @@ private:
   std::unordered_map<std::string, std::unordered_set<std::string>>
       dependenciesByRoot;
   std::unordered_map<std::string, std::uint64_t> analysisGenerations;
+  std::uint64_t includeDiscoveryGeneration = 0;
   std::unordered_map<std::string, AnalysisSnapshot> analysisSnapshots;
   std::unordered_map<std::string, CachedSemanticTokens> semanticTokenCache;
   std::unordered_map<std::string, AnalysisRequest> pendingAnalyses;

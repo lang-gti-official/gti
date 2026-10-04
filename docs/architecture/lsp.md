@@ -591,10 +591,45 @@ Quick fixes come only from compiler `Diagnostic::fixes` associated with the
 current source/generation, an intersecting request range, and an exact
 client-provided diagnostic. Position conversion is tested at the protocol
 edge; compiler source spans remain half-open UTF-8 byte ranges.
-An unresolved canonical standard-library nominal type publishes the compiler's
-missing-include fix through this same path, so an editor code-action request
-can insert (for example) `#include <std/vector>` without the protocol layer
-matching `std::vector` text or maintaining its own header catalog.
+Unresolved declarations publish compiler-validated missing-include fixes through
+this same path. This covers project functions such as `example::test()`, types,
+aliases, values, scoped enumerators, static members, and concepts, not a catalog
+of standard-library type spellings. Semantics marks the unresolved lookup on
+the diagnostic; the protocol adapter never extracts names from its message.
+
+The driver supplies search roots for the selected package and its declared
+direct dependency aliases. Standalone files search their parent directory;
+standard-library public units use the same discovery mechanism. Discovery
+recurses through `.gti` files, excluding hidden/build directories, nested
+packages without their own search authority, and symlink escapes. Unsaved
+files and dirty overlays participate. Dependency fixes use the declared angle
+alias; same-package fixes use a relative quoted path. Module interfaces are
+not include candidates, including exported interfaces: those require imports.
+
+`include_suggestions.cpp` uses the lexer as a cheap candidate filter and the
+existing source loader/parser to discover declaration names. `FrontendPhase::Parsing`
+stops the canonical frontend before semantic analysis; it is not another
+declaration parser or semantic index. A candidate edit is then checked in a
+separate frontend snapshot of the actual requesting program. The existing
+definition query must resolve the original occurrence to that candidate file,
+and the edit must introduce no new errors. Wrong namespace, access, overload,
+configuration, package, and module guesses therefore fail closed. Existing
+unrelated errors may remain; a candidate that reveals additional errors is
+conservatively withheld until those errors are addressed. No discovery runs
+for a snapshot without unresolved-name requests or for completion-marker analysis.
+
+The service shares the bounded parsed-unit cache but retains no semantic IDs
+across snapshots. Edits preserve BOM/CRLF and follow a module header when the
+requesting file has one. Multiple valid files produce separate, deterministic,
+non-preferred alternatives rather than silently choosing a declaration.
+
+Open/change/close and watched-file events refresh snapshots that requested
+discovery, including negative searches and newly created files outside the
+loaded graph. A discovery-generation check rejects an in-flight result after
+any source change; ordinary loaded-source generation checks remain unchanged.
+Code actions still require the current source and diagnostic. This deliberately
+uses conservative invalidation for unresolved snapshots rather than adding a
+persistent background project index.
 
 ## Incomplete Source
 

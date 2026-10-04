@@ -610,11 +610,13 @@ void testStandardLibraryImports() {
   const lang::FrontendResult missingMemory = lang::Frontend().analyze(
       root / "missing-memory.gti", uniqueOwnerSource,
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!missingMemory.canGenerateCode() &&
-             hasDiagnosticCode(missingMemory.diagnostics, "GTI-S2000") &&
-             hasDiagnostic(missingMemory.diagnostics,
-                           "Undefined qualified name 'std::make_unique'"),
-         "unique ownership should not remain ambient in the implicit prelude");
+  expect(
+      !missingMemory.canGenerateCode() &&
+          hasDiagnosticCode(missingMemory.diagnostics, "GTI-S2089") &&
+          hasDiagnostic(missingMemory.diagnostics,
+                        "Undefined qualified name 'std::make_unique'") &&
+          hasDiagnosticHint(missingMemory.diagnostics, "#include <std/memory>"),
+      "unique ownership is not ambient and should offer its actual include");
 
   const lang::FrontendResult indirectMemory = lang::Frontend().analyze(
       root / "indirect-memory.gti",

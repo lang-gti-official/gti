@@ -1,0 +1,39 @@
+==================
+Qualified namespace declarations and aliases
+==================
+
+namespace tea::gitea {
+  namespace sdk::detail {}
+}
+namespace tea { namespace gitea::sdk {} }
+namespace alias = tea::gitea;
+export namespace public_api::nested {}
+
+---
+
+(source_file
+  (namespace_declaration
+    (identifier)
+    (identifier)
+    (namespace_body
+      (namespace_declaration
+        (identifier)
+        (identifier)
+        (namespace_body))))
+  (namespace_declaration
+    (identifier)
+    (namespace_body
+      (namespace_declaration
+        (identifier)
+        (identifier)
+        (namespace_body))))
+  (namespace_alias_declaration
+    (identifier)
+    (scoped_identifier
+      (identifier)
+      (identifier)))
+  (export_declaration
+    (namespace_declaration
+      (identifier)
+      (identifier)
+      (namespace_body))))

@@ -159,7 +159,8 @@ void testIncludeDiagnostics() {
                missing->severity == lang::DiagnosticSeverity::Error &&
                missing->primary.start == source.find(name) &&
                missing->primary.end == source.find(name) + name.size() &&
-               missing->message.find("<std/simd>") != std::string::npos &&
+               !missing->hints.empty() &&
+               missing->hints.front().find("<std/simd>") != std::string::npos &&
                missing->fixes.size() == 1 &&
                missing->fixes.front().span.source == missing->primary.source &&
                missing->fixes.front().span.start == 0 &&

@@ -288,12 +288,8 @@ int main() { return 0; }
              include->primary.start == missingSource.find("vector") &&
              include->primary.end ==
                  missingSource.find("vector") + std::string("vector").size() &&
-             include->message ==
-                 "Type 'std::vector' is unavailable because <std/vector> is "
-                 "not included." &&
-             include->hints ==
-                 std::vector<std::string>{"Add '#include <std/vector>' to this "
-                                          "source file."} &&
+             include->message == "Unknown type 'std::vector'." &&
+             hasDiagnosticHint(missing.diagnostics, "#include <std/vector>") &&
              include->fixes.size() == 1 &&
              include->fixes.front().span.source == include->primary.source &&
              include->fixes.front().span.start == 0 &&

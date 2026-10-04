@@ -40,7 +40,7 @@ is a teaching helper, not a production server.
 | `03-functions.gti` | typed parameters, return values, and calls |
 | `04-integers.gti` | fixed-width integers, arithmetic, and bitwise operators |
 | `05-objects.gti` | structs, classes, constructors, access, and mutable methods |
-| `06-namespaces.gti` | nested namespaces, qualification, and aliases |
+| `06-namespaces.gti` | nested namespace shorthand, qualification, and aliases |
 | `07-generics.gti` | type generics, exact inference, and class value parameters |
 | `08-expected.gti` | explicit recoverable errors and `?` propagation with `expected<T, E>` |
 | `09-target-selection.gti` | compile-time host selection and active `#error` guards |
