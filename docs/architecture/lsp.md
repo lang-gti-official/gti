@@ -565,6 +565,14 @@ Diagnostic serialization preserves compiler codes, severities, groups, phases,
 hints, related locations, and fix-its while respecting the client's
 `publishDiagnostics` capabilities. Hints stay in the plain-text message for
 universal display and are also exposed as structured data when supported.
+Ownership explanations use this same serialization: move-site notes,
+borrow-origin/later-statement notes, and read-only declaration notes remain
+compiler-owned half-open byte spans until protocol conversion. Their intentional
+repair options are plain hints, not automatic moves, clones, mutability changes,
+or effect reorders. Correcting an overlay clears the former explanation on the
+next document generation; a diagnostic from the prior version cannot authorize
+an action on the replacement source. Terminal display-cell expansion never
+enters LSP messages or UTF-16 ranges.
 Compiler diagnostic tags are published only when the client's negotiated
 `tagSupport.valueSet` admits that exact LSP tag; the current unreachable-code
 and unnecessary-`mut` warnings use `Unnecessary`. Quick-fix preference is

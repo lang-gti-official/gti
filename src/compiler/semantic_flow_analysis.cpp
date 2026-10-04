@@ -5058,6 +5058,77 @@ auto SemanticVisitor::Impl::isMutableObject(const ExprPtr &expression) const
   return isMutableTarget(expression);
 }
 
+auto SemanticVisitor::Impl::appendReadOnlyPlaceContext(
+    Diagnostic &diagnostic, const ExprPtr &expression) const -> void {
+  if (!expression)
+    return;
+  if (const auto *grouping = exprAs<Grouping>(expression.get())) {
+    appendReadOnlyPlaceContext(diagnostic, grouping->expression());
+    return;
+  }
+  if (const auto *index = exprAs<Index>(expression.get())) {
+    const auto *type = semanticModel.findType(*index->object());
+    if (type && type->kind == SemanticType::Array)
+      appendReadOnlyPlaceContext(diagnostic, index->object());
+    return;
+  }
+  const Symbol *symbol = nullptr;
+  if (const auto *variable = exprAs<Variable>(expression.get())) {
+    symbol = resolve(variable->name());
+  } else if (const auto *member = exprAs<Get>(expression.get())) {
+    if (member->access().kind != TokenKind::DOT)
+      return;
+    const auto *resolved =
+        findMember(memberAccessObjectType(*member), member->name());
+    if (!resolved)
+      return;
+    if (resolved->symbol.assignable && !resolved->symbol.staticMember) {
+      appendReadOnlyPlaceContext(diagnostic, member->object());
+      return;
+    }
+    symbol = &resolved->symbol;
+  }
+  // Calls, overloaded projections and raw pointers do not prove that changing
+  // a named binding's mutability would grant access to the result.
+  if (!symbol || symbol->declaration.lexeme.empty())
+    return;
+  const bool readOnlyReference =
+      symbol->type.kind == SemanticType::Reference &&
+      symbol->type.referenceAccess == AccessMode::ReadOnly;
+  if (symbol->assignable && !readOnlyReference)
+    return;
+  diagnostic.related.push_back(
+      {tokenSpan(symbol->declaration),
+       "'" + symbol->declaration.lexeme + "' is declared " +
+           (readOnlyReference ? "as a read-only reference here."
+                              : "without mutable access here.")});
+  if (readOnlyReference) {
+    diagnostic.hints.emplace_back(
+        "Mutation requires a 'mut T&' reference and exclusive access to its "
+        "owner; otherwise keep this operation read-only.");
+  } else if (symbol->lambdaCapture) {
+    diagnostic.hints.emplace_back(
+        "This capture is an immutable value snapshot; changing its source "
+        "binding does not make the captured value mutable.");
+  } else if (symbol->constant) {
+    diagnostic.hints.emplace_back(
+        "A constant cannot be mutated; use separate mutable storage if a "
+        "changing value is needed.");
+  } else if (target.executionProfile == ExecutionProfile::Concurrent &&
+             (symbol->bindingKind == SemanticBindingKind::GlobalVariable ||
+              symbol->bindingKind == SemanticBindingKind::StaticField)) {
+    diagnostic.hints.emplace_back(
+        "Concurrent globals and static fields must stay immutable. Use local "
+        "mutable storage or an immutable value with an approved atomic or "
+        "mutex contract for synchronized mutation.");
+  } else {
+    diagnostic.hints.emplace_back(
+        "Declare '" + symbol->declaration.lexeme +
+        "' with 'mut' if mutation is intended. Mutable fields still require "
+        "mutable access through their containing value.");
+  }
+}
+
 auto SemanticVisitor::Impl::isThisObject(const ExprPtr &expression) -> bool {
   if (exprAs<This>(expression.get()) != nullptr) {
     return true;
@@ -5556,6 +5627,11 @@ auto SemanticVisitor::Impl::reportMutableReceiverFailure(
   const bool valueShaped = assessment.type.kind == SemanticType::Class;
   if (!valueShaped) {
     report(location, std::string(operation) + " requires a mutable receiver.");
+    appendReadOnlyPlaceContext(diagnostics.back(), receiver);
+    if (function.declaration != nullptr)
+      diagnostics.back().related.push_back(
+          {tokenSpan(function.declaration->name()),
+           "This operation requires mutable receiver access."});
     return;
   }
 
@@ -6067,7 +6143,9 @@ auto SemanticVisitor::Impl::movedSourcePlace(const ExprPtr &expression)
 }
 
 auto SemanticVisitor::Impl::setProjectedValueState(const SemanticPlace &place,
-                                                   ValueState state) -> void {
+                                                   ValueState state,
+                                                   const Token &origin)
+    -> void {
   if (place.root == nullptr || (place.projections.empty() && !place.receiver)) {
     return;
   }
@@ -6084,9 +6162,12 @@ auto SemanticVisitor::Impl::setProjectedValueState(const SemanticPlace &place,
   }
   if (found == place.root->projectedValueStates.end()) {
     place.root->projectedValueStates.push_back(
-        {.projections = place.projections, .state = state});
+        {.projections = place.projections,
+         .state = state,
+         .moveOrigins = {tokenSpan(origin)}});
   } else {
     found->state = state;
+    found->moveOrigins = {tokenSpan(origin)};
   }
 }
 
@@ -6140,6 +6221,7 @@ auto SemanticVisitor::Impl::reportUnavailablePlace(
              : "Place '" + name +
                    "' may have been moved on another control-flow path.",
          "GTI-S2018");
+  appendMoveContext(diagnostics.back(), state.moveOrigins);
 }
 
 auto SemanticVisitor::Impl::validateProjectedPlaceRead(const Expr &expression)
@@ -6189,6 +6271,9 @@ auto SemanticVisitor::Impl::requireInitializedReceiver(const Token &location)
              : "Method cannot return because part of 'this' may remain "
                "moved on another control-flow path.",
          "GTI-S2018");
+  for (const auto &origin : state.moveOrigins)
+    diagnostics.back().related.push_back(
+        {origin, "Ownership transferred here."});
   diagnostics.back().hints.emplace_back(
       "Reinitialize every moved field on each reachable path before the "
       "method returns.");
@@ -6219,6 +6304,38 @@ auto SemanticVisitor::Impl::reportUnavailableValue(const Token &use,
              : "Value '" + use.lexeme +
                    "' may have been moved on another control-flow path.",
          "GTI-S2018");
+  appendMoveContext(diagnostics.back(), symbol.moveOrigins);
+}
+
+auto SemanticVisitor::Impl::mergedMoveOrigins(
+    const std::vector<SourceSpan> &left, const std::vector<SourceSpan> &right)
+    -> std::vector<SourceSpan> {
+  auto result = left;
+  result.insert(result.end(), right.begin(), right.end());
+  std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) {
+    return std::tie(a.source, a.start, a.end) <
+           std::tie(b.source, b.start, b.end);
+  });
+  result.erase(std::unique(result.begin(), result.end(),
+                           [](const auto &a, const auto &b) {
+                             return a.source == b.source &&
+                                    a.start == b.start && a.end == b.end;
+                           }),
+               result.end());
+  // Keep diagnostics bounded even when control-flow joins many transfers.
+  if (result.size() > 4)
+    result.resize(4);
+  return result;
+}
+
+auto SemanticVisitor::Impl::appendMoveContext(
+    Diagnostic &diagnostic, const std::vector<SourceSpan> &origins) -> void {
+  for (const auto &origin : origins)
+    diagnostic.related.push_back({origin, "Ownership transferred here."});
+  diagnostic.hints.emplace_back(
+      "Use the value before transferring it, or borrow it instead if the "
+      "receiving API supports references. If independent ownership is needed, "
+      "make an explicit clone before the transfer when the type supports it.");
 }
 
 auto SemanticVisitor::Impl::mergedValueState(ValueState left, ValueState right)
@@ -6241,7 +6358,17 @@ auto SemanticVisitor::Impl::mergedProjectedValueStates(const Symbol &left,
         mergedValueState(projectedValueState(left, projections),
                          projectedValueState(right, projections));
     if (state != ValueState::Available) {
-      result.push_back({.projections = projections, .state = state});
+      std::vector<SourceSpan> origins;
+      for (const auto *symbol : {&left, &right}) {
+        for (const auto &candidate : symbol->projectedValueStates) {
+          if (candidate.projections == projections &&
+              candidate.state != ValueState::Available)
+            origins = mergedMoveOrigins(origins, candidate.moveOrigins);
+        }
+      }
+      result.push_back({.projections = projections,
+                        .state = state,
+                        .moveOrigins = std::move(origins)});
     }
   };
   for (const ProjectedValueState &state : left.projectedValueStates) {
@@ -6269,6 +6396,13 @@ auto SemanticVisitor::Impl::mergeValueStates(const ScopeStack &base,
         if (tracksValueState(baseSymbol)) {
           target->second.valueState = mergedValueState(
               leftSymbol->second.valueState, rightSymbol->second.valueState);
+          target->second.moveOrigins = mergedMoveOrigins(
+              leftSymbol->second.valueState == ValueState::Available
+                  ? std::vector<SourceSpan>{}
+                  : leftSymbol->second.moveOrigins,
+              rightSymbol->second.valueState == ValueState::Available
+                  ? std::vector<SourceSpan>{}
+                  : rightSymbol->second.moveOrigins);
         }
         target->second.projectedValueStates =
             mergedProjectedValueStates(leftSymbol->second, rightSymbol->second);
@@ -6312,6 +6446,7 @@ auto SemanticVisitor::Impl::applyMoveStates(const ScopeStack &source) -> void {
         continue;
       }
       target.valueState = found->second.valueState;
+      target.moveOrigins = found->second.moveOrigins;
       target.projectedValueStates = found->second.projectedValueStates;
     }
   }

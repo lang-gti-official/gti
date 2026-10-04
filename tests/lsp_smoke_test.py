@@ -11481,11 +11481,19 @@ def test_owner_dependent_span_tooling(executable, root):
         ), diagnostic
         assert diagnostic["data"]["phase"] == "semantics", diagnostic
         assert diagnostic["data"]["hints"] == [
-            "Place the borrowed value in a narrower block when an explicit "
-            "lexical end is required across control flow."
+            "Finish using the borrowed value before changing or moving its "
+            "owner, or perform the owner operation before creating the borrow. "
+            "Choose an order that preserves the intended effects."
         ], diagnostic
         assert any(
             related["message"] == "Retained borrow originates here."
+            for related in diagnostic["relatedInformation"]
+        ), diagnostic
+        assert any(
+            related["message"] == "The borrowed value is used later here."
+            and related["location"]["uri"] == uri
+            and related["location"]["range"]["start"]
+            == lsp_position(invalidated_source, invalidated_source.index("return "))
             for related in diagnostic["relatedInformation"]
         ), diagnostic
 

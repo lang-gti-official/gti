@@ -4802,6 +4802,8 @@ auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
       }
     }
     if (!liveLoans.empty()) {
+      bool laterUse = false;
+      bool lifecycleBound = false;
       for (const SemanticLoanId id : liveLoans) {
         const SemanticLoanInfo *loan = semanticModel.findLoan(id);
         if (loan != nullptr && loan->origin != nullptr) {
@@ -4821,10 +4823,42 @@ auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
             conflict.diagnostic.related.push_back(std::move(related));
           }
         }
+        const auto flow = loanFlow.records.find(id);
+        if (loan && loan->lifecycleBound)
+          lifecycleBound = true;
+        if (flow != loanFlow.records.end() &&
+            flow->second.region == conflict.region &&
+            flow->second.lastUseOrder > conflict.order &&
+            flow->second.lastUse && flow->second.lastUse->extent()) {
+          const auto &span = *flow->second.lastUse->extent();
+          const bool duplicate = std::any_of(
+              conflict.diagnostic.related.begin(),
+              conflict.diagnostic.related.end(), [&](const auto &note) {
+                return note.span.source == span.source &&
+                       note.span.start == span.start &&
+                       note.span.end == span.end;
+              });
+          if (!duplicate)
+            conflict.diagnostic.related.push_back(
+                {span, "The borrowed value is used later here."});
+          laterUse = true;
+        }
       }
-      conflict.diagnostic.hints.emplace_back(
-          "Place the borrowed value in a narrower block when an explicit "
-          "lexical end is required across control flow.");
+      if (lifecycleBound) {
+        conflict.diagnostic.hints.emplace_back(
+            "This borrow protects a resource until its carrier is destroyed, "
+            "not merely until its last read. End the carrier's scope before "
+            "accessing the owner again.");
+      } else if (laterUse) {
+        conflict.diagnostic.hints.emplace_back(
+            "Finish using the borrowed value before changing or moving its "
+            "owner, or perform the owner operation before creating the borrow. "
+            "Choose an order that preserves the intended effects.");
+      } else {
+        conflict.diagnostic.hints.emplace_back(
+            "Place the borrowed value in a narrower block when an explicit "
+            "lexical end is required across control flow.");
+      }
       diagnostics.emplace_back(std::move(conflict.diagnostic));
     }
   }
@@ -5813,7 +5847,7 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
     reportLoanPlaceConflict(
         expressionToken(argument), place, AccessMode::Mutable,
         "Cannot move this while an overlapping borrow may still be live.");
-    setProjectedValueState(place, ValueState::Moved);
+    setProjectedValueState(place, ValueState::Moved, expressionToken(argument));
     semanticModel.recordOwnershipEvent(expr, {.kind = OwnershipEventKind::Move,
                                               .place = placeKey(place),
                                               .before = ValueState::Available,
@@ -5948,7 +5982,7 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
         "live.");
     const ValueState before =
         projectedValueState(*place.root, place.projections);
-    setProjectedValueState(place, ValueState::Moved);
+    setProjectedValueState(place, ValueState::Moved, expressionToken(argument));
     if (place.root->variableDeclaration != nullptr) {
       semanticModel.recordExplicitMove(*place.root->variableDeclaration);
     } else if (place.root->parameterDeclaration != nullptr) {
@@ -6102,6 +6136,7 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
   }
   const ValueState before = mutableSymbol->valueState;
   mutableSymbol->valueState = ValueState::Moved;
+  mutableSymbol->moveOrigins = {tokenSpan(variable->name())};
   if (mutableSymbol->variableDeclaration != nullptr) {
     semanticModel.recordExplicitMove(*mutableSymbol->variableDeclaration);
   } else if (mutableSymbol->parameterDeclaration != nullptr) {
@@ -6186,6 +6221,7 @@ auto SemanticVisitor::Impl::analyzeImplicitReturnMove(
 
   const ValueState before = mutableSymbol->valueState;
   mutableSymbol->valueState = ValueState::Moved;
+  mutableSymbol->moveOrigins = {tokenSpan(variable->name())};
   if (mutableSymbol->variableDeclaration != nullptr) {
     semanticModel.recordExplicitMove(*mutableSymbol->variableDeclaration);
   } else if (mutableSymbol->parameterDeclaration != nullptr) {
