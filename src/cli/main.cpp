@@ -2268,8 +2268,10 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
     if (result.driverDiagnostic) {
       std::cerr << *result.driverDiagnostic << '\n';
     }
-    std::cerr << "gti: build --all: target '" << plan.targetName()
-              << "' failed with exit code " << result.exitCode << '\n';
+    std::cerr << "gti: build --all: target '" << plan.targetName() << "' "
+              << terminalStyle.code(std::cerr, Style::Error) << "failed"
+              << terminalStyle.code(std::cerr, Style::Reset)
+              << " with exit code " << result.exitCode << '\n';
     if (firstFailure == exitCode(ExitStatus::Success)) {
       firstFailure = result.exitCode;
     }
@@ -2674,7 +2676,9 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
     if (options.verbose) {
       reportProjectPlan(plan, ProjectCommand::Test);
     }
-    std::cerr << "Building test " << plan.targetName() << '\n';
+    std::cerr << terminalStyle.code(std::cerr, Style::Note) << "Building test"
+              << terminalStyle.code(std::cerr, Style::Reset) << ' '
+              << plan.targetName() << '\n';
     DiagnosticSummary buildSummary;
     const int buildStatus =
         buildProjectPlan(plan, options, toolchain, &resolution.sources, nullptr,
@@ -2688,7 +2692,9 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
     if (plan.keepCpp()) {
       std::cerr << "Kept C++ " << plan.generatedSource().string() << '\n';
     }
-    std::cerr << "Testing " << plan.targetName() << '\n';
+    std::cerr << terminalStyle.code(std::cerr, Style::Note) << "Testing"
+              << terminalStyle.code(std::cerr, Style::Reset) << ' '
+              << plan.targetName() << '\n';
     const lang::driver::ProcessResult process = lang::driver::invokeProcess(
         {plan.output().string()},
         {.outputMode = lang::driver::ProcessOutputMode::Inherit,
@@ -2715,9 +2721,12 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
               << ")\n";
   }
 
-  std::cerr << "Test result: " << passed << " passed";
+  std::cerr << "Test result: " << terminalStyle.code(std::cerr, Style::Success)
+            << passed << " passed"
+            << terminalStyle.code(std::cerr, Style::Reset);
   if (failed != 0) {
-    std::cerr << ", " << failed << " failed";
+    std::cerr << ", " << terminalStyle.code(std::cerr, Style::Error) << failed
+              << " failed" << terminalStyle.code(std::cerr, Style::Reset);
   }
   std::cerr << '\n';
   reportDiagnosticSummary(std::cerr, diagnosticSummary);

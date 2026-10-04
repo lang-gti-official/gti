@@ -28,6 +28,11 @@ or `gti build --color=never` to disable it. Automatic terminal detection and
 For `gti run`, build status remains on stderr and the program's stdout is left
 unchanged. Parallel `build --all` preserves both coloured child diagnostics and
 their aggregated counts without adding presentation policy to driver requests.
+For `gti test`, build/run progress is cyan, passed labels/counts are green, and
+failed labels/counts are red. Test-runner status stays on stderr; test-program
+stdout and stderr remain inherited and are never restyled or filtered. The
+same `auto`, `always`, `never`, and `NO_COLOR` policy applies to test output.
+Parallel build target-failure labels are red under that policy as well.
 
 - `gti_compiler` contains reusable frontend, IR, optimizer, backend contracts,
   and compiler-owned language queries. It does not depend on manifests, TOML,

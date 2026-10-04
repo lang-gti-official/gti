@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.366.1 — Consistent test-runner colour
+
+- Colour `gti test` build/run progress and the final passed/failed counts using
+  the existing terminal policy, alongside per-target results.
+- Colour parallel build target-failure labels. Automatic detection, `NO_COLOR`,
+  and `--color=always|never` work consistently without changing test-program
+  output, plain captured text, or exit statuses.
+
 ## 0.366.0 — Borrowed Expected propagation and required access
 
 - Prefix `?` propagates `expected<T&, E>` errors while yielding a checked,

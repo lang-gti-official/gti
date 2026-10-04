@@ -254,6 +254,26 @@ forced-colour and redirected-output cases; its native console detection still
 requires platform coverage. Existing `cli_workflow` and `project_cli_workflow`
 retain the plain captured-output contract.
 
+The test-runner cases cover all-pass, all-fail and mixed outcomes, continuation
+after a runtime failure, coloured build/run progress and per-category summary
+counts, and the first failing exit status. They compare ANSI-stripped stderr
+with the original plain output while requiring identical test-program stdout.
+POSIX pseudo-terminal checks include redirected stdout, `NO_COLOR` (empty and
+nonempty), `TERM=dumb`, and explicit `never`; forced `always` overrides disabled
+environment defaults. A source compilation failure stops execution without a
+misleading test-result summary. Parallel target-failure labels are also checked.
+
+The 0.366.1 test-runner follow-up passes all nine focused gates in a clean
+macOS arm64 Release/Ninja build with AppleClang 21 and LLVM 22.1.8:
+`cli_color` in 16.03 seconds, and the remaining eight CLI, compiler/driver
+boundary, project, test-ownership and version-policy gates in 112.95 seconds.
+The same colour regression passes against a freshly installed toolchain; all
+eleven installed-library checks pass in 1.47 seconds. A separate installed
+mixed-outcome test with `GTI_*` overrides removed verifies resource discovery,
+unchanged program output and first-failure status. Clang-format checks all
+405 first-party C/C++ files. This is a CLI presentation-only patch; the full
+language suite and native Windows console coverage were not rerun.
+
 Reconciliation with the panic/Expected release on 2026-10-04 passes all eight
 focused gates (`cli_color`, both CLI workflows, both driver boundaries,
 `project_model`, `cmake_test_ownership`, and `release_version_policy`) in
