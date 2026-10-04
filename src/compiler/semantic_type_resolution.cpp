@@ -2079,13 +2079,15 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
     }
     const auto valueTraits = typeTraits(expected.arguments[0]);
     const auto errorTraits = typeTraits(expected.arguments[1]);
-    if (isFallibleBorrowType(expected) || valueTraits.containsBorrowedState ||
+    const bool borrowedSuccess = isFallibleBorrowType(expected);
+    if ((!borrowedSuccess && valueTraits.containsBorrowedState) ||
         errorTraits.containsBorrowedState ||
-        (expected.arguments[0] != SemanticType::Void && !valueTraits.movable) ||
+        (!borrowedSuccess && expected.arguments[0] != SemanticType::Void &&
+         !valueTraits.movable) ||
         !errorTraits.movable) {
       report(member.name(),
-             "expect requires movable owned alternatives; inspect a fallible "
-             "borrow's state and borrow its value explicitly instead.",
+             "expect requires a movable owned error and an owned movable value "
+             "or a checked read-only reference success.",
              "GTI-S2045");
       currentType = SemanticType::Unknown;
       return;
@@ -2105,10 +2107,15 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
       currentType = SemanticType::Unknown;
       return;
     }
-    currentType = expected.arguments[0];
-    ResolvedCallInfo resolved{.returnType = currentType,
+    currentType = borrowedSuccess ? expected.arguments[0].arguments.front()
+                                  : expected.arguments[0];
+    ResolvedCallInfo resolved{.returnType = expected.arguments[0],
                               .parameterTypes = {SemanticType::StringView},
                               .tracksCaller = true,
+                              .borrowOrigin = borrowedSuccess
+                                                  ? BorrowOriginKind::Receiver
+                                                  : BorrowOriginKind::None,
+                              .borrowAccess = AccessMode::ReadOnly,
                               .dispatchOwner = expected,
                               .receiverMode = CallReceiverMode::Consuming};
     semanticModel.record(call, resolved);

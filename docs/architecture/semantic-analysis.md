@@ -1031,6 +1031,18 @@ state is not locally provable.
 
 ## Loan Flow
 
+Borrowed expected propagation yields a read-only referent place, preserving
+the carrier's original owner, escape boundary and loan endpoint. Its success
+does not require referent copyability or movability; only the error alternative
+is transported. Borrowed `expect` records a reference return and a consuming
+receiver, so both ordinary reference checks and explicit named consumption
+apply. These extraction forms participate in the same stored-source,
+transient-production and retained-loan queries as other checked references.
+Global and local loan-flow places use the same analysis-local domain. HIR
+qualifies those places with its concrete snapshot/body identity; qualifying
+only global dependencies during semantic conflict checks would incorrectly
+make every local carrier potentially alias a global owner.
+
 Retained borrows receive stable semantic loan identities. A move transfers a
 carrier; a read-only alias adds another carrier to the same identity, while a
 mutable stored carrier cannot be copied. Uses are

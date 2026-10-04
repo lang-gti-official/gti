@@ -605,6 +605,9 @@ add_test(NAME expected_transform_error COMMAND gti_expected_transform_error_test
 add_executable(gti_expected_ergonomics_tests expected_ergonomics_tests.cpp)
 target_link_libraries(gti_expected_ergonomics_tests PRIVATE gti_cpp_backend)
 add_test(NAME expected_ergonomics COMMAND gti_expected_ergonomics_tests)
+add_executable(gti_borrowed_expected_extraction_tests borrowed_expected_extraction_tests.cpp)
+target_link_libraries(gti_borrowed_expected_extraction_tests PRIVATE gti_cpp_backend)
+add_test(NAME borrowed_expected_extraction COMMAND gti_borrowed_expected_extraction_tests)
 add_executable(gti_panic_contract_tests panic_contract_tests.cpp)
 target_link_libraries(gti_panic_contract_tests PRIVATE gti_cpp_backend)
 add_test(NAME panic_contracts COMMAND gti_panic_contract_tests)
@@ -1414,6 +1417,12 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/expected_ergonomics_runtime_test.py"
             "$<TARGET_FILE:gti>")
   set_tests_properties(expected_ergonomics_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME borrowed_expected_extraction_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/borrowed_expected_extraction_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(borrowed_expected_extraction_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME expected_payload_range_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -2656,6 +2665,12 @@ if(Python3_Interpreter_FOUND)
       NAME expected_transform_error_lsp
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/expected_transform_error_lsp_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    add_test(
+      NAME borrowed_expected_extraction_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/borrowed_expected_extraction_lsp_test.py"
               "$<TARGET_FILE:gti_lsp>"
     )
     add_test(

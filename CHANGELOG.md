@@ -9,6 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.366.0 — Borrowed Expected propagation and required access
+
+- Prefix `?` propagates `expected<T&, E>` errors while yielding a checked,
+  read-only reference on success. Named carriers require copying only `E`,
+  not the referent; fresh or explicitly moved carriers move the error.
+- `.expect(message)` also supports borrowed successes, retaining the original
+  owner's lifetime checks and the existing panic, caller-location and cleanup
+  contracts. Even noncopyable, immovable referents are supported.
+- Add a runnable borrowed command-lookup example and cross-phase, runtime,
+  sanitizer and LSP regression coverage.
+- Fix ordinary constructor emission for cloned owning fields whose type has
+  no default constructor; use the same verified field-publication storage as
+  failure-form constructors. This repairs Tea's URL-wrapper build failure.
+
 ## 0.364.1 — Checked Expected payload argument fix
 
 - Fix an internal compiler error when a moved Expected's cleanup-free class

@@ -17,6 +17,8 @@ if __name__ == "__main__":
         ("constructor_nonassignable_fields", "7\n12\n3\n2\n1\n", "7\n2\n1\n"),
         ("constructor_field_call_assignment", "12\nold\n12\nnew\ndone\nnew\n",
          "12\nold\nnew\n"),
+        ("constructor_nondefault_cloned_field", "12\nsource\nsource\nholder\nguard\n",
+         "guard\n"),
     ):
         source = fixtures / f"{name}.gti"
         line = next(index + 1 for index, text in enumerate(source.read_text().splitlines())

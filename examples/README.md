@@ -18,6 +18,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Translate library errors into application errors | [96: error mapping](96-error-mapping.gti) |
 | Build and validate data at compile time | [97: constexpr tables](97-constexpr-tables.gti) |
 | Share an object's lifetime without deep-copying it | [98: shared ownership](98-shared-ownership.gti) |
+| Propagate a failed lookup without copying its borrowed result | [99: borrowed expected](99-borrowed-expected.gti) |
 | Retain a lambda as a callback | [86: owning callbacks](86-owning-callbacks.gti) |
 | Model an absent value and initialize it later | [84: optional values](84-optional-values.gti) |
 | Read program arguments | [43: hosted arguments](43-program-arguments.gti) |
@@ -130,6 +131,7 @@ is a teaching helper, not a production server.
 | `96-error-mapping.gti` | consuming `transform_error`, named mapper functions, and `?` propagation |
 | `97-constexpr-tables.gti` | constexpr constructors, methods, arrays, loops, and static assertions |
 | `98-shared-ownership.gti` | shared handles, explicit cloning versus moving, and final-owner cleanup |
+| `99-borrowed-expected.gti` | read-only fallible lookup, borrowed `?` propagation, and consuming `.expect` with owner lifetime checks |
 
 ## Build and run
 

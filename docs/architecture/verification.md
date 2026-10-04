@@ -1,5 +1,39 @@
 # Compiler Verification
 
+## Borrowed Expected extraction and constructor publication
+
+The 0.366.0 slice supports prefix `?` and consuming `expect` on
+`expected<T&, E>` without copying, moving or extending the lifetime of the
+referent. The dedicated compiler gate covers noncopyable and immovable user
+types, named/fresh/moved carriers, receiver/argument/global origins, reference
+forwarding, rejected invalidation and escape, and independent HIR/MIR mutations.
+The runtime matrix passes 42 outcomes plus seven runs of the new command-lookup
+example across C++20/C++23 at O0/O1/O3, disabled elision and ASan/UBSan.
+LSP checks cover diagnostics, Unicode ranges, hover/navigation and recovery.
+
+Review exposed a global/local loan-domain mismatch that falsely treated a
+local carrier move as invalidating its global referent. Global-owner mutation
+remains rejected after unifying the semantic loan-flow domain. HIR retains its
+existing concrete snapshot/body qualification. MIR additionally rejects a
+forged extraction loan rooted in carrier storage instead of the external owner.
+
+Tea's `gitea-sdk-test` now builds without running the service-facing test.
+The reduced no-default-constructor fixture proves cloned field publication and
+failure cleanup in the existing constructor matrix. Ordinary constructors use
+the same verified private empty-field state as failure-form overloads; the
+backend does not invent a default constructor. The separate non-comparable
+payload-enum equality warnings are not changed by this fix.
+
+The Release/Ninja all-target build uses AppleClang 21 and LLVM 22.1.8 on macOS
+arm64, with 12 build jobs. All 395 broad CTest gates pass with eight workers
+(2042.62 seconds). The constructor/global-origin review additions made during
+that run also have passing focused reruns, including the compiler pipeline and
+the complete constructor runtime matrix (285.67 seconds). The 96-example
+corpus has 10914 emitted MIR body identities; only the new example changes the
+reviewed inventories. All 68 Tree-sitter corpus cases and shipped-source
+parsing pass. These results do not claim Linux/Windows execution or an update
+to the user's active toolchain.
+
 ## Required examples for new language features
 
 Every new language feature **must include an accompanying runnable example

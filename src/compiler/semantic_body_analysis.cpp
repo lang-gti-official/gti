@@ -6995,17 +6995,6 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
       currentType = SemanticType::Unknown;
       return;
     }
-    if (isFallibleBorrowType(operandType)) {
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2086", DiagnosticPhase::Semantics, expr.oper(),
-          "Error propagation for 'expected<T&, E>' is not supported yet.");
-      diagnostic.hints.emplace_back(
-          "Inspect has_value(), return the error explicitly, and borrow "
-          "value() only on the success path.");
-      diagnostics.emplace_back(std::move(diagnostic));
-      currentType = SemanticType::Unknown;
-      return;
-    }
     if (currentReturnType.kind != SemanticType::Expected ||
         currentReturnType.arguments.size() != 2) {
       Diagnostic diagnostic = makeDiagnostic(
@@ -7048,9 +7037,11 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
       const SemanticTypeTraits traits = typeTraits(type);
       return moves ? traits.movable : traits.copyable;
     };
-    if (!transferable(valueType) || !transferable(errorType)) {
+    const bool borrowedSuccess = isFallibleBorrowType(operandType);
+    if ((!borrowedSuccess && !transferable(valueType)) ||
+        !transferable(errorType)) {
       const SemanticType &blocked =
-          !transferable(valueType) ? valueType : errorType;
+          !borrowedSuccess && !transferable(valueType) ? valueType : errorType;
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2086", DiagnosticPhase::Semantics, expr.oper(),
           std::string("Error propagation cannot ") + (moves ? "move" : "copy") +
@@ -7065,7 +7056,7 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
       return;
     }
 
-    currentType = valueType;
+    currentType = borrowedSuccess ? valueType.arguments.front() : valueType;
     return;
   }
   if (contextualOperatorIntegerType &&

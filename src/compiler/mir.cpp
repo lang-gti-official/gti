@@ -9227,6 +9227,84 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                        "instruction has an invalid shape or reference",
                        block.id, instruction.id);
       }
+      if (instruction.intrinsic == IntrinsicKind::ExpectedValue &&
+          instruction.receiver &&
+          instruction.receiver->type.kind == SemanticType::Expected &&
+          instruction.receiver->type.arguments.size() == 2 &&
+          instruction.receiver->type.arguments.front().kind ==
+              SemanticType::Reference) {
+        // A fallible reference stores an external address. Its extraction
+        // must preserve the carrier's actual owner, never its shell storage.
+        // Follow only explicit loan publication and copy/move transport.
+        const MirLoan *extracted =
+            instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
+        std::unordered_set<MirPlaceId> visiting;
+        const auto preservesOwner = [&](auto &&self, MirPlaceId id) -> bool {
+          const MirPlace *carrier = body.findPlace(id);
+          if (carrier == nullptr || extracted == nullptr ||
+              !visiting.insert(id).second)
+            return false;
+          const auto sameOwner = [&](const MirLoan &dependency) {
+            return dependency.id != extracted->id &&
+                   dependency.access == AccessMode::ReadOnly &&
+                   sameCanonicalPlace(canonicalBorrowOriginPlace(
+                                          body, dependency.source, {}, false),
+                                      canonicalBorrowOriginPlace(
+                                          body, extracted->source, {}, false));
+          };
+          if (carrier->root == MirPlaceRootKind::Binding) {
+            return std::any_of(body.loans.begin(), body.loans.end(),
+                               [&](const MirLoan &dependency) {
+                                 return std::find(dependency.carriers.begin(),
+                                                  dependency.carriers.end(),
+                                                  carrier->binding) !=
+                                            dependency.carriers.end() &&
+                                        sameOwner(dependency);
+                               });
+          }
+          if (carrier->root != MirPlaceRootKind::Value)
+            return false;
+          const MirValue *value = body.findValue(carrier->value);
+          const MirBlock *definition =
+              value ? body.findBlock(value->definitionBlock) : nullptr;
+          if (definition == nullptr)
+            return false;
+          const auto producer = std::find_if(
+              definition->instructions.begin(), definition->instructions.end(),
+              [&](const MirInstruction &candidate) {
+                return candidate.id == value->definition;
+              });
+          if (producer == definition->instructions.end())
+            return false;
+          if (producer->loan) {
+            const MirLoan *dependency = body.findLoan(*producer->loan);
+            return dependency != nullptr && sameOwner(*dependency);
+          }
+          return (producer->kind == MirInstructionKind::Move ||
+                  producer->kind == MirInstructionKind::Load) &&
+                 producer->operands.size() == 1 &&
+                 self(self, producer->operands.front().place);
+        };
+        const MirPlace *origin =
+            extracted ? body.findPlace(extracted->source) : nullptr;
+        const SemanticType &reference =
+            instruction.receiver->type.arguments.front();
+        if (reference.arguments.size() != 1 ||
+            reference.referenceAccess != AccessMode::ReadOnly ||
+            instruction.info.type != reference.arguments.front() ||
+            instruction.borrowAccess != AccessMode::ReadOnly ||
+            origin == nullptr || origin->root == MirPlaceRootKind::Value ||
+            origin->root == MirPlaceRootKind::Temporary ||
+            extracted->source == instruction.receiver->place ||
+            extracted->access != AccessMode::ReadOnly ||
+            instruction.borrowOrigin != BorrowOriginKind::Receiver ||
+            !preservesOwner(preservesOwner, instruction.receiver->place)) {
+          return failure(
+              body, owner,
+              "fallible reference extraction lost its carrier's external owner",
+              block.id, instruction.id);
+        }
+      }
       if (instruction.fullExpressionEnd != 0) {
         if (instruction.fullExpressionEnd > body.fullExpressions.size()) {
           return failure(body, owner,

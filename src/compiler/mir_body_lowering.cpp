@@ -2992,6 +2992,8 @@ private:
       }
       break;
     case HirValueKind::Call:
+    case HirValueKind::ExpectedPropagation:
+    case HirValueKind::Conditional:
       place = loanOrValuePlace(*value);
       break;
     case HirValueKind::Unary:
@@ -3348,6 +3350,8 @@ private:
   [[nodiscard]] static bool isPlaceExpression(HirValueKind kind) {
     switch (kind) {
     case HirValueKind::Call:
+    case HirValueKind::ExpectedPropagation:
+    case HirValueKind::Conditional:
     case HirValueKind::Grouping:
     case HirValueKind::Index:
     case HirValueKind::MemberAccess:
@@ -3371,7 +3375,9 @@ private:
       valid = false;
       return;
     }
-    if (isCallLike(*value)) {
+    if (isCallLike(*value) ||
+        value->kind == HirValueKind::ExpectedPropagation ||
+        value->kind == HirValueKind::Conditional) {
       emitValue(id);
       return;
     }
@@ -3750,6 +3756,8 @@ private:
         materialized->sourceValue != temporary->id ||
         !materialized->projections.empty() ||
         (temporary->info.traits.containsBorrowedState &&
+         !(mirFallibleBorrowReferent(temporary->info.type) &&
+           loanForValue(id) != 0) &&
          !findMirTemporaryCarrierDependency(output, *materialized))) {
       valid = false;
       return {};
@@ -4630,8 +4638,11 @@ private:
           retainedReceiver ? receiverOperand(receiverSource->operands.front(),
                                              AccessMode::Mutable)
           : expectedTemporaryExtraction
-              ? temporaryBorrowOperand(*receiver, AccessMode::ReadOnly,
-                                       receiverSource->info.type, true)
+              ? temporaryBorrowOperand(
+                    *receiver, AccessMode::ReadOnly, receiverSource->info.type,
+                    true,
+                    mirFallibleBorrowReferent(receiverSource->info.type)
+                        .has_value())
               : receiverOperand(*receiver, access);
       if (expandsPack) {
         const HirValue *input = findValue(*receiver);
@@ -5095,7 +5106,14 @@ private:
             value.borrowAccess == AccessMode::Mutable;
         if ((derivedCallResult || derivedMutableCarrier) &&
             !(shellReference &&
-              output.loans[originLoan - 1].kind == MirLoanKind::Stored)) {
+              output.loans[originLoan - 1].kind == MirLoanKind::Stored) &&
+            !(value.intrinsic == IntrinsicKind::ExpectedValue &&
+              sourceReceiverValue &&
+              mirFallibleBorrowReferent(
+                  findValue(*sourceReceiverValue)->info.type))) {
+          // A fallible reference stores an external pointer, not an inline
+          // referent. Extraction shares that owner's authority independently
+          // of the carrier shell, which may end at this full expression.
           parent = originLoan;
         }
       }
@@ -6311,6 +6329,20 @@ private:
     emittedValues.insert(value.id);
   }
 
+  void forwardBorrowResult(const HirValue &value, HirValueId source) {
+    emitValue(source);
+    const MirLoanId loan = loanForValue(source);
+    if (loan == 0 || value.info.category != ValueCategory::Place ||
+        value.info.access != AccessMode::ReadOnly) {
+      valid = false;
+      return;
+    }
+    valueLoans.insert_or_assign(value.id, loan);
+    loweredValues.insert_or_assign(value.id, mirValueFor(source));
+    valuePlaces.insert_or_assign(value.id,
+                                 clonePlace(placeForValue(source), value));
+  }
+
   void emitConditional(const HirValue &value) {
     if (value.operands.size() != 3) {
       valid = false;
@@ -6342,10 +6374,24 @@ private:
     const std::vector<Scope> incomingScopes = scopes;
     const std::vector<TemporaryDrop> incomingTemporaryDrops = temporaryDrops;
     const bool hasResult = value.info.type.kind != SemanticType::Void;
-    const MirPlaceId temporary =
-        hasResult ? conditionalTemporary(value) : MirPlaceId{0};
+    const bool borrowedResult =
+        hasResult && value.info.category == ValueCategory::Place;
+    // A reference join currently has exactly one normally completing arm.
+    // The other is terminal, so no pointer phi or lifetime union is needed.
+    if (borrowedResult &&
+        (!findValue(value.operands[1]) || !findValue(value.operands[2]) ||
+         findValue(value.operands[1])->neverReturns ==
+             findValue(value.operands[2])->neverReturns)) {
+      valid = false;
+      return;
+    }
+    const MirPlaceId temporary = hasResult && !borrowedResult
+                                     ? conditionalTemporary(value)
+                                     : MirPlaceId{0};
     const MirDropObligationId resultObligation =
-        hasResult ? dropObligationForValue(value.id, temporary) : 0;
+        hasResult && !borrowedResult
+            ? dropObligationForValue(value.id, temporary)
+            : 0;
     std::vector<TemporaryDrop> thenTemporaryDrops;
     std::vector<TemporaryDrop> elseTemporaryDrops;
     const auto emitArm = [&](MirBlockId block, HirValueId arm,
@@ -6367,7 +6413,9 @@ private:
         }
         return temporaryDrops;
       }
-      if (hasResult) {
+      if (borrowedResult) {
+        forwardBorrowResult(value, arm);
+      } else if (hasResult) {
         const MirOperand operand = valueOperand(arm);
         if (terminated()) {
           completesNormally = false;
@@ -6404,7 +6452,8 @@ private:
       if (!completesNormally) {
         return temporaryDrops;
       }
-      endAddedLoans(incomingScopes);
+      if (!borrowedResult)
+        endAddedLoans(incomingScopes);
       terminate({.kind = MirTerminatorKind::Goto, .target = mergeBlock});
       return temporaryDrops;
     };
@@ -6435,7 +6484,9 @@ private:
     if (elseCompletes) {
       retainBranchCarrierLoans(elseScopes);
     }
-    if (hasResult) {
+    if (borrowedResult) {
+      scopes = thenCompletes ? thenScopes : elseScopes;
+    } else if (hasResult) {
       const bool moveResult = value.info.traits.drop != DropKind::Trivial ||
                               !value.info.traits.copyable;
       (void)appendInstruction(
@@ -6467,7 +6518,9 @@ private:
         errorExtraction == nullptr || unexpected == nullptr ||
         operand->info.type.kind != SemanticType::Expected ||
         operand->info.type.arguments.size() != 2 ||
-        operand->info.type.arguments[0] != value.info.type ||
+        (operand->info.type.arguments[0] != value.info.type &&
+         mirFallibleBorrowReferent(operand->info.type) !=
+             std::optional<SemanticType>{value.info.type}) ||
         successExtraction->intrinsic != IntrinsicKind::ExpectedValue ||
         errorExtraction->intrinsic != IntrinsicKind::ExpectedError ||
         unexpected->kind != HirValueKind::Unexpected ||
@@ -6526,6 +6579,12 @@ private:
     }
     if (plan.successValue == 0 || findValue(plan.successValue) == nullptr) {
       valid = false;
+      return;
+    }
+
+    if (value.info.category == ValueCategory::Place) {
+      forwardBorrowResult(value, plan.successValue);
+      emittedValues.insert(value.id);
       return;
     }
 
@@ -9278,7 +9337,17 @@ private:
                 function->returnBorrowOrigin == BorrowOriginKind::Receiver ||
                         function->returnBorrowOrigin == BorrowOriginKind::Global
                     ? transient == 0
-                    : summarizedEntry != 0 && transient == summarizedEntry;
+                    : summarizedEntry != 0 &&
+                          (transient == summarizedEntry ||
+                           (transient == 0 &&
+                            output.loans[borrow.loan - 1].access ==
+                                AccessMode::ReadOnly &&
+                            output.findPlace(sourcePlace) != nullptr &&
+                            output.findPlace(sourcePlace)->root ==
+                                MirPlaceRootKind::Binding &&
+                            output.findPlace(sourcePlace)->binding ==
+                                function->parameterBindings
+                                    [function->returnBorrowParameter]));
             if (!validTail || transientChain.empty()) {
               valid = false;
             } else {
@@ -9287,9 +9356,11 @@ private:
                   value->info.type != output.returnType.arguments.front()) {
                 valid = false;
               } else {
+                const HirValueId producer =
+                    output.loans[borrow.loan - 1].producedBy;
                 const MirLoanId normalized =
                     createLoan(MirLoanKind::Return, sourcePlace,
-                               function->returnBorrowAccess, *statement.value);
+                               function->returnBorrowAccess, producer);
                 output.loans[normalized - 1].storedDependency =
                     output.loans[borrow.loan - 1].storedDependency;
                 // A nested reference-returning call carries the exact referent
@@ -9298,7 +9369,7 @@ private:
                 // Return loan before retiring the body-local chain.
                 (void)appendInstruction(
                     {.kind = MirInstructionKind::Borrow,
-                     .hirValue = *statement.value,
+                     .hirValue = producer,
                      .operands = {{.kind = MirOperandKind::Loan,
                                    .loan = borrow.loan,
                                    .type = value->info.type}},
@@ -9307,7 +9378,7 @@ private:
                 for (const MirLoanId ended : transientChain) {
                   (void)appendInstruction(
                       {.kind = MirInstructionKind::EndBorrow,
-                       .hirValue = *statement.value,
+                       .hirValue = producer,
                        .loan = ended});
                   removeLoanFromState(ended, scopes, bindingLoans);
                 }

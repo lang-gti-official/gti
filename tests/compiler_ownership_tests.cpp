@@ -9896,7 +9896,9 @@ int main() {
               std::string::npos &&
           nullArtifact.contents.find(
               "unique_ptr<::__gti_program::Widget>::unique_ptr(std::nullptr_t "
-              "__gti_mir_arg_0) {") != std::string::npos &&
+              "__gti_mir_arg_0) : owner(::gti_internal::backend::"
+              "mir_empty_state_v1<std::remove_cv_t<decltype(owner)>>()) {") !=
+              std::string::npos &&
           nullArtifact.contents.find(
               "::__gti_mir_op_assign__gti_mir_failure(std::nullptr_t "
               "__gti_mir_arg_0") != std::string::npos &&
@@ -17434,34 +17436,15 @@ int main() { return 0; }
   const lang::FrontendResult unsupportedOperations =
       analyzeTrustedPreludeFixture("fallible-borrow-operations.gti",
                                    unsupportedSource);
-  const std::size_t propagationOperator = unsupportedSource.find("?borrow");
-  const lang::Diagnostic *propagationDiagnostic =
-      findDiagnosticByCode(unsupportedOperations.diagnostics, "GTI-S2086");
   const bool unsupportedContract =
       !unsupportedOperations.canGenerateCode() &&
-      propagationOperator != std::string::npos &&
       countDiagnosticCode(unsupportedOperations.diagnostics, "GTI-S2086") ==
-          1 &&
-      propagationDiagnostic != nullptr &&
-      propagationDiagnostic->phase == lang::DiagnosticPhase::Semantics &&
-      std::filesystem::path(propagationDiagnostic->primary.source).filename() ==
-          "gti-trusted-fallible-borrow-operations.gti" &&
-      propagationDiagnostic->primary.start == propagationOperator &&
-      propagationDiagnostic->primary.end == propagationOperator + 1 &&
-      propagationDiagnostic->related.empty() &&
-      propagationDiagnostic->fixes.empty() &&
-      hasDiagnostic(unsupportedOperations.diagnostics,
-                    "Error propagation for 'expected<T&, E>' is not "
-                    "supported yet") &&
-      hasDiagnosticHint(unsupportedOperations.diagnostics,
-                        "Inspect has_value()") &&
+          0 &&
       hasDiagnostic(unsupportedOperations.diagnostics,
                     "does not provide 'value_or'") &&
       hasDiagnostic(unsupportedOperations.diagnostics,
                     "cannot be initialized directly from 'unexpected'");
   if (!unsupportedContract) {
-    std::cerr << "Expected fallible-borrow '?' offset " << propagationOperator
-              << '\n';
     for (const lang::Diagnostic &diagnostic :
          unsupportedOperations.diagnostics) {
       std::cerr << "  " << diagnostic.code << ' ' << diagnostic.primary.source
@@ -17470,7 +17453,7 @@ int main() { return 0; }
     }
   }
   expect(unsupportedContract,
-         "unsupported fallible-borrow propagation, fallback, and direct "
+         "unsupported fallible-borrow fallback and direct "
          "error construction should fail semantically rather than in MIR or "
          "native C++");
 }
