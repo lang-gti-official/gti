@@ -1,0 +1,22 @@
+// Expected exit status: 0. Reduced from the seed-20261003 interaction campaign.
+#include <std/utility>
+
+class Ticket {
+public:
+  Ticket(int32_t input) : identity(input) {}
+  Ticket(Ticket&& other) = default;
+  int32_t get() { return this.identity; }
+private:
+  int32_t identity;
+};
+
+expected<Ticket, int32_t> produce() { return Ticket(7); }
+
+expected<int32_t, int32_t> exercise() {
+  mut auto result = produce();
+  if (!result) { return unexpected(std::move(result).error()); }
+  Ticket item = std::move(result).value();
+  return item.get();
+}
+
+int main() { return exercise().value() == 7 ? 0 : 1; }
