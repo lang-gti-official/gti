@@ -602,6 +602,12 @@ add_test(NAME owned_expected_error COMMAND gti_owned_expected_error_tests)
 add_executable(gti_expected_transform_error_tests expected_transform_error_tests.cpp)
 target_link_libraries(gti_expected_transform_error_tests PRIVATE gti_cpp_backend)
 add_test(NAME expected_transform_error COMMAND gti_expected_transform_error_tests)
+add_executable(gti_expected_ergonomics_tests expected_ergonomics_tests.cpp)
+target_link_libraries(gti_expected_ergonomics_tests PRIVATE gti_cpp_backend)
+add_test(NAME expected_ergonomics COMMAND gti_expected_ergonomics_tests)
+add_executable(gti_panic_contract_tests panic_contract_tests.cpp)
+target_link_libraries(gti_panic_contract_tests PRIVATE gti_cpp_backend)
+add_test(NAME panic_contracts COMMAND gti_panic_contract_tests)
 add_executable(gti_owned_unexpected_pending_cleanup_tests owned_unexpected_pending_cleanup_tests.cpp)
 target_link_libraries(gti_owned_unexpected_pending_cleanup_tests PRIVATE gti_cpp_backend)
 add_test(NAME owned_unexpected_pending_cleanup COMMAND gti_owned_unexpected_pending_cleanup_tests)
@@ -635,6 +641,23 @@ target_link_libraries("gti_cpp_mir_representation_snapshot_tests"
                       PRIVATE gti_cpp_backend)
 add_test(NAME cpp_mir_representation_snapshot
          COMMAND gti_cpp_mir_representation_snapshot_tests)
+add_test(NAME type_only_alias_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/type_only_alias_runtime_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(type_only_alias_runtime PROPERTIES TIMEOUT 300)
+
+add_test(NAME nested_receiver_array_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/nested_receiver_array_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(nested_receiver_array_runtime PROPERTIES TIMEOUT 300)
+
+add_test(NAME passive_record_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/passive_record_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(passive_record_runtime PROPERTIES TIMEOUT 300)
 
 add_executable("gti_failure_descriptor_backend_tests"
                "${PROJECT_SOURCE_DIR}/tests/failure_descriptor_backend_tests.cpp")
@@ -807,6 +830,20 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/runtime_failure_test.py"
             "$<TARGET_FILE:gti_runtime_failure_helper>"
   )
+  add_test(
+    NAME panic_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/panic_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(panic_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME panic_adoption_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/panic_adoption_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(panic_adoption_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME cmath_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -1351,6 +1388,12 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(expected_transform_error_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME expected_ergonomics_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/expected_ergonomics_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(expected_ergonomics_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME expected_payload_range_runtime
     COMMAND "${Python3_EXECUTABLE}"

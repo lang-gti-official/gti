@@ -72,6 +72,7 @@ public:
         programInitialization(programInitialization),
         loweredProgramInitialization(loweredProgramInitialization) {
     output.kind = kind;
+    output.hasCallerLocation = function != nullptr && function->tracksCaller;
     output.placeDomain = source.placeDomain;
     output.returnType = std::move(returnType);
     for (const HirValue &value : source.values) {
@@ -356,6 +357,8 @@ public:
           output.kind == MirBodyKind::FieldInitializers ||
           output.kind == MirBodyKind::StaticFieldInitializers) {
         terminate({.kind = MirTerminatorKind::Exit});
+      } else if (function != nullptr && function->neverReturns) {
+        terminate({.kind = MirTerminatorKind::Unreachable});
       } else if (implicitZeroReturn) {
         terminate({.kind = MirTerminatorKind::Return,
                    .value = MirOperand{.kind = MirOperandKind::Constant,
@@ -2152,6 +2155,15 @@ private:
       }
     }
     instruction.localFailureSites.clear();
+    if (instruction.callerLocation) {
+      const auto site =
+          failureMetadata.callerSiteFor(*instruction.callerLocation);
+      if (!site) {
+        valid = false;
+      } else {
+        instruction.callerLocationSite = *site;
+      }
+    }
     instruction.localFailureSites.reserve(
         instruction.definedFailure.localOrigins.size());
     for (const DefinedFailureOrigin &origin :
@@ -2201,6 +2213,7 @@ private:
     }
     block->instructions.push_back(std::move(instruction));
     const MirInstruction &appended = block->instructions.back();
+    const bool neverReturns = appended.neverReturns;
     const bool fullExpressionRoot = isFullExpressionRoot(appended.hirValue);
     const bool preparedCallArgumentRoot =
         preparedCallArgumentFailure &&
@@ -2216,6 +2229,9 @@ private:
           appended.successResultDrop.value_or(0);
       appendFailureControlFlow(id, successResultDrop);
       registerTemporary(successResultDrop);
+    }
+    if (neverReturns && !terminated()) {
+      terminate({.kind = MirTerminatorKind::Unreachable});
     }
     return id;
   }
@@ -3202,6 +3218,9 @@ private:
   }
 
   [[nodiscard]] MirOperand valueOperand(HirValueId id) {
+    if (terminated()) {
+      return {};
+    }
     const HirValue *value = findValue(id);
     if (value == nullptr) {
       valid = false;
@@ -3302,6 +3321,9 @@ private:
               .type = value->info.type};
     }
     emitValue(id);
+    if (terminated()) {
+      return {};
+    }
     return {.kind = MirOperandKind::Value,
             .value = mirValueFor(*value),
             .type = value->info.type};
@@ -4377,6 +4399,9 @@ private:
         (void)valueOperand(callee->id);
       }
     }
+    if (terminated()) {
+      return;
+    }
     if (value.intrinsic == IntrinsicKind::ExactTypeParameterConstruction) {
       std::vector<MirOperand> operands;
       for (const HirValueId id : callArgumentValues(value)) {
@@ -4492,11 +4517,12 @@ private:
                                              : MirInstructionKind::Call,
                         .hirValue = value.id,
                         .callSite = value.callPlan ? value.id : 0,
-                        .result = detachedBorrowResult
-                                      ? std::optional<MirValueId>{appendValue(
-                                            value.id, value.info)}
-                                      : resultFor(value),
                         .intrinsic = value.intrinsic,
+                        .neverReturns = value.neverReturns,
+                        .tracksCaller = value.tracksCaller,
+                        .callerLocation = value.callerLocation,
+                        .forwardsCallerLocation =
+                            value.tracksCaller && output.hasCallerLocation,
                         .sourceLocation = value.sourceLocation,
                         .synchronization = value.synchronization,
                         .definedFailure = std::move(failure),
@@ -4683,6 +4709,9 @@ private:
                 ? copyArgumentOperand(argument.value, argument.parameterType)
                 : argumentOperand(argument.value, argument.parameterType);
         preparedCallArgumentFailure = enclosingFailure;
+        if (terminated()) {
+          return;
+        }
         sourceArguments.push_back(std::move(sourceArgument));
         PreparedCallInput prepared = prepareCallInput(
             value.id, argument.value, argument.parameterType, argument.kind,
@@ -4971,8 +5000,19 @@ private:
                        : findValue(arguments[index])->info.type);
         call.parameterTypes.push_back(parameter);
         call.operands.push_back(argumentOperand(arguments[index], parameter));
+        if (terminated()) {
+          return;
+        }
       }
     }
+
+    if (terminated()) {
+      return;
+    }
+    call.result =
+        detachedBorrowResult
+            ? std::optional<MirValueId>{appendValue(value.id, value.info)}
+            : resultFor(value);
 
     const auto operandLoan = [&](const MirOperand &operand) {
       if (operand.kind == MirOperandKind::Loan) {
@@ -6308,16 +6348,36 @@ private:
         hasResult ? dropObligationForValue(value.id, temporary) : 0;
     std::vector<TemporaryDrop> thenTemporaryDrops;
     std::vector<TemporaryDrop> elseTemporaryDrops;
-    const auto emitArm = [&](MirBlockId block, HirValueId arm) {
+    const auto emitArm = [&](MirBlockId block, HirValueId arm,
+                             bool &completesNormally) {
       current = block;
       scopes = incomingScopes;
       temporaryDrops = incomingTemporaryDrops;
+      const HirValue *armValue = findValue(arm);
+      if (armValue == nullptr) {
+        valid = false;
+        completesNormally = false;
+        return temporaryDrops;
+      }
+      if (armValue->neverReturns) {
+        emitValue(arm);
+        completesNormally = false;
+        if (!terminated()) {
+          valid = false;
+        }
+        return temporaryDrops;
+      }
       if (hasResult) {
+        const MirOperand operand = valueOperand(arm);
+        if (terminated()) {
+          completesNormally = false;
+          return temporaryDrops;
+        }
         MirInstruction initialize{
             .kind = MirInstructionKind::Initialize,
             .hirValue = value.id,
             .destination = temporary,
-            .operands = {valueOperand(arm)},
+            .operands = {operand},
             .info = ExpressionInfo{.type = value.info.type,
                                    .category = ValueCategory::Place,
                                    .access = AccessMode::Mutable,
@@ -6340,22 +6400,41 @@ private:
       } else {
         emitValue(arm);
       }
+      completesNormally = !terminated();
+      if (!completesNormally) {
+        return temporaryDrops;
+      }
       endAddedLoans(incomingScopes);
       terminate({.kind = MirTerminatorKind::Goto, .target = mergeBlock});
       return temporaryDrops;
     };
 
-    thenTemporaryDrops = emitArm(thenBlock, value.operands[1]);
+    bool thenCompletes = false;
+    bool elseCompletes = false;
+    thenTemporaryDrops = emitArm(thenBlock, value.operands[1], thenCompletes);
     const auto thenScopes = scopes;
-    elseTemporaryDrops = emitArm(elseBlock, value.operands[2]);
+    elseTemporaryDrops = emitArm(elseBlock, value.operands[2], elseCompletes);
     const auto elseScopes = scopes;
 
     current = mergeBlock;
     scopes = incomingScopes;
+    if (!thenCompletes && !elseCompletes) {
+      temporaryDrops = incomingTemporaryDrops;
+      terminate({.kind = MirTerminatorKind::Unreachable});
+      emittedValues.insert(value.id);
+      return;
+    }
     temporaryDrops =
-        mergeTemporaryDrops(thenTemporaryDrops, elseTemporaryDrops);
-    retainBranchCarrierLoans(thenScopes);
-    retainBranchCarrierLoans(elseScopes);
+        thenCompletes && elseCompletes
+            ? mergeTemporaryDrops(thenTemporaryDrops, elseTemporaryDrops)
+        : thenCompletes ? thenTemporaryDrops
+                        : elseTemporaryDrops;
+    if (thenCompletes) {
+      retainBranchCarrierLoans(thenScopes);
+    }
+    if (elseCompletes) {
+      retainBranchCarrierLoans(elseScopes);
+    }
     if (hasResult) {
       const bool moveResult = value.info.traits.drop != DropKind::Trivial ||
                               !value.info.traits.copyable;
@@ -6802,7 +6881,54 @@ private:
     emittedValues.insert(value.id);
   }
 
+  // A terminal operand never supplies a value to its enclosing expression.
+  // Keep the primary full-expression bookkeeping on the impossible normal
+  // continuation, independently of the already-routed failure cleanup. This
+  // also covers grouped/nested calls and a conditional with two terminal arms.
+  void finishTerminalFullExpression(HirValueId id) {
+    MirBlock *block = currentBlock();
+    if (block == nullptr ||
+        block->terminator.kind != MirTerminatorKind::Unreachable ||
+        !isFullExpressionRoot(id)) {
+      return;
+    }
+    const HirValue *value = findValue(id);
+    if (value == nullptr) {
+      return;
+    }
+    const auto boundary = std::find_if(
+        source.fullExpressions.begin(), source.fullExpressions.end(),
+        [&](const HirFullExpression &item) {
+          return item.id == value->fullExpression;
+        });
+    if (boundary == source.fullExpressions.end()) {
+      return;
+    }
+    const auto temporary = fullExpressionTemporaryBaselines.find(boundary->id);
+    const auto scope = fullExpressionScopeBaselines.find(boundary->id);
+    if (temporary == fullExpressionTemporaryBaselines.end() ||
+        scope == fullExpressionScopeBaselines.end()) {
+      return;
+    }
+    const auto temporaryBaseline = temporary->second;
+    const auto scopeBaseline = scope->second;
+    const MirTerminator endpoint = block->terminator;
+    block->terminator = {};
+    endFullExpressionLoans(scopeBaseline);
+    emitTemporaryDrops(temporaryBaseline, id, boundary->statement,
+                       boundary->constructorInitializer);
+    terminate(endpoint);
+  }
+
   void emitValue(HirValueId id) {
+    if (terminated()) {
+      return;
+    }
+    emitValueImpl(id);
+    finishTerminalFullExpression(id);
+  }
+
+  void emitValueImpl(HirValueId id) {
     if (id == 0 || emittedValues.contains(id)) {
       return;
     }
@@ -6822,6 +6948,14 @@ private:
     if (value->programConstantSubstitution) {
       emitProgramConstantSubstitution(*value);
       return;
+    }
+
+    for (const HirValueId input : value->sequencedInputs) {
+      emitValue(input);
+      if (terminated()) {
+        emittedValues.insert(id);
+        return;
+      }
     }
 
     if (value->kind == HirValueKind::ExpectedPropagation) {
@@ -7091,7 +7225,6 @@ private:
 
     MirInstruction instruction{.kind = MirInstructionKind::Compute,
                                .hirValue = value->id,
-                               .result = resultFor(*value),
                                .operation = computeOperation(*value),
                                .literal = value->literal,
                                .enumOwner = value->enumOwner,
@@ -7165,7 +7298,11 @@ private:
                 ? addressOperand(operand)
                 : valueOperand(operand));
       }
+      if (terminated()) {
+        return;
+      }
     }
+    instruction.result = resultFor(*value);
     if (value->kind == HirValueKind::ArrayInitializer ||
         value->kind == HirValueKind::PayloadConstruction ||
         value->kind == HirValueKind::Unexpected ||
@@ -8113,6 +8250,9 @@ private:
           retainedLoan = loanForValue(*statement.value);
         }
       }
+    }
+    if (terminated()) {
+      return 0;
     }
     if (retainedLoan != 0) {
       if (binding != nullptr && binding->info.retainedLoan != 0) {
@@ -9292,6 +9432,9 @@ private:
           }
         }
       }
+    }
+    if (terminated()) {
+      return;
     }
     const MirDropObligationId enclosingPendingReturnDrop = pendingReturnDrop;
     if (statement.value && result &&

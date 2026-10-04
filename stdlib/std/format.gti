@@ -1,5 +1,6 @@
 #include <std/charconv>
 #include <std/string>
+#include <std/detail/panic>
 
 namespace gti_internal {
 namespace runtime {
@@ -23,6 +24,15 @@ enum class format_errc {
   invalid_format,
   argument_count_mismatch,
   unsupported_argument,
+};
+
+/// Formatting errors and stdout submission failure are distinct recoverable
+/// outcomes. Allocation still follows GTI's defined allocation-failure policy.
+enum class print_errc {
+  invalid_format,
+  argument_count_mismatch,
+  unsupported_argument,
+  write_failed,
 };
 
 namespace detail {
@@ -742,7 +752,7 @@ public:
 };
 
 namespace std {
-expected<string, format_errc> format(string_view pattern) {
+expected<string, format_errc> try_format(string_view pattern) {
   expected<void, format_errc> validation =
       detail::validate_format_pattern(pattern, size_t(0));
   if (!validation) {
@@ -758,7 +768,7 @@ expected<string, format_errc> format(string_view pattern) {
 }
 
 expected<string, format_errc>
-format<First, Args...>(string_view pattern, First first, Args... args) {
+try_format<First, Args...>(string_view pattern, First first, Args... args) {
   mut size_t argument_count = 1;
   (detail::count_format_argument(argument_count, args), ...);
   expected<void, format_errc> validation =
@@ -806,9 +816,9 @@ format<First, Args...>(string_view pattern, First first, Args... args) {
 }
 
 /// Appends one fully formatted result. Failure leaves `output` unchanged.
-expected<void, format_errc> format_to(mut string& output,
+expected<void, format_errc> try_format_to(mut string& output,
                                       string_view pattern) {
-  mut expected<string, format_errc> formatted = format(pattern);
+  mut expected<string, format_errc> formatted = try_format(pattern);
   if (!formatted) {
     return unexpected(formatted.error());
   }
@@ -818,10 +828,10 @@ expected<void, format_errc> format_to(mut string& output,
 
 /// Appends one fully formatted result. Failure leaves `output` unchanged.
 expected<void, format_errc>
-format_to<First, Args...>(mut string& output, string_view pattern, First first,
+try_format_to<First, Args...>(mut string& output, string_view pattern, First first,
                           Args... args) {
   mut expected<string, format_errc> formatted =
-      format(pattern, std::move(first), args...);
+      try_format(pattern, std::move(first), args...);
   if (!formatted) {
     return unexpected(formatted.error());
   }
@@ -829,45 +839,136 @@ format_to<First, Args...>(mut string& output, string_view pattern, First first,
   return;
 }
 
-expected<void, format_errc> try_print(string_view pattern) {
-  mut expected<string, format_errc> formatted = format(pattern);
-  if (!formatted) {
-    return unexpected(formatted.error());
+namespace detail {
+[[noreturn, track_caller]]
+void panic_format_error(format_errc error) {
+  switch (error) {
+  case format_errc::invalid_format:
+    panic("Formatting failed: invalid format");
+  case format_errc::argument_count_mismatch:
+    panic("Formatting failed: argument count mismatch");
+  case format_errc::unsupported_argument:
+    panic("Formatting failed: unsupported argument; convert the value to a supported type");
   }
-  print(formatted.value());
-  return;
+  panic("Formatting failed: unknown error");
 }
 
-expected<void, format_errc>
+print_errc print_format_error(format_errc error) {
+  switch (error) {
+  case format_errc::invalid_format:
+    return print_errc::invalid_format;
+  case format_errc::argument_count_mismatch:
+    return print_errc::argument_count_mismatch;
+  case format_errc::unsupported_argument:
+    return print_errc::unsupported_argument;
+  }
+  return print_errc::invalid_format;
+}
+
+[[noreturn, track_caller]]
+void panic_print_error(print_errc error) {
+  switch (error) {
+  case print_errc::invalid_format:
+    panic_format_error(format_errc::invalid_format);
+  case print_errc::argument_count_mismatch:
+    panic_format_error(format_errc::argument_count_mismatch);
+  case print_errc::unsupported_argument:
+    panic_format_error(format_errc::unsupported_argument);
+  case print_errc::write_failed:
+    panic("Output failed: stdout write failed");
+  }
+  panic("Output failed: unknown error");
+}
+
+expected<void, print_errc> submit_print(string_view text) {
+  // The prelude's counted stdout entry checks complete submission already.
+  // Avoid importing the unrelated FILE/descriptor layer just for its status.
+  if (gti_internal::runtime::gti_rt_write_stdout(text) != 0) {
+    return unexpected(print_errc::write_failed);
+  }
+  return;
+}
+}
+
+/// Formats an owning result, panicking at the caller on formatting failure.
+[[track_caller]]
+string format(string_view pattern) {
+  mut auto result = try_format(pattern);
+  if (!result) {
+    detail::panic_format_error(result.error());
+  }
+  return std::move(result).expect("Formatting succeeded without a value");
+}
+
+[[track_caller]]
+string format<First, Args...>(string_view pattern, First first, Args... args) {
+  mut auto result = try_format(pattern, std::move(first), args...);
+  if (!result) {
+    detail::panic_format_error(result.error());
+  }
+  return std::move(result).expect("Formatting succeeded without a value");
+}
+
+[[track_caller]]
+void format_to(mut string& output, string_view pattern) {
+  auto result = try_format_to(output, pattern);
+  if (!result) {
+    detail::panic_format_error(result.error());
+  }
+}
+
+[[track_caller]]
+void format_to<First, Args...>(mut string& output, string_view pattern,
+                              First first, Args... args) {
+  auto result = try_format_to(output, pattern, std::move(first), args...);
+  if (!result) {
+    detail::panic_format_error(result.error());
+  }
+}
+
+/// With no format arguments, output is literal, like the prelude print API.
+expected<void, print_errc> try_print(string_view text) {
+  return detail::submit_print(text);
+}
+
+expected<void, print_errc>
 try_print<First, Args...>(string_view pattern, First first, Args... args) {
-  mut expected<string, format_errc> formatted =
-      format(pattern, std::move(first), args...);
+  mut auto formatted = try_format(pattern, std::move(first), args...);
   if (!formatted) {
-    return unexpected(formatted.error());
+    return unexpected(detail::print_format_error(formatted.error()));
   }
-  print(formatted.value());
-  return;
+  return detail::submit_print(formatted.value().view());
 }
 
-expected<void, format_errc> try_println(string_view pattern) {
-  mut expected<string, format_errc> formatted = format(pattern);
-  if (!formatted) {
-    return unexpected(formatted.error());
-  }
-  print(formatted.value());
-  print('\n');
-  return;
+expected<void, print_errc> try_println(string_view text) {
+  mut string line = string(text);
+  line.push_back('\n');
+  return detail::submit_print(line.view());
 }
 
-expected<void, format_errc>
+expected<void, print_errc>
 try_println<First, Args...>(string_view pattern, First first, Args... args) {
-  mut expected<string, format_errc> formatted =
-      format(pattern, std::move(first), args...);
+  mut auto formatted = try_format(pattern, std::move(first), args...);
   if (!formatted) {
-    return unexpected(formatted.error());
+    return unexpected(detail::print_format_error(formatted.error()));
   }
-  print(formatted.value());
-  print('\n');
-  return;
+  formatted.value().push_back('\n');
+  return detail::submit_print(formatted.value().view());
+}
+
+[[track_caller]]
+void print<First, Args...>(string_view pattern, First first, Args... args) {
+  auto result = try_print(pattern, std::move(first), args...);
+  if (!result) {
+    detail::panic_print_error(result.error());
+  }
+}
+
+[[track_caller]]
+void println<First, Args...>(string_view pattern, First first, Args... args) {
+  auto result = try_println(pattern, std::move(first), args...);
+  if (!result) {
+    detail::panic_print_error(result.error());
+  }
 }
 }

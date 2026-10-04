@@ -559,8 +559,11 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
         expression, "a deferred callable invocation has no closed target set");
     return;
   }
-  if (const ExpectedTransformErrorInfo *transform =
-          semanticModel.findExpectedTransformError(*call)) {
+  if (const ExpectedCombinatorInfo *transform =
+          semanticModel.findExpectedCombinator(*call)) {
+    if (transform->kind == ExpectedCombinatorKind::Expect) {
+      return;
+    }
     if (transform->lambda != 0) {
       addProgramEffectEdge(
           {.kind = ProgramEffectOwnerKind::Lambda, .id = transform->lambda},
@@ -573,8 +576,7 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
         target->declaration->body() == nullptr ||
         !target->genericParameters.empty()) {
       addUnknownProgramEffect(
-          expression,
-          "an expected error mapper has no closed static GTI target");
+          expression, "an expected mapper has no closed static GTI target");
     } else {
       addProgramEffectEdge(
           {.kind = ProgramEffectOwnerKind::Function, .id = target->id},
@@ -1697,8 +1699,16 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
 
   if (kind == ExprKind::Call) {
     const auto *call = static_cast<const Call *>(&expr);
-    if (const auto *transform =
-            semanticModel.findExpectedTransformError(*call)) {
+    if (const auto *transform = semanticModel.findExpectedCombinator(*call)) {
+      if (transform->kind == ExpectedCombinatorKind::Expect) {
+        const auto *member = exprAs<Get>(call->callee().get());
+        if (member != nullptr) {
+          anchor(member->name());
+          addFailureOutcome(operation, DefinedFailureCode::Panic,
+                            DefinedFailureDetail::ExplicitPanic);
+        }
+        return operation;
+      }
       operation.propagation = transform->lambda != 0
                                   ? FailurePropagationKind::Callable
                                   : FailurePropagationKind::DirectCall;
@@ -1731,6 +1741,11 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
       if (intrinsic != IntrinsicKind::None) {
         const Token token = callableToken(call->callee());
         switch (intrinsic) {
+        case IntrinsicKind::Panic:
+          anchor(token);
+          addFailureOutcome(operation, DefinedFailureCode::Panic,
+                            DefinedFailureDetail::ExplicitPanic);
+          break;
         case IntrinsicKind::NumericTypeParameterConversion:
         case IntrinsicKind::NumericAliasConversion:
           if (!call->arguments().empty() &&
@@ -2155,6 +2170,20 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   ExpressionInfo info = classifyExpression(expr, result);
   semanticModel.record(expr, info);
   semanticModel.recordDefinedFailure(expr, classifyDefinedFailure(expr, info));
+  // Keep a source token for calls, including source operations that select an
+  // ordinary operator and expected's synthesized mapper/failure branches.
+  // This is location provenance only, not a transitive failure category set.
+  if (expr.exprKind() == ExprKind::Call ||
+      expr.exprKind() == ExprKind::DirectInitializer ||
+      semanticModel.findOperator(expr)) {
+    const Token location = expressionToken(expr);
+    const SourceSpan span = tokenSpan(location);
+    semanticModel.recordCallerLocation(expr,
+                                       {.sourceUnit = sourceUnitFor(location),
+                                        .start = span.start,
+                                        .end = span.end,
+                                        .line = span.line});
+  }
   const SemanticPlace expressionPlace = semanticPlace(&expr);
   if (expressionPlace.root != nullptr) {
     semanticModel.recordPlace(expr, placeKey(expressionPlace));
@@ -4002,6 +4031,30 @@ auto SemanticVisitor::Impl::captureMemberCompletion(
            .detail = "expected<" + typeSpelling(value) +
                      ", F> transform_error(F(" + typeSpelling(error) +
                      ") mapper) &&",
+           .scopeDistance = 0});
+      context.candidates.push_back(
+          {.kind = SemanticCompletionCandidateKind::Method,
+           .name = "transform",
+           .qualifiedName = "transform",
+           .detail = "expected<U, " + typeSpelling(error) + "> transform(U(" +
+                     (value == SemanticType::Void ? "" : typeSpelling(value)) +
+                     ") mapper) &&",
+           .scopeDistance = 0});
+      context.candidates.push_back(
+          {.kind = SemanticCompletionCandidateKind::Method,
+           .name = "and_then",
+           .qualifiedName = "and_then",
+           .detail = "expected<U, " + typeSpelling(error) +
+                     "> and_then(expected<U, " + typeSpelling(error) + ">(" +
+                     (value == SemanticType::Void ? "" : typeSpelling(value)) +
+                     ") mapper) &&",
+           .scopeDistance = 0});
+      context.candidates.push_back(
+          {.kind = SemanticCompletionCandidateKind::Method,
+           .name = "expect",
+           .qualifiedName = "expect",
+           .detail =
+               typeSpelling(value) + " expect(std::string_view message) &&",
            .scopeDistance = 0});
     }
   }

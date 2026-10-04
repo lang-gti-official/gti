@@ -990,7 +990,7 @@ void expectDistinctCallableInstances(const lang::FrontendResult &frontend,
                                std::to_string(function.id) +
                                "_apply__gti_mir_failure";
     const std::string signature =
-        symbol + "(Operation __gti_mir_arg_0, ::gti_failure_record_v1 "
+        symbol + "(Operation __gti_mir_arg_0, ::gti_failure_record_v2 "
                  "*__gti_mir_failure_record)";
     const std::string definition =
         signature +
@@ -1055,7 +1055,7 @@ int main() {
     }
     return occurrences;
   };
-  expect(count("(Operation __gti_mir_arg_0, ::gti_failure_record_v1 "
+  expect(count("(Operation __gti_mir_arg_0, ::gti_failure_record_v2 "
                "*__gti_mir_failure_record) {") == 2,
          "each free-function instance must retain its own MIR body");
   expect(count("deduced-callable-failure-v1 function-instance") == 2,
@@ -2518,7 +2518,7 @@ int main() {
     }
     return occurrences;
   };
-  expect(count("(Operation __gti_mir_arg_0, ::gti_failure_record_v1 "
+  expect(count("(Operation __gti_mir_arg_0, ::gti_failure_record_v2 "
                "*__gti_mir_failure_record) {") == 2,
          "each cleanup-shape instance must retain its own definition");
   expect(count("deduced-callable-failure-v1 function-instance") == 2,

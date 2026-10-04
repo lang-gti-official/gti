@@ -263,7 +263,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v84 valid=" << program.valid() << '\n';
+    output << "mir-v85 valid=" << program.valid() << '\n';
     for (const MirNativeCallbackAdapter &adapter :
          program.nativeCallbackAdapters()) {
       output << "native-callback @" << adapter.id
@@ -295,6 +295,14 @@ public:
                << definedFailureDetailName(outcome.detail);
       }
       output << "]\n";
+    }
+    for (const CallerLocationAssignment &assignment :
+         program.failureMetadata().callerAssignments()) {
+      output << "caller-location-site @" << assignment.site
+             << " source-unit=" << assignment.origin.sourceUnit
+             << " line=" << assignment.origin.line
+             << " span=" << assignment.origin.start << ".."
+             << assignment.origin.end << '\n';
     }
     programInitialization(program.programInitializationPlan());
     hostedStartup(program.hostedStartupPlan());
@@ -553,6 +561,8 @@ public:
       }
       output << " may-raise-defined-failure=" << instance.mayRaiseDefinedFailure
              << " requires-unsafe=" << instance.requiresUnsafe
+             << " noreturn=" << instance.neverReturns
+             << " track-caller=" << instance.tracksCaller
              << " cthread-operation="
              << static_cast<unsigned>(instance.cThreadOperation);
       effectSummary(instance.effectSummary);
@@ -703,7 +713,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v71\n";
+    output << "mir-body-v72\n";
     body(value, 0);
     return output.str();
   }
@@ -1417,7 +1427,20 @@ private:
     optional(value.enumVariant);
     output << " payload-index=";
     optional(value.payloadIndex);
-    output << " intrinsic=" << name(value.intrinsic) << " source-location=";
+    output << " intrinsic=" << name(value.intrinsic)
+           << " noreturn=" << value.neverReturns
+           << " track-caller=" << value.tracksCaller
+           << " caller-site=" << value.callerLocationSite
+           << " forward-caller=" << value.forwardsCallerLocation
+           << " caller-origin=";
+    if (value.callerLocation) {
+      output << value.callerLocation->sourceUnit << ':'
+             << value.callerLocation->start << ':' << value.callerLocation->end
+             << ':' << value.callerLocation->line;
+    } else {
+      output << '-';
+    }
+    output << " source-location=";
     if (value.sourceLocation) {
       output << value.sourceLocation->file.size() << ':'
              << value.sourceLocation->file << ','
@@ -1637,6 +1660,7 @@ private:
 
   void body(const MirBody &value, std::size_t owner) {
     output << "body kind=" << number(value.kind) << " owner=" << owner
+           << " caller-parameter=" << value.hasCallerLocation
            << " compiler-trusted-synchronization="
            << value.compilerTrustedSynchronization << " domain=";
     placeDomain(value.placeDomain);

@@ -91,6 +91,34 @@ def main() -> int:
     expect(helper, "terminal_closed", 70, b"O", b"")
     expect(helper, "terminal_broken_pipe", 70, b"O", b"")
 
+    panic = b'unit.gti:7: runtime error[GTI-R0017]: panic: "cannot format Uuid"\n'
+    expect(helper, "panic_report", 0, b"", panic)
+    expect(helper, "panic_snapshot", 0, b"", panic)
+    for mode, count in (("panic_truncated", 512), ("panic_utf8_boundary", 511)):
+        expect(helper, mode, 0, b"", (
+            b'unit.gti:7: runtime error[GTI-R0017]: panic: "'
+            + b"a" * count + b'" [truncated]\n'
+        ))
+    expect(helper, "panic_escaped", 0, b"", (
+        b'unit.gti:7: runtime error[GTI-R0017]: panic: "'
+        + b'A\\x00\\n\\r\\t\\"\\\\\\xC0\\xAF\\xE2\\x80\\xAE'
+        + "λ".encode() + b'"\n'
+    ))
+    panic_cleanup = (
+        b'cleanup.gti:11: runtime error[GTI-R0014]: failure_during_cleanup; '
+        b'primary [GTI-R0017] at unit.gti:7 message="cannot format Uuid"; '
+        b'secondary [GTI-R0017] message="cleanup failed"\n'
+    )
+    expect(helper, "panic_cleanup", 0, b"", panic_cleanup)
+    expect(helper, "panic_terminal_cleanup", 70, b"", panic_cleanup)
+    expect(helper, "panic_legacy_join", 70, b"", panic)
+    expect(helper, "panic_nested_legacy_join", 70, b"", panic)
+    for mode in ("panic_terminal_observer", "panic_terminal_mutation",
+                 "panic_terminal_exception", "panic_terminal_reentry"):
+        expect(helper, mode, 70, b"O", panic)
+    expect(helper, "panic_terminal_closed", 70, b"O", b"")
+    expect(helper, "panic_terminal_broken_pipe", 70, b"O", b"")
+
     race = invoke(helper, "terminal_race")
     assert race.returncode == 70, race
     assert race.stdout == b"O", race.stdout

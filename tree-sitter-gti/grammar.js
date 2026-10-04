@@ -589,6 +589,7 @@ module.exports = grammar({
 
     method_declaration: ($) =>
       seq(
+        repeat(field("attribute", $.function_contract_attribute)),
         optional(field("virtual", "virtual")),
         optional(field("storage", "static")),
         optional(field("constant", "constexpr")),
@@ -611,6 +612,7 @@ module.exports = grammar({
     operator_declaration: ($) =>
       choice(
         seq(
+          repeat(field("attribute", $.function_contract_attribute)),
           optional(field("virtual", "virtual")),
           optional(field("constant", "constexpr")),
           optional(field("return_mutable", "mut")),
@@ -701,6 +703,7 @@ module.exports = grammar({
               $.native_c_array_attribute,
               $.native_link_name_attribute,
               $.unsafe_function_attribute,
+              $.function_contract_attribute,
             ),
           ),
         ),
@@ -713,6 +716,14 @@ module.exports = grammar({
       ),
 
     unsafe_function_attribute: () => seq("[[", "unsafe", "]]"),
+
+    function_contract_attribute: () =>
+      seq(
+        "[[",
+        choice("noreturn", "track_caller"),
+        repeat(seq(",", choice("noreturn", "track_caller"))),
+        "]]",
+      ),
 
     _function_declaration_body: ($) =>
       seq(

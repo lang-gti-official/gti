@@ -25,6 +25,106 @@ files under `docs/plans/`. The documents under
 [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
+## Release Bug Closure
+
+**State:** the six open Gitea bug reproductions (#20, #23, #25, #26, #28, #29)
+are fixed and locally validated. All 389 optimized CTest gates have passing
+combined evidence after correcting the new regression's census registration;
+fresh installed-consumer and installed panic/LSP checks also pass. The user has
+authorized closing the bugs and publishing 0.363.0, superseding the earlier
+publication hold. Gitea access is restored; reconciliation on 2026-10-04
+confirmed unchanged remote main and the same six open issues. Fix commit
+`318051e8` carries their closing references, and merge `a610575c` preserves the
+user's main-branch documentation work. The canonical main push dispatches the
+0.363.0 release; no CI wait or manual competing tag is required. Active
+installation is unchanged. Earlier publication holds below are historical.
+
+The fixes retain verified-MIR execution: concrete type-only alias identities,
+shared nested fixed-array receiver access, passive record copy/staging, exact
+class-returning callback forwarding and temporary by-value operator arguments.
+No new ownership rule, source fallback or public-library-name special case is
+introduced. The original Tea snapshot builds after the deliberate `try_format`
+API migration. Current evidence and platform limits are recorded in
+[`verification.md`](../architecture/verification.md#release-bug-closure-after-panic-adoption).
+
+## Panic Adoption In Formatting And Stdout
+
+**State:** implementation and local validation complete, held with
+the unreleased 0.363.0 foundation below. This is ordinary source-library policy
+over the already verified terminal/caller contracts, not a new compiler feature.
+
+The named client is ergonomic diagnostic/output code: `format` returns an
+owning string, `format_to` returns void, and formatted `print`/`println` terminate
+with a useful domain reason at the caller if they cannot complete. The
+authoritative recoverable implementations are `try_format`, `try_format_to`,
+`try_print`, and `try_println`; the last two now report native submission errors
+as well as formatting failures. Existing raw output no longer drops host status.
+Single-text-argument output remains literal, including for the `try_` siblings.
+
+File and network operations, parsing external input, randomness and thread
+startup remain expected-first. Checked container preconditions already have
+specific defined-failure identities and are not relabelled as generic panic.
+Compile-time format validation and customization are separate general facilities,
+not introduced through public-name magic. `panic_adoption_runtime` covers both
+C++ standards, O0/O2/O3, no-elide and sanitizers, including closed-pipe errors,
+owning arguments/results, transactional append, reverse cleanup and exact caller
+locations. Canonical contracts and migration are in [I/O](../language/io.md).
+
+Completion evidence: all 386 optimized CTest gates have passing combined
+results after reviewing the formatting example's inventory changes. The final
+nine-gate rerun covers both census and executable corpus gates, the 144-outcome
+adoption matrix, panic contracts, compiler pipeline, source-surface manifest and
+LSP protocol. Isolated installed-consumer, reference and syntax-tooling checks
+also pass. Publication and active installation remain held. Exact accounting
+and platform limits are in
+[`verification.md`](../architecture/verification.md#panic-adoption-in-formatting-and-stdout).
+
+## Panic, Expected Ergonomics, And Constraint Diagnostics
+
+**State:** implementation and local end-to-end validation complete for 0.363.0;
+publication and active installation held at the user's request.
+The user-facing clients are explicit terminal reporting with
+`std::panic(message)` and formatted messages, consuming `expected::expect`,
+`transform` and `and_then`, and actionable generic-constraint diagnostics that
+identify the responsible argument without public standard-library-name rules.
+
+The runtime uses a separately versioned bounded message record, snapshots the
+message before cleanup, and preserves existing hosted and managed-thread
+containment. Formatted panic initially uses the existing allocating formatter;
+allocation-free message capture does not promise allocation-free argument
+evaluation or user cleanup. That foundation left formatting/I/O return types
+unchanged; the subsequent adoption slice above deliberately changes them.
+
+General `[[noreturn]]` and `[[track_caller]]` declaration contracts must be
+checked by semantics and retained through HIR/MIR. Caller-location tokens are
+separate from detector effects: a tracked wrapper forwards a token, a detector
+creates the original failure record, and propagation never rewrites it. The
+first token consumer is explicit panic, not arbitrary checked operations.
+Unsupported native callback transport must be diagnosed rather than losing the
+hidden parameter. Exact function items stored in source-defined callable
+wrappers preserve their selected target; an untracked wrapper establishes a
+fresh source anchor, while an explicitly tracked wrapper forwards its incoming
+anchor. Compiler/backend admission and independent verification remain mandatory.
+
+Completion evidence: all 385 optimized CTest gates have passing results,
+including reviewed test-only assertion/inventory refreshes after the broad run.
+The panic matrix passes 312 outcomes and Expected passes 196, covering both
+C++ standards, O0/O1/O3, no-elide and sanitizer checks. Terminal contract tests independently
+reject forged caller metadata, ordinary return continuations and lost call-input
+consumers; cleanup-owning arguments preceding a terminal argument now lower
+through the same verified failure-cleanup graph. The representation suite covers
+an unrelated primary/exact class family in a lexical-callable program, fixing
+the native specialization omission exposed by formatted panic. All 11 staged
+consumers, installed panic/Expected probes, installed contract-diagnostic LSP
+checks, syntax-tooling, formatting and isolated local-installer package checks
+pass. The minor version advance records the new surface; no release was
+initiated. Detailed evidence and local-platform limits are recorded in
+[`verification.md`](../architecture/verification.md#panic-expected-ergonomics-and-library-contract-diagnostics).
+
+The general diagnostic foundation explains source-defined concept failures;
+it does not introduce a public-name formatter rule, a new formatter protocol,
+or literal-format validation. Those remain separate language/library work.
+
 ## Ephemeral Borrowed Receivers And PR Reconciliation
 
 **State:** receiver implementation, validation and publication are complete at
@@ -5208,10 +5308,13 @@ consumer, and release refreshes remain outstanding for the full campaign.
 
 ### L-CONST-01: Remaining Bounded Compile-Time Programming
 
-- **State/role:** the bounded aggregate initial release is implemented for the
-  ordinary `std::array<T, N>` constructor/observer and `std::gcd<T>` clients.
-  Default generic arguments remain a separate final slice requiring
-  declaration-owned exact identity.
+- **State/role:** the staged MIR constexpr foundation is implemented and locally
+  validated; publication is held at the user's request. It enables source-defined numeric helpers,
+  passive records and fixed-array metadata tables, including read-only text
+  inspection for game-engine asset descriptions. Declaration-owned generic
+  defaults retain exact identity through the same frontend-owned constant
+  model. The remaining AST interpreter is a compatibility path for unmigrated
+  profiles, not the intended endpoint for future execution facilities.
 - **Implemented scope:** The existing evaluator admits concrete non-pack type
   and `uint64_t` value-generic calls, exact scoped enums, concrete fixed arrays,
   fully initialized structural class/struct values, ordinary constexpr
@@ -5219,12 +5322,131 @@ consumer, and release refreshes remain outstanding for the full campaign.
   declaration/type/value identity through semantics and required HIR/MIR data;
   the backend only materializes an already-proven value. One shared 4096-step
   budget and 64-call-depth limit cover recursive/default aggregate work.
-- **Remaining scope:** Default generic arguments are a separate final slice.
-  References, allocation, aggregate-place mutation, payload enums, unions,
-  inherited or cleanup-owning aggregates, generic packs, constexpr operators,
-  mutable receivers, and polymorphism remain excluded. Do not widen exact
-  qualified specialization into partial specialization or introduce a
-  bytecode interpreter.
+- **Text-inspection slice (implemented):** Literal-backed string-view `size()`,
+  `empty()`, and checked unsigned-byte indexing now use backend-neutral constant
+  kernels selected by resolved intrinsic/type identity. Focused frontend and
+  O0/O1/O3, C++20/C++23 differential tests cover an asset-path inspector,
+  embedded NULs, non-ASCII bytes, bounds, runtime-input rejection, and shared
+  budgets. The early kernels share runtime operation meaning and are consumed
+  by the staged executor. A separate completed-body HIR boundary
+  now permits early scalar/text calls through canonical MIR while preserving
+  the ordinary whole-program seal. Continue extending this staged evaluator to
+  subsume the AST call/control-flow driver and reuse these text kernels, not
+  maintain a second text rule.
+- **MIR-execution foundation (implemented and locally verified):**
+  `mir_constant_evaluator` executes verified canonical MIR for scalar/text
+  functions, local mutation, CFG, and
+  recursive constexpr calls with shared limits and located failures. Conversion
+  policy has moved from the semantic AST driver into the shared constant
+  service. Differential tests cover existing frontend constants, integer and
+  floating domains, byte inspection, failed calls/arithmetic, malformed MIR, and
+  optimizer-independence. Completed free-function closures, including exact
+  concrete type/value generic instances, are now
+  wired into semantic constant requests using real source failure metadata.
+  Early-only tests prove array extents, static assertions, and branch selection
+  actually execute MIR; incomplete roots and whole-program publication reject.
+  Generic staging lazily forks semantic state, retaining enclosing scopes and
+  live loans and rejecting invalid concrete static assertions. It does not
+  reenter the caller's mutable body-analysis context.
+  Fixed-array local storage, default construction, nested indexed mutation,
+  independent copies, and by-value array parameters now execute through the
+  same MIR place model; element work and storage copying are budgeted.
+  Focused early-only, bounds/resource-negative, and native parity checks cover
+  this family. Passive structural record parameters, copies, field/index
+  mutation, and returned records now retain exact class/field identity through
+  staged catalogs and MIR. Recursive argument validation rejects incomplete or
+  mistyped records; passive lifetime bookkeeping cannot execute active cleanup.
+  Explicit completed constexpr constructors now retain semantic eligibility in
+  HIR/MIR and execute explicit field writes, including trivial fixed arrays.
+  Nested/generic construction and read-only receiver methods reuse ordinary
+  selected calls and `This` places; std::array construction/observers and
+  unrelated user records exercise both paths. Constructor failure locations
+  retain their original initializer expression. Direct constructor and
+  read-only/static method roots now use the same staging boundary, including
+  concrete generic owner identity. Generic constexpr declarations now permit
+  ordinary runtime-only owning substitutions without relaxing required constant
+  evaluation or normal ownership checks. Source-defined `min`, `max`, `clamp`,
+  `lcm`, `midpoint`, binary32 `abs`, and passive `pair`/`make_pair` now exercise
+  the foundation, with actual MIR execution and O0/O1/O3 C++20/C++23 parity.
+  Constant aggregate factories retain exact concrete type identity, preventing
+  runtime owning instances from inheriting native constexpr requirements.
+  Checked read-only reference parameters, local bindings, and returned
+  projections now execute through ordinary MIR loans, with immutable referent
+  observations and no persisted constant references. `std::array::at`, `front`,
+  and `back` and an unrelated record exercise the same boundary; mutable and
+  stored-reference facilities remain excluded. A game-engine-like asset table
+  now composes literal-path inspection, passive record construction, fixed-array
+  storage and checked reference traversal, with staged execution counts and
+  six native parity configurations. Passive array constructor failure proofs
+  now require their explicit field-write stage, matching the scalar rule;
+  an aggregate computation alone cannot stand in for object initialization.
+  Read-only arithmetic/bitwise, comparison, subscript, dereference, and call
+  operators now share the named constexpr-call staging boundary. Ordinary
+  selected targets, concrete generic owners, and read-only reference results
+  execute through MIR, including nested nominal call-operator invocation.
+  `std::array::operator[]` and unrelated math records exercise the same rules;
+  no operator body is added to the legacy AST evaluator. Arrow/contextual-bool
+  operators and mutable/consuming receivers remain outside this slice.
+  Declaration-owned default
+  schedules remain migration
+  work for library clients. Generated native construction is not proof of const
+  eligibility or completed semantic analysis. Value/type-dependent
+  `if constexpr` selection now defers only unselected arms and branch-dependent
+  flow proof in primary analysis; independent assertions and ordinary name/type
+  checks remain active. Concrete analysis reruns return, movement,
+  receiver-restoration and borrow checks, and HIR rejects an unselected branch.
+  Nested required predicates stage from the canonical base snapshot with a
+  shared execution budget and bounded staging depth. Focused fixtures cover
+  recursive generic calls, discarded invalid code, constructors, methods and
+  owner restoration. The combined production and installed-consumer validation
+  below covers this final slice alongside the reconciled library changes.
+  Unsupported profiles still retain the legacy driver; arithmetic/resource
+  failures never fall back. Completion requires the combined production,
+  installed-consumer and tooling gates in addition to these focused clients;
+  implementation of the staged bridge alone is not sufficient evidence.
+- **Foundation completion evidence (2026-10-01):** the combined Release build
+  has passing evidence for all 350 registered CTest gates: 348 passed in the
+  full run, the compiler aggregate passed after correcting two manifest entries'
+  order, and HTTP passed with the localhost socket access denied by the sandbox.
+  All 21 constexpr test groups, nine constexpr runtime gates, 11 clean installed
+  library consumers, staged asset-table/CLI/LSP/project checks, and Tree-sitter
+  corpus/highlight/source checks pass. The optional audit passes its contract,
+  differential, composition, malformed-source, and 87-example/four-variant
+  matrices, but its final comparison runner is absent; it is not a full audit
+  pass. This completes the reusable-foundation outcome, not every remaining
+  constexpr profile below. These are macOS arm64 results, not unrun platform or
+  release evidence.
+- **Proposed evaluator direction:** Semantics remains the authority for whether
+  an expression is permitted in a constant context and remains the consumer of
+  the resulting `ConstantValue`. Execution should progressively move out of the
+  semantic AST walker into a constant-evaluation service backed, where
+  coherent, by canonical unoptimized body-local MIR plus ordinary MIR
+  verification and an additional const-eligibility verifier. That profile must
+  reuse MIR operations, places, CFG, selected calls and constructors, concrete
+  generic identity, and source provenance; it must not introduce an unrelated
+  CTFE bytecode or second type system. Eligibility is structural over typed
+  operations and effects, not public `std::*` names, optimizer success, emitted
+  C++, or backend behavior.
+- **Phase constraint:** Full post-semantics MIR is too late for every constant
+  request. `if constexpr`, static assertions, array extents, and value-generic
+  arguments can determine which semantics and types are valid before complete
+  HIR/MIR exists. Migration therefore needs lazy or staged typed-body lowering,
+  or a deliberately small early constant kernel; it cannot merely append a MIR
+  interpreter after the existing frontend pipeline. The early kernel must not
+  grow into a second full execution engine.
+- **Extension rule:** Every new constexpr feature must audit the corresponding
+  runtime MIR rule and either migrate a coherent vertical slice to the proposed
+  service/profile or explain the blocking prerequisite for a bounded interim
+  AST-evaluator addition. Interim work retains target-correct checked
+  operations, exact identities, source-located diagnostics, deterministic
+  step/call-depth limits, and compile-time/runtime differential evidence. Its
+  plan must say how overlapping AST execution is removed or subsumed rather
+  than accepting two permanent meanings.
+- **Remaining scope:** Mutable/stored references, allocation, receiver mutation,
+  payload enums, unions, inherited or cleanup-owning aggregates, generic packs,
+  arrow/contextual-bool operators, consuming receivers, and polymorphism remain excluded. Do
+  not widen exact qualified specialization into partial specialization as a
+  side effect.
 - **Initial exit gate:** met by positive/negative identity and limit tests plus
   an O0/O3 and C++20/C++23 runtime-parity matrix whose result is independent of
   native C++ constant evaluation.

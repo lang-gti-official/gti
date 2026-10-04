@@ -224,6 +224,16 @@ _Static_assert(
 
 _Static_assert(sizeof(gti_failure_record_v1) == 48,
                "the v1 failure record ABI must remain 48 bytes");
+_Static_assert(sizeof(gti_failure_record_v2) == 568 &&
+                   _Alignof(gti_failure_record_v2) == 4 &&
+                   offsetof(gti_failure_record_v2, message_size) == 48 &&
+                   offsetof(gti_failure_record_v2, message_flags) == 52 &&
+                   offsetof(gti_failure_record_v2, message) == 56,
+               "v2 panic payload extends a separately versioned record");
+_Static_assert(sizeof(gti_failure_emergency_v2) == 1144 &&
+                   GTI_FAILURE_CODE_PANIC_V2 == 17 &&
+                   GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2 == 37,
+               "v2 emergency and panic vocabulary must remain stable");
 _Static_assert(_Alignof(gti_failure_record_v1) == 4,
                "the v1 failure record alignment must remain four");
 _Static_assert(offsetof(gti_failure_record_v1, abi_version) == 0 &&

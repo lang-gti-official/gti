@@ -416,6 +416,7 @@ private:
   StmtPtr bracketAttributedDeclaration(LanguageLinkage linkage) {
     std::optional<NativeCArrayAttribute> nativeCArray;
     std::optional<NativeLinkNameAttribute> nativeLinkName;
+    std::vector<Token> functionAttributes;
     bool parsedNativeFunctionAttribute = false;
     while (true) {
       consume(TokenKind::LEFT_BRACKET,
@@ -438,13 +439,17 @@ private:
           throw error(attribute,
                       "[[unsafe]] requires a namespace-scope GTI function.");
         }
-        return typedDeclaration(true, std::nullopt, false, false, true, linkage,
-                                std::nullopt, std::nullopt,
-                                std::move(attribute));
+        return typedDeclaration(
+            true, std::nullopt, false, false, true, linkage, std::nullopt,
+            std::nullopt, std::move(attribute), std::move(functionAttributes));
       }
       Token first = consume(TokenKind::IDENTIFIER,
                             "Expect an attribute name after '[['.");
       if (first.lexeme == "c_array" || first.lexeme == "link_name") {
+        if (!functionAttributes.empty()) {
+          throw error(first, "GTI function attributes cannot be combined with "
+                             "native function attributes.");
+        }
         parsedNativeFunctionAttribute = true;
         consume(TokenKind::LEFT_PAREN,
                 "Expect '(' after native function attribute '" + first.lexeme +
@@ -505,9 +510,32 @@ private:
             TokenKind::IDENTIFIER, "Expect an attribute name after '[['."));
       }
       consume(TokenKind::RIGHT_BRACKET,
-              "Expect ']]' after class or interface attributes.");
+              "Expect ']]' after declaration attributes.");
       consume(TokenKind::RIGHT_BRACKET,
-              "Expect ']]' after class or interface attributes.");
+              "Expect ']]' after declaration attributes.");
+      bool functionAttributeList = !functionAttributes.empty();
+      for (const Token &attribute : attributes) {
+        functionAttributeList = functionAttributeList ||
+                                attribute.lexeme == "noreturn" ||
+                                attribute.lexeme == "track_caller";
+      }
+      if (functionAttributeList) {
+        for (Token &attribute : attributes) {
+          functionAttributes.push_back(std::move(attribute));
+        }
+        if (check(TokenKind::LEFT_BRACKET) &&
+            peekAt(1).kind == TokenKind::LEFT_BRACKET) {
+          continue;
+        }
+        if (!isTypedDeclaration()) {
+          throw error(peek(), "Function attributes require a function "
+                              "declaration.");
+        }
+        return typedDeclaration(
+            true, std::nullopt, currentClassName.has_value(),
+            currentClassName.has_value(), true, linkage, std::nullopt,
+            std::nullopt, std::nullopt, std::move(functionAttributes));
+      }
       if (!match({TokenKind::CLASS, TokenKind::STRUCT, TokenKind::INTERFACE,
                   TokenKind::UNION})) {
         throw error(peek(), "These attributes apply only to class, "
@@ -638,7 +666,8 @@ private:
       bool allowStatic = true, LanguageLinkage linkage = LanguageLinkage::Gti,
       std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
-      std::optional<Token> unsafeAttribute = std::nullopt) {
+      std::optional<Token> unsafeAttribute = std::nullopt,
+      std::vector<Token> functionAttributes = {}) {
     std::optional<Token> virtualKeyword;
     if (match({TokenKind::VIRTUAL})) {
       virtualKeyword = previous();
@@ -710,7 +739,7 @@ private:
           std::move(operatorName), std::move(staticKeyword),
           std::move(virtualKeyword), linkage, std::move(constexprKeyword),
           std::move(nativeCArray), std::move(nativeLinkName),
-          std::move(unsafeAttribute));
+          std::move(unsafeAttribute), std::move(functionAttributes));
     }
 
     if (operatorName) {
@@ -737,6 +766,10 @@ private:
       throw error(*unsafeAttribute,
                   "[[unsafe]] must annotate a function declaration.");
     }
+    if (!functionAttributes.empty()) {
+      throw error(functionAttributes.front(),
+                  "Function attributes must annotate a function declaration.");
+    }
     if (virtualKeyword) {
       throw error(*virtualKeyword,
                   "Only member functions can be declared virtual.");
@@ -761,7 +794,8 @@ private:
       std::optional<Token> constexprKeyword = std::nullopt,
       std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
-      std::optional<Token> unsafeAttribute = std::nullopt) {
+      std::optional<Token> unsafeAttribute = std::nullopt,
+      std::vector<Token> functionAttributes = {}) {
     std::vector<Parameter> parameters = parameterList();
     if (operatorName && operatorName->kind == OverloadedOperator::Dereference &&
         !parameters.empty()) {
@@ -838,7 +872,7 @@ private:
           std::move(overrideKeyword), std::move(pureSpecifier), linkage,
           std::move(constexprKeyword), std::move(requiresClause),
           std::move(nativeCArray), std::move(nativeLinkName),
-          std::move(unsafeAttribute));
+          std::move(unsafeAttribute), std::move(functionAttributes));
     }
 
     if (match({TokenKind::SEMICOLON})) {
@@ -850,7 +884,7 @@ private:
           std::move(overrideKeyword), std::nullopt, linkage,
           std::move(constexprKeyword), std::move(requiresClause),
           std::move(nativeCArray), std::move(nativeLinkName),
-          std::move(unsafeAttribute));
+          std::move(unsafeAttribute), std::move(functionAttributes));
     }
 
     consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
@@ -863,7 +897,7 @@ private:
         std::move(overrideKeyword), std::nullopt, linkage,
         std::move(constexprKeyword), std::move(requiresClause),
         std::move(nativeCArray), std::move(nativeLinkName),
-        std::move(unsafeAttribute));
+        std::move(unsafeAttribute), std::move(functionAttributes));
   }
 
   StmtPtr conversionOperatorDeclaration(
@@ -1708,6 +1742,10 @@ private:
     }
 
     if (context == ItemContext::ClassMember) {
+      if (check(TokenKind::LEFT_BRACKET) &&
+          peekAt(1).kind == TokenKind::LEFT_BRACKET) {
+        return bracketAttributedDeclaration(LanguageLinkage::Gti);
+      }
       if (check(TokenKind::MUT) && peekAt(1).kind == TokenKind::LEFT_BRACE) {
         Token keyword = advance();
         return mutableFieldGroupDeclaration(std::move(keyword));

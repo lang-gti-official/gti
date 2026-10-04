@@ -70,6 +70,10 @@
       "suite": "frontend"
     },
     {
+      "name": "testFunctionContracts",
+      "suite": "declarations"
+    },
+    {
       "name": "testContainerScaffoldSurfaces",
       "suite": "declarations"
     },
@@ -163,6 +167,10 @@
     },
     {
       "name": "testMemberRequirementConcepts",
+      "suite": "declarations"
+    },
+    {
+      "name": "testConstraintFailureProvenance",
       "suite": "declarations"
     },
     {

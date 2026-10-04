@@ -61,6 +61,9 @@ public surface includes:
 
 `expected<T, E>` and `unexpected(error)` currently have language-level syntax
 and semantics rather than being ordinary prelude templates.
+Their consuming `expect`, `transform`, and `and_then` members are described in
+[expected values](expected.md); they do not implicitly extract successful
+values or convert terminal failures into recoverable results.
 
 ## 7.3 Optional Standard Units
 
@@ -131,6 +134,11 @@ outside this initial slice.
 
 The current implemented foundation includes:
 
+- `<std/panic>` source-defined raw and formatted terminal reporting through
+  `std::panic`, with caller attribution and bounded message capture before
+  deterministic cleanup. Formatting and stdout convenience APIs use the same
+  facility; see [panic reporting](io.md#surface) and
+  [defined runtime failure](execution.md#410-defined-runtime-failure); and
 - `<std/build>` host-side package build-program support through
   `std::build::context`, exact-argv `std::build::command`, and structured
   `std::build::outputs`. This unit is intended for consumer-approved
@@ -379,14 +387,17 @@ The current implemented foundation includes:
 - `<std/format>` heterogeneous automatic or numeric-indexed replacement for
   booleans, characters, fixed-width integers, binary32/binary64 values, string
   views, and transferred owning strings through source-defined `std::format`,
-  `std::format_to`, `std::try_print`, and `std::try_println`. Escaped braces and
+  `std::format_to`, `std::print`, and `std::println`, with recoverable
+  `try_format`, `try_format_to`, `try_print`, and `try_println` siblings. Escaped braces and
   fill/alignment, sign, alternate, zero-padding, width, precision, integer,
   floating, and string presentation specifiers are supported. Default floating
   presentation is the shortest round-tripping decimal; alternate default form
   only forces a decimal point, explicit general precision retains significant
   zeroes, and infinity/NaN ignore numeric zero-padding. Pattern, specifier,
   argument-count, and unsupported-type errors return
-  `expected<..., std::format_errc>` before output begins; and
+  `expected<..., std::format_errc>` from the formatting `try_` APIs. Output
+  `try_` APIs use `print_errc`, additionally reporting stdout submission failure.
+  Plain APIs panic with the same domain reason and external caller location; and
 - `<std/random>` source-defined deterministic `std::random_engine` sequences
   from an explicit `uint64_t` seed, plus fallible `std::random_device` draws
   backed by bounded host entropy; and
@@ -882,18 +893,14 @@ reasonably handle return `expected`. Operations documented as infallible at the
 type level produce a defined runtime failure for violated checked
 preconditions or allocation failure.
 
-An infallible convenience wrapper over a fallible host service may use
-`GTI-R0012` when its host operation fails, but it shall not discard that
-failure. It should have a recoverable sibling when callers reasonably need to
-handle the condition. The current `std::print`/`std::println` implementation
-discards the status from the counted and scalar-byte stdout runtime entries;
-this is an implementation gap owned by the hosted-service work, not a
-permitted hidden stream state.
-`std::format` and the `try_print` family return `format_errc` for malformed
-replacement syntax, an argument-count mismatch, or an unsupported argument
-type. The `try_` output names do not yet make a native stdout failure
-recoverable; they guarantee that a format error is reported before any bytes
-are written.
+An infallible convenience wrapper over a fallible host service shall not
+discard failure. Formatting and stdout output use explicit panic (`GTI-R0017`)
+with a stable domain reason and caller location. `try_format`/`try_format_to`
+return `format_errc`; `try_print`/`try_println` return `print_errc`, including
+`write_failed`. Formatting failure occurs before any output; host submission
+failure may leave a prefix written. Existing raw print overloads check their
+runtime result as well. No output API implicitly flushes the host stream.
+See [I/O](io.md) for the literal single-text-argument rule and migration details.
 
 Wrong-state `expected.value()` and `expected.error()` access is the checked
 `GTI-R0009` failure. Infallible allocation uses `GTI-R0011`; recoverable

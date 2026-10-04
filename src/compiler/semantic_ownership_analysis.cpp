@@ -1832,6 +1832,9 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
   if (name == "require_container_argument") {
     return IntrinsicKind::RequireContainerArgument;
   }
+  if (name == "panic") {
+    return IntrinsicKind::Panic;
+  }
   if (name == "allocate_prefix_storage") {
     return IntrinsicKind::AllocatePrefixStorage;
   }
@@ -5512,6 +5515,31 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
   if (intrinsic >= IntrinsicKind::SharedOwnerEmpty &&
       intrinsic <= IntrinsicKind::SharedOwnerUpcast) {
     analyzeSharedOwnerIntrinsicCall(expr, declaration);
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
+  if (intrinsic == IntrinsicKind::Panic) {
+    std::vector<SemanticType> argumentTypes;
+    for (const auto &argument : expr.arguments()) {
+      argumentTypes.push_back(analyze(argument));
+    }
+    for (const auto &argument : expr.typeArguments()) {
+      validateType(argument);
+    }
+    if (!expr.typeArguments().empty() || argumentTypes.size() != 1 ||
+        argumentTypes.front() != SemanticType::StringView) {
+      report(expr.paren(),
+             "Panic requires one counted text-view message and no type "
+             "arguments.",
+             "GTI-S2019");
+    }
+    currentType = SemanticType::Void;
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = SemanticType::Void,
+                               .parameterTypes = std::move(argumentTypes),
+                               .intrinsic = intrinsic,
+                               .neverReturns = true,
+                               .tracksCaller = true});
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }

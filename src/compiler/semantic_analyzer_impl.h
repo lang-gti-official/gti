@@ -395,6 +395,8 @@ private:
     bool internalLinkage = false;
     bool constexprFunction = false;
     bool requiresUnsafe = false;
+    bool neverReturns = false;
+    bool tracksCaller = false;
     CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
     LanguageLinkage linkage = LanguageLinkage::Gti;
     std::string externalSymbol;
@@ -970,6 +972,7 @@ private:
     bool canFallThrough = true;
     bool breaksEnclosingControl = false;
     bool continuesEnclosingLoop = false;
+    const ReturnStmt *normalReturn = nullptr;
   };
 
   struct ConstexprEvaluation {
@@ -1132,6 +1135,8 @@ private:
 
   [[nodiscard]] static std::optional<bool>
   constantBoolean(const ExprPtr &expression);
+
+  [[nodiscard]] bool expressionNeverReturns(const Expr *expression) const;
 
   [[nodiscard]] FlowSummary summarizeFlow(const StmtList &statements) const;
 
@@ -1737,10 +1742,10 @@ private:
 
   [[nodiscard]] static std::vector<StructuralConstraintKind>
   guaranteedStructuralKinds(StructuralConstraintKind kind);
-  [[nodiscard]] bool
-  readMemberRequirementSatisfied(const SemanticType &receiver,
-                                 std::string_view member,
-                                 const SemanticType &result) const;
+  [[nodiscard]] bool readMemberRequirementSatisfied(
+      const SemanticType &receiver, std::string_view member,
+      const SemanticType &result,
+      SemanticMemberRequirementFailure *failure = nullptr) const;
   void recordMemberRequirementReceiver(const MemberRequirement &query,
                                        const SemanticType &type);
   struct ActiveMemberRequirement {
@@ -1774,6 +1779,12 @@ private:
 
   void reportConstraintFailure(const Token &site,
                                const ConstraintFailure &failure);
+
+  void
+  attachConstraintCallContext(ConstraintFailure &failure,
+                              const CallableCandidate &candidate,
+                              const std::vector<SemanticType> &argumentTypes,
+                              const ExprList &expressions) const;
 
   bool applyVariadicFunctionTypeArguments(
       CallableCandidate &function,
@@ -2009,7 +2020,8 @@ private:
   void reportOverloadResolutionFailure(
       const Call &call, const Symbol &overloadSet,
       const std::vector<SemanticType> &argumentTypes,
-      const std::vector<const CallableCandidate *> &exactMatches);
+      const std::vector<const CallableCandidate *> &exactMatches,
+      std::span<const ConstraintFailure> constraintFailures = {});
 
   [[nodiscard]] static int callConversionRank(const SemanticType &parameter,
                                               const SemanticType &argument);

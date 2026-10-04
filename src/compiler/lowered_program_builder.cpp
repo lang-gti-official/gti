@@ -586,6 +586,8 @@ private:
             .internalLinkage = info->internalLinkage,
             .constexprFunction = info->constexprFunction,
             .requiresUnsafe = info->requiresUnsafe,
+            .neverReturns = info->neverReturns,
+            .tracksCaller = info->tracksCaller,
             .cThreadOperation = info->cThreadOperation,
             .virtualMethod = info->virtualMethod,
             .pureVirtual = info->pureVirtual,
@@ -806,10 +808,14 @@ private:
         source.staticMember != lowered.staticMember ||
         source.constexprFunction != lowered.constexprFunction ||
         source.requiresUnsafe != lowered.requiresUnsafe ||
+        source.neverReturns != lowered.neverReturns ||
+        source.tracksCaller != lowered.tracksCaller ||
         source.cThreadOperation != lowered.cThreadOperation ||
         (info != nullptr &&
          source.cThreadOperation != info->cThreadOperation) ||
         (info != nullptr && source.requiresUnsafe != info->requiresUnsafe) ||
+        (info != nullptr && source.neverReturns != info->neverReturns) ||
+        (info != nullptr && source.tracksCaller != info->tracksCaller) ||
         source.linkage != lowered.linkage ||
         source.externalSymbol != lowered.externalSymbol ||
         source.body.placeDomain != lowered.body.placeDomain ||

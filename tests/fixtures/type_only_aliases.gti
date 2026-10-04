@@ -1,0 +1,29 @@
+#include <std/optional>
+
+struct Option { int value = 0; };
+class Options {
+  using option_type = std::optional<Option>;
+public:
+  Options() {}
+};
+
+namespace independent {
+struct Box<T> { T value; };
+struct Data { int value = 0; };
+using Nested = Box<Box<Data>>;
+class Catalog {
+  using Entry = Box<Data>;
+public:
+  Catalog() {}
+};
+class Chain<T> {
+  using Next = Chain<Chain<T>>;
+  using Entry = Box<Data>;
+};
+}
+
+int main() {
+  Options options{};
+  independent::Catalog catalog{};
+  return 0;
+}

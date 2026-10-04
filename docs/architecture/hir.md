@@ -70,15 +70,26 @@ whole-program plan verification or be published to the backend. Normal
 
 IDs are stable only inside one `HirProgram`; zero means no identity.
 
-Consuming `expected<T, E>::transform_error` receives the exact mapper identity
-and `expected<T, F>` result from semantics. HIR expands it into one state test,
+Consuming `expected<T, E>` combinators receive their exact operation, mapper
+identity, and result type from semantics. `transform_error`, `transform`, and
+`and_then` share one expansion into a state test,
 mutually exclusive active-alternative extraction/move paths, an ordinary
-call to the selected `F(E)` function or concrete lambda on the error path, an
-Unexpected wrapper, and an Expected-valued conditional join. The mapper's ordinary
+call to the selected function or concrete lambda on the applicable path, an
+Unexpected wrapper, and an Expected-valued conditional join. Error mapping
+changes `E`, success mapping changes `T`, and success chaining retains the
+mapper's complete expected result with the same exact error type. The mapper's ordinary
 defined-failure edge and the existing full-expression lifecycle pass govern
 cleanup. `void` success constructs the empty success alternative without a
 payload extraction. Synthetic values retain stable IDs; lowering does not keep
 pointers into the values vector across appends.
+For a void-returning success mapper, a value's ordered `sequencedInputs`
+complete the ordinary void call before default construction publishes the
+`expected<void, E>` success. These are structural void-evaluation dependencies,
+not a backend expected special case. They share the full-expression lifetime;
+verification rejects missing, duplicate, cyclic, non-void, nonreturning, or
+cross-expression dependencies and verifies the selected void mapper is not
+lost. Reachability, lifecycle assignment, and synthetic-default checks include
+these graph edges. MIR schedules the existing call and construction operations.
 The conditional's explicit `conditionalInputs` retain receiver-then-mapper
 evaluation before branching. They participate in full-expression assignment,
 module reachability, and parent-edge checks; synthetic default values cannot
@@ -91,6 +102,17 @@ fresh owning captures remain live for cleanup even when the error arm is skipped
 An explicitly moved lambda receiver uses a `MoveValue` stage independently of
 its read-only invocation capability. Its value obligation retains cleanup for
 the full expression; the receiver stage does not transfer that obligation.
+
+`expect(message)` uses the same selected-combinator record and eager input
+contract, with receiver then counted message rather than a mapper. Its success
+arm extracts/moves the active owned value, or performs the void observer; its
+error arm is the same terminal `Panic` intrinsic used by the trusted panic
+declaration. The intrinsic carries the call's semantic failure origin and
+caller-tracking contract. HIR plan checks reject a normal continuation or a
+different message on that arm. MIR conditional lowering joins only normally
+completing branches; the panic arm cannot initialize a result slot or add a
+fictional success value. Existing cleanup obligations own receiver/error and
+message-storage cleanup after the panic record has been captured.
 
 When an owner has no generated-default construction route, each concrete source
 constructor selects its omitted declaration field defaults into its own HIR

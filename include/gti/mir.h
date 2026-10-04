@@ -672,6 +672,11 @@ struct MirInstruction {
   std::optional<std::size_t> enumVariant;
   std::optional<std::size_t> payloadIndex;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  bool neverReturns = false;
+  bool tracksCaller = false;
+  std::optional<CallerLocationOrigin> callerLocation;
+  FailureSiteId callerLocationSite = 0;
+  bool forwardsCallerLocation = false;
   std::optional<SourceLocationLiteral> sourceLocation;
   SynchronizationOperation synchronization;
   DefinedFailureOperation definedFailure;
@@ -925,6 +930,8 @@ struct MirRangeIteration {
 
 struct MirBody {
   MirBodyKind kind = MirBodyKind::Function;
+  // Only a tracked source function owns an incoming caller-location parameter.
+  bool hasCallerLocation = false;
   // Source-defined standard-library wrappers are part of the complete MIR
   // declaration inventory even when their public surface is unavailable in
   // the selected execution profile. Lowering sets this bit only on a
@@ -986,6 +993,13 @@ struct MirBody {
 
   friend bool operator==(const MirBody &, const MirBody &) = default;
 };
+
+// An input whose enclosing invocation never executes may have no SSA consumer
+// only when every remaining normal path in this full expression reaches an
+// explicit terminal call. This query does not replace the independent loan and
+// drop checks on failure edges, or declaration-contract verification.
+[[nodiscard]] bool mirCallInputAbandonedByTerminal(const MirBody &body,
+                                                   const MirInstruction &input);
 
 // A source temporary is either still rooted directly in its SSA value or has
 // been promoted into one hidden slot so it remains nameable across a CFG
@@ -1206,6 +1220,8 @@ struct MirFunctionInstance {
   std::optional<OverloadedOperator> overloadedOperator;
   bool constexprFunction = false;
   bool requiresUnsafe = false;
+  bool neverReturns = false;
+  bool tracksCaller = false;
   CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;

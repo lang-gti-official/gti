@@ -1304,7 +1304,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v71\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v72\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -3470,7 +3470,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v84 ") &&
+  expect(mirDump.starts_with("mir-v85 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -7790,14 +7790,14 @@ int use() {
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const std::size_t copyBlockedCall =
       copyBlockedSource.rfind("accepts_forward");
-  expect(!copyBlocked.canGenerateCode() &&
-             hasDiagnosticAt(
-                 copyBlocked.diagnostics, "GTI-S2029",
-                 "forward-iterator-copy-blocked.gti",
-                 copyBlockedSource.find(';', copyBlockedCall) - 1,
-                 "does not satisfy generic constraint 'std::forward_iterator'"),
-         "forward_iterator should reject a cursor without copy construction at "
-         "the constrained call");
+  expect(
+      !copyBlocked.canGenerateCode() &&
+          hasDiagnosticAt(copyBlocked.diagnostics, "GTI-S2029",
+                          "forward-iterator-copy-blocked.gti",
+                          copyBlockedSource.find(';', copyBlockedCall) - 2,
+                          "does not satisfy concept 'std::forward_iterator<"),
+      "forward_iterator should reject a cursor without copy construction at "
+      "the constrained call");
 
   const std::string distinctSentinelSource = R"(
 #include <std/iterator>
@@ -7834,8 +7834,7 @@ int use() {
              hasDiagnosticAt(distinctSentinel.diagnostics, "GTI-S2029",
                              "forward-iterator-distinct-sentinel.gti",
                              distinctSentinelSource.find(';', distinctCall) - 1,
-                             "Generic arguments do not satisfy concept "
-                             "'std::forward_iterator'"),
+                             "satisfy concept 'std::forward_iterator"),
          "forward_iterator should reject a distinct-sentinel-only cursor at "
          "the constrained call with the structural reason");
 
@@ -7859,14 +7858,14 @@ int use() {
       "forward-iterator-mutable-cursor.gti", mutableCursorSource,
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const std::size_t mutableCall = mutableCursorSource.rfind("accepts_forward");
-  expect(!mutableCursor.canGenerateCode() &&
-             hasDiagnosticAt(
-                 mutableCursor.diagnostics, "GTI-S2029",
-                 "forward-iterator-mutable-cursor.gti",
-                 mutableCursorSource.find(';', mutableCall) - 1,
-                 "does not satisfy generic constraint 'std::forward_iterator'"),
-         "forward_iterator should reject a mutable owner-loan cursor at the "
-         "constrained call");
+  expect(
+      !mutableCursor.canGenerateCode() &&
+          hasDiagnosticAt(mutableCursor.diagnostics, "GTI-S2029",
+                          "forward-iterator-mutable-cursor.gti",
+                          mutableCursorSource.find(';', mutableCall) - 2,
+                          "does not satisfy concept 'std::forward_iterator<"),
+      "forward_iterator should reject a mutable owner-loan cursor at the "
+      "constrained call");
 
   const std::string mutCursorReadReceiverSource = R"(
 #include <std/iterator>
@@ -8004,7 +8003,7 @@ int main() {
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!readDestination.canGenerateCode() &&
              hasDiagnostic(readDestination.diagnostics,
-                           "do not satisfy concept 'std::output_iterator'"),
+                           "satisfy concept 'std::output_iterator"),
          "a read-only iterator destination should fail std::output_iterator");
 
   const lang::FrontendResult forwardOnly = lang::Frontend().analyze(
@@ -8035,8 +8034,7 @@ int use() {
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!forwardOnly.canGenerateCode() &&
              hasDiagnostic(forwardOnly.diagnostics,
-                           "do not satisfy concept "
-                           "'std::bidirectional_iterator'"),
+                           "satisfy concept 'std::bidirectional_iterator"),
          "a forward-only cursor should fail std::bidirectional_iterator");
 
   const lang::FrontendResult noJumps = lang::Frontend().analyze(
@@ -8068,8 +8066,7 @@ int use() {
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!noJumps.canGenerateCode() &&
              hasDiagnostic(noJumps.diagnostics,
-                           "do not satisfy concept "
-                           "'std::random_access_iterator'"),
+                           "satisfy concept 'std::random_access_iterator"),
          "a step-only cursor should fail std::random_access_iterator");
 
   const lang::FrontendResult wrongElement = lang::Frontend().analyze(
@@ -8091,7 +8088,7 @@ int use() {
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!wrongElement.canGenerateCode() &&
              hasDiagnostic(wrongElement.diagnostics,
-                           "do not satisfy concept 'std::writes_to'"),
+                           "satisfy concept 'std::writes_to"),
          "writes_to should reject a destination whose element type differs "
          "from the required referent");
 
@@ -8124,8 +8121,7 @@ int use() {
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!unsizedSentinel.canGenerateCode() &&
              hasDiagnostic(unsizedSentinel.diagnostics,
-                           "do not satisfy concept "
-                           "'std::sized_sentinel_for'"),
+                           "satisfy concept 'std::sized_sentinel_for"),
          "sized_sentinel_for should reject an iterator without the signed "
          "distance operator");
 
@@ -16449,7 +16445,7 @@ int main() {
               std::string::npos &&
           artifact.contents.find("___gti_operator_call(__gti_mir_v_") !=
               std::string::npos &&
-          artifact.contents.find("*__gti_mir_out_result = __gti_mir_v_1;") !=
+          artifact.contents.find("*__gti_mir_out_result = __gti_mir_v_4;") !=
               std::string::npos,
       "C++ lowering should preserve predicate values through the exact "
       "callable bridge");
@@ -16783,7 +16779,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v84 ") &&
+             mirDump.starts_with("mir-v85 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
