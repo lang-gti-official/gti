@@ -2008,9 +2008,13 @@ when the public wrapper is added.
 `installed_native_record_pipeline` additionally verifies that the packaged
 compiler library exposes the same semantic/HIR/MIR native-record contract.
 
-CI and release jobs default to two compile jobs and one CTest worker, separately
-overridable through `GTI_JOBS` and `GTI_TEST_JOBS`. Shared-host runner capacity
-and timeout are configured outside the repository. A small ASan/UBSan preflight
+CI and release jobs use the job's detected available processor count for both
+compilation and CTest. `scripts/configure_ci_resources.sh` uses `nproc` (not
+`nproc --all`), then host-appropriate `sysctl` or `getconf` when unavailable;
+failed/invalid detection falls back to one. Repository variables `GTI_JOBS`
+and `GTI_TEST_JOBS` independently override those defaults and must be positive
+integers. Runner CPU/memory provisioning and timeouts remain external policy;
+the helper does not infer a safe memory budget. A small ASan/UBSan preflight
 fails early when that mandatory capability is broken. ThreadSanitizer execution
 is an explicit host capability controlled by
 `GTI_ENABLE_THREAD_SANITIZER_TESTS`, which defaults to enabled. The generic
@@ -2023,14 +2027,39 @@ evidence.
 Release build-tree tests derive their resource overrides from the final CTest
 inventory, including every CLI/LSP test; installed-consumer checks retain clean,
 relocatable discovery without those overrides. Their C
-and C++ compilation uses `sccache` through CMake's compiler-launcher contract;
-the cache is an exact-input build accelerator and is never an authority for
+and C++ compilation uses explicitly installed `ccache` through CMake's
+compiler-launcher contract. Native, sanitizer, and bundled-release object
+stores are persisted separately by OS, architecture, and profile, with
+configuration fingerprints and per-run snapshot keys. Failed partial builds
+also attempt to save reusable objects. The pinned Gitea cache action supports
+the runner's v1 cache service; restore/save errors are non-fatal optimization
+failures, not reasons to skip verification. The cache helper uses compiler
+content checks without header/PCH/time-macro sloppiness or path rewriting, and
+caches no build tree, test results, or installed toolchain.
+The native CI build also supplies the deterministic documentation index,
+avoiding a second compiler build. Nightly and stable share one bundled build
+and complete validation suite per commit, but retain separate publication
+contracts described in `build-and-driver.md`.
+In every profile, the cache is an exact-input build accelerator and never an authority for
 test selection, compiler semantics, or release contents. A cold cache must
 therefore pass the same build, build-tree tests, staged-toolchain tests, and
 packaging gates as a warm cache. Release packages continue to build the pinned
 LLVM support libraries from their verified source archive on every platform;
 cached object reuse does not replace that source or alter the installed static
 archives.
+
+`ci_resources`, `ci_cache`, and `ci_release` cover detected/explicit budgets,
+fail-closed cache setup, exact source/version/tag admission, shared-build
+workflow structure, and stale-nightly skipping. `ci_release` additionally
+archives a staged fixture through the real packaging script and compares both
+channels' contents and checksums. The cache test's optional `--ccache` mode
+proves cold/warm object identity and header/flag invalidation using a real
+compiler. `cmake_test_ownership` configures the actual guarded LSP registration
+both with and without the target: LSP-disabled sanitizer builds must generate
+without referencing a missing executable.
+`native_framework_nonapple` compiles the actual non-Apple resolver branch at
+O2 with unused-parameter warnings treated as errors and checks its conservative
+cache bypass. It is bounded branch evidence, not a substitute for full Linux CI.
 
 ## Cross-Phase Feature Coverage
 

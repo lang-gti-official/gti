@@ -53,6 +53,14 @@ def main() -> None:
         if f'"{resource}=' not in release_layout.group("environment"):
             fail(f"release build-tree tests lack {resource}")
 
+    optional_lsp = re.search(
+        r"if\(TARGET gti_lsp\)\s+add_test\(\s+NAME structural_relocation_lsp\b"
+        r".*?set_tests_properties\(structural_relocation_lsp PROPERTIES TIMEOUT 120\)"
+        r"\s+endif\(\)", test_cmake, re.DOTALL,
+    )
+    if optional_lsp is None:
+        fail("structural_relocation_lsp must be conditional on its actual LSP target")
+
     # Execute the actual final CMake fragment in a small standalone project.
     # A newly registered test must inherit the layout too, while existing test
     # environment entries survive and non-release builds remain unaffected.
@@ -91,6 +99,30 @@ def main() -> None:
                 for value in expected:
                     if (value in environment) != (release == "ON"):
                         fail(f"{release}/{test['name']}: incorrect override {value}")
+
+        # Evaluate the owning registration with the optional target both absent
+        # and present. In the OFF case even generation must succeed, not just
+        # configuring before TARGET_FILE generator expressions are evaluated.
+        (source / "CMakeLists.txt").write_text(
+            'cmake_minimum_required(VERSION 3.20)\n'
+            'project(OptionalLsp NONE)\nenable_testing()\n'
+            'if(ENABLE_LSP)\nadd_executable(gti_lsp IMPORTED GLOBAL)\n'
+            'set_target_properties(gti_lsp PROPERTIES IMPORTED_LOCATION '
+            '"${CMAKE_COMMAND}")\nendif()\n' + optional_lsp.group(0),
+            encoding="utf-8",
+        )
+        for enabled in ("ON", "OFF"):
+            build = source / f"lsp-{enabled}"
+            subprocess.run(["cmake", "-S", str(source), "-B", str(build),
+                            f"-DENABLE_LSP={enabled}"], check=True,
+                           capture_output=True, text=True, timeout=30)
+            result = subprocess.run(
+                ["ctest", "--test-dir", str(build), "--show-only=json-v1"],
+                check=True, capture_output=True, text=True, timeout=30,
+            )
+            names = [test["name"] for test in json.loads(result.stdout)["tests"]]
+            if names != (["structural_relocation_lsp"] if enabled == "ON" else []):
+                fail(f"LSP {enabled}: incorrect optional test inventory {names}")
 
     print("CMake test ownership: root products and test registrations are separate")
 

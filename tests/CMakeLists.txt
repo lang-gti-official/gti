@@ -1061,6 +1061,26 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/scripts/configure_ci_resources.sh"
   )
   add_test(
+    NAME ci_cache
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/ci_cache_test.py"
+            "${PROJECT_SOURCE_DIR}/scripts/configure_ci_cache.sh"
+  )
+  add_test(
+    NAME ci_release
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/ci_release_test.py"
+            "${PROJECT_SOURCE_DIR}"
+            --cmake "${CMAKE_COMMAND}"
+  )
+  add_test(
+    NAME native_framework_nonapple
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/native_framework_nonapple_test.py"
+            "${PROJECT_SOURCE_DIR}/src/driver/build.cpp"
+            "${CMAKE_CXX_COMPILER}"
+  )
+  add_test(
     NAME neovim_local_installer
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/neovim_local_installer_test.py"
@@ -2129,13 +2149,15 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(structural_relocation_runtime PROPERTIES TIMEOUT 600)
-  add_test(
-    NAME structural_relocation_lsp
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/structural_relocation_lsp_test.py"
-            "$<TARGET_FILE:gti_lsp>"
-  )
-  set_tests_properties(structural_relocation_lsp PROPERTIES TIMEOUT 120)
+  if(TARGET gti_lsp)
+    add_test(
+      NAME structural_relocation_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/structural_relocation_lsp_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(structural_relocation_lsp PROPERTIES TIMEOUT 120)
+  endif()
   add_test(
     NAME owning_function_policy_failure_runtime
     COMMAND "${Python3_EXECUTABLE}"

@@ -15,11 +15,15 @@ on a GitHub mirror or on GitHub-created tags.
    the intended host or container. Gitea requires static runner labels for the
    versions used by this repository.
 4. Optionally set `GTI_JOBS` and `GTI_TEST_JOBS` to positive integers in
-   **Repository settings -> Actions -> Variables**. Defaults are two compile
-   jobs and one CTest worker. A container's visible CPU count is not its resource
-   budget; the workflows deliberately do not expand to every host CPU.
-   A preinstalled `sccache` is used automatically, including the
-   Actions cache backend when the runner exposes it.
+   **Repository settings -> Actions -> Variables**. By default both use the
+   job's available processor count (`nproc`, not `nproc --all`, with macOS/POSIX
+   fallbacks and a one-worker detection fallback). This installation permits
+   full parallelism; runner provisioning must supply its CPU/memory budget.
+   Explicit overrides remain available for other deployments.
+   Jobs install `ccache` and persist only compiler objects, separately for
+   native, sanitizer, and bundled-release profiles. The cache action is pinned
+   to v4.1.0 for the Gitea runner's v1 cache service. Cache failures never skip
+   build or verification gates.
 5. In **Repository settings -> Actions -> General**, allow the workflow token
    a maximum of `code: write` and `releases: write`. Ordinary CI requests only
    read access; the two publication jobs explicitly request the write scopes.
@@ -37,13 +41,12 @@ additional binary platforms from Gitea, register those native runners and add
 statically labelled package jobs for them; source support for a target is not
 evidence that a binary archive was published for it.
 
-For one shared runner host, start with `runner.capacity: 1` and
-`runner.timeout: 6h` in the runner configuration. Four concurrent jobs can mean
-four independent LLVM/compiler builds, not four compiler processes. The former
-three-hour limit cancelled the stable and sanitizer jobs during execution.
-Tune capacity only after measuring the host's memory/CPU budget. Restart the
-runner after changing its configuration; repository variables cannot alter its
-job capacity or timeout.
+Set `runner.capacity` for the number of concurrent jobs the host is provisioned
+to execute; this installation permits full job capacity. Set `runner.timeout`
+long enough for a cold bundled LLVM/Clang build: earlier logs showed termination
+near three hours. Job concurrency and compiler-process parallelism are separate
+settings. Restart the runner after changing its configuration; repository
+variables cannot alter job capacity or timeout.
 
 The generic Gitea runner executes a small, race-free ASan/UBSan probe before
 its expensive builds. ThreadSanitizer is a separate runner capability because
@@ -74,15 +77,17 @@ built toolchain or an added native macOS package job.
 
 - `ci.yml` runs for every push to `main`, every pull request, and manual
   dispatch. It is the canonical remote CI signal.
-- `nightly.yml` runs for every `main` commit. It packages and tests the exact
-  triggering revision, refuses publication if that revision was superseded,
-  then advances the mutable `nightly` tag and Gitea release. Current assets are
-  uploaded before assets outside the new build are pruned.
-- `release.yml` runs when `VERSION` changes on `main`, or by manual dispatch.
-  It packages and tests the exact commit, rejects a conflicting existing tag,
-  and lets Gitea create or update the matching `v<VERSION>` release.
+- `release.yml` runs for every `main` commit or by manual dispatch. One bundled
+  build and validation suite supplies both channels. Nightly always gets an
+  archive; stable gets an archive only on a `VERSION` change or exact-commit
+  manual rebuild. Stable is archived before the nightly identity stamp.
+  Stable publication rejects a conflicting immutable `v<VERSION>` tag.
+  Serialized nightly publication skips superseded revisions, then advances
+  the mutable `nightly` tag and Gitea release. Current assets are uploaded before
+  assets outside the new build are pruned. The former separate nightly workflow
+  is removed to avoid compiling and testing the same bundled toolchain twice.
 
-Both release workflows use Gitea's repository token and publish only after the
+Both publication jobs use Gitea's repository token and publish only after the
 build-tree and installed-toolchain gates pass. A successful push merely starts
 that asynchronous work; local validation remains the pre-push authority.
 
