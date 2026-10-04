@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.365.0 — Opt-in Git project initialization
+
+- `gti init [path] --git` initializes a standalone Git repository and writes
+  the canonical GTI `.gitignore` with a root `/build/` rule.
+- Existing `.git` and `.gitignore` entries are preserved by rejecting the
+  request. Git failures roll back only output created by the scaffold command.
+- Git executable selection follows `GTI_GIT`, then `git`.
+
 ## 0.364.1 — Checked Expected payload argument fix
 
 - Fix an internal compiler error when a moved Expected's cleanup-free class

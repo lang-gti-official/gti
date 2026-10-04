@@ -1770,7 +1770,7 @@ void testProjectFactsDiagnostics() {
   }
 }
 
-void testProjectScaffolding() {
+void testProjectScaffolding(const std::filesystem::path &testExecutable) {
   TemporaryDirectory temporary;
   const std::string expectedSource = R"(#include <std/string>
 #include <std/vector>
@@ -1854,6 +1854,130 @@ int main(int argc, std::vector<std::string> argv) {
              std::filesystem::is_regular_file(emptyRoot / "src/main.gti") &&
              readFile(emptyRoot / "src/main.gti") == expectedSource,
          "init scaffolding should create an entry source when one is absent");
+
+  const std::filesystem::path gitRoot =
+      temporary.root() / "git package;literal";
+  std::filesystem::create_directory(gitRoot);
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::ExistingDirectory, gitRoot,
+      std::string("git_package"),
+      lang::driver::ProjectScaffoldGit{.executable = testExecutable.string()}));
+  expect(scaffold.succeeded() && scaffold.initializedGit &&
+             scaffold.createdGitIgnore &&
+             std::filesystem::is_directory(gitRoot / ".git") &&
+             readFile(gitRoot / ".gitignore") ==
+                 "# GTI build output\n/build/\n" &&
+             std::filesystem::is_regular_file(gitRoot / "gti.toml") &&
+             std::filesystem::is_regular_file(gitRoot / "src/main.gti"),
+         "git init scaffolding should create repository metadata and the "
+         "canonical GTI ignore file");
+
+  const std::filesystem::path existingIgnoreRoot =
+      temporary.root() / "existing-ignore";
+  std::filesystem::create_directory(existingIgnoreRoot);
+  expect(writeFile(existingIgnoreRoot / ".gitignore", "user-owned\n"),
+         "the existing ignore fixture should be writable");
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::ExistingDirectory, existingIgnoreRoot,
+      std::string("existing_ignore"),
+      lang::driver::ProjectScaffoldGit{.executable = testExecutable.string()}));
+  expect(scaffold.status == lang::driver::ProjectScaffoldStatus::Conflict &&
+             findDiagnostic(scaffold.diagnostics, "GTI-B1503") != nullptr &&
+             readFile(existingIgnoreRoot / ".gitignore") == "user-owned\n" &&
+             !std::filesystem::exists(existingIgnoreRoot / "gti.toml"),
+         "git init scaffolding should preserve an existing .gitignore and "
+         "fail before project mutation");
+
+  const std::filesystem::path existingGitRoot =
+      temporary.root() / "existing-git";
+  std::filesystem::create_directories(existingGitRoot / ".git");
+  expect(writeFile(existingGitRoot / ".git/sentinel", "repository-owned\n"),
+         "the existing Git metadata fixture should be writable");
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::ExistingDirectory, existingGitRoot,
+      std::string("existing_git"),
+      lang::driver::ProjectScaffoldGit{.executable = testExecutable.string()}));
+  expect(scaffold.status == lang::driver::ProjectScaffoldStatus::Conflict &&
+             findDiagnostic(scaffold.diagnostics, "GTI-B1503") != nullptr &&
+             readFile(existingGitRoot / ".git/sentinel") ==
+                 "repository-owned\n" &&
+             !std::filesystem::exists(existingGitRoot / "gti.toml"),
+         "git init scaffolding should refuse existing repository metadata "
+         "before project mutation");
+
+  for (const std::string entry : {".git", ".gitignore"}) {
+    const auto redirectedRoot =
+        temporary.root() / ("redirected-" + entry.substr(1));
+    std::filesystem::create_directory(redirectedRoot);
+    std::error_code linkError;
+    std::filesystem::create_directory_symlink(
+        existingGitRoot / ".git", redirectedRoot / entry, linkError);
+    if (!linkError) {
+      scaffold =
+          lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+              lang::driver::ProjectScaffoldMode::ExistingDirectory,
+              redirectedRoot, std::string("redirected_git"),
+              lang::driver::ProjectScaffoldGit{.executable =
+                                                   testExecutable.string()}));
+      expect(scaffold.status == lang::driver::ProjectScaffoldStatus::Conflict &&
+                 std::filesystem::is_symlink(redirectedRoot / entry) &&
+                 !std::filesystem::exists(redirectedRoot / "gti.toml") &&
+                 readFile(existingGitRoot / ".git/sentinel") ==
+                     "repository-owned\n",
+             "Git scaffold must reject existing metadata and ignore symlinks "
+             "without following or removing them");
+    }
+  }
+
+  const std::filesystem::path failedGitRoot = temporary.root() / "failed-git";
+  std::filesystem::create_directory(failedGitRoot);
+  const std::filesystem::path failedGitSource = failedGitRoot / "src/main.gti";
+  const std::string failedGitSourceContents = "int main() { return 17; }\n";
+  expect(writeFile(failedGitSource, failedGitSourceContents),
+         "the failed Git init source fixture should be writable");
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::ExistingDirectory, failedGitRoot,
+      std::string("failed_git"),
+      lang::driver::ProjectScaffoldGit{
+          .executable = (temporary.root() / "missing-git").string()}));
+  expect(scaffold.status == lang::driver::ProjectScaffoldStatus::ToolFailure &&
+             findDiagnostic(scaffold.diagnostics, "GTI-B1504") != nullptr &&
+             !std::filesystem::exists(failedGitRoot / "gti.toml") &&
+             readFile(failedGitSource) == failedGitSourceContents &&
+             !std::filesystem::exists(failedGitRoot / ".gitignore") &&
+             !std::filesystem::exists(failedGitRoot / ".git"),
+         "a Git process failure should roll back scaffold-owned output while "
+         "preserving an existing entry source");
+
+  const std::filesystem::path partialGitRoot =
+      temporary.root() / "partial-git-failure";
+  std::filesystem::create_directory(partialGitRoot);
+  expect(writeFile(partialGitRoot / "sentinel", "user-owned\n"),
+         "the partial Git initialization fixture should be writable");
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::ExistingDirectory, partialGitRoot,
+      std::string("partial_git_failure"),
+      lang::driver::ProjectScaffoldGit{.executable = testExecutable.string()}));
+  expect(scaffold.status == lang::driver::ProjectScaffoldStatus::ToolFailure &&
+             readFile(partialGitRoot / "sentinel") == "user-owned\n" &&
+             !std::filesystem::exists(partialGitRoot / ".git") &&
+             !std::filesystem::exists(partialGitRoot / ".gitignore") &&
+             !std::filesystem::exists(partialGitRoot / "gti.toml") &&
+             !std::filesystem::exists(partialGitRoot / "src"),
+         "a failed Git child must remove its reserved partial metadata but "
+         "preserve unrelated files");
+
+  const std::filesystem::path unsupportedNewRoot =
+      temporary.root() / "new-with-git";
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::NewPackage, unsupportedNewRoot,
+      std::string("new_with_git"),
+      lang::driver::ProjectScaffoldGit{.executable = testExecutable.string()}));
+  expect(scaffold.status ==
+                 lang::driver::ProjectScaffoldStatus::InvalidRequest &&
+             findDiagnostic(scaffold.diagnostics, "GTI-B1500") != nullptr &&
+             !std::filesystem::exists(unsupportedNewRoot),
+         "Git initialization should remain scoped to gti init");
 
   scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
       lang::driver::ProjectScaffoldMode::ExistingDirectory,
@@ -3068,7 +3192,25 @@ void testModuleManifest() {
   }
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+  if (argc == 5 && std::string_view(argv[1]) == "-C" &&
+      std::string_view(argv[3]) == "init" &&
+      std::string_view(argv[4]) == "--quiet") {
+    const std::filesystem::path root(argv[2]);
+    std::error_code error;
+    if (!std::filesystem::is_directory(root / ".git", error) || error) {
+      return 2;
+    }
+    // A child may fail after publishing partial metadata. Only the directory
+    // reserved by this scaffold operation is eligible for rollback.
+    if (root.filename() == "partial-git-failure") {
+      if (!writeFile(root / ".git/partial", "partial repository state\n")) {
+        return 3;
+      }
+      return 1;
+    }
+    return 0;
+  }
   lang::installCrashHandlers("gti_project_tests");
   testDiscoveryParsingAndResolution();
   testManifestDiagnostics();
@@ -3085,7 +3227,7 @@ int main() {
   testNativeDependencyComposition();
   testProjectFacts();
   testProjectFactsDiagnostics();
-  testProjectScaffolding();
+  testProjectScaffolding(std::filesystem::absolute(argv[0]));
   testFormatConfigScaffolding();
   testBindgenImportManifest();
   testBindgenImportManifestDiagnostics();

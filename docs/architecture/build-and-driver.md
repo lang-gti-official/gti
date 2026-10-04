@@ -339,7 +339,19 @@ publish from unique sibling staging paths rather than following a leaf link.
 `new` and a source-creating `init` scaffold the implemented owned-argument
 entry form, `int main(int argc, std::vector<std::string> argv)`, with the
 required standard string and vector includes. `init` continues to preserve an
-existing regular entry source rather than modernizing or replacing it.
+existing regular entry source rather than modernizing or replacing it. An
+explicit `gti init --git` additionally initializes a standalone Git repository
+at the package root and writes the canonical GTI `.gitignore`, which ignores
+the root `/build/` subtree. The option refuses existing `.git` or `.gitignore`
+entries rather than modifying user-owned version-control state. Git follows
+the dependency tool convention (`GTI_GIT`, then `git`); a failed invocation
+rolls back the manifest, entry source, ignore file, source directory, and Git
+metadata created by that scaffold operation while preserving pre-existing
+files and directories. Repository-location Git environment overrides are
+rejected before any mutation, including empty overrides; `-C` alone does not
+isolate Git from inherited repository settings. The driver reserves the exact
+missing `.git` directory before invocation and rolls it back only when that
+reservation succeeds, never treating a preflight absence as deletion authority.
 
 `gti format init [directory]` is the bounded formatter-configuration scaffold.
 It defaults to the current directory, requires an existing real directory,

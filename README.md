@@ -358,7 +358,17 @@ without preventing later tests from running.
 
 Use `gti init` to initialize an existing directory. It preserves an existing
 `src/main.gti` and refuses to replace an existing `gti.toml`; `--name <name>`
-overrides the package name derived from the directory.
+overrides the package name derived from the directory. Add `--git` to create a
+standalone Git repository and a canonical `.gitignore` containing `/build/`:
+
+```sh
+gti init --git
+gti init path/to/project --name project --git
+```
+
+The option refuses to modify an existing `.git` entry or `.gitignore`.
+Repository-local Git environment overrides such as `GIT_DIR` or
+`GIT_WORK_TREE` must be unset, so initialization cannot target another repository.
 
 Create an editable formatter configuration in the current directory with
 `gti format init`, or pass an existing destination directory explicitly. The
