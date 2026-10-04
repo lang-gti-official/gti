@@ -1,7 +1,7 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "548e63aa7ab5633b6af6ad1a55bc36429c92dbc80d613d2eda07c5367a9037cb",
+    "stdlib/prelude.gti": "96bc29566eee732519bc1191560c6c8ab2ac0758bf25206b4029848c82c48efb",
     "stdlib/std/algorithm.gti": "9af861e6832ca068e28076d3556258a695b8c6c8f2940f904a4da61163d7b657",
     "stdlib/std/array.gti": "93925b89feef1498cb17f5c952e1c3aaeaa6b8657be6a03e1e1bfd1434c61f2a",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
@@ -12,9 +12,10 @@
     "stdlib/std/cstdio.gti": "4fdc4c99e067c1870d6dadd7b3dc14f8ae8ad817abdd082d2e54c583754ea13d",
     "stdlib/std/cthread.gti": "4b583b04dd052f5f05d0af2444718360eb12c2da546d4c6f1eddc05a39e8858f",
     "stdlib/std/deque.gti": "5e014f240f4655824f1c245d507a96805ce4bfb1444570af4af2e6a222c1bba7",
+    "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
     "stdlib/std/filesystem.gti": "1018e88ac78adb603b80f0e83427a431c7c6225e00f39b0924721edcc4820687",
-    "stdlib/std/format.gti": "6ef29ccab9a8d9a56e1719b82113ef9aebb4e859d1c597ddfa0af09bcd65f599",
+    "stdlib/std/format.gti": "260feb05085a38e6097831d034afd96084c6ff601bbe9a21ffa2bbb3d54c9228",
     "stdlib/std/forward_list.gti": "2152aab44209cfa14a3b1709f6250c3ef85db78e1e665d5bc8299f3cb353a4bf",
     "stdlib/std/functional.gti": "2fa13a7b511a42cb3cd87d6ca1a6550e77c77109320b5457f5292bb3e5333540",
     "stdlib/std/http.gti": "3a99fd4a109627769f86d89b16348dbd25431960163e7b9aa016ce72c127954d",
@@ -27,6 +28,7 @@
     "stdlib/std/numeric.gti": "2fe329a8585d1eee0a1be02f42b9cb6d388c80e898a3f58d34e9de12989388fb",
     "stdlib/std/optional.gti": "3b7739f20a768cc511326382ec675bb0bd098d8852a50141c040aadf3879f5be",
     "stdlib/std/paired_span.gti": "3657f5994dd7880c8de9796e1c6c08bba5f507b492406eb685d529c1c6b0e3ae",
+    "stdlib/std/panic.gti": "37db8f4dc0a6cefb0f6959030cdd601a151a84dcb684e861cec34af4a20da5ae",
     "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
     "stdlib/std/queue.gti": "e7181505d8e12e151310ac46075b33cdc8095b4f727457c11603de1887e4c2ff",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
@@ -34,7 +36,7 @@
     "stdlib/std/simd.gti": "ec60e8807ec3d4cf617a03d4f593231e54b298c2b399b260aa19acfddcdbe720",
     "stdlib/std/source_location.gti": "744c1a254ad954db7bedf71652bc4d2f08eb0ed09df96fc61cdfb2a1822e43e1",
     "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
-    "stdlib/std/string.gti": "71d3cfa382f0565520822636b70bac8b8ac0176958d0c76db609eab720a529c6",
+    "stdlib/std/string.gti": "e7d9affa6b8b355e2581f38a6ef89e7fabc77bad492d4714b3f582a06e9a61a0",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
     "stdlib/std/unordered_map.gti": "dd9a09af61807b6482123f37f4875608c7eb6a5e83129ae7f498586b174e8aa7",
@@ -525,6 +527,14 @@
       }
     },
     {
+      "id": "format-panic-adoption",
+      "mode": "run",
+      "source": "tests/fixtures/panic_adoption.gti",
+      "native_sources": ["tests/fixtures/panic_adoption_io.cpp"],
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "{raw}{{raw}}\n1 2 three\n", "stderr": ""}
+    },
+    {
       "id": "forward-list-algorithms",
       "mode": "run",
       "source": "tests/fixtures/forward_list_algorithms.gti",
@@ -721,6 +731,13 @@
       "id": "paired-span",
       "mode": "run",
       "source": "tests/fixtures/paired_span.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "panic-expected",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_panic_expected.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -1332,6 +1349,14 @@
       ]
     },
     {
+      "id": "detail.panic-core",
+      "source": "stdlib/std/detail/panic.gti",
+      "status": "executable",
+      "operations": ["std::detail::panic"],
+      "case_ids": ["panic-expected", "format-panic-adoption"],
+      "evidence": ["tests/panic_runtime_test.py", "tests/panic_adoption_runtime_test.py"]
+    },
+    {
       "id": "encoding.executable",
       "source": "stdlib/std/encoding.gti",
       "status": "executable",
@@ -1464,8 +1489,8 @@
       "id": "format.executable",
       "source": "stdlib/std/format.gti",
       "status": "executable",
-      "operations": ["std::format", "std::format_to", "std::try_print", "std::try_println"],
-      "case_ids": ["format"],
+      "operations": ["std::format", "std::format_to", "std::print(pattern,Args...)", "std::println(pattern,Args...)", "std::try_format", "std::try_format_to", "std::try_print", "std::try_println"],
+      "case_ids": ["format", "format-panic-adoption"],
       "required_instantiations": ["zero arguments", "all fixed-width integer types", "mixed bool,char,int32_t,float,double,string_view,string pack", "counted string view with embedded zero", "indexed and typed format specifications", "unsupported nominal argument"],
       "evidence": ["tests/fixtures/stdlib_surface_format.gti", "stdlib/std/format.gti"]
     },
@@ -1954,6 +1979,24 @@
       "case_ids": ["paired-span"],
       "required_instantiations": ["std::paired_span<int32_t, int32_t>", "std::paired_span<int32_t, double>"],
       "evidence": ["tests/fixtures/paired_span.gti", "stdlib/std/paired_span.gti"]
+    },
+    {
+      "id": "panic.executable",
+      "source": "stdlib/std/panic.gti",
+      "status": "executable",
+      "operations": ["std::panic(string_view)", "std::panic(string_view,Args...)"],
+      "case_ids": ["panic-expected"],
+      "required_instantiations": ["raw counted message", "formatted int argument"],
+      "evidence": ["tests/fixtures/stdlib_surface_panic_expected.gti", "tests/panic_runtime_test.py", "tests/panic_contract_tests.cpp", "stdlib/std/panic.gti"]
+    },
+    {
+      "id": "prelude.expected-ergonomics",
+      "source": "stdlib/prelude.gti",
+      "status": "executable",
+      "operations": ["expected::and_then", "expected::expect", "expected::transform"],
+      "case_ids": ["panic-expected"],
+      "required_instantiations": ["expected<int,int>", "owned and void alternatives in the runtime matrix"],
+      "evidence": ["tests/fixtures/stdlib_surface_panic_expected.gti", "tests/expected_ergonomics_tests.cpp", "tests/expected_ergonomics_runtime_test.py"]
     },
     {
       "id": "prelude.move-construction",

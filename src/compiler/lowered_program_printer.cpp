@@ -645,6 +645,8 @@ private:
       output << '-';
     }
     output << ";definition=" << number(value.definitionKind)
+           << ";never-returns=" << value.neverReturns
+           << ";tracks-caller=" << value.tracksCaller
            << ";linkage=" << number(value.linkage)
            << ";external=" << std::quoted(value.externalSymbol) << ";c-array=";
     if (value.cArrayCountParameter) {
@@ -781,7 +783,7 @@ private:
 
 std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   std::ostringstream output;
-  output << "lowered-program-v9\n";
+  output << "lowered-program-v10\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="

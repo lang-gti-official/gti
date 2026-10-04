@@ -867,6 +867,19 @@ public:
     return name;
   }
 
+  [[nodiscard]] std::size_t
+  emitLoweredCallerLocationParameter(const LoweredFunctionDeclaration &function,
+                                     std::size_t parameterCount) {
+    if (!function.tracksCaller) {
+      return parameterCount;
+    }
+    if (parameterCount != 0) {
+      output << ", ";
+    }
+    output << "std::uint32_t __gti_mir_caller_site";
+    return parameterCount + 1;
+  }
+
   void emitLoweredFunctionSignature(const LoweredDeclaration &row,
                                     const LoweredFunctionDeclaration &function,
                                     const MirFunctionInstance *instance,
@@ -948,6 +961,8 @@ public:
       emitLoweredParameters(function.parameters, sourceParameterTypes);
       parameterCount = function.parameters.size();
     }
+    parameterCount =
+        emitLoweredCallerLocationParameter(function, parameterCount);
     if (failure) {
       if (parameterCount != 0) {
         output << ", ";
@@ -958,7 +973,7 @@ public:
                                 : instance->returnType,
           callableSignature.has_value(),
           cppFunctionHasFailureResultChannel(loweredProgram, function));
-      output << "::gti_failure_record_v1 *__gti_mir_failure_record";
+      output << "::gti_failure_record_v2 *__gti_mir_failure_record";
     }
     output << ')';
     const ReceiverMutability receiver = instance == nullptr
@@ -1239,16 +1254,26 @@ public:
 
   void emitLoweredConcreteClassForwardDeclarations() {
     std::unordered_set<std::string> emitted;
-    for (const MirClassInstance &instance : mir.classInstances()) {
+    const auto emitType = [&](const auto &self,
+                              const SemanticType &type) -> void {
+      // Type-only aliases need the same nominal spelling as executable uses,
+      // but do not require an instantiated layout or executable class body.
+      // Visit only the already-resolved argument graph, not alias members of
+      // the referenced class: recursive aliases must not expand endlessly.
+      for (const SemanticType &argument : type.arguments) {
+        self(self, argument);
+      }
       const std::optional<std::string> name =
-          cppConcreteClassName(loweredProgram, instance.type);
-      const LoweredDeclaration *row = loweredClassRow(instance.declaration);
+          cppConcreteClassName(loweredProgram, type);
+      const LoweredDeclaration *row = type.kind == SemanticType::Class
+                                          ? loweredClassRow(type.classId)
+                                          : nullptr;
       const auto *declaration =
           row == nullptr ? nullptr
                          : std::get_if<LoweredClassDeclaration>(&row->payload);
       if (!name || row == nullptr || declaration == nullptr ||
           !emitted.insert(*name).second) {
-        continue;
+        return;
       }
       const std::size_t namespaceCount =
           emitLoweredNamespaceOpen(row->namespaceScope);
@@ -1258,6 +1283,15 @@ public:
                                                          : "class ")
              << *name << ";\n";
       emitLoweredNamespaceClose(namespaceCount);
+    };
+    for (const MirClassInstance &instance : mir.classInstances()) {
+      emitType(emitType, instance.type);
+    }
+    for (const LoweredDeclaration &row : loweredProgram.declarations()) {
+      if (const auto *alias =
+              std::get_if<LoweredTypeAliasDeclaration>(&row.payload)) {
+        emitType(emitType, alias->type);
+      }
     }
   }
 
@@ -1579,8 +1613,8 @@ public:
       emitLoweredExplicitArguments(*lowered);
     }
     output << '(';
-    const std::size_t parameterCount =
-        emitLoweredMirParameters(instance.parameterTypes);
+    const std::size_t parameterCount = emitLoweredCallerLocationParameter(
+        function, emitLoweredMirParameters(instance.parameterTypes));
     if (failure) {
       if (parameterCount != 0) {
         output << ", ";
@@ -1588,7 +1622,7 @@ public:
       emitLoweredFailureResultParameter(
           instance.returnType, false,
           cppFunctionHasFailureResultChannel(loweredProgram, function));
-      output << "::gti_failure_record_v1 *__gti_mir_failure_record";
+      output << "::gti_failure_record_v2 *__gti_mir_failure_record";
     }
     output << ')';
   }
@@ -1616,8 +1650,8 @@ public:
       }
     }
     output << (failure ? cppMirFailureSiblingSpelling(*name) : *name) << '(';
-    const std::size_t parameterCount =
-        emitLoweredMirParameters(instance.parameterTypes);
+    const std::size_t parameterCount = emitLoweredCallerLocationParameter(
+        function, emitLoweredMirParameters(instance.parameterTypes));
     if (failure) {
       if (parameterCount != 0) {
         output << ", ";
@@ -1625,7 +1659,7 @@ public:
       emitLoweredFailureResultParameter(
           instance.returnType, false,
           cppFunctionHasFailureResultChannel(loweredProgram, function));
-      output << "::gti_failure_record_v1 *__gti_mir_failure_record";
+      output << "::gti_failure_record_v2 *__gti_mir_failure_record";
     }
     output << ')';
   }
@@ -2629,7 +2663,7 @@ public:
     output << "if (!__gti_mir_contained_state.success) {\n";
     ++indentation;
     writeIndent();
-    output << "::gti_rt_failure_terminate_v1(\n";
+    output << "::gti_rt_failure_terminate_v2(\n";
     ++indentation;
     writeIndent();
     output << "&__gti_mir_contained_state.record,\n";
@@ -2714,7 +2748,7 @@ public:
       }
       output << ", ";
       output << "bool *__gti_mir_constructor_success, "
-                "::gti_failure_record_v1 *__gti_mir_failure_record);\n";
+                "::gti_failure_record_v2 *__gti_mir_failure_record);\n";
       if (loweredContainedConstructorRepresentation(instance->id) != nullptr) {
         if (genericOwnerPrimary)
           emitLoweredTemplateDeclaration(constructor.genericParameters);
@@ -2758,7 +2792,7 @@ public:
         }
         emitLoweredMirParameters(instance->parameterTypes);
         output << ", bool *__gti_mir_constructor_success, "
-                  "::gti_failure_record_v1 *__gti_mir_failure_record);\n";
+                  "::gti_failure_record_v2 *__gti_mir_failure_record);\n";
         if (loweredContainedConstructorRepresentation(instance->id) !=
             nullptr) {
           writeIndent();
@@ -3016,13 +3050,13 @@ public:
             << "friend bool "
                "::gti_internal::backend::mir_unique_owner_drop_with_failure_v1<"
             << classRow.name << ">(std::unique_ptr<" << classRow.name
-            << "> &, ::gti_failure_record_v1 *);\n";
+            << "> &, ::gti_failure_record_v2 *);\n";
         writeIndent();
         output << "bool " << lifecycleFailureDispatchName()
-               << "(::gti_failure_record_v1 *);\n";
+               << "(::gti_failure_record_v2 *);\n";
         writeIndent();
         output << "bool " << lifecycleFailureBodyName()
-               << "(::gti_failure_record_v1 *);\n";
+               << "(::gti_failure_record_v2 *);\n";
       }
       loweredDeferredLifecycleClasses.push_back(classRow);
     }
@@ -3301,7 +3335,7 @@ public:
     writeIndent();
     output << "template <std::size_t __gti_cleanup_instance>\n";
     writeIndent();
-    output << "bool __gti_mir_unique_cleanup_failure(::gti_failure_record_v1 "
+    output << "bool __gti_mir_unique_cleanup_failure(::gti_failure_record_v2 "
               "*record, bool unwinding) {\n";
     ++indentation;
     bool first = true;
@@ -3415,14 +3449,14 @@ public:
       writeIndent();
       if (cleanup) {
         output << "__gti_mir_dynamic_cleanup.bind([](void *object, "
-                  "::gti_failure_record_v1 *record, bool unwinding) { return "
+                  "::gti_failure_record_v2 *record, bool unwinding) { return "
                   "static_cast<__gti_cleanup_self *>(object)->template "
                   "__gti_mir_unique_cleanup_failure<__gti_cleanup_instance>("
                   "record, "
                   "unwinding); });\n";
       } else {
         output << "__gti_mir_dynamic_cleanup.bind([](void *, "
-                  "::gti_failure_record_v1 *, bool) { return true; });\n";
+                  "::gti_failure_record_v2 *, bool) { return true; });\n";
       }
       --indentation;
       writeIndent();
@@ -3438,7 +3472,7 @@ public:
     output << "}\n";
     writeIndent();
     output << "virtual bool __gti_mir_polymorphic_cleanup_failure("
-              "::gti_failure_record_v1 *record, bool unwinding)";
+              "::gti_failure_record_v2 *record, bool unwinding)";
     if (std::any_of(declaration.bases.begin(), declaration.bases.end(),
                     [&](const LoweredClassBase &base) {
                       const auto *parent = loweredProgram.findClassDeclaration(
@@ -3672,6 +3706,12 @@ public:
 
     if (declaration.exactSpecializationPrimary == 0 &&
         loweredClassNeedsNativePrimary(declaration)) {
+      emitLoweredClassDefinitionBody(classRow, declaration);
+    } else if (declaration.exactSpecializationPrimary != 0 &&
+               loweredConcreteClassInstances(declaration.id).empty()) {
+      // A retained native template carrier needs the definition of its
+      // already-selected exact specialization, not only a forward declaration.
+      // Direct concrete instances are emitted by their separate schedule.
       emitLoweredClassDefinitionBody(classRow, declaration);
     }
   }
@@ -5133,11 +5173,11 @@ public:
           writeIndent();
           output << "template <> bool " << ownerSpelling
                  << "::" << lifecycleFailureDispatchName()
-                 << "(::gti_failure_record_v1 *);\n";
+                 << "(::gti_failure_record_v2 *);\n";
           writeIndent();
           output << "template <> bool " << ownerSpelling
                  << "::" << lifecycleFailureBodyName()
-                 << "(::gti_failure_record_v1 *);\n";
+                 << "(::gti_failure_record_v2 *);\n";
         }
       }
       emitLoweredNamespaceClose(namespaceCount);
@@ -5234,7 +5274,7 @@ public:
     output << "{\n";
     ++indentation;
     writeIndent();
-    output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+    output << "::gti_failure_record_v2 __gti_failure_record{};\n";
     if (instance.returnType.kind == SemanticType::Reference) {
       writeIndent();
       if (instance.returnType.referenceAccess == AccessMode::ReadOnly) {
@@ -5425,7 +5465,7 @@ public:
     output << " {\n";
     ++indentation;
     writeIndent();
-    output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+    output << "::gti_failure_record_v2 __gti_failure_record{};\n";
     if (instance.returnType.kind == SemanticType::Reference) {
       writeIndent();
       if (instance.returnType.referenceAccess == AccessMode::ReadOnly) {
@@ -5465,6 +5505,9 @@ public:
     }
     if (!instance.parameterTypes.empty()) {
       output << ", ";
+    }
+    if (function.tracksCaller) {
+      output << "__gti_mir_caller_site, ";
     }
     if (instance.returnType != SemanticType::Void) {
       output << (placementResult ? "__gti_result.construction_address(), "
@@ -5716,7 +5759,7 @@ public:
       output << ", ";
     }
     output << "bool *__gti_mir_constructor_success, "
-              "::gti_failure_record_v1 *__gti_mir_failure_record";
+              "::gti_failure_record_v2 *__gti_mir_failure_record";
   }
 
   void emitLoweredGenericOwnerConstructorParameters(
@@ -5741,7 +5784,7 @@ public:
       output << ", ";
     }
     output << "bool *__gti_mir_constructor_success, "
-              "::gti_failure_record_v1 *__gti_mir_failure_record";
+              "::gti_failure_record_v2 *__gti_mir_failure_record";
   }
 
   [[nodiscard]] static std::string
@@ -6189,7 +6232,7 @@ public:
           emitPrefix();
           output << "bool " << ownerSpelling
                  << "::" << lifecycleFailureBodyName()
-                 << "(::gti_failure_record_v1 "
+                 << "(::gti_failure_record_v2 "
                     "*__gti_mir_failure_record) ";
           if (retainedText)
             output << *retainedText;
@@ -6199,7 +6242,7 @@ public:
           emitPrefix();
           output << "bool " << ownerSpelling
                  << "::" << lifecycleFailureDispatchName()
-                 << "(::gti_failure_record_v1 "
+                 << "(::gti_failure_record_v2 "
                     "*__gti_mir_failure_record) {\n";
           ++indentation;
           writeIndent();
@@ -6221,9 +6264,12 @@ public:
                << "::" << loweredLifecycleCleanupName(classDeclaration->id)
                << "() noexcept {\n";
         ++indentation;
+        writeIndent();
+        output << "if (::gti_internal::backend::"
+                  "mir_cleanup_emergency_abandonment()) { return; }\n";
         if (failure) {
           writeIndent();
-          output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+          output << "::gti_failure_record_v2 __gti_failure_record{};\n";
           writeIndent();
           output << "if (!" << lifecycleFailureDispatchName()
                  << "(&__gti_failure_record)) {\n";
@@ -6610,8 +6656,11 @@ public:
       const auto emitCleanupHelper = [&](std::string_view name,
                                          const SemanticType &type, bool slot) {
         const auto cleanup = mirUniqueCleanupType(mir, type);
+        // These helpers run inside run_managed_task_adapter. A verified
+        // cleanup-emergency may use its private handoff to stop all remaining
+        // task cleanup; the public entry adapter remains noexcept.
         output << "  template <typename Value>\n  static bool " << name
-               << "(Value &value) noexcept {\n"
+               << "(Value &value) {\n"
                   "    const auto pending = ::gti_runtime_detail::"
                   "managed_task_cleanup_failure_kind();\n"
                   "    if (pending == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1) "
@@ -6619,12 +6668,12 @@ public:
         if (cleanup && cleanup->requiresActiveCleanup) {
           output << "    const bool unwinding = pending == "
                     "GTI_THREAD_WORKER_FAILURE_ORDINARY_V1;\n"
-                    "    ::gti_failure_record_v1 failure{};\n    const bool "
+                    "    ::gti_failure_record_v2 failure{};\n    const bool "
                     "success = ";
           if (slot)
             output << "value.destroy_cleanup_with_failure(&failure, true, "
                       "unwinding, "
-                      "[](auto &element, ::gti_failure_record_v1 *record, bool "
+                      "[](auto &element, ::gti_failure_record_v2 *record, bool "
                       "unwinding) { return "
                    << cppMirCleanupValueExpression(mir, *cleanup, "element",
                                                    "record", "unwinding")
@@ -6637,7 +6686,7 @@ public:
               << "    if (!success && "
                  "!::gti_runtime_detail::record_managed_task_cleanup_failure(\n"
                  "        failure, &__gti_failure_artifact_descriptor_v1)) {\n"
-                 "      ::gti_rt_failure_terminate_v1(&failure, "
+                 "      ::gti_rt_failure_terminate_v2(&failure, "
                  "&__gti_failure_artifact_descriptor_v1, nullptr, nullptr);\n"
                  "    }\n";
         } else if (slot) {
@@ -6663,7 +6712,7 @@ public:
                   "*>(raw);\n";
       }
       output << "    ::gti_runtime_detail::run_managed_task_adapter([&] {\n"
-                "      ::gti_failure_record_v1 failure{};\n";
+                "      ::gti_failure_record_v2 failure{};\n";
       if (functionTarget != nullptr) {
         emitThreadTaskFunctionCall(adapter, *functionTarget);
       } else if (valueBearing) {
@@ -6953,7 +7002,7 @@ public:
       emitAttachment(true);
       if (target.mayRaiseDefinedFailure) {
         writeIndent();
-        output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+        output << "::gti_failure_record_v2 __gti_failure_record{};\n";
         if (returnType != SemanticType::Void) {
           writeIndent();
           emitSemanticType(returnType);
@@ -6973,7 +7022,7 @@ public:
         output << "&__gti_failure_record)) {\n";
         ++indentation;
         writeIndent();
-        output << "::gti_rt_failure_terminate_v1(\n";
+        output << "::gti_rt_failure_terminate_v2(\n";
         ++indentation;
         writeIndent();
         output << "&__gti_failure_record,\n";
@@ -7402,7 +7451,7 @@ public:
 
   void emitHostedFailureTermination() {
     writeIndent();
-    output << "::gti_rt_failure_terminate_v1(\n";
+    output << "::gti_rt_failure_terminate_v2(\n";
     ++indentation;
     writeIndent();
     output << "&__gti_failure_record,\n";
@@ -7434,7 +7483,7 @@ public:
     output << "static " << (moduleRuntimeMayRaise ? "bool" : "void")
            << " __gti_program_initialize(";
     if (moduleRuntimeMayRaise) {
-      output << "::gti_failure_record_v1 *__gti_mir_failure_record";
+      output << "::gti_failure_record_v2 *__gti_mir_failure_record";
     }
     output << ") " << emission.text << '\n';
 
@@ -7450,7 +7499,7 @@ public:
     ++indentation;
     if (moduleRuntimeMayRaise) {
       writeIndent();
-      output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+      output << "::gti_failure_record_v2 __gti_failure_record{};\n";
       writeIndent();
       output << "try {\n";
       ++indentation;
@@ -7565,7 +7614,7 @@ public:
         output << "\nint main() {\n";
         ++indentation;
         writeIndent();
-        output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+        output << "::gti_failure_record_v2 __gti_failure_record{};\n";
         writeIndent();
         output << "std::int32_t __gti_result{};\n";
         writeIndent();
@@ -7613,7 +7662,7 @@ public:
       ++indentation;
       if (moduleRuntimeMayRaise) {
         writeIndent();
-        output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+        output << "::gti_failure_record_v2 __gti_failure_record{};\n";
         writeIndent();
         output << "try {\n";
         ++indentation;
@@ -7679,7 +7728,7 @@ public:
     ++indentation;
     if (failure || moduleRuntimeMayRaise) {
       writeIndent();
-      output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+      output << "::gti_failure_record_v2 __gti_failure_record{};\n";
     }
     if (failure) {
       writeIndent();

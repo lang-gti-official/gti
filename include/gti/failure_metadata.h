@@ -60,6 +60,16 @@ struct FailureOriginAssignment {
                          const FailureOriginAssignment &) = default;
 };
 
+// Caller attribution admits a reported location; it does not authorize a call
+// to originate a failure. Detector assignments above retain that separate role.
+struct CallerLocationAssignment {
+  CallerLocationOrigin origin;
+  FailureSiteId site = 0;
+
+  friend bool operator==(const CallerLocationAssignment &,
+                         const CallerLocationAssignment &) = default;
+};
+
 class FailureMetadata {
 public:
   [[nodiscard]] const FailureArtifactIdentity &artifactIdentity() const {
@@ -84,10 +94,18 @@ public:
     return originAssignments;
   }
 
+  [[nodiscard]] const std::vector<CallerLocationAssignment> &
+  callerAssignments() const {
+    return callerLocationAssignments;
+  }
+
   [[nodiscard]] const FailureSiteDescriptor *findSite(FailureSiteId id) const;
 
   [[nodiscard]] std::optional<FailureSiteId>
   siteFor(const DefinedFailureOrigin &origin) const;
+
+  [[nodiscard]] std::optional<FailureSiteId>
+  callerSiteFor(const CallerLocationOrigin &origin) const;
 
   friend bool operator==(const FailureMetadata &,
                          const FailureMetadata &) = default;
@@ -100,6 +118,7 @@ private:
   std::vector<FailureSourceDescriptor> sources;
   std::vector<FailureSiteDescriptor> siteTable;
   std::vector<FailureOriginAssignment> originAssignments;
+  std::vector<CallerLocationAssignment> callerLocationAssignments;
 };
 
 struct FailureMetadataVerificationResult {

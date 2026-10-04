@@ -1,0 +1,11 @@
+// Shared non-formatting panic core. Keeping this separate lets formatting
+// adopt the public operation without a format -> panic -> format cycle.
+namespace std {
+namespace detail {
+  /// Stops normal execution after preserving the message and running cleanup.
+  [[noreturn, track_caller]]
+  void panic(string_view message) {
+    gti_internal::panic(message);
+  }
+}
+}

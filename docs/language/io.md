@@ -11,6 +11,35 @@ domain-specific records remain ordinary higher-level libraries.
 
 ## Surface
 
+`<std/panic>` provides explicit terminal reporting, including formatted messages:
+
+```gti
+std::panic("configuration is missing");
+std::panic("asset {} could not be loaded", asset_name);
+```
+
+The one-argument overload treats its message literally, including braces.
+With formatting arguments, the source-defined wrapper calls the existing
+recoverable formatter and panics with its successful text. Invalid syntax,
+argument-count mismatch, and unsupported arguments use distinct stable literal
+fallback messages; reporting a format error does not recursively format another
+message. An otherwise unknown format error has a final literal fallback.
+
+Raw message capture copies at most 512 bytes into the failure record before
+cleanup. The formatted overload can allocate while constructing its message;
+allocation failure there follows the normal allocation-failure contract.
+Neither overload resumes or exposes a catch operation. Caller attribution passes
+through the tracked wrapper rather than naming its internal formatting call.
+See [execution semantics](execution.md#410-defined-runtime-failure) for cleanup,
+message truncation and containment.
+
+Formatting and stdout convenience APIs adopt this facility as described below.
+General concept-failure diagnostics can explain declared constraints, but
+literal-format validation and a public formattable protocol are not introduced
+by panic. Unsupported format arguments still produce a runtime format error;
+that limitation is not a claim that an unsupported static type is inherently
+dynamic.
+
 ```gti
 #include <std/cstdio>
 #include <std/memory> // when spelling std::unique_ptr explicitly
@@ -246,7 +275,7 @@ fixed-display conversion. It formats both binary32 and binary64 values through
 the bounded, locale-independent character-conversion runtime described below.
 Floating input for both widths is available through `<std/charconv>`.
 
-`<std/format>` provides checked replacement-field formatting:
+`<std/format>` provides explicit convenience/recoverable pairs:
 
 ```gti
 namespace std {
@@ -256,27 +285,48 @@ namespace std {
     unsupported_argument,
   };
 
-  expected<string, format_errc> format(string_view pattern);
+  enum class print_errc {
+    invalid_format,
+    argument_count_mismatch,
+    unsupported_argument,
+    write_failed,
+  };
+
+  [[track_caller]] string format(string_view pattern);
+  [[track_caller]]
+  string format<First, Args...>(string_view pattern, First first, Args... args);
+
+  expected<string, format_errc> try_format(string_view pattern);
 
   expected<string, format_errc>
-  format<First, Args...>(string_view pattern, First first, Args... args);
+  try_format<First, Args...>(string_view pattern, First first, Args... args);
+
+  [[track_caller]] void format_to(mut string& output, string_view pattern);
+  [[track_caller]]
+  void format_to<First, Args...>(mut string& output, string_view pattern,
+                                First first, Args... args);
 
   expected<void, format_errc>
-  format_to(mut string& output, string_view pattern);
+  try_format_to(mut string& output, string_view pattern);
 
   expected<void, format_errc>
-  format_to<First, Args...>(mut string& output, string_view pattern,
-                            First first, Args... args);
+  try_format_to<First, Args...>(mut string& output, string_view pattern,
+                               First first, Args... args);
 
-  expected<void, format_errc> try_print(string_view pattern);
+  expected<void, print_errc> try_print(string_view text);
 
-  expected<void, format_errc>
+  expected<void, print_errc>
   try_print<First, Args...>(string_view pattern, First first, Args... args);
 
-  expected<void, format_errc> try_println(string_view pattern);
+  expected<void, print_errc> try_println(string_view text);
 
-  expected<void, format_errc>
+  expected<void, print_errc>
   try_println<First, Args...>(string_view pattern, First first, Args... args);
+
+  [[track_caller]]
+  void print<First, Args...>(string_view pattern, First first, Args... args);
+  [[track_caller]]
+  void println<First, Args...>(string_view pattern, First first, Args... args);
 }
 ```
 
@@ -311,37 +361,67 @@ conversion is locale independent, preserves signs and non-finite spellings,
 and applies sign-aware zero padding.
 
 A lone opening or closing brace, mixed indexing, or an incompatible specifier
-returns `invalid_format`; an out-of-range index or automatic field-count
-mismatch returns `argument_count_mismatch`. A type outside the admitted set
-returns `unsupported_argument`. Pattern grammar and field count are validated
+produces `invalid_format`; an out-of-range index or automatic field-count
+mismatch produces `argument_count_mismatch`. A type outside the admitted set
+produces `unsupported_argument`. Pattern grammar and field count are validated
 first, so those errors take precedence. Named fields, dynamic width or
 precision, locale-specific formatting, and user formatter customization are
 not yet part of this bounded surface.
 
 The overload family separates the zero-argument case from the nonempty
 `First, Args...` case and permits heterogeneous admitted arguments in one
-call. `std::format` returns a newly owned string. `format_to` appends only after
-the whole replacement succeeds, leaving its destination unchanged on error.
-`try_print` and `try_println` validate the complete grammar and exact argument count, then
-construct the complete owning result before making any stdout write. Invalid
-or unsupported input therefore produces no partial output, and `try_println`
-submits its newline only after successful formatting and after the formatted
-text has been submitted to stdout.
+call. `std::format` returns a newly owned string; `try_format` returns that
+string inside `expected`. `format_to` and `try_format_to` append only after
+the whole replacement succeeds, leaving the destination unchanged on a format
+error. The convenience wrappers call the recoverable implementation and
+translate its error to a terminal panic; they do not duplicate formatting.
+
+With at least one format argument, `print`, `println`, `try_print`, and
+`try_println` construct the complete formatted result before writing anything.
+Invalid input therefore produces no partial output. The formatted `println`
+variants append the newline to the result and submit both in one serialized
+runtime call. A host error can still leave a prefix written: output is not
+transactional. `print_errc` preserves each format category and additionally
+reports `write_failed`.
+
+With **only one text argument**, all four print functions write literally,
+including braces. This preserves the prelude's raw-output contract without
+making semantics depend on whether `<std/format>` is included. In contrast,
+`format(pattern)` and `try_format(pattern)` always interpret replacement syntax,
+even with no arguments. Use `println("{}", text)` to request formatted output
+explicitly. This changes the previous zero-argument `try_print` interpretation.
+
+Convenience failures report `GTI-R0017` at the external caller, with stable
+messages identifying invalid format, argument-count mismatch, unsupported
+argument (including a conversion hint), or stdout write failure. Tracked user
+wrappers can forward the caller further. Existing raw prelude and owning-string
+output overloads now also panic on failed submission; they no longer discard
+the runtime status. Cleanup and secondary panic follow the same defined-failure
+contract as explicit `std::panic`.
 
 These operations are ordinary GTI library code. A source-defined exact adapter
 for each admitted type feeds the bounded, source-order pack fold; the compiler
 does not recognize a formatting function, public string type, or pattern.
-Literal views use their counted runtime write. Dynamic owning strings and
-individual `char` values cross through the scalar
+Formatted output uses the existing counted stdout runtime boundary. Existing
+raw views use their counted runtime write; raw owning strings and individual
+`char` values cross through the scalar
 `gti_rt_write_stdout_byte(uint8_t)` entry after the explicit lossless
 `uint8_t(char)` code-unit extraction, preserving embedded zero bytes.
 
-The `format_errc` result reports pattern and argument errors. The existing
-formatting helpers and infallible `print` family still do not merge a host I/O
-error into that distinct result type; callers needing direct submission status
-can format to an owning string and pass its view to `try_write_stdout`.
+Successful submission is not a flush or a durability guarantee. Buffered host
+errors detected only by a later flush remain observable through
+`try_flush_stdout`; these wrappers do not add an implicit flush. Raw numeric
+and owning-string print callers can obtain a recoverable alternative by
+formatting through `try_print("{}", value)` (borrow strings with `.view()`).
 Allocation failure while constructing an owning result follows the current
-defined-failure allocation policy rather than becoming a `format_errc` value.
+defined-failure allocation policy rather than becoming a format or print error.
+
+Migration: code handling the old `format` or `format_to` expected result should
+use `try_format` or `try_format_to`. Code intentionally terminating on failure
+uses the plain name and no longer calls `.value()`. `try_print` errors are now
+`print_errc`, not `format_errc`. File open/read/write, external-input parsing,
+HTTP/network requests, entropy and managed-thread startup remain expected-first;
+panic adoption is not a blanket rename of environmental operations.
 
 Buffered streams, encoding conversion, named/dynamic fields, and formatter
 customization remain future library layers. A future buffer/stream object

@@ -2876,6 +2876,17 @@
       "type": "SEQ",
       "members": [
         {
+          "type": "REPEAT",
+          "content": {
+            "type": "FIELD",
+            "name": "attribute",
+            "content": {
+              "type": "SYMBOL",
+              "name": "function_contract_attribute"
+            }
+          }
+        },
+        {
           "type": "CHOICE",
           "members": [
             {
@@ -3078,6 +3089,17 @@
         {
           "type": "SEQ",
           "members": [
+            {
+              "type": "REPEAT",
+              "content": {
+                "type": "FIELD",
+                "name": "attribute",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "function_contract_attribute"
+                }
+              }
+            },
             {
               "type": "CHOICE",
               "members": [
@@ -3669,6 +3691,10 @@
                 {
                   "type": "SYMBOL",
                   "name": "unsafe_function_attribute"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "function_contract_attribute"
                 }
               ]
             }
@@ -3770,6 +3796,57 @@
         {
           "type": "STRING",
           "value": "unsafe"
+        },
+        {
+          "type": "STRING",
+          "value": "]]"
+        }
+      ]
+    },
+    "function_contract_attribute": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "[["
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "noreturn"
+            },
+            {
+              "type": "STRING",
+              "value": "track_caller"
+            }
+          ]
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "STRING",
+                "value": ","
+              },
+              {
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "STRING",
+                    "value": "noreturn"
+                  },
+                  {
+                    "type": "STRING",
+                    "value": "track_caller"
+                  }
+                ]
+              }
+            ]
+          }
         },
         {
           "type": "STRING",

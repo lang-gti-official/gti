@@ -2106,7 +2106,8 @@ public:
       std::optional<RequiresClause> requiresClause = std::nullopt,
       std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
-      std::optional<Token> unsafeAttribute = std::nullopt)
+      std::optional<Token> unsafeAttribute = std::nullopt,
+      std::vector<Token> functionAttributes = {})
       : returnType_(std::move(returnType)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)), body_(std::move(body)),
@@ -2122,7 +2123,8 @@ public:
         requiresClause_(std::move(requiresClause)),
         nativeCArray_(std::move(nativeCArray)),
         nativeLinkName_(std::move(nativeLinkName)),
-        unsafeAttribute_(std::move(unsafeAttribute)) {}
+        unsafeAttribute_(std::move(unsafeAttribute)),
+        functionAttributes_(std::move(functionAttributes)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitFunctionDecl(*this);
@@ -2189,6 +2191,17 @@ public:
   [[nodiscard]] const std::optional<Token> &unsafeAttribute() const {
     return unsafeAttribute_;
   }
+  [[nodiscard]] const std::vector<Token> &functionAttributes() const {
+    return functionAttributes_;
+  }
+  [[nodiscard]] bool hasFunctionAttribute(std::string_view name) const {
+    for (const Token &attribute : functionAttributes_) {
+      if (attribute.lexeme == name) {
+        return true;
+      }
+    }
+    return false;
+  }
 
 private:
   TypeRef returnType_;
@@ -2210,6 +2223,7 @@ private:
   std::optional<NativeCArrayAttribute> nativeCArray_;
   std::optional<NativeLinkNameAttribute> nativeLinkName_;
   std::optional<Token> unsafeAttribute_;
+  std::vector<Token> functionAttributes_;
 };
 
 class IfStmt final : public StmtOfKind<StmtKind::IfStmt> {

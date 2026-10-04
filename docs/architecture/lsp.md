@@ -136,8 +136,11 @@ written `::` path. Tree-sitter accepts the alias as a class member and supplies
 the syntax-level type-definition capture while semantic tokens retain the exact
 class-versus-namespace meaning.
 
-Function-declaration and selected-call signatures retain a leading `[[unsafe]]`
-from `FunctionInfo::requiresUnsafe`. The LSP publishes `GTI-S2055` and its
+Function-declaration and selected-call signatures retain `[[noreturn]]`,
+`[[track_caller]]`, and `[[unsafe]]` from the resolved `FunctionInfo`. Contract
+attributes precede `[[unsafe]]`, which the current grammar requires immediately
+before the typed declaration; copying the attributes preserves valid order.
+The LSP publishes `GTI-S2055` and its
 related declaration span from the same frontend; it neither infers safety
 requirements nor offers a fix-it accepting an unsafe obligation.
 

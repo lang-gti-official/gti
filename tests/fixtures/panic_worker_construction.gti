@@ -1,0 +1,40 @@
+#include <std/panic>
+#include <std/memory>
+#include <std/thread>
+#include <std/string>
+#include <std/vector>
+
+struct Guard {
+  int id;
+  bool fails;
+  Guard(int value, bool failure = false) : id(value), fails(failure) {}
+  ~Guard() {
+    std::println(id);
+    if (fails) {
+      std::panic("cleanup failed"); // cleanup-site
+    }
+  }
+};
+
+struct IncompleteOwner {
+  Guard initialized;
+  IncompleteOwner(bool emergency) : initialized(Guard(95)) {
+    Guard skipped{83};
+    Guard failing{82, emergency};
+    std::panic("allocation primary failure"); // construction-primary-site
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard parent{90};
+  bool emergency = argc > 1;
+  auto started = std::thread::start([emergency]() -> void {
+    Guard caller{84};
+    auto unpublished = std::make_unique<IncompleteOwner>(emergency);
+  });
+  if (!started) { return 99; }
+  mut std::thread worker = std::move(started).value();
+  auto joined = worker.join();
+  if (!joined) { return 98; }
+  return 0;
+}

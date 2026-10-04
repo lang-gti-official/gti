@@ -975,9 +975,19 @@ auto SemanticVisitor::Impl::firstConstraintFailure(
         if (std::optional<ConstraintFailure> failure =
                 firstConceptApplicationFailure(requirement)) {
           failure->parameter = parameter.name;
-          failure->argument = arguments[argumentIndex];
           failure->constraintName = parameter.constraintName;
           failure->application = nullptr;
+          failure->parameterId =
+              failure->applicationArgumentIndex ? parameter.id : 0;
+          if (parameter.constraintName && !failure->context.empty()) {
+            failure->context.front().location =
+                parameter.constraintName->last();
+          }
+          if (parameter.constraintName && failure->context.empty()) {
+            failure->context.push_back({pathSpelling(*parameter.constraintName),
+                                        {arguments[argumentIndex]},
+                                        parameter.constraintName->last()});
+          }
           return failure;
         }
         ++argumentIndex;
@@ -991,7 +1001,8 @@ auto SemanticVisitor::Impl::firstConstraintFailure(
                                  .argument = arguments[argumentIndex],
                                  .constraints = parameter.constraints,
                                  .failed = *failed,
-                                 .constraintName = parameter.constraintName};
+                                 .constraintName = parameter.constraintName,
+                                 .parameterId = parameter.id};
       }
       ++argumentIndex;
     }
@@ -1388,9 +1399,11 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
     -> std::optional<ConstraintFailure> {
   if (requirement.syntax && requirement.syntax->memberRequirement) {
     const auto &member = requirement.syntax->memberRequirement->member();
+    SemanticMemberRequirementFailure memberFailure;
     if (requirement.arguments.size() == 2 &&
         readMemberRequirementSatisfied(requirement.arguments[0], member.lexeme,
-                                       requirement.arguments[1])) {
+                                       requirement.arguments[1],
+                                       &memberFailure)) {
       return std::nullopt;
     }
     return ConstraintFailure{.parameter = member,
@@ -1399,7 +1412,10 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
                                              : requirement.arguments[0],
                              .structural = StructuralConstraintKind::ReadMember,
                              .application = requirement.syntax,
-                             .memberName = member.lexeme};
+                             .memberName = member.lexeme,
+                             .leafApplication = requirement.syntax,
+                             .applicationArgumentIndex = 0,
+                             .memberFailure = memberFailure};
   }
   if (requirement.conceptId == 0 || requirement.conceptId > concepts.size()) {
     return std::nullopt;
@@ -1521,6 +1537,29 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
     }
     if (std::optional<ConstraintFailure> failure =
             firstRequirementFailure(expanded)) {
+      // Follow the declared parameter map, not coincidentally equal concrete
+      // types. A relationship may reorder parameters or mention a closed type.
+      std::optional<std::size_t> outerArgument;
+      if (failure->applicationArgumentIndex) {
+        const auto pattern = std::find_if(
+            conceptInfo.definitionRequirements.begin(),
+            conceptInfo.definitionRequirements.end(), [&](const auto &item) {
+              return item.syntax == failure->application;
+            });
+        if (pattern != conceptInfo.definitionRequirements.end() &&
+            *failure->applicationArgumentIndex < pattern->arguments.size()) {
+          outerArgument =
+              pattern->arguments[*failure->applicationArgumentIndex].parameter;
+        }
+      }
+      failure->applicationArgumentIndex = outerArgument;
+      if (!conceptInfo.compilerPrivate) {
+        failure->context.insert(
+            failure->context.begin(),
+            {conceptInfo.qualifiedName, requirement.arguments,
+             requirement.syntax != nullptr ? requirement.syntax->name.last()
+                                           : conceptInfo.declaration->name()});
+      }
       if (requirement.syntax != nullptr) {
         failure->constraintName = requirement.syntax->name;
         failure->application = requirement.syntax;
@@ -1528,9 +1567,6 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
             requirement.syntax->arguments.empty()
                 ? requirement.syntax->name.last()
                 : requirement.syntax->arguments.front().name.last();
-      }
-      if (!requirement.arguments.empty()) {
-        failure->argument = requirement.arguments.front();
       }
       return failure;
     }
@@ -1556,7 +1592,22 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
               requirement.syntax == nullptr
                   ? std::optional<NamePath>{}
                   : std::optional<NamePath>{requirement.syntax->name},
-          .application = requirement.syntax};
+          .application = requirement.syntax,
+          .context =
+              conceptInfo.compilerPrivate
+                  ? std::vector<SemanticConstraintContext>{}
+                  : std::vector<
+                        SemanticConstraintContext>{{conceptInfo.qualifiedName,
+                                                    requirement.arguments,
+                                                    requirement.syntax !=
+                                                            nullptr
+                                                        ? requirement.syntax
+                                                              ->name.last()
+                                                        : conceptInfo
+                                                              .declaration
+                                                              ->name()}},
+          .leafApplication = requirement.syntax,
+          .applicationArgumentIndex = index};
     }
   }
   AppliedConceptRequirement direct = requirement;
@@ -1578,7 +1629,21 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
                   ? std::optional<NamePath>{}
                   : std::optional<NamePath>{requirement.syntax->name},
           .structural = structural.kind,
-          .application = requirement.syntax};
+          .application = requirement.syntax,
+          .context =
+              conceptInfo.compilerPrivate
+                  ? std::vector<SemanticConstraintContext>{}
+                  : std::vector<
+                        SemanticConstraintContext>{{conceptInfo.qualifiedName,
+                                                    requirement.arguments,
+                                                    requirement.syntax !=
+                                                            nullptr
+                                                        ? requirement.syntax
+                                                              ->name.last()
+                                                        : conceptInfo
+                                                              .declaration
+                                                              ->name()}},
+          .leafApplication = requirement.syntax};
     }
   }
   return std::nullopt;
@@ -1594,6 +1659,79 @@ auto SemanticVisitor::Impl::hasConstraintFailure(
 auto SemanticVisitor::Impl::reportConstraintFailure(
     const Token &site, const ConstraintFailure &failure) -> void {
   reporter.reportConstraintFailure(site, failure);
+}
+
+auto SemanticVisitor::Impl::attachConstraintCallContext(
+    ConstraintFailure &failure, const CallableCandidate &candidate,
+    const std::vector<SemanticType> &argumentTypes,
+    const ExprList &expressions) const -> void {
+  if (candidate.declaration != nullptr) {
+    failure.candidate = candidate.declaration->name();
+  }
+  // Both single-candidate checking and overload trials use this helper. The
+  // former has already substituted its mutable candidate by the time a
+  // trailing requirement fails, so inference origins come from the immutable
+  // declaration catalog rather than that candidate's now-concrete types.
+  const CallableDeclaration &declaration = candidate.record();
+  GenericParameterId parameter = failure.parameterId;
+  if (parameter == 0 && failure.applicationArgumentIndex) {
+    const auto source = std::find_if(
+        declaration.requirements.begin(), declaration.requirements.end(),
+        [&](const auto &item) { return item.syntax == failure.application; });
+    if (source != declaration.requirements.end() &&
+        *failure.applicationArgumentIndex < source->arguments.size()) {
+      const SemanticType &type =
+          source->arguments[*failure.applicationArgumentIndex];
+      if (type.kind == SemanticType::TypeParameter) {
+        parameter = type.genericParameterId;
+      }
+    }
+  }
+  if (parameter == 0 ||
+      std::none_of(declaration.genericParameters.begin(),
+                   declaration.genericParameters.end(),
+                   [&](const auto &item) { return item.id == parameter; })) {
+    return;
+  }
+  const auto usesParameter = [&](const auto &self,
+                                 const SemanticType &type) -> bool {
+    if ((type.kind == SemanticType::TypeParameter ||
+         type.kind == SemanticType::TypePack) &&
+        type.genericParameterId == parameter) {
+      return true;
+    }
+    return std::any_of(
+        type.arguments.begin(), type.arguments.end(),
+        [&](const auto &argument) { return self(self, argument); });
+  };
+  const std::size_t fixed =
+      declaration.parameterTypes.size() - (declaration.parameterPack ? 1 : 0);
+  std::optional<std::size_t> origin;
+  for (std::size_t index = 0;
+       index < argumentTypes.size() && index < expressions.size(); ++index) {
+    const std::size_t formal = declaration.parameterPack && index >= fixed
+                                   ? declaration.parameterTypes.size() - 1
+                                   : index;
+    if (formal >= declaration.parameterTypes.size() ||
+        !usesParameter(usesParameter, declaration.parameterTypes[formal])) {
+      continue;
+    }
+    // A pack's failing concrete element can identify one written argument,
+    // but a forwarded expansion cannot identify an individual source token.
+    if (declaration.parameterPack && index >= fixed &&
+        argumentTypes[index] != failure.argument) {
+      continue;
+    }
+    if (origin || argumentTypes[index].kind == SemanticType::TypePack) {
+      return;
+    }
+    origin = index;
+  }
+  if (origin) {
+    failure.callArgumentIndex = *origin;
+    failure.callArgument = expressionToken(expressions[*origin]);
+    failure.callArgumentType = argumentTypes[*origin];
+  }
 }
 
 auto SemanticVisitor::Impl::applyVariadicFunctionTypeArguments(
@@ -1892,8 +2030,9 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
   }
   if (resolvedTypeArguments.size() ==
       genericTypeParameterCount(function.record().genericParameters)) {
-    if (const std::optional<ConstraintFailure> failure = firstConstraintFailure(
+    if (std::optional<ConstraintFailure> failure = firstConstraintFailure(
             function.record().genericParameters, resolvedTypeArguments)) {
+      attachConstraintCallContext(*failure, function, argumentTypes, arguments);
       reportConstraintFailure(paren, *failure);
       valid = false;
     }
@@ -1909,8 +2048,9 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
   }
   if (resolvedTypeArguments.size() ==
       genericTypeParameterCount(function.record().genericParameters)) {
-    if (const std::optional<ConstraintFailure> failure =
+    if (std::optional<ConstraintFailure> failure =
             firstRequirementFailure(function.requirements)) {
+      attachConstraintCallContext(*failure, function, argumentTypes, arguments);
       reportConstraintFailure(paren, *failure);
       valid = false;
     }
@@ -2144,6 +2284,8 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
             firstRequirementFailure(candidate.requirements)) {
       if (constraintFailure != nullptr) {
         *constraintFailure = *failure;
+        attachConstraintCallContext(*constraintFailure, candidate,
+                                    argumentTypes, expressions);
       }
       return false;
     }
@@ -2324,6 +2466,8 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
           candidate.record().genericParameters, resolvedTypeArguments)) {
     if (constraintFailure != nullptr) {
       *constraintFailure = *failure;
+      attachConstraintCallContext(*constraintFailure, candidate, argumentTypes,
+                                  expressions);
     }
     return false;
   }
@@ -2347,6 +2491,8 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
           firstRequirementFailure(resolved.requirements)) {
     if (constraintFailure != nullptr) {
       *constraintFailure = *failure;
+      attachConstraintCallContext(*constraintFailure, candidate, argumentTypes,
+                                  expressions);
     }
     return false;
   }
@@ -3980,10 +4126,25 @@ auto SemanticVisitor::Impl::symbolicReadMemberReturnType(
 
 auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
     const SemanticType &receiver, std::string_view member,
-    const SemanticType &result) const -> bool {
+    const SemanticType &result, SemanticMemberRequirementFailure *failure) const
+    -> bool {
+  const auto reject = [&](MemberRequirementFailureKind kind,
+                          const CallableCandidate *candidate = nullptr) {
+    if (failure != nullptr) {
+      *failure = {.kind = kind, .requiredResult = result};
+      if (candidate != nullptr) {
+        failure->actualResult = candidate->returnType;
+        if (candidate->declaration != nullptr) {
+          failure->declaration = candidate->declaration->name();
+        }
+      }
+    }
+    return false;
+  };
   if (containsOpenTypeParameter(receiver) ||
       containsOpenTypeParameter(result)) {
-    return symbolicReadMemberReturnType(receiver, member) == result;
+    return symbolicReadMemberReturnType(receiver, member) == result ||
+           reject(MemberRequirementFailureKind::Unproven);
   }
   // Bound recursively growing receiver types as well as exact cycles.
   constexpr std::size_t memberRequirementDepthLimit = 64;
@@ -3993,7 +4154,7 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
                     return active.receiver == receiver &&
                            active.member == member && active.result == result;
                   }))
-    return false;
+    return reject(MemberRequirementFailureKind::Recursive);
   activeMemberRequirements.push_back({receiver, std::string(member), result});
   struct PopRequirement {
     std::vector<ActiveMemberRequirement> &stack;
@@ -4001,31 +4162,51 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
   } pop{activeMemberRequirements};
   const auto *owner = classInfo(receiver);
   if (!owner)
-    return false;
+    return reject(MemberRequirementFailureKind::Missing);
   const auto found = owner->members.find(std::string(member));
   if (found == owner->members.end() ||
       found->second.symbol.type != SemanticType::Function)
-    return false;
+    return reject(MemberRequirementFailureKind::Missing);
   const auto overloads = substituteSymbol(found->second.symbol, receiver);
   const CallableCandidate *selected = nullptr;
+  const CallableCandidate *rejectedShape = nullptr;
+  const CallableCandidate *rejectedConstraints = nullptr;
   for (const auto &candidate : overloads.overloads) {
     if (candidate.staticMember || candidate.parameterPack ||
         !candidate.parameterTypes.empty() ||
         candidate.receiverMutability != ReceiverMutability::ReadOnly ||
         !candidate.declaration ||
-        !candidate.declaration->genericParameters().empty() ||
-        firstRequirementFailure(candidate.requirements))
+        !candidate.declaration->genericParameters().empty()) {
+      if (rejectedShape == nullptr)
+        rejectedShape = &candidate;
       continue;
+    }
+    if (firstRequirementFailure(candidate.requirements)) {
+      if (rejectedConstraints == nullptr)
+        rejectedConstraints = &candidate;
+      continue;
+    }
     if (selected)
-      return false;
+      return reject(MemberRequirementFailureKind::Ambiguous, selected);
     selected = &candidate;
   }
-  return selected && selected->access == AccessModifier::Public &&
-         !selected->compilerPrivate && selected->returnType == result &&
-         !selected->declaration->unsafeAttribute() &&
-         selected->returnBorrowOrigin == BorrowOriginKind::None &&
-         result.kind != SemanticType::Reference &&
-         !typeTraits(result).containsBorrowedState;
+  if (selected == nullptr) {
+    return rejectedConstraints != nullptr
+               ? reject(MemberRequirementFailureKind::Constraints,
+                        rejectedConstraints)
+               : reject(MemberRequirementFailureKind::Shape, rejectedShape);
+  }
+  if (selected->access != AccessModifier::Public || selected->compilerPrivate)
+    return reject(MemberRequirementFailureKind::Inaccessible, selected);
+  if (selected->returnType != result)
+    return reject(MemberRequirementFailureKind::Result, selected);
+  if (selected->declaration->unsafeAttribute())
+    return reject(MemberRequirementFailureKind::Unsafe, selected);
+  if (selected->returnBorrowOrigin != BorrowOriginKind::None ||
+      result.kind == SemanticType::Reference ||
+      typeTraits(result).containsBorrowedState)
+    return reject(MemberRequirementFailureKind::BorrowedResult, selected);
+  return true;
 }
 
 auto SemanticVisitor::Impl::symbolicRangeMemberReturnType(
@@ -5808,7 +5989,8 @@ auto SemanticVisitor::Impl::callExpressionType(const SemanticType &returnType)
 auto SemanticVisitor::Impl::reportOverloadResolutionFailure(
     const Call &call, const Symbol &overloadSet,
     const std::vector<SemanticType> &argumentTypes,
-    const std::vector<const CallableCandidate *> &exactMatches) -> void {
+    const std::vector<const CallableCandidate *> &exactMatches,
+    std::span<const ConstraintFailure> constraintFailures) -> void {
   const std::string name = callableSpelling(call.callee());
   Diagnostic diagnostic;
   if (exactMatches.empty()) {
@@ -5823,9 +6005,11 @@ auto SemanticVisitor::Impl::reportOverloadResolutionFailure(
         "GTI-S2012", DiagnosticPhase::Semantics, call.paren(),
         "No overload of '" + name + "' exactly matches argument types (" +
             arguments + ").");
-    diagnostic.hints.emplace_back(
-        "Function calls do not perform implicit conversions; convert an "
-        "argument explicitly with syntax such as 'uint64_t(value)'.");
+    if (constraintFailures.empty()) {
+      diagnostic.hints.emplace_back(
+          "Function calls do not perform implicit conversions; convert an "
+          "argument explicitly with syntax such as 'uint64_t(value)'.");
+    }
     for (const CallableCandidate &candidate : overloadSet.overloads) {
       if (candidate.declaration != nullptr &&
           (isCompilerTrustedRequester(call.paren()) ||
@@ -5833,6 +6017,26 @@ auto SemanticVisitor::Impl::reportOverloadResolutionFailure(
         diagnostic.related.push_back(
             {tokenSpan(candidate.declaration->name()),
              "Candidate: " + functionSignatureSpelling(candidate)});
+      }
+    }
+    for (const ConstraintFailure &failure : constraintFailures) {
+      std::vector<Diagnostic> explanations;
+      SemanticDiagnosticReporter detailReporter(semanticModel, explanations);
+      detailReporter.reportConstraintFailure(call.paren(), failure);
+      for (const Diagnostic &explanation : explanations) {
+        diagnostic.related.push_back(
+            {failure.candidate ? tokenSpan(*failure.candidate)
+                               : explanation.primary,
+             "Candidate rejected: " + explanation.message});
+        diagnostic.related.insert(diagnostic.related.end(),
+                                  explanation.related.begin(),
+                                  explanation.related.end());
+        for (const std::string &hint : explanation.hints) {
+          if (std::find(diagnostic.hints.begin(), diagnostic.hints.end(),
+                        hint) == diagnostic.hints.end()) {
+            diagnostic.hints.push_back(hint);
+          }
+        }
       }
     }
   } else {

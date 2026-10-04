@@ -2889,6 +2889,8 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
           .internalLinkage = !classMember && function->isStatic(),
           .constexprFunction = function->isConstexpr(),
           .requiresUnsafe = function->unsafeAttribute().has_value(),
+          .neverReturns = function->hasFunctionAttribute("noreturn"),
+          .tracksCaller = function->hasFunctionAttribute("track_caller"),
           .linkage = function->linkage(),
           .externalSymbol =
               function->hasCLinkage()
@@ -6088,6 +6090,8 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .internalLinkage = declaration.internalLinkage,
       .constexprFunction = declaration.constexprFunction,
       .requiresUnsafe = declaration.requiresUnsafe,
+      .neverReturns = declaration.neverReturns,
+      .tracksCaller = declaration.tracksCaller,
       .cThreadOperation = declaration.cThreadOperation,
       .requiresCThreadRuntime =
           requiresCThreadConcurrency(declaration.cThreadOperation),

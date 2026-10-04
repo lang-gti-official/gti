@@ -2,6 +2,95 @@
 
 namespace {
 
+void testPassiveRecordComposition() {
+  for (const std::string name :
+       {"passive_expected_records", "passive_callable_records",
+        "temporary_operator_records", "nested_receiver_array"}) {
+    const auto path = std::filesystem::path(__FILE__).parent_path() /
+                      "fixtures" / (name + ".gti");
+    std::ifstream input(path);
+    expect(input.good(), "the passive record composition fixture must exist");
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+    expect(frontend.canGenerateCode(), "record compositions must verify");
+    if (!frontend.canGenerateCode())
+      continue;
+    const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+    // Production planning also applies the exact deduced-callable template
+    // overlays. A raw representation map alone is not that whole-program plan.
+    expect(
+        !gti_test::emitCpp(frontend, frontend.mir, frontend.mir)
+             .contents.empty(),
+        "record compositions must have a complete verified-MIR representation");
+    bool mutated = false;
+    for (const auto &function : frontend.mir.functionInstances()) {
+      if (mutated)
+        break;
+      auto malformed = frontend.mir;
+      auto *changed = const_cast<lang::MirFunctionInstance *>(
+          malformed.findFunctionInstance(function.id));
+      for (auto &place : changed->body.places) {
+        if (name == "nested_receiver_array" &&
+            place.root == lang::MirPlaceRootKind::This &&
+            place.projections.size() >= 3 &&
+            place.projections.back().kind == lang::MirProjectionKind::Index) {
+          place.projections.front().field = 999999;
+          mutated = true;
+          break;
+        }
+      }
+      for (auto &block : changed->body.blocks) {
+        for (auto &instruction : block.instructions) {
+          if (mutated)
+            break;
+          if (name == "passive_callable_records" && instruction.lambdaTarget &&
+              instruction.callableInvocation &&
+              instruction.info.type == changed->returnType &&
+              changed->returnType.kind == lang::SemanticType::Class) {
+            // A passive result still requires the exact invoked lambda's
+            // result type; absence of a semantic drop is not permission to
+            // publish some other representation into caller storage.
+            instruction.info.type = lang::SemanticType::Int32;
+            mutated = true;
+          } else if (name == "temporary_operator_records" &&
+                     instruction.kind == lang::MirInstructionKind::Call &&
+                     instruction.receiver && instruction.callSite == 0 &&
+                     instruction.receiver->kind ==
+                         lang::MirOperandKind::BorrowWrite) {
+            instruction.receiver->kind = lang::MirOperandKind::BorrowRead;
+            mutated = true;
+          } else if (name == "passive_expected_records" &&
+                     instruction.operation == lang::MirOperation::Unexpected &&
+                     instruction.operands.size() == 1 &&
+                     instruction.operands.front().type.kind ==
+                         lang::SemanticType::Class) {
+            instruction.operands.push_back(instruction.operands.front());
+            mutated = true;
+          }
+        }
+      }
+      if (mutated) {
+        const lang::CppMirBodyEmitter invalid(malformed, map);
+        expect(!invalid.supportsFailureBodyText(
+                   {lang::MirBodyKind::Function, function.id}),
+               "record staging must reject mismatched fields, receivers, "
+               "payloads, and results");
+        bool rejected = false;
+        try {
+          static_cast<void>(gti_test::emitCpp(frontend, malformed, malformed));
+        } catch (const std::exception &) {
+          rejected = true;
+        }
+        expect(rejected,
+               "the production plan must reject the same mutation after "
+               "accepting the original program with its callable overlays");
+      }
+    }
+    expect(mutated,
+           "each record regression must exercise its exact negative proof");
+  }
+}
+
 void testGeneratedDefaultOwningFieldInitializer() {
   const auto frontend = analyze("generated-default-owning-field.gti", R"(
 class Resource {
@@ -1650,7 +1739,7 @@ int main() {
              artifact.contents.find("&__gti_mir_contained_state.success, "
                                     "&__gti_mir_contained_state.record)") !=
                  std::string::npos &&
-             artifact.contents.find("gti_rt_failure_terminate_v1") !=
+             artifact.contents.find("gti_rt_failure_terminate_v2") !=
                  std::string::npos,
          "the C++ artifact should emit the contained overload, delegate to "
          "the exact failure constructor, and terminate with its record");
@@ -3977,8 +4066,21 @@ int32_t main() {
                   "&__gti_mir_v_"),
          "a nested array read should check the terminal index over its "
          "proved-safe parent projection");
-  expect(contains("mir_checked_array_read_v1((*this).values, UINT64_C(0), "
-                  "&__gti_mir_v_"),
+  bool checkedReceiverArray = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &place : function.body.places) {
+      if (place.root == lang::MirPlaceRootKind::This &&
+          place.type.kind == lang::SemanticType::Array &&
+          place.projections.size() == 1 &&
+          place.projections.front().kind == lang::MirProjectionKind::Field) {
+        checkedReceiverArray =
+            checkedReceiverArray ||
+            contains("mir_checked_array_read_v1(__gti_mir_p_" +
+                     std::to_string(place.id) + ", UINT64_C(0), &__gti_mir_v_");
+      }
+    }
+  }
+  expect(checkedReceiverArray,
          "a receiver fixed-array field read should use the checked failure "
          "operation");
 }
@@ -5229,7 +5331,7 @@ int32_t main() {
                  std::string::npos &&
              text.find("__gti_operator_dereference__gti_mir_failure("
                        "const std::int32_t **__gti_mir_out_result, "
-                       "::gti_failure_record_v1 *__gti_mir_failure_record) "
+                       "::gti_failure_record_v2 *__gti_mir_failure_record) "
                        "const override;") != std::string::npos,
          "the interface and concrete class should publish one virtual status "
          "ABI");
@@ -5645,7 +5747,7 @@ int32_t main() {
                            ".code == GTI_FAILURE_CODE_NONE_V1") !=
                            std::string::npos &&
                        allocationText.text.find("*__gti_mir_failure_record = "
-                                                "::gti_failure_record_v1{") !=
+                                                "::gti_failure_record_v2{") !=
                            std::string::npos &&
                        allocationText.text.find("return false;") !=
                            std::string::npos &&
@@ -5771,7 +5873,7 @@ void testExpectedLifetimeSlotObserverFusion() {
 #include <std/string>
 
 int32_t main() {
-  auto formatted = std::format("value={}", int32_t(7));
+  auto formatted = std::try_format("value={}", int32_t(7));
   if (!formatted) {
     return 1;
   }
@@ -8488,6 +8590,7 @@ constexpr NamedTest kTests[] = {
      testConcreteGenericConstructorAndMemberPackPublication},
     {"testPassiveConstructorFailureSummary",
      testPassiveConstructorFailureSummary},
+    {"testPassiveRecordComposition", testPassiveRecordComposition},
     {"testPassiveFixedArrayFailureClosure",
      testPassiveFixedArrayFailureClosure},
     {"testOwningFixedArrayAggregateAndCheckedMove",

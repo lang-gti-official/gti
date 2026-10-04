@@ -330,6 +330,7 @@ enum class IntrinsicKind {
   ExactTypeParameterConstruction,
   RequireKey,
   RequireContainerArgument,
+  Panic,
   SharedOwnerEmpty,
   SharedOwnerFromUnique,
   SharedOwnerClone,
@@ -531,6 +532,8 @@ struct FunctionInfo {
   bool internalLinkage = false;
   bool constexprFunction = false;
   bool requiresUnsafe = false;
+  bool neverReturns = false;
+  bool tracksCaller = false;
   CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
   // Derived from resolved calls, after all source bodies have been analyzed.
   bool requiresCThreadRuntime = false;
@@ -882,6 +885,8 @@ struct ResolvedCallInfo {
   std::vector<CompileTimeValue> valueArguments;
   std::vector<AppliedConceptRequirement> requirements;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  bool neverReturns = false;
+  bool tracksCaller = false;
   SynchronizationOperation synchronization;
   std::optional<ResolvedThreadTaskEntry> threadTaskEntry;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
@@ -903,12 +908,21 @@ struct ResolvedCallInfo {
   std::vector<CallableArgumentBoundary> callableArguments;
 };
 
-// One exact consuming expected<T, E>::transform_error mapper. Expected is a
-// language type, but the mapped error is still computed by an ordinary GTI
-// function or lambda whose exact identity remains authoritative through
-// lowering. Exactly one of mapper/lambda is set; mapperType preserves the
-// environment.
-struct ExpectedTransformErrorInfo {
+enum class ExpectedCombinatorKind {
+  TransformError,
+  Transform,
+  AndThen,
+  Expect
+};
+
+// One exact consuming expected<T, E> mapper. Expected is a
+// language type, but the mapped alternative is still computed by an ordinary
+// GTI function or lambda whose exact identity remains authoritative through
+// lowering. Mapping selects exactly one mapper/lambda and retains its type.
+// Expect instead retains the exact message type and selects the shared Panic
+// intrinsic on its failure arm; it has no mapper target.
+struct ExpectedCombinatorInfo {
+  ExpectedCombinatorKind kind = ExpectedCombinatorKind::TransformError;
   SemanticType sourceType = SemanticType::Unknown;
   SemanticType resultType = SemanticType::Unknown;
   SemanticType mapperType = SemanticType::Unknown;
@@ -1407,6 +1421,9 @@ public:
   [[nodiscard]] const DefinedFailureOperation *
   findDefinedFailure(const Expr &expression) const;
 
+  [[nodiscard]] const CallerLocationOrigin *
+  findCallerLocation(const Expr &expression) const;
+
   [[nodiscard]] const ProgramInitializationPlan &
   programInitializationPlan() const;
 
@@ -1554,8 +1571,8 @@ public:
   findPayloadPattern(const Expr &expression) const;
 
   [[nodiscard]] const ResolvedCallInfo *findCall(const Call &call) const;
-  [[nodiscard]] const ExpectedTransformErrorInfo *
-  findExpectedTransformError(const Call &call) const;
+  [[nodiscard]] const ExpectedCombinatorInfo *
+  findExpectedCombinator(const Call &call) const;
   [[nodiscard]] const ResolvedCollectionInfo *
   findCollection(const ArrayInitializer &initializer) const;
 
@@ -1702,6 +1719,9 @@ private:
   void recordDefinedFailure(const Expr &expression,
                             DefinedFailureOperation operation);
 
+  void recordCallerLocation(const Expr &expression,
+                            CallerLocationOrigin origin);
+
   void recordPlace(const Expr &expression, PlaceKey place);
 
   void recordOwnershipEvent(const Expr &expression, OwnershipEvent event);
@@ -1788,8 +1808,7 @@ private:
                             ResolvedPayloadPatternInfo info);
 
   void record(const Call &call, ResolvedCallInfo info);
-  void recordExpectedTransformError(const Call &call,
-                                    ExpectedTransformErrorInfo info);
+  void recordExpectedCombinator(const Call &call, ExpectedCombinatorInfo info);
   void recordCollection(const ArrayInitializer &initializer,
                         ResolvedCollectionInfo info);
 
@@ -1891,6 +1910,7 @@ private:
   std::unordered_map<const Expr *, ConstantValue> constants;
   std::unordered_map<const Expr *, UnsafeOperationKind> unsafeOperations;
   std::unordered_map<const Expr *, DefinedFailureOperation> definedFailures;
+  std::unordered_map<const Expr *, CallerLocationOrigin> callerLocations;
   ProgramInitializationPlan programInitialization;
   std::optional<HostedProgramEntryPlan> hostedProgramEntry;
   std::unordered_set<const Expr *> programConstantSubstitutions;
@@ -1944,8 +1964,7 @@ private:
       payloadConstructions;
   std::unordered_map<const Expr *, ResolvedPayloadPatternInfo> payloadPatterns;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
-  std::unordered_map<const Call *, ExpectedTransformErrorInfo>
-      expectedTransformErrors;
+  std::unordered_map<const Call *, ExpectedCombinatorInfo> expectedCombinators;
   std::unordered_map<const Expr *, NativeFunctionConversionInfo>
       nativeFunctionConversions;
   std::unordered_map<const Expr *, FunctionItemSelectionInfo>

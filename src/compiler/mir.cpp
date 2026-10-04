@@ -58,6 +58,79 @@ const std::vector<MirValueUse> &MirBody::usesOf(MirValueId id) const {
   return id == 0 || id > valueUses.size() ? empty : valueUses[id - 1];
 }
 
+bool mirCallInputAbandonedByTerminal(const MirBody &body,
+                                     const MirInstruction &input) {
+  if (input.kind != MirInstructionKind::CallInput || !input.result ||
+      !body.usesOf(*input.result).empty())
+    return false;
+  const MirValue *value = body.findValue(*input.result);
+  const MirBlock *start =
+      value == nullptr ? nullptr : body.findBlock(value->definitionBlock);
+  if (start == nullptr || value->definition != input.id)
+    return false;
+  const auto position = std::find_if(
+      start->instructions.begin(), start->instructions.end(),
+      [&](const MirInstruction &candidate) { return &candidate == &input; });
+  if (position == start->instructions.end())
+    return false;
+  std::unordered_set<MirBlockId> visiting;
+  std::unordered_map<MirBlockId, bool> complete;
+  const auto visit = [&](const auto &self, const MirBlock &block,
+                         std::size_t begin) -> bool {
+    if (begin == 0) {
+      if (const auto found = complete.find(block.id); found != complete.end())
+        return found->second;
+    }
+    if (!visiting.insert(block.id).second)
+      return false;
+    const auto finish = [&](bool result) {
+      visiting.erase(block.id);
+      if (begin == 0)
+        complete.emplace(block.id, result);
+      return result;
+    };
+    for (std::size_t index = begin; index < block.instructions.size();
+         ++index) {
+      const auto &instruction = block.instructions[index];
+      if (instruction.tombstone)
+        continue;
+      // A later, unrelated statement's panic cannot excuse a lost call input.
+      if (instruction.fullExpressionEnd != 0)
+        return finish(false);
+      if (instruction.kind == MirInstructionKind::Call &&
+          instruction.neverReturns)
+        return finish(true);
+    }
+    const auto edge = [&](MirBlockId id) {
+      const auto *target = body.findBlock(id);
+      return target != nullptr && self(self, *target, 0);
+    };
+    const auto &term = block.terminator;
+    switch (term.kind) {
+    case MirTerminatorKind::Goto:
+    case MirTerminatorKind::Invoke:
+      // Invoke's failure edge already owns cleanup; only its normal successor
+      // could reach an invocation that consumes the prepared input.
+      return finish(edge(term.target));
+    case MirTerminatorKind::Branch:
+      return finish(edge(term.target) && edge(term.elseTarget));
+    case MirTerminatorKind::Switch:
+      return finish(term.target != 0 && edge(term.target) &&
+                    std::all_of(term.switchTargets.begin(),
+                                term.switchTargets.end(),
+                                [&](const MirSwitchTarget &target) {
+                                  return edge(target.target);
+                                }));
+    default:
+      // Neither a bare Unreachable nor a return is a terminal-call witness.
+      return finish(false);
+    }
+  };
+  return visit(
+      visit, *start,
+      static_cast<std::size_t>(position - start->instructions.begin()) + 1);
+}
+
 std::size_t MirBody::instructionCount() const {
   std::size_t result = 0;
   for (const MirBlock &block : blocks) {
@@ -4548,9 +4621,15 @@ validFailureInstructionShape(const MirInstruction &instruction) {
     return false;
   }
   if (instruction.intrinsic == IntrinsicKind::RequireKey ||
-      instruction.intrinsic == IntrinsicKind::RequireContainerArgument) {
+      instruction.intrinsic == IntrinsicKind::RequireContainerArgument ||
+      instruction.intrinsic == IntrinsicKind::Panic) {
+    const bool panic = instruction.intrinsic == IntrinsicKind::Panic;
+    const SemanticType parameter =
+        panic ? SemanticType::StringView : SemanticType::Bool;
     const DefinedFailureOutcome expected =
-        instruction.intrinsic == IntrinsicKind::RequireKey
+        panic ? DefinedFailureOutcome{DefinedFailureCode::Panic,
+                                      DefinedFailureDetail::ExplicitPanic}
+        : instruction.intrinsic == IntrinsicKind::RequireKey
             ? DefinedFailureOutcome{DefinedFailureCode::KeyNotFound,
                                     DefinedFailureDetail::KeyLookup}
             : DefinedFailureOutcome{
@@ -4562,10 +4641,11 @@ validFailureInstructionShape(const MirInstruction &instruction) {
            !instruction.callableInvocation && !instruction.result &&
            !instruction.receiver && !instruction.destination &&
            instruction.info.type == SemanticType::Void &&
+           instruction.neverReturns == panic &&
+           instruction.tracksCaller == panic &&
            instruction.operands.size() == 1 &&
-           instruction.operands.front().type == SemanticType::Bool &&
-           instruction.parameterTypes ==
-               std::vector<SemanticType>{SemanticType::Bool} &&
+           instruction.operands.front().type == parameter &&
+           instruction.parameterTypes == std::vector<SemanticType>{parameter} &&
            instruction.definedFailure.propagation ==
                FailurePropagationKind::None &&
            instruction.definedFailure.localOrigins.size() == 1 &&
@@ -6555,6 +6635,10 @@ static MirVerificationResult verifyObjectAllocations(const MirBody &body,
 }
 
 MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
+  if (body.hasCallerLocation && body.kind != MirBodyKind::Function) {
+    return failure(body, owner,
+                   "only a source function body can receive caller location");
+  }
   if (auto vocabulary = verifyMirOptimizationVocabulary(body, owner);
       !vocabulary.valid()) {
     return vocabulary;
@@ -6996,7 +7080,21 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         instruction.successResultDestination
             ? body.findPlace(*instruction.successResultDestination)
             : nullptr;
-    if ((instruction.ownership &&
+    if ((instruction.kind != MirInstructionKind::Call &&
+         (instruction.neverReturns || instruction.tracksCaller)) ||
+        (instruction.tracksCaller != instruction.callerLocation.has_value()) ||
+        (instruction.tracksCaller != (instruction.callerLocationSite != 0)) ||
+        (instruction.forwardsCallerLocation !=
+         (instruction.tracksCaller && body.hasCallerLocation)) ||
+        (instruction.callerLocation &&
+         (instruction.callerLocation->sourceUnit == 0 ||
+          instruction.callerLocation->end <=
+              instruction.callerLocation->start ||
+          instruction.callerLocation->line < 1)) ||
+        ((instruction.neverReturns || instruction.tracksCaller) &&
+         !instruction.functionTarget &&
+         instruction.intrinsic != IntrinsicKind::Panic) ||
+        (instruction.ownership &&
          instruction.ownership->kind == OwnershipEventKind::ConsumeReceiver &&
          (!callInput ||
           instruction.callInputKind != HirCallInputKind::RetainedReceiver)) ||
@@ -7894,7 +7992,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                  instruction.intrinsic == IntrinsicKind::None &&
                  !instruction.constructorTarget) ||
                 (!instruction.functionTarget &&
-                 (instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner ||
+                 (instruction.intrinsic == IntrinsicKind::Panic ||
+                  instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner ||
                   instruction.intrinsic == IntrinsicKind::StorageConstruct ||
                   instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
                   instruction.intrinsic == IntrinsicKind::PrefixStorageInsert ||
@@ -8866,11 +8965,50 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   std::vector<std::size_t> failureInvokeCounts(body.failureRecords.size(), 0);
   std::vector<std::size_t> failureEndpointCounts(body.failureRecords.size(), 0);
   std::unordered_map<MirInstructionId, std::size_t> invokedInstructions;
+  const auto terminalContinuationIsUnreachable =
+      [&](const MirBlock &start, std::size_t instructionIndex) {
+        const MirBlock *block = &start;
+        std::size_t next = instructionIndex + 1;
+        std::unordered_set<MirBlockId> visited;
+        while (block != nullptr && visited.insert(block->id).second) {
+          // Only lifetime bookkeeping may occupy the impossible successful
+          // continuation. In particular, no later argument, expression or
+          // ordinary return may be made reachable by losing terminality.
+          for (; next < block->instructions.size(); ++next) {
+            const MirInstruction &tail = block->instructions[next];
+            if (!tail.tombstone && tail.kind != MirInstructionKind::Lifecycle &&
+                tail.kind != MirInstructionKind::EndBorrow &&
+                tail.kind != MirInstructionKind::Drop) {
+              return false;
+            }
+          }
+          const MirTerminator &terminator = block->terminator;
+          if (terminator.kind == MirTerminatorKind::Unreachable) {
+            return true;
+          }
+          if (terminator.kind != MirTerminatorKind::Goto &&
+              terminator.kind != MirTerminatorKind::Invoke) {
+            return false;
+          }
+          block = body.findBlock(terminator.target);
+          next = 0;
+        }
+        return false;
+      };
   for (std::size_t index = 0; index < body.blocks.size(); ++index) {
     const MirBlock &block = body.blocks[index];
     if (block.id != index + 1) {
       return failure(body, owner,
                      "block identity does not match stored block order");
+    }
+    for (std::size_t instructionIndex = 0;
+         instructionIndex < block.instructions.size(); ++instructionIndex) {
+      if (block.instructions[instructionIndex].neverReturns &&
+          !terminalContinuationIsUnreachable(block, instructionIndex)) {
+        return failure(body, owner,
+                       "terminal call has an ordinary normal continuation",
+                       block.id, block.instructions[instructionIndex].id);
+      }
     }
     if (body.kind != MirBodyKind::Module &&
         block.programInitializationStep != 0) {
@@ -10811,9 +10949,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                  append->operands.front().value == *instruction.result;
         });
       }
+      if (uses.empty() && mirCallInputAbandonedByTerminal(body, instruction)) {
+        continue;
+      }
       if (uses.size() != 1) {
         return failure(body, owner,
-                       "call input must have exactly one executable use",
+                       "call input must have exactly one executable use or "
+                       "be abandoned by a terminal argument",
                        block.id, instruction.id);
       }
       const MirValueUse &use = uses.front();

@@ -25,6 +25,102 @@ files under `docs/plans/`. The documents under
 [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
+## Release Bug Closure
+
+**State:** the six open Gitea bug reproductions (#20, #23, #25, #26, #28, #29)
+are fixed and locally validated. All 389 optimized CTest gates have passing
+combined evidence after correcting the new regression's census registration;
+fresh installed-consumer and installed panic/LSP checks also pass. The user has
+authorized closing the bugs and publishing 0.363.0, superseding the earlier
+publication hold. Publication and remote issue closure await restored Gitea
+access (Tailscale reports `NeedsLogin`). Active installation is unchanged.
+
+The fixes retain verified-MIR execution: concrete type-only alias identities,
+shared nested fixed-array receiver access, passive record copy/staging, exact
+class-returning callback forwarding and temporary by-value operator arguments.
+No new ownership rule, source fallback or public-library-name special case is
+introduced. The original Tea snapshot builds after the deliberate `try_format`
+API migration. Current evidence and platform limits are recorded in
+[`verification.md`](../architecture/verification.md#release-bug-closure-after-panic-adoption).
+
+## Panic Adoption In Formatting And Stdout
+
+**State:** implementation and local validation complete, held with
+the unreleased 0.363.0 foundation below. This is ordinary source-library policy
+over the already verified terminal/caller contracts, not a new compiler feature.
+
+The named client is ergonomic diagnostic/output code: `format` returns an
+owning string, `format_to` returns void, and formatted `print`/`println` terminate
+with a useful domain reason at the caller if they cannot complete. The
+authoritative recoverable implementations are `try_format`, `try_format_to`,
+`try_print`, and `try_println`; the last two now report native submission errors
+as well as formatting failures. Existing raw output no longer drops host status.
+Single-text-argument output remains literal, including for the `try_` siblings.
+
+File and network operations, parsing external input, randomness and thread
+startup remain expected-first. Checked container preconditions already have
+specific defined-failure identities and are not relabelled as generic panic.
+Compile-time format validation and customization are separate general facilities,
+not introduced through public-name magic. `panic_adoption_runtime` covers both
+C++ standards, O0/O2/O3, no-elide and sanitizers, including closed-pipe errors,
+owning arguments/results, transactional append, reverse cleanup and exact caller
+locations. Canonical contracts and migration are in [I/O](../language/io.md).
+
+Completion evidence: all 386 optimized CTest gates have passing combined
+results after reviewing the formatting example's inventory changes. The final
+nine-gate rerun covers both census and executable corpus gates, the 144-outcome
+adoption matrix, panic contracts, compiler pipeline, source-surface manifest and
+LSP protocol. Isolated installed-consumer, reference and syntax-tooling checks
+also pass. Publication and active installation remain held. Exact accounting
+and platform limits are in
+[`verification.md`](../architecture/verification.md#panic-adoption-in-formatting-and-stdout).
+
+## Panic, Expected Ergonomics, And Constraint Diagnostics
+
+**State:** implementation and local end-to-end validation complete for 0.363.0;
+publication and active installation held at the user's request.
+The user-facing clients are explicit terminal reporting with
+`std::panic(message)` and formatted messages, consuming `expected::expect`,
+`transform` and `and_then`, and actionable generic-constraint diagnostics that
+identify the responsible argument without public standard-library-name rules.
+
+The runtime uses a separately versioned bounded message record, snapshots the
+message before cleanup, and preserves existing hosted and managed-thread
+containment. Formatted panic initially uses the existing allocating formatter;
+allocation-free message capture does not promise allocation-free argument
+evaluation or user cleanup. That foundation left formatting/I/O return types
+unchanged; the subsequent adoption slice above deliberately changes them.
+
+General `[[noreturn]]` and `[[track_caller]]` declaration contracts must be
+checked by semantics and retained through HIR/MIR. Caller-location tokens are
+separate from detector effects: a tracked wrapper forwards a token, a detector
+creates the original failure record, and propagation never rewrites it. The
+first token consumer is explicit panic, not arbitrary checked operations.
+Unsupported native callback transport must be diagnosed rather than losing the
+hidden parameter. Exact function items stored in source-defined callable
+wrappers preserve their selected target; an untracked wrapper establishes a
+fresh source anchor, while an explicitly tracked wrapper forwards its incoming
+anchor. Compiler/backend admission and independent verification remain mandatory.
+
+Completion evidence: all 385 optimized CTest gates have passing results,
+including reviewed test-only assertion/inventory refreshes after the broad run.
+The panic matrix passes 312 outcomes and Expected passes 196, covering both
+C++ standards, O0/O1/O3, no-elide and sanitizer checks. Terminal contract tests independently
+reject forged caller metadata, ordinary return continuations and lost call-input
+consumers; cleanup-owning arguments preceding a terminal argument now lower
+through the same verified failure-cleanup graph. The representation suite covers
+an unrelated primary/exact class family in a lexical-callable program, fixing
+the native specialization omission exposed by formatted panic. All 11 staged
+consumers, installed panic/Expected probes, installed contract-diagnostic LSP
+checks, syntax-tooling, formatting and isolated local-installer package checks
+pass. The minor version advance records the new surface; no release was
+initiated. Detailed evidence and local-platform limits are recorded in
+[`verification.md`](../architecture/verification.md#panic-expected-ergonomics-and-library-contract-diagnostics).
+
+The general diagnostic foundation explains source-defined concept failures;
+it does not introduce a public-name formatter rule, a new formatter protocol,
+or literal-format validation. Those remain separate language/library work.
+
 ## Ephemeral Borrowed Receivers And PR Reconciliation
 
 **State:** receiver implementation, validation and publication are complete at

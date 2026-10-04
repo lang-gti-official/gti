@@ -3302,19 +3302,19 @@ def main():
             "bytes.push_back('B'); std::print(bytes); std::print('|'); "
             'mut auto empty_print = std::try_print(""); '
             "if (!empty_print) { return 1; } "
-            'mut auto plain = std::format("escaped={{}}" ); '
+            'mut auto plain = std::try_format("escaped={{}}" ); '
             'if (!plain or plain.value() != "escaped={}") { return 2; } '
-            'mut auto braces = std::format("{{}}|{{{{|}}}}|{{{}}}", '
+            'mut auto braces = std::try_format("{{}}|{{{{|}}}}|{{{}}}", '
             "int32_t(-7)); "
             'if (!braces or braces.value() != "{}|{{|}}|{-7}") '
             "{ return 3; } "
-            'mut auto nul = std::format("A\\0{}B", uint8_t(7)); '
+            'mut auto nul = std::try_format("A\\0{}B", uint8_t(7)); '
             "if (!nul or nul.value().size() != std::size_t(4) or "
             "nul.value()[std::size_t(0)] != 'A' or "
             "nul.value()[std::size_t(1)] != '\\0' or "
             "nul.value()[std::size_t(2)] != '7' or "
             "nul.value()[std::size_t(3)] != 'B') { return 4; } "
-            'mut auto all = std::format("{}|{}|{}|{}|{}|{}|{}|{}", '
+            'mut auto all = std::try_format("{}|{}|{}|{}|{}|{}|{}|{}", '
             "int8_t(-128), uint8_t(255), int16_t(-32768), "
             "uint16_t(65535), int32_t(-2147483647 - 1), "
             "uint32_t(4294967295), int64_t(-9223372036854775807 - 1), "
@@ -3329,46 +3329,46 @@ def main():
             '18446744073709551615") { return 6; } '
             'mut std::string host = std::string("gitea.example"); '
             'std::string_view method = "api/v1/user"; '
-            'mut auto endpoint = std::format("https://{}/{}", '
+            'mut auto endpoint = std::try_format("https://{}/{}", '
             'host.view(), method); '
             'if (!endpoint or endpoint.value() != '
             '"https://gitea.example/api/v1/user") { return 16; } '
             'mut std::string owned = std::string("owned"); '
-            'mut auto heterogeneous = std::format("{}|{}|{}|{}|{}", '
+            'mut auto heterogeneous = std::try_format("{}|{}|{}|{}|{}", '
             "true, 'X', int32_t(-7), 1.25, std::move(owned)); "
             'if (!heterogeneous or heterogeneous.value() != '
             '"true|X|-7|1.25|owned") { return 17; } '
-            'mut auto unsupported = std::format("{}", '
+            'mut auto unsupported = std::try_format("{}", '
             'unsupported_format_value()); '
             'if (unsupported or unsupported.error() != '
             'std::format_errc::unsupported_argument) { return 18; } '
-            'mut auto binary64 = std::format("{}", 1.5d); '
+            'mut auto binary64 = std::try_format("{}", 1.5d); '
             'if (!binary64 or binary64.value() != "1.5") { return 19; } '
             'mut auto unsupported_print = std::try_print("LEAK {}", '
             'unsupported_format_value()); '
             'if (unsupported_print or unsupported_print.error() != '
-            'std::format_errc::unsupported_argument) { return 20; } '
+            'std::print_errc::unsupported_argument) { return 20; } '
             'mut auto malformed = std::try_print("LEAK {", int32_t(1)); '
             "if (malformed or malformed.error() != "
-            "std::format_errc::invalid_format) { return 7; } "
-            'mut auto malformed_zero = std::try_println("LEAK}"); '
+            "std::print_errc::invalid_format) { return 7; } "
+            'mut auto malformed_zero = std::try_println("LEAK}", 1); '
             "if (malformed_zero or malformed_zero.error() != "
-            "std::format_errc::invalid_format) { return 8; } "
-            'mut auto invalid_field = std::try_print("LEAK{x}"); '
+            "std::print_errc::invalid_format) { return 8; } "
+            'mut auto invalid_field = std::try_print("LEAK{x}", 1); '
             "if (invalid_field or invalid_field.error() != "
-            "std::format_errc::invalid_format) { return 9; } "
-            'mut auto invalid_escape = std::try_print("LEAK{{}"); '
+            "std::print_errc::invalid_format) { return 9; } "
+            'mut auto invalid_escape = std::try_print("LEAK{{}", 1); '
             "if (invalid_escape or invalid_escape.error() != "
-            "std::format_errc::invalid_format) { return 10; } "
-            'mut auto invalid_close = std::try_print("LEAK}}}"); '
+            "std::print_errc::invalid_format) { return 10; } "
+            'mut auto invalid_close = std::try_print("LEAK}}}", 1); '
             "if (invalid_close or invalid_close.error() != "
-            "std::format_errc::invalid_format) { return 11; } "
+            "std::print_errc::invalid_format) { return 11; } "
             'mut auto too_few = std::try_print("{} {}", int32_t(1)); '
             "if (too_few or too_few.error() != "
-            "std::format_errc::argument_count_mismatch) { return 12; } "
+            "std::print_errc::argument_count_mismatch) { return 12; } "
             'mut auto too_many = std::try_print("{}", int32_t(1), int32_t(2)); '
             "if (too_many or too_many.error() != "
-            "std::format_errc::argument_count_mismatch) { return 13; } "
+            "std::print_errc::argument_count_mismatch) { return 13; } "
             "std::print(nul.value()); "
             'mut auto first = std::try_print("signed={} unsigned={} braces={{}}", '
             "int64_t(-9223372036854775807 - 1), "
@@ -3415,7 +3415,7 @@ def main():
             ],
             65,
         )
-        assert "does not satisfy generic constraint 'std::integral'" in (
+        assert "does not satisfy concept 'std::integral<float>'" in (
             rejected_float_print.stderr
         )
 

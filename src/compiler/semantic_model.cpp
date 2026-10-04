@@ -432,6 +432,15 @@ SemanticModel::findDefinedFailure(const Expr &expression) const {
   return base == nullptr ? nullptr : base->findDefinedFailure(expression);
 }
 
+const CallerLocationOrigin *
+SemanticModel::findCallerLocation(const Expr &expression) const {
+  const auto found = callerLocations.find(&expression);
+  if (found != callerLocations.end()) {
+    return &found->second;
+  }
+  return base == nullptr ? nullptr : base->findCallerLocation(expression);
+}
+
 const SemanticAnalysisSeal &SemanticModel::analysisSeal() const {
   return base == nullptr ? semanticAnalysisSeal : base->analysisSeal();
 }
@@ -963,16 +972,16 @@ SemanticModel::findCall(const Call &call) const {
   return base == nullptr ? nullptr : base->findCall(call);
 }
 
-[[nodiscard]] const ExpectedTransformErrorInfo *
-SemanticModel::findExpectedTransformError(const Call &call) const {
-  const auto found = expectedTransformErrors.find(&call);
-  if (found != expectedTransformErrors.end()) {
+[[nodiscard]] const ExpectedCombinatorInfo *
+SemanticModel::findExpectedCombinator(const Call &call) const {
+  const auto found = expectedCombinators.find(&call);
+  if (found != expectedCombinators.end()) {
     return &found->second;
   }
   if (suppressedInheritedCalls.contains(&call)) {
     return nullptr;
   }
-  return base == nullptr ? nullptr : base->findExpectedTransformError(call);
+  return base == nullptr ? nullptr : base->findExpectedCombinator(call);
 }
 
 [[nodiscard]] const NativeFunctionConversionInfo *
@@ -1272,6 +1281,7 @@ void SemanticModel::clear() {
   constants.clear();
   unsafeOperations.clear();
   definedFailures.clear();
+  callerLocations.clear();
   programInitialization = {};
   hostedProgramEntry.reset();
   programConstantSubstitutions.clear();
@@ -1309,7 +1319,7 @@ void SemanticModel::clear() {
   payloadConstructions.clear();
   payloadPatterns.clear();
   calls.clear();
-  expectedTransformErrors.clear();
+  expectedCombinators.clear();
   suppressedInheritedCalls.clear();
   packFolds.clear();
   lambdaCalls.clear();
@@ -1446,6 +1456,11 @@ void SemanticModel::recordDefinedFailure(const Expr &expression,
     return;
   }
   definedFailures.insert_or_assign(&expression, std::move(operation));
+}
+
+void SemanticModel::recordCallerLocation(const Expr &expression,
+                                         CallerLocationOrigin origin) {
+  callerLocations.insert_or_assign(&expression, origin);
 }
 
 bool SemanticModel::appendFullExpression(
@@ -1773,14 +1788,21 @@ void SemanticModel::recordPayloadPattern(const Expr &expression,
 }
 
 void SemanticModel::record(const Call &call, ResolvedCallInfo info) {
+  if (const FunctionInfo *target = findFunction(info.function)) {
+    info.neverReturns = target->neverReturns;
+    info.tracksCaller = target->tracksCaller;
+  } else if (info.intrinsic == IntrinsicKind::Panic) {
+    info.neverReturns = true;
+    info.tracksCaller = true;
+  }
   suppressedInheritedCalls.erase(&call);
   calls.insert_or_assign(&call, std::move(info));
 }
 
-void SemanticModel::recordExpectedTransformError(
-    const Call &call, ExpectedTransformErrorInfo info) {
+void SemanticModel::recordExpectedCombinator(const Call &call,
+                                             ExpectedCombinatorInfo info) {
   suppressedInheritedCalls.erase(&call);
-  expectedTransformErrors.insert_or_assign(&call, std::move(info));
+  expectedCombinators.insert_or_assign(&call, std::move(info));
 }
 
 void SemanticModel::recordNativeFunctionConversion(
@@ -1795,7 +1817,7 @@ void SemanticModel::recordFunctionItemSelection(
 
 void SemanticModel::suppressInheritedCall(const Call &call) {
   calls.erase(&call);
-  expectedTransformErrors.erase(&call);
+  expectedCombinators.erase(&call);
   suppressedInheritedCalls.insert(&call);
 }
 

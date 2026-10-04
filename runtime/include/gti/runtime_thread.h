@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #define GTI_THREAD_ABI_VERSION_V1 UINT32_C(1)
+#define GTI_THREAD_ABI_VERSION_V2 UINT32_C(2)
 
 typedef struct gti_thread_state_v1 gti_thread_state_v1;
 typedef void (*gti_thread_task_entry_v1)(void *context);
@@ -60,6 +61,27 @@ typedef struct gti_thread_value_join_result_v1 {
   gti_thread_result_abandon_v1 abandon_result;
 } gti_thread_value_join_result_v1;
 
+/* Spawn, task callbacks, and the opaque state retain their v1 ABI. These join
+ * results preserve v2 failure messages across the worker containment boundary.
+ */
+typedef struct gti_thread_join_result_v2 {
+  uint32_t abi_version;
+  gti_thread_join_status_v1 status;
+  gti_thread_worker_failure_kind_v1 failure_kind;
+  uint32_t reserved;
+  gti_failure_record_v2 failure;
+  gti_failure_emergency_v2 cleanup_failure;
+  const gti_failure_artifact_descriptor_v1 *primary_artifact;
+  const gti_failure_artifact_descriptor_v1 *secondary_artifact;
+} gti_thread_join_result_v2;
+
+typedef struct gti_thread_value_join_result_v2 {
+  gti_thread_join_result_v2 join;
+  void *result_context;
+  gti_thread_result_take_v1 take_result;
+  gti_thread_result_abandon_v1 abandon_result;
+} gti_thread_value_join_result_v2;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -104,6 +126,14 @@ gti_thread_join_result_v1 gti_rt_thread_join_v1(gti_thread_state_v1 **state);
  */
 gti_thread_value_join_result_v1
 gti_rt_thread_join_value_v1(gti_thread_state_v1 **state);
+
+/* Prefer v2 for new generated clients. A legacy v1 join preserves old failure
+ * records, but terminates with the exact v2 report if a worker produces a
+ * panic that cannot be represented by its v1 result. It never drops messages.
+ */
+gti_thread_join_result_v2 gti_rt_thread_join_v2(gti_thread_state_v1 **state);
+gti_thread_value_join_result_v2
+gti_rt_thread_join_value_v2(gti_thread_state_v1 **state);
 
 #ifdef __cplusplus
 }

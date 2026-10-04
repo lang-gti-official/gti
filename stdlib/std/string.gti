@@ -652,35 +652,41 @@ namespace std {
     bool operator>=(string& other) { return this.compare_bytes(other.view()) >= 0; }
   };
 
+  [[track_caller]]
   void print(string& value) {
     for (mut size_t index = 0; index < value.size(); index++) {
       print(value[index]);
     }
   }
 
+  [[track_caller]]
   void print(string value) {
     for (mut size_t index = 0; index < value.size(); index++) {
       print(value[index]);
     }
   }
 
+  [[track_caller]]
   void println(string& value) {
     print(value);
     print("\n");
   }
 
+  [[track_caller]]
   void println(string value) {
     print(value);
     print("\n");
   }
 
   /// Writes a binary32 value in decimal without adding a newline.
+  [[track_caller]]
   void print(float value) {
     mut string text = detail::float_to_decimal_string(value);
     print(text);
   }
 
   /// Writes a binary32 value in decimal followed by a newline.
+  [[track_caller]]
   void println(float value) {
     print(value);
     print("\n");

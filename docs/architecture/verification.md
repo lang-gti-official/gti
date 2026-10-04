@@ -1,5 +1,173 @@
 # Compiler Verification
 
+## Release bug closure after panic adoption
+
+The optimized 0.363.0 compiler now compiles the original reductions for Gitea
+issues #20, #23, #25, #26, #28 and #29. Permanent coverage includes unused and
+recursive concrete aliases, both expected alternatives with passive record
+errors, checked extraction of copyable class payloads, direct/generic lambdas
+returning copyable and move-only records, temporary operator arguments and
+nested receiver arrays. `type_only_alias_runtime` passes C++20/C++23 at O0/O3.
+`passive_record_runtime` passes 35 executions and `nested_receiver_array_runtime`
+passes 49 executions across C++20/C++23 at O0/O1/O3 and an ASan/UBSan case.
+These include error-constructor failure, later-argument failure, checked array
+reads/writes, exact source attribution and reverse-order cleanup. Backend
+mutation tests reject wrong result types, receiver capabilities, payload arity
+and field paths.
+
+The original Tea #20 snapshot at
+`3af52eb0d51f8c28dd27d9489016b863e4f8845d` builds with its original pinned
+dependencies after changing only its three recoverable `format` calls to the
+new `try_format` spelling. The unmodified snapshot first produced the expected
+API-migration diagnostics; that is not a reproduction of its missing concrete
+alias failure. Validation uses an isolated snapshot and copied dependencies,
+not the user's Tea working tree, and does not execute authenticated commands.
+
+The final all-target Release/Ninja build uses AppleClang 21 and LLVM 22.1.8 on
+macOS arm64. The full 389-test run passed 388 gates in 1356.11 seconds; the sole
+failure was the missing manifest entry for the newly added
+`testPassiveRecordComposition`, whose executable test passed. Registering that
+test, without changing production code, produced a passing six-gate rerun in
+28.66 seconds: emitter census/lifecycle, representation snapshot and all three
+new runtime matrices. All 389 gates have passing combined evidence, not an
+uninterrupted initial pass. Malformed-record tests also require rejection by
+the complete production plan after it accepts the corresponding original
+program, avoiding a vacuous rejection caused by absent callable overlays.
+
+A fresh isolated installation passes all 11 external CMake consumers, all 18
+quick panic-adoption cases and the formatting-error missing-include LSP
+correction/reanalysis/stale-action check with build-tree resource overrides
+cleared. Clang-format and patch whitespace checks pass. The user's active
+installation is unchanged. These are macOS results; Linux/Windows execution
+and bundled-LLVM packaging were not run locally. Publication and remote issue
+closure remain pending because Gitea is unreachable while Tailscale reports
+`NeedsLogin`. The earlier checkpoint evidence below remains historical.
+
+## Panic adoption in formatting and stdout
+
+The source-library adoption completes the unreleased 0.363.0 foundation below.
+`panic_adoption_runtime` checks 18 scenarios in eight configurations: C++20 and
+C++23 at O0/O2/O3, disabled copy elision at C++23/O0, and ASan/UBSan at
+C++23/O1. All 144 outcomes pass. They cover plain/`try_` success parity,
+move-only formatting arguments/results, transactional append, format-error
+categories, literal single-text output, exact external and tracked-wrapper
+locations, reverse cleanup, real closed-pipe errors, and output failure during
+panic cleanup. The latter preserves both failure records and the existing
+emergency contract. A test-only native helper disables stdout buffering so a
+submission error is observable immediately; it does not replace runtime I/O.
+
+An all-target Release/Ninja build uses AppleClang 21 and LLVM 22.1.8 on macOS
+arm64, with 12 compile jobs and eight CTest workers. The broad run passed 383
+of 386 gates in 1397.21 seconds; three gates rejected the formatting example's
+old census. Removing an unnecessary `<std/cstdio>` dependency during validation
+reduced that example from 502 emitted bodies to 437. The final inventory adds
+nine ordinary wrapper/policy bodies, 15 declarations and one generated adapter
+over the foundation baseline; all other 94 examples are unchanged. Both corpus
+execution endpoints passed before the counts were refreshed. The final nine-gate
+rerun passes in 153.15 seconds: both census gates, both executable corpus gates,
+`panic_adoption_runtime`, `panic_contracts`, `compiler_pipeline`,
+`stdlib_surface_manifest`, and `lsp_protocol`. All 386 gates therefore have
+passing combined evidence, not an uninterrupted initial pass. The final-source
+144-outcome adoption matrix and 39-outcome quick panic matrix also passed
+separately after narrowing the dependency.
+
+The isolated staged toolchain passes all 18 quick adoption cases and the
+`print_errc` missing-include LSP correction/reanalysis/stale-action checks from
+outside the checkout, with build-tree resource overrides cleared. The updated
+reference example passes against that stage. The generated documentation index
+validates all 90 reference pages; Tree-sitter accepts all 156 shipped sources.
+Clang-format 22.1.8 checks all 400 first-party C/C++ files, and patch whitespace
+checks pass. The stage includes the new nested panic implementation unit;
+temporary dependency symlinks used for tooling validation have been removed.
+
+These are local macOS results, not Linux/Windows execution or bundled-LLVM
+release validation. Formatting customization and compile-time pattern checking
+remain explicitly outside this slice. No source publication or active user
+installation has been performed.
+
+## Panic, expected ergonomics, and library contract diagnostics
+
+The 0.363.0 slice is implemented and locally verified. Publication and the
+user's active installation remain deliberately unchanged.
+
+- `panic_contracts` independently mutates HIR/MIR/lowered terminal contracts
+  and caller anchors. It checks impossible normal continuations, argument-stage
+  abandonment only when every normal path reaches a terminal call, and retained
+  failure cleanup. Optimized backend emission exercises both C++ standards.
+- `panic_runtime` checks raw and formatted messages, exact external caller
+  locations through ordinary/tracked/generic/stored-callable wrappers, ordered
+  arguments, reverse cleanup, truncation, format-error fallbacks, managed-task
+  transport, and cleanup double failures. Its unrelated exact-class/primary
+  fixture also checks the retained native-template representation used by
+  lexical callables. The matrix uses C++20/C++23 at O0/O1/O3, no-elide, and
+  ASan/UBSan; `--quick` is development feedback only.
+  Worker fixtures independently exercise ordinary cleanup and cleanup-emergency
+  abandonment through by-value owners, initialized storage, held mutex guards,
+  shared ownership, a live nested thread handle, task captures, and partially
+  constructed heap objects. The fresh multi-carrier argument fixture separately
+  retains the complete source composition that exposed missing result-slot
+  admission; named inputs are not a substitute for that regression.
+- `expected_ergonomics` owns semantic rejection, HIR/MIR shape and independent
+  malformed-IR coverage for consuming `expect`, `transform`, and `and_then`.
+  `expected_ergonomics_runtime` exercises owning alternatives and mapper results,
+  void input/output, skipped mappers with owning captures, eager message
+  evaluation, pending returns and exact failure cleanup. Both native standards
+  and O0/O1/O3 run with copy elision disabled, with a separate sanitizer case.
+- `failure_metadata`, `runtime_failure_boundary`, `runtime_failure_subprocess`,
+  `managed_thread_runtime`, `c_abi_header_boundary`, and
+  `runtime_failure_header_coexistence` cover bounded v2 messages independently
+  from source wrappers,
+  including malformed records, frozen v1 compatibility and observer containment.
+- `compiler_declarations` and `lsp_protocol` check concrete source-defined
+  concept chains, leaf explanations, precise uniquely attributable argument
+  token anchors, and conservative call-site blame for ambiguous provenance.
+  The same suites cover function-contract validation and editor publication. Tree-sitter
+  corpus/highlight/shipped-source checks cover both attribute spellings.
+
+These gates supplement the existing full optimized CTest, corpus,
+optimization-report/replay, staged-consumer, and editor/package completion
+checks below. They do not claim a formatter protocol or literal-format
+validation facility: those require separate general language capabilities.
+
+The final all-target Release/Ninja build uses AppleClang 21 and LLVM 22.1.8 on
+macOS arm64, with 12 compile jobs and eight CTest workers. All 385 registered
+gates have passing evidence. The broad run passed 370 in 1527.10 seconds;
+15 gates retained obsolete ABI names, MIR value numbers/printer layout, test
+registration entries, or corpus counts. Each changed assertion was checked
+against current MIR or emitted C++ before updating it. Fourteen passed in the
+105.79-second rerun; the compiler aggregate then exposed one further stale
+predicate-result number and passed after that assertion-only repair (25.98
+seconds). No production compiler, library, or runtime source changed during
+these reruns. This is combined evidence, not a claim that the initial run
+passed without corrections.
+
+The frozen-source panic matrix passes all 312 outcomes, including the original
+fresh five-carrier worker alongside its named-input control. The cleanup-free
+constructor fixture checks normal calls, constructor failure, and later-argument
+failure without adding semantic drops for representation-only storage. Expected's
+matrix passes all 196 outcomes. Both matrices retain exact cleanup and failure
+checks across C++20/C++23, optimization levels, disabled elision, and ASan/UBSan.
+Both executable corpus gates, independent IR mutations, optimizer/replay gates,
+stdlib surface checks, and LSP protocol tests pass.
+
+All 11 external consumers pass against the refreshed isolated stage. Its
+compiler independently passes all 39 quick panic outcomes from outside the
+checkout, with resource overrides cleared and a native build report confirming
+installed headers, stdlib, and runtime. It also passes all 28 quick Expected
+outcomes and the focused function-contract/constraint-diagnostic LSP tests with
+resource overrides cleared. The installed CLI/LSP retain the final build's
+Mach-O UUIDs. The staged local-installer archive
+passes checksum, extraction, compiler/LSP version, parser, and headless Neovim
+checks without changing the active installation. This archive uses the local
+system-LLVM build, not the separately bundled-LLVM release packaging profile.
+Tree-sitter regeneration is byte-identical; all 68 corpus cases, 155 shipped
+sources, highlight/locals/rainbow and source-text checks pass, as do the three
+reference-highlighting tests. Clang-format 22.1.8 checks all 399 first-party
+C/C++ files; final patch whitespace checks pass. These are local macOS checks,
+not Linux/Windows execution or bundled-LLVM release validation. The optional
+non-gating full language audit was not repeated. No publication or active user
+installation has been performed for this slice.
+
 Status: Current test and audit structure.
 
 ## Combined 0.362.0 release validation
@@ -2278,6 +2446,16 @@ Generated C++ is not a stable public text contract. Marker identities are a
 test-only ownership witness; behavior comparison remains on process status and
 output. A baseline update is valid only after the changed inventory is
 reviewed and the corpus oracle and relevant focused tests are green.
+
+The panic refresh adds one trusted prelude declaration and its terminal body
+to every example, with no generated-item changes. Three lexical-callable
+examples additionally emit 30 previously retained-but-unemitted addresses:
+the field/static initializer and call-operator bodies of ten exact class
+specializations. These bodies already existed in their MIR inventories; the
+structural native-template-carrier definition repair makes them visible in
+emitted C++. The unrelated exact-class regression independently covers the
+repair. All 95 examples execute identically at the two native endpoints, and
+both census gates pass against this reviewed change.
 
 The associative-container refresh additionally retains the callback and
 dictionary examples together. Two private container contract checks extend the
