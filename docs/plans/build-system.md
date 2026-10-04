@@ -140,8 +140,12 @@ an existing `gti.toml`. Both commands derive the package name from the
 destination unless `--name` supplies one, validate the manifest's portable-name
 rule, and generate one schema-version-1 executable target. A generated entry
 uses the owned-argument `int main(int, std::vector<std::string>)` form and
-includes the standard string and vector modules. They do not build the project,
-initialize version control, or consult a parent manifest.
+includes the standard string and vector modules. `gti init --git` opts into a
+standalone Git repository and the canonical GTI `.gitignore` containing the
+root `/build/` rule. It refuses existing `.git` and `.gitignore` entries and
+rolls scaffold-owned output back if Git cannot initialize the repository.
+Without that option scaffolding has no version-control side effects. Neither
+command builds the project or consults a parent manifest.
 
 Direct `gti source.gti` compilation remains manifest-independent, including
 when an invalid manifest is present beside the source. Project native inputs
@@ -537,7 +541,7 @@ gti build ...                   project build mode
 gti check ...                   project analysis mode
 gti run ...                     project build-and-run mode
 gti new <path> ...              new executable package scaffolding
-gti init [path] ...             existing-directory package scaffolding
+gti init [path] [--git] ...     existing-directory package scaffolding
 gti test ...                    project test mode
 gti verify ...                  recorded-provenance verification mode
 gti clean ...                   project cleanup mode
@@ -593,6 +597,7 @@ gti new hello
 gti new tools/hello --name hello
 gti init
 gti init existing/project --name project
+gti init existing/project --git
 gti test
 gti clean
 gti metadata --format json
@@ -1129,14 +1134,23 @@ Status: complete
 - Generate `gti.toml` and `src/main.gti`, while preserving an existing regular
   entry source during `init`. The generated source uses the implemented owned
   argument-vector entry form and its required standard-library includes.
-- Accept `--name <name>` without adding editions, library targets, dependency
-  fields, or version-control side effects.
+- Accept `--name <name>` without adding editions, library targets, or
+  dependency fields. Scaffolding has no version-control side effects unless
+  `--git` is explicitly selected.
+- Accept `--git` on `gti init` as an explicit version-control side effect. It
+  creates a standalone repository and canonical `/build/` ignore rule, refuses
+  user-owned `.git` or `.gitignore` entries, and rolls back scaffold-owned
+  output when Git fails.
 
 Acceptance criteria:
 
 - generated manifests load through the ordinary schema-version-1 parser;
 - no existing manifest, source, symlink, or destination is overwritten;
 - invalid package names fail before filesystem mutation;
+- Git conflicts fail before filesystem mutation and Git invocation failure
+  leaves no scaffold-owned output behind;
+- inherited Git repository-location overrides fail before mutation, and a
+  metadata reservation collision never authorizes deleting the existing entry;
 - direct compilation remains manifest-independent.
 
 ### Post-Milestone 3 addition: formatter configuration scaffolding

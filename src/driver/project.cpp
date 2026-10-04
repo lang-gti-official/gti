@@ -1,10 +1,12 @@
 #include "gti/driver/project.h"
 
+#include "gti/driver/process.h"
 #include "gti/format_config.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <limits>
@@ -840,6 +842,23 @@ bool writeScaffoldFile(const std::filesystem::path &path,
   return static_cast<bool>(output);
 }
 
+std::string processFailureDetail(const ProcessResult &process) {
+  constexpr std::size_t limit = 400;
+  std::string detail = process.driverDiagnostic.value_or("");
+  if (!process.output.empty()) {
+    if (!detail.empty()) {
+      detail += "; ";
+    }
+    detail += process.output.size() > limit
+                  ? "..." + process.output.substr(process.output.size() - limit)
+                  : process.output;
+  }
+  while (!detail.empty() && (detail.back() == '\n' || detail.back() == '\r')) {
+    detail.pop_back();
+  }
+  return detail.empty() ? "Git returned a nonzero status" : detail;
+}
+
 Diagnostic scaffoldDiagnostic(const std::filesystem::path &path,
                               std::string code, std::string message) {
   return projectDiagnostic(std::move(code), {path.string(), 0, 1, 1},
@@ -867,6 +886,10 @@ int main(int argc, std::vector<std::string> argv) {
   std::println("Hello, GTI!");
   return 0;
 }
+)";
+
+constexpr std::string_view scaffoldGitIgnore = R"(# GTI build output
+/build/
 )";
 
 } // namespace
@@ -1069,9 +1092,11 @@ const std::vector<ProjectBuildPlan> &ProjectMetadata::plans() const {
 
 ProjectScaffoldRequest::ProjectScaffoldRequest(
     ProjectScaffoldMode mode, std::filesystem::path destination,
-    std::optional<std::string> packageName)
+    std::optional<std::string> packageName,
+    std::optional<ProjectScaffoldGit> git)
     : scaffoldMode(mode), destinationPath(std::move(destination)),
-      requestedPackageName(std::move(packageName)) {}
+      requestedPackageName(std::move(packageName)),
+      requestedGit(std::move(git)) {}
 
 ProjectScaffoldMode ProjectScaffoldRequest::mode() const {
   return scaffoldMode;
@@ -1083,6 +1108,10 @@ const std::filesystem::path &ProjectScaffoldRequest::destination() const {
 
 const std::optional<std::string> &ProjectScaffoldRequest::packageName() const {
   return requestedPackageName;
+}
+
+const std::optional<ProjectScaffoldGit> &ProjectScaffoldRequest::git() const {
+  return requestedGit;
 }
 
 std::string targetTriple(const TargetInfo &target) {
@@ -1661,6 +1690,41 @@ ProjectScaffoldResult scaffoldProject(const ProjectScaffoldRequest &request) {
         {}, "GTI-B1500", "A project destination path is required."));
     return result;
   }
+  if (request.git() &&
+      request.mode() != ProjectScaffoldMode::ExistingDirectory) {
+    result.status = ProjectScaffoldStatus::InvalidRequest;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        request.destination(), "GTI-B1500",
+        "Git initialization is supported only by existing-directory project "
+        "scaffolding."));
+    return result;
+  }
+  if (request.git() && request.git()->executable.empty()) {
+    result.status = ProjectScaffoldStatus::InvalidRequest;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        request.destination(), "GTI-B1500",
+        "Git initialization requires a non-empty Git executable."));
+    return result;
+  }
+  if (request.git()) {
+    // Git repository-local environment overrides take precedence over -C.
+    // Refuse them before creating any scaffold output: otherwise `git init`
+    // could mutate external metadata which local rollback cannot restore.
+    for (const char *variable :
+         {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+          "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+          "GIT_IMPLICIT_WORK_TREE"}) {
+      if (std::getenv(variable) != nullptr) {
+        result.status = ProjectScaffoldStatus::InvalidRequest;
+        result.diagnostics.push_back(scaffoldDiagnostic(
+            request.destination(), "GTI-B1500",
+            "Cannot initialize a standalone Git repository while '" +
+                std::string(variable) +
+                "' is set; unset that environment variable and retry."));
+        return result;
+      }
+    }
+  }
 
   std::error_code error;
   result.packageRoot = std::filesystem::absolute(request.destination(), error)
@@ -1731,6 +1795,8 @@ ProjectScaffoldResult scaffoldProject(const ProjectScaffoldRequest &request) {
   const std::filesystem::path manifest = result.packageRoot / "gti.toml";
   const std::filesystem::path sourceDirectory = result.packageRoot / "src";
   const std::filesystem::path source = sourceDirectory / "main.gti";
+  const std::filesystem::path gitMetadata = result.packageRoot / ".git";
+  const std::filesystem::path gitIgnore = result.packageRoot / ".gitignore";
   const ScaffoldEntryKind manifestKind = inspectScaffoldEntry(manifest, error);
   if (manifestKind == ScaffoldEntryKind::Failure) {
     result.status = ProjectScaffoldStatus::FilesystemFailure;
@@ -1745,6 +1811,43 @@ ProjectScaffoldResult scaffoldProject(const ProjectScaffoldRequest &request) {
     result.diagnostics.push_back(scaffoldDiagnostic(
         manifest, "GTI-B1503", "A project manifest already exists."));
     return result;
+  }
+
+  if (request.git()) {
+    const ScaffoldEntryKind gitMetadataKind =
+        inspectScaffoldEntry(gitMetadata, error);
+    if (gitMetadataKind == ScaffoldEntryKind::Failure) {
+      result.status = ProjectScaffoldStatus::FilesystemFailure;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          gitMetadata, "GTI-B1504",
+          "Failed to inspect the Git metadata path: " + error.message() + "."));
+      return result;
+    }
+    if (gitMetadataKind != ScaffoldEntryKind::Missing) {
+      result.status = ProjectScaffoldStatus::Conflict;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          gitMetadata, "GTI-B1503",
+          "Cannot initialize Git because a '.git' entry already exists."));
+      return result;
+    }
+
+    const ScaffoldEntryKind gitIgnoreKind =
+        inspectScaffoldEntry(gitIgnore, error);
+    if (gitIgnoreKind == ScaffoldEntryKind::Failure) {
+      result.status = ProjectScaffoldStatus::FilesystemFailure;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          gitIgnore, "GTI-B1504",
+          "Failed to inspect the Git ignore path: " + error.message() + "."));
+      return result;
+    }
+    if (gitIgnoreKind != ScaffoldEntryKind::Missing) {
+      result.status = ProjectScaffoldStatus::Conflict;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          gitIgnore, "GTI-B1503",
+          "Cannot create the canonical GTI '.gitignore' because that entry "
+          "already exists."));
+      return result;
+    }
   }
 
   const ScaffoldEntryKind sourceDirectoryKind =
@@ -1815,9 +1918,19 @@ ProjectScaffoldResult scaffoldProject(const ProjectScaffoldRequest &request) {
   }
 
   bool manifestWriteAttempted = false;
+  bool gitIgnoreWriteAttempted = false;
+  bool createdGitMetadata = false;
   const auto rollback = [&] {
     std::error_code rollbackError;
+    if (createdGitMetadata) {
+      std::filesystem::remove_all(gitMetadata, rollbackError);
+    }
+    if (gitIgnoreWriteAttempted) {
+      rollbackError.clear();
+      std::filesystem::remove(gitIgnore, rollbackError);
+    }
     if (manifestWriteAttempted) {
+      rollbackError.clear();
       std::filesystem::remove(manifest, rollbackError);
     }
     if (createdRoot) {
@@ -1855,6 +1968,83 @@ ProjectScaffoldResult scaffoldProject(const ProjectScaffoldRequest &request) {
     result.diagnostics.push_back(scaffoldDiagnostic(
         manifest, "GTI-B1504", "Failed to write the project manifest."));
     return result;
+  }
+
+  if (request.git()) {
+    gitIgnoreWriteAttempted = true;
+    if (!writeScaffoldFile(gitIgnore, scaffoldGitIgnore)) {
+      rollback();
+      result.createdSource = false;
+      result.status = ProjectScaffoldStatus::FilesystemFailure;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          gitIgnore, "GTI-B1504",
+          "Failed to write the canonical GTI '.gitignore'."));
+      return result;
+    }
+    result.createdGitIgnore = true;
+
+    // Reserve the exact metadata directory before starting Git. A missing
+    // entry observed during preflight is not ownership: another process may
+    // have created it since, and rollback must never delete that entry.
+    createdGitMetadata = std::filesystem::create_directory(gitMetadata, error);
+    if (!createdGitMetadata) {
+      const std::error_code reservationError = error;
+      rollback();
+      result.createdSource = false;
+      result.createdGitIgnore = false;
+      result.status = reservationError
+                          ? ProjectScaffoldStatus::FilesystemFailure
+                          : ProjectScaffoldStatus::Conflict;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          gitMetadata, reservationError ? "GTI-B1504" : "GTI-B1503",
+          reservationError ? "Failed to reserve the Git metadata directory: " +
+                                 reservationError.message() + "."
+                           : "Cannot initialize Git because a '.git' entry "
+                             "already exists."));
+      return result;
+    }
+    const ProcessResult git =
+        invokeProcess({request.git()->executable, "-C",
+                       result.packageRoot.string(), "init", "--quiet"},
+                      {.outputMode = ProcessOutputMode::Capture,
+                       .captureSuccessfulOutput = false,
+                       .description = "Git initialization"});
+    if (!git.succeeded()) {
+      rollback();
+      result.createdSource = false;
+      result.createdGitIgnore = false;
+      result.status = ProjectScaffoldStatus::ToolFailure;
+      result.diagnostics.push_back(
+          scaffoldDiagnostic(result.packageRoot, "GTI-B1504",
+                             "Failed to initialize the Git repository: " +
+                                 processFailureDetail(git) + "."));
+      return result;
+    }
+
+    const ScaffoldEntryKind initializedGitKind =
+        inspectScaffoldEntry(gitMetadata, error);
+    if (initializedGitKind == ScaffoldEntryKind::Failure) {
+      rollback();
+      result.createdSource = false;
+      result.createdGitIgnore = false;
+      result.status = ProjectScaffoldStatus::FilesystemFailure;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          gitMetadata, "GTI-B1504",
+          "Failed to inspect the initialized Git repository: " +
+              error.message() + "."));
+      return result;
+    }
+    if (initializedGitKind != ScaffoldEntryKind::Directory) {
+      rollback();
+      result.createdSource = false;
+      result.createdGitIgnore = false;
+      result.status = ProjectScaffoldStatus::ToolFailure;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          gitMetadata, "GTI-B1504",
+          "Git reported success without creating repository metadata."));
+      return result;
+    }
+    result.initializedGit = true;
   }
 
   result.status = ProjectScaffoldStatus::Success;
