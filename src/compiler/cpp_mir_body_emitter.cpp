@@ -1,6 +1,7 @@
 #include "cpp_mir_body_emitter.h"
 #include "cpp_mir_body_text_writer.h"
 #include "cpp_mir_control_flow.h"
+#include "gti/lowered_program.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
@@ -25425,11 +25426,13 @@ public:
                         const CppMirBodyEmissionMap &representations,
                         std::size_t indentation, bool failureForm = false,
                         std::string_view indentationPlaceholder = {},
-                        bool deducedCallableFamily = false)
+                        bool deducedCallableFamily = false,
+                        std::span<const LoweredBody> debugBodies = {})
       : program(program), representations(representations),
         indentation(indentation), failureForm(failureForm),
         indentationPlaceholder(indentationPlaceholder),
-        deducedCallableFamilyOverride(deducedCallableFamily) {}
+        deducedCallableFamilyOverride(deducedCallableFamily),
+        debugBodies(debugBodies) {}
 
   [[nodiscard]] std::string emit(const MirFunctionInstance &function,
                                  std::string_view familyLabel) {
@@ -26872,10 +26875,14 @@ public:
                << " cleanup\n";
       }
       for (const MirInstruction &instruction : block->instructions) {
+        emitDebugLocation(facts, block->id, instruction.id);
         emitInstruction(*block, instruction, facts);
         emitStagedFieldPublication(instruction, facts);
+        emitGeneratedLocation();
       }
+      emitDebugLocation(facts, block->id, 0);
       emitTerminator(*block, facts, controlFlow);
+      emitGeneratedLocation();
       --indentation;
       writeIndent();
       output << "}\n";
@@ -26883,10 +26890,74 @@ public:
     --indentation;
     writeIndent();
     output << "}\n";
-    return output.str();
+    return completedText();
   }
 
 private:
+  std::string completedText() const {
+    const std::string text = output.str();
+    if (debugBodies.empty())
+      return text;
+    // An operation can expand to many C++ lines. Do not let those physical
+    // lines invent subsequent GTI source lines. Nested body mappings and
+    // generated resets remain explicit directives in the completed template.
+    std::istringstream lines(text);
+    std::ostringstream mapped;
+    std::string line;
+    std::string active;
+    while (std::getline(lines, line)) {
+      if (line.starts_with("#line ")) {
+        active = line.find("\"<gti-generated>\"") == std::string::npos
+                     ? line
+                     : std::string{};
+      } else if (!active.empty() && !line.empty()) {
+        mapped << active << '\n';
+      }
+      mapped << line << '\n';
+    }
+    return mapped.str();
+  }
+
+  void emitGeneratedLocation() {
+    if (!debugBodies.empty())
+      output << "\n#line 1 \"<gti-generated>\"\n";
+  }
+
+  void emitDebugLocation(const ScalarBodyFacts &facts, MirBlockId block,
+                         MirInstructionId instruction) {
+    if (debugBodies.empty())
+      return;
+    const auto body =
+        std::find_if(debugBodies.begin(), debugBodies.end(),
+                     [&](const LoweredBody &candidate) {
+                       return candidate.identity.address ==
+                              MirBodyAddress{facts.kind, facts.id};
+                     });
+    if (body == debugBodies.end())
+      return;
+    const auto location =
+        std::find_if(body->sourceLocations.begin(), body->sourceLocations.end(),
+                     [&](const LoweredSourceLocation &candidate) {
+                       return candidate.block == block &&
+                              candidate.instruction == instruction;
+                     });
+    if (location == body->sourceLocations.end())
+      return;
+    output << "\n#line " << location->source.line << " \"";
+    for (const unsigned char byte : location->source.source) {
+      if (byte == '\\' || byte == '"') {
+        output << '\\' << static_cast<char>(byte);
+      } else if (byte < 32 || byte == 127) {
+        output << '\\' << static_cast<char>('0' + ((byte >> 6U) & 7U))
+               << static_cast<char>('0' + ((byte >> 3U) & 7U))
+               << static_cast<char>('0' + (byte & 7U));
+      } else {
+        output << static_cast<char>(byte);
+      }
+    }
+    output << "\"\n";
+  }
+
   [[nodiscard]] const MirClassInstance *
   disarmedConstructorLifecycleOwner(const ScalarBodyFacts &facts) const {
     if (!failureForm || facts.kind != MirBodyKind::Constructor ||
@@ -27272,7 +27343,8 @@ private:
       output << ") const "
              << ScalarBodyTextEmitter(program, representations, indentation,
                                       failureForm, indentationPlaceholder,
-                                      deducedCallableFamilyOverride)
+                                      deducedCallableFamilyOverride,
+                                      debugBodies)
                     .emit(*closure.lambda, currentFamilyLabel)
              << '\n';
       --indentation;
@@ -28082,14 +28154,15 @@ private:
       output << "::gti_failure_record_v2 *__gti_mir_failure_record) -> bool "
              << ScalarBodyTextEmitter(program, representations, indentation,
                                       true, indentationPlaceholder,
-                                      deducedCallableFamilyOverride)
+                                      deducedCallableFamilyOverride,
+                                      debugBodies)
                     .emit(*lambda, currentFamilyLabel);
       return;
     }
     output << ") -> " << typeSpelling(lambda->returnType) << ' '
            << ScalarBodyTextEmitter(program, representations, indentation,
                                     false, indentationPlaceholder,
-                                    deducedCallableFamilyOverride)
+                                    deducedCallableFamilyOverride, debugBodies)
                   .emit(*lambda, currentFamilyLabel);
   }
 
@@ -37159,6 +37232,7 @@ private:
   bool failureForm = false;
   std::string_view indentationPlaceholder;
   bool deducedCallableFamilyOverride = false;
+  std::span<const LoweredBody> debugBodies;
   std::string_view currentFamilyLabel;
   const MirBody *currentBody = nullptr;
   // Exact immutable-body queries only; reset for each emission and never
@@ -48018,7 +48092,7 @@ CppMirBodyEmissionPlan CppMirBodyEmitter::buildPlanFromAnalysis(
                                 bool deducedCallable) -> std::string {
     ScalarBodyTextEmitter writer(program_, representations_, 0, failure,
                                  cppMirBodyEmissionIndentationPlaceholder,
-                                 deducedCallable);
+                                 deducedCallable, debugBodies_);
     switch (address.kind) {
     case MirBodyKind::Module:
       if (address.owner == 0) {

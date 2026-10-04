@@ -783,7 +783,7 @@ private:
 
 std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   std::ostringstream output;
-  output << "lowered-program-v10\n";
+  output << "lowered-program-v11\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="
@@ -828,6 +828,13 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
       printGeneratedIdentity(output, required);
     }
     output << '\n';
+    for (const LoweredSourceLocation &location : body.sourceLocations) {
+      output << "  source-location bb" << location.block << ":i"
+             << location.instruction << ' '
+             << std::quoted(location.source.source) << ':'
+             << location.source.start << ':' << location.source.end << ':'
+             << location.source.line << '\n';
+    }
   }
 
   output << "declarations " << program.declarations().size() << '\n';

@@ -101,7 +101,8 @@ template <typename Payload>
 }
 
 [[nodiscard]] std::optional<lang::LoweredProgram>
-buildDetachedProgram(std::string_view sourceName = "lowered-program.gti") {
+buildDetachedProgram(std::string_view sourceName = "lowered-program.gti",
+                     bool debugInfo = false) {
   lang::FrontendResult frontend = lang::Frontend().analyze(sourceName, R"(
 using Unary = (int32_t) -> int32_t;
 
@@ -207,8 +208,8 @@ int main() {
   }
   lang::LoweredProgramBuild build = lang::LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
-      optimized.mir, optimized.report.transformations,
-      lang::TargetInfo::host());
+      optimized.mir, optimized.report.transformations, lang::TargetInfo::host(),
+      debugInfo);
   if (!build.valid()) {
     for (const lang::LoweredProgramIssue &issue : build.issues) {
       std::cerr << "lowered-program issue: " << issue.detail << '\n';
@@ -231,7 +232,7 @@ void testDetachedDeterministicProgram() {
   const std::string secondText = lang::LoweredProgramPrinter().print(*second);
   expect(firstText == secondText,
          "independent frontend snapshots should lower deterministically");
-  expect(firstText.find("lowered-program-v10") == 0 &&
+  expect(firstText.find("lowered-program-v11") == 0 &&
              firstText.find("\nmir\n") != std::string::npos,
          "the deterministic printer should serialize the complete contract");
   const gti_test::LoweredProgramInventory inventory =
@@ -519,6 +520,39 @@ int main() {
                       lang::LoweredProgramIssueKind::InvalidOptimization),
          "LoweredProgramBuilder should independently reject forged optimizer "
          "evidence before sealing backend input");
+}
+
+void testDetachedDebugLocations() {
+  auto normal = buildDetachedProgram();
+  auto debug = buildDetachedProgram("debug-source.gti", true);
+  expect(normal && debug,
+         "debug capture should retain a valid detached program");
+  if (!normal || !debug)
+    return;
+  expect(std::all_of(
+             normal->bodies().begin(), normal->bodies().end(),
+             [](const auto &body) { return body.sourceLocations.empty(); }),
+         "debug provenance should be opt-in");
+  auto &bodies = lang::LoweredProgramTestAccess::bodies(*debug);
+  const auto body =
+      std::find_if(bodies.begin(), bodies.end(), [](const auto &body) {
+        return !body.sourceLocations.empty();
+      });
+  expect(body != bodies.end(),
+         "debug provenance should survive frontend destruction");
+  if (body == bodies.end())
+    return;
+  expect(std::all_of(body->sourceLocations.begin(), body->sourceLocations.end(),
+                     [](const auto &row) {
+                       return row.source.source.ends_with("debug-source.gti") &&
+                              row.source.line > 0 &&
+                              row.source.start < row.source.end;
+                     }),
+         "debug rows should own real source statement spans");
+  body->sourceLocations.front().block = 999999;
+  expect(hasIssue(lang::verifyLoweredProgram(*debug),
+                  lang::LoweredProgramIssueKind::InvalidBodyInventory),
+         "debug stages must identify exact optimized MIR operations");
 }
 
 void testMutationRejection() {
@@ -823,6 +857,7 @@ void testMutationRejection() {
 int main() {
   testDetachedDeterministicProgram();
   testBuilderRejectsForgedOptimizationEvidence();
+  testDetachedDebugLocations();
   testMutationRejection();
   if (failures != 0) {
     std::cerr << failures << " lowered-program test(s) failed\n";

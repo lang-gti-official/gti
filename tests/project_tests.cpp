@@ -98,7 +98,8 @@ root = "src/main.gti"
          "cpp-standard = \"c++20\"\n"
          "execution-profile = \"concurrent\"\n"
          "disabled-warnings = [\"unused-mut\"]\n"
-         "keep-cpp = true\n";
+         "keep-cpp = true\n"
+         "debug-info = true\n";
 }
 
 void testDiscoveryParsingAndResolution() {
@@ -177,7 +178,7 @@ void testDiscoveryParsingAndResolution() {
                development->cppStandard == lang::CppStandard::Cpp23 &&
                development->executionProfile ==
                    lang::ExecutionProfile::SingleThreaded &&
-               !development->keepCpp,
+               !development->keepCpp && !development->debugInfo,
            "the built-in dev profile should have stable defaults");
     expect(release != nullptr &&
                release->optimization == lang::OptimizationLevel::O2 &&
@@ -186,7 +187,7 @@ void testDiscoveryParsingAndResolution() {
                    lang::ExecutionProfile::Concurrent &&
                release->warningPolicy.disabledGroups() ==
                    std::vector<std::string>{"unused-mut"} &&
-               release->keepCpp,
+               release->keepCpp && release->debugInfo,
            "manifest profile fields should refine built-in defaults");
   }
 
@@ -195,6 +196,7 @@ void testDiscoveryParsingAndResolution() {
   overrides.cppStandard = lang::CppStandard::Cpp23;
   overrides.executionProfile = lang::ExecutionProfile::SingleThreaded;
   overrides.keepCpp = false;
+  overrides.debugInfo = false;
   overrides.warningPolicy = lang::WarningPolicy({"unreachable-code"});
   const lang::TargetInfo targetInfo{
       .os = "testos", .vendor = "testvendor", .arch = "testarch"};
@@ -220,7 +222,7 @@ void testDiscoveryParsingAndResolution() {
                 lang::ExecutionProfile::SingleThreaded &&
             plan.warnings().disabledGroups() ==
                 (std::vector<std::string>{"unreachable-code", "unused-mut"}) &&
-            !plan.keepCpp(),
+            !plan.keepCpp() && !plan.debugInfo(),
         "explicit build overrides should win over profile settings");
   }
 

@@ -796,6 +796,7 @@ void compareNativeCommand(std::vector<BuildProvenanceDifference> &differences,
 std::string serializeBuildProvenanceJson(const BuildProvenance &provenance) {
   std::ostringstream stream;
   stream << "{\n  \"schema\": " << provenance.schema
+         << ",\n  \"debug_info\": " << (provenance.debugInfo ? "true" : "false")
          << ",\n  \"producer\": {\n    \"executable\": ";
   writeBuildFileJson(stream, provenance.producerExecutable);
   stream << ",\n    \"compiler_build\": {\"state\":";
@@ -941,6 +942,11 @@ parseBuildProvenanceJson(std::string_view text, std::string &errorMessage) {
     return std::nullopt;
   }
   provenance.schema = currentBuildProvenanceSchema;
+  if (document->member("debug_info") != nullptr &&
+      !requireBoolean(*document, "debug_info", "report", provenance.debugInfo,
+                      errorMessage)) {
+    return std::nullopt;
+  }
 
   const JsonValue *producer = nullptr;
   if (!requireMember(*document, "producer", JsonValue::Kind::Object, "report",
@@ -1189,6 +1195,9 @@ compareBuildProvenance(const BuildProvenance &recorded,
   std::vector<BuildProvenanceDifference> differences;
   compareValue(differences, "report", "schema", std::to_string(recorded.schema),
                std::to_string(observed.schema));
+  compareValue(differences, "build policy", "debug info",
+               recorded.debugInfo ? "true" : "false",
+               observed.debugInfo ? "true" : "false");
   compareProject(differences, recorded.project, observed.project);
   compareFile(differences, "producer executable", recorded.producerExecutable,
               observed.producerExecutable);

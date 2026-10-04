@@ -27,7 +27,7 @@ public:
         const HirProgram &hir, const MirProgram &sourceMir,
         const MirProgram &optimizedMir,
         const std::vector<MirTransformRecord> &transformations,
-        const TargetInfo &target) const;
+        const TargetInfo &target, bool captureSourceLocations = false) const;
 };
 
 } // namespace lang

@@ -74,10 +74,23 @@ struct LoweredGeneratedItemIdentity {
                          const LoweredGeneratedItemIdentity &) = default;
 };
 
+// Optional statement-level provenance for an exact optimized MIR stage.
+// Instruction zero denotes the block terminator; generated glue has no row.
+// This is debug metadata only, never executable or ownership authority.
+struct LoweredSourceLocation {
+  MirBlockId block = 0;
+  MirInstructionId instruction = 0;
+  SourceSpan source;
+
+  friend bool operator==(const LoweredSourceLocation &,
+                         const LoweredSourceLocation &) = default;
+};
+
 struct LoweredBody {
   LoweredBodyIdentity identity;
   LoweredBodyRole role = LoweredBodyRole::SourceExecutable;
   std::vector<LoweredGeneratedItemIdentity> requiredGeneratedItems;
+  std::vector<LoweredSourceLocation> sourceLocations;
 
   friend bool operator==(const LoweredBody &, const LoweredBody &) = default;
 };
