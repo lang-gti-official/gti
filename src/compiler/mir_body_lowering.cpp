@@ -6634,11 +6634,9 @@ private:
   // schedule inside MIR's primitive vocabulary instead of one opaque
   // compound instruction a backend would have to re-derive.
   //
-  // The bounded family requires the read, the operation, and the commit to
-  // share one fixed-width integer domain. A narrowing form folds a checked
-  // conversion into the same HIR-authored failure origin, and MIR may not
-  // split that origin across stages, so it stays on the compound instruction
-  // until semantics gives each stage its own origin.
+  // Semantics records the arithmetic domain separately from the destination
+  // and gives arithmetic and checked narrowing independent source origins.
+  // MIR preserves those facts as read -> compute -> convert -> commit.
   [[nodiscard]] static bool fixedWidthIntegerType(const SemanticType &type) {
     switch (type.kind) {
     case SemanticType::Int8:
@@ -6699,6 +6697,8 @@ private:
   struct OrderedCompoundSchedule {
     DefinedFailureOperation readFailure;
     DefinedFailureOperation arithmeticFailure;
+    DefinedFailureOperation conversionFailure;
+    SemanticType arithmeticType = SemanticType::Unknown;
   };
 
   [[nodiscard]] static bool samePlaceRoot(const MirPlace &left,
@@ -6737,9 +6737,12 @@ private:
     const bool arrayElement =
         place != nullptr && fixedArrayElementPlace(*place);
     const bool floating = semanticFloatFormat(value.info.type).has_value();
-    if (place == nullptr || (place->projections.size() > 1 && !arrayElement) ||
+    const SemanticType arithmeticType = value.info.updateArithmeticType;
+    if (place == nullptr ||
         (!fixedWidthIntegerType(value.info.type) && !floating) ||
-        place->type != value.info.type || operandType != value.info.type ||
+        (!fixedWidthIntegerType(arithmeticType) && !floating) ||
+        place->type != value.info.type ||
+        (!fixedWidthIntegerType(operandType) && !floating) ||
         value.info.category != ValueCategory::Value ||
         value.info.traits.drop != DropKind::Trivial ||
         value.info.traits.containsBorrowedState || value.ownership ||
@@ -6749,6 +6752,7 @@ private:
     }
 
     OrderedCompoundSchedule schedule;
+    schedule.arithmeticType = arithmeticType;
     for (const DefinedFailureOrigin &origin :
          value.definedFailure.localOrigins) {
       const bool bounds =
@@ -6758,15 +6762,23 @@ private:
                         return outcome.code ==
                                DefinedFailureCode::IndexOutOfBounds;
                       });
-      (bounds ? schedule.readFailure.localOrigins
-              : schedule.arithmeticFailure.localOrigins)
+      const bool conversion =
+          origin.outcomes ==
+          std::vector<DefinedFailureOutcome>{
+              {.code = DefinedFailureCode::NumericConversionOutOfRange,
+               .detail = DefinedFailureDetail::NumericCast}};
+      (bounds       ? schedule.readFailure.localOrigins
+       : conversion ? schedule.conversionFailure.localOrigins
+                    : schedule.arithmeticFailure.localOrigins)
           .push_back(origin);
     }
     const bool arithmeticValid =
         floating
             ? schedule.arithmeticFailure.empty()
             : orderedCompoundOutcomes(schedule.arithmeticFailure, operation);
-    if (schedule.readFailure.localOrigins.size() > 1 || !arithmeticValid) {
+    if (schedule.readFailure.localOrigins.size() > 1 ||
+        schedule.conversionFailure.localOrigins.size() > 1 ||
+        !arithmeticValid) {
       return std::nullopt;
     }
     return schedule;
@@ -6779,21 +6791,31 @@ private:
       const HirValue &value, MirPlaceId destination, MirOperation operation,
       MirOperand sourceOperand, bool postfix, bool commitResult,
       const OrderedCompoundSchedule &schedule,
-      UnsafeOperationKind unsafeOperation = UnsafeOperationKind::None) {
+      UnsafeOperationKind unsafeOperation = UnsafeOperationKind::None,
+      MirValueId preparedRead = 0) {
     const MirValueId canonical = mirValueFor(value);
-    const MirValueId readValue =
-        postfix ? canonical : appendValue(value.id, value.info);
-    (void)appendInstruction({.kind = MirInstructionKind::Load,
-                             .hirValue = value.id,
-                             .result = readValue,
-                             .operands = {{.kind = MirOperandKind::Copy,
-                                           .place = destination,
-                                           .type = value.info.type}},
-                             .definedFailure = schedule.readFailure,
-                             .info = value.info},
-                            false);
-    const MirValueId computedValue =
-        postfix || commitResult ? appendValue(value.id, value.info) : canonical;
+    const MirValueId readValue = preparedRead != 0 ? preparedRead
+                                 : postfix ? canonical
+                                           : appendValue(value.id, value.info);
+    if (preparedRead == 0)
+      (void)appendInstruction({.kind = MirInstructionKind::Load,
+                               .hirValue = value.id,
+                               .result = readValue,
+                               .operands = {{.kind = MirOperandKind::Copy,
+                                             .place = destination,
+                                             .type = value.info.type}},
+                               .definedFailure = schedule.readFailure,
+                               .info = value.info},
+                              false);
+    ExpressionInfo arithmeticInfo = value.info;
+    arithmeticInfo.type = schedule.arithmeticType == SemanticType::Unknown
+                              ? value.info.type
+                              : schedule.arithmeticType;
+    arithmeticInfo.traits = semanticTraits(arithmeticInfo.type);
+    const bool conversion = arithmeticInfo.type != value.info.type;
+    const MirValueId computedValue = postfix || commitResult || conversion
+                                         ? appendValue(value.id, arithmeticInfo)
+                                         : canonical;
     (void)appendInstruction({.kind = MirInstructionKind::Compute,
                              .hirValue = value.id,
                              .unsafeOperation = unsafeOperation,
@@ -6804,8 +6826,24 @@ private:
                                           std::move(sourceOperand)},
                              .operation = operation,
                              .definedFailure = schedule.arithmeticFailure,
-                             .info = value.info},
+                             .info = arithmeticInfo},
                             false);
+    MirValueId committedValue = computedValue;
+    if (conversion) {
+      committedValue = postfix || commitResult
+                           ? appendValue(value.id, value.info)
+                           : canonical;
+      (void)appendInstruction({.kind = MirInstructionKind::Compute,
+                               .hirValue = value.id,
+                               .result = committedValue,
+                               .operands = {{.kind = MirOperandKind::Value,
+                                             .value = computedValue,
+                                             .type = arithmeticInfo.type}},
+                               .operation = MirOperation::Convert,
+                               .definedFailure = schedule.conversionFailure,
+                               .info = value.info},
+                              false);
+    }
     // The commit keeps assignment's ordinary result contract; a prefix or
     // compound form denotes it, and a postfix form discards it in favor of
     // the pre-update read.
@@ -6815,7 +6853,7 @@ private:
          .result = commitResult ? canonical : appendValue(value.id, value.info),
          .destination = destination,
          .operands = {{.kind = MirOperandKind::Value,
-                       .value = computedValue,
+                       .value = committedValue,
                        .type = value.info.type}},
          .operation = MirOperation::Assign,
          .info = value.info});
@@ -7106,6 +7144,33 @@ private:
         destination = destinationFor(*value);
       }
       attachPlaceIdentity(destination, *value);
+      const MirOperation assignOperation =
+          value->operation ? assignmentOperation(*value->operation)
+                           : MirOperation::None;
+      const MirOperation compoundOperation =
+          orderedCompoundArithmetic(assignOperation);
+      std::optional<OrderedCompoundSchedule> compoundSchedule;
+      MirValueId compoundRead = 0;
+      if (compoundOperation != MirOperation::None && !value->operands.empty()) {
+        const HirValue *right = findValue(value->operands.back());
+        if (right != nullptr) {
+          compoundSchedule = orderedCompoundSchedule(
+              *value, destination, right->info.type, compoundOperation);
+        }
+        if (compoundSchedule) {
+          compoundRead = appendValue(value->id, value->info);
+          (void)appendInstruction(
+              {.kind = MirInstructionKind::Load,
+               .hirValue = value->id,
+               .result = compoundRead,
+               .operands = {{.kind = MirOperandKind::Copy,
+                             .place = destination,
+                             .type = value->info.type}},
+               .definedFailure = compoundSchedule->readFailure,
+               .info = value->info},
+              false);
+        }
+      }
       std::vector<MirOperand> operands;
       MirDropObligationId sourceObligation = 0;
       if (!value->operands.empty()) {
@@ -7113,11 +7178,6 @@ private:
         operands.push_back(valueOperand(sourceValue));
         sourceObligation = dropObligationForValue(sourceValue);
       }
-      const MirOperation assignOperation =
-          value->operation ? assignmentOperation(*value->operation)
-                           : MirOperation::None;
-      const MirOperation compoundOperation =
-          orderedCompoundArithmetic(assignOperation);
       const MirOperation pointerCompoundOperation =
           assignOperation == MirOperation::AddAssign
               ? MirOperation::PointerAdd
@@ -7138,17 +7198,15 @@ private:
             value->unsafeOperation);
         return;
       }
-      const std::optional<OrderedCompoundSchedule> compoundSchedule =
-          compoundOperation == MirOperation::None || operands.size() != 1 ||
-                  sourceObligation != 0
-              ? std::nullopt
-              : orderedCompoundSchedule(*value, destination,
-                                        operands.front().type,
-                                        compoundOperation);
       if (compoundSchedule) {
+        if (operands.size() != 1 || sourceObligation != 0) {
+          valid = false;
+          return;
+        }
         emitOrderedCompoundSchedule(*value, destination, compoundOperation,
                                     std::move(operands.front()), false, true,
-                                    *compoundSchedule);
+                                    *compoundSchedule,
+                                    UnsafeOperationKind::None, compoundRead);
         return;
       }
       if (reservedBorrowStore) {

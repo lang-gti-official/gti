@@ -4497,15 +4497,51 @@ int main() {
         line.find(" {") != std::string::npos;
     checkedReferenceCompound =
         checkedReferenceCompound ||
-        (line.find("mir_checked_compound_multiply_v1(") != std::string::npos &&
-         line.find("___gti_operator_subscript(") != std::string::npos);
+        line.find("mir_checked_multiply_v1(") != std::string::npos;
   }
   expect(normalDefinitions == 2,
          "the C++ artifact should define both ordinary subscript boundaries "
          "instead of leaving compatibility calls unresolved");
   expect(checkedReferenceCompound,
          "a reference-projected class subscript should preserve the checked "
-         "compound operation instead of degrading it to assignment");
+         "arithmetic in its primitive read/compute/commit schedule");
+  bool checkedSchedule = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Compute ||
+            instruction.operation != lang::MirOperation::Multiply ||
+            instruction.operands.size() != 2 || !instruction.result)
+          continue;
+        const auto *read =
+            function.body.findValue(instruction.operands.front().value);
+        const auto *readBlock =
+            read ? function.body.findBlock(read->definitionBlock) : nullptr;
+        const auto loaded =
+            readBlock ? std::find_if(readBlock->instructions.begin(),
+                                     readBlock->instructions.end(),
+                                     [&](const auto &item) {
+                                       return item.id == read->definition;
+                                     })
+                      : block.instructions.end();
+        if (!readBlock || loaded == readBlock->instructions.end() ||
+            loaded->kind != lang::MirInstructionKind::Load ||
+            loaded->operands.size() != 1)
+          continue;
+        for (const auto &success : function.body.blocks)
+          for (const auto &commit : success.instructions)
+            checkedSchedule |=
+                commit.kind == lang::MirInstructionKind::Assign &&
+                commit.destination == loaded->operands.front().place &&
+                commit.operands.size() == 1 &&
+                commit.operands.front().value == *instruction.result &&
+                block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                block.terminator.target == success.id;
+      }
+    }
+  }
+  expect(checkedSchedule, "subscript compound commit occurs only after the "
+                          "checked multiply succeeds");
 }
 
 constexpr NamedTest kTests[] = {

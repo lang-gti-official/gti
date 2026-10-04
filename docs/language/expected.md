@@ -32,6 +32,13 @@ path; `T` need not have a default constructor and may be `void`. The error's
 ordinary copying or explicit movement rules still apply. This does not extend
 the checked-reference specialization described below.
 
+`unexpected(error)` checks ownership when it constructs the error payload,
+including in returns, initializers and call arguments. A noncopyable place is
+rejected there with an ownership diagnostic rather than deferred to native
+code generation. For an error borrowed from an expected carrier, transfer it
+with `unexpected(std::move(carrier).error())`; `unexpected(carrier.error())`
+would copy. A fresh error value or an ordinary copyable error remains valid.
+
 Expected values follow the C++ observer model:
 
 ```gti

@@ -1,5 +1,25 @@
 # Compiler Verification
 
+## Narrow updates, borrowed arrays and error transport
+
+`issues_30_33` checks semantic ownership rejection at `unexpected` payloads,
+fresh/moved/copyable errors, passive consuming Expected relays, and unchanged
+use-after-move, read-only, escape and live-loan rules. It verifies promoted
+arithmetic followed by checked narrowing and rejects malformed failure
+contracts, payload identities and move ownership. The subscript preflight test
+checks that the primitive multiplication commits to the original place only
+on its success edge.
+
+`issues_30_33_runtime` runs 120 outcomes across C++20/C++23 O0/O1/O2/O3,
+disabled elision and ASan/UBSan. Cases cover signed/unsigned narrow limits,
+prefix/postfix results, mixed-width compounds, read-before-RHS ordering,
+borrowed nested array reads/writes, exact first-failure locations, unchanged
+destinations after failed checks, reverse-order cleanup and move-only error
+construction/relay. `issues_30_33_lsp` checks CLI/LSP agreement, exact Unicode
+UTF-16 payload ranges, explicit-move advice without unsafe fixes, corrected
+overlays and stale-action rejection. This focused evidence uses a Release
+compiler on macOS arm64; it does not claim Linux or Windows execution.
+
 ## Ownership diagnostic explanations
 
 `testOwnershipAndMissingIncludeDiagnostics` covers exact move origins, branch
