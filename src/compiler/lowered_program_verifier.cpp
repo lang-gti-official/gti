@@ -910,6 +910,20 @@ verifyLoweredProgram(const LoweredProgram &program) {
         program.mir_.constructorInstances()[index];
     const auto *declaration =
         program.findConstructorDeclaration(instance.declaration);
+    const auto *owner = program.mir_.findClassInstance(instance.owner);
+    if (instance.declaration == 0 &&
+        (owner == nullptr ||
+         owner->defaultConstructor != SpecialMemberStatus::Generated ||
+         !owner->declaredFields.empty() || owner->destructor ||
+         !mir.parameterTypes.empty() || !mir.typeArguments.empty() ||
+         !mir.valueArguments.empty() || mir.initializers.size() != 1 ||
+         mir.initializers.front().kind !=
+             ConstructorInitializerTargetKind::Base ||
+         mir.definitionKind != MirDefinitionKind::Source)) {
+      addIssue(
+          issues, LoweredProgramIssueKind::InvalidInstanceInventory,
+          "generated constructor instance has an invalid structural schedule");
+    }
     if (instance.id != index + 1 || instance.id != mir.id ||
         instance.owner != mir.owner ||
         instance.typeArguments != mir.typeArguments ||

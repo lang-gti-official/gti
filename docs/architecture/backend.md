@@ -1004,6 +1004,29 @@ operation. A policy declaration never becomes an empty C++ body: semantic
 analysis has already decided structural availability, and the lifecycle status
 remains the backend authority for that result.
 
+A generated default constructor of a non-generic class with no declared
+instance fields or destructor has a selected HIR constructor instance when
+its state-bearing non-generic base has an exact zero-parameter source
+constructor. Semantics records that base declaration identity; HIR discovers
+the base even when no expression constructs it directly. The generated
+instance has declaration identity zero and no AST constructor. Its ordinary
+constructor MIR body owns the exact base initialization, success activation,
+and failure propagation, so a failed base cleans its completed state and then
+the caller's live locals. Methods and static fields do not change eligibility.
+The MIR `Source` definition category means an executable GTI constructor body
+in this family; it does not assert that an AST constructor declaration exists.
+HIR and lowered-program checks independently bind the generated body to its
+owner's generated lifecycle status and the selected base schedule.
+
+The C++ plan emits this body's admitted status constructor instead of a native
+`= default` operation that would call a missing ordinary base entry. Trivial
+and cleanup-owning bases use the same `InitializeBase` publication contract;
+the rollback record retains the base's exact cleanup requirement. No terminal
+adapter or native exception supplies the failure path. Derived instance fields,
+source destructors, generic owners/bases, constructor default arguments and
+generated-base chains remain outside this generated-body slice and retain
+their existing structural construction representation.
+
 When a field or static initializer selects a failure-capable source
 constructor, the private C++ representation snapshot derives one exact
 contained-constructor row from the lowered initializer schedule and constructor

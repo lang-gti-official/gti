@@ -1977,76 +1977,148 @@ void testSourceDestructorOwningFieldCleanup() {
 }
 
 void testOwningBaseConstructorStatus() {
-  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
-                       "fixtures/inherited_unique_allocation.gti";
-  std::ifstream input(fixture);
-  expect(input.good(), "the inherited-allocation fixture must exist");
-  const std::string source{std::istreambuf_iterator<char>(input),
-                           std::istreambuf_iterator<char>()};
-  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
-  expect(frontend.canGenerateCode(), "the owning-base fixture must verify");
-  if (!frontend.canGenerateCode())
-    return;
-  std::size_t selected = 0;
-  for (const auto &constructor : frontend.mir.constructorInstances()) {
-    const auto *entry = constructor.body.findBlock(constructor.body.entry);
-    if (!entry || entry->instructions.empty() ||
-        entry->instructions.front().kind !=
-            lang::MirInstructionKind::InitializeBase)
-      continue;
-    ++selected;
-    const auto &stage = entry->instructions.front();
-    const auto bindings =
-        lang::cppMirBaseParameterInitializerBindings(frontend.mir, constructor);
-    expect(bindings && bindings->size() == 1 &&
-               bindings->front().parameters.empty() &&
-               bindings->front().constructor == stage.constructorTarget &&
-               bindings->front().initializer + 1 ==
-                   stage.constructorInitializer,
-           "zero-argument base initialization must retain its exact native "
-           "binding");
-    for (const auto standard :
-         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-      const lang::CppMirBodyEmissionMap map(
-          buildRows(frontend, frontend.mir, standard));
-      const lang::CppMirBodyEmitter emitter(frontend.mir, map);
-      const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
-                                         .owner = constructor.id};
-      expect(emitter.supportsFailureBodyText(address) &&
-                 !emitter.supportsBodyText(address),
-             "base initialization must consume its MIR failure edge, not a "
-             "terminal plain call");
-      const auto text =
-          emitter.emitFailureBodyText(address, "owning-base-test-v0", 1);
-      expect(text.emitted() &&
-                 text.text.find(" = *__gti_mir_constructor_success;") !=
-                     std::string::npos &&
-                 text.text.find("if (__gti_mir_construct_success_" +
-                                std::to_string(stage.id) + ")") !=
-                     std::string::npos &&
-                 text.text.find("auto &__gti_mir_p_" +
-                                std::to_string(*stage.destination) + " =") ==
-                     std::string::npos &&
-                 text.text.find("mir_rollback_field_v1(") == std::string::npos,
-             "the base must use its status edge without a field alias or field "
-             "replacement");
-      auto malformed = frontend.mir;
-      auto &constructors =
-          const_cast<std::vector<lang::MirConstructorInstance> &>(
-              malformed.constructorInstances());
-      for (auto &candidate : constructors) {
-        if (candidate.id == constructor.id)
-          candidate.body.blocks[candidate.body.entry - 1]
-              .instructions.front()
-              .successResultDrop.reset();
+  for (const auto fixtureName :
+       {"inherited_unique_allocation.gti", "generated_base_constructor.gti",
+        "generated_base_owner_constructor.gti"}) {
+    const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                         "fixtures" / fixtureName;
+    std::ifstream input(fixture);
+    expect(input.good(), "the inherited-allocation fixture must exist");
+    const std::string source{std::istreambuf_iterator<char>(input),
+                             std::istreambuf_iterator<char>()};
+    const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+    expect(frontend.canGenerateCode(), "the owning-base fixture must verify");
+    if (!frontend.canGenerateCode())
+      return;
+    for (const auto &generated : frontend.hir.constructorInstances()) {
+      if (!generated.generatedDefault)
+        continue;
+      expect(
+          generated.declaration == 0 && generated.source == nullptr &&
+              generated.initializers.size() == 1,
+          "generated construction needs a selected body without synthetic AST");
+      for (int mutation = 0; mutation != 7; ++mutation) {
+        auto malformed = frontend.hir;
+        auto *changed = const_cast<lang::HirConstructorInstance *>(
+            malformed.findConstructorInstance(generated.id));
+        if (mutation == 0)
+          changed->generatedDefault = false;
+        else if (mutation == 1)
+          changed->initializers.front().constructorTarget = generated.id;
+        else if (mutation == 2)
+          changed->initializers.front().base = 999999;
+        else if (mutation == 3)
+          changed->initializers.front().targetType = lang::SemanticType::Int32;
+        else if (mutation == 4)
+          changed->body.roots.push_back(999999);
+        else if (mutation == 5)
+          changed->owner = 999999;
+        else
+          changed->declaration = 999999;
+        expect(
+            !lang::verifyHirProgramPlans(frontend.semantics, malformed).valid(),
+            "generated construction must retain its exact semantic selection");
       }
-      expect(!lang::CppMirBodyEmitter(malformed, map)
-                  .supportsFailureBodyText(address),
-             "base status emission must reject missing rollback activation");
+      bool erasedCall = false;
+      auto malformed = frontend.hir;
+      for (const auto &function : malformed.functionInstances()) {
+        auto *changed = const_cast<lang::HirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        for (auto &value : changed->body.values) {
+          if (value.constructorTarget == generated.id) {
+            value.constructorTarget.reset();
+            value.definedFailure.propagation =
+                lang::FailurePropagationKind::None;
+            erasedCall = true;
+          }
+        }
+      }
+      expect(erasedCall &&
+                 !lang::verifyHirProgramPlans(frontend.semantics, malformed)
+                      .valid(),
+             "generated construction cannot erase both target and propagation "
+             "into a native default call");
     }
+    std::size_t selected = 0;
+    for (const auto &constructor : frontend.mir.constructorInstances()) {
+      const auto *entry = constructor.body.findBlock(constructor.body.entry);
+      if (!entry || entry->instructions.empty() ||
+          entry->instructions.front().kind !=
+              lang::MirInstructionKind::InitializeBase)
+        continue;
+      ++selected;
+      const auto &stage = entry->instructions.front();
+      const auto bindings = lang::cppMirBaseParameterInitializerBindings(
+          frontend.mir, constructor);
+      expect(bindings && bindings->size() == 1 &&
+                 bindings->front().parameters.empty() &&
+                 bindings->front().constructor == stage.constructorTarget &&
+                 bindings->front().initializer + 1 ==
+                     stage.constructorInitializer,
+             "zero-argument base initialization must retain its exact native "
+             "binding");
+      for (const auto standard :
+           {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+        const lang::CppMirBodyEmissionMap map(
+            buildRows(frontend, frontend.mir, standard));
+        const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+        const lang::MirBodyAddress address{
+            .kind = lang::MirBodyKind::Constructor, .owner = constructor.id};
+        expect(emitter.supportsFailureBodyText(address) &&
+                   !emitter.supportsBodyText(address),
+               "base initialization must consume its MIR failure edge, not a "
+               "terminal plain call");
+        const auto text =
+            emitter.emitFailureBodyText(address, "owning-base-test-v0", 1);
+        expect(
+            text.emitted() &&
+                text.text.find(" = *__gti_mir_constructor_success;") !=
+                    std::string::npos &&
+                text.text.find("if (__gti_mir_construct_success_" +
+                               std::to_string(stage.id) + ")") !=
+                    std::string::npos &&
+                text.text.find("auto &__gti_mir_p_" +
+                               std::to_string(*stage.destination) + " =") ==
+                    std::string::npos &&
+                text.text.find("mir_rollback_field_v1(") == std::string::npos,
+            "the base must use its status edge without a field alias or field "
+            "replacement");
+        auto malformed = frontend.mir;
+        auto &constructors =
+            const_cast<std::vector<lang::MirConstructorInstance> &>(
+                malformed.constructorInstances());
+        for (auto &candidate : constructors) {
+          if (candidate.id == constructor.id)
+            candidate.body.blocks[candidate.body.entry - 1]
+                .instructions.front()
+                .successResultDrop.reset();
+        }
+        expect(!lang::CppMirBodyEmitter(malformed, map)
+                    .supportsFailureBodyText(address),
+               "base status emission must reject missing rollback activation");
+        for (int mutation = 0; mutation != 3; ++mutation) {
+          auto forged = frontend.mir;
+          auto *changed = const_cast<lang::MirConstructorInstance *>(
+              forged.findConstructorInstance(constructor.id));
+          if (mutation == 0)
+            changed->initializers.front().base = 999999;
+          else if (mutation == 1)
+            changed->body.dropObligations[*stage.successResultDrop - 1]
+                .dropType.requiresActiveCleanup =
+                !changed->body.dropObligations[*stage.successResultDrop - 1]
+                     .dropType.requiresActiveCleanup;
+          else
+            changed->body.blocks[changed->body.entry - 1]
+                .terminator.successLifecycle.clear();
+          expect(!lang::verifyMirProgram(forged).valid(),
+                 "base identity, cleanup requirement and success activation "
+                 "are exact");
+        }
+      }
+    }
+    expect(selected == 1,
+           "the fixture must exercise exactly one owning-base stage");
   }
-  expect(selected == 1,
-         "the fixture must exercise exactly one owning-base stage");
 }
 
 void testBodyOrderedPassivePolicyConstructor() {

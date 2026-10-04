@@ -437,8 +437,7 @@ private:
           return candidate.id == initializer.base &&
                  candidate.type == initializer.targetType;
         });
-    if (base == program.classInstances().end() ||
-        !base->requiresActiveCleanup || base->destructor ||
+    if (base == program.classInstances().end() || base->destructor ||
         base->requiresActiveDropState) {
       return;
     }
@@ -456,9 +455,10 @@ private:
          .constructionOrder = rollback,
          .kind = MirDropObligationKind::ConstructionRollback,
          .place = destination,
-         .dropType = lowerDropType({.type = base->type,
-                                    .classInstance = base->id,
-                                    .requiresActiveCleanup = true})});
+         .dropType = lowerDropType(
+             {.type = base->type,
+              .classInstance = base->id,
+              .requiresActiveCleanup = base->requiresActiveCleanup})});
     (void)appendInstruction(
         {.kind = MirInstructionKind::InitializeBase,
          .constructorInitializer = initializerIndex + 1,
@@ -7902,9 +7902,10 @@ private:
         function != nullptr &&
         (function->source == nullptr || function->source->runtimeBinding() ||
          function->source->body() == nullptr);
-    const bool bodylessConstructor =
-        constructor != nullptr && (constructor->source == nullptr ||
-                                   constructor->source->body() == nullptr);
+    const bool bodylessConstructor = constructor != nullptr &&
+                                     !constructor->generatedDefault &&
+                                     (constructor->source == nullptr ||
+                                      constructor->source->body() == nullptr);
     return bodylessFunction || bodylessConstructor;
   }
 

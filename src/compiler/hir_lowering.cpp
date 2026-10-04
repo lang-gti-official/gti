@@ -563,13 +563,25 @@ private:
     }
     const std::optional<HirClassInstanceId> owner =
         enqueueClass(construction.constructedType, site);
+    const ClassTypeInfo *ownerType =
+        owner ? baseModel->findClassType(construction.constructedType.classId)
+              : nullptr;
+    const ClassLifecycleInfo *ownerLifecycle =
+        ownerType != nullptr && ownerType->declaration != nullptr
+            ? baseModel->findClassLifecycle(*ownerType->declaration)
+            : nullptr;
+    const bool generatedBase =
+        construction.generatedDefault && ownerLifecycle != nullptr &&
+        ownerLifecycle->generatedDefaultBaseConstructor != 0;
     if (!owner || construction.kind != ConstructorKind::Ordinary ||
-        construction.generatedDefault || construction.declaration == nullptr ||
-        construction.constructor == 0) {
+        (!generatedBase && (construction.generatedDefault ||
+                            construction.declaration == nullptr ||
+                            construction.constructor == 0))) {
       return 0;
     }
+    const ConstructorId identity = generatedBase ? 0 : construction.constructor;
     if (const std::optional<std::size_t> existing =
-            instanceIndex.findConstructor(construction.constructor, *owner,
+            instanceIndex.findConstructor(identity, *owner,
                                           construction.typeArguments,
                                           construction.valueArguments)) {
       HirConstructorInstance &instance =
@@ -586,8 +598,9 @@ private:
     output.program.constructors.push_back(
         {.id = id,
          .sourceUnit = output.program.classes[*owner - 1].sourceUnit,
-         .declaration = construction.constructor,
-         .source = construction.declaration,
+         .declaration = identity,
+         .source = generatedBase ? nullptr : construction.declaration,
+         .generatedDefault = generatedBase,
          .constexprConstructor = constant,
          .owner = *owner,
          .typeArguments = construction.typeArguments,
@@ -598,7 +611,7 @@ private:
          .borrowAccess = construction.borrowAccess,
          .borrowParameters = construction.borrowArguments,
          .instantiationSite = std::move(site)});
-    instanceIndex.recordConstructor(construction.constructor, *owner,
+    instanceIndex.recordConstructor(identity, *owner,
                                     construction.typeArguments,
                                     construction.valueArguments, id);
     return id;
@@ -1321,6 +1334,8 @@ private:
     }
     const HirConstructorInstance &snapshot =
         output.program.constructors[id - 1];
+    if (snapshot.generatedDefault)
+      return nullptr;
     if (snapshot.owner == 0 || snapshot.owner > output.program.classes.size()) {
       return nullptr;
     }
@@ -1550,6 +1565,56 @@ private:
     const std::string enclosingSourceFunctionName = currentSourceFunctionName;
     const ClassTypeInfo *ownerInfo =
         baseModel->findClassType(owner.declaration);
+    if (snapshot.generatedDefault) {
+      // Select the same implicit state-bearing base as an ordinary constructor.
+      // Keep the first executable structural family closed: no derived fields
+      // or destructor means there is no additional partial-object schedule.
+      const auto base = std::find_if(owner.bases.begin(), owner.bases.end(),
+                                     [](const HirBaseInstance &candidate) {
+                                       return !candidate.interface;
+                                     });
+      const ClassTypeInfo *baseType =
+          base == owner.bases.end()
+              ? nullptr
+              : baseModel->findClassType(base->type.classId);
+      const ClassLifecycleInfo *lifecycle =
+          baseType == nullptr || baseType->declaration == nullptr
+              ? nullptr
+              : baseModel->findClassLifecycle(*baseType->declaration);
+      if (!owner.fields.empty() || owner.destructor || lifecycle == nullptr ||
+          ownerInfo == nullptr || ownerInfo->declaration == nullptr) {
+        lifecycleValid = false;
+        return;
+      }
+      const auto *ownerLifecycle =
+          baseModel->findClassLifecycle(*ownerInfo->declaration);
+      const auto selected = std::find_if(
+          lifecycle->constructors.begin(), lifecycle->constructors.end(),
+          [&](const ConstructorInfo &candidate) {
+            return ownerLifecycle != nullptr &&
+                   candidate.id ==
+                       ownerLifecycle->generatedDefaultBaseConstructor;
+          });
+      if (selected == lifecycle->constructors.end() ||
+          !selected->parameterTypes.empty()) {
+        lifecycleValid = false;
+        return;
+      }
+      const HirConstructorInstanceId target =
+          enqueueConstructor({.constructor = selected->id,
+                              .declaration = selected->declaration,
+                              .constructedType = base->type});
+      if (target == 0) {
+        lifecycleValid = false;
+        return;
+      }
+      output.program.constructors[index].initializers.push_back(
+          {.kind = ConstructorInitializerTargetKind::Base,
+           .targetType = base->type,
+           .base = base->instance,
+           .constructorTarget = target});
+      return;
+    }
     currentSourceFunctionName =
         (ownerInfo == nullptr ? std::string{} : ownerInfo->qualifiedName) +
         "::" + snapshot.source->name().lexeme;
@@ -3452,6 +3517,7 @@ private:
         enqueueConstructor(construction, tokenSpan(initializer.brace()));
     if (target != 0) {
       value.constructorTarget = target;
+      value.definedFailure.propagation = FailurePropagationKind::Constructor;
     } else if (construction.constructor != 0 &&
                !construction.generatedDefault) {
       lifecycleValid = false;

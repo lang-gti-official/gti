@@ -1700,7 +1700,17 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
       construction != nullptr &&
       construction->kind == ConstructorKind::Ordinary &&
       construction->constructedType.kind == SemanticType::Class &&
-      construction->constructor != 0 && !construction->generatedDefault &&
+      ((construction->constructor != 0 && !construction->generatedDefault) ||
+       (construction->generatedDefault &&
+        [&] {
+          const auto *owner = classInfo(construction->constructedType);
+          const auto *lifecycle =
+              owner == nullptr || owner->declaration == nullptr
+                  ? nullptr
+                  : semanticModel.findClassLifecycle(*owner->declaration);
+          return lifecycle != nullptr &&
+                 lifecycle->generatedDefaultBaseConstructor != 0;
+        }())) &&
       (callResolution == nullptr ||
        callResolution->intrinsic == IntrinsicKind::None)) {
     operation.propagation = FailurePropagationKind::Constructor;

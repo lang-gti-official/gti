@@ -809,6 +809,9 @@ struct ClassLifecycleInfo {
   std::optional<ConstructorInfo> declaredMoveConstructor;
   std::optional<DestructorInfo> declaredDestructor;
   SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
+  // Exact source base selected by the bounded generated-constructor schedule.
+  // Zero retains the existing structural declaration-initializer route.
+  ConstructorId generatedDefaultBaseConstructor = 0;
   SpecialMemberStatus copyConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus moveConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus copyAssignment = SpecialMemberStatus::Deleted;

@@ -5546,6 +5546,21 @@ auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
         owner.destructor->declaration->specifier() &&
         owner.destructor->declaration->specifier()->kind ==
             SpecialMemberSpecifierKind::Deleted;
+    ConstructorId generatedBaseConstructor = 0;
+    if (defaultStatus == SpecialMemberStatus::Generated &&
+        owner.fields.empty() && !owner.destructor &&
+        owner.genericParameters.empty()) {
+      if (const auto *base = concreteBase(owner);
+          base != nullptr && base->type.arguments.empty() &&
+          base->type.valueArguments.empty()) {
+        const auto *selected =
+            defaultConstructor(classInfo(base->type.classId));
+        if (selected != nullptr && selected->parameterTypes.empty() &&
+            selected->declaration != nullptr &&
+            selected->declaration->body() != nullptr)
+          generatedBaseConstructor = selected->id;
+      }
+    }
     semanticModel.record(
         *owner.declaration,
         ClassLifecycleInfo{
@@ -5556,6 +5571,7 @@ auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
             .declaredMoveConstructor = owner.moveConstructor,
             .declaredDestructor = owner.destructor,
             .defaultConstructor = defaultStatus,
+            .generatedDefaultBaseConstructor = generatedBaseConstructor,
             .copyConstructor = copyStatus,
             .moveConstructor = moveStatus,
             .copyAssignment = traits.copyAssignable

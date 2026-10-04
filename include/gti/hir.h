@@ -579,6 +579,9 @@ struct HirConstructorInstance {
   SourceUnitId sourceUnit = 0;
   ConstructorId declaration = 0;
   const ConstructorDecl *source = nullptr;
+  // Structural default construction with an explicit, selected base schedule.
+  // Such instances have no source constructor declaration.
+  bool generatedDefault = false;
   bool constexprConstructor = false;
   HirClassInstanceId owner = 0;
   std::vector<SemanticType> typeArguments;
