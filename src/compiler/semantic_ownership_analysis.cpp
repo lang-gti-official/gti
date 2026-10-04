@@ -2031,6 +2031,12 @@ auto SemanticVisitor::Impl::storedBorrowSource(const ExprPtr &expression) const
   if (!expression) {
     return nullptr;
   }
+  if (const auto *unary = exprAs<Unary>(expression.get());
+      unary != nullptr && unary->oper().kind == TokenKind::QUESTION) {
+    const SemanticType *operand = semanticModel.findType(*unary->right());
+    if (operand != nullptr && isFallibleBorrowType(*operand))
+      return &unary->right();
+  }
   if (const auto *variable = exprAs<Variable>(expression.get())) {
     const Symbol *symbol = resolve(variable->name());
     if (symbol != nullptr &&
@@ -2217,6 +2223,12 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
     }
     return retainedLoanSource(unary->right());
   }
+  if (const auto *unary = exprAs<Unary>(expression.get());
+      unary != nullptr && unary->oper().kind == TokenKind::QUESTION) {
+    const SemanticType *operand = semanticModel.findType(*unary->right());
+    if (operand != nullptr && isFallibleBorrowType(*operand))
+      return retainedLoanSource(unary->right());
+  }
   if (const ResolvedOperatorInfo *resolved =
           semanticModel.findOperator(*expression)) {
     const ExprPtr *source = operatorBorrowSource(expression, *resolved);
@@ -2310,9 +2322,10 @@ auto SemanticVisitor::Impl::loanPlace(SemanticPlace place)
 
 auto SemanticVisitor::Impl::loanPlace(const BorrowOriginPlace &place) const
     -> SemanticLoanPlace {
-  return {.domain = {.snapshot = semanticModel.placeSnapshot()},
-          .root = place.root,
-          .projections = place.projections};
+  // Loan-flow places share one analysis-local domain, including globals.
+  // HIR qualifies all of them with the concrete snapshot/body domain. Giving
+  // only globals a snapshot here makes disjoint local carriers MayAlias.
+  return {.root = place.root, .projections = place.projections};
 }
 
 auto SemanticVisitor::Impl::loanPlace(const ExprPtr &expression)
@@ -2573,6 +2586,13 @@ auto SemanticVisitor::Impl::transientBorrowProduction(const ExprPtr &expression)
         .retainsValueCarrier =
             valueCarrier || (nested && nested->retainsValueCarrier)};
   };
+
+  if (const auto *unary = exprAs<Unary>(expression.get());
+      unary != nullptr && unary->oper().kind == TokenKind::QUESTION) {
+    const SemanticType *operand = semanticModel.findType(*unary->right());
+    if (operand != nullptr && isFallibleBorrowType(*operand))
+      return fromSource(unary->right(), AccessMode::ReadOnly, false, false);
+  }
 
   if (const ResolvedOperatorInfo *resolved =
           semanticModel.findOperator(*expression);

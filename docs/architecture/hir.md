@@ -90,6 +90,7 @@ verification rejects missing, duplicate, cyclic, non-void, nonreturning, or
 cross-expression dependencies and verifies the selected void mapper is not
 lost. Reachability, lifecycle assignment, and synthetic-default checks include
 these graph edges. MIR schedules the existing call and construction operations.
+
 The conditional's explicit `conditionalInputs` retain receiver-then-mapper
 evaluation before branching. They participate in full-expression assignment,
 module reachability, and parent-edge checks; synthetic default values cannot
@@ -103,9 +104,19 @@ An explicitly moved lambda receiver uses a `MoveValue` stage independently of
 its read-only invocation capability. Its value obligation retains cleanup for
 the full expression; the receiver stage does not transfer that obligation.
 
+Borrowed success extraction preserves the semantic read-only place category.
+`expected<T&, E>` propagation uses an `ExpectedValue` call carrying
+receiver-origin borrow authority and never adds a success `Move`. Only its
+error transport follows the carrier's value category. Borrowed `expect` uses
+the same extraction as the single normally completing arm of its conditional;
+the other arm is terminal panic. HIR verification checks the exact receiver,
+referent type, access, plan and transfer identities, including the absence of
+a referent copy/move. No public type spelling supplies these rules.
+
 `expect(message)` uses the same selected-combinator record and eager input
 contract, with receiver then counted message rather than a mapper. Its success
-arm extracts/moves the active owned value, or performs the void observer; its
+arm extracts/moves the active owned value, borrows the reference success, or
+performs the void observer; its
 error arm is the same terminal `Panic` intrinsic used by the trusted panic
 declaration. The intrinsic carries the call's semantic failure origin and
 caller-tracking contract. HIR plan checks reject a normal continuation or a

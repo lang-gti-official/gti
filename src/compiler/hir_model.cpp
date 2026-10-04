@@ -251,6 +251,76 @@ verifyHirProgramPlans(const SemanticModel &semantics,
 
   const auto verifyCallableValues = [&](const HirBody &body) {
     for (const HirValue &value : body.values) {
+      if (value.kind == HirValueKind::ExpectedPropagation ||
+          value.expectedPropagation) {
+        if (value.kind != HirValueKind::ExpectedPropagation ||
+            !value.expectedPropagation) {
+          result.errors.emplace_back(
+              "expected propagation lost its selected plan");
+        } else {
+          const auto &plan = *value.expectedPropagation;
+          const auto *operand = body.findValue(plan.operand);
+          const auto *success = body.findValue(plan.successExtraction);
+          const auto *error = body.findValue(plan.errorExtraction);
+          const auto *transport = body.findValue(plan.errorValue);
+          const auto *unexpected = body.findValue(plan.unexpected);
+          const bool carrier =
+              operand != nullptr &&
+              operand->info.type.kind == SemanticType::Expected &&
+              operand->info.type.arguments.size() == 2;
+          if (!carrier || success == nullptr || error == nullptr ||
+              transport == nullptr || unexpected == nullptr) {
+            result.errors.emplace_back(
+                "expected propagation references missing alternatives");
+          } else {
+            const auto &payload = operand->info.type.arguments.front();
+            const bool borrowed =
+                payload.kind == SemanticType::Reference &&
+                payload.arguments.size() == 1 &&
+                payload.referenceAccess == AccessMode::ReadOnly;
+            const SemanticType resultType =
+                borrowed ? payload.arguments.front() : payload;
+            const auto extraction = [&](const HirValue &part,
+                                        IntrinsicKind intrinsic,
+                                        const SemanticType &type) {
+              return part.kind == HirValueKind::Call &&
+                     part.intrinsic == intrinsic &&
+                     part.receiver == operand->id &&
+                     part.operands == std::vector<HirValueId>{operand->id} &&
+                     part.info.type == type &&
+                     part.fullExpression == value.fullExpression;
+            };
+            if (plan.moves !=
+                    (operand->info.category == ValueCategory::Value) ||
+                value.info.type != resultType ||
+                value.info.category !=
+                    (borrowed ? ValueCategory::Place : ValueCategory::Value) ||
+                value.info.access != AccessMode::ReadOnly ||
+                !extraction(*success, IntrinsicKind::ExpectedValue,
+                            resultType) ||
+                !extraction(*error, IntrinsicKind::ExpectedError,
+                            operand->info.type.arguments[1]) ||
+                (borrowed &&
+                 (plan.successValue != plan.successExtraction ||
+                  success->info.category != ValueCategory::Place ||
+                  success->info.access != AccessMode::ReadOnly ||
+                  success->borrowOrigin != BorrowOriginKind::Receiver ||
+                  success->borrowAccess != AccessMode::ReadOnly)) ||
+                unexpected->kind != HirValueKind::Unexpected ||
+                unexpected->operands !=
+                    std::vector<HirValueId>{plan.errorValue} ||
+                (plan.moves
+                     ? transport->kind != HirValueKind::Move ||
+                           transport->operands !=
+                               std::vector<HirValueId>{plan.errorExtraction}
+                     : plan.errorValue != plan.errorExtraction)) {
+              result.errors.emplace_back(
+                  "expected propagation lost its selected extraction or "
+                  "transfer contract");
+            }
+          }
+        }
+      }
       const HirFunctionInstance *contractTarget =
           value.kind == HirValueKind::Call && value.functionTarget
               ? program.findFunctionInstance(*value.functionTarget)
@@ -361,10 +431,22 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           const bool expectedResult =
               value.info.type.kind == SemanticType::Expected &&
               value.info.type.arguments.size() == 2;
+          const bool borrowedSuccess =
+              ownedSource &&
+              receiver->info.type.arguments.front().kind ==
+                  SemanticType::Reference &&
+              receiver->info.type.arguments.front().arguments.size() == 1;
           const bool validResult =
               ownedSource &&
               (transform->kind == ExpectedCombinatorKind::Expect
-                   ? value.info.type == receiver->info.type.arguments.front()
+                   ? borrowedSuccess
+                         ? value.info.type ==
+                                   receiver->info.type.arguments.front()
+                                       .arguments.front() &&
+                               value.info.category == ValueCategory::Place &&
+                               value.info.access == AccessMode::ReadOnly
+                         : value.info.type ==
+                               receiver->info.type.arguments.front()
                    : expectedResult &&
                          value.info.type.arguments
                                  [transform->kind ==
@@ -380,6 +462,19 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             result.errors.emplace_back(
                 "expected conditional lost its selected result or arms");
           } else if (transform->kind == ExpectedCombinatorKind::Expect) {
+            if (borrowedSuccess &&
+                (success->kind != HirValueKind::Call ||
+                 success->intrinsic != IntrinsicKind::ExpectedValue ||
+                 success->borrowOrigin != BorrowOriginKind::Receiver ||
+                 success->borrowAccess != AccessMode::ReadOnly ||
+                 success->info.category != ValueCategory::Place ||
+                 success->info.access != AccessMode::ReadOnly ||
+                 success->info.type != value.info.type ||
+                 success->operands != std::vector<HirValueId>{receiver->id} ||
+                 success->receiver != receiver->id)) {
+              result.errors.emplace_back("borrowed expect success lost its "
+                                         "read-only reference extraction");
+            }
             if (failure->intrinsic != IntrinsicKind::Panic ||
                 failure->info.type != SemanticType::Void ||
                 !failure->neverReturns || !failure->tracksCaller ||

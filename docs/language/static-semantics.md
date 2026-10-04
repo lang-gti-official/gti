@@ -1095,18 +1095,19 @@ and the immediately enclosing function or lambda must return
 does not consider conversions or overloads. The expression has type `T`, or
 `void` when `T` is `void`.
 
-The bounded `expected<T&, E>` checked-borrow specialization is excluded from
-`?` for now. It must be handled with `has_value()`, `error()`, and `value()` so
-the successful child loan remains explicit. `GTI-S2086` diagnoses propagation
-before HIR lowering. That specialization accepts only a read-only reference
-success payload, one non-borrowing error type, and the single receiver,
+For the bounded `expected<T&, E>` checked-borrow specialization, `?` yields a
+read-only place of type `T`, retaining the original owner dependency without
+copying or moving the referent. Only the error alternative uses the operand's
+copy/move transport policy. That specialization accepts only a read-only
+reference success payload, one non-borrowing error type, and the single receiver,
 argument, or global owner origin described by the ownership rules. It may be a
 local or function return, but not a field, global variable, parameter, or
 lambda return; `value_or` and direct local `unexpected` initialization are not
 available in the initial surface.
 
-An operand whose expression category is a value selects move transport for
-both alternatives. A named place selects copy transport for both alternatives.
+An owning operand whose expression category is a value selects move transport
+for both alternatives. A named owning place selects copy transport for both
+alternatives.
 The selected move or copy must be available for every non-`void` alternative.
 Consequently a named expected with a move-only value or error is rejected;
 `?std::move(result)` is the explicit consuming form. `GTI-S2086` owns invalid

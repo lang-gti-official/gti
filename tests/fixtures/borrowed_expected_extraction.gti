@@ -1,0 +1,124 @@
+#include <std/string>
+#include <std/vector>
+
+// Deliberately unrelated, noncopyable application types. A success extraction
+// must borrow Resource, never reconstruct it from its pointer representation.
+class Resource {
+  mut int identity;
+public:
+  Resource(int value) : identity(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() { std::println(identity); }
+  int read() { return identity; }
+  void set(int value) mut { identity = value; }
+};
+
+struct Error {
+  int code;
+  Error(int value) : code(value) {}
+  Error(Error& other) = delete;
+  Error(Error&& other) = default;
+  ~Error() { std::println(code); }
+};
+
+struct Guard {
+  int identity;
+  Guard(int value) : identity(value) {}
+  ~Guard() { std::println(identity); }
+};
+
+expected<Resource&, int> lookup_plain(Resource& owner, bool missing) {
+  if (missing) { return unexpected(9); }
+  return owner;
+}
+
+expected<Resource&, Error> lookup(Resource& owner, bool missing) {
+  std::println(1);
+  if (missing) { return unexpected(Error(9)); }
+  return owner;
+}
+
+expected<Resource&, int> forward(Resource& owner, bool missing) {
+  return ?lookup_plain(owner, missing);
+}
+
+expected<int, int> named_success(Resource& owner) {
+  auto carrier = lookup_plain(owner, false);
+  Resource& first = ?carrier;
+  Resource& second = ?carrier;
+  Resource& third = ?forward(owner, false);
+  return first.read() + second.read() + third.read();
+}
+
+expected<int, int> named_failure(Resource& owner) {
+  auto carrier = lookup_plain(owner, true);
+  Resource& alias = ?carrier;
+  return alias.read();
+}
+
+expected<int, Error> propagate(Resource& owner, bool missing, bool named) {
+  Guard guard{80};
+  if (named) {
+    auto carrier = lookup(owner, missing);
+    Resource& alias = ?std::move(carrier);
+    return alias.read();
+  }
+  Resource& alias = ?lookup(owner, missing);
+  return alias.read();
+}
+
+std::string_view message() {
+  std::println(2);
+  return "required borrowed resource";
+}
+
+[[track_caller]]
+Resource& required(Resource& owner, bool missing) {
+  return lookup(owner, missing).expect(message());
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut Resource owner{7};
+  int mode = argc - 1;
+  if (mode == 0) {
+    auto count = named_success(owner);
+    if (!count || count.value() != 21) { return 1; }
+    auto failed = named_failure(owner);
+    if (failed || failed.error() != 9) { return 5; }
+    Resource& fresh = lookup(owner, false).expect(message());
+    std::println(fresh.read());
+    auto carrier = lookup(owner, false);
+    Resource& moved = std::move(carrier).expect(message());
+    std::println(moved.read());
+    auto first = propagate(owner, false, false);
+    auto second = propagate(owner, false, true);
+    if (!first || !second || first.value() != 7 || second.value() != 7) {
+      return 2;
+    }
+    // Every extracted reference/carrier has reached its last use.
+    owner.set(8);
+    return 0;
+  }
+  if (mode == 1 || mode == 2) {
+    auto failed = propagate(owner, true, mode == 2);
+    if (failed || failed.error().code != 9) { return 3; }
+    std::println(3);
+    return 0;
+  }
+  Guard outer{90};
+  if (mode == 3) {
+    Resource& alias = lookup(owner, true).expect(message());
+    return alias.read();
+  }
+  if (mode == 4) {
+    auto carrier = lookup(owner, true);
+    Resource& alias = std::move(carrier).expect(message());
+    return alias.read();
+  }
+  if (mode == 5) {
+    Resource& alias = required(owner, true);
+    return alias.read();
+  }
+  return 4;
+}

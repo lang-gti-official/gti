@@ -1424,11 +1424,26 @@
         "concrete_instance_adapter": 0,
         "thread_task_adapter": 21
       }
+    },
+    "99-borrowed-expected.gti": {
+      "declarations": 815,
+      "bodies": 347,
+      "generated_items": 49,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 11,
+        "callable_adapter": 21,
+        "lifecycle_cleanup": 0,
+        "native_interop_adapter": 0,
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 16
+      }
     }
   },
   "totals": {
-    "declarations": 30318,
-    "bodies": 10574,
-    "generated_items": 2287
+    "declarations": 31133,
+    "bodies": 10921,
+    "generated_items": 2336
   }
 }

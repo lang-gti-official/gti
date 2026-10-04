@@ -1094,6 +1094,10 @@ array of concrete generic class elements uses each element's private tag
 constructor and never assumes that the public class has a zero-argument
 constructor. This remains a backend-only rollback representation and does not
 add a GTI constructor or observable initialized value.
+Ordinary native constructor overloads that publish fields from the same MIR
+body use the same proved private empty state as their failure-form overloads.
+They must not implicitly call a source default constructor before MIR field
+publication; that constructor may be deleted or have observable behavior.
 The recursive proof requires a concrete nonzero array extent and exact element
 type. A concrete polymorphic element may participate only through independently
 verified stateless interface bases with generated default construction and

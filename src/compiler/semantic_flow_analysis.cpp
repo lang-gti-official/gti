@@ -1255,6 +1255,13 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
   if (kind == ExprKind::Grouping) {
     return preserveCategory(*static_cast<const Grouping &>(expr).expression());
   }
+  if (const auto *unary = exprAs<Unary>(&expr);
+      unary != nullptr && unary->oper().kind == TokenKind::QUESTION) {
+    const SemanticType *operand = semanticModel.findType(*unary->right());
+    if (operand != nullptr && isFallibleBorrowType(*operand))
+      return expressionInfo(std::move(type), ValueCategory::Place,
+                            AccessMode::ReadOnly);
+  }
   if (kind == ExprKind::Binary) {
     const Binary &binary = static_cast<const Binary &>(expr);
     if (binary.oper().kind == TokenKind::COMMA) {

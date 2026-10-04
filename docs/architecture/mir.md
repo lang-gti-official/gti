@@ -11,6 +11,20 @@ alone is not the complete backend API.
 
 ## Representation
 
+### Borrowed expected extraction
+
+Prefix propagation and `expect` on `expected<T&, E>` lower to a state branch
+and a checked read-only `ExpectedValue` loan, not an owned value temporary.
+The success result forwards that loan and its exact runtime place; only the
+error is copied/moved or translated into terminal panic. A conditional
+reference result currently requires exactly one normally completing arm.
+The extraction shares the external owner's provenance independently of the
+carrier shell, so carrier cleanup cannot destroy the referent or terminate
+its retained dependency. Reference-return publication preserves the actual
+extraction producer while retiring body-local loans. MIR verification and
+the existing production reference representation remain authoritative; no
+AST/HIR-only backend path is introduced.
+
 ### Terminal calls and caller locations
 
 Concrete functions and calls retain semantic `neverReturns` and `tracksCaller`

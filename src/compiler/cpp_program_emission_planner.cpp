@@ -7225,7 +7225,7 @@ public:
                                 .moved = true});
       }
     }
-    if (failureForm && owner != nullptr) {
+    if (owner != nullptr) {
       for (std::size_t index = 0; index < constructor.initializers.size();
            ++index) {
         const MirConstructorInitializer &initializer =
@@ -7250,6 +7250,9 @@ public:
                         })) {
           continue;
         }
+        // Both ordinary and failure-form bodies publish these fields from
+        // the same verified MIR schedule. Neither may invoke an unrelated
+        // source default constructor before that schedule begins.
         // Passive fields may retain their ordinary C++ default state until
         // verified MIR publishes them. A class field without a native default
         // constructor needs the exact private empty state proved for that

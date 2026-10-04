@@ -102,12 +102,41 @@ from a temporary owner is rejected.
 The initial surface intentionally excludes `expected<mut T&, E>`, fields,
 global variables, parameters, and lambda returns containing a fallible borrow.
 `value_or` is unavailable because choosing between a borrowed referent and a
-fallback needs an explicit lifetime contract. Prefix `?` does not yet propagate
-`expected<T&, E>`; inspect `has_value()`, return the error explicitly, and call
-`value()` only on the success path. A local fallible borrow also cannot yet be
-initialized directly from `unexpected`; obtain that state from a function
+fallback needs an explicit lifetime contract. A local fallible borrow cannot
+yet be initialized directly from `unexpected`; obtain that state from a function
 returning the complete type. These cases receive semantic diagnostics before
 HIR or MIR lowering.
+
+Prefix `?` and consuming `.expect(message)` both support this borrowed form:
+
+```gti
+expected<int, lookup_errc> read(table& owner) {
+  int& value = ?owner.find(true);
+  return value;
+}
+
+int require_value(table& owner) {
+  int& value = owner.find(true).expect("table entry is required");
+  return value;
+}
+```
+
+Neither operation copies or moves `T`, even when `T` is noncopyable or
+immovable. The result is a read-only place tied to the original owner, not to
+the temporary expected shell. Destroying the shell does not end the extracted
+reference's owner dependency. Owner invalidation, mutable-reference binding,
+and escape from a local or temporary owner remain errors. A permitted
+reference-returning function can forward that same dependency. This does not
+expand return-origin inference: a free function still needs an independently
+established exact global origin or an eligible owner parameter; forwarding a
+local carrier alone does not establish a global-return summary.
+
+For `?`, a named carrier copies only the error alternative and therefore
+requires copyable `E`; a fresh or explicitly moved carrier moves the error.
+The referent is always borrowed. `.expect` still requires a fresh receiver or
+`std::move(result)`, consumes only the carrier, and panics on error. Neither
+operation extends the owner's lifetime. See the runnable
+[borrowed expected example](../../examples/99-borrowed-expected.gti).
 
 Native C++ reference payloads are not used. Both C++20 and C++23 represent the
 success state with a private pointer-backed carrier while GTI MIR remains the
@@ -145,7 +174,7 @@ the callable immediately returns `unexpected(error)` after cleaning up the
 live full-expression and lexical obligations on that path. Propagation never
 performs an implicit error conversion.
 
-## Requiring a successful owned result
+## Requiring a successful result
 
 `expect(message)` is explicit consuming extraction with panic-on-error policy:
 
@@ -180,10 +209,11 @@ execute on success. Panic snapshots the counted message before cleanup can
 invalidate its storage. No include is needed for the built-in expected member;
 the `<std/panic>` public function and its formatted overloads are separate APIs.
 
-The first consuming extraction slice requires movable owned alternatives and
-excludes `expected<T&, E>` and alternatives carrying checked borrowed state.
-Use explicit state inspection and a normal checked observer for those values;
-`expect` does not invent a loan-transfer contract or detach a referent lifetime.
+Owned extraction requires movable owned alternatives. A read-only reference
+success `expected<T&, E>` instead yields a checked `T&`, with no movement of
+the referent and the same owner dependency described above. Other alternatives
+carrying checked borrowed state remain outside this operation; the error must
+be movable and owned.
 
 ## Mapping and chaining owned successes
 
@@ -315,13 +345,12 @@ through the enclosing full expression.
 
 ## Propagation ownership
 
-Here `T` is an owned value or `void`; the checked-borrow specialization above
-is diagnosed until propagation can preserve its loan without materializing or
-copying the referent.
-
-A temporary expected is consumed and its active alternative is moved. Applying
-`?` to a named expected place copies the active alternative, so both `T` and
-`E` must be copyable. Consume a named move-only result explicitly:
+For an owned success (`T` or `void`), a temporary expected is consumed and its
+active alternative is moved. Applying `?` to a named expected place copies
+the active alternative, so both non-void `T` and `E` must be copyable. For
+`expected<T&, E>`, success instead preserves the read-only loan without
+materializing or copying the referent; only `E` needs the selected copy/move
+capability. Consume a named move-only carrier explicitly:
 
 ```gti
 expected<Payload, Error> forward(expected<Payload, Error> result) {

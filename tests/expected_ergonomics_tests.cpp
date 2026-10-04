@@ -108,10 +108,6 @@ void testDiagnostics() {
          "GTI-S2018", "expect", "std::move");
   reject(producer + "int main() { [[discard]] read().expect(42); return 0; }\n",
          "GTI-S2016", "42", "std::string_view");
-  reject("expected<int&, int> read(int& value) { return value; }\n"
-         "int main() { int value = 7; [[discard]] "
-         "read(value).expect(\"required\"); return 0; }\n",
-         "GTI-S2045", "expect", "fallible borrow");
   reject(producer +
              "expected<int, bool> map(int value) { return value; }\n"
              "int main() { [[discard]] read().and_then(map); return 0; }\n",

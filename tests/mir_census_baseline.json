@@ -94,7 +94,8 @@
     "95-explicit-cloning.gti": 363,
     "96-error-mapping.gti": 29,
     "97-constexpr-tables.gti": 38,
-    "98-shared-ownership.gti": 355
+    "98-shared-ownership.gti": 355,
+    "99-borrowed-expected.gti": 347
   },
-  "total": 10567
+  "total": 10914
 }

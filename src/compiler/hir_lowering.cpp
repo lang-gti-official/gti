@@ -3584,7 +3584,11 @@ private:
     }
 
     const SemanticType expectedType = operandValue->info.type;
-    const SemanticType valueType = expectedType.arguments[0];
+    const bool borrowedSuccess =
+        expectedType.arguments[0].kind == SemanticType::Reference;
+    const SemanticType valueType =
+        borrowedSuccess ? expectedType.arguments[0].arguments.front()
+                        : expectedType.arguments[0];
     const SemanticType errorType = expectedType.arguments[1];
     const bool moves = operandValue->info.category == ValueCategory::Value;
     const AccessMode extractionAccess =
@@ -3597,10 +3601,18 @@ private:
           .kind = HirValueKind::Call,
           .info = {.type = type,
                    .category = ValueCategory::Place,
-                   .access = extractionAccess,
+                   .access = borrowedSuccess &&
+                                     intrinsic == IntrinsicKind::ExpectedValue
+                                 ? AccessMode::ReadOnly
+                                 : extractionAccess,
                    .traits = instanceProvider->traitsFor(type)},
           .operands = {*operand},
           .intrinsic = intrinsic,
+          .borrowOrigin =
+              borrowedSuccess && intrinsic == IntrinsicKind::ExpectedValue
+                  ? BorrowOriginKind::Receiver
+                  : BorrowOriginKind::None,
+          .borrowAccess = AccessMode::ReadOnly,
           .receiver = *operand,
       };
       body.values.push_back(std::move(extraction));
@@ -3628,9 +3640,9 @@ private:
     const HirValueId successExtraction =
         appendExtraction(IntrinsicKind::ExpectedValue, valueType);
     const HirValueId successValue =
-        valueType == SemanticType::Void
-            ? HirValueId{0}
-            : appendTransport(successExtraction, valueType);
+        valueType == SemanticType::Void ? HirValueId{0}
+        : borrowedSuccess               ? successExtraction
+                          : appendTransport(successExtraction, valueType);
     const HirValueId errorExtraction =
         appendExtraction(IntrinsicKind::ExpectedError, errorType);
     const HirValueId errorValue = appendTransport(errorExtraction, errorType);
@@ -3682,13 +3694,21 @@ private:
     const ExpressionInfo *resultInfo = model.findExpression(expression);
     const DefinedFailureOperation *failure =
         model.findDefinedFailure(expression);
+    const bool borrowedSuccess =
+        expect.sourceType.arguments.size() == 2 &&
+        expect.sourceType.arguments.front().kind == SemanticType::Reference;
+    const SemanticType payload =
+        borrowedSuccess ? expect.sourceType.arguments.front().arguments.front()
+        : expect.sourceType.arguments.empty()
+            ? SemanticType::Unknown
+            : expect.sourceType.arguments.front();
     if (member == nullptr || expression.arguments().size() != 1 ||
         resultInfo == nullptr || failure == nullptr ||
         expect.sourceType.kind != SemanticType::Expected ||
         expect.sourceType.arguments.size() != 2 ||
-        expect.resultType != expect.sourceType.arguments.front() ||
-        expect.resultType != resultInfo->type || expect.mapper != 0 ||
-        expect.lambda != 0 || expect.mapperType != SemanticType::StringView) {
+        expect.resultType != payload || expect.resultType != resultInfo->type ||
+        expect.mapper != 0 || expect.lambda != 0 ||
+        expect.mapperType != SemanticType::StringView) {
       lifecycleValid = false;
       return std::nullopt;
     }
@@ -3717,10 +3737,18 @@ private:
            .kind = HirValueKind::Call,
            .info = {.type = type,
                     .category = category,
-                    .access = AccessMode::Mutable,
+                    .access = borrowedSuccess &&
+                                      intrinsic == IntrinsicKind::ExpectedValue
+                                  ? AccessMode::ReadOnly
+                                  : AccessMode::Mutable,
                     .traits = instanceProvider->traitsFor(type)},
            .operands = {*receiver},
            .intrinsic = intrinsic,
+           .borrowOrigin =
+               borrowedSuccess && intrinsic == IntrinsicKind::ExpectedValue
+                   ? BorrowOriginKind::Receiver
+                   : BorrowOriginKind::None,
+           .borrowAccess = AccessMode::ReadOnly,
            .receiver = *receiver});
       return id;
     };
@@ -3733,7 +3761,7 @@ private:
                        valueType == SemanticType::Void ? ValueCategory::Value
                                                        : ValueCategory::Place);
     HirValueId success = extraction;
-    if (valueType != SemanticType::Void) {
+    if (valueType != SemanticType::Void && !borrowedSuccess) {
       success = nextValueId++;
       body.values.push_back({.id = success,
                              .kind = HirValueKind::Move,
