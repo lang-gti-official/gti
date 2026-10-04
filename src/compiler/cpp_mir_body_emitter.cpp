@@ -5578,6 +5578,11 @@ payloadEnumFreshArgumentStageForStagedValue(const MirProgram &program,
 [[nodiscard]] bool payloadEnumArgumentMetadataPlace(const MirProgram &program,
                                                     const MirBody &body,
                                                     const MirPlace &place) {
+  // Both admitted transport forms prove an exact enum-typed storage slot.
+  // Scalar aggregate element places cannot participate in either proof.
+  if (place.type.kind != SemanticType::Enum) {
+    return false;
+  }
   for (const MirValue &value : body.values) {
     const PayloadEnumArgumentMoveStage stage =
         payloadEnumArgumentMoveStage(program, body, value.id);
@@ -15004,17 +15009,19 @@ expectedMoveDestinationSlot(const MirProgram &program, const MirBody &body,
 [[nodiscard]] OwnedExpectedClassExtractionProducer
 ownedExpectedClassExtractionProducer(const MirBody &body, MirValueId valueId) {
   const MirValue *value = body.findValue(valueId);
-  const MirInstruction *call =
-      value == nullptr ? nullptr : findInstruction(body, value->definition);
-  const MirDropObligation *valueDrop =
-      value == nullptr ? nullptr
-                       : uniqueValueDrop(body, valueId, value->info.type);
+  // Most values in aggregate-heavy bodies are scalar elements. Reject those
+  // before looking up an instruction or scanning lifetime obligations.
   if (value == nullptr || value->info.type.kind != SemanticType::Class ||
       value->info.category != ValueCategory::Value ||
-      !value->info.traits.movable || call == nullptr ||
-      call->kind != MirInstructionKind::Call || !call->result ||
-      *call->result != valueId || call->destination || !call->receiver ||
-      !call->operands.empty() || call->functionTarget ||
+      !value->info.traits.movable) {
+    return {};
+  }
+  const MirInstruction *call = findInstruction(body, value->definition);
+  const MirDropObligation *valueDrop =
+      uniqueValueDrop(body, valueId, value->info.type);
+  if (call == nullptr || call->kind != MirInstructionKind::Call ||
+      !call->result || *call->result != valueId || call->destination ||
+      !call->receiver || !call->operands.empty() || call->functionTarget ||
       call->constructorTarget || call->lambdaTarget || call->bodyTarget ||
       call->callableInvocation || !call->callableArguments.empty() ||
       (call->intrinsic != IntrinsicKind::ExpectedValue &&
@@ -15396,17 +15403,16 @@ cleanupFreeExpectedUnexpectedReturn(const MirProgram &program,
 directExpectedClassExtraction(const MirProgram &program, const MirBody &body,
                               MirValueId valueId) {
   const MirValue *value = body.findValue(valueId);
-  const MirInstruction *call =
-      value == nullptr ? nullptr : findInstruction(body, value->definition);
   if (value == nullptr || value->info.type.kind != SemanticType::Class ||
       (value->info.category != ValueCategory::Value &&
        value->info.category != ValueCategory::Place) ||
-      value->info.traits.drop != DropKind::Lexical || call == nullptr) {
+      value->info.traits.drop != DropKind::Lexical) {
     return {};
   }
-  if (call->kind != MirInstructionKind::Call || call->result != valueId ||
-      call->destination || call->successResultDrop || !call->receiver ||
-      !call->operands.empty() || call->functionTarget ||
+  const MirInstruction *call = findInstruction(body, value->definition);
+  if (call == nullptr || call->kind != MirInstructionKind::Call ||
+      call->result != valueId || call->destination || call->successResultDrop ||
+      !call->receiver || !call->operands.empty() || call->functionTarget ||
       call->constructorTarget || call->lambdaTarget || call->bodyTarget ||
       call->callableInvocation || !call->callableArguments.empty() ||
       (call->intrinsic != IntrinsicKind::ExpectedValue &&
@@ -15567,6 +15573,11 @@ directExpectedClassExtraction(const MirProgram &program, const MirBody &body,
 directExpectedClassExtractionForReceiver(const MirProgram &program,
                                          const MirBody &body,
                                          MirValueId receiverId) {
+  const MirValue *receiver = body.findValue(receiverId);
+  if (receiver == nullptr ||
+      receiver->info.type.kind != SemanticType::Expected) {
+    return {};
+  }
   DirectExpectedClassExtraction found;
   for (const MirValue &candidate : body.values) {
     const DirectExpectedClassExtraction extraction =
@@ -15774,6 +15785,15 @@ expectedOwnedClassExtractionDestination(const MirBody &body,
 [[nodiscard]] const MirPlace *
 expectedOwnedClassExtractionReceiverSlot(const MirBody &body,
                                          MirValueId valueId) {
+  // The producer proof below requires an owning Expected receiver. This
+  // necessary condition must precede its body-wide search: probing every
+  // unrelated scalar value otherwise repeats that search quadratically.
+  const MirValue *receiver = body.findValue(valueId);
+  if (receiver == nullptr ||
+      receiver->info.type.kind != SemanticType::Expected ||
+      receiver->info.category != ValueCategory::Value) {
+    return nullptr;
+  }
   const MirPlace *found = nullptr;
   for (const MirValue &candidate : body.values) {
     const OwnedExpectedClassExtractionProducer producer =

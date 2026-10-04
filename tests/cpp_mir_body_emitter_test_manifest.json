@@ -38,6 +38,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testLargeScalarAggregateAdmission",
+      "suite": "preflight"
+    },
+    {
       "name": "testProgramPlanValidationIsOperationScoped",
       "suite": "preflight"
     },

@@ -140,6 +140,53 @@ void testExhaustiveEnumClassification() {
       "unknown future enum values should fail closed");
 }
 
+void testLargeScalarAggregateAdmission() {
+  // A ROM-sized aggregate must not be mistaken for an owning Expected
+  // extraction candidate at each scalar element. Keep this structural test
+  // threshold-free; paired benchmark runs measure the admission cost.
+  std::string source = "int32_t main() { int32_t rom[1024] = {";
+  for (int index = 0; index < 1024; ++index) {
+    if (index != 0)
+      source += ",";
+    source += std::to_string(index);
+  }
+  source += "}; return rom[1023] - 1023; }";
+  const auto frontend = analyze("large-scalar-aggregate.gti", source);
+  expect(frontend.canGenerateCode(), "ROM-sized scalar aggregate must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  expect(
+      !gti_test::emitCpp(frontend, frontend.mir, frontend.mir).contents.empty(),
+      "ROM-sized scalar aggregate must pass complete production admission");
+
+  auto malformed = frontend.mir;
+  bool changed = false;
+  for (const auto &function : malformed.functionInstances()) {
+    auto *body = const_cast<lang::MirFunctionInstance *>(
+        malformed.findFunctionInstance(function.id));
+    for (auto &block : body->body.blocks) {
+      for (auto &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Compute &&
+            instruction.operation == lang::MirOperation::Aggregate &&
+            instruction.operands.size() == 1024) {
+          instruction.operands.pop_back();
+          changed = true;
+        }
+      }
+    }
+  }
+  expect(changed && !lang::verifyMirProgram(malformed).valid(),
+         "fast rejection of unrelated ownership patterns must not admit an "
+         "incomplete aggregate");
+  bool rejected = false;
+  try {
+    static_cast<void>(gti_test::emitCpp(frontend, malformed, malformed));
+  } catch (const std::exception &) {
+    rejected = true;
+  }
+  expect(rejected, "production admission must reject the incomplete aggregate");
+}
+
 void testReadyBodyAndRepresentationFailures() {
   const lang::FrontendResult frontend = analyze("cpp-mir-body-ready.gti", R"(
 int32_t identity(int32_t value) { return value; }
@@ -4548,6 +4595,7 @@ constexpr NamedTest kTests[] = {
     {"testExhaustiveEnumClassification", testExhaustiveEnumClassification},
     {"testReadyBodyAndRepresentationFailures",
      testReadyBodyAndRepresentationFailures},
+    {"testLargeScalarAggregateAdmission", testLargeScalarAggregateAdmission},
     {"testProgramPlanValidationIsOperationScoped",
      testProgramPlanValidationIsOperationScoped},
     {"testImmutableBodyPlanOutlivesAdmissionInputs",
