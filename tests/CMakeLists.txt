@@ -1140,6 +1140,26 @@ if(Python3_Interpreter_FOUND)
                  "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${PROJECT_SOURCE_DIR}/vendor/expected_lite/include"
   )
   add_test(
+    NAME feature_interaction_model
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/feature_interaction_model_test.py"
+            "${PROJECT_SOURCE_DIR}"
+  )
+  add_test(
+    NAME feature_interaction_smoke
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/feature_interaction_smoke_test.py"
+            "$<TARGET_FILE:gti>"
+            "${CMAKE_CXX_COMPILER}"
+            "${PROJECT_SOURCE_DIR}"
+  )
+  set_tests_properties(
+    feature_interaction_smoke
+    PROPERTIES TIMEOUT 600
+               ENVIRONMENT
+                 "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${PROJECT_SOURCE_DIR}/vendor/expected_lite/include"
+  )
+  add_test(
     NAME stdlib_surface_manifest
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/stdlib_surface_manifest_test.py"
