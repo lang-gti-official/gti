@@ -1343,6 +1343,46 @@ bodies remain deferred rather than being inherited from the C++ backend.
 
 ## Structural Relocation
 
+### Restoring initialized places
+
+`std::exchange(place, replacement)` replaces one initialized writable place
+and returns its previous value, retaining that value's ownership. Both values
+must have the exact same structurally relocatable type. Prepare conversions
+explicitly; a named move-only replacement requires `std::move`.
+
+`std::swap(left, right)` exchanges two disjoint initialized writable places
+of the same structurally relocatable type. The ordinary exclusive-reference
+contract applies: self-aliasing, overlapping places, and conflicting live loans
+are rejected. Neither operation requires copying or move assignment.
+
+Argument evaluation and replacement construction finish before transfer begins.
+Failure there leaves the destination unchanged. The sealed transfer itself
+uses generated, failure-free relocation: it neither calls user movement code
+nor destroys the old resource. Every place is restored before any caller code
+or cleanup can run. The returned old value follows ordinary exactly-once
+cleanup, including the existing double-failure contract if its cleanup panics.
+This does not permit arbitrary consumption through a reference or indexed place.
+
+These operations do not introduce a mutable reference escape. Their exclusive
+loans end at the ordinary call/full-expression boundary; an owning exchange
+result carries the old cleanup obligation, not a reference to its former slot.
+The current single-owner text-borrow model does not support exchanging dynamic
+view dependency graphs through mutable references; these operations do not
+erase that boundary. Such a call receives a semantic diagnostic, not a backend
+failure. Create a new local view with an explicit owner instead.
+
+Checked indexed swap takes one exclusive owner loan instead of two element
+loans. It validates both initialized indices before transfer, accepts equal
+valid indices as a no-op, and restores the complete initialized prefix before
+returning. No user operation can observe an empty element. A live element
+reference, iterator or other owner-dependent borrow prevents the mutation,
+including the equal-index case. Array/vector `swap_elements`, array `swap`,
+and vector sorting/reversal use this protocol; they do not permit arbitrary
+movement out of an indexed element. A comparison that fails runs only between
+complete transfers, preserving a valid permutation for deterministic cleanup.
+
+### Relocation into empty storage
+
 Relocation transfers one complete value into **empty, non-overlapping typed
 storage**, ending the source value's lifetime. It neither copies the ownership
 obligation nor replaces an already-live destination. Generated movement

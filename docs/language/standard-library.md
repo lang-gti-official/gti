@@ -661,8 +661,35 @@ Both arguments must be distinct mutable owners. Existing loans into either
 owner, including element references, iterators, spans, and string views,
 prevent swap while live. In particular, `a.swap(a)` is rejected as overlapping
 mutable access, not treated as a runtime no-op. Swapping does not migrate a
-retained reference to the other owner. General `std::swap`/`std::exchange` and
-`array::swap` remain separate incomplete operations.
+retained reference to the other owner.
+
+`<std/utility>` also implements general `std::swap` and `std::exchange` for
+exact structurally relocatable types, including unrelated move-only classes.
+Swap requires two disjoint initialized mutable places. Exchange takes a
+prepared replacement of the same exact type and returns the old owned value;
+it does not destroy that value or require move assignment. Named move-only
+replacements need explicit movement. Existing loans block both operations.
+See [restoring initialized places](ownership-and-lifetimes.md#restoring-initialized-places)
+and [the resource example](../../examples/103-resource-exchange.gti).
+
+`std::array<T, N>::swap(other)` exchanges all elements for relocatable `T`
+without copying or requiring default construction; its two owners must be
+distinct and unborrowed. `std::array` and `std::vector` expose
+`swap_elements(size_t left, size_t right) mut` for relocatable elements. Both
+indices are checked against the initialized length before mutation. Equal
+**valid** indices are a no-op; equal invalid indices still fail. Bounds failure
+uses ordinary defined-failure cleanup and leaves the sequence unchanged.
+
+Whole-vector `std::reverse` and both `std::sort` overloads accept relocatable
+move-only elements. Sort uses iterative heapsort, O(n log n) comparisons and
+constant auxiliary storage, without copying a pivot or cloning elements. It
+is not stable. The default relation requires `std::totally_ordered<T>`; an
+explicit comparator must satisfy `std::comparator<Compare, T>` and define a
+strict weak ordering. Each comparison borrows elements read-only, ending those
+loans before any swap. A failed comparator leaves a valid permutation, not a
+promised partially sorted order, and normal cleanup destroys each remaining
+element exactly once. Empty and singleton inputs perform no comparisons.
+See [move-only ordering](../../examples/104-move-only-ordering.gti).
 
 `std::string(begin, end, other)` copies the code units in the half-open interval
 `[begin, end)` into an independent owning string. Its `size_t` endpoints must

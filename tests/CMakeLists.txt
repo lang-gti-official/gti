@@ -628,6 +628,24 @@ add_test(NAME nested_guarded_expected COMMAND gti_nested_guarded_expected_tests)
 add_executable(gti_structural_relocation_tests structural_relocation_tests.cpp)
 target_link_libraries(gti_structural_relocation_tests PRIVATE gti_cpp_backend)
 add_test(NAME structural_relocation COMMAND gti_structural_relocation_tests)
+add_executable(gti_restoring_exchange_tests restoring_exchange_tests.cpp)
+target_link_libraries(gti_restoring_exchange_tests PRIVATE gti_cpp_backend)
+add_test(NAME restoring_exchange COMMAND gti_restoring_exchange_tests)
+add_test(NAME restoring_exchange_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/restoring_exchange_runtime_test.py"
+          $<TARGET_FILE:gti>)
+set_tests_properties(restoring_exchange_runtime PROPERTIES TIMEOUT 600)
+add_test(NAME restoring_exchange_shapes_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/restoring_exchange_shapes_runtime_test.py"
+          $<TARGET_FILE:gti>)
+set_tests_properties(restoring_exchange_shapes_runtime PROPERTIES TIMEOUT 600)
+add_test(NAME restoring_indexed_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/restoring_indexed_runtime_test.py"
+          $<TARGET_FILE:gti>)
+set_tests_properties(restoring_indexed_runtime PROPERTIES TIMEOUT 600)
 if(Python3_Interpreter_FOUND)
   add_test(
     NAME cpp_mir_body_emitter_census
@@ -2157,6 +2175,13 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti_lsp>"
     )
     set_tests_properties(structural_relocation_lsp PROPERTIES TIMEOUT 120)
+  endif()
+  if(TARGET gti_lsp)
+    add_test(NAME restoring_exchange_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/restoring_exchange_lsp_test.py"
+              "$<TARGET_FILE:gti_lsp>")
+    set_tests_properties(restoring_exchange_lsp PROPERTIES TIMEOUT 120)
   endif()
   add_test(
     NAME owning_function_policy_failure_runtime

@@ -1,0 +1,108 @@
+#include <std/utility>
+#include <std/string>
+#include <std/memory>
+#include <std/optional>
+
+class Resource {
+  int identity;
+  std::string storage;
+public:
+  Resource(int id) : identity(id), storage(std::string("resource")) {}
+  Resource(Resource& other) = delete;
+  int id() { return this.identity; }
+};
+
+class QuietResource {
+  int identity;
+public:
+  QuietResource(int id) : identity(id) {}
+  QuietResource(QuietResource& other) = delete;
+  int id() { return this.identity; }
+};
+
+enum class Payload { empty, resource(Resource value) };
+
+class QuietBundle {
+  QuietResource values[2];
+public:
+  QuietBundle(QuietResource initial[2]) : values(std::move(initial)) {}
+  int first() { return this.values[0].id(); }
+};
+
+struct Fields {
+  mut std::string left;
+  mut std::string right;
+  Fields() : left(std::string("one")), right(std::string("two")) {}
+};
+
+// All of these owners satisfy the same structural relocation contract.
+// The backend must transport their results without inventing default
+// construction, copying, or a second cleanup identity.
+int main() {
+  mut std::unique_ptr<int> pointer = std::make_unique<int>(1);
+  auto old_pointer = std::exchange(pointer, std::make_unique<int>(2));
+  if (*old_pointer != 1 || *pointer != 2) { return 1; }
+
+  mut expected<std::string, int> result = std::string("old");
+  expected<std::string, int> replacement = std::string("new");
+  auto old_result = std::exchange(result, std::move(replacement));
+  if (old_result.value() != "old" || result.value() != "new") { return 2; }
+
+  mut std::optional<std::string> optional = std::optional<std::string>(std::string("a"));
+  auto old_optional = std::exchange(optional, std::optional<std::string>(std::string("b")));
+  if (old_optional.value() != "a" || optional.value() != "b") { return 3; }
+
+  mut std::string names[2] = {std::string("first"), std::string("second")};
+  std::string next[2] = {std::string("third"), std::string("fourth")};
+  auto old_names = std::exchange(names, std::move(next));
+  if (old_names[0] != "first" || names[0] != "third") { return 4; }
+
+  mut Resource resources[2] = {Resource(1), Resource(2)};
+  Resource incoming[2] = {Resource(3), Resource(4)};
+  auto old_resources = std::exchange(resources, std::move(incoming));
+  if (old_resources[0].id() != 1 || resources[1].id() != 4) { return 5; }
+  mut Resource others[2] = {Resource(5), Resource(6)};
+  std::swap(resources, others);
+  if (resources[0].id() != 5 || others[1].id() != 4) { return 6; }
+
+  mut expected<int, std::string> error = unexpected(std::string("old error"));
+  expected<int, std::string> success = 7;
+  auto old_error = std::exchange(error, std::move(success));
+  if (old_error || old_error.error() != "old error" || error.value() != 7) { return 7; }
+  mut expected<int, std::string> new_error = unexpected(std::string("new error"));
+  std::swap(error, new_error);
+  if (error || error.error() != "new error" || new_error.value() != 7) { return 8; }
+
+  mut QuietResource quiet[2] = {QuietResource(11), QuietResource(12)};
+  QuietResource quiet_next[2] = {QuietResource(13), QuietResource(14)};
+  auto old_quiet = std::exchange(quiet, std::move(quiet_next));
+  if (old_quiet[0].id() != 11 || quiet[1].id() != 14) { return 9; }
+
+  mut Payload payload = Payload::resource(Resource(21));
+  auto old_payload = std::exchange(payload, Payload::empty);
+  switch (old_payload) {
+    case Payload::resource(auto& value):
+      if (value.id() != 21) { return 10; }
+      break;
+    case Payload::empty: return 11;
+  }
+
+  mut auto shared = std::make_shared<int>(31);
+  auto alias = shared.clone();
+  auto old_shared = std::exchange(shared, std::make_shared<int>(32));
+  if (*old_shared != 31 || *shared != 32 || *alias != 31) { return 12; }
+
+  auto engaged = std::exchange(optional, std::optional<std::string>());
+  if (!engaged || engaged.value() != "b" || optional) { return 13; }
+  auto empty = std::exchange(optional, std::optional<std::string>(std::string("c")));
+  if (empty || optional.value() != "c") { return 14; }
+  QuietBundle bundle = QuietBundle({QuietResource(41), QuietResource(42)});
+  if (bundle.first() != 41) { return 15; }
+  mut Fields fields{};
+  std::swap(fields.left, fields.right);
+  auto old_field = std::exchange(fields.left, std::string("three"));
+  if (old_field != "two" || fields.left != "three" || fields.right != "one") { return 16; }
+  auto old_element = std::exchange(names[0], std::string("four"));
+  if (old_element != "third" || names[0] != "four") { return 17; }
+  return 0;
+}

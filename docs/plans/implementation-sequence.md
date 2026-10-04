@@ -57,7 +57,7 @@ the canonical [library contract](../language/standard-library.md).
 | Implemented facility and boundary | Library consequence | Adoption owner |
 | --- | --- | --- |
 | Owned Expected propagation, `expect`, `transform`, `and_then`, and `transform_error`; exact error identity and consuming receiver rules remain. Version 0.366.0 also supports checked read-only `expected<T&, E>` extraction through `?` and `expect`; borrowed combinators remain excluded. | Simplify owned fallible pipelines and checked borrowed lookups now. | `L-UP-01`, `L-UP-09`; [Expected](../language/expected.md). |
-| Explicit movement, bounded implicit return of an exact whole move-only local, generated lifecycle policy, and immediate borrowed-carrier receivers. None permits unrestricted consumption through references or dynamic indices. | Move owned mapper results now; do not infer that generic swap or move-only sorting is solved. | `L-UP-03`, `L-UP-07/08`; [ownership](../language/ownership-and-lifetimes.md). |
+| Explicit movement, bounded implicit return of an exact whole move-only local, generated lifecycle policy, immediate borrowed-carrier receivers, and sealed restoring/indexed transfers. None permits unrestricted consumption through references or dynamic indices. | Move owned mapper results, exchange initialized mutable places, and reverse/sort relocatable move-only vectors without cloning. | `L-UP-03`, `L-UP-07/08`; [ownership](../language/ownership-and-lifetimes.md). |
 | Nested owner-tied text relay, shared multi-origin carriers, checked exclusive access, storage shift/relocation, and source-defined explicit cloning. Multi-owner projections remain conservative. | Remove duplicate URL view backing; retain owner invalidation. Precise range projection and proxy iteration remain separate work. | `L-UP-02`, `L-UP-16`; [relay fixture](../../tests/fixtures/text_owner_relay.gti). |
 | Exact operation/comparator concepts, bounded ordinary-method requirements, exact class specialization, nullary read-member requirements, and attributable contract diagnostics. Argument-bearing/static member queries, pack constraints, and conditional operators are not implemented. | Improve ordinary API constraints now; custom formatting and conditional indexing require general compiler extensions. | `L-UP-04`, `L-UP-13/15`; [concepts](../language/concepts.md). |
 | Constructor-local type packs and final-field construction have positive immovable-node evidence. Borrowed argument forwarding still has a recorded backend composition blocker. Optional publication currently transfers a completed payload. | Finish that correctness slice, then adopt node emplacement. Direct inline emplacement is not a forwarding-only rewrite. | `L-UP-10/11/12`; [existing emplacement checkpoint](#active-request-complete-the-existing-standard-library). |
@@ -89,8 +89,8 @@ the same vertical slice. It does not mean the missing capability exists.
 | 4 / `L-UP-04` | complete in 0.367.0 | current ordinary-method constraints and diagnostics | Invalid library calls fail at their API contract, starting with optional `value_or`. |
 | 5 / `L-UP-05` | complete in 0.367.0 | current comparator contract; copyable elements | Comparator sorting with bounded O(n log n) comparison growth. |
 | 6 / `L-UP-06` | complete in 0.367.0 | completed passive-record MIR constant profile | Compile-time duration/time-point constants and pure observers. |
-| 7 / `L-UP-07` | ready / new capability | current places, lifecycle and failure authority | Sound generic exchange/swap of eligible initialized writable places. |
-| 8 / `L-UP-08` | blocked | `L-UP-07`, checked disjoint indexed exchange | Array swap and move-only vector reverse/sort without cloning elements. |
+| 7 / `L-UP-07` | implemented / locally validated | current places, lifecycle and failure authority | Sound generic exchange/swap of eligible initialized writable places. |
+| 8 / `L-UP-08` | implemented / locally validated | `L-UP-07`, checked disjoint indexed exchange | Array swap and move-only vector reverse/sort without cloning elements. |
 | 9 / `L-UP-09` | complete in 0.366.0 | current checked borrowed Expected and loan facts | Propagation/extraction of a checked borrowed success without a manual wrapper dance. |
 | 10 / `L-UP-10` | ready / correctness prerequisite | existing constructor-pack implementation and retained failure | Borrowed constructor-pack composition succeeds end to end. |
 | 11 / `L-UP-11` | blocked | `L-UP-10` | Node-container emplacement constructs immovable mapped values at their final address. |
@@ -325,13 +325,38 @@ coordinate integration and select an independent adoption row.
 
 ### L-UP-07: General Restoring Exchange And Swap
 
-- **Adoption audit (2026-10-04):** still a new semantic capability, not a
+- **Implemented and locally validated:** `codex/restoring-exchange` adds
+  source-defined utility wrappers over sealed MIR restoring transfers. Focused
+  scalar/resource, loan-rejection and verifier-mutation tests pass, as does the
+  replacement/cleanup failure matrix (C++20/C++23, O0/O1/O3, disabled elision,
+  ASan/UBSan). The complete eligibility review repaired intrinsic-result
+  transport for owning `expected` values using its existing result-slot
+  protocol. Raw owning and cleanup-free move-only fixed-array exchange now
+  use explicit result construction; owning error alternatives and payload enums
+  also pass the shapes matrix (both standards, O0/O1/O3, no-elide, sanitizers).
+  Array pending-return cleanup and double failure pass the same matrix.
+  Shared ownership, optional engagement transitions, projected fields and
+  indexed places have additional regression coverage. Dynamic text-view
+  exchange rejects during semantics instead of failing MIR verification.
+  Compiler pipeline, focused LSP/formatter recovery, and the 101-example
+  native corpus oracle pass. Broad verification repaired a duplicate
+  passive-array constructor publication. Directly returned, discarded and
+  by-value-consumed raw-array
+  results now have production transport, with a later-argument failure fixture
+  and independent publication/transfer mutations passing focused validation.
+  The combined runtime fixtures pass 176 outcomes across the eight native
+  modes. A clean staged install passes all 11 library consumers, both new
+  examples and the feature LSP check. All 404 broad CTests and four separate
+  corpus gates pass on the final implementation. Examples 103/104, editor
+  checks and canonical contracts accompany the feature. Publication and
+  reconciliation with concurrent work remain separate from this local proof.
+- **Pre-implementation adoption audit (2026-10-04):** a new semantic capability, not a
   stale library workaround. A current optimized-compiler probe over an
   unrelated `exchange<T>(mut T&, T)` rejects `std::move(target)` with
   `GTI-S2018` (cannot consume a reference). The public utility declarations
   remain bodyless. Existing relocation does not establish restoration or
   two-place disjointness, so row 8 is not newly unlocked.
-- **Client/evidence:** generic `swap`/`exchange` in
+- **Original client/evidence:** generic `swap`/`exchange` in
   [`utility.gti`](../../stdlib/std/utility.gti) are declarations, not complete
   implementations. Existing reborrows do not permit arbitrary consumption
   through `mut T&`.
@@ -353,7 +378,23 @@ coordinate integration and select an independent adoption row.
 
 ### L-UP-08: Checked Indexed Exchange And Move-Only Algorithms
 
-- **Prerequisite/client:** `L-UP-07`; the bodyless
+- **Implemented and locally validated:** a sealed indexed-swap intrinsic,
+  checked `swap_elements` methods, array swap and source-defined move-only
+  heapsort/reverse execute through verified MIR in `codex/restoring-exchange`.
+  Move-only resource/string arrays
+  and vectors pass the runtime matrix, including left/right/equal-invalid
+  bounds, comparator panic, partial element construction and consuming wrapper
+  constructor failure. Owning fixed-array argument transport now retains the
+  verified lifetime slot instead of default-constructing/copying an SSA array.
+  Independent mutations reject lost publication/transfer evidence. Ordering,
+  permutation, duplicates, zero-clone and comparison-budget fixtures pass the
+  same matrix, including zero-length array swap. Passive record-array
+  construction now has an explicit MIR field write, preserving constexpr
+  construction through the existing MIR evaluator rather than adding AST
+  movement interpretation. Installed-consumer verification and all 408
+  registered gates pass, including four separately run corpus gates.
+  Publication and reconciliation with concurrent work remain separate.
+- **Original prerequisite/client:** `L-UP-07`; the bodyless
   [`array::swap`](../../stdlib/std/array.gti) and copy-based vector
   `reverse`/`sort` are the public clients.
 - **Steps:** establish a sealed exchange of two initialized checked indices,
@@ -679,8 +720,8 @@ coordinate integration and select an independent adoption row.
 **Recommended next implementation prompt:** `L-UP-10`, the retained compiler
 correctness prerequisite before more emplacement APIs are built around the
 unresolved borrowed-pack composition. Rows 1–6 no longer need adoption work;
-the independent `L-UP-07` exchange facility remains the next new capability by
-the original priority order.
+`L-UP-07/08` now implement the independent exchange and move-only algorithm
+capability, with local completion evidence recorded above.
 
 ## Release Bug Closure
 

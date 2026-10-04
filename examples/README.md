@@ -135,6 +135,8 @@ is a teaching helper, not a production server.
 | `100-owned-error-pipelines.gti` | exact-error propagation and explicit conversion into an owning application error without losing JSON path context |
 | `101-owned-algorithm-results.gti` | move-only string transformation and bounded comparator sorting for asset-build work |
 | `102-constexpr-frame-budget.gti` | compile-time duration budgets, passive asset metadata, and pre-epoch timestamp decomposition |
+| `103-resource-exchange.gti` | restoring exchange and swap of unrelated move-only resources without copying |
+| `104-move-only-ordering.gti` | sorting and reversing move-only jobs, checked indexed swap, and swapping owning arrays |
 
 ## Build and run
 

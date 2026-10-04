@@ -230,6 +230,11 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::SimdLess:
     return barrier(
         "authoritative intrinsic effects; no range/call interpretation");
+  case IntrinsicKind::RestoringExchange:
+  case IntrinsicKind::RestoringSwap:
+  case IntrinsicKind::RestoringIndexedSwap:
+    return barrier("exclusive restoring ownership transfer; mutable place "
+                   "facts invalidated");
   case IntrinsicKind::ThreadSpawn:
   case IntrinsicKind::ThreadJoin:
   case IntrinsicKind::ThreadAutoJoin:

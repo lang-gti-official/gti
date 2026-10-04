@@ -1,0 +1,87 @@
+#include <std/algorithm>
+#include <std/array>
+#include <std/panic>
+#include <std/string>
+#include <std/vector>
+
+constexpr std::array<int, 3> constant_values = std::array<int, 3>({4, 5, 6});
+static_assert(constant_values.size() == 3);
+
+class Resource {
+  int identity;
+  std::string label;
+public:
+  Resource(int id) : identity(id), label(std::string("resource")) {}
+  Resource(Resource& other) = delete;
+  Resource clone() { std::panic("sorting must never clone"); }
+  int id() { return this.identity; }
+};
+
+class Compare {
+  mut int comparisons = 0;
+  int limit;
+public:
+  Compare(int limit) : limit(limit) {}
+  bool operator()(Resource& left, Resource& right) mut {
+    this.comparisons++;
+    if (this.comparisons > this.limit) { std::panic("comparison budget exceeded"); }
+    return left.id() < right.id();
+  }
+};
+
+class QuietResource {
+  int identity;
+public:
+  QuietResource(int id) : identity(id) {}
+  QuietResource(QuietResource& other) = delete;
+  ~QuietResource() {}
+  int id() { return this.identity; }
+};
+
+int main() {
+  mut std::array<int, 0> empty_array{};
+  mut std::array<int, 0> other_empty_array{};
+  empty_array.swap(other_empty_array);
+  if (!empty_array.empty() || !other_empty_array.empty()) { return 20; }
+  mut std::array<QuietResource, 2> quiet = std::array<QuietResource, 2>({QuietResource(1), QuietResource(2)});
+  quiet.swap_elements(std::size_t(0), std::size_t(1));
+  if (quiet[0].id() != 2 || quiet[1].id() != 1) { return 5; }
+  mut std::vector<Resource> resources{};
+  std::sort(resources, Compare(0));
+  std::reverse(resources);
+  resources.push_back(Resource(0));
+  std::sort(resources, Compare(0));
+  std::reverse(resources);
+  // 37 is coprime to 97: all 97 distinct identities occur exactly once.
+  for (mut int index = 1; index < 97; index++) {
+    resources.push_back(Resource((index * 37) % 97));
+  }
+  // A conservative 2*n*ceil(log2(n)) upper bound for this heap sort.
+  std::sort(resources, Compare(1358));
+  for (mut int index = 0; index < 97; index++) {
+    if (resources[std::size_t(index)].id() != index) { return 1; }
+  }
+  std::reverse(resources);
+  for (mut int index = 0; index < 97; index++) {
+    if (resources[std::size_t(index)].id() != 96 - index) { return 2; }
+  }
+  std::sort(resources, Compare(1358));
+  std::sort(resources, Compare(1358));
+  for (mut int index = 0; index < 97; index++) {
+    if (resources[std::size_t(index)].id() != index) { return 3; }
+  }
+
+  // The default relation also preserves duplicate counts and ordering.
+  mut std::vector<int> repeated{};
+  std::sort(repeated);
+  repeated.push_back(0);
+  std::sort(repeated);
+  for (mut int index = 1; index < 115; index++) {
+    repeated.push_back((index * 7) % 23);
+  }
+  std::sort(repeated);
+  for (mut int index = 0; index < 115; index++) {
+    if (repeated[std::size_t(index)] != index / 5) { return 4; }
+  }
+  return 0;
+}

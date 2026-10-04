@@ -1857,6 +1857,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
                             DefinedFailureDetail::ElementConstruction);
           break;
         case IntrinsicKind::PrefixStorageErase:
+        case IntrinsicKind::RestoringIndexedSwap:
           anchor(token);
           addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
                             DefinedFailureDetail::PrivateStorage);
@@ -1960,6 +1961,8 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::Move:
         case IntrinsicKind::UniqueOwnerIsNull:
         case IntrinsicKind::UniqueOwnerSwap:
+        case IntrinsicKind::RestoringExchange:
+        case IntrinsicKind::RestoringSwap:
         case IntrinsicKind::UniqueOwnerUpcast:
         case IntrinsicKind::SharedOwnerEmpty:
         case IntrinsicKind::SharedOwnerIsNull:

@@ -545,7 +545,7 @@ is recognized by the backend.
 | `<std/memory>` | Implemented `unique_ptr` with reset/swap, `make_unique`, `upcast_unique`, explicit-clone `shared_ptr`, `make_shared`, and `upcast_shared`, typed `allocator`, `storage<T>`, `alignment`, `alloc_errc`, fixed-capacity `arena<T>`/`pool<T>`, and recoverable storage factories; declaration-only `weak_ptr` |
 | `<std/numeric>` | Implemented exact fixed-width `wrapping_add/sub/mul`, `saturating_add/sub/mul`, `checked_add/sub/mul`, default and operation-based `accumulate`, homogeneous default and operation-based `inner_product`, unary `transform_reduce`, `gcd`, `lcm`, and `midpoint` |
 | `<std/span>` | Executable checked read-only single-owner spans with vector/string factories, local copy/move, subviews, empty ranges, iteration, and no raw-address `data()` API; mutable and multi-owner views remain unsupported |
-| `<std/utility>` | Implemented `pair` and `make_pair`; declaration-only `swap` and `exchange`; compiler-defined `std::move` remains implicitly available |
+| `<std/utility>` | Implemented `pair`, `make_pair`, explicit `clone`, and restoring `swap`/`exchange` for structurally relocatable initialized places; compiler-defined `std::move` remains implicitly available |
 
 Empty constructor bodies in these scaffolds are placeholders because GTI does
 not yet support declaration-only constructor syntax. Replace them when adding

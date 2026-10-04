@@ -201,64 +201,54 @@ void transform<std::movable T, Operation>(std::vector<T>& source,
   }
 }
 
-// In-place families rewrite one owning container through a single exclusive
-// borrow, copying each element out and assigning it back into place. Element
-// types must therefore be copyable until place-aware initialization tracking
-// allows moving directly out of an indexed element.
-void reverse<std::copyable T>(mut std::vector<T>& values) {
+// In-place families retain one exclusive container borrow. Checked restoring
+// transfers permute initialized elements without copying or leaving a hole.
+void reverse<std::relocatable T>(mut std::vector<T>& values) {
   if (values.size() < std::size_t(2)) {
     return;
   }
   mut ptrdiff_t left = ptrdiff_t(0);
   mut ptrdiff_t right = ptrdiff_t(values.size()) - ptrdiff_t(1);
   while (left < right) {
-    T low = values[size_t(left)];
-    T high = values[size_t(right)];
-    values[size_t(left)] = high;
-    values[size_t(right)] = low;
+    values.swap_elements(size_t(left), size_t(right));
     left++;
     right--;
   }
 }
 
 namespace detail {
-// Lomuto partition quicksort over a copied pivot. Recursion always descends
-// into the smaller side while the loop continues on the larger, so the stack
-// stays logarithmic in the range length.
-void sort_range<std::copyable T>(mut std::vector<T>& values,
-                                 mut ptrdiff_t low, mut ptrdiff_t high)
+// Borrow the owner read-only for the entire comparison. This selects readable
+// element access even though the sorting caller owns an exclusive reborrow.
+bool sort_less_at<std::relocatable T>(std::vector<T>& values,
+                                    size_t left, size_t right)
   requires std::totally_ordered<T> {
-  while (low < high) {
-    T pivot = values[size_t(high)];
-    mut ptrdiff_t store = low;
-    for (mut ptrdiff_t scan = low; scan < high; scan++) {
-      if (values[size_t(scan)] < pivot) {
-        T lower = values[size_t(scan)];
-        T kept = values[size_t(store)];
-        values[size_t(scan)] = kept;
-        values[size_t(store)] = lower;
-        store++;
-      }
-    }
-    T boundary = values[size_t(store)];
-    values[size_t(high)] = boundary;
-    values[size_t(store)] = pivot;
-    if (store - low < high - store) {
-      sort_range(values, low, store - ptrdiff_t(1));
-      low = store + ptrdiff_t(1);
-    } else {
-      sort_range(values, store + ptrdiff_t(1), high);
-      high = store - ptrdiff_t(1);
-    }
-  }
+  return values[left] < values[right];
 }
 }
 
-void sort<std::copyable T>(mut std::vector<T>& values)
+void sort<std::relocatable T>(mut std::vector<T>& values)
   requires std::totally_ordered<T> {
-  if (values.size() > std::size_t(1)) {
-    detail::sort_range(values, ptrdiff_t(0),
-                       ptrdiff_t(values.size()) - ptrdiff_t(1));
+  mut size_t end = values.size();
+  mut size_t start = end / size_t(2);
+  while (end > size_t(1)) {
+    mut size_t root = size_t(0);
+    if (start > size_t(0)) {
+      start--;
+      root = start;
+    } else {
+      end--;
+      values.swap_elements(size_t(0), end);
+    }
+    while (root < end / size_t(2)) {
+      mut size_t child = root * size_t(2) + size_t(1);
+      if (child + size_t(1) < end &&
+          detail::sort_less_at(values, child, child + size_t(1))) {
+        child++;
+      }
+      if (!detail::sort_less_at(values, root, child)) { break; }
+      values.swap_elements(root, child);
+      root = child;
+    }
   }
 }
 
@@ -268,7 +258,7 @@ void sort<std::copyable T>(mut std::vector<T>& values)
 // sorting may compare zero or more times. Iterative heapsort keeps one owned
 // comparator, O(n log n) comparisons, and constant auxiliary storage. Neither
 // sort overload promises stability. Compare must define a strict weak order.
-void sort<std::copyable T, Compare>(mut std::vector<T>& values,
+void sort<std::relocatable T, Compare>(mut std::vector<T>& values,
                                     mut Compare compare)
   requires std::comparator<Compare, T> {
   mut size_t end = values.size();
@@ -280,25 +270,27 @@ void sort<std::copyable T, Compare>(mut std::vector<T>& values,
       root = start;
     } else {
       end--;
-      T largest = values[size_t(0)];
-      T last = values[end];
-      values[size_t(0)] = last;
-      values[end] = largest;
+      values.swap_elements(size_t(0), end);
     }
     // root < end/2 proves 2*root+1 is an in-bounds child without overflow.
     // An odd-sized heap's last parent also has children at root == end/2-1.
     while (root < end / size_t(2)) {
       mut size_t child = root * size_t(2) + size_t(1);
       if (child + size_t(1) < end) {
-        T left = values[child];
-        T right = values[child + size_t(1)];
-        if (compare(left, right)) { child++; }
+        mut bool before = false;
+        {
+          std::vector<T>& readable = values;
+          before = compare(readable[child], readable[child + size_t(1)]);
+        }
+        if (before) { child++; }
       }
-      T parent = values[root];
-      T selected = values[child];
-      if (!compare(parent, selected)) { break; }
-      values[root] = selected;
-      values[child] = parent;
+      mut bool before = false;
+      {
+        std::vector<T>& readable = values;
+        before = compare(readable[root], readable[child]);
+      }
+      if (!before) { break; }
+      values.swap_elements(root, child);
       root = child;
     }
   }

@@ -7233,6 +7233,109 @@ exactUniqueOwnerSwapContract(const MirBody &body,
   return ownerType != SemanticType::Unknown;
 }
 
+// This indivisible operation has no user-code/failure point between taking
+// the old value and restoring its place. Ordinary call-input/lifecycle and
+// loan verification still prove staging, exclusive access and result cleanup.
+[[nodiscard]] bool
+exactRestoringTransferContract(const MirProgram &program, const MirBody &body,
+                               const MirInstruction &instruction) {
+  const bool swap = instruction.intrinsic == IntrinsicKind::RestoringSwap;
+  if (!swap && instruction.intrinsic != IntrinsicKind::RestoringExchange)
+    return true;
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.operation != MirOperation::None || instruction.receiver ||
+      instruction.functionTarget || instruction.constructorTarget ||
+      instruction.lambdaTarget || instruction.bodyTarget ||
+      instruction.callableInvocation ||
+      !instruction.callableArguments.empty() || instruction.destination ||
+      instruction.loan || instruction.borrowPlace ||
+      instruction.borrowOrigin != BorrowOriginKind::None ||
+      !instruction.borrowArguments.empty() ||
+      instruction.synchronization.kind != SynchronizationOperationKind::None ||
+      !instruction.definedFailure.empty() ||
+      !instruction.localFailureSites.empty() ||
+      !instruction.safetyDischarges.empty() ||
+      instruction.operands.size() != 2 ||
+      instruction.parameterTypes.size() != 2)
+    return false;
+  const SemanticType &reference = instruction.parameterTypes.front();
+  if (reference.kind != SemanticType::Reference ||
+      reference.referenceAccess != AccessMode::Mutable ||
+      reference.arguments.size() != 1)
+    return false;
+  const SemanticType &type = reference.arguments.front();
+  if (mirTypeRelocationKind(program, type) == RelocationKind::Unavailable ||
+      !mirTypeRelocationIsDefinedFailureFree(program, type))
+    return false;
+  MirPlaceId first = 0;
+  for (std::size_t index = 0; index != (swap ? 2u : 1u); ++index) {
+    const MirOperand &operand = instruction.operands[index];
+    if (operand.type != reference ||
+        instruction.parameterTypes[index] != reference || operand.value ||
+        operand.literal ||
+        (operand.kind != MirOperandKind::BorrowWrite &&
+         operand.kind != MirOperandKind::Loan))
+      return false;
+    const MirLoan *loan = body.findLoan(operand.loan);
+    const MirPlaceId id = operand.place != 0 ? operand.place
+                          : loan != nullptr  ? loan->source
+                                             : 0;
+    const MirPlace *place = body.findPlace(id);
+    if (place == nullptr || place->type != type ||
+        place->access != AccessMode::Mutable ||
+        (operand.kind == MirOperandKind::Loan &&
+         (loan == nullptr || loan->access != AccessMode::Mutable)) ||
+        (operand.kind == MirOperandKind::BorrowWrite && operand.loan))
+      return false;
+    if (index == 0)
+      first = id;
+    else if (id == first)
+      return false;
+  }
+  if (swap)
+    return !instruction.result && instruction.info.type == SemanticType::Void &&
+           instruction.lifecycle.empty();
+  const MirOperand &replacement = instruction.operands.back();
+  if (!instruction.result || instruction.info.type != type ||
+      instruction.parameterTypes.back() != type || replacement.type != type ||
+      replacement.kind != MirOperandKind::Value || !replacement.value ||
+      replacement.place || replacement.loan || replacement.literal)
+    return false;
+  const MirValue *prepared = body.findValue(replacement.value);
+  if (prepared == nullptr || prepared->info.type != type)
+    return false;
+  // Owning inputs must retire exactly their prepared cleanup token. The
+  // result's independent token keeps the old value alive for its consumer.
+  if (prepared->info.traits.drop == DropKind::Trivial ||
+      exactOwnerErasureTransfer(body, instruction, replacement))
+    return true;
+  // Cleanup-free move-only records still have lexical binding lifetimes, but
+  // lowering does not invent a temporary cleanup token for their Move. Use
+  // the source's independently type-checked drop recipe to distinguish this
+  // case from a lost ownership transfer for an active resource.
+  const MirInstruction *move = linearDefinition(body, replacement.value);
+  if (move == nullptr || move->kind != MirInstructionKind::Move ||
+      move->operands.size() != 1 ||
+      move->operands.front().kind != MirOperandKind::Move ||
+      !move->lifecycle.empty() || !instruction.lifecycle.empty())
+    return false;
+  const MirPlace *source = body.findPlace(move->operands.front().place);
+  const MirDropObligation *bindingDrop = nullptr;
+  for (const auto &drop : body.dropObligations) {
+    if (source == nullptr || drop.place != source->id)
+      continue;
+    if (bindingDrop != nullptr)
+      return false;
+    bindingDrop = &drop;
+  }
+  return source != nullptr && source->type == type &&
+         source->root == MirPlaceRootKind::Binding &&
+         source->projections.empty() && bindingDrop != nullptr &&
+         bindingDrop->kind == MirDropObligationKind::Binding &&
+         bindingDrop->dropType.type == type &&
+         !bindingDrop->dropType.requiresActiveCleanup;
+}
+
 [[nodiscard]] const SemanticType *
 exactCapabilityReferenceValue(const MirProgram &program,
                               const SemanticType &reference, AccessMode access,
@@ -7251,6 +7354,71 @@ exactCapabilityReferenceValue(const MirProgram &program,
     *instance = selected;
   }
   return &selected->type.arguments.front();
+}
+
+[[nodiscard]] bool
+exactRestoringIndexedSwapContract(const MirProgram &program,
+                                  const MirBody &body,
+                                  const MirInstruction &instruction) {
+  if (instruction.intrinsic != IntrinsicKind::RestoringIndexedSwap)
+    return true;
+  if (instruction.kind != MirInstructionKind::Call || instruction.result ||
+      instruction.destination || instruction.receiver ||
+      instruction.functionTarget || instruction.constructorTarget ||
+      instruction.lambdaTarget || instruction.bodyTarget ||
+      instruction.operation != MirOperation::None ||
+      instruction.info.type != SemanticType::Void || instruction.loan ||
+      instruction.borrowOrigin != BorrowOriginKind::None ||
+      instruction.borrowPlace || !instruction.borrowArguments.empty() ||
+      !instruction.lifecycle.empty() || instruction.operands.size() != 3 ||
+      instruction.parameterTypes.size() != 3 ||
+      instruction.definedFailure.localOrigins.size() != 1 ||
+      instruction.localFailureSites.size() != 1 ||
+      instruction.definedFailure.propagation != FailurePropagationKind::None ||
+      !instruction.safetyDischarges.empty())
+    return false;
+  const auto &reference = instruction.parameterTypes.front();
+  if (reference.kind != SemanticType::Reference ||
+      reference.referenceAccess != AccessMode::Mutable ||
+      reference.arguments.size() != 1)
+    return false;
+  const auto &storage = reference.arguments.front();
+  if ((storage.kind != SemanticType::Array &&
+       storage.kind != SemanticType::PrefixStorage) ||
+      storage.arguments.size() != 1 ||
+      mirTypeRelocationKind(program, storage.arguments.front()) ==
+          RelocationKind::Unavailable ||
+      !mirTypeRelocationIsDefinedFailureFree(program,
+                                             storage.arguments.front()))
+    return false;
+  const auto &operand = instruction.operands.front();
+  const auto *loan = body.findLoan(operand.loan);
+  const auto *place = body.findPlace(operand.place ? operand.place
+                                     : loan        ? loan->source
+                                                   : 0);
+  if (operand.type != reference || operand.value || operand.literal || !place ||
+      place->type != storage || place->access != AccessMode::Mutable ||
+      (operand.kind != MirOperandKind::BorrowWrite &&
+       operand.kind != MirOperandKind::Loan) ||
+      (operand.kind == MirOperandKind::BorrowWrite && operand.loan) ||
+      (operand.kind == MirOperandKind::Loan &&
+       (!loan || loan->access != AccessMode::Mutable)))
+    return false;
+  for (std::size_t index = 1; index != 3; ++index) {
+    const auto &value = instruction.operands[index];
+    if (instruction.parameterTypes[index] != SemanticType::UInt64 ||
+        value.type != SemanticType::UInt64 ||
+        value.kind != MirOperandKind::Value || !value.value || value.place ||
+        value.loan || value.literal)
+      return false;
+  }
+  const std::vector<DefinedFailureOutcome> outcomes{
+      {DefinedFailureCode::IndexOutOfBounds,
+       DefinedFailureDetail::PrivateStorage}};
+  const auto *site =
+      program.failureMetadata().findSite(instruction.localFailureSites.front());
+  return site && site->outcomes == outcomes &&
+         instruction.definedFailure.localOrigins.front().outcomes == outcomes;
 }
 
 [[nodiscard]] bool
@@ -8711,6 +8879,28 @@ verifyMirProgramContracts(const MirProgram &program) {
                .instruction = instruction.id,
                .message = "unique-owner swap does not retain its exact "
                           "matching mutable-owner contract"});
+        }
+        if (!exactRestoringTransferContract(program, body, instruction)) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message =
+                   "restoring transfer lost its exact initialized-place, "
+                   "prepared replacement, or failure-free relocation "
+                   "contract"});
+        }
+        if (!exactRestoringIndexedSwapContract(program, body, instruction)) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message =
+                   "indexed restoring swap lost its exclusive initialized "
+                   "storage, complete bounds preflight, or relocation "
+                   "contract"});
         }
         if ((instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
              instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut) &&
@@ -10285,8 +10475,7 @@ verifyMirProgramContracts(const MirProgram &program) {
         return true;
       case SemanticType::Array: {
         const auto traits = concretePackElementTraits(program, type);
-        return traits && traits->drop == DropKind::Trivial &&
-               !traits->containsBorrowedState;
+        return traits && !traits->containsBorrowedState;
       }
       case SemanticType::Enum:
         return program.findPayloadEnum(type.enumId) == nullptr;
@@ -10476,7 +10665,8 @@ verifyMirProgramContracts(const MirProgram &program) {
           field->type == initializer.targetType &&
           cleanupFreeInitializerType(initializer.targetType) &&
           (field->dropKind == DropKind::Trivial ||
-           initializer.targetType.kind == SemanticType::Class) &&
+           initializer.targetType.kind == SemanticType::Class ||
+           initializer.targetType.kind == SemanticType::Array) &&
           !field->requiresActiveCleanup;
       // A lexical field completed from one owning argument may publish an
       // explicit rollback-armed stage; whether it does depends on the

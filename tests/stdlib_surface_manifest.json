@@ -1,9 +1,9 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "96bc29566eee732519bc1191560c6c8ab2ac0758bf25206b4029848c82c48efb",
-    "stdlib/std/algorithm.gti": "e4545de11a8ad92f45e53f7b313b8a068fa66991c3d769cc64d70c3f08216ca8",
-    "stdlib/std/array.gti": "93925b89feef1498cb17f5c952e1c3aaeaa6b8657be6a03e1e1bfd1434c61f2a",
+    "stdlib/prelude.gti": "95894b4be5b9375c7c5241cbae6b02e50584d01fb2d22e02af1a764c29212187",
+    "stdlib/std/algorithm.gti": "f989a6357efa6e9d4be6c0b99747794f6c93bc3a918e9890ea01d27df5328f19",
+    "stdlib/std/array.gti": "6b738e22e49dc45108dc3c1b90c90f19b765b4fc8bca48a63a9d565818b45233",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
     "stdlib/std/charconv.gti": "925dbda69d2eacd4d70525cae5261c46174660e4245eb5a2489e45a7e5af5809",
@@ -41,8 +41,8 @@
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
     "stdlib/std/unordered_map.gti": "dd9a09af61807b6482123f37f4875608c7eb6a5e83129ae7f498586b174e8aa7",
     "stdlib/std/unordered_set.gti": "f99b3591dc87e0fc1bbfa8ee6256403daf07317efa9e466c0dbd38381d314f3f",
-    "stdlib/std/utility.gti": "46d9aa9265e8b21693128812d9ccd48f1c464efdf42b77571d1cbefbeeda5086",
-    "stdlib/std/vector.gti": "5d0b093abbcb3a14ef427d5d4929db090b797b006a4694921db0af7c92aedd31"
+    "stdlib/std/utility.gti": "142fb40869c5b2f4d0a431035ae7af5128c99426e9adb2abb2f9fa9d4b3b382d",
+    "stdlib/std/vector.gti": "1ed83cc7e02077c644593c054013b2cb2f1316954613d40321dc3bc1c4a59a1e"
   },
   "cases": [
     {
@@ -806,6 +806,41 @@
       }
     },
     {
+      "id": "restoring-exchange-example",
+      "mode": "run",
+      "source": "examples/103-resource-exchange.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "scene-c\nscene-a\nscene-b\n", "stderr": ""}
+    },
+    {
+      "id": "restoring-indexed",
+      "mode": "run",
+      "source": "tests/fixtures/restoring_indexed_swap.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "20\n10\n30\n40\n1\n2\n3\n", "stderr": ""}
+    },
+    {
+      "id": "restoring-order",
+      "mode": "run",
+      "source": "tests/fixtures/restoring_algorithm_order.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "restoring-order-example",
+      "mode": "run",
+      "source": "examples/104-move-only-ordering.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "shaders\nmeshes\ntextures\n", "stderr": ""}
+    },
+    {
+      "id": "restoring-shapes",
+      "mode": "run",
+      "source": "tests/fixtures/restoring_exchange_shapes.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "shared-ptr",
       "mode": "run",
       "source": "tests/fixtures/shared_ownership.gti",
@@ -1106,7 +1141,7 @@
         "std::transform",
         "std::upper_bound"
       ],
-      "case_ids": ["algorithm", "algorithm-boundaries", "algorithm-mutation", "algorithm-search", "algorithm-user-types", "constexpr-library", "algorithm-owned-transform", "algorithm-owned-example"],
+      "case_ids": ["algorithm", "algorithm-boundaries", "algorithm-mutation", "algorithm-search", "algorithm-user-types", "constexpr-library", "algorithm-owned-transform", "algorithm-owned-example", "restoring-indexed", "restoring-order", "restoring-order-example"],
       "required_instantiations": ["audit_iterator/audit_iterator/int32_t predicates and exact value", "move-only iterator/distinct sentinel/int32_t", "std::vector<int32_t>::iterator/sentinel/int32_t", "read- and mut-callable for_each clients", "application-defined and fixed-array predicate/operation/mutable complete-range clients"],
       "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "tests/fixtures/generic_algorithm_find_count.gti", "tests/fixtures/generic_algorithm_for_each.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_algorithm_cluster_test.py", "tests/generic_callable_concepts_runtime_test.py", "tests/generic_algorithm_breadth_test.py", "tests/generic_algorithm_errors_test.py", "stdlib/std/algorithm.gti"]
     },
@@ -1132,12 +1167,13 @@
       "evidence": ["tests/fixtures/stdlib_surface_array.gti", "tests/fixtures/algorithm_search.gti", "tests/fixtures/algorithm_mutation.gti", "tests/fixtures/algorithm_user_types.gti", "stdlib/std/array.gti"]
     },
     {
-      "id": "array.scaffold",
+      "id": "array.swap",
       "source": "stdlib/std/array.gti",
-      "status": "scaffold",
-      "operations": ["std::array::swap"],
-      "reason": "swap is bodyless because moving a value out through a mutable reference is not expressible yet.",
-      "evidence": ["stdlib/std/array.gti", "stdlib/README.md"]
+      "status": "executable",
+      "operations": ["std::array::swap", "std::array::swap_elements"],
+      "case_ids": ["restoring-indexed", "restoring-order", "restoring-order-example"],
+      "required_instantiations": ["std::array<int, 0>", "std::array<int, 2>", "std::array<std::string, 2>", "unrelated move-only Resource"],
+      "evidence": ["tests/fixtures/restoring_indexed_swap.gti", "tests/fixtures/restoring_algorithm_order.gti", "tests/restoring_indexed_runtime_test.py", "tests/restoring_exchange_tests.cpp", "examples/104-move-only-ordering.gti"]
     },
     {
       "id": "atomic.executable",
@@ -2453,12 +2489,13 @@
       "required_instantiations": ["std::pair<int32_t,int64_t>"]
     },
     {
-      "id": "utility.scaffold",
+      "id": "utility.restoring",
       "source": "stdlib/std/utility.gti",
-      "status": "scaffold",
+      "status": "executable",
       "operations": ["std::exchange", "std::swap"],
-      "reason": "swap and exchange are declaration-only because moving through a mutable reference is not yet expressible.",
-      "evidence": ["stdlib/std/utility.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+      "case_ids": ["restoring-exchange-example", "restoring-shapes"],
+      "required_instantiations": ["unrelated move-only Asset and Resource", "owning and cleanup-free fixed arrays", "unique and shared owners", "optional", "expected owning success and error", "owning payload enum"],
+      "evidence": ["examples/103-resource-exchange.gti", "tests/fixtures/restoring_exchange_shapes.gti", "tests/restoring_exchange_tests.cpp", "tests/restoring_exchange_runtime_test.py", "tests/restoring_exchange_shapes_runtime_test.py"]
     },
     {
       "id": "vector.executable",
@@ -2493,6 +2530,15 @@
       "case_ids": ["span", "vector", "utility-clone", "vector-construction-only", "optional-expected-composition"],
       "required_instantiations": ["std::vector<int32_t>", "std::vector<int32_t>(int32_t[3])", "std::vector<std::string>", "nested vector<string>", "user-defined Record", "construction-only Message", "std::vector<std::optional<std::string>>"],
       "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_vector.gti", "tests/fixtures/generic_clone.gti", "tests/fixtures/vector_construction_only.gti", "tests/fixtures/vector_construction_only_failure.gti", "tests/vector_construction_only_runtime_test.py", "stdlib/std/vector.gti"]
+    },
+    {
+      "id": "vector.indexed-swap",
+      "source": "stdlib/std/vector.gti",
+      "status": "executable",
+      "operations": ["std::vector::swap_elements"],
+      "case_ids": ["restoring-indexed", "restoring-order", "restoring-order-example"],
+      "required_instantiations": ["int", "std::string", "unrelated move-only Resource and Job"],
+      "evidence": ["tests/fixtures/restoring_indexed_swap.gti", "tests/fixtures/restoring_algorithm_order.gti", "tests/restoring_indexed_runtime_test.py", "tests/restoring_exchange_tests.cpp"]
     },
     {
       "id": "vector.swap",

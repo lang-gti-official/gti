@@ -48,7 +48,7 @@ class array<T, uint64_t N> {
 public:
   constexpr array() : values({}) {}
 
-  constexpr array(T initial[N]) : values(initial) {}
+  constexpr array(T initial[N]) : values(std::move(initial)) {}
 
   constexpr size_t size() {
     return N;
@@ -122,6 +122,16 @@ public:
   }
 
   void swap(mut array<T, N>& other) mut
-    requires std::movable<T>;
+    requires std::relocatable<T> {
+    gti_internal::restoring_swap(this.values, other.values);
+  }
+
+  /// Check both indices before mutation; equal valid indices are a no-op.
+  void swap_elements(size_t left, size_t right) mut
+    requires std::relocatable<T> {
+    gti_internal::index_bounds_check(left, N);
+    gti_internal::index_bounds_check(right, N);
+    gti_internal::restoring_indexed_swap(this.values, left, right);
+  }
 };
 }

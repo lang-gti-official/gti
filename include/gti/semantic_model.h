@@ -349,6 +349,11 @@ enum class IntrinsicKind {
   SimdDivide,
   SimdEqual,
   SimdLess,
+  // Sealed initialized-place transfers: all owned inputs are prepared before
+  // entry; eligible generated relocation cannot fail or invoke user code.
+  RestoringExchange,
+  RestoringSwap,
+  RestoringIndexedSwap,
   Count,
 };
 
