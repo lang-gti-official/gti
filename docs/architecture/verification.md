@@ -47,6 +47,16 @@ restoring-transfer, optional/vector, diagnostic, LSP and release-policy gates
 (120.68 seconds). The issue 30–33 fixes are not part of that integration
 evidence and require their own combined validation before publication.
 
+After integrating issue fixes `c684ce47`, the all-target Release build and
+three focused exchange/issue/preflight gates pass. The merged representation
+proof retains cleanup-free array staging while restricting the direct moved
+error producer to class values. A fresh staged installation passes all eleven
+external CMake consumers, both new examples (C++23/O3 and C++20/O0), and both
+exchange/error-ownership LSP gates outside the checkout with resource overrides
+absent or cleared. The system-LLVM consumer configuration names the same
+LLVM 22.1.8 package as the compiler build. Formatting passes all 413 first-party
+C/C++ files. This does not update the user's active toolchain.
+
 The optional `local_language_audit.py --full` passes its 23 contract cases,
 24 generated differential programs, four composition programs, 100 malformed
 mutations and its 96-example/four-configuration matrix. It then fails because
@@ -55,6 +65,26 @@ Its two-digit example glob also omits examples 100 and above; this optional
 result is not evidence for those programs. The independent 101-example corpus
 gates and explicit new-example installed runs supply that coverage. The
 optional audit is not reported as a complete pass or used to replace any gate.
+
+## Narrow updates, borrowed arrays and error transport
+
+`issues_30_33` checks semantic ownership rejection at `unexpected` payloads,
+fresh/moved/copyable errors, passive consuming Expected relays, and unchanged
+use-after-move, read-only, escape and live-loan rules. It verifies promoted
+arithmetic followed by checked narrowing and rejects malformed failure
+contracts, payload identities and move ownership. The subscript preflight test
+checks that the primitive multiplication commits to the original place only
+on its success edge.
+
+`issues_30_33_runtime` runs 120 outcomes across C++20/C++23 O0/O1/O2/O3,
+disabled elision and ASan/UBSan. Cases cover signed/unsigned narrow limits,
+prefix/postfix results, mixed-width compounds, read-before-RHS ordering,
+borrowed nested array reads/writes, exact first-failure locations, unchanged
+destinations after failed checks, reverse-order cleanup and move-only error
+construction/relay. `issues_30_33_lsp` checks CLI/LSP agreement, exact Unicode
+UTF-16 payload ranges, explicit-move advice without unsafe fixes, corrected
+overlays and stale-action rejection. This focused evidence uses a Release
+compiler on macOS arm64; it does not claim Linux or Windows execution.
 
 ## Ownership diagnostic explanations
 

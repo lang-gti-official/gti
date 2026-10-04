@@ -373,6 +373,13 @@ promotion, implicit `float`-to-`double` widening, explicit-only narrowing, and
 the selected width passed to constant evaluation. LLVM floating types never
 enter `SemanticModel`.
 
+Built-in numeric place updates additionally retain their selected arithmetic
+domain as `ExpressionInfo::updateArithmeticType`. The destination and expression
+result keep their own type. Semantics authors independent arithmetic and
+checked-back-conversion failure origins at the written operator; HIR preserves
+them and MIR emits separate primitive stages. Native C++ promotions are not an
+authority for narrow increment/decrement or compound assignment.
+
 For a binary operator's bounded integer-literal context, semantics recognizes
 the complete literal expression, including one unary sign, checks its
 mathematical value against the selected concrete operand type, and records a
