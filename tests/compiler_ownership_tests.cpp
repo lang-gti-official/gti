@@ -6290,7 +6290,7 @@ int main() {
                            "Cannot initialize 'copied'") &&
              hasDiagnosticCode(unsupported.diagnostics, "GTI-S2003") &&
              hasDiagnostic(unsupported.diagnostics,
-                           "Cannot assign a value of type"),
+                           "Move assignment is unavailable for type 'MutView'"),
          "multi-origin, global, copied, and reseated mutable "
          "dependency graphs should remain rejected");
 }

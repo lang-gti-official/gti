@@ -574,6 +574,7 @@ set_target_properties(
 add_executable("gti" "src/cli/main.cpp" "src/cli/project_presentation.cpp"
                      "src/cli/terminal_style.cpp")
 target_link_libraries("gti" PRIVATE gti_driver gti_bindgen)
+target_include_directories("gti" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_compile_definitions(
   "gti"
   PRIVATE

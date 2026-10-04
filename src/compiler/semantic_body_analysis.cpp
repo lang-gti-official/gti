@@ -3441,6 +3441,15 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
     diagnostic.hints.emplace_back(
         symbol.lambdaCapture
             ? "Lambda captures are value snapshots and remain immutable."
+        : symbol.constant
+            ? "A constant cannot be mutated; use separate mutable storage if a "
+              "changing value is needed."
+        : target.executionProfile == ExecutionProfile::Concurrent &&
+                (symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
+                 symbol.bindingKind == SemanticBindingKind::StaticField)
+            ? "Concurrent globals and static fields must stay immutable. Use "
+              "local mutable storage or an immutable value with an approved "
+              "atomic or mutex contract for synchronized mutation."
             : "Bindings are immutable by default; add 'mut' to the "
               "declaration if mutation is required.");
     diagnostics.emplace_back(std::move(diagnostic));
@@ -3461,20 +3470,27 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
       !simpleAssignment ||
       isOwnershipAssignment(targetType, valueType, expr.value());
   if (simpleAssignment && !valueAssignable) {
+    const bool ownerAssignment =
+        isMoveOnlyOwnerType(targetType) && targetType == valueType;
+    const auto *valueInfo = semanticModel.findExpression(*expr.value());
+    const bool moving =
+        valueInfo != nullptr && valueInfo->category == ValueCategory::Value;
     report(expressionToken(expr.value()),
-           "Cannot assign a value of type '" + typeSpelling(valueType) +
-               "' to '" + expr.name().lexeme + "' of type '" +
-               typeSpelling(targetType) + "'.",
+           ownerAssignment
+               ? (moving ? "Move assignment is unavailable for type '"
+                         : "Cannot copy assign move-only type '") +
+                     typeSpelling(targetType) + "'."
+               : "Cannot assign a value of type '" + typeSpelling(valueType) +
+                     "' to '" + expr.name().lexeme + "' of type '" +
+                     typeSpelling(targetType) + "'.",
            "GTI-S2003");
-    if (isMoveOnlyOwnerType(targetType) && targetType == valueType) {
+    if (ownerAssignment) {
       diagnostics.back().hints.emplace_back(
-          explicitMove ? "This type does not support "
-                         "move assignment; initialize "
-                         "a new binding from the moved "
-                         "value instead."
-                       : "Move-only owners cannot be "
-                         "copied; use std::move(owner) "
-                         "to transfer ownership.");
+          !typeTraits(targetType).moveAssignable
+              ? "This type does not support move assignment; initialize a "
+                "new binding from an owned value instead."
+              : "Move-only owners cannot be copied; use std::move(owner) "
+                "to transfer ownership.");
     }
   }
   if (!simpleAssignment) {
@@ -3501,6 +3517,7 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
                   ? target->valueState
                   : projectedValueState(*target, targetPlace.projections);
           target->valueState = ValueState::Available;
+          target->moveOrigins.clear();
           semanticModel.recordOwnershipEvent(
               expr, {.kind = OwnershipEventKind::Reinitialize,
                      .place = placeKey(placeForSymbol(*target)),
@@ -5609,6 +5626,7 @@ auto SemanticVisitor::Impl::visitIndexSetExpr(const IndexSet &expr) -> void {
       report(expr.bracket(),
              "Cannot assign through an immutable fixed array binding.",
              "GTI-S2002");
+      appendReadOnlyPlaceContext(diagnostics.back(), expr.object());
     }
   } else if (!overloadedMutation) {
     reportLoanPlaceConflict(
@@ -6641,6 +6659,7 @@ auto SemanticVisitor::Impl::visitPackExpansionExpr(const PackExpansion &expr)
   } else if (packRequiresMove(symbol->type)) {
     if (Symbol *pack = resolveMutable(expr.name())) {
       pack->valueState = ValueState::Moved;
+      pack->moveOrigins = {tokenSpan(expr.name())};
     }
   }
   currentType = symbol->type;
@@ -6911,11 +6930,26 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
     report(expr.name(), "Methods are not assignable.");
   } else if (!resolvedMember.assignable) {
     report(expr.name(), "Member is immutable.");
+    diagnostics.back().related.push_back({tokenSpan(resolvedMember.declaration),
+                                          "Immutable field declared here."});
+    diagnostics.back().hints.emplace_back(
+        resolvedMember.constant
+            ? "A constant cannot be mutated; use separate mutable storage if a "
+              "changing value is needed."
+        : resolvedMember.staticMember &&
+                target.executionProfile == ExecutionProfile::Concurrent
+            ? "Concurrent static fields must stay immutable. Use local "
+              "mutable storage or an immutable value with an approved atomic "
+              "or mutex contract for synchronized mutation."
+            : "Declare the field with 'mut' if it is intended to change after "
+              "construction; access through its containing value must also be "
+              "mutable.");
   } else if (!mutableReceiver) {
     const std::optional<ResolvedFieldUse> root = receiverRestrictedMemberRoot(
         expr.object(), expr.name(), member->symbol);
     if (!root || !reportReceiverRestrictedMutation(expr.name(), *root)) {
       report(expr.name(), "Cannot mutate through a read-only receiver.");
+      appendReadOnlyPlaceContext(diagnostics.back(), expr.object());
     }
   } else if (!overloadedMutation) {
     reportLoanPlaceConflict(

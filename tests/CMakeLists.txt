@@ -2675,6 +2675,13 @@ if(Python3_Interpreter_FOUND)
 
   if(TARGET gti_lsp)
     add_test(
+      NAME diagnostic_explanations
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/diagnostic_explanations_test.py"
+              "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(diagnostic_explanations PROPERTIES TIMEOUT 120)
+    add_test(
       NAME lsp_include_suggestions
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/lsp_include_suggestions_test.py"

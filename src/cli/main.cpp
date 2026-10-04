@@ -16,6 +16,9 @@
 #include "project_presentation.h"
 #include "terminal_style.h"
 
+#include <llvm/Support/ConvertUTF.h>
+#include <llvm/Support/Unicode.h>
+
 #include <algorithm>
 #include <charconv>
 #include <filesystem>
@@ -1289,6 +1292,70 @@ std::string_view severityName(lang::DiagnosticSeverity severity) {
   return "error";
 }
 
+// Render source bytes as terminal text while retaining the compiler's byte
+// spans. Tabs have a fixed four-column stop; control bytes cannot inject ANSI
+// commands into a diagnostic. LLVM supplies Unicode column widths.
+void reportSourceExcerpt(const lang::SourceSpan &span,
+                         const lang::SourceManager &sources, Style style) {
+  const auto location = sources.locate(span);
+  const auto line = sources.line(span);
+  if (line.empty())
+    return;
+  const auto begin =
+      std::clamp(span.start, location.lineStart, location.lineEnd) -
+      location.lineStart;
+  const auto end = std::clamp(span.end, location.lineStart, location.lineEnd) -
+                   location.lineStart;
+  std::string display;
+  std::size_t columns = 0, markerStart = 0, markerEnd = 0;
+  for (std::size_t offset = 0; offset < line.size();) {
+    const auto start = offset;
+    const auto *cursor =
+        reinterpret_cast<const llvm::UTF8 *>(line.data() + offset);
+    const auto *limit =
+        reinterpret_cast<const llvm::UTF8 *>(line.data() + line.size());
+    // On malformed UTF-8, escape one byte at a time. An illegal continuation
+    // must not absorb an adjacent ASCII character or misplace the underline.
+    offset += std::max(1U, llvm::getUTF8SequenceSize(cursor, limit));
+    const auto bytes = line.substr(start, offset - start);
+    const auto before = columns;
+    if (bytes == "\t") {
+      const auto width = 4 - columns % 4;
+      display.append(width, ' ');
+      columns += width;
+    } else {
+      const int width = llvm::sys::unicode::columnWidthUTF8(
+          llvm::StringRef(bytes.data(), bytes.size()));
+      if (width < 0) {
+        constexpr char hex[] = "0123456789abcdef";
+        for (const unsigned char byte : bytes) {
+          display += "\\x";
+          display += hex[byte >> 4];
+          display += hex[byte & 15];
+          columns += 4;
+        }
+      } else {
+        display.append(bytes);
+        columns += static_cast<std::size_t>(width);
+      }
+    }
+    if (offset <= begin)
+      markerStart = columns;
+    else if (start <= begin)
+      markerStart = before;
+    if (start < end)
+      markerEnd = columns;
+  }
+  const auto number = std::to_string(location.line);
+  std::cerr << ' ' << number << " | " << display << '\n'
+            << std::string(number.size() + 2, ' ') << "| "
+            << std::string(markerStart, ' ')
+            << terminalStyle.code(std::cerr, style) << '^';
+  if (markerEnd > markerStart + 1)
+    std::cerr << std::string(markerEnd - markerStart - 1, '~');
+  std::cerr << terminalStyle.code(std::cerr, Style::Reset) << '\n';
+}
+
 void reportLocation(const lang::SourceSpan &span, std::string_view level,
                     std::string_view message,
                     const lang::SourceManager &sources) {
@@ -1299,28 +1366,7 @@ void reportLocation(const lang::SourceSpan &span, std::string_view level,
             << terminalStyle.code(std::cerr, Style::Reset) << ": " << message
             << '\n';
 
-  const std::string_view sourceLine = sources.line(span);
-  if (sourceLine.empty()) {
-    return;
-  }
-
-  const std::string lineNumber = std::to_string(location.line);
-  std::cerr << ' ' << lineNumber << " | " << sourceLine << '\n';
-  std::cerr << std::string(lineNumber.size() + 2, ' ') << "| ";
-
-  const std::size_t start = std::min(span.start, location.lineEnd);
-  for (std::size_t index = location.lineStart; index < start; ++index) {
-    const std::string *source = sources.find(span.source);
-    std::cerr << (source != nullptr && (*source)[index] == '\t' ? '\t' : ' ');
-  }
-  const std::size_t end =
-      std::min(location.lineEnd,
-               std::max(span.end, std::min(span.start + 1, location.lineEnd)));
-  std::cerr << terminalStyle.code(std::cerr, Style::Note) << '^';
-  if (end > start + 1) {
-    std::cerr << std::string(end - start - 1, '~');
-  }
-  std::cerr << terminalStyle.code(std::cerr, Style::Reset) << '\n';
+  reportSourceExcerpt(span, sources, Style::Note);
 }
 
 void reportDiagnostic(const lang::Diagnostic &diagnostic,
@@ -1342,27 +1388,7 @@ void reportDiagnostic(const lang::Diagnostic &diagnostic,
   std::cerr << terminalStyle.code(std::cerr, Style::Reset) << ": "
             << diagnostic.message << '\n';
 
-  const std::string_view sourceLine = sources.line(diagnostic.primary);
-  if (!sourceLine.empty()) {
-    const std::string lineNumber = std::to_string(location.line);
-    std::cerr << ' ' << lineNumber << " | " << sourceLine << '\n';
-    std::cerr << std::string(lineNumber.size() + 2, ' ') << "| ";
-    const std::string *source = sources.find(diagnostic.primary.source);
-    const std::size_t start =
-        std::min(diagnostic.primary.start, location.lineEnd);
-    for (std::size_t index = location.lineStart; index < start; ++index) {
-      std::cerr << (source != nullptr && (*source)[index] == '\t' ? '\t' : ' ');
-    }
-    const std::size_t end = std::min(
-        location.lineEnd,
-        std::max(diagnostic.primary.end,
-                 std::min(diagnostic.primary.start + 1, location.lineEnd)));
-    std::cerr << terminalStyle.code(std::cerr, style) << '^';
-    if (end > start + 1) {
-      std::cerr << std::string(end - start - 1, '~');
-    }
-    std::cerr << terminalStyle.code(std::cerr, Style::Reset) << '\n';
-  }
+  reportSourceExcerpt(diagnostic.primary, sources, style);
 
   for (const lang::RelatedDiagnostic &related : diagnostic.related) {
     reportLocation(related.span, "note", related.message, sources);
