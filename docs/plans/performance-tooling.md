@@ -2,8 +2,8 @@
 
 ## C-TIME-02: Chip8 aggregate-admission latency (2026-10-04)
 
-Status: measured compiler improvement; combined constructor-fix validation and
-original-project successful-cache confirmation are still pending.
+Status: bounded compiler improvement, original-project successful-cache
+confirmation and combined broad release validation complete.
 
 The client is the user's approximately 876-line Chip8 project, including its
 3,584-element ROM initializer, under **plain `gti build`**, not `--release`.
@@ -56,6 +56,51 @@ key, optimization changes miss, and same-size/same-timestamp native header and
 C-source edits miss and produce the changed executable behavior. Existing
 no-op caching is already fast; another cache layer is not justified here.
 
+### Reconciled original-project confirmation
+
+After integrating the generated-constructor fix, a fresh copy of the
+**unmodified** Chip8 project (including `Chip9`) builds with Release 0.369.1:
+1.989 s for a cold cache miss, 1.992 s for a genuinely new comment edit, and
+0.051 s median for three verified no-op hits. Repeating the edit hits its new
+key; restoring the original bytes hits the original key. Every build succeeds,
+and both compiler/source identity checks and before/after user-file hashes
+pass. No emulator execution or source workaround is involved in this
+confirmation. These full-build numbers are single cold/edited observations,
+not a second five-pair comparison.
+
+The constructor correction records the selected base identity in semantics,
+discovers its executable HIR even without a separate direct base construction,
+and uses ordinary MIR base initialization and failure propagation. It does
+not repair the link with a terminating native adapter that bypasses caller
+cleanup. The first structural family and remaining migration boundary are
+documented in the canonical HIR/MIR/backend documents.
+
+Original-project records are in the adjacent `final-original/report.json`;
+`../final_original.py` recreates this check without touching the user project.
+The measured combined source is `7fcee9b6` plus VERSION/documentation edits;
+the preserved executable SHA-256 is
+`0d3daa6ba1fcb193e2e5d75f4bef5018b3cca297e36147fb94011fa1d4699942`.
+
+### Existing workload controls
+
+The existing `compile_time_compare.py` runner checks vector and game-update
+workloads at O2/C++23, with one warmup and three interleaved repetitions, using
+the same optimized baseline and final combined compiler. No other build/test
+jobs run during timing. Full-build medians are 545.9/540.0 ms before/after for
+vector and 2421.2/2366.6 ms for game update; this small control set shows no
+material regression, not an additional speedup claim. Idiomatic C++ medians
+are 325.2 and 373.1 ms respectively. The game-update comparison target remains
+unmet.
+
+Every GTI and C++ variant produces identical complete stdout per workload.
+The runner's raw C++ comparison differs because it selects separate stdlib
+paths and consequently different source-derived identities. Separate emission
+checks with common staged resources produce byte-identical C++ for both
+workloads. These correctness checks are not additional timing samples. Commands,
+identities, output hashes and generated files are retained under
+`/private/tmp/gti-chip8-controls-final/`, including `report.json` and the
+`*-common.cpp` files.
+
 Local raw evidence, harness, exact source/resource hashes, commands, logs and
 the measured diff live under
 `/private/tmp/gti-cache-investigation.fyiJ9u/paired-final/`; the report is
@@ -76,6 +121,19 @@ positive/negative applicable-pattern proofs. Do not add noisy CI wall-time
 thresholds or infer generic C++ compile-time parity from this one application.
 The C-TIME-01 comparison target remains open; this result establishes a large,
 bounded improvement, not a physical/practical lower bound.
+
+Combined validation passes all 413 registered CTests, including corpus,
+independent MIR oracle, optimizer, runtime, LSP and the 121-case standard-library
+surface gate (2351.85 s with six test jobs). The all-target host Release build
+uses twelve jobs. All 413 first-party C/C++ files pass clang-format 22.1.8 and
+the diff passes whitespace checks. A fresh isolated 0.369.1 installation passes
+all eleven external CMake consumers and the owning-base success/failure client
+at O3/C++23 with checkout resource overrides cleared. The active user toolchain
+is not changed. The constructor correctness fix advances VERSION to 0.369.1;
+the internal admission optimization alone did not require a version advance.
+These are local macOS arm64 results, not Linux/Windows or asynchronous Gitea CI
+results. The optional full language audit was not repeated; the registered
+corpus and differential gates provide the required broad evidence.
 
 ## C-TIME-01: bounded compiler-latency investigation (2026-10-01)
 

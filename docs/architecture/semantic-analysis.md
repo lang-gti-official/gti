@@ -49,6 +49,15 @@ generic recurrence remains conservatively bounded. MIR independently derives
 relocation from concrete instance identities; it does not accept a semantic
 trait simply because a wrapper's name appeared earlier in a query.
 
+`ClassLifecycleInfo::generatedDefaultBaseConstructor` records the exact base
+constructor selected for the bounded executable generated-default family:
+nongeneric owners/bases, no derived instance fields or destructor, and an
+exact zero-parameter source base constructor. Construction carries ordinary
+constructor-failure propagation; HIR consumes this identity rather than
+reselecting a constructor. A zero identity retains the existing generated
+declaration schedule for other shapes. This fact changes representation of an
+already permitted construction, not source overload availability.
+
 ## Analysis Order
 
 `SemanticVisitor::check(const Program&)` is staged because later facts depend

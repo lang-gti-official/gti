@@ -1684,9 +1684,13 @@ native shell at the consuming operation; it does not defer argument evaluation
 into a C++ call expression.
 
 The first base-subobject family now uses an entry `InitializeBase` followed by
-an `Invoke`. It covers a selected zero-argument owning base constructor,
+an `Invoke`. It covers a selected zero-argument base constructor,
 parameterless derived construction, cleanup-free derived fields, and generated
-base/derived destruction. A base that fails is not armed in the derived body;
+base/derived destruction. Both trivial-cleanup and owning bases carry the exact
+base cleanup bit in their rollback descriptor. The bounded source-free
+generated-derived HIR constructor lowers through the same body schedule; it is
+not a native-only default constructor or a terminal containment adapter.
+A base that fails is not armed in the derived body;
 later derived failure drains the completed base last, while successful
 construction transfers its obligation to the enclosing object. Independent
 verification binds the exact base relation, constructor, place, rollback type,
