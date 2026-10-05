@@ -1976,6 +1976,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::UniqueOwnerSwap:
         case IntrinsicKind::RestoringExchange:
         case IntrinsicKind::RestoringSwap:
+        case IntrinsicKind::EnumUnderlyingValue:
         case IntrinsicKind::UniqueOwnerUpcast:
         case IntrinsicKind::SharedOwnerEmpty:
         case IntrinsicKind::SharedOwnerIsNull:
@@ -5559,13 +5560,11 @@ auto SemanticVisitor::Impl::freshTemporaryReceiverValue(
     return result;
   }
   const auto dependencies = storedBorrowDependencies(expression);
-  if (dependencies.size() > 1) {
-    result.failure = FreshTemporaryValueFailure::MultipleBorrowOwners;
-    return result;
-  }
   if (!hasStableBorrowStorage(expression) || dependencies.empty() ||
-      (dependencies.front().place.root == 0 &&
-       !dependencies.front().place.receiver)) {
+      std::any_of(
+          dependencies.begin(), dependencies.end(), [](const auto &dependency) {
+            return dependency.place.root == 0 && !dependency.place.receiver;
+          })) {
     result.failure = FreshTemporaryValueFailure::UnstableBorrowOwner;
     return result;
   }
@@ -5712,16 +5711,13 @@ auto SemanticVisitor::Impl::reportMutableReceiverFailure(
                "temporary receiver.";
       break;
     case FreshTemporaryValueFailure::BorrowedState:
-      reason = "A temporary containing tracked borrowed state requires exactly "
-               "one stable owner dependency for an immediate method call.";
+      reason = "A temporary containing tracked borrowed state requires a "
+               "complete set of stable owner dependencies for an immediate "
+               "method call.";
       break;
     case FreshTemporaryValueFailure::UnstableBorrowOwner:
       reason = "A temporary borrowed receiver requires an owner whose storage "
                "remains alive for the complete expression.";
-      break;
-    case FreshTemporaryValueFailure::MultipleBorrowOwners:
-      reason = "A temporary borrowed receiver cannot retain multiple owner "
-               "dependencies in an immediate method call.";
       break;
     case FreshTemporaryValueFailure::UnsupportedProducer:
       reason = "This value is not produced directly by an ordinary "

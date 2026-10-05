@@ -907,7 +907,6 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
             break;
           case FreshTemporaryValueFailure::BorrowedState:
           case FreshTemporaryValueFailure::UnstableBorrowOwner:
-          case FreshTemporaryValueFailure::MultipleBorrowOwners:
             reason = argumentLabel + std::to_string(index + 1) +
                      " contains tracked borrowed state and cannot be "
                      "borrowed as a temporary argument.";
@@ -1885,8 +1884,8 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
     storedAccess = borrowAccess(constructedType);
     if (!storedParameter) {
       report(paren,
-             "Construction of a stored-reference carrier must bind its one "
-             "borrowed field from one exact constructor parameter.",
+             "Construction of a stored-reference carrier must bind every "
+             "borrowed field from an exact compatible constructor parameter.",
              "GTI-S2045");
       currentType = constructedType;
       return;
@@ -1895,6 +1894,20 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   if (storedReferencePaths(constructedType).size() <= 1) {
     storedParameters.clear();
   }
+  std::vector<BorrowedFieldOrigin> storedFields;
+  if (!storedParameters.empty() && selected.constructor != nullptr)
+    for (const auto &binding : storedCarrierConstructorBindings(
+             constructedType, selected.constructor->declaration,
+             selected.parameterTypes))
+      storedFields.push_back(
+          {.resultFields =
+               storedFieldSymbols(constructedType, binding.destination.fields),
+           .origin = BorrowOriginKind::Argument,
+           .parameter = binding.parameter,
+           .sourceFields =
+               storedFieldSymbols(selected.parameterTypes[binding.parameter],
+                                  binding.sourceFields),
+           .access = binding.destination.reference.referenceAccess});
   semanticModel.record(
       construction,
       ResolvedConstructionInfo{
@@ -1919,6 +1932,7 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
           .borrowArgument = storedParameter.value_or(0),
           .borrowAccess = storedAccess,
           .borrowArguments = std::move(storedParameters),
+          .borrowFields = std::move(storedFields),
           .generatedDefault = selected.generatedDefault,
           .kind = selected.kind});
   if (const auto *call = exprAs<Call>(&construction)) {
@@ -3828,8 +3842,12 @@ auto SemanticVisitor::Impl::validateReferenceBinding(
         sourceLoan != nullptr &&
         sourceLoan->kind == SemanticLoanKind::StoredValue &&
         typeTraits(referent).containsBorrowedState;
+    const AccessMode sourceAccess =
+        source && source->dependency ? source->dependency->access
+        : sourceLoan != nullptr      ? sourceLoan->access
+                                     : AccessMode::ReadOnly;
     if (sourceLoan != nullptr && !carrierShell &&
-        sourceLoan->access == AccessMode::ReadOnly) {
+        sourceAccess == AccessMode::ReadOnly) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2017", DiagnosticPhase::Semantics, expressionToken(initializer),
           "A read-only loan cannot be upgraded to a mutable reborrow.");
@@ -4172,6 +4190,64 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
       value == nullptr ? nullptr : semanticModel.findExpression(*value);
   if (valueInfo == nullptr || valueInfo->type == SemanticType::Unknown) {
     return;
+  }
+  if (!function->returnBorrowFields.empty()) {
+    auto actual =
+        function->returnType.kind == SemanticType::Reference
+            ? std::vector<SemanticLoanDependency>{{.place =
+                                                       retainedLoanPlace(value),
+                                                   .access =
+                                                       function->returnType
+                                                           .referenceAccess}}
+            : storedBorrowDependencies(value);
+    const bool matches =
+        actual.size() == function->returnBorrowFields.size() &&
+        std::all_of(
+            function->returnBorrowFields.begin(),
+            function->returnBorrowFields.end(), [&](const auto &expected) {
+              const auto found = std::find_if(
+                  actual.begin(), actual.end(), [&](const auto &dependency) {
+                    if (dependency.designatedFields != expected.resultFields ||
+                        dependency.access != expected.access)
+                      return false;
+                    if (expected.origin == BorrowOriginKind::Receiver) {
+                      if (!dependency.place.receiver)
+                        return false;
+                    } else if (expected.origin == BorrowOriginKind::Argument) {
+                      if (function->declaration == nullptr ||
+                          expected.parameter >=
+                              function->declaration->parameters().size() ||
+                          dependency.place.receiver ||
+                          dependency.place.root !=
+                              symbolForDeclaration(
+                                  function->declaration
+                                      ->parameters()[expected.parameter]
+                                      .name))
+                        return false;
+                    } else {
+                      return false;
+                    }
+                    if (dependency.place.projections.size() !=
+                        expected.sourceFields.size())
+                      return false;
+                    for (std::size_t index = 0;
+                         index < expected.sourceFields.size(); ++index)
+                      if (dependency.place.projections[index].kind !=
+                              PlaceProjectionKind::Field ||
+                          dependency.place.projections[index].field !=
+                              expected.sourceFields[index])
+                        return false;
+                    return true;
+                  });
+              return found != actual.end();
+            });
+    if (!matches) {
+      report(expressionToken(value),
+             "Each returned borrowed field must preserve its exact declared "
+             "source field, owner, and access permission.",
+             std::move(code));
+      return;
+    }
   }
   if (storedReferencePaths(valueInfo->type).size() > 1) {
     const auto dependencies = storedBorrowDependencies(value);

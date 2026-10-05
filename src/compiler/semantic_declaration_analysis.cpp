@@ -4742,17 +4742,6 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
     const auto dependencies =
         storedReferencePaths(SemanticType::classType(owner.id));
     if (dependencies.size() > 1) {
-      if (std::any_of(dependencies.begin(), dependencies.end(),
-                      [](const StoredReferencePath &path) {
-                        return path.reference.referenceAccess !=
-                               AccessMode::ReadOnly;
-                      })) {
-        report(owner.name,
-               "A composed borrowed value requires read-only dependencies; "
-               "multiple or mixed exclusive dependencies are not supported.",
-               "GTI-S2045");
-        continue;
-      }
       if (owner.constructors.empty()) {
         report(owner.name,
                "A composed borrowed value requires a declared constructor "
@@ -4760,6 +4749,26 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
                "GTI-S2045");
       }
       for (ConstructorInfo &constructor : owner.constructors) {
+        const auto bindings = storedCarrierConstructorBindings(
+            SemanticType::classType(owner.id), constructor.declaration,
+            constructor.parameterTypes);
+        for (std::size_t index = 0; index < bindings.size(); ++index) {
+          for (std::size_t earlier = 0; earlier < index; ++earlier) {
+            const auto &left = bindings[earlier];
+            const auto &right = bindings[index];
+            if (left.parameter == right.parameter &&
+                left.sourceFields == right.sourceFields &&
+                (left.destination.reference.referenceAccess ==
+                     AccessMode::Mutable ||
+                 right.destination.reference.referenceAccess ==
+                     AccessMode::Mutable)) {
+              report(right.destination.fields.front()->name(),
+                     "Stored reference fields cannot duplicate an exclusive "
+                     "dependency from the same constructor parameter.",
+                     "GTI-S2045");
+            }
+          }
+        }
         constructor.borrowParameters = storedCarrierConstructorParameters(
             SemanticType::classType(owner.id), constructor,
             constructor.parameterTypes);
@@ -4771,7 +4780,8 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
                  "GTI-S2045");
         } else {
           constructor.borrowParameter = constructor.borrowParameters.front();
-          constructor.borrowAccess = AccessMode::ReadOnly;
+          constructor.borrowAccess =
+              dependencies.front().reference.referenceAccess;
         }
       }
       continue;
@@ -4958,6 +4968,7 @@ auto SemanticVisitor::Impl::publishFunctionBorrowSummary(
       declaration->returnBorrowParameter = function.returnBorrowParameter;
       declaration->returnBorrowAccess = function.returnBorrowAccess;
       declaration->returnBorrowParameters = function.returnBorrowParameters;
+      declaration->returnBorrowFields = function.returnBorrowFields;
       declaration->returnBorrowPlace = function.returnBorrowPlace;
     }
   }
@@ -4973,6 +4984,7 @@ auto SemanticVisitor::Impl::publishFunctionBorrowSummary(
     candidate->returnBorrowParameter = function.returnBorrowParameter;
     candidate->returnBorrowAccess = function.returnBorrowAccess;
     candidate->returnBorrowParameters = function.returnBorrowParameters;
+    candidate->returnBorrowFields = function.returnBorrowFields;
     candidate->returnBorrowPlace = function.returnBorrowPlace;
   }
 }
@@ -5325,6 +5337,214 @@ auto SemanticVisitor::Impl::ownedPointeeReturnProjection(
                                 .borrowIntrinsic = expected};
 }
 
+auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
+    const FunctionInfo &function, SemanticType ownerType)
+    -> std::optional<FunctionReturnBorrowSummary> {
+  if (!isBorrowReturningType(function.returnType) ||
+      isBorrowedCarrierReference(function.returnType) ||
+      function.intrinsic != IntrinsicKind::None || function.virtualMethod ||
+      function.overrideMethod || function.declaration == nullptr ||
+      function.declaration->body() == nullptr)
+    return std::nullopt;
+  // The existing single-origin contract already identifies a sole stored
+  // field. Publish a field map where choosing among multiple fields would
+  // otherwise lose information; this is not a limit on carrier cardinality.
+  if (function.returnType.kind != SemanticType::Reference &&
+      storedReferencePaths(function.returnType).size() <= 1)
+    return std::nullopt;
+  if (function.ownerClass != 0 && (ownerType.kind != SemanticType::Class ||
+                                   ownerType.classId != function.ownerClass))
+    ownerType = substituteType(openClassType(function.ownerClass),
+                               instanceTypeSubstitution);
+  const auto enclosingNamespace = currentNamespace;
+  const auto enclosingSourceUnit = currentSourceUnit;
+  const auto enclosingClass = currentClass;
+  currentNamespace = function.namespaceScope;
+  currentSourceUnit = function.sourceUnit;
+  currentClass = function.ownerClass == 0
+                     ? std::nullopt
+                     : std::optional<ClassId>{function.ownerClass};
+
+  struct Origin {
+    BorrowedFieldOrigin source;
+    SemanticType type = SemanticType::Unknown;
+  };
+  const auto field = [&](Origin source,
+                         const Token &name) -> std::optional<Origin> {
+    SemanticType owner = source.type;
+    if (owner.kind == SemanticType::Reference && owner.arguments.size() == 1)
+      owner = owner.arguments.front();
+    const auto *member = findMember(owner, name);
+    if (member == nullptr || member->symbol.variableDeclaration == nullptr ||
+        member->symbol.staticMember)
+      return std::nullopt;
+    source.source.sourceFields.push_back(toolingSymbolFor(member->symbol));
+    source.type = substituteType(member->symbol.type, classSubstitution(owner));
+    return source;
+  };
+  const auto origin = [&](const auto &self,
+                          const ExprPtr &expression) -> std::optional<Origin> {
+    if (!expression)
+      return std::nullopt;
+    if (const auto *group = exprAs<Grouping>(expression.get()))
+      return self(self, group->expression());
+    if (exprAs<This>(expression.get()) != nullptr && function.ownerClass != 0)
+      return Origin{.source = {.origin = BorrowOriginKind::Receiver},
+                    .type = ownerType};
+    if (const auto *variable = exprAs<Variable>(expression.get())) {
+      for (std::size_t index = 0; index < function.parameterTypes.size();
+           ++index)
+        if (function.declaration->parameters()[index].name.lexeme ==
+            variable->name().lexeme)
+          return Origin{.source = {.origin = BorrowOriginKind::Argument,
+                                   .parameter = index},
+                        .type = function.parameterTypes[index]};
+      if (function.ownerClass != 0 && !function.staticMember)
+        return field({.source = {.origin = BorrowOriginKind::Receiver},
+                      .type = ownerType},
+                     variable->name());
+    }
+    if (const auto *member = exprAs<Get>(expression.get()))
+      if (auto object = self(self, member->object()))
+        return field(std::move(*object), member->name());
+    if (const auto *call = exprAs<Call>(expression.get());
+        call != nullptr && call->arguments().size() == 1)
+      if (const auto intrinsic = intrinsicCandidate(call->callee());
+          intrinsic && intrinsic->record().intrinsic == IntrinsicKind::Move)
+        return self(self, call->arguments().front());
+    return std::nullopt;
+  };
+  const auto returnFields = [&](const ExprPtr &expression)
+      -> std::optional<std::vector<BorrowedFieldOrigin>> {
+    std::vector<BorrowedFieldOrigin> fields;
+    if (auto source = origin(origin, expression)) {
+      if (function.returnType.kind == SemanticType::Reference) {
+        // Ordinary owner/field references already use the projected-place
+        // return contract. Field mappings describe stored external referents,
+        // not a second interpretation of owned storage or raw indirection.
+        SemanticType owner =
+            source->source.origin == BorrowOriginKind::Receiver
+                ? ownerType
+                : function.parameterTypes[source->source.parameter];
+        if (owner.kind == SemanticType::Reference &&
+            owner.arguments.size() == 1)
+          owner = owner.arguments.front();
+        const auto paths = storedReferencePaths(owner);
+        if (paths.size() <= 1 ||
+            std::none_of(paths.begin(), paths.end(), [&](const auto &path) {
+              return storedFieldSymbols(owner, path.fields) ==
+                     source->source.sourceFields;
+            }))
+          return std::nullopt;
+        source->source.access = function.returnType.referenceAccess;
+        fields.push_back(std::move(source->source));
+        return fields;
+      }
+      SemanticType type = source->type;
+      if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+        type = type.arguments.front();
+      if (type != function.returnType)
+        return std::nullopt;
+      for (const auto &path : storedReferencePaths(type)) {
+        auto mapping = source->source;
+        mapping.resultFields = storedFieldSymbols(type, path.fields);
+        mapping.sourceFields.insert(mapping.sourceFields.end(),
+                                    mapping.resultFields.begin(),
+                                    mapping.resultFields.end());
+        mapping.access = path.reference.referenceAccess;
+        fields.push_back(std::move(mapping));
+      }
+      return fields.empty() ? std::nullopt : std::optional{fields};
+    }
+    const auto *call = exprAs<Call>(expression.get());
+    std::optional<ClassId> constructed;
+    if (call != nullptr) {
+      if (const auto *name = exprAs<Variable>(call->callee().get()))
+        constructed =
+            resolveClassPath(NamePath(name->name()), currentNamespace);
+      else if (const auto *name = exprAs<QualifiedName>(call->callee().get()))
+        constructed = resolveClassPath(name->name(), currentNamespace);
+    }
+    if (!constructed || *constructed != function.returnType.classId)
+      return std::nullopt;
+    const auto *owner = classInfo(function.returnType);
+    if (owner == nullptr)
+      return std::nullopt;
+    std::optional<std::vector<BorrowedFieldOrigin>> result;
+    for (const auto &constructor : owner->constructors) {
+      if (constructor.parameterTypes.size() != call->arguments().size())
+        continue;
+      auto parameters = constructor.parameterTypes;
+      for (auto &parameter : parameters)
+        parameter =
+            substituteType(parameter, classSubstitution(function.returnType));
+      const auto bindings = storedCarrierConstructorBindings(
+          function.returnType, constructor.declaration, parameters);
+      if (bindings.empty())
+        continue;
+      fields.clear();
+      for (const auto &binding : bindings) {
+        auto source = origin(origin, call->arguments()[binding.parameter]);
+        if (!source) {
+          fields.clear();
+          break;
+        }
+        auto mapping = std::move(source->source);
+        mapping.resultFields =
+            storedFieldSymbols(function.returnType, binding.destination.fields);
+        auto nested = storedFieldSymbols(parameters[binding.parameter],
+                                         binding.sourceFields);
+        mapping.sourceFields.insert(mapping.sourceFields.end(), nested.begin(),
+                                    nested.end());
+        mapping.access = binding.destination.reference.referenceAccess;
+        fields.push_back(std::move(mapping));
+      }
+      if (fields.empty() || (result && *result != fields))
+        return std::nullopt;
+      result = fields;
+    }
+    return result;
+  };
+  std::vector<const ExprPtr *> returns;
+  collectBorrowReturnExpressions(function.declaration->body().get(), returns);
+  std::optional<std::vector<BorrowedFieldOrigin>> fields;
+  for (const auto *expression : returns) {
+    const auto candidate = returnFields(*expression);
+    if (!candidate || (fields && *fields != *candidate)) {
+      fields.reset();
+      break;
+    }
+    fields = candidate;
+  }
+  currentNamespace = enclosingNamespace;
+  currentSourceUnit = enclosingSourceUnit;
+  currentClass = enclosingClass;
+  if (!fields || fields->empty())
+    return std::nullopt;
+  FunctionReturnBorrowSummary result{.origin = fields->front().origin,
+                                     .parameter = fields->front().parameter,
+                                     .access = fields->front().access,
+                                     .fields = *fields};
+  for (const auto &field : *fields) {
+    if (field.origin != result.origin)
+      return std::nullopt;
+    if (field.origin == BorrowOriginKind::Argument &&
+        (field.parameter >= function.parameterTypes.size() ||
+         (function.parameterTypes[field.parameter].kind !=
+              SemanticType::Reference &&
+          !isDirectStoredReferenceType(
+              function.parameterTypes[field.parameter]))))
+      return std::nullopt;
+    if (field.origin == BorrowOriginKind::Argument &&
+        std::find(result.parameters.begin(), result.parameters.end(),
+                  field.parameter) == result.parameters.end())
+      result.parameters.push_back(field.parameter);
+  }
+  if (result.parameters.size() == 1)
+    result.parameters.clear();
+  return result;
+}
+
 auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
   BorrowSummaryCandidateIndex candidateIndex =
       functionCandidateBorrowSummaryIndex();
@@ -5347,6 +5567,8 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
             dynamicTextReturnBorrowSummary(updated)) {
       summary = *dynamicText;
     }
+    if (const auto fields = storedFieldReturnBorrowSummary(updated))
+      summary = *fields;
     if (isBorrowReturningType(updated.returnType) &&
         updated.intrinsic == IntrinsicKind::None) {
       if (std::optional<BorrowOriginPlace> place =
@@ -5360,6 +5582,7 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
     updated.returnBorrowParameter = summary.parameter;
     updated.returnBorrowAccess = summary.access;
     updated.returnBorrowParameters = summary.parameters;
+    updated.returnBorrowFields = summary.fields;
     updated.returnBorrowPlace = summary.place;
     updated.ownedPointeeProjection = ownedPointeeReturnProjection(updated);
     semanticModel.record(*declaration, updated);
@@ -6153,6 +6376,7 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .returnBorrowParameter = declaration.returnBorrowParameter,
       .returnBorrowAccess = declaration.returnBorrowAccess,
       .returnBorrowParameters = declaration.returnBorrowParameters,
+      .returnBorrowFields = declaration.returnBorrowFields,
       .returnBorrowPlace = declaration.returnBorrowPlace,
       .virtualRoots = declaration.virtualRoots,
       .compilerPrivate = declaration.compilerPrivate};
@@ -6201,6 +6425,9 @@ auto SemanticVisitor::Impl::publishCallableDeclaration(
   declaration->returnBorrowParameters = candidateOwnsBorrow
                                             ? candidate.returnBorrowParameters
                                             : concreteBorrow.parameters;
+  declaration->returnBorrowFields = candidateOwnsBorrow
+                                        ? candidate.returnBorrowFields
+                                        : concreteBorrow.fields;
   declaration->virtualRoots = candidate.virtualRoots;
   declaration->compilerPrivate = candidate.compilerPrivate;
   const SourceUnit *unit = sourceGraph == nullptr

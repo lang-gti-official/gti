@@ -25440,6 +25440,27 @@ storageReadFailureHelperSpelling(IntrinsicKind intrinsic) {
                               optionalStorageType(program, place->type));
 }
 
+[[nodiscard]] bool exactEnumExtraction(const MirProgram &program,
+                                       const MirBody &body,
+                                       const MirInstruction &instruction) {
+  const MirValue *argument =
+      instruction.operands.size() == 1 &&
+              instruction.operands.front().kind == MirOperandKind::Value
+          ? body.findValue(instruction.operands.front().value)
+          : nullptr;
+  const MirIntegralEnum *enumeration =
+      argument != nullptr && argument->info.type.kind == SemanticType::Enum
+          ? program.findIntegralEnum(argument->info.type.enumId)
+          : nullptr;
+  return instruction.kind == MirInstructionKind::Call && instruction.result &&
+         !instruction.receiver && !instruction.functionTarget &&
+         enumeration != nullptr &&
+         instruction.info.type == enumeration->underlyingType &&
+         instruction.parameterTypes ==
+             std::vector<SemanticType>{argument->info.type} &&
+         instruction.localFailureSites.empty();
+}
+
 [[nodiscard]] bool scalarSpellableArithmeticIntrinsic(IntrinsicKind intrinsic) {
   switch (intrinsic) {
   case IntrinsicKind::IntegerWrappingAdd:
@@ -25913,11 +25934,12 @@ public:
           // spells in the native initializer and rollback in the caller.
           continue;
         }
-        const bool fieldChain =
-            std::all_of(place.projections.begin(), place.projections.end(),
-                        [](const MirPlaceProjection &projection) {
-                          return projection.kind == MirProjectionKind::Field;
-                        });
+        const bool fieldChain = std::all_of(
+            place.projections.begin(), place.projections.end(),
+            [](const MirPlaceProjection &projection) {
+              return projection.kind == MirProjectionKind::Field ||
+                     projection.kind == MirProjectionKind::Dereference;
+            });
         if (fieldChain) {
           const MirClassInstance *receiverOwner =
               facts.owner ? program.findClassInstance(*facts.owner) : nullptr;
@@ -25940,33 +25962,8 @@ public:
             place.projections[1].kind == MirProjectionKind::Index) {
           continue;
         }
-        writeIndent();
-        output << (receiverAllowsMutation(facts.receiverMutability)
-                       ? "auto &__gti_mir_p_"
-                       : "const auto &__gti_mir_p_")
-               << place.id << " = (*this)."
-               << fieldSpelling(facts, place.projections.front().field);
-        // A reference member dereferences implicitly, so trailing field
-        // projections read directly through the bound referent.
-        if (place.projections.size() > 2) {
-          const MirClassInstance *receiverOwner =
-              facts.owner ? program.findClassInstance(*facts.owner) : nullptr;
-          const ResolvedMirField reference =
-              receiverOwner == nullptr
-                  ? ResolvedMirField{}
-                  : resolveMirField(program, receiverOwner->type,
-                                    place.projections.front().field);
-          if (!reference ||
-              reference.field->type.kind != SemanticType::Reference ||
-              reference.field->type.arguments.size() != 1) {
-            throw std::logic_error(
-                "verified reference field chain lost its referent type");
-          }
-          emitFieldProjectionChain(reference.field->type.arguments.front(),
-                                   place.projections, 2);
-        }
-        output << ";\n";
-        continue;
+        throw std::logic_error(
+            "verified receiver projection changed after probing");
       }
       // A lambda-typed local declares only under a template emission's
       // overlay row (spelling its template parameter name); otherwise its
@@ -34261,6 +34258,14 @@ private:
       output << ");\n";
       return;
     }
+    if (instruction.kind == MirInstructionKind::Call &&
+        instruction.intrinsic == IntrinsicKind::EnumUnderlyingValue) {
+      output << "__gti_mir_v_" << *instruction.result << " = static_cast<"
+             << typeSpelling(instruction.info.type) << ">(";
+      emitOperand(instruction.operands.front());
+      output << ");\n";
+      return;
+    }
     if (instruction.kind == MirInstructionKind::Call && instruction.receiver &&
         (instruction.intrinsic == IntrinsicKind::StringViewSize ||
          instruction.intrinsic == IntrinsicKind::StringViewEmpty ||
@@ -36661,20 +36666,12 @@ private:
       }
       if (std::all_of(place.projections.begin(), place.projections.end(),
                       [](const MirPlaceProjection &projection) {
-                        return projection.kind == MirProjectionKind::Field;
-                      })) {
-        output << "__gti_mir_p_" << place.id;
-        return;
-      }
-      if (place.projections.size() >= 2 &&
-          place.projections[0].kind == MirProjectionKind::Field &&
-          place.projections[1].kind == MirProjectionKind::Dereference &&
-          std::all_of(place.projections.begin() + 2, place.projections.end(),
-                      [](const MirPlaceProjection &projection) {
-                        return projection.kind == MirProjectionKind::Field;
+                        return projection.kind == MirProjectionKind::Field ||
+                               projection.kind ==
+                                   MirProjectionKind::Dereference;
                       })) {
         // A reference member dereferences implicitly; the bound alias
-        // already names the referent (or its trailing field projection).
+        // names the exact referent even inside nested stored aggregates.
         output << "__gti_mir_p_" << place.id;
         return;
       }
@@ -41688,57 +41685,15 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // field spelling or a separately materialized C++ lvalue.
         continue;
       }
-      const bool fieldChain =
-          std::all_of(place.projections.begin(), place.projections.end(),
-                      [](const MirPlaceProjection &projection) {
-                        return projection.kind == MirProjectionKind::Field;
-                      });
-      if (fieldChain) {
-        const MirClassInstance *receiverOwner =
-            owner ? program_.findClassInstance(*owner) : nullptr;
-        if (receiverOwner == nullptr ||
-            !exactFieldProjectionRows(program_, representations_,
-                                      receiverOwner->type, place.projections, 0,
-                                      place.type)) {
-          return false;
-        }
-        continue;
-      }
-      // A reference field followed by its dereference binds through the
-      // member spelling because C++ reference members dereference
-      // implicitly; trailing field projections then read through the bound
-      // referent. Fixed-array fields use the shared checked path above.
-      const bool referenceFieldChain =
-          place.projections.size() >= 2 &&
-          place.projections[0].kind == MirProjectionKind::Field &&
-          place.projections[1].kind == MirProjectionKind::Dereference &&
-          std::all_of(place.projections.begin() + 2, place.projections.end(),
-                      [](const MirPlaceProjection &projection) {
-                        return projection.kind == MirProjectionKind::Field;
-                      });
-      if (!referenceFieldChain ||
-          place.projections.front().kind != MirProjectionKind::Field ||
-          !fieldRow(place.projections.front().field)) {
-        {
-          return false;
-        }
-      }
-      if (referenceFieldChain && place.projections.size() > 2) {
-        const MirClassInstance *receiverOwner =
-            owner ? program_.findClassInstance(*owner) : nullptr;
-        const ResolvedMirField reference =
-            receiverOwner == nullptr
-                ? ResolvedMirField{}
-                : resolveMirField(program_, receiverOwner->type,
-                                  place.projections.front().field);
-        if (!reference ||
-            reference.field->type.kind != SemanticType::Reference ||
-            reference.field->type.arguments.size() != 1 ||
-            !exactFieldProjectionRows(program_, representations_,
-                                      reference.field->type.arguments.front(),
-                                      place.projections, 2, place.type)) {
-          return false;
-        }
+      // Resolve every field and reference step through its exact MIR type
+      // and representation row, including references nested in aggregates.
+      const MirClassInstance *receiverOwner =
+          owner ? program_.findClassInstance(*owner) : nullptr;
+      if (receiverOwner == nullptr ||
+          !exactFieldProjectionRows(program_, representations_,
+                                    receiverOwner->type, place.projections, 0,
+                                    place.type, true)) {
+        return false;
       }
       // A storage-typed receiver field is only the staging carrier for
       // storage-intrinsic calls; it needs a field row but no value row.
@@ -42001,7 +41956,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               : nullptr;
       if (referent == nullptr || !typeRow(place.type) ||
           !exactFieldProjectionRows(program_, representations_, *referent,
-                                    place.projections, 1, place.type)) {
+                                    place.projections, 1, place.type, true)) {
         {
           return false;
         }
@@ -46263,6 +46218,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
           // A numeric-conversion intrinsic spells as the shipped
           // numeric_cast helper over one staged operand.
+          if (instruction.intrinsic == IntrinsicKind::EnumUnderlyingValue &&
+              exactEnumExtraction(program_, body, instruction) &&
+              valueOperand(instruction.operands.front()) &&
+              typeRow(instruction.info.type)) {
+            continue;
+          }
           if ((instruction.intrinsic ==
                    IntrinsicKind::NumericTypeParameterConversion ||
                instruction.intrinsic ==

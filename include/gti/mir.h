@@ -328,6 +328,15 @@ enum class MirLoanKind {
   CallArgument,
 };
 
+struct MirLoanDependency {
+  MirPlaceId source = 0;
+  std::vector<SymbolId> designatedFields;
+  AccessMode access = AccessMode::ReadOnly;
+
+  friend bool operator==(const MirLoanDependency &,
+                         const MirLoanDependency &) = default;
+};
+
 struct MirLoan {
   MirLoanId id = 0;
   SemanticLoanId semanticLoan = 0;
@@ -338,9 +347,10 @@ struct MirLoan {
   MirLoanId storedDependency = 0;
   MirLoanKind kind = MirLoanKind::Local;
   MirPlaceId source = 0;
-  // Independent protected owners for a composed read-only carrier. These
-  // places are verified and participate in loan conflicts, not emitted C++.
-  std::vector<MirPlaceId> additionalSources;
+  // Each extra stored dependency retains its own provenance and permission.
+  // Abstract entry dependencies designate a field rather than a concrete
+  // caller place; concrete dependencies name their body-local source place.
+  std::vector<MirLoanDependency> additionalDependencies;
   AccessMode access = AccessMode::ReadOnly;
   HirValueId producedBy = 0;
   std::vector<HirBindingId> carriers;
@@ -350,7 +360,6 @@ struct MirLoan {
   // metadata for a by-value carrier dependency and has no backend
   // representation.
   std::vector<SymbolId> designatedFields;
-  std::vector<std::vector<SymbolId>> additionalDesignatedFields;
   // True only for a stored exclusive dependency whose carrier destructor
   // releases the protected resource. Cleanup must Drop that carrier before
   // ending this loan on every normal and failure edge.
@@ -363,6 +372,32 @@ struct MirLoan {
   bool twoPhase = false;
   bool entry = false;
   bool escapes = false;
+
+  [[nodiscard]] bool protectsSource(MirPlaceId place) const {
+    if (source == place)
+      return true;
+    for (const auto &dependency : additionalDependencies)
+      if (dependency.source != 0 && dependency.source == place)
+        return true;
+    return false;
+  }
+
+  [[nodiscard]] std::vector<MirPlaceId> additionalSources() const {
+    std::vector<MirPlaceId> result;
+    for (const auto &dependency : additionalDependencies)
+      if (dependency.source != 0)
+        result.push_back(dependency.source);
+    return result;
+  }
+
+  [[nodiscard]] std::vector<std::vector<SymbolId>>
+  additionalDesignatedFields() const {
+    std::vector<std::vector<SymbolId>> result;
+    for (const auto &dependency : additionalDependencies)
+      if (!dependency.designatedFields.empty())
+        result.push_back(dependency.designatedFields);
+    return result;
+  }
 
   friend bool operator==(const MirLoan &, const MirLoan &) = default;
 };
@@ -662,6 +697,7 @@ struct MirInstruction {
   AccessMode borrowAccess = AccessMode::ReadOnly;
   // Preserve the frontend-selected origins; emission must not infer them.
   std::vector<std::size_t> borrowArguments;
+  std::vector<BorrowedFieldOrigin> borrowFields;
   std::optional<BorrowOriginPlace> borrowPlace;
   MirOperation operation = MirOperation::None;
   std::optional<Literal> literal;
@@ -1227,6 +1263,7 @@ struct MirFunctionInstance {
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> returnBorrowParameters;
+  std::vector<BorrowedFieldOrigin> returnBorrowFields;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
   std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   LanguageLinkage linkage = LanguageLinkage::Gti;
@@ -1536,6 +1573,15 @@ struct MirHostedStartupPlan {
                          const MirHostedStartupPlan &) = default;
 };
 
+// Exact numeric representation selected by semantics for a payload-free enum.
+struct MirIntegralEnum {
+  EnumId declaration = 0;
+  SourceUnitId sourceUnit = 0;
+  SemanticType underlyingType = SemanticType::Unknown;
+  friend bool operator==(const MirIntegralEnum &,
+                         const MirIntegralEnum &) = default;
+};
+
 // Pointer-free lifecycle authority for a closed payload enum. Variant rows
 // retain the exact ordered field types and active-cleanup facts that MIR
 // construction, extraction, ownership flow, and backends are allowed to use.
@@ -1609,6 +1655,19 @@ public:
 
   [[nodiscard]] const std::vector<MirPayloadEnum> &payloadEnums() const {
     return payloadEnums_;
+  }
+
+  [[nodiscard]] const std::vector<MirIntegralEnum> &integralEnums() const {
+    return integralEnums_;
+  }
+
+  [[nodiscard]] const MirIntegralEnum *findIntegralEnum(EnumId id) const {
+    const auto found =
+        std::find_if(integralEnums_.begin(), integralEnums_.end(),
+                     [&](const MirIntegralEnum &candidate) {
+                       return candidate.declaration == id;
+                     });
+    return found == integralEnums_.end() ? nullptr : &*found;
   }
 
   [[nodiscard]] const MirPayloadEnum *findPayloadEnum(EnumId id) const {
@@ -1700,6 +1759,7 @@ private:
   std::optional<MirBody> hostedStartupBody;
   MirBody moduleBody;
   std::vector<MirPayloadEnum> payloadEnums_;
+  std::vector<MirIntegralEnum> integralEnums_;
   std::vector<MirClassInstance> classes;
   std::vector<MirFunctionInstance> functions;
   std::vector<MirNativeCallbackAdapter> nativeCallbacks;

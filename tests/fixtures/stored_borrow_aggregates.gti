@@ -1,0 +1,128 @@
+#include <std/utility>
+
+struct Services {
+  int& input;
+  mut int& output;
+  int& offset;
+  mut int& total;
+  Services(int& source, mut int& destination, int& delta, mut int& sum)
+      : input(source), output(destination), offset(delta), total(sum) {}
+  int& read() { return this.input; }
+  mut int& write() mut { return this.output; }
+  mut int& operator*() mut { return this.total; }
+  int update() mut {
+    output = input;
+    this.total = output;
+    total += offset;
+    this.output += 1;
+    return total;
+  }
+};
+
+Services services_for(mut int& sum, int& delta, int& source, mut int& destination) {
+  return Services(source, destination, delta, sum);
+}
+
+Services relay(Services value) { return std::move(value); }
+T generic_relay<T>(T value) { return std::move(value); }
+
+int inspect(Services& services) { return services.read(); }
+
+struct Envelope<T> {
+  mut T payload;
+  Envelope(T value) : payload(std::move(value)) {}
+};
+
+struct Repeated {
+  int& first;
+  int& second;
+  int& third;
+  Repeated(int& value) : first(value), second(value), third(value) {}
+  int sum() { return first + second + third; }
+};
+
+struct State {
+  int input = 40;
+  mut int output = 0;
+  int offset = 2;
+  mut int total = 0;
+};
+
+struct Exclusive {
+  mut int& value;
+  Exclusive(mut int& source) : value(source) {}
+};
+
+struct NestedPermissions {
+  int& input;
+  mut Exclusive output;
+  NestedPermissions(int& source, Exclusive target)
+      : input(source), output(std::move(target)) {}
+  int run() mut { output.value = input; return output.value; }
+};
+
+struct ReversedPermissions {
+  mut int& output;
+  Repeated input;
+  ReversedPermissions(mut int& target, Repeated source)
+      : output(target), input(source) {}
+  int run() mut { output = input.sum(); return output; }
+};
+
+int main() {
+  mut State state{};
+  Services services{state.input, state.output, state.offset, state.total};
+  Envelope<Services> first{std::move(services)};
+  mut Envelope<Envelope<Services>> second{std::move(first)};
+  if (second.payload.payload.update() != 42) { return 1; }
+  // Both exclusive owners reactivate after the final carrier use.
+  if (state.output != 41 || state.total != 42) { return 2; }
+  state.output = 14;
+  Repeated repeated{state.output};
+  auto copy = repeated;
+  if (copy.sum() != 42) { return 3; }
+  state.output = 0;
+  mut Services projected{state.input, state.output, state.offset, state.total};
+  mut int& output = projected.output;
+  mut int& total = projected.total;
+  int& input = projected.input;
+  int& same_input = projected.input;
+  output = input + same_input;
+  total = 42;
+  // The derived references retain independent owners and expire at last use.
+  if (state.output != 80 || state.total != 42) { return 4; }
+  state.output = 0;
+  Services factory_result = services_for(state.total, state.offset, state.input, state.output);
+  Services intermediate = relay(std::move(factory_result));
+  mut Services forwarded = generic_relay<Services>(std::move(intermediate));
+  mut int& destination = forwarded.write();
+  destination = 41;
+  mut int& sum = *forwarded;
+  sum = 42;
+  int observed = inspect(forwarded);
+  if (observed != 40 || state.output != 41 || state.total != 42) { return 5; }
+  mut Services branch_view{state.input, state.output, state.offset, state.total};
+  if (state.input > 0) {
+    [[discard]] branch_view.update();
+  } else {
+    [[discard]] branch_view.update();
+  }
+  state.output = 0;
+  for (mut int iteration = 0; iteration < 3; iteration++) {
+    mut Services loop_view{state.input, state.output, state.offset, state.total};
+    [[discard]] loop_view.update();
+  }
+  if (state.output != 41 || state.total != 42) { return 6; }
+  if (Services(state.input, state.output, state.offset, state.total).update() != 42) {
+    return 7;
+  }
+  state.output = 0;
+  Exclusive child{state.output};
+  mut NestedPermissions nested{state.input, std::move(child)};
+  if (nested.run() != 40) { return 8; }
+  Repeated shared{state.offset};
+  mut ReversedPermissions reversed{state.output, shared};
+  if (reversed.run() != 6) { return 9; }
+  state.output = 0;
+  return state.output;
+}

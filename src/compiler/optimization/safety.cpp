@@ -4430,7 +4430,7 @@ indexedAggregateAccess(const MirProgram *program, const MirBody &body,
   const bool directCarrier = carrierLoan != nullptr && carrierLoan == loan;
   if (loan == nullptr || loan->kind != MirLoanKind::CallResult ||
       loan->source == 0 || loan->producedBy == 0 || loan->entry ||
-      loan->storedDependency != 0 || !loan->additionalSources.empty() ||
+      loan->storedDependency != 0 || !loan->additionalSources().empty() ||
       loan->escapes || element == nullptr ||
       (place->root == MirPlaceRootKind::Loan && !loan->carriers.empty()) ||
       (loan->parent != 0 &&

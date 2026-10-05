@@ -337,6 +337,14 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
     concreteFunction.returnBorrowParameters = borrow.parameters;
     concreteFunction.returnBorrowPlace = borrow.place;
   }
+  if (const auto fields = storedFieldReturnBorrowSummary(concreteFunction)) {
+    concreteFunction.returnBorrowOrigin = fields->origin;
+    concreteFunction.returnBorrowParameter = fields->parameter;
+    concreteFunction.returnBorrowAccess = fields->access;
+    concreteFunction.returnBorrowParameters = fields->parameters;
+    concreteFunction.returnBorrowFields = fields->fields;
+    concreteFunction.returnBorrowPlace = fields->place;
+  }
   semanticModel.record(*function->declaration, std::move(concreteFunction));
   function->declaration->accept(*this);
   validateDefaultArgumentCycles();
@@ -3340,6 +3348,12 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
                                   : resolvePlaceSymbol(expr.name());
   SemanticPlace targetPlace =
       placeTarget == nullptr ? SemanticPlace{} : placeForSymbol(*placeTarget);
+  // The result of assignment is a value, but its destination is still an
+  // exact semantic place. Preserve it independently of result category so
+  // implicit receiver fields cannot become namespace/global symbol storage
+  // during HIR/MIR lowering.
+  if (targetPlace.root != nullptr)
+    semanticModel.recordPlace(expr, placeKey(targetPlace));
   if (expr.oper().kind != TokenKind::EQUAL &&
       symbol.valueState != ValueState::Available) {
     reportUnavailableValue(expr.name(), symbol);
@@ -6981,12 +6995,16 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
     return;
   }
   const Symbol resolvedMember = substituteSymbol(member->symbol, objectType);
+  const SemanticType targetType =
+      resolvedMember.type.kind == SemanticType::Reference &&
+              resolvedMember.type.arguments.size() == 1
+          ? resolvedMember.type.arguments.front()
+          : resolvedMember.type;
   SemanticPlace targetPlace = semanticPlace(expr);
   const std::optional<OverloadedOperator> mutationOperator =
       compoundOperator(expr.oper().kind);
-  const bool overloadedMutation =
-      !simpleAssignment && mutationOperator &&
-      resolvedMember.type.kind == SemanticType::Class;
+  const bool overloadedMutation = !simpleAssignment && mutationOperator &&
+                                  targetType.kind == SemanticType::Class;
   bool targetStateValid = true;
   if (!simpleAssignment) {
     if (const ProjectedValueState *state =
@@ -7000,11 +7018,11 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
     targetStateValid = false;
   }
   const SemanticType valueType =
-      simpleAssignment ? analyzeInitializer(expr.value(), resolvedMember.type)
+      simpleAssignment ? analyzeInitializer(expr.value(), targetType)
                        : analyze(expr.value());
   if (simpleAssignment &&
-      (resolvedMember.type.kind == SemanticType::StringView ||
-       resolvedMember.type.kind == SemanticType::CString) &&
+      (targetType.kind == SemanticType::StringView ||
+       targetType.kind == SemanticType::CString) &&
       isOwnerDependentTextExpression(expr.value())) {
     reportOwnerDependentTextStorage(expr.value(), "stored in a field");
   }
@@ -7045,17 +7063,17 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
         "live.");
   }
   if (simpleAssignment &&
-      !isOwnershipAssignment(resolvedMember.type, valueType, expr.value())) {
+      !isOwnershipAssignment(targetType, valueType, expr.value())) {
     report(expressionToken(expr.value()),
            "Cannot assign a value of type '" + typeSpelling(valueType) +
                "' to member '" + expr.name().lexeme + "' of type '" +
-               typeSpelling(resolvedMember.type) + "'.",
+               typeSpelling(targetType) + "'.",
            "GTI-S2003");
   }
   if (overloadedMutation && resolvedMember.assignable && mutableReceiver) {
     const std::optional<CallableCandidate> selected = resolveOperator(
-        expr, *mutationOperator, expr.object(), resolvedMember.type,
-        expr.oper(), std::span<const SemanticType>(&valueType, 1),
+        expr, *mutationOperator, expr.object(), targetType, expr.oper(),
+        std::span<const SemanticType>(&valueType, 1),
         std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
         OperatorReceiverState{.place = targetPlace, .mutableReceiver = true});
     currentType = selected ? callExpressionType(selected->returnType)
@@ -7063,12 +7081,12 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
     return;
   }
   if (!simpleAssignment && !overloadedMutation) {
-    if (resolvedMember.type.kind == SemanticType::RawPointer &&
+    if (targetType.kind == SemanticType::RawPointer &&
         (expr.oper().kind == TokenKind::PLUS_EQUAL ||
          expr.oper().kind == TokenKind::MINUS_EQUAL) &&
-        isInteger(valueType) && resolvedMember.type.arguments.size() == 1 &&
-        resolvedMember.type.arguments.front() != SemanticType::Void &&
-        !isCOpaqueHandleType(resolvedMember.type.arguments.front()) &&
+        isInteger(valueType) && targetType.arguments.size() == 1 &&
+        targetType.arguments.front() != SemanticType::Void &&
+        !isCOpaqueHandleType(targetType.arguments.front()) &&
         resolvedMember.assignable && mutableReceiver) {
       if (expr.access().kind != TokenKind::ARROW ||
           receiverType.kind != SemanticType::RawPointer) {
@@ -7076,13 +7094,13 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
                       "Raw pointer arithmetic");
       }
     }
-    validateCompoundAssignment(expr.oper(), resolvedMember.type, valueType,
+    validateCompoundAssignment(expr.oper(), targetType, valueType,
                                expr.value().get());
   }
   if (simpleAssignment && resolvedMember.type != SemanticType::Function &&
       resolvedMember.assignable && mutableReceiver && targetStateValid &&
       !directSelfMove &&
-      isOwnershipAssignment(resolvedMember.type, valueType, expr.value())) {
+      isOwnershipAssignment(targetType, valueType, expr.value())) {
     if (targetPlace.root != nullptr) {
       semanticModel.recordOwnershipEvent(
           expr, {.kind = OwnershipEventKind::Reinitialize,
@@ -7093,7 +7111,7 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
     }
     reinitializePlace(targetPlace);
   }
-  currentType = resolvedMember.type;
+  currentType = targetType;
 }
 
 auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {

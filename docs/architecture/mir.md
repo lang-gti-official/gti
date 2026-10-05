@@ -53,7 +53,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v85`, `mir-body-v72`).
+instruction, body, and caller-assignment facts (`mir-v87`, `mir-body-v74`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -226,7 +226,26 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v85`/`mir-body-v72`.
+The deterministic serialization is currently `mir-v87`/`mir-body-v74`.
+Field-aware borrowed-return and construction contracts serialize each result
+field path, selected receiver or parameter, source field path, and permission.
+Calls preserve the semantic contract; program verification also checks the
+callee's actual return publication or constructor initializers independently.
+Matching forged caller/callee summaries are therefore not sufficient proof.
+An abstract entry retains caller-owned field identities without treating the
+carrier's physical shell as the external referent. Its complete value transfer
+is checked against the returned SSA producer. Compact sole-origin carriers
+remain representable when nested in an explicitly mapped aggregate; their
+field names must not be projected onto the external owner's storage.
+Whole noncopyable field-mapped call transfers retire the consumed caller loan
+on success, while the returned carrier retains its independently verified
+dependencies. Failure cleanup retains its existing explicit MIR edges.
+An immediate temporary carrier receiver retains the same complete dependency
+set. Its materialized shell has a distinct call-only loan, while every stored
+dependency survives through full-expression destruction of owned fields.
+Independent verification rejects missing dependencies, changed permissions,
+forged shell authority and owner-loan retirement before cleanup. Shared-only
+and mixed carriers use one schedule rather than a separate passive exception.
 The prefix-construction capacity check and its exact append identity are
 serialized for deterministic evidence and independent replay.
 The new loan contract separates a physical carrier reference from its inherited
@@ -905,12 +924,12 @@ self-contained; version 48 completes its independent proof. Lowering gives the
 carrier parameter one body-local entry `Stored` loan whose unprojected formal-
 binding source is the opaque identity of the external dependency proven by
 semantics, and the loan retains the exact ordered designated field path down
-to the reference leaf. Each step is checked against the concrete class fields;
-the exclusive carrier must have exactly one such dependency path. A shared
-carrier may have several paths. Its entry loan retains all designated paths;
-at a call boundary its result loan retains each independent caller source in
-`source` plus `additionalSources`. Constructor and function summaries retain
-the complete formal-origin set. These are checked dependencies, not fabricated
+to the reference leaf. Each step is checked against the concrete class fields.
+The current field-aware contract permits any number of shared and exclusive
+paths. Its entry loan retains each designated path and permission; at a call
+boundary its result loan retains every independent caller source in `source`
+plus typed `additionalDependencies`. Constructor and function summaries retain
+the complete field-to-formal-origin map. These are checked dependencies, not fabricated
 storage under a single merged owner. Loan conflicts, scalar-promotion admission,
 and alias/escape analysis inspect the entire set. Shared reference/subview
 projections conservatively preserve that complete set rather than independently
@@ -1428,6 +1447,14 @@ their semantic `float` or `double` type. The verifier requires the retained
 `BinaryFloat` format to match that type, and deterministic printing uses
 `f32:0x........` or `f64:0x................`. MIR contains no LLVM floating
 representation.
+
+Integral enums retain a program-level table of
+their declaration identity, source unit, and exact underlying integer type.
+The `EnumUnderlyingValue` call consumes one already-staged enum value and
+produces exactly that integer type, with no failure, loan, or cleanup effect.
+Verification and backend admission reject payload enums, missing identities,
+inexact result types, and altered parameter shapes. Formatting uses this
+general operation through source-defined library policy.
 
 Payload-enum construction and pattern extraction lower as distinct typed HIR
 values and `MirOperation::PayloadConstruct`/`PayloadExtract` instructions with

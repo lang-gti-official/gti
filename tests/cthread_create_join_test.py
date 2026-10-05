@@ -52,9 +52,9 @@ def main():
         for mode, flags, native in modes:
             for index, (case, options, status, output, failure, helper) in enumerate(cases):
                 binary = root / f"{mode}-{index}"
-                command = [str(compiler), str(fixtures / f"{case}.gti"),
+                command = [str(compiler), str(fixtures / f"{case}.gti"), "--progress=never",
                            "--execution-profile", "concurrent", *flags, *options,
-                           "--progress=never", "--keep-cpp", "-o", str(binary)]
+                           "--keep-cpp", "-o", str(binary)]
                 extra = [*native]
                 if helper:
                     extra.append(str(fixtures / "cthread_context.cpp"))

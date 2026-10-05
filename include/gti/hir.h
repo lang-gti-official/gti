@@ -227,6 +227,7 @@ struct HirValue {
   AccessMode borrowAccess = AccessMode::ReadOnly;
   // Exact argument origins retained for composed owner-dependent values.
   std::vector<std::size_t> borrowArguments;
+  std::vector<BorrowedFieldOrigin> borrowFields;
   std::optional<BorrowOriginPlace> borrowPlace;
   bool storedReferenceAccess = false;
   bool retainedReceiverProjection = false;
@@ -516,6 +517,7 @@ struct HirFunctionInstance {
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> returnBorrowParameters;
+  std::vector<BorrowedFieldOrigin> returnBorrowFields;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
   std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   HirBody body;
