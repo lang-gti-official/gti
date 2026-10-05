@@ -10,6 +10,7 @@
 #include <string_view>
 
 #if !defined(_WIN32)
+#include <signal.h>
 #include <unistd.h>
 #endif
 
@@ -67,10 +68,22 @@ int main() {
     expect(gti_rt_write_file_v1(descriptor, {.data = nullptr, .length = 0}) ==
                0,
            "empty writes should not require a buffer");
+    expect(gti_rt_write_file_some_v1(descriptor, nullptr, 0) == 0,
+           "empty partial writes do not require a buffer");
+    expect(gti_rt_write_file_some_v1(descriptor, nullptr, 1) < 0,
+           "nonempty partial writes reject a null input");
+    expect(gti_rt_seek_file_v1(descriptor, 0, GTI_FILE_SEEK_BEGIN_V1) == 0,
+           "partial-write fixture rewinds the file");
+    const std::array<std::uint8_t, 3> input{65, 0, 90};
+    expect(gti_rt_write_file_some_v1(descriptor, input.data(), input.size()) ==
+               3,
+           "partial write returns exact progress and preserves binary bytes");
     expect(gti_rt_close_file(descriptor) == 0,
            "closing an open descriptor should succeed");
     expect(gti_rt_close_file(descriptor) != 0,
            "closing the same descriptor twice should fail");
+    expect(gti_rt_write_file_some_v1(descriptor, input.data(), 1) < 0,
+           "partial writes reject a closed descriptor");
   }
 
   const std::int64_t appendDescriptor =
@@ -136,6 +149,22 @@ int main() {
     (void)::close(pipeDescriptors[0]);
     expect(gti_rt_write_file_v1(pipeDescriptors[1], view("x")) < 0,
            "a closed pipe must report write failure without SIGPIPE escape");
+    const std::uint8_t byte = 1;
+    expect(gti_rt_write_file_some_v1(pipeDescriptors[1], &byte, 1) < 0,
+           "partial writes contain broken-pipe failure without SIGPIPE escape");
+    struct sigaction ignored{};
+    struct sigaction previous{};
+    ignored.sa_handler = SIG_IGN;
+    sigemptyset(&ignored.sa_mask);
+    const bool installed = sigaction(SIGPIPE, &ignored, &previous) == 0;
+    expect(installed,
+           "ignored-SIGPIPE fixture installs its signal disposition");
+    if (installed) {
+      expect(gti_rt_write_file_some_v1(pipeDescriptors[1], &byte, 1) < 0,
+             "ignored SIGPIPE reports failure without waiting for a signal");
+      expect(sigaction(SIGPIPE, &previous, nullptr) == 0,
+             "ignored-SIGPIPE fixture restores its signal disposition");
+    }
     (void)::close(pipeDescriptors[1]);
   }
 
@@ -154,11 +183,16 @@ int main() {
     (void)::close(stdoutPipe[1]);
     if (installed) {
       const std::int64_t stdoutStatus = gti_rt_write_stdout_bytes_v1(view("x"));
+      std::clearerr(stdout);
+      const std::uint8_t byte = 1;
+      const auto partialStatus = gti_rt_write_stdout_some_v1(&byte, 1);
       expect(::dup2(savedStdout, STDOUT_FILENO) >= 0,
              "the stdout probe should restore stdout");
       std::clearerr(stdout);
       expect(stdoutStatus < 0,
              "stdout should report a closed pipe without SIGPIPE escape");
+      expect(partialStatus < 0,
+             "partial stdout writes contain broken-pipe failure");
     }
     (void)::close(savedStdout);
   } else {

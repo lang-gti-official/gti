@@ -398,8 +398,10 @@ The current implemented foundation includes:
   floating, and string presentation specifiers are supported. Default floating
   presentation is the shortest round-tripping decimal; alternate default form
   only forces a decimal point, explicit general precision retains significant
-  zeroes, and infinity/NaN ignore numeric zero-padding. Pattern, specifier,
-  argument-count, and unsupported-type errors return
+  zeroes, and infinity/NaN ignore numeric zero-padding. Application types extend
+  the protocol through exact source-defined `std::formatter<T>` specializations;
+  unsupported static types fail the `std::formattable<T>` constraint at compile
+  time. Pattern, specifier, argument-count, and value-dependent formatter errors return
   `expected<..., std::format_errc>` from the formatting `try_` APIs. Output
   `try_` APIs use `print_errc`, additionally reporting stdout submission failure.
   Plain APIs panic with the same domain reason and external caller location; and
@@ -801,6 +803,17 @@ indexing, and iteration retain that dependency. Moving, destroying, or
 invalidating the owner while any retained view is live is rejected, and
 dropping the final view releases the owner for later mutation.
 
+The same header provides exclusive, move-only `std::mutable_span<T>` through
+vector/string `as_mutable_span()` factories. Checked element access, mutable
+iteration and subviews preserve parent suspension; `as_span()` produces a
+retained shared projection without granting mutation. These views cover
+initialized prefix storage, not arbitrary native pointers or fixed arrays.
+See [ranges](ranges.md) for the exact lifetime and operation contract.
+`<std/io>` adds `std::byte_buffer` (an initialized `vector<uint8_t>`), generic
+reader/writer contracts, exact transfer/copy/line helpers, memory and native
+stream adapters, and explicit-flush buffering. See [I/O](io.md) for partial
+progress and error semantics.
+
 `<std/paired_span>` provides an ordinary source-defined
 `std::paired_span<L, R>` over two read-only spans, including different element
 types. Its constructor takes the two spans by value; `size()` is the smaller
@@ -848,8 +861,8 @@ read-only.
 Nullable owner-tied traversal and invalidation remain unavailable; iterator
 operations are still bodyless, and generic emplacement remains scaffolded
 without executable conformance evidence. The declaration-only span is
-replaced by the executable read-only single-owner `std::span<T>` surface above;
-mutable access and raw address exposure remain absent.
+replaced by the executable `std::span<T>` and `std::mutable_span<T>` surfaces
+above; raw address exposure remains absent.
 
 `<std/list>` is an executable doubly-linked sequence. Each element has one
 exclusive node owner; private checked slot indexes represent previous/next

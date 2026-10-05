@@ -1,5 +1,50 @@
 # Compiler Verification
 
+## Composable I/O and mutable-buffer validation
+
+`composable_io_runtime` covers memory/file/process-stream transport, exact
+partial progress, failed flush retries, EOF, binary NUL bytes, zero-capacity
+adapters and oversized custom-transport results. Mutable-slice cases check
+parent reactivation, retained shared copies, first/last/subspan operations,
+mutable iteration and bounds at both view and iterator endpoints. Passive
+error publication cases preserve source failure identity and cleanup order
+when construction or intervening cleanup fails. These fixtures execute under
+C++20/C++23 at O0/O1/O3, disabled elision and ASan/UBSan.
+
+The 0.371.0 Release/Ninja build uses AppleClang 21 and LLVM 22.1.8 on macOS
+arm64. Seven final focused gates pass in 265.37 seconds. They include the
+complete eight-mode I/O matrix, CLI, compiler pipeline, carrier references,
+optimizer, surface-manifest and formatter LSP checks. The full source-surface
+gate passes; the added owning-element case separately passes O0/O3. All four
+post-fix corpus gates pass in 278.96 seconds over 105 examples. Reviewed census
+changes account for mutable-view declarations, owner factories and examples
+107/108; existing string-importing examples gain four MIR bodies.
+
+Owning-element regressions cover projected-member mutation and chained
+observation, rejecting owner clear, movement and competing mutable views.
+Borrowed-value/reference results retain accessor ancestry; forged early
+`EndBorrow` and erased constructor/dependency paths fail independent MIR
+verification. Passive error publication retains exactly-once cleanup and
+first-failure identity. The CLI rejects missing formatter support statically;
+a valid rejecting formatter proves runtime error and transactional-output
+behavior. Closed-file empty reads/writes are no-op successes, while nonempty
+operations and flush retain invalid-stream errors; this final native-file
+regression passes all eight configurations.
+
+The broad run completes 408 checks in 2231.33 seconds: 404 pass initially.
+The outdated CLI formatting expectation passes after correction; the two
+localhost-server checks and LLDB launch check pass with the host permissions
+denied by the sandbox. Combined with the ten separately selected gates, all
+418 registered tests have passing evidence. Tree-sitter 0.25.10 passes all
+70 corpus cases, highlight/locals/rainbow checks, 167 shipped sources and
+source-text tests. All 413 first-party C/C++ files pass clang-format 22.1.8.
+
+An isolated installation passes all eleven external CMake consumers, examples
+106–108, owning-element and native-I/O regressions at C++20/O0 and C++23/O3,
+and formatter LSP checks with checkout resource overrides cleared. The active
+user installation is unchanged. This is local macOS arm64 evidence, not a
+claim of Linux/Windows execution or asynchronous Gitea release completion.
+
 ## Chip8 aggregate admission and generated base construction
 
 `testLargeScalarAggregateAdmission` admits a 1,024-element scalar initializer

@@ -1856,6 +1856,10 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
 verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
                                std::size_t owner);
 
+[[nodiscard]] bool
+isCarrierReferenceConstruction(const MirProgram &program,
+                               const MirInstruction &instruction);
+
 [[nodiscard]] MirVerificationResult
 verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                          std::size_t owner) {
@@ -2695,9 +2699,36 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             selectedSource(instruction.operands[instruction.borrowArgument]);
       }
       const bool shellResult =
-          instruction.info.category == ValueCategory::Place &&
-          instruction.info.type.kind == SemanticType::Class &&
-          instruction.info.traits.containsBorrowedState;
+          isCarrierReferenceConstruction(program, instruction) ||
+          (instruction.info.category == ValueCategory::Place &&
+           instruction.info.type.kind == SemanticType::Class &&
+           instruction.info.traits.containsBorrowedState);
+      if (instruction.kind == MirInstructionKind::Construct &&
+          instruction.borrowOrigin == BorrowOriginKind::Argument &&
+          instruction.borrowArgument < instruction.operands.size()) {
+        const MirOperand *input =
+            &instruction.operands[instruction.borrowArgument];
+        if (input->kind == MirOperandKind::Value) {
+          const auto *prepared = definitionFor(body, input->value);
+          if (prepared != nullptr &&
+              prepared->kind == MirInstructionKind::CallInput &&
+              prepared->operands.size() == 1)
+            input = &prepared->operands.front();
+        }
+        const auto *place = body.findPlace(input->place);
+        const auto *inputLoan =
+            input->kind == MirOperandKind::Loan ? body.findLoan(input->loan)
+            : place != nullptr && place->root == MirPlaceRootKind::Loan
+                ? body.findLoan(place->loan)
+                : nullptr;
+        if (inputLoan != nullptr &&
+            inputLoan->kind == MirLoanKind::CallResult &&
+            loan->parent != inputLoan->id)
+          return verificationFailure(
+              body, owner,
+              "stored construction must preserve its accessor parent", block.id,
+              instruction.id);
+      }
       const CanonicalPlace expectedPlace =
           expectedSource
               ? canonicalBorrowOrigin(
@@ -2929,6 +2960,25 @@ findStoredCarrierReference(const MirProgram &program,
              : std::optional<MirStoredCarrierReference>(references.front());
 }
 
+[[nodiscard]] bool
+isCarrierReferenceConstruction(const MirProgram &program,
+                               const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Construct ||
+      instruction.borrowOrigin != BorrowOriginKind::Argument ||
+      instruction.borrowArgument >= instruction.parameterTypes.size())
+    return false;
+  const auto &parameter =
+      instruction.parameterTypes[instruction.borrowArgument];
+  if (parameter.kind != SemanticType::Reference ||
+      parameter.arguments.size() != 1 ||
+      !findStoredCarrierReference(program, parameter.arguments.front()))
+    return false;
+  const auto paths =
+      findStoredCarrierReferences(program, instruction.info.type);
+  return paths.size() == 1 &&
+         paths.front().reference.arguments == parameter.arguments;
+}
+
 // Zero denotes an exact caller-owned receiver/reference source. A nonzero
 // binding requires a separately proved local carrier publication. Field
 // projections are admitted only when their concrete type and every returned
@@ -3150,11 +3200,59 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
         body.returnType.arguments.size() == 1 &&
         findStoredCarrierReference(program, body.returnType.arguments.front())
             .has_value();
+    const auto *constructor = body.kind == MirBodyKind::Constructor
+                                  ? program.findConstructorInstance(owner)
+                                  : nullptr;
+    const auto *constructedType =
+        constructor != nullptr ? program.findClassInstance(constructor->owner)
+                               : nullptr;
+    // An owned carrier field transfers its stored referent; only a field
+    // whose type is itself a reference to a carrier publishes a shell borrow.
+    // Private storage capabilities and references to ordinary owners are not
+    // carrier shells merely because the constructor transports a view.
+    const bool carrierReferenceField =
+        constructedType != nullptr &&
+        std::any_of(constructedType->declaredFields.begin(),
+                    constructedType->declaredFields.end(),
+                    [&](const auto &field) {
+                      return field.symbol == loan.storedField &&
+                             field.type.kind == SemanticType::Reference &&
+                             field.type.arguments.size() == 1 &&
+                             findStoredCarrierReference(
+                                 program, field.type.arguments.front())
+                                 .has_value();
+                    });
+    const bool publishedShell =
+        body.kind == MirBodyKind::Constructor &&
+        loan.kind == MirLoanKind::Stored && loan.storedField != 0 &&
+        loan.escapes && carrierReferenceField &&
+        findStoredCarrierReference(program, sourceType).has_value();
+    bool constructedShell = false;
+    if (loan.kind == MirLoanKind::Stored && !loan.entry && !loan.escapes &&
+        loan.storedField == 0 &&
+        findStoredCarrierReference(program, sourceType).has_value()) {
+      for (const auto &block : body.blocks) {
+        for (const auto &instruction : block.instructions) {
+          if (instruction.loan != loan.id ||
+              !isCarrierReferenceConstruction(program, instruction))
+            continue;
+          const auto &parameter =
+              instruction.parameterTypes[instruction.borrowArgument];
+          constructedShell = parameter.arguments.front() == sourceType;
+        }
+      }
+    }
     const bool localShell =
-        returnShell ||
+        publishedShell || constructedShell || returnShell ||
         ((loan.kind == MirLoanKind::Local ||
           loan.kind == MirLoanKind::Parameter) &&
          findStoredCarrierReference(program, sourceType).has_value());
+    if (loan.kind == MirLoanKind::Stored && loan.parent == 0 &&
+        loan.storedDependency != 0 && !publishedShell && !constructedShell)
+      return verificationFailure(
+          body, owner,
+          "stored shell dependency requires an exact "
+          "carrier-reference construction or publication");
     if (!localShell && loan.storedDependency == 0)
       continue;
     MirLoanId expected = 0;
@@ -3232,13 +3330,19 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
                                : nullptr;
     const auto *lambda =
         body.kind == MirBodyKind::Lambda ? program.findLambda(owner) : nullptr;
+    const auto *constructor = body.kind == MirBodyKind::Constructor
+                                  ? program.findConstructorInstance(owner)
+                                  : nullptr;
     const auto *parameterBindings =
-        function != nullptr ? &function->parameterBindings
-        : lambda != nullptr ? &lambda->parameterBindings
-                            : nullptr;
+        function != nullptr      ? &function->parameterBindings
+        : lambda != nullptr      ? &lambda->parameterBindings
+        : constructor != nullptr ? &constructor->parameterBindings
+                                 : nullptr;
     const auto *parameterTypes = function != nullptr ? &function->parameterTypes
                                  : lambda != nullptr ? &lambda->parameterTypes
-                                                     : nullptr;
+                                 : constructor != nullptr
+                                     ? &constructor->parameterTypes
+                                     : nullptr;
     if (abstractEntry || loan.carriers.empty()) {
       const auto *receiver = function != nullptr && function->owner
                                  ? program.findClassInstance(*function->owner)

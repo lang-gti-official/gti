@@ -250,10 +250,74 @@ void testPublication() {
          "local passive retirement");
 }
 
+void testPassiveErrorCleanup() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/passive_error_cleanup.gti";
+  std::ifstream input(path);
+  expect(input.good(), "passive error cleanup fixture exists");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "passive errors cross surrounding fallible cleanup in verified MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, rows);
+  std::size_t wrappers = 0;
+  std::size_t cleanupInvokes = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *hir = frontend.hir.findFunctionInstance(function.id);
+    if (!hir || !hir->source ||
+        (hir->source->name().lexeme != "operation" &&
+         hir->source->name().lexeme != "forward"))
+      continue;
+    const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                       function.id};
+    expect(emitter.supportsFailureBodyText(address),
+           "passive constructed/copied error snapshots emit before cleanup");
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        const bool wrapper =
+            instruction.operation == lang::MirOperation::Unexpected;
+        const bool cleanup =
+            instruction.kind == lang::MirInstructionKind::Drop &&
+            block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+            block.terminator.invokeInstruction == instruction.id;
+        if (!wrapper && !cleanup)
+          continue;
+        wrappers += wrapper;
+        cleanupInvokes += cleanup;
+        auto malformed = frontend.mir;
+        auto *changed = lang::findMirBody(malformed, address);
+        for (auto &candidateBlock : changed->blocks)
+          for (auto &candidate : candidateBlock.instructions)
+            if (candidate.id == instruction.id) {
+              if (wrapper)
+                candidate.operands.front().type = lang::SemanticType::Int32;
+              else
+                candidate.lifecycle.clear();
+            }
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "passive return cannot erase payload identity or surrounding "
+               "cleanup");
+        const lang::CppMirBodyEmitter rejected(malformed, rows);
+        expect(!rejected.analyze(address).ready() ||
+                   !rejected.supportsFailureBodyText(address),
+               "passive error representation fails closed on corrupted MIR");
+      }
+    }
+  }
+  expect(
+      wrappers == 2 && cleanupInvokes > 0,
+      "passive error tests cover direct/copy producers and fallible cleanup");
+}
+
 } // namespace
 
 int main() {
   testPublication();
+  testPassiveErrorCleanup();
   if (failures != 0)
     return 1;
   std::cout << "passive expected publication mutations passed\n";

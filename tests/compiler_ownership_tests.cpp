@@ -2050,15 +2050,42 @@ int child_parent(mut Box& parent) {
 }
 int main() { return 0; }
 )");
-  expect(!storedMutableParent.canGenerateCode() &&
-             countDiagnosticCode(storedMutableParent.diagnostics,
-                                 "GTI-S2017") == 2 &&
-             hasDiagnostic(storedMutableParent.diagnostics,
-                           "borrowed-state value cannot retain a mutable "
-                           "parent or child reborrow") &&
-             !hasDiagnosticCode(storedMutableParent.diagnostics, "GTI-B0001"),
-         "local borrowed-state carriers should reject mutable parents and "
-         "their read-only child reborrows at the semantic boundary");
+  expect(storedMutableParent.canGenerateCode(),
+         "single-path shared carriers retain a checked child of mutable "
+         "parents and their read-only reborrows");
+  bool checkedSharedAccessor = false;
+  for (const auto &function : storedMutableParent.mir.functionInstances()) {
+    for (const auto &loan : function.body.loans) {
+      const auto *parent = function.body.findLoan(loan.parent);
+      if (loan.kind != lang::MirLoanKind::Stored || parent == nullptr ||
+          parent->kind != lang::MirLoanKind::CallResult ||
+          parent->access != lang::AccessMode::ReadOnly || parent->parent == 0)
+        continue;
+      auto missingParent = storedMutableParent.mir;
+      auto *changed = const_cast<lang::MirFunctionInstance *>(
+          missingParent.findFunctionInstance(function.id));
+      changed->body.loans[loan.id - 1].parent = 0;
+      expect(!lang::verifyMirProgram(missingParent).valid(),
+             "a shared stored accessor cannot lose its suspended-owner chain");
+      checkedSharedAccessor = true;
+    }
+  }
+  expect(checkedSharedAccessor,
+         "shared stored accessor exercises an exact parent chain");
+  for (const std::string mutation :
+       {"parent.value = 99;", "mut Box& alias = parent; alias.value = 99;"}) {
+    const auto invalid =
+        lang::Frontend().analyze("invalid-shared-stored-parent.gti",
+                                 R"(
+class Box { public: mut int value = 2; int& read() { return this.value; } };
+class View { int& value; public: View(int& source) : value(source) {}
+  int get() { return this.value; } };
+int bad(mut Box& parent) { View retained = View(parent.read());
+)" + mutation + " return retained.get(); }\nint main() { return 0; }\n");
+    expect(!invalid.semanticValid, "shared stored accessor forbids mutable "
+                                   "owner/reference invalidation: " +
+                                       mutation);
+  }
 
   const lang::FrontendResult ordinaryStoredDependency =
       lang::Frontend().analyze("ordinary-stored-dependency.gti", R"(

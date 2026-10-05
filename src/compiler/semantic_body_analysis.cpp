@@ -798,13 +798,14 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                                constructorInfo != nullptr &&
                                    constructorInfo->kind ==
                                        ConstructorKind::Move,
-                               defaultLibraryStorageBorrow);
+                               defaultLibraryStorageBorrow, false, true);
     const bool trustedGuardSpecialMember =
         isDefaultLibraryMutexGuardCarrier(owner) &&
         constructorInfo != nullptr &&
         (constructorInfo->kind == ConstructorKind::Copy ||
          constructorInfo->kind == ConstructorKind::Move);
-    if (nestsBorrowedState(parameterType) && !trustedGuardSpecialMember) {
+    if (nestsBorrowedState(parameterType) && !trustedGuardSpecialMember &&
+        !isBorrowedCarrierReference(parameterType)) {
       report(parameter.name,
              "Constructor parameters cannot nest borrowed state in the "
              "current lifetime model.",

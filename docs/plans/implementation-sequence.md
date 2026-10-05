@@ -25,6 +25,38 @@ files under `docs/plans/`. The documents under
 [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
+## Completed: Composable I/O, Mutable Buffers, And Extensible Formatting
+
+**Status: implemented and locally validated for 0.371.0.** The outcome is one parser/copy routine
+working against file, memory, and buffered transports with reusable initialized
+byte storage; application-owned types can participate in the same formatting
+APIs through checked source-defined customization.
+
+- Extend the existing exclusive carrier/child-loan contracts only where needed
+  for mutable subviews and retained shared projections. Preserve owner and parent
+  suspension, alias endpoints, no permission upgrade, and MIR verification.
+- Keep read-only `span<T>` compatible; add explicit `mutable_span<T>` with the
+  familiar checked span operations and owner factories. A byte buffer owns its
+  initialized bytes; reading must not expose uninitialized capacity.
+- Define generic partial reader/writer contracts, exact-read/all-write/copy
+  helpers, memory/file/standard-stream adapters and reusable buffering. Specify
+  EOF, zero progress, short operations, partial failure, and explicit flushing.
+- Implement public formatting customization and general exact member-signature
+  requirements with an independent formatting agent; do not recognize public
+  library names in compiler semantics.
+- Prove unrelated user-defined borrowers/transports/formatters, negative lifetime
+  and contract cases, failure cleanup, O0/O3 and C++20/C++23 behavior, installed
+  consumption, runnable examples, and updated source-surface/corpus inventories.
+
+Mutable prefix-backed subviews, retained shared projections, source-defined
+buffered adapters and the formatter protocol are implemented. Combined
+lifetime/cleanup, native I/O, installed-consumer and regression validation
+passes: the eight-mode runtime matrix, all four 105-example corpus gates,
+source-surface checks, all 418 registered tests (including targeted reruns),
+isolated examples and eleven installed-library consumers. See the canonical
+[verification record](../architecture/verification.md#composable-io-and-mutable-buffer-validation)
+for the exact host, failures repaired and environment-limited reruns.
+
 ## Stdlib Capability Adoption And Upgrade Campaign
 
 **Checkpoint: 2026-10-04, reviewed source baseline `c427474d` / 0.364.1.**
@@ -95,7 +127,7 @@ the same vertical slice. It does not mean the missing capability exists.
 | 10 / `L-UP-10` | ready / correctness prerequisite | existing constructor-pack implementation and retained failure | Borrowed constructor-pack composition succeeds end to end. |
 | 11 / `L-UP-11` | blocked | `L-UP-10` | Node-container emplacement constructs immovable mapped values at their final address. |
 | 12 / `L-UP-12` | blocked | `L-UP-10`; selected-constructor/final-slot initialization contract | Direct sparse/inline emplacement for currently eligible payloads, without an intermediate T temporary/move. |
-| 13 / `L-UP-13` | implemented bounded slice; combined release validation pending | exact argument-bearing read/mut signatures, dependent compound concept facts, constrained pack calls | Public source-defined formatter protocol and compile-time unsupported-type diagnostics; examples 105/106 and focused compiler/runtime/editor/corpus gates pass. |
+| 13 / `L-UP-13` | implemented and locally validated for 0.371.0 | exact argument-bearing read/mut signatures, dependent compound concept facts, constrained pack calls | Public source-defined formatter protocol and compile-time unsupported-type diagnostics; examples 105/106 and compiler/runtime/editor/corpus/installed gates pass. |
 | 14 / `L-UP-14` | ready / new capability, staged | current literal-text/passive-record MIR constant profile; shared validator before call-site admission | Bad literal format strings fail before execution; dynamic strings stay recoverable. |
 | 15 / `L-UP-15` | ready / new capability | current validity-only requirements and operator selection | Conditionally available map indexing without imposing default construction on every mapped type. |
 | 16 / `L-UP-16` | ready / new capability | current multi-origin shared-carrier facts | Precisely projected read-only views retain only their actual owner dependencies. |
@@ -539,7 +571,7 @@ coordinate integration and select an independent adoption row.
   dynamic custom formatter rejection and move-only exactly-once cleanup,
   native optimization/standard/sanitizer matrix, CLI/LSP argument attribution
   and edit recovery, Tree-sitter corpus, and whole-example native corpus oracle.
-  Installed consumer validation remains a combined-release gate. Dynamic
+  Installed consumer validation passes in the combined 0.371.0 slice. Dynamic
   unsupported presentation remains a runtime domain error; literal validation
   is the next distinct row.
 

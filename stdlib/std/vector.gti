@@ -253,6 +253,12 @@ public:
                    gti_internal::prefix_storage_length(this.data));
   }
 
+  /// Exclusively borrows initialized elements without permitting reallocation.
+  mutable_span<T> as_mutable_span() mut {
+    size_t count = gti_internal::prefix_storage_length(this.data);
+    return mutable_span<T>(this.data, size_t(0), count);
+  }
+
   void reserve(size_t requested) mut {
     if (requested <= this.reserved) {
       return;

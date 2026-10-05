@@ -1,0 +1,45 @@
+#include <std/string>
+#include <std/vector>
+
+// The payload owns nothing, but its construction has observable effects.
+struct Failure {
+  int code;
+  Failure(int divisor) : code(9 / divisor) { std::println(1); }
+};
+
+class Guard {
+  int divisor;
+public:
+  Guard(int divisor) : divisor(divisor) {}
+  ~Guard() {
+    std::println(2);
+    int checked = 7 / this.divisor;
+  }
+};
+
+expected<int, Failure> operation(int constructor_divisor, int cleanup_divisor) {
+  Guard guard{cleanup_divisor};
+  std::string local{"owning local"};
+  auto view = local.view();
+  if (view.empty()) { return 0; }
+  return unexpected(Failure(constructor_divisor));
+}
+
+expected<int, Failure> forward(int cleanup_divisor) {
+  auto result = operation(1, 1);
+  Guard guard{cleanup_divisor};
+  return unexpected(result.error());
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc >= 4) {
+    auto forwarded = forward(argc == 4 ? 1 : 0);
+    if (forwarded || forwarded.error().code != 9) { return 2; }
+    std::println(4);
+    return 0;
+  }
+  auto result = operation(argc == 2 ? 0 : 1, argc == 3 ? 0 : 1);
+  if (result || result.error().code != 9) { return 1; }
+  std::println(3);
+  return 0;
+}

@@ -170,7 +170,8 @@ failure can still leave a prefix written because operating-system writes are
 not transactional. On POSIX targets a closed pipe is translated to
 `write_failed`; the runtime confines the generated `SIGPIPE` to the calling
 thread rather than letting it terminate the process. Files are unbuffered at
-this layer, so there is no file flush operation. `seek` uses an explicit
+this layer; the composable writer's `FILE::flush()` only validates the open
+handle and does not perform a durability sync. `seek` uses an explicit
 `seek_origin`; `tell` reports the current byte offset. Both return `seek_failed`
 when the native object is not seekable or the requested offset is invalid.
 
@@ -225,6 +226,83 @@ payload traversal, field or global receivers, retaining a standalone payload
 reference, and returning an element remain unsupported; see
 [`ranges.md`](ranges.md#named-expected-payload-ranges).
 
+## Composable buffered I/O
+
+`<std/io>` defines `std::byte_buffer` as `vector<uint8_t>` and source-defined
+reader/writer contracts. Include `<std/span>`, `<std/cstdio>` and other units
+directly when naming their declarations. Buffers own initialized bytes;
+`byte_buffer(size)` establishes writable size, while `reserve` alone does not.
+
+```gti
+concept reader<R> = requires(mut R& stream, mut std::mutable_span<uint8_t>& output) {
+  { stream.read_some(output) } -> expected<std::size_t, std::io_errc>;
+};
+concept writer<W> = requires(mut W& stream, std::span<uint8_t>& input) {
+  { stream.write_some(input) } -> expected<std::size_t, std::io_errc>;
+} && requires(mut W& stream) {
+  { stream.flush() } -> expected<void, std::io_errc>;
+};
+```
+
+These are exact ordinary member-signature requirements. Custom transports do
+not inherit a library base class. A successful `read_some` or `write_some`
+returns the committed byte count, never more than the supplied span size.
+Zero on a nonempty read means EOF. Empty requests succeed with zero without
+accessing a byte. A transport must report a partial successful prefix before
+reporting a later error; an error alone cannot encode hidden partial progress.
+
+The generic helpers are:
+
+- `read_exact(source, output)`: fills the writable span or reports EOF/error.
+- `write_all(destination, input)`: submits the complete span; zero progress on
+  a nonempty write is `write_failed`, not an infinite retry.
+- `copy(source, destination, scratch)`: copies until EOF using nonempty,
+  caller-owned scratch space. It neither rewinds nor implicitly flushes.
+- `getline(source, text, delimiter = uint8_t(10))`: clears `text`, consumes but
+  excludes the delimiter, and preserves all other bytes (including NUL and CR).
+  A final unterminated line succeeds; EOF before any byte returns `end_of_file`.
+  This helper currently allocates a one-byte initialized scratch buffer per call;
+  use a buffered reader to amortize host reads.
+
+Each helper returns `expected<size_t, io::error>`, where `error` has `code` and
+`transferred` fields. Progress counts bytes read into the destination, bytes
+accepted by the writer, or line bytes appended, respectively. Copy counts bytes
+accepted by its destination, not read-ahead bytes. A writer may buffer accepted
+bytes: acceptance is not a flush or durability guarantee. Invalid oversized
+transport counts are rejected before indexing or updating progress. On line
+failure the accumulated prefix remains in `text`.
+
+`memory_reader` borrows a read-only span and maintains a cursor. `memory_stream`
+owns an exclusive span (not its underlying allocation), with read/write/tell
+and bounded absolute seek. Writes do not grow storage; a full nonempty write
+fails, while reading at the end returns zero. `memory_stream::flush()` has no
+work to do; readers do not require a flush operation.
+
+`FILE` implements the same contracts with direct partial reads/writes.
+`FILE::flush()` validates that the unbuffered native descriptor is open; it
+does not call `fsync` or promise durability. `stdin_reader`, `stdout_writer`
+and `stderr_writer` borrow the process streams without closing them; output
+flush drains the host stdio buffer and can fail. Applications must not mix
+different buffering layers on a stream without accounting for read-ahead and
+explicit flushing.
+
+`buffered_reader<R>` and `buffered_writer<W>` exclusively borrow their
+underlying transport and own reusable byte storage (default size 4096). A
+reader returns pending bytes before refilling; destroying it discards unread
+read-ahead bytes and does not rewind the source. A writer accepts only the
+prefix fitting its buffer, draining a full buffer before accepting more.
+`pending()` reports bytes not yet submitted to the underlying writer.
+`flush()` drains them and then flushes the underlying writer. A failed partial
+flush preserves exactly the unwritten suffix, so retry does not duplicate the
+committed prefix. Zero-capacity adapters reject nonempty operations with
+`invalid_stream`; empty requests still succeed.
+
+**Buffered writers require explicit `flush()` and handling its result.** Their
+destruction discards pending bytes; it does not perform fallible hidden I/O.
+The underlying transport cannot be accessed, moved or destroyed while borrowed
+by an adapter. These are synchronous byte-oriented facilities, not a
+nonblocking readiness/cancellation or Unicode decoding protocol.
+
 ## Runtime boundary
 
 Single-byte compatibility calls and bounded chunk calls cross the runtime.
@@ -235,10 +313,12 @@ existing generated programs. Ordinary `gti_internal::runtime` wrappers and
 the trusted `<std/cstdio>` implementation translate status values into the
 public `expected` API.
 
-Paths and writes cross as immutable, counted, non-retained
-`gti_c_string_view` records from `<gti/c_abi.h>`. The only mutable pointer is a
-fixed 4096-byte buffer inside trusted standard-library source, scoped by
-`unsafe`; it never enters the public API. The runtime owns any temporary
+Paths and text writes cross as immutable, counted, non-retained
+`gti_c_string_view` records from `<gti/c_abi.h>`. Partial binary writes use
+versioned `gti_rt_write_{file,stdout,stderr}_some_v1` pointer/count entries.
+Trusted source derives pointers only from checked nonempty initialized spans
+or bounded local buffers, scoped by `unsafe`; pointers never enter the public
+API and are not retained by the runtime. The runtime owns any temporary
 NUL-terminated native path it needs. Runtime declarations are unavailable to
 application lookup, completion, hover, and definition; direct access is
 `GTI-S2058`. The complete bounded ABI and lifetime rules are in
@@ -422,10 +502,10 @@ uses the plain name and no longer calls `.value()`. `try_print` errors are now
 HTTP/network requests, entropy and managed-thread startup remain expected-first;
 panic adoption is not a blanket rename of environmental operations.
 
-Buffered streams, encoding conversion, and named/dynamic fields remain future
-library layers. A future buffer/stream object
-should build on this byte surface without turning the runtime ABI into the
-public GTI ABI.
+Composable buffered streams are provided by `<std/io>` as described above;
+they build on the byte boundary without exposing the runtime ABI as the public
+GTI API. Encoding conversion and named/dynamic formatting fields remain future
+library layers.
 
 ## User-defined formatters
 

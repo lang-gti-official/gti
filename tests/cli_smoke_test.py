@@ -3291,11 +3291,36 @@ def main():
             "255|65535|4294967295|18446744073709551615\n"
         )
 
+        # Missing formatter support is a static constraint failure, even for
+        # recoverable APIs. Runtime rejection remains covered below by a valid
+        # source-defined formatter that rejects the particular value.
+        for operation in ("try_format", "try_print", "try_println"):
+            unsupported_source = root / f"unsupported-{operation}.gti"
+            unsupported_source.write_text(
+                "#include <std/format>\n"
+                "class unsupported_format_value {};\n"
+                "int main() { mut auto result = std::" + operation +
+                '("{}", unsupported_format_value()); return 0; }\n',
+                encoding="utf-8",
+            )
+            unsupported_binary = root / f"unsupported-{operation}"
+            rejected = run([gti, str(unsupported_source), "-o",
+                            str(unsupported_binary)], 65)
+            assert "error[GTI-S2029]" in rejected.stderr
+            assert "std::formattable<unsupported_format_value>" in rejected.stderr
+            assert "has no member 'format()'" in rejected.stderr
+            assert not unsupported_binary.exists()
+
         formatted_output = root / "formatted-output.gti"
         formatted_output.write_text(
             "#include <std/format>\n"
             "#include <std/string>\n"
-            "class unsupported_format_value {}; "
+            "class rejected_format_value {}; "
+            "class std::formatter<rejected_format_value> { public: "
+            "expected<void, std::format_errc> format(rejected_format_value& value, "
+            "mut std::string& output, std::format_spec& spec) { "
+            'output.append("DISCARDED"); '
+            "return unexpected(std::format_errc::unsupported_argument); } }; "
             "int main() { "
             "mut std::string bytes = std::string(); "
             "bytes.push_back('A'); bytes.push_back('\\0'); "
@@ -3339,13 +3364,13 @@ def main():
             'if (!heterogeneous or heterogeneous.value() != '
             '"true|X|-7|1.25|owned") { return 17; } '
             'mut auto unsupported = std::try_format("{}", '
-            'unsupported_format_value()); '
+            'rejected_format_value()); '
             'if (unsupported or unsupported.error() != '
             'std::format_errc::unsupported_argument) { return 18; } '
             'mut auto binary64 = std::try_format("{}", 1.5d); '
             'if (!binary64 or binary64.value() != "1.5") { return 19; } '
             'mut auto unsupported_print = std::try_print("LEAK {}", '
-            'unsupported_format_value()); '
+            'rejected_format_value()); '
             'if (unsupported_print or unsupported_print.error() != '
             'std::print_errc::unsupported_argument) { return 20; } '
             'mut auto malformed = std::try_print("LEAK {", int32_t(1)); '
