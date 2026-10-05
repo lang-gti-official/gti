@@ -276,10 +276,16 @@ Pinned git dependencies are declared as
 `gti fetch` acquires them and writes `gti.lock`, builds verify the recorded
 checksums before loading source, and `--offline`/`--locked` keep compilation
 network-free. Branch and tag selectors are deliberately rejected, and a
-registry remains a later phase.
+registry is available through `gti add libc` and version requirements such as
+`libc = "^0.1.0"`. `gti fetch` prefers compatible exact lock entries and verifies
+downloaded archives; registry-backed builds and editor analysis never fetch
+implicitly. `gti publish --dry-run` validates a source package without uploading,
+and `gti publish --name libc` publishes a Git-tracked package inventory. The
+[registry documentation](docs/architecture/build-and-driver.md#source-package-registries)
+describes configuration, publication, cache integrity and the bootstrap limits.
 
 The language server reads this same resolved package graph without fetching or
-building. Once `gti fetch` has materialized a locked Git dependency, package
+building. Once `gti fetch` has materialized a locked Git or registry dependency, package
 diagnostics, hover, definition, semantic tokens, and member completion use it;
 unsaved GTI dependency buffers override the stored source for editor analysis.
 

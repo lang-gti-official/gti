@@ -184,6 +184,17 @@ add_test(NAME executable_entry_semantics COMMAND gti_executable_entry_tests)
 add_executable("gti_project_tests" "${PROJECT_SOURCE_DIR}/tests/project_tests.cpp")
 target_link_libraries("gti_project_tests" PRIVATE gti_driver)
 add_test(NAME project_model COMMAND gti_project_tests)
+add_executable(gti_registry_tests registry_tests.cpp)
+target_link_libraries(gti_registry_tests PRIVATE gti_driver)
+add_test(NAME package_registry_model COMMAND gti_registry_tests)
+if(TARGET gti_lsp)
+  add_test(NAME package_registry_cli
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/registry_cli_test.py" $<TARGET_FILE:gti> $<TARGET_FILE:gti_lsp>)
+else()
+  add_test(NAME package_registry_cli
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/registry_cli_test.py" $<TARGET_FILE:gti>)
+endif()
+set_tests_properties(package_registry_cli PROPERTIES TIMEOUT 240)
 
 add_executable(gti_designated_construction_tests designated_construction_tests.cpp)
 target_link_libraries(gti_designated_construction_tests PRIVATE gti_cpp_backend)

@@ -84,13 +84,20 @@ struct ProjectGitDependencySource {
   SourceSpan revisionDeclaration;
 };
 
+struct ProjectRegistryDependencySource {
+  std::string registry = "official";
+  std::string package;
+  std::string requirement;
+};
+
 struct ProjectDependency {
   std::string alias;
-  // For a path dependency, the resolved package directory. A git dependency
+  // For a path dependency, the resolved package directory. A Git dependency
   // leaves this empty until workspace resolution materializes its verified
   // checkout.
   std::filesystem::path packageRoot;
   std::optional<ProjectGitDependencySource> git;
+  std::optional<ProjectRegistryDependencySource> registry;
   SourceSpan declaration;
   SourceSpan pathDeclaration;
 };
@@ -284,7 +291,8 @@ struct ManifestLoadResult {
 [[nodiscard]] ManifestDiscoveryResult
 discoverProjectManifest(const std::filesystem::path &startDirectory);
 
-[[nodiscard]] ManifestLoadResult
-loadProjectManifest(const std::filesystem::path &manifestPath);
+[[nodiscard]] ManifestLoadResult loadProjectManifest(
+    const std::filesystem::path &manifestPath,
+    const std::optional<std::string> &textOverride = std::nullopt);
 
 } // namespace lang::driver
