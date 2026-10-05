@@ -47,13 +47,27 @@ Unknown application/package names never receive a guessed standard-library
 include.
 
 Integer `std::print`/`std::println` overloads, `<std/string>` conversion, and
-`<std/format>`'s bounded sequential heterogeneous replacement are a deliberate
+`<std/format>`'s bounded heterogeneous replacement are a deliberate
 boundary example. Digit extraction, built-in argument adapters, brace
 validation, exact argument counting, owning-string construction, and format
 errors are ordinary GTI source. The frontend's bounded comma-pack fold supplies
 only exact ordered calls over a pack; it does not recognize any public
 formatting or string name or parse a format string. Counted literal/formatted
-writes and scalar dynamic-code-unit writes are the only host output operations.
+writes and scalar dynamic-code-unit writes cross the host boundary. Public
+`std::formatter<T>` specializations use the same source-defined formatting
+grammar and checked member-signature protocol; compile-time unsupported-type
+diagnostics arise from ordinary constraints, not recognition of public names.
+
+`<std/io>` composes source-defined partial reader/writer contracts, memory
+transports, exact transfer/line/copy helpers and owned buffering. Mutable spans
+borrow initialized prefix storage exclusively; byte buffers are ordinary
+vectors. Checked carrier loans permit a buffered adapter to borrow another
+carrier while owning a disjoint buffer field. Compiler facts describe places,
+permissions and lifetime dependencies, not readers or writers. The only new
+host operations are versioned non-retaining partial binary writes for files
+and stdout/stderr, reporting the committed prefix. Existing read and flush
+entries are reused. SIGPIPE containment checks for an actually pending signal
+before consuming it, including hosts where SIGPIPE is ignored.
 
 The panic-adoption layer remains source-defined: `try_format` and
 `try_format_to` own recoverable formatting, plain formatting translates their

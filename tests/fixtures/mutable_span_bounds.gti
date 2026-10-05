@@ -1,0 +1,31 @@
+#include <std/span>
+#include <std/vector>
+#include <std/string>
+
+int main(int argc, std::vector<std::string> argv) {
+  mut std::vector<int> values = {1, 2, 3};
+  mut auto view = values.as_mutable_span();
+  if (argc == 1) { view[std::size_t(3)] = 4; }
+  if (argc == 2) {
+    auto invalid = view.subspan(std::size_t(4), std::size_t(0));
+    return int(invalid.size());
+  }
+  if (argc == 3) {
+    mut auto empty = view.first(std::size_t(0));
+    return empty.back();
+  }
+  if (argc == 4) {
+    auto first = view.first(std::size_t(1));
+    mut auto cursor = first.begin();
+    ++cursor;
+    return *cursor;
+  }
+  if (argc == 5) {
+    mut auto first = view.first(std::size_t(1));
+    mut auto cursor = first.begin_mut();
+    ++cursor;
+    *cursor = 5;
+  }
+  auto empty = view.subspan(view.size(), std::size_t(0));
+  return empty.empty() ? 0 : 9;
+}

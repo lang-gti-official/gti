@@ -233,10 +233,15 @@ The new loan contract separates a physical carrier reference from its inherited
 external-owner authority. `storedDependency` names one exact `Stored` loan;
 unlike `parent`, it does not denote containment or suspend that loan. Dependency
 identity, liveness, permission capping and child-before-dependency retirement
-are verified independently. Reference formals and receivers seed an abstract
+are verified independently. Dependencies may form an acyclic chain when an
+adapter borrows another adapter. Protected-source and call-conflict queries
+traverse the complete chain, and access authority is capped at each edge;
+retaining an outer shell cannot lose protection for an intermediate shell or
+the ultimate owner. Reference formals and receivers seed an abstract
 `Stored` entry naming their concrete reference-field paths, separate from the
-physical reference loan. Program verification independently binds function and
-lambda entries to the exact formal or receiver and checks field access against
+physical reference loan. Program verification independently binds function,
+lambda and constructor-reference-formal entries to the exact formal (or the
+function/lambda receiver) and checks field access against
 the concrete class layout. Each local value copy attached to an entry requires
 an independently proven, dominating same-type initialization; merely adding a
 binding to the carrier list grants no authority.
@@ -245,6 +250,24 @@ loan or the caller's cleanup ownership. In particular, borrowing a guard does
 not acquire its lock-release obligation. Local bindings of stored referents
 retain their concrete reference-field dereference; semantic overlap identities
 are not substituted for executable projection chains.
+An owning field provably disjoint from all stored-reference paths is not an
+access through that external dependency; an ordinary physical receiver loan
+still protects its shell. An adapter may consequently own its buffer while
+borrowing another carrier. Publishing a carrier-reference constructor field
+retains both its physical shell and exact abstract dependency through successful
+construction. Failed construction rolls back initialized fields before ending
+published loans child-before-dependency. Missing or forged dependencies are
+rejected by program verification.
+This applies to read-only as well as exclusive carrier-reference fields.
+A reference obtained through an owning accessor also retains its exact
+transient call-result ancestry until the adapter's endpoint; a coarse owner
+identity is not a substitute for the selected constructor input's loan chain.
+Conversely, a completed call with no reference or borrowed-state result can
+retire an unretained transient accessor loan even when its receiver is an
+owning member projected from that accessor. Lowering uses the already
+materialized place's exact loan root, not a guessed owner identity. Escaping
+loans, attached carriers and live children still prevent early retirement;
+borrow-returning calls retain their normal full-expression or carrier endpoint.
 A reference return preserves both its physical source and stored dependency.
 A copied by-value return instead publishes a fresh external-owner loan from
 the exact copied SSA value. Its original entry remains live until physical

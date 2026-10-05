@@ -14,17 +14,20 @@ public:
 class span_iterator<T> {
   gti_internal::prefix_storage<T>& data;
   mut size_t current_position;
+  size_t final_position;
 
 public:
-  span_iterator(gti_internal::prefix_storage<T>& source, size_t position)
-      : data(source), current_position(position) {}
+  span_iterator(gti_internal::prefix_storage<T>& source, size_t position, size_t end)
+      : data(source), current_position(position), final_position(end) {}
 
   T& operator*() {
+    gti_internal::index_bounds_check(this.current_position, this.final_position);
     return gti_internal::prefix_storage_read(this.data,
                                               this.current_position);
   }
 
   void operator++() mut {
+    gti_internal::index_bounds_check(this.current_position, this.final_position);
     this.current_position++;
   }
 
@@ -34,6 +37,31 @@ public:
 
   bool operator!=(span_iterator<T>& other) {
     return this.current_position != other.current_position;
+  }
+};
+
+class mutable_span_iterator<T> {
+  mut gti_internal::prefix_storage<T>& data;
+  mut size_t current_position;
+  size_t final_position;
+public:
+  mutable_span_iterator(mut gti_internal::prefix_storage<T>& source,
+                        size_t begin, size_t end)
+      : data(source), current_position(begin), final_position(end) {}
+  T& operator*() {
+    gti_internal::index_bounds_check(this.current_position, this.final_position);
+    return gti_internal::prefix_storage_read(this.data, this.current_position);
+  }
+  mut T& operator*() mut {
+    gti_internal::index_bounds_check(this.current_position, this.final_position);
+    return gti_internal::prefix_storage_read_mut(this.data, this.current_position);
+  }
+  void operator++() mut {
+    gti_internal::index_bounds_check(this.current_position, this.final_position);
+    this.current_position++;
+  }
+  bool operator!=(span_sentinel& sentinel) {
+    return this.current_position != sentinel.position();
   }
 };
 }
@@ -110,9 +138,85 @@ public:
   }
 
   detail::span_iterator<T> begin() {
-    return detail::span_iterator<T>(this.data, this.first_position);
+    return detail::span_iterator<T>(this.data, this.first_position,
+                                    this.first_position + this.element_count);
   }
 
+  detail::span_sentinel end() {
+    return detail::span_sentinel(this.first_position + this.element_count);
+  }
+};
+
+/// An exclusive, move-only view of initialized contiguous elements.
+/// Reborrowing a subspan suspends access through its parent until the child ends.
+class mutable_span<T> {
+  mut gti_internal::prefix_storage<T>& data;
+  size_t first_position;
+  size_t element_count;
+
+  void validate_subspan(size_t offset, size_t count) {
+    if (offset > this.element_count) {
+      gti_internal::index_bounds_check(offset, this.element_count);
+    }
+    if (count > this.element_count - offset) {
+      gti_internal::index_bounds_check(count, this.element_count - offset);
+    }
+  }
+
+public:
+  mutable_span(mut gti_internal::prefix_storage<T>& source,
+               size_t offset, size_t count)
+      : data(source), first_position(offset), element_count(count) {}
+
+  size_t size() { return this.element_count; }
+  bool empty() { return this.element_count == 0; }
+
+  T& at(size_t index) {
+    gti_internal::index_bounds_check(index, this.element_count);
+    return gti_internal::prefix_storage_read(this.data, this.first_position + index);
+  }
+  mut T& at(size_t index) mut {
+    gti_internal::index_bounds_check(index, this.element_count);
+    return gti_internal::prefix_storage_read_mut(this.data, this.first_position + index);
+  }
+  T& operator[](size_t index) { return this.at(index); }
+  mut T& operator[](size_t index) mut { return this.at(index); }
+  T& front() { return this.at(size_t(0)); }
+  mut T& front() mut { return this.at(size_t(0)); }
+  T& back() {
+    mut size_t index = 0;
+    if (this.element_count > 0) { index = this.element_count - 1; }
+    return this.at(index);
+  }
+  mut T& back() mut {
+    mut size_t index = 0;
+    if (this.element_count > 0) { index = this.element_count - 1; }
+    return this.at(index);
+  }
+
+  mutable_span<T> subspan(size_t offset, size_t count) mut {
+    this.validate_subspan(offset, count);
+    return mutable_span<T>(this.data, this.first_position + offset, count);
+  }
+  mutable_span<T> first(size_t count) mut {
+    this.validate_subspan(size_t(0), count);
+    return mutable_span<T>(this.data, this.first_position, count);
+  }
+  mutable_span<T> last(size_t count) mut {
+    this.validate_subspan(size_t(0), count);
+    return mutable_span<T>(this.data, this.first_position + (this.element_count - count), count);
+  }
+  span<T> as_span() {
+    return span<T>(this.data, this.first_position, this.element_count);
+  }
+  detail::span_iterator<T> begin() {
+    return detail::span_iterator<T>(this.data, this.first_position,
+                                    this.first_position + this.element_count);
+  }
+  detail::mutable_span_iterator<T> begin_mut() mut {
+    return detail::mutable_span_iterator<T>(this.data, this.first_position,
+                                           this.first_position + this.element_count);
+  }
   detail::span_sentinel end() {
     return detail::span_sentinel(this.first_position + this.element_count);
   }

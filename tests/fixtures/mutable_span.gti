@@ -1,0 +1,47 @@
+#include <std/vector>
+#include <std/string>
+#include <std/span>
+
+void fill(mut std::mutable_span<int>& output) {
+  for (mut std::size_t i = 0; i < output.size(); i++) {
+    output[i] = int(i) + 10;
+  }
+}
+
+int main() {
+  mut std::vector<int> values = {1, 2, 3, 4};
+  {
+    mut auto whole = values.as_mutable_span();
+    {
+      mut auto middle = whole.subspan(std::size_t(1), std::size_t(2));
+      fill(middle);
+    }
+    whole[std::size_t(0)] = 9;
+    {
+      auto shared = whole.as_span();
+      auto copied = shared;
+      if (copied[std::size_t(1)] != 10 || shared.back() != 4) { return 1; }
+    }
+    whole[std::size_t(3)] = 12;
+    for (mut int& element : whole) { element += 1; }
+    {
+      mut auto first = whole.first(std::size_t(1));
+      if (first.front() != 10 || first.back() != 10) { return 4; }
+      first[std::size_t(0)] = 20;
+    }
+    {
+      mut auto last = whole.last(std::size_t(1));
+      if (last.front() != 13 || last.back() != 13) { return 5; }
+      last[std::size_t(0)] = 30;
+    }
+    if (whole.front() != 20 || whole.back() != 30) { return 6; }
+    whole[std::size_t(0)] = 10;
+  }
+  if (values[std::size_t(0)] != 10 || values[std::size_t(2)] != 12) { return 2; }
+  mut std::string text{"abc"};
+  {
+    mut auto chars = text.as_mutable_span();
+    chars[std::size_t(1)] = 'x';
+  }
+  return text == "axc" ? 0 : 3;
+}

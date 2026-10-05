@@ -1,5 +1,13 @@
 # GTI standard library
 
+`<std/io>` supplies checked reader/writer concepts, exact-read/all-write/copy
+helpers, line reading, memory and process-stream adapters, reusable buffering,
+and `std::byte_buffer`. `<std/span>` adds exclusive `mutable_span<T>` views
+from initialized vector/string elements. Buffered output must be explicitly
+flushed; see [I/O](../docs/language/io.md#composable-buffered-io),
+[mutable views](../docs/language/ranges.md#mutable-contiguous-views), and
+examples 107/108 for ownership and partial-progress behavior.
+
 `<std/simd>` provides fixed float/double lane values and masks, checked
 `std::array` copying, arithmetic, explicit lane comparisons and ordered
 reductions. See [the SIMD contract](../docs/language/standard-library.md#fixed-lane-simd)
@@ -274,11 +282,15 @@ string views, and explicitly transferred owning strings, plus escaped
 `{{`/`}}`. Fields support fill/alignment, sign, alternate form, zero-padding,
 width, precision, integer `b`/`B`/`o`/`d`/`x`/`X`/`c`, floating
 `f`/`F`/`e`/`E`/`g`/`G`, and string `s` presentation. It builds an owning
-`std::string`; malformed patterns/specifiers, count mismatches, and unsupported
-argument types are returned through `std::format_errc` before output. Named
+`std::string`; malformed patterns/specifiers, count mismatches, and dynamic
+formatter rejections are returned through `std::format_errc` by `try_format`
+before output; `format` uses the same implementation and panics on failure.
+Exact source-defined `std::formatter<T>` specializations extend the protocol.
+The source-defined `std::formattable<T>` concept rejects unsupported static
+argument types, including every later heterogeneous pack element. Named
 strings use `.view()` for non-consuming formatting because current value packs
 have no reference-pack declarator. Named and dynamic fields, locale-aware
-formatting, and formatter customization remain later standard-library layers;
+formatting remain later standard-library layers;
 none of this makes the compiler recognize the public `std::string` name.
 Front/back, mutable `at`, resize, shrink-to-fit, pop-back, and constant-time
 storage `swap` are implemented. Swap also exchanges size and capacity without
@@ -544,7 +556,7 @@ is recognized by the backend.
 | `<std/set>` / `<std/unordered_set>` | Unique immutable keys over AVL/hash dictionaries, checked insertion results and traversal, lookup/erase, bounds or hash capacity controls |
 | `<std/memory>` | Implemented `unique_ptr` with reset/swap, `make_unique`, `upcast_unique`, explicit-clone `shared_ptr`, `make_shared`, and `upcast_shared`, typed `allocator`, `storage<T>`, `alignment`, `alloc_errc`, fixed-capacity `arena<T>`/`pool<T>`, and recoverable storage factories; declaration-only `weak_ptr` |
 | `<std/numeric>` | Implemented exact fixed-width `wrapping_add/sub/mul`, `saturating_add/sub/mul`, `checked_add/sub/mul`, default and operation-based `accumulate`, homogeneous default and operation-based `inner_product`, unary `transform_reduce`, `gcd`, `lcm`, and `midpoint` |
-| `<std/span>` | Executable checked read-only single-owner spans with vector/string factories, local copy/move, subviews, empty ranges, iteration, and no raw-address `data()` API; mutable and multi-owner views remain unsupported |
+| `<std/span>` | Checked read-only `span<T>` and exclusive move-only `mutable_span<T>` over initialized prefix storage, with vector/string factories, subviews and checked iteration; mutable views support retained shared projections. No raw-address `data()` API or fixed-array factory. |
 | `<std/utility>` | Implemented `pair`, `make_pair`, explicit `clone`, and restoring `swap`/`exchange` for structurally relocatable initialized places; compiler-defined `std::move` remains implicitly available |
 
 Empty constructor bodies in these scaffolds are placeholders because GTI does

@@ -1,0 +1,31 @@
+#include <std/vector>
+#include <std/string>
+#include <std/span>
+
+// An owning application type exercises mutable element loans, not only bytes.
+struct Entry {
+  mut std::string name;
+  Entry(std::string text) : name(std::move(text)) {}
+};
+
+int main() {
+  mut std::vector<Entry> entries{};
+  entries.push_back(Entry(std::string("a")));
+  entries.push_back(Entry(std::string("b")));
+  {
+    mut auto slice = entries.as_mutable_span();
+    {
+      mut Entry& first = slice.front();
+      first.name.append("1");
+    }
+    {
+      mut Entry& last = slice.back();
+      last.name.append("2");
+    }
+    for (mut Entry& entry : slice) { entry.name.append("!"); }
+  }
+  if (entries[std::size_t(0)].name != "a1!" || entries[std::size_t(1)].name != "b2!") {
+    return 1;
+  }
+  return 0;
+}

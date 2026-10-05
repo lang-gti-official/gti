@@ -27,14 +27,6 @@ std::vector<MirPlaceId> mirLoanProtectedSources(const MirBody &body,
   const MirLoan *loan = body.findLoan(id);
   if (loan == nullptr || loan->id != id)
     return {};
-  const MirLoan *dependency = nullptr;
-  if (loan->storedDependency != 0) {
-    dependency = body.findLoan(loan->storedDependency);
-    if (dependency == nullptr || dependency->id != loan->storedDependency ||
-        dependency->id == id || dependency->kind != MirLoanKind::Stored ||
-        dependency->storedDependency != 0)
-      return {};
-  }
   std::vector<MirPlaceId> sources;
   const auto append = [&](MirPlaceId source) {
     if (body.findPlace(source) == nullptr)
@@ -48,8 +40,18 @@ std::vector<MirPlaceId> mirLoanProtectedSources(const MirBody &body,
            std::all_of(record.additionalSources.begin(),
                        record.additionalSources.end(), append);
   };
-  if (!appendLoan(*loan) || (dependency != nullptr && !appendLoan(*dependency)))
-    return {};
+  std::unordered_set<MirLoanId> visited;
+  while (loan != nullptr) {
+    if (!visited.insert(loan->id).second || !appendLoan(*loan))
+      return {};
+    const MirLoanId dependency = loan->storedDependency;
+    if (dependency == 0)
+      break;
+    loan = body.findLoan(dependency);
+    if (loan == nullptr || loan->id != dependency ||
+        loan->kind != MirLoanKind::Stored)
+      return {};
+  }
   return sources;
 }
 
@@ -1863,6 +1865,7 @@ successors(const MirTerminator &terminator) {
 }
 
 struct AbstractStoredAccess {
+  bool overlaps = false;
   bool referent = false;
   bool referenceStorage = false;
   bool invalidReferentProjection = false;
@@ -1872,12 +1875,16 @@ struct AbstractStoredAccess {
 abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
   AbstractStoredAccess result;
   const auto inspectPath = [&](const std::vector<SymbolId> &fields) {
-    if (fields.empty() || place.projections.size() < fields.size())
+    if (fields.empty())
       return;
-    for (std::size_t index = 0; index < fields.size(); ++index)
+    for (std::size_t index = 0;
+         index < std::min(fields.size(), place.projections.size()); ++index)
       if (place.projections[index].kind != MirProjectionKind::Field ||
           place.projections[index].field != fields[index])
         return;
+    result.overlaps = true;
+    if (place.projections.size() < fields.size())
+      return;
     result.referenceStorage =
         result.referenceStorage || place.projections.size() == fields.size();
     result.referent =
@@ -2062,7 +2069,34 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
       // not a competing sibling borrow. Never extend this to shell storage,
       // unrelated fields, or a stronger access mode.
       const auto access = abstractStoredAccess(dependency, place);
-      if (!access.referent || access.invalidReferentProjection)
+      const auto *derivedSource = body.findPlace(derived.source);
+      const auto carrierPrefix = [&](const std::vector<SymbolId> &fields) {
+        if (derivedSource == nullptr ||
+            derivedSource->type.kind != SemanticType::Class ||
+            !derivedSource->traits.containsBorrowedState ||
+            place.projections.empty() ||
+            place.projections.size() >= fields.size() ||
+            (derived.kind != MirLoanKind::CallResult &&
+             derived.kind != MirLoanKind::Stored))
+          return false;
+        for (std::size_t index = 0; index < place.projections.size(); ++index)
+          if (place.projections[index].kind != MirProjectionKind::Field ||
+              place.projections[index].field != fields[index])
+            return false;
+        return true;
+      };
+      // A call on a nested borrowed carrier publishes a loan rooted at that
+      // carrier, not at its private reference field. The independently checked
+      // call-origin contract supplies the projection into the stored referent.
+      // Only an exact nonempty prefix of a designated reference path qualifies;
+      // unrelated fields and the enclosing receiver never gain this authority.
+      const bool nestedCarrier =
+          carrierPrefix(dependency.designatedFields) ||
+          std::any_of(dependency.additionalDesignatedFields.begin(),
+                      dependency.additionalDesignatedFields.end(),
+                      carrierPrefix);
+      if ((!access.referent && !nestedCarrier) ||
+          access.invalidReferentProjection)
         return false;
       const auto *source = body.findPlace(dependency.source);
       const AccessMode shellAccess =
@@ -2078,14 +2112,16 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
     const auto requireStoredDependency =
         [&](MirLoanId loan, const char *context, MirInstructionId instruction)
         -> std::optional<MirVerificationResult> {
-      const MirLoanId dependency = body.loans[loan - 1].storedDependency;
-      if (dependency != 0 &&
-          active[dependency - 1] != MirLoanFlowState::Active) {
-        return failure(body, owner,
-                       "carrier-shell loan " + std::to_string(loan) +
-                           " requires active stored dependency loan " +
-                           std::to_string(dependency) + " in " + context,
-                       block.id, instruction);
+      MirLoanId dependency = body.loans[loan - 1].storedDependency;
+      while (dependency != 0) {
+        if (active[dependency - 1] != MirLoanFlowState::Active) {
+          return failure(body, owner,
+                         "carrier-shell loan " + std::to_string(loan) +
+                             " requires active stored dependency loan " +
+                             std::to_string(dependency) + " in " + context,
+                         block.id, instruction);
+        }
+        dependency = body.loans[dependency - 1].storedDependency;
       }
       return std::nullopt;
     };
@@ -2443,13 +2479,14 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
                    .input = inputIndex});
             }
           };
-          const bool writableShell =
-              mutableInput && loan.access == AccessMode::Mutable;
-          appendSources(loan, writableShell);
-          if (loan.storedDependency != 0) {
-            const MirLoan &stored = body.loans[loan.storedDependency - 1];
-            appendSources(stored, writableShell &&
-                                      stored.access == AccessMode::Mutable);
+          bool writable = mutableInput;
+          const MirLoan *record = &loan;
+          while (record != nullptr) {
+            writable = writable && record->access == AccessMode::Mutable;
+            appendSources(*record, writable);
+            record = record->storedDependency == 0
+                         ? nullptr
+                         : &body.loans[record->storedDependency - 1];
           }
         };
         if (resolved.kind == MirOperandKind::BorrowRead ||
@@ -2689,6 +2726,10 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
           }
           const MirCanonicalPlace otherPlace =
               canonicalPlace(body, other.source, bindingLoans, active);
+          if (abstractStoredEntry(body, other) &&
+              sameCanonicalRoot(reservedPlace, otherPlace) &&
+              !abstractStoredAccess(other, reservedPlace).overlaps)
+            continue;
           if (canonicalPlacesOverlap(reservedPlace, otherPlace)) {
             return failure(body, owner,
                            "two-phase loan " + std::to_string(loan) +
@@ -2771,6 +2812,10 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
           }
           const MirCanonicalPlace otherPlace =
               canonicalPlace(body, other.source, bindingLoans, active);
+          if (abstractStoredEntry(body, other) &&
+              sameCanonicalRoot(childPlace, otherPlace) &&
+              !abstractStoredAccess(other, childPlace).overlaps)
+            continue;
           const bool sharedEphemeralAccess =
               body.loans[loan - 1].kind == MirLoanKind::CallResult &&
               other.kind == MirLoanKind::CallResult &&
@@ -3042,8 +3087,13 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
             }
             const MirCanonicalPlace otherPlace =
                 canonicalPlace(body, other.source, bindingLoans, active);
+            if (abstractStoredEntry(body, other) &&
+                sameCanonicalRoot(childPlace, otherPlace) &&
+                !abstractStoredAccess(other, childPlace).overlaps)
+              continue;
             const bool compatibleReadOnlyDependency =
-                body.loans[loan - 1].kind == MirLoanKind::CallResult &&
+                (body.loans[loan - 1].kind == MirLoanKind::CallResult ||
+                 body.loans[loan - 1].kind == MirLoanKind::Stored) &&
                 body.loans[loan - 1].access == AccessMode::ReadOnly &&
                 other.access == AccessMode::ReadOnly;
             const bool compatibleReservationRead =
@@ -3128,6 +3178,19 @@ abstractStoredAccess(const MirLoan &loan, const MirCanonicalPlace &place) {
             returned->storedDependency == loan.id) {
           continue;
         }
+        if (body.kind == MirBodyKind::Constructor &&
+            block.terminator.kind == MirTerminatorKind::Return &&
+            abstractStoredEntry(body, loan) &&
+            std::any_of(body.loans.begin(), body.loans.end(),
+                        [&](const MirLoan &published) {
+                          return published.kind == MirLoanKind::Stored &&
+                                 published.escapes &&
+                                 published.storedField != 0 &&
+                                 published.storedDependency == loan.id &&
+                                 active[published.id - 1] ==
+                                     MirLoanFlowState::Active;
+                        }))
+          continue;
         if (!loan.escapes) {
           return failure(body, owner,
                          "non-escaping loan " + std::to_string(loan.id) +
@@ -8290,9 +8353,23 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
     if (loan.storedDependency != 0) {
       const MirLoan &dependency = body.loans[loan.storedDependency - 1];
-      if (loan.kind == MirLoanKind::Stored ||
+      const bool derivedStoredDependency =
+          loan.kind == MirLoanKind::Stored && loan.parent != 0 &&
+          body.loans[loan.parent - 1].storedDependency == loan.storedDependency;
+      const bool publishedShellDependency =
+          body.kind == MirBodyKind::Constructor &&
+          loan.kind == MirLoanKind::Stored && loan.storedField != 0 &&
+          loan.escapes && loan.parent == 0 &&
+          abstractStoredEntry(body, dependency);
+      const auto *source = body.findPlace(loan.source);
+      const bool constructedShellDependency =
+          loan.kind == MirLoanKind::Stored && !loan.entry && !loan.escapes &&
+          loan.storedField == 0 && loan.parent == 0 && loan.producedBy != 0 &&
+          source != nullptr && source->root != MirPlaceRootKind::Loan &&
+          source->traits.containsBorrowedState;
+      if ((loan.kind == MirLoanKind::Stored && !derivedStoredDependency &&
+           !publishedShellDependency && !constructedShellDependency) ||
           dependency.kind != MirLoanKind::Stored ||
-          dependency.storedDependency != 0 ||
           loan.storedDependency == loan.parent ||
           (loan.entry && !dependency.entry)) {
         return failure(body, owner,
@@ -8317,15 +8394,19 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                            " must be a non-escaping Local, CallResult, or "
                            "Stored loan");
       }
-      const bool sharedDerivedCall = loan.kind == MirLoanKind::CallResult &&
-                                     loan.access == AccessMode::ReadOnly &&
-                                     parent.access == AccessMode::ReadOnly;
+      const bool sharedDerivedCall =
+          (loan.kind == MirLoanKind::CallResult ||
+           (loan.kind == MirLoanKind::Stored &&
+            parent.kind == MirLoanKind::CallResult)) &&
+          loan.access == AccessMode::ReadOnly &&
+          parent.access == AccessMode::ReadOnly;
       if (loan.entry ||
           (parent.access != AccessMode::Mutable && !sharedDerivedCall)) {
         return failure(body, owner,
                        "child loan " + std::to_string(loan.id) +
                            " must be non-entry and either have a mutable "
-                           "parent or be a read-only derived call result");
+                           "parent or be a read-only derived call result "
+                           "or stored accessor result");
       }
     }
     std::unordered_set<HirBindingId> carriers;

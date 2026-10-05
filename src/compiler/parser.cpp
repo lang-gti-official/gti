@@ -409,9 +409,13 @@ private:
       TypeRef receiver = requirement->receiver();
       receiver.reference.reset();
       const std::size_t application = expression.applications.size();
+      std::vector<TypeRef> arguments{std::move(receiver),
+                                     requirement->result()};
+      arguments.insert(arguments.end(), requirement->parameters().begin(),
+                       requirement->parameters().end());
       expression.applications.push_back(
           {.name = NamePath{{requirement->member()}},
-           .arguments = {std::move(receiver), requirement->result()},
+           .arguments = std::move(arguments),
            .memberRequirement = std::move(requirement)});
       expression.nodes.push_back({.kind = ConstraintExpressionKind::Application,
                                   .application = application});
@@ -2662,14 +2666,39 @@ private:
   std::unique_ptr<MemberRequirement> memberRequirement(Token keyword) {
     const NestingGuard nesting = enterNesting(keyword);
     consume(TokenKind::LEFT_PAREN, "Expect '(' after member requirement.");
+    std::optional<Token> receiverAccess;
+    if (match({TokenKind::MUT}))
+      receiverAccess = previous();
     TypeRef receiver = parseType();
     if (!receiver.reference ||
         receiver.reference->kind != TokenKind::AMPERSAND) {
       throw error(receiver.name.last(),
-                  "Member requirement receiver must be a read-only reference.");
+                  "Member requirement receiver must be a reference.");
     }
+    receiver.referenceMutability = std::move(receiverAccess);
     Token binding =
         consume(TokenKind::IDENTIFIER, "Expect requirement receiver name.");
+    std::vector<TypeRef> parameters;
+    std::vector<Token> bindings;
+    while (match({TokenKind::COMMA})) {
+      std::optional<Token> access;
+      if (match({TokenKind::MUT}))
+        access = previous();
+      TypeRef parameter = parseType();
+      if (access && !parameter.reference)
+        throw error(*access,
+                    "Mutable requirement parameters must be references.");
+      parameter.referenceMutability = access;
+      Token name =
+          consume(TokenKind::IDENTIFIER, "Expect requirement parameter name.");
+      if (name.lexeme == binding.lexeme ||
+          std::any_of(
+              bindings.begin(), bindings.end(),
+              [&](const Token &other) { return other.lexeme == name.lexeme; }))
+        throw error(name, "Duplicate requirement parameter name.");
+      parameters.push_back(std::move(parameter));
+      bindings.push_back(std::move(name));
+    }
     consume(TokenKind::RIGHT_PAREN, "Expect ')' after requirement receiver.");
     consume(TokenKind::LEFT_BRACE, "Expect '{' before member requirement.");
     consume(TokenKind::LEFT_BRACE, "Expect '{' before required member call.");
@@ -2682,8 +2711,22 @@ private:
     Token member =
         consume(TokenKind::IDENTIFIER, "Expect required member name.");
     consume(TokenKind::LEFT_PAREN, "Expect '(' after required member name.");
+    std::vector<Token> arguments;
+    if (!check(TokenKind::RIGHT_PAREN)) {
+      do {
+        Token argument = consume(TokenKind::IDENTIFIER,
+                                 "Expect requirement parameter name.");
+        if (arguments.size() >= bindings.size() ||
+            argument.lexeme != bindings[arguments.size()].lexeme)
+          throw error(argument, "Required call must use each declared "
+                                "parameter once, in declaration order.");
+        arguments.push_back(std::move(argument));
+      } while (match({TokenKind::COMMA}));
+    }
+    if (arguments.size() != bindings.size())
+      throw error(peek(), "Required call must use every declared parameter.");
     consume(TokenKind::RIGHT_PAREN,
-            "Member requirements currently require a nullary call.");
+            "Expect ')' after required member arguments.");
     consume(TokenKind::RIGHT_BRACE, "Expect '}' after required member call.");
     consume(TokenKind::ARROW, "Expect '->' before exact required result type.");
     TypeRef result = parseType();
@@ -2691,7 +2734,8 @@ private:
     consume(TokenKind::RIGHT_BRACE, "Expect '}' after member requirement.");
     return std::make_unique<MemberRequirement>(
         std::move(keyword), std::move(receiver), std::move(binding),
-        std::move(use), std::move(member), std::move(result));
+        std::move(use), std::move(member), std::move(result),
+        std::move(parameters), std::move(bindings), std::move(arguments));
   }
 
   ExprPtr primary() {

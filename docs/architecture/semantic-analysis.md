@@ -2,6 +2,23 @@
 
 Status: Current implementation.
 
+## Exact structural member signatures
+
+Source member requirements carry a typed receiver, exact parameter types/access,
+and an exact owned result. Their synthetic bindings are tooling identities, not
+runtime variables or loans. Concept parameters have semantic generic identities;
+dependent compound arguments substitute through the existing type machinery and
+canonical exact class specialization selector. Eager concept resolution follows
+class/specialization registration; primitive constraints needed during class
+registration resolve lazily. No formatter or stream spelling selects a rule.
+
+Generic body analysis uses only signatures guaranteed by its requirements,
+checking argument and receiver access. Concrete instance analysis selects the
+ordinary method and publishes the normal HIR/MIR call. Comma-pack fold targets
+may carry requirements: each concrete element passes ordinary instantiation and
+constraint checking before a resolved fold can enter HIR. Signature requirements
+do not create a second executable call path or bypass actual borrow checking.
+
 Semantic analysis is GTI's authoritative language layer. It resolves meaning
 over the syntax-preserving AST and records facts in `SemanticModel`; HIR, MIR,
 backends, and language queries consume those facts rather than repeating

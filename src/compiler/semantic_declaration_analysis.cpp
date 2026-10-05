@@ -888,12 +888,15 @@ auto SemanticVisitor::Impl::registerConcepts(const StmtList &statements,
           recordToolingSymbol(declaration->name(), SymbolKind::Concept,
                               qualified, SemanticType::Unknown);
       std::vector<SymbolId> parameterSymbols;
+      std::vector<GenericParameterId> parameterIds;
       parameterSymbols.reserve(declaration->typeParameters().size());
       for (const Token &parameter : declaration->typeParameters()) {
-        parameterSymbols.emplace_back(
-            recordToolingSymbol(parameter, SymbolKind::TypeParameter,
-                                qualified + "::" + parameter.lexeme,
-                                SemanticType::Unknown, false, false));
+        const GenericParameterId parameterId = nextGenericParameterId++;
+        parameterIds.push_back(parameterId);
+        parameterSymbols.emplace_back(recordToolingSymbol(
+            parameter, SymbolKind::TypeParameter,
+            qualified + "::" + parameter.lexeme,
+            SemanticType::typeParameter(parameterId), false, false));
       }
       conceptIds.emplace(qualified, id);
       conceptDeclIds.emplace(declaration, id);
@@ -905,6 +908,7 @@ auto SemanticVisitor::Impl::registerConcepts(const StmtList &statements,
                           .namespaceScope = scope,
                           .symbol = symbol,
                           .parameterSymbols = std::move(parameterSymbols),
+                          .parameterIds = std::move(parameterIds),
                           .compilerPrivate = compilerPrivateDeclaration(
                               currentSourceUnit, scope)});
     } else if (const auto *namespaceDeclaration =
@@ -961,6 +965,12 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
   currentNamespace = conceptInfo.namespaceScope;
 
   const ConceptDecl &declaration = *conceptInfo.declaration;
+  typeParameterScopes.emplace_back();
+  for (std::size_t index = 0; index < declaration.typeParameters().size();
+       ++index)
+    typeParameterScopes.back().emplace(
+        declaration.typeParameters()[index].lexeme,
+        SemanticType::typeParameter(conceptInfo.parameterIds[index]));
   std::vector<GenericConstraintSet> parameterConstraints(
       declaration.typeParameters().size(), 0);
   std::vector<RegisteredConcept::StructuralPattern> structuralConstraints;
@@ -1070,19 +1080,10 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         if (parameter == declaration.typeParameters().end()) {
           validateType(argument);
           const SemanticType concrete = typeOf(argument);
-          if (concrete == SemanticType::Unknown ||
-              containsOpenTypeParameter(concrete)) {
+          if (concrete == SemanticType::Unknown) {
             report(argumentToken,
-                   declaration.typeParameters().size() == 1
-                       ? "Concept requirements must apply to the "
-                         "declaration's type parameter '" +
-                             declaration.typeParameters().front().lexeme +
-                             "' or a closed exact type; dependent compound "
-                             "types are not supported."
-                       : "Concept requirements must apply to one of the "
-                         "declaration's type parameters or a closed exact "
-                         "type; dependent compound types are not "
-                         "supported.",
+                   "Concept requirement argument must name a visible type "
+                   "or a compound type formed from the concept's parameters.",
                    "GTI-S2049");
             argumentMap.push_back({});
             valid = false;
@@ -1112,6 +1113,8 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         pattern.kind = StructuralConstraintKind::ReadMember;
         pattern.arguments = argumentMap;
         pattern.memberName = requirement.memberRequirement->member().lexeme;
+        pattern.mutableReceiver = requirement.memberRequirement->receiver()
+                                      .referenceMutability.has_value();
         leafStructuralConstraints[requirementIndex].push_back(
             std::move(pattern));
         leafHasStructural[requirementIndex] = true;
@@ -1206,10 +1209,20 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         RegisteredConcept::StructuralPattern mapped;
         mapped.kind = pattern.kind;
         mapped.memberName = pattern.memberName;
+        mapped.mutableReceiver = pattern.mutableReceiver;
+        std::vector<SemanticType> mappedTypes;
+        for (const auto &argument : argumentMap)
+          mappedTypes.push_back(
+              argument.parameter
+                  ? SemanticType::typeParameter(
+                        conceptInfo.parameterIds[*argument.parameter])
+                  : argument.concrete);
+        const auto substitution = conceptSubstitution(required, mappedTypes);
         for (const RegisteredConcept::StructuralPattern::Argument &argument :
              pattern.arguments) {
           if (!argument.parameter) {
-            mapped.arguments.emplace_back(argument);
+            mapped.arguments.push_back(
+                {.concrete = substituteType(argument.concrete, substitution)});
             continue;
           }
           if (*argument.parameter >= argumentMap.size()) {
@@ -1307,6 +1320,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
 
   currentSourceUnit = enclosingSourceUnit;
   currentNamespace = enclosingNamespace;
+  typeParameterScopes.pop_back();
   conceptInfo.parameterConstraints = std::move(parameterConstraints);
   conceptInfo.structuralConstraints = std::move(structuralConstraints);
   if (declaration.compilerBinding()) {

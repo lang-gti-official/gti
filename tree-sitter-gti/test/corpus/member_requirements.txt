@@ -39,3 +39,29 @@ bool supported = requires (Widget& item) { { item.clone() } -> Widget; };
           (type
             (user_type
               (identifier))))))))
+
+==================
+Exact mutable member signature
+==================
+concept writes<T> = requires(mut T& writer, int& value, mut int& output) {
+  { writer.write(value, output) } -> int;
+};
+---
+
+(source_file
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (constraint_expression
+      (member_requirement_expression
+        (type (user_type (identifier)) (reference_declarator))
+        (identifier)
+        (type (primitive_type) (reference_declarator))
+        (identifier)
+        (type (primitive_type) (reference_declarator))
+        (identifier)
+        (identifier)
+        (identifier)
+        (identifier)
+        (identifier)
+        (type (primitive_type))))))

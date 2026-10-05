@@ -35,10 +35,9 @@ message truncation and containment.
 
 Formatting and stdout convenience APIs adopt this facility as described below.
 General concept-failure diagnostics can explain declared constraints, but
-literal-format validation and a public formattable protocol are not introduced
-by panic. Unsupported format arguments still produce a runtime format error;
-that limitation is not a claim that an unsupported static type is inherently
-dynamic.
+literal-format validation is not introduced by panic. Unsupported static
+argument types are rejected by the source-defined `std::formattable` protocol
+described below; dynamic presentation and value errors remain recoverable.
 
 ```gti
 #include <std/cstdio>
@@ -171,7 +170,8 @@ failure can still leave a prefix written because operating-system writes are
 not transactional. On POSIX targets a closed pipe is translated to
 `write_failed`; the runtime confines the generated `SIGPIPE` to the calling
 thread rather than letting it terminate the process. Files are unbuffered at
-this layer, so there is no file flush operation. `seek` uses an explicit
+this layer; the composable writer's `FILE::flush()` only validates the open
+handle and does not perform a durability sync. `seek` uses an explicit
 `seek_origin`; `tell` reports the current byte offset. Both return `seek_failed`
 when the native object is not seekable or the requested offset is invalid.
 
@@ -226,6 +226,83 @@ payload traversal, field or global receivers, retaining a standalone payload
 reference, and returning an element remain unsupported; see
 [`ranges.md`](ranges.md#named-expected-payload-ranges).
 
+## Composable buffered I/O
+
+`<std/io>` defines `std::byte_buffer` as `vector<uint8_t>` and source-defined
+reader/writer contracts. Include `<std/span>`, `<std/cstdio>` and other units
+directly when naming their declarations. Buffers own initialized bytes;
+`byte_buffer(size)` establishes writable size, while `reserve` alone does not.
+
+```gti
+concept reader<R> = requires(mut R& stream, mut std::mutable_span<uint8_t>& output) {
+  { stream.read_some(output) } -> expected<std::size_t, std::io_errc>;
+};
+concept writer<W> = requires(mut W& stream, std::span<uint8_t>& input) {
+  { stream.write_some(input) } -> expected<std::size_t, std::io_errc>;
+} && requires(mut W& stream) {
+  { stream.flush() } -> expected<void, std::io_errc>;
+};
+```
+
+These are exact ordinary member-signature requirements. Custom transports do
+not inherit a library base class. A successful `read_some` or `write_some`
+returns the committed byte count, never more than the supplied span size.
+Zero on a nonempty read means EOF. Empty requests succeed with zero without
+accessing a byte. A transport must report a partial successful prefix before
+reporting a later error; an error alone cannot encode hidden partial progress.
+
+The generic helpers are:
+
+- `read_exact(source, output)`: fills the writable span or reports EOF/error.
+- `write_all(destination, input)`: submits the complete span; zero progress on
+  a nonempty write is `write_failed`, not an infinite retry.
+- `copy(source, destination, scratch)`: copies until EOF using nonempty,
+  caller-owned scratch space. It neither rewinds nor implicitly flushes.
+- `getline(source, text, delimiter = uint8_t(10))`: clears `text`, consumes but
+  excludes the delimiter, and preserves all other bytes (including NUL and CR).
+  A final unterminated line succeeds; EOF before any byte returns `end_of_file`.
+  This helper currently allocates a one-byte initialized scratch buffer per call;
+  use a buffered reader to amortize host reads.
+
+Each helper returns `expected<size_t, io::error>`, where `error` has `code` and
+`transferred` fields. Progress counts bytes read into the destination, bytes
+accepted by the writer, or line bytes appended, respectively. Copy counts bytes
+accepted by its destination, not read-ahead bytes. A writer may buffer accepted
+bytes: acceptance is not a flush or durability guarantee. Invalid oversized
+transport counts are rejected before indexing or updating progress. On line
+failure the accumulated prefix remains in `text`.
+
+`memory_reader` borrows a read-only span and maintains a cursor. `memory_stream`
+owns an exclusive span (not its underlying allocation), with read/write/tell
+and bounded absolute seek. Writes do not grow storage; a full nonempty write
+fails, while reading at the end returns zero. `memory_stream::flush()` has no
+work to do; readers do not require a flush operation.
+
+`FILE` implements the same contracts with direct partial reads/writes.
+`FILE::flush()` validates that the unbuffered native descriptor is open; it
+does not call `fsync` or promise durability. `stdin_reader`, `stdout_writer`
+and `stderr_writer` borrow the process streams without closing them; output
+flush drains the host stdio buffer and can fail. Applications must not mix
+different buffering layers on a stream without accounting for read-ahead and
+explicit flushing.
+
+`buffered_reader<R>` and `buffered_writer<W>` exclusively borrow their
+underlying transport and own reusable byte storage (default size 4096). A
+reader returns pending bytes before refilling; destroying it discards unread
+read-ahead bytes and does not rewind the source. A writer accepts only the
+prefix fitting its buffer, draining a full buffer before accepting more.
+`pending()` reports bytes not yet submitted to the underlying writer.
+`flush()` drains them and then flushes the underlying writer. A failed partial
+flush preserves exactly the unwritten suffix, so retry does not duplicate the
+committed prefix. Zero-capacity adapters reject nonempty operations with
+`invalid_stream`; empty requests still succeed.
+
+**Buffered writers require explicit `flush()` and handling its result.** Their
+destruction discards pending bytes; it does not perform fallible hidden I/O.
+The underlying transport cannot be accessed, moved or destroyed while borrowed
+by an adapter. These are synchronous byte-oriented facilities, not a
+nonblocking readiness/cancellation or Unicode decoding protocol.
+
 ## Runtime boundary
 
 Single-byte compatibility calls and bounded chunk calls cross the runtime.
@@ -236,10 +313,12 @@ existing generated programs. Ordinary `gti_internal::runtime` wrappers and
 the trusted `<std/cstdio>` implementation translate status values into the
 public `expected` API.
 
-Paths and writes cross as immutable, counted, non-retained
-`gti_c_string_view` records from `<gti/c_abi.h>`. The only mutable pointer is a
-fixed 4096-byte buffer inside trusted standard-library source, scoped by
-`unsafe`; it never enters the public API. The runtime owns any temporary
+Paths and text writes cross as immutable, counted, non-retained
+`gti_c_string_view` records from `<gti/c_abi.h>`. Partial binary writes use
+versioned `gti_rt_write_{file,stdout,stderr}_some_v1` pointer/count entries.
+Trusted source derives pointers only from checked nonempty initialized spans
+or bounded local buffers, scoped by `unsafe`; pointers never enter the public
+API and are not retained by the runtime. The runtime owns any temporary
 NUL-terminated native path it needs. Runtime declarations are unavailable to
 application lookup, completion, hover, and definition; direct access is
 `GTI-S2058`. The complete bounded ABI and lifetime rules are in
@@ -330,7 +409,7 @@ namespace std {
 }
 ```
 
-The admitted arguments are `bool`, `char`, every fixed-width integer,
+The built-in admitted arguments are `bool`, `char`, every fixed-width integer,
 binary32 `float`, binary64 `double`, `std::string_view`, and `std::string`.
 Booleans render as `true` or `false`; characters append their one code unit;
 integers default to canonical base-10 text; and floating values default to the
@@ -362,11 +441,11 @@ and applies sign-aware zero padding.
 
 A lone opening or closing brace, mixed indexing, or an incompatible specifier
 produces `invalid_format`; an out-of-range index or automatic field-count
-mismatch produces `argument_count_mismatch`. A type outside the admitted set
-produces `unsupported_argument`. Pattern grammar and field count are validated
-first, so those errors take precedence. Named fields, dynamic width or
-precision, locale-specific formatting, and user formatter customization are
-not yet part of this bounded surface.
+mismatch produces `argument_count_mismatch`. Pattern grammar and field count
+are validated first, so those errors take precedence over dynamic formatter
+errors. A type without a valid formatter is a compile-time constraint error,
+including a later pack argument not selected by the pattern. Named fields,
+dynamic width or precision, and locale-specific formatting remain unsupported.
 
 The overload family separates the zero-argument case from the nonempty
 `First, Args...` case and permits heterogeneous admitted arguments in one
@@ -399,7 +478,7 @@ output overloads now also panic on failed submission; they no longer discard
 the runtime status. Cleanup and secondary panic follow the same defined-failure
 contract as explicit `std::panic`.
 
-These operations are ordinary GTI library code. A source-defined exact adapter
+These operations are ordinary GTI library code. A source-defined exact formatter
 for each admitted type feeds the bounded, source-order pack fold; the compiler
 does not recognize a formatting function, public string type, or pattern.
 Formatted output uses the existing counted stdout runtime boundary. Existing
@@ -423,7 +502,56 @@ uses the plain name and no longer calls `.value()`. `try_print` errors are now
 HTTP/network requests, entropy and managed-thread startup remain expected-first;
 panic adoption is not a blanket rename of environmental operations.
 
-Buffered streams, encoding conversion, named/dynamic fields, and formatter
-customization remain future library layers. A future buffer/stream object
-should build on this byte surface without turning the runtime ABI into the
-public GTI ABI.
+Composable buffered streams are provided by `<std/io>` as described above;
+they build on the byte boundary without exposing the runtime ABI as the public
+GTI API. Encoding conversion and named/dynamic formatting fields remain future
+library layers.
+
+## User-defined formatters
+
+Applications extend formatting with ordinary exact class specialization:
+
+```gti
+struct AssetId { uint64_t value; };
+class std::formatter<AssetId> {
+public:
+  expected<void, std::format_errc> format(AssetId& value,
+      mut std::string& output, std::format_spec& spec) {
+    std::formatter<uint64_t> numeric{};
+    return numeric.format(value.value, output, spec);
+  }
+};
+```
+
+The specialization must be default-initializable and provide exactly this
+public, safe, read-only, nongeneric method signature. `std::formattable<T>` is a
+source-defined conjunction of default initialization and the exact method
+requirement, not a compiler-known capability. Normal primary-or-argument package
+ownership controls specialization coherence. The empty primary has no fallback
+conversion and does not satisfy the contract. A user may constrain a forwarding
+generic with `requires std::formattable<T>`.
+
+`format_spec` exposes the parsed common presentation fields: `fill`, `alignment`,
+`sign`, `alternate`, `zero_pad`, `width`, `has_precision`, `precision`, and `type`.
+Zero alignment/type means unspecified; the default fill is a space and sign is
+`'-'`. A formatter should implement or reject every non-default field it accepts.
+It can delegate to a built-in formatter or compose ordinary `try_format_to`
+calls. This first public protocol shares the existing common specification
+grammar; it does not add C++ iterator/context types or arbitrary per-type parse
+grammars. Neither compiler nor LSP parses format strings.
+
+The formatter appends to a temporary result and may report any `format_errc`.
+`invalid_format` normally means a rejected presentation; `unsupported_argument`
+remains available for a value-dependent rejection by an otherwise supported
+type. `try_format`, `try_format_to`, `try_print`, `try_println`, the convenience
+twins, and formatted panic all use this one protocol. Failed formatting never
+publishes a partially appended destination or submits partial formatted stdout.
+Directly calling a formatter is lower-level: its caller owns the destination
+and any partial append behavior. A formatter is constructed per selected field,
+so repeated indexed fields repeat its method call in pattern order.
+
+Unsupported static types receive ordinary contract diagnostics in CLI and LSP;
+no fix can invent the application's formatting policy. Generic forwarding
+wrappers should declare the same required contracts. Literal syntax, count, and
+specifier validation remain runtime checks until a general call-site constant
+validation facility exists. See `examples/106-custom-formatters.gti`.
