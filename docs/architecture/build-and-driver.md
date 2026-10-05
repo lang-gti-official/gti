@@ -203,6 +203,80 @@ an internal declaration cannot authorize version churn. Documentation-only
 changes need no trailer. A stable-version advance retains the ordinary release
 workflow, with no competing manual tag.
 
+## Live Build Progress
+
+Executable direct compilation and project `build`, `run`, `test`, and `check`
+report live, Cargo-style aligned phase verbs on stderr. A successful build can
+look like this (counts and timings are illustrative):
+
+```text
+  Building  tea (dev, arm64-apple-macos)
+   Loading  source graph
+   Loading  24 source units
+     Cache  checking build cache
+   Parsing  24 source units
+  Checking  tea
+  Lowering  HIR
+  Lowering  MIR
+Optimizing  program (-O2)
+  Emitting  C++ backend
+    Native  compiling and linking (clang++)
+Publishing  executable and build cache
+  Finished  tea (2.81s)
+```
+
+`--progress=auto` is the default: a capable stderr terminal updates one active
+row in place, refreshing elapsed time every 200 ms. Redirected streams and
+`TERM=dumb` retain durable stage transitions without cursor controls. A silent
+stage emits an elapsed-time heartbeat every ten seconds in that log mode.
+`--progress=plain` forces durable output even on a terminal;
+`--progress=never` disables this telemetry without suppressing diagnostics or
+the existing artifact/test summaries. `--color` and `NO_COLOR` govern colours
+independently; forcing colour on a redirected stream never enables cursor
+rewriting. Live rows are bounded to the terminal width and source/path control
+bytes are escaped.
+
+Timings use a monotonic clock. Completed phase rows show a duration for slower
+work (at least 100 ms in terminals, one second in logs); `Finished`/`Failed`
+always includes total elapsed time. A heartbeat means the operation remains
+pending, not that the compiler or native subprocess is proven to be advancing.
+There are no estimated overall percentages or completion times.
+
+Source-unit totals come from the canonical loaded graph, including the prelude
+and dependencies. Parsing publishes actual per-unit events; `--verbose` exposes
+those paths and a slow interactive parse shows the current path. Semantic
+analysis, HIR/MIR lowering, optimization, and backend emission remain
+whole-program stages: the CLI does not invent a per-file semantic or object
+compilation counter. Declared native sources report their exact source paths;
+the final generated-C++ compilation and link are honestly one `Native` stage.
+Native dependency build scripts and Darwin symbol collection have separate
+rows. Native tool diagnostics retain the existing captured-output contract.
+
+An optional caller-owned `ProgressObserver` observes synchronous begin/update/end
+events through the compiler frontend and reusable driver entry points.
+`ProgressScope` times only observed work; ending a phase does not assert success.
+Events borrow detail strings only during their callback, and neither caches,
+results, artifacts, nor compiler workers retain an observer. The compiler
+reports its own work; the driver reports cache/native/publication work; only
+the CLI owns colours, terminal state, output, and the heartbeat thread. A null
+observer leaves library and LSP clients silent. Progress policy never enters an
+immutable semantic/build request, provenance sidecar, or cache key.
+
+A cache hit reports `hit; restoring executable` and skips parsing, semantics,
+lowering, emission and native compilation. `run --no-build` does not create a
+build display. Direct emit-only modes remain silent by default for tooling;
+explicit `--progress` enables observation for them. Project emit-MIR supports
+the same display. stdout—including generated/metadata data and executed
+program output—is unchanged. The heartbeat is joined and transient rows are
+cleared before diagnostics or program execution.
+
+Parallel `build --all` disables child progress so captured diagnostics and
+artifact summaries still replay in deterministic target-name order. The parent
+reports its actual target waits, with target ordinal/count, while other children
+may also be running. `--progress=never` preserves byte-identical serial/parallel
+presentation; elapsed progress is intentionally not byte-stable. The display
+does not imply that waiting for one target means the other targets are idle.
+
 ## Direct Mode
 
 Executable requests explicitly require a compiler-selected global `main`

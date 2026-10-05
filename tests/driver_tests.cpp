@@ -32,6 +32,32 @@ void expect(bool condition, const std::string &message) {
   }
 }
 
+class RecordingProgress final : public lang::ProgressObserver {
+public:
+  std::vector<lang::ProgressPhase> phases;
+  std::vector<lang::ProgressPhase> active;
+  bool balanced = true;
+  std::optional<std::size_t> parsed;
+  std::optional<std::size_t> total;
+  std::optional<std::size_t> loaded;
+  void onProgress(const lang::ProgressEvent &event) noexcept override {
+    if (event.kind == lang::ProgressKind::Begin) {
+      phases.push_back(event.phase);
+      active.push_back(event.phase);
+    } else if (event.kind == lang::ProgressKind::End) {
+      balanced = balanced && !active.empty() && active.back() == event.phase &&
+                 event.elapsed >= std::chrono::nanoseconds{};
+      if (!active.empty())
+        active.pop_back();
+    } else if (event.phase == lang::ProgressPhase::Parsing) {
+      parsed = event.completed;
+      total = event.total;
+    } else if (event.phase == lang::ProgressPhase::Loading) {
+      loaded = event.total;
+    }
+  }
+};
+
 class TemporaryDirectory final {
 public:
   TemporaryDirectory() {
@@ -270,6 +296,39 @@ int main() {
       lang::driver::compileToCpp(request);
   expect(result.succeeded(),
          "the driver should compile a valid whole-program request");
+  RecordingProgress progress;
+  const auto withProgress = lang::driver::compileToCpp(request, &progress);
+  expect(withProgress.succeeded() && result.artifact && withProgress.artifact &&
+             withProgress.artifact->contents == result.artifact->contents,
+         "observing compilation must preserve byte-identical artifacts");
+  expect(
+      progress.phases ==
+              std::vector<lang::ProgressPhase>{lang::ProgressPhase::Loading,
+                                               lang::ProgressPhase::Parsing,
+                                               lang::ProgressPhase::Checking,
+                                               lang::ProgressPhase::HirLowering,
+                                               lang::ProgressPhase::MirLowering,
+                                               lang::ProgressPhase::Optimizing,
+                                               lang::ProgressPhase::Emitting} &&
+          progress.balanced && progress.active.empty() &&
+          progress.parsed == 2 && progress.total == 2 && progress.loaded == 2,
+      "live telemetry must follow the canonical phase order and exact units");
+  const auto broken = temporary.root() / "broken.gti";
+  expect(writeFile(broken, "int main() { return missing; }\n"),
+         "the failed progress fixture should be writable");
+  RecordingProgress failedProgress;
+  const auto failed = lang::driver::compileToCpp(
+      lang::driver::CompilationRequest(broken, request.standardLibrary(),
+                                       target, request.optimization(),
+                                       request.cppStandard()),
+      &failedProgress);
+  expect(!failed.succeeded() && failedProgress.balanced &&
+             failedProgress.active.empty() &&
+             failedProgress.phases ==
+                 std::vector<lang::ProgressPhase>{
+                     lang::ProgressPhase::Loading, lang::ProgressPhase::Parsing,
+                     lang::ProgressPhase::Checking},
+         "semantic failure must end telemetry without claiming later phases");
   expect(!result.preOptimizationMir && !result.postOptimizationMir &&
              !result.optimizationReport,
          "ordinary driver compilation should not capture optimizer output");

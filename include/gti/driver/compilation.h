@@ -7,6 +7,7 @@
 #include "gti/mir.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
+#include "gti/progress.h"
 #include "gti/source_graph.h"
 #include "gti/standard_library.h"
 #include "gti/target.h"
@@ -141,28 +142,38 @@ struct CheckResult {
   }
 };
 
-[[nodiscard]] CheckResult checkCompilation(const CompilationRequest &request);
+[[nodiscard]] CheckResult
+checkCompilation(const CompilationRequest &request,
+                 ProgressObserver *progress = nullptr);
 
 [[nodiscard]] CompilationInputs
-loadCompilationInputs(const CompilationRequest &request);
+loadCompilationInputs(const CompilationRequest &request,
+                      ProgressObserver *progress = nullptr);
 
 // Run the canonical whole-program pipeline with a caller-provided backend.
 // Backend exceptions are translated into structured compilation failures at
 // this driver boundary rather than escaping into individual CLI/library
 // callers.
 [[nodiscard]] CompilationResult
-compileWithBackend(const CompilationRequest &request, Backend &backend);
-
-[[nodiscard]] CompilationResult compileToCpp(const CompilationRequest &request);
-
-[[nodiscard]] CompilationResult compileToCpp(const CompilationRequest &request,
-                                             CompilationInputs inputs);
+compileWithBackend(const CompilationRequest &request, Backend &backend,
+                   ProgressObserver *progress = nullptr);
 
 [[nodiscard]] CompilationResult
-compileToNativeHeader(const CompilationRequest &request);
+compileToCpp(const CompilationRequest &request,
+             ProgressObserver *progress = nullptr);
+
+[[nodiscard]] CompilationResult
+compileToCpp(const CompilationRequest &request, CompilationInputs inputs,
+             ProgressObserver *progress = nullptr);
+
+[[nodiscard]] CompilationResult
+compileToNativeHeader(const CompilationRequest &request,
+                      ProgressObserver *progress = nullptr);
 
 // Serializes the verified optimized MIR snapshot that executable backends
 // consume, in the deterministic versioned text format owned by `MirPrinter`.
-[[nodiscard]] CompilationResult compileToMir(const CompilationRequest &request);
+[[nodiscard]] CompilationResult
+compileToMir(const CompilationRequest &request,
+             ProgressObserver *progress = nullptr);
 
 } // namespace lang::driver
