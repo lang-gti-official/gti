@@ -78,15 +78,28 @@ passes all 70 corpus cases and now parses 169 shipped sources; formatting
 covers all 417 first-party C/C++ files. This is focused reconciliation evidence,
 not a second full 422-test execution.
 
-The optional full audit passes 23 contract cases, 24 typed differential
+The handoff's optional full audit passes 23 contract cases, 24 typed differential
 programs, four compositions, 100 malformed mutations and its 96-example,
 four-variant matrix. It then fails at the already missing
 `examples/gti-vs-cpp/verify.py` comparison runner. This is not a complete
 optional-audit pass; its example selector still omits three-digit examples.
+Delivery review repairs that stale integration: the removed comparison-showcase
+runner is no longer invoked, and numbered example discovery admits arbitrary
+digit counts in numeric order. The independent typed GTI/C++/evaluator checks
+remain authoritative and unchanged. The bounded typed smoke also tests example
+discovery, including three/four-digit names, non-example exclusions and an
+optional module entry. This repair does not claim a new full-audit run.
+The repaired quick audit passes all 23 contract cases, eight typed differential
+programs, two compositions and 24 malformed mutations. The bounded smoke passes
+including injected mismatch capture and example discovery. Seven independently
+rerun unsafe, borrowing, enum, driver, project and LSP gates pass in 79.91 seconds.
 The installed stage uses system LLVM, so the bundled-release packaging probe
 rejects it for lacking `lib/gti/llvm/libLLVMDemangle.a`; no bundled-LLVM release
-archive or Linux/Windows validation is claimed. The active user installation
-and unrelated main-checkout files remain untouched.
+archive or Linux/Windows validation is claimed. The normal 12-job local
+installer subsequently builds and activates 0.374.0 with its archive/Neovim
+smoke checks. Both terminal commands report 0.374.0; installed examples 39,
+109 and 110 and the unsafe/project-facts LSP checks pass. Unrelated
+main-checkout files remain untouched.
 
 ## Stored-borrow aggregates and integral-enum formatting
 
@@ -3282,8 +3295,10 @@ finding, not a release blocker discovered late.
 `scripts/local_language_audit.py` is a deliberately non-gating bug finder. The
 quick mode checks focused contract snapshots, generated programs, malformed
 source, deterministic C++ output, and `-O0`/`-O3` behavior. `--full` also
-exercises C++20/C++23 paths, numbered examples, and GTI/C++ comparison
-fixtures.
+exercises C++20/C++23 paths and every numbered example, including three-digit
+names. Independent GTI/C++ comparisons use the typed model below. The old
+`examples/gti-vs-cpp` showcase was removed; the audit no longer invokes its
+missing runner or exposes the obsolete `--skip-comparisons` switch.
 
 The typed portion has one deterministic gating slice without turning the broad
 audit into CI. `typed_differential_smoke` runs one scalar case and all four

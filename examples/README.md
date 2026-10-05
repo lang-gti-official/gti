@@ -420,10 +420,6 @@ With the locally installed toolchain, run it from the repository root:
 /tmp/gti-callbacks
 ```
 
-For paired, machine-verifiable examples that compare GTI's familiar source
-shape and enforced guarantees with C++, see
-[`gti-vs-cpp/`](gti-vs-cpp/README.md).
-
 ## Generic container algorithms
 
 [`90-generic-algorithms.gti`](90-generic-algorithms.gti) demonstrates sequence

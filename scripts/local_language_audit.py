@@ -25,7 +25,6 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 AUDIT_ROOT = REPOSITORY_ROOT / "tests" / "local-language-audit"
 MANIFEST_PATH = AUDIT_ROOT / "cases.json"
 EXAMPLES_ROOT = REPOSITORY_ROOT / "examples"
-COMPARISON_RUNNER = EXAMPLES_ROOT / "gti-vs-cpp" / "verify.py"
 
 # Public examples normally use the safe single-threaded default. Examples that
 # intentionally exercise a capability-gated execution profile declare that
@@ -633,7 +632,11 @@ def verify_mutations(
 
 
 def numbered_examples() -> list[Path]:
-    sources = sorted(EXAMPLES_ROOT.glob("[0-9][0-9]-*.gti"))
+    sources = sorted(
+        (source for source in EXAMPLES_ROOT.glob("[0-9]*-*.gti")
+         if source.is_file() and source.name.partition("-")[0].isdigit()),
+        key=lambda source: (int(source.name.partition("-")[0]), source.name),
+    )
     module_entry = EXAMPLES_ROOT / "10-modules" / "main.gti"
     if module_entry.is_file():
         sources.append(module_entry)
@@ -688,32 +691,6 @@ def verify_public_examples(
     return len(sources)
 
 
-def verify_comparison_showcase(
-    gti: str,
-    cxx: str,
-    *,
-    timeout: int,
-    verbose: bool,
-) -> None:
-    if not COMPARISON_RUNNER.is_file():
-        raise AuditFailure(f"comparison runner is missing: {COMPARISON_RUNNER}")
-    command = [
-        sys.executable,
-        str(COMPARISON_RUNNER),
-        "--gti",
-        gti,
-        "--cxx",
-        cxx,
-    ]
-    result = run_command(command, timeout=max(timeout, 120), verbose=verbose)
-    assert_no_internal_failure("GTI versus C++ comparison showcase", result)
-    if result.returncode != 0:
-        raise command_failure(
-            "GTI versus C++ comparison showcase failed", command, result
-        )
-    print("PASS paired GTI/C++ comparison showcase")
-
-
 def verify_workflow_isolation() -> None:
     forbidden_references = (
         "local_language_audit.py",
@@ -752,7 +729,6 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--skip-generated", action="store_true")
     parser.add_argument("--skip-compositions", action="store_true")
     parser.add_argument("--skip-mutations", action="store_true")
-    parser.add_argument("--skip-comparisons", action="store_true")
     parser.add_argument(
         "--typed-only",
         action="store_true",
@@ -922,13 +898,6 @@ def main() -> int:
                     gti,
                     cxx,
                     output_root,
-                    timeout=arguments.timeout,
-                    verbose=arguments.verbose,
-                )
-            if not arguments.typed_only and not arguments.skip_comparisons:
-                verify_comparison_showcase(
-                    gti,
-                    cxx,
                     timeout=arguments.timeout,
                     verbose=arguments.verbose,
                 )
