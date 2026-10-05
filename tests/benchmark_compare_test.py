@@ -1661,6 +1661,46 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         / thread_descriptors["gti-sequential"]["source"]
     ).resolve()
 
+    require(
+        sequential_report.get("debug_info") is False,
+        "benchmark sidecar did not record the default non-debug policy",
+    )
+    legacy_report = copy.deepcopy(sequential_report)
+    del legacy_report["debug_info"]
+    legacy_path = root / "legacy-build-report.json"
+    legacy_path.write_text(json.dumps(legacy_report), encoding="utf-8")
+    module.load_build_provenance(
+        legacy_path, selected_gti, selected_cxx, sequential_entry
+    )
+    for invalid_policy, diagnostic in (
+        (True, "must disable source debug info"),
+        (1, "debug_info must be a boolean"),
+        ("false", "debug_info must be a boolean"),
+        (None, "debug_info must be a boolean"),
+    ):
+        policy_report = copy.deepcopy(sequential_report)
+        policy_report["debug_info"] = invalid_policy
+        policy_path = root / "invalid-debug-policy-report.json"
+        policy_path.write_text(json.dumps(policy_report), encoding="utf-8")
+        expect_benchmark_error(
+            module,
+            lambda: module.load_build_provenance(
+                policy_path, selected_gti, selected_cxx, sequential_entry
+            ),
+            diagnostic,
+        )
+    unknown_report = copy.deepcopy(sequential_report)
+    unknown_report["unexpected"] = False
+    unknown_path = root / "unknown-build-report-field.json"
+    unknown_path.write_text(json.dumps(unknown_report), encoding="utf-8")
+    expect_benchmark_error(
+        module,
+        lambda: module.load_build_provenance(
+            unknown_path, selected_gti, selected_cxx, sequential_entry
+        ),
+        "contains unknown fields: unexpected",
+    )
+
     archive_link = root / "runtime-archive-link"
     try:
         archive_link.symlink_to(archive_path)

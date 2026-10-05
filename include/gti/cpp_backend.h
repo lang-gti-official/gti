@@ -9,7 +9,8 @@ namespace lang {
 
 class CppBackend final : public Backend {
 public:
-  explicit CppBackend(CppStandard standard = CppStandard::Cpp23);
+  explicit CppBackend(CppStandard standard = CppStandard::Cpp23,
+                      bool debugInfo = false);
 
   [[nodiscard]] std::string_view name() const override;
   [[nodiscard]] BackendArtifact
@@ -17,6 +18,7 @@ public:
 
 private:
   CppStandard standard;
+  bool debugInfo;
 };
 
 } // namespace lang

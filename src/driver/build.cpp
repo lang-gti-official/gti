@@ -24,6 +24,77 @@
 namespace lang::driver {
 namespace {
 
+struct StagedDebugBundleCleanup {
+  std::filesystem::path path;
+  ~StagedDebugBundleCleanup() {
+    // This exact path is inside the fresh driver-owned link staging directory.
+    std::error_code error;
+    std::filesystem::remove_all(path, error);
+  }
+};
+
+// Native Darwin symbols are a bundle, not a single rename-replaceable file.
+// Never replace an unowned directory or follow a symbol-bundle symlink.
+std::optional<std::string>
+publishDebugBundle(const std::filesystem::path &staged,
+                   const std::filesystem::path &destination) {
+  constexpr std::string_view markerName = ".gti-debug-symbols";
+  constexpr std::string_view markerContents = "gti-debug-symbols-v1\n";
+  std::error_code error;
+  const auto status = std::filesystem::symlink_status(destination, error);
+  if (error && error != std::errc::no_such_file_or_directory)
+    return error.message();
+  const bool exists = std::filesystem::exists(status);
+  if (exists) {
+    if (!std::filesystem::is_directory(status))
+      return "refusing to replace a non-directory or symlink debug bundle";
+    const auto marker = destination / markerName;
+    error.clear();
+    if (!std::filesystem::is_regular_file(
+            std::filesystem::symlink_status(marker, error)) ||
+        error)
+      return "refusing to replace a debug bundle not owned by GTI";
+    std::ifstream input(marker);
+    std::string contents(markerContents.size(), '\0');
+    input.read(contents.data(), static_cast<std::streamsize>(contents.size()));
+    if (!input || contents != markerContents ||
+        input.peek() != std::char_traits<char>::eof())
+      return "refusing to replace a debug bundle not owned by GTI";
+  }
+  if (writeArtifact(staged / markerName, markerContents) !=
+      ArtifactWriteStatus::Success)
+    return "cannot mark staged debug bundle as GTI-owned";
+  const auto backup = stagedArtifactPath(destination);
+  if (exists) {
+    error.clear();
+    std::filesystem::rename(destination, backup, error);
+    if (error)
+      return error.message();
+  }
+  error.clear();
+  std::filesystem::rename(staged, destination, error);
+  if (error) {
+    if (exists) {
+      std::error_code restoreError;
+      std::filesystem::rename(backup, destination, restoreError);
+      if (restoreError)
+        return error.message() + "; previous bundle retained at '" +
+               backup.string() +
+               "' (restore failed: " + restoreError.message() + ")";
+    }
+    return error.message();
+  }
+  if (exists) {
+    // Exact validated, GTI-owned bundle moved above; never a workspace root.
+    std::filesystem::remove_all(backup, error);
+    if (error)
+      return "published symbols but could not remove previous GTI-owned bundle "
+             "'" +
+             backup.string() + "': " + error.message();
+  }
+  return std::nullopt;
+}
+
 constexpr std::string_view cacheSchema = "gti-build-cache-v2";
 using detail::IdentityBuilder;
 
@@ -1655,6 +1726,10 @@ std::optional<std::string>
 nativeCacheBypassDetail(const ExecutableBuildRequest &request,
                         NativeLinkIdentityPlan &plan) {
   plan = {};
+  if (request.compilation().debugInfo()) {
+    return "source-level debug artifacts retain checkout paths and native "
+           "symbol sidecars; caching these is not yet supported";
+  }
   const NativeInputs &inputs = request.nativeInputs();
   if (!inputs.compilerArguments.empty() || !inputs.cCompilerArguments.empty() ||
       !inputs.linkerArguments.empty() || !inputs.trailingArguments.empty()) {
@@ -2502,6 +2577,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
       return result;
     }
     buildProvenance = BuildProvenance{
+        .debugInfo = request.compilation().debugInfo(),
         .compilerBuild = currentCompilerBuildIdentity(),
         .project = request.buildReport()->project,
         .source = std::move(*source),
@@ -2867,6 +2943,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   const std::filesystem::path stagedOutput =
       stagedOutputDirectory / request.output().filename();
   TemporaryArtifact stagedArtifact(stagedOutput, true);
+  const StagedDebugBundleCleanup stagedSymbolsCleanup{
+      std::filesystem::path(stagedOutput.string() + ".dSYM")};
   const std::filesystem::path nativeDependencyFile =
       request.buildReport()
           ? temporaryArtifactPath(request.output(), ".build-report.d")
@@ -2881,7 +2959,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
                             request.nativeInputs(), nativeObjects),
       request.buildReport()
           ? std::optional<std::filesystem::path>(nativeDependencyFile)
-          : std::nullopt);
+          : std::nullopt,
+      request.compilation().debugInfo());
   result.nativeCommand = nativeToolchain.command(nativeRequest);
   result.nativeProcess = nativeToolchain.invoke(
       nativeRequest,
@@ -2948,6 +3027,63 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
     buildProvenance->nativeCommand = result.nativeCommand;
     buildProvenance->runtime = std::move(*runtime);
     result.provenance = std::move(buildProvenance);
+  }
+
+  if (request.compilation().debugInfo() &&
+      request.compilation().target().os == "macos") {
+    const std::filesystem::path stagedSymbols(stagedOutput.string() + ".dSYM");
+    const std::filesystem::path symbols(request.output().string() + ".dSYM");
+    // Replacing an owned bundle must not remove a loaded source that was
+    // deliberately placed inside it. A symlink bundle is rejected below.
+    std::error_code collisionError;
+    const auto canonicalSymbols =
+        std::filesystem::weakly_canonical(symbols, collisionError);
+    if (collisionError) {
+      result.status = ExecutableBuildStatus::ArtifactPathConflict;
+      result.driverDiagnostic =
+          "gti: cannot inspect debug bundle path: " + collisionError.message();
+      return result;
+    }
+    for (const std::string &name : result.compilation.sources.names()) {
+      const auto source =
+          std::filesystem::weakly_canonical(name, collisionError);
+      if (collisionError)
+        continue;
+      if (std::mismatch(canonicalSymbols.begin(), canonicalSymbols.end(),
+                        source.begin(), source.end())
+              .first == canonicalSymbols.end()) {
+        result.status = ExecutableBuildStatus::ArtifactPathConflict;
+        result.driverDiagnostic =
+            "gti: refusing to replace debug bundle containing loaded source '" +
+            name + "'";
+        return result;
+      }
+    }
+    std::error_code symbolError;
+    if (!std::filesystem::is_directory(stagedSymbols, symbolError)) {
+      // Clang normally creates this during its compile/link invocation. A
+      // native toolchain that does not must provide the standard DWARF tool.
+      const ProcessResult symbolProcess = invokeProcess(
+          {"dsymutil", stagedOutput.string(), "-o", stagedSymbols.string()},
+          {.captureSuccessfulOutput = request.captureSuccessfulNativeOutput()});
+      if (!symbolProcess.succeeded()) {
+        generatedArtifact.keep();
+        result.generatedSourceRetained = true;
+        result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+        result.driverDiagnostic =
+            "gti: failed to collect native debug symbols: " +
+            symbolProcess.output;
+        return result;
+      }
+    }
+    if (const auto diagnostic = publishDebugBundle(stagedSymbols, symbols)) {
+      generatedArtifact.keep();
+      result.generatedSourceRetained = true;
+      result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+      result.driverDiagnostic = "gti: failed to publish debug bundle '" +
+                                symbols.string() + "': " + *diagnostic;
+      return result;
+    }
   }
 
   result.artifactPublishResult =

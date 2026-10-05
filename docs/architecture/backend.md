@@ -51,12 +51,47 @@ original record and follows the explicit raw-storage cleanup edge. The
 existing bounded constructor rollback proof remains mandatory; targetless
 generated construction and broader subobject rollback remain migration work.
 
+## Opt-in Source Debug Locations
+
+Source-level debugging is a statement-line first slice, not a GTI debugger or
+a complete source-level type/variable description. `CompilationRequest` can
+ask the frontend-aware `LoweredProgramBuilder` to capture parser-recorded
+statement spans against the **optimized** MIR's retained HIR identities.
+Each `LoweredBody::sourceLocations` row owns its source path/span and exact
+block/instruction identity; instruction zero identifies a terminator. These
+optional rows are verified and sealed with the lowered contract (printer
+version 11), survive destruction of AST/HIR, and are never executable,
+ownership, type, or optimization authority. The default contract has no rows.
+
+The C++ backend consumes only those lowered rows. Body/template planning emits
+escaped standard `#line` directives around admitted source operations and
+returns completed text to the formatting-only final writer. Every physical
+line in a mapped multi-line expansion repeats its statement-start line;
+standalone generated ownership/failure transport, cleanup, adapters, and
+unmapped operations reset to `<gti-generated>` rather than inventing GTI source
+lines.
+Nested lambda and retained generic body plans consume the same owned metadata.
+Native Clang/GCC debug information, not a GTI-specific DWARF writer, maps the
+resulting machine instructions to those locations.
+
+File-and-line breakpoints and source display are the supported outcome at
+`-O0`. Native stepping uses these mappings but can still stop in generated
+glue. Initializer-only expressions without recorded statement extents may
+remain unmapped. Optimizations can fold, merge, inline, or remove statements.
+Several instructions may share one line; columns, native frames,
+local names/types, expression evaluation, generated prologue/cleanup stepping,
+and GTI function-name breakpoints still reflect the C++ representation. There
+is no promise that every source line is executable. Precise expression spans,
+GTI-named variables/types, relocatable source paths, and synthetic-frame hiding
+remain later slices; this metadata does not bypass MIR verification.
+
 ## Backend Contract
 
 Terminal and caller-tracking contracts are sealed declaration facts, also
-checked against the embedded MIR. Lowered-program serialization version 10
-includes both flags. The C++ representation passes an explicit artifact-local
-caller-site parameter through supported tracked signatures and calls. An
+checked against the embedded MIR. Lowered-program serialization version 11
+includes both flags and optional source debug locations. The C++ representation
+passes an explicit artifact-local caller-site parameter through supported
+tracked signatures and calls. An
 untracked caller supplies the verified call-site constant; a tracked caller
 forwards its incoming parameter. The backend does not consult source spellings
 or recover caller policy from a C++ function name.

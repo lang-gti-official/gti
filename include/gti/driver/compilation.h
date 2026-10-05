@@ -62,13 +62,14 @@ public:
                      std::vector<PackageSourceRoot> packageSourceRoots = {},
                      ConfigurationFlags configurationFlags = {},
                      OptimizationOutputRequest optimizationOutputs = {},
-                     WarningPolicy warningPolicy = {});
+                     WarningPolicy warningPolicy = {}, bool debugInfo = false);
 
   [[nodiscard]] const std::filesystem::path &entry() const;
   [[nodiscard]] const StandardLibraryLayout &standardLibrary() const;
   [[nodiscard]] const TargetInfo &target() const;
   [[nodiscard]] OptimizationLevel optimization() const;
   [[nodiscard]] CppStandard cppStandard() const;
+  [[nodiscard]] bool debugInfo() const;
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
   [[nodiscard]] const OptimizationOutputRequest &optimizationOutputs() const;
@@ -87,6 +88,7 @@ private:
   OptimizationOutputRequest requestedOptimizationOutputs;
   WarningPolicy warningPolicy;
   bool entryPointRequired = false;
+  bool sourceDebugInfo = false;
 };
 
 enum class CompilationStatus {

@@ -188,6 +188,7 @@ struct ProjectProfile {
   ExecutionProfile executionProfile = ExecutionProfile::SingleThreaded;
   WarningPolicy warningPolicy;
   bool keepCpp = false;
+  bool debugInfo = false;
   SourceSpan declaration;
   ProjectNativeSettings native;
 };

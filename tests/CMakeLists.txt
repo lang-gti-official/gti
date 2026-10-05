@@ -161,6 +161,15 @@ add_test(NAME driver_library_boundary COMMAND gti_driver_library_smoke)
 add_executable("gti_driver_tests" "${PROJECT_SOURCE_DIR}/tests/driver_tests.cpp")
 target_link_libraries("gti_driver_tests" PRIVATE gti_driver)
 add_test(NAME driver_pipeline COMMAND gti_driver_tests)
+add_test(NAME source_debug_info
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_debug_info_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(source_debug_info PROPERTIES TIMEOUT 180)
+find_program(GTI_LLDB_EXECUTABLE NAMES lldb)
+if(GTI_LLDB_EXECUTABLE)
+  add_test(NAME source_debug_lldb
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_debug_info_test.py" $<TARGET_FILE:gti> --lldb "${GTI_LLDB_EXECUTABLE}")
+  set_tests_properties(source_debug_lldb PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+endif()
 
 add_executable(gti_include_suggestions_tests
                "${PROJECT_SOURCE_DIR}/tests/include_suggestions_tests.cpp")

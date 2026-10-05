@@ -29,6 +29,120 @@ using lowered_detail::findBody;
 using lowered_detail::findDeclaration;
 using lowered_detail::fingerprint;
 
+[[nodiscard]] const HirBody *debugHirBody(const HirProgram &hir,
+                                          MirBodyAddress address) {
+  switch (address.kind) {
+  case MirBodyKind::Module:
+    return &hir.module();
+  case MirBodyKind::Function:
+    if (const auto *instance = hir.findFunctionInstance(address.owner))
+      return &instance->body;
+    break;
+  case MirBodyKind::Constructor:
+    if (const auto *instance = hir.findConstructorInstance(address.owner))
+      return &instance->body;
+    break;
+  case MirBodyKind::Destructor:
+    if (const auto *instance = hir.findDestructorInstance(address.owner))
+      return &instance->body;
+    break;
+  case MirBodyKind::Lambda:
+    if (const auto *instance = hir.findLambda(address.owner))
+      return &instance->body;
+    break;
+  case MirBodyKind::FieldInitializers:
+  case MirBodyKind::StaticFieldInitializers:
+    if (address.owner != 0 && address.owner <= hir.classInstances().size()) {
+      const auto &instance = hir.classInstances()[address.owner - 1];
+      return address.kind == MirBodyKind::FieldInitializers
+                 ? &instance.fieldInitializers
+                 : &instance.staticFieldInitializers;
+    }
+    break;
+  case MirBodyKind::HostedStartup:
+    break;
+  }
+  return nullptr;
+}
+
+[[nodiscard]] std::vector<LoweredSourceLocation>
+captureSourceLocations(const HirBody *hir, const MirBody &mir) {
+  std::vector<LoweredSourceLocation> result;
+  if (hir == nullptr)
+    return result;
+  std::unordered_map<HirStatementId, SourceSpan> statements;
+  std::unordered_map<HirValueId, SourceSpan> values;
+  for (const HirStatement &statement : hir->statements) {
+    if (statement.source == nullptr || !statement.source->extent())
+      continue;
+    const SourceSpan &span = *statement.source->extent();
+    if (span.source.empty() || span.source.front() == '<' ||
+        span.start >= span.end || span.line < 1)
+      continue;
+    statements.emplace(statement.id, span);
+    std::vector<HirValueId> pending;
+    for (const auto root :
+         {statement.value, statement.condition, statement.increment}) {
+      if (root)
+        pending.push_back(*root);
+    }
+    while (!pending.empty()) {
+      const HirValueId id = pending.back();
+      pending.pop_back();
+      if (!values.emplace(id, span).second)
+        continue;
+      if (const HirValue *value = hir->findValue(id)) {
+        pending.insert(pending.end(), value->operands.begin(),
+                       value->operands.end());
+        pending.insert(pending.end(), value->sequencedInputs.begin(),
+                       value->sequencedInputs.end());
+      }
+    }
+  }
+  const auto source = [&](HirStatementId statement,
+                          HirValueId value) -> const SourceSpan * {
+    if (const auto found = statements.find(statement);
+        found != statements.end())
+      return &found->second;
+    if (const auto found = values.find(value); found != values.end())
+      return &found->second;
+    return nullptr;
+  };
+  for (const MirBlock &block : mir.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.tombstone)
+        continue;
+      // Ownership/failure routing and transport scaffolding do not acquire a
+      // user statement merely because they retain a provenance identity.
+      switch (instruction.kind) {
+      case MirInstructionKind::Compute:
+      case MirInstructionKind::Load:
+      case MirInstructionKind::Initialize:
+      case MirInstructionKind::Assign:
+      case MirInstructionKind::Modify:
+      case MirInstructionKind::Call:
+      case MirInstructionKind::Construct:
+        if (const SourceSpan *span =
+                source(instruction.hirStatement, instruction.hirValue))
+          result.push_back({block.id, instruction.id, *span});
+        break;
+      default:
+        break;
+      }
+    }
+    const MirTerminator &terminator = block.terminator;
+    if (terminator.kind == MirTerminatorKind::Return ||
+        terminator.kind == MirTerminatorKind::Branch ||
+        terminator.kind == MirTerminatorKind::Switch ||
+        terminator.kind == MirTerminatorKind::Invoke) {
+      if (const SourceSpan *span =
+              source(terminator.hirStatement, terminator.hirValue))
+        result.push_back({block.id, 0, *span});
+    }
+  }
+  return result;
+}
+
 [[nodiscard]] LoweredBodyDefinitionKind
 bodyDefinition(MirDefinitionKind definition) {
   switch (definition) {
@@ -930,7 +1044,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     const HirProgram &hir, const MirProgram &sourceMir,
     const MirProgram &optimizedMir,
     const std::vector<MirTransformRecord> &transformations,
-    const TargetInfo &target) const {
+    const TargetInfo &target, bool captureDebugLocations) const {
   LoweredProgramBuild build;
   if (!target.supported()) {
     addIssue(build.issues, LoweredProgramIssueKind::UnsupportedTarget,
@@ -1139,6 +1253,10 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     }
     lowered.bodies_.push_back(
         {.identity = *identity, .role = bodyRole(optimizedMir, *identity)});
+    if (captureDebugLocations) {
+      lowered.bodies_.back().sourceLocations = captureSourceLocations(
+          debugHirBody(hir, address), *findMirBody(optimizedMir, address));
+    }
   }
 
   DerivedGeneratedGraph graph = deriveGeneratedGraph(

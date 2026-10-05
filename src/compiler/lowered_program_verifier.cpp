@@ -10,6 +10,7 @@
 #include <functional>
 #include <iterator>
 #include <limits>
+#include <set>
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
@@ -603,6 +604,27 @@ verifyLoweredProgram(const LoweredProgram &program) {
                "body generated-item roots are unordered, duplicated, or "
                "attached to a non-executable body",
                body.identity.address);
+    }
+    std::set<std::pair<MirBlockId, MirInstructionId>> debugStages;
+    for (const LoweredSourceLocation &location : body.sourceLocations) {
+      const MirBlock *block =
+          mirBody == nullptr ? nullptr : mirBody->findBlock(location.block);
+      const bool instructionExists =
+          block != nullptr &&
+          (location.instruction == 0 ||
+           std::any_of(block->instructions.begin(), block->instructions.end(),
+                       [&](const MirInstruction &instruction) {
+                         return instruction.id == location.instruction &&
+                                !instruction.tombstone;
+                       }));
+      if (!instructionExists || location.source.source.empty() ||
+          location.source.start >= location.source.end ||
+          location.source.line < 1 ||
+          !debugStages.emplace(location.block, location.instruction).second) {
+        addIssue(issues, LoweredProgramIssueKind::InvalidBodyInventory,
+                 "source location has an invalid or duplicated MIR stage/span",
+                 body.identity.address);
+      }
     }
   }
 
