@@ -3308,7 +3308,7 @@ def main():
                             str(unsupported_binary)], 65)
             assert "error[GTI-S2029]" in rejected.stderr
             assert "std::formattable<unsupported_format_value>" in rejected.stderr
-            assert "has no member 'format()'" in rejected.stderr
+            assert "Member 'format()' has unsatisfied requirements of its own" in rejected.stderr
             assert not unsupported_binary.exists()
 
         formatted_output = root / "formatted-output.gti"

@@ -410,6 +410,11 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "The range must provide one exact public read-only size() returning "
           "std::size_t.");
       break;
+    case StructuralConstraintKind::EnumUnderlying:
+      diagnostic.hints.emplace_back(
+          "The first type must be an integral enum and the second its exact "
+          "declared underlying integer type.");
+      break;
     case StructuralConstraintKind::Adds:
       diagnostic.hints.emplace_back(
           "The domain type must provide a public read-only "
@@ -559,6 +564,10 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     diagnostic.hints.emplace_back(
         "The atomic scalar domain contains bool and the fixed-width signed "
         "and unsigned integer types only.");
+    break;
+  case GenericConstraintKind::IntegralEnum:
+    diagnostic.hints.emplace_back("The type must be an integral enum; payload "
+                                  "enums have no underlying integer value.");
     break;
   case GenericConstraintKind::None:
   case GenericConstraintKind::Invalid:

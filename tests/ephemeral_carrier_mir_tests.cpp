@@ -12,6 +12,18 @@ public:
   void advance(int amount) mut { this.counter.value += amount; }
 };
 Service service(mut Counter& source) { return Service(source); }
+class Group {
+  Counter& input;
+  mut Counter& left;
+  mut Counter& right;
+public:
+  Group(Counter& source, mut Counter& a, mut Counter& b)
+      : input(source), left(a), right(b) {}
+  void advance(int amount) mut {
+    this.left.value += amount;
+    this.right.value += this.input.value;
+  }
+};
 int amount(int divisor) { return 4 / divisor; }
 mut Counter global_owner{};
 class Trace {
@@ -80,7 +92,12 @@ void checkSchedules() {
         "mut Counter owner{}; auto result = expected_call(owner, false); "
         "return result && result.value() == 6 ? 0 : 1;",
         "mut Counter owner{}; auto result = expected_call(owner, true); "
-        "return !result && result.error() == 7 ? 0 : 1;"}) {
+        "return !result && result.error() == 7 ? 0 : 1;",
+        "mut Counter owner{}; mut Counter other{}; "
+        "Group(decoy, owner, other).advance(2); return owner.value + "
+        "other.value - 11;",
+        "mut Counter owner{}; mut Counter other{}; "
+        "Group(decoy, owner, other).advance(amount(0)); return 0;"}) {
     const auto frontend = analyze(program);
     expect(frontend.canGenerateCode(),
            "ephemeral carrier has verified MIR: " + program);
@@ -110,6 +127,22 @@ void checkSchedules() {
         found = true;
         if (!carrier)
           continue;
+        if (!carrier.loan->additionalDependencies.empty()) {
+          for (bool erase : {false, true}) {
+            auto malformed = frontend.mir;
+            auto *instance = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            auto &dependencies = instance->body.loans[carrier.loan->id - 1]
+                                     .additionalDependencies;
+            if (erase)
+              dependencies.pop_back();
+            else
+              dependencies.back().access = lang::AccessMode::ReadOnly;
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "temporary receiver preserves every stored permission and "
+                   "origin");
+          }
+        }
         for (int mutation = 0; mutation < 5; ++mutation) {
           auto malformed = frontend.mir;
           auto *instance = const_cast<lang::MirFunctionInstance *>(
@@ -501,8 +534,11 @@ int main() {
 )gti");
   expect(frontend.canGenerateCode(),
          "conditional-parent mutation seed has independently verified MIR");
-  if (!frontend.canGenerateCode())
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     return;
+  }
   bool checked = false;
   for (const auto &function : frontend.mir.functionInstances()) {
     const auto &body = function.body;

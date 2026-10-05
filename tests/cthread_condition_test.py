@@ -37,7 +37,7 @@ def main():
             run([native, "reacquire-failure"], 86)
             for fixture in ("cthread_condition", "cthread_condition_concurrent", "cthread_condition_destroy"):
                 binary = output / f"{fixture}-{mode}"
-                command = [compiler, fixtures / f"{fixture}.gti", "--std", std,
+                command = [compiler, fixtures / f"{fixture}.gti", "--progress=never", "--std", std,
                            f"-{opt}", "--keep-cpp", "--execution-profile", "concurrent", "-o", binary]
                 extra = [*sanitizers]
                 if fixture.endswith(("concurrent", "destroy")):

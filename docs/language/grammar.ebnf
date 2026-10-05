@@ -471,22 +471,20 @@ access-specifier       = ( "public" | "private" ) ":" ;
    cascade (`GTI-S2059` for capability policy, `GTI-S2064` for C ABI records,
    and `GTI-S2065` for opaque handles).
 
-   A class or struct may contain one direct read-only reference field. Every
-   constructor must initialize it directly from one exact read-only reference
-   parameter. Such a value is copy- and move-constructible: every copy has an
-   independent carrier shell and shares the same read-only owner dependency.
-   Copy and move assignment remain unavailable, so the dependency cannot be
-   reseated. Mutable or multiple reference fields, nested or inherited
-   borrowed state, user cleanup, global/static/captured storage, and
-   dependency-changing assignment are rejected by semantics. An instance
-   method may return the direct carrier from its receiver; a free function or
-   static method may return it from one eligible read-only parameter. A
-   by-value carrier parameter may return only that carrier dependency or a
-   reference to its exact designated stored referent; shell fields, shell or
-   referent projections, and incompatible referent types are rejected. The
-   dependency survives concrete generic carrier relays, calls, moves, returns,
-   copies, and drops. Mutable/exclusive carriers are noncopyable, and multiple
-   origins remain unsupported. *)
+   A class or struct may contain any number of read-only or mutable reference
+   fields, including paths nested through nominal carrier fields. Constructors
+   bind each direct reference from an exact reference parameter with matching
+   access; nested carriers bind from exact carrier parameters. Independent or
+   proven disjoint origins may coexist. Overlapping dependencies conflict when
+   either requires exclusive access. Copies retain every shared dependency when
+   the complete carrier is copyable; any exclusive dependency makes it
+   noncopyable. Moves transfer the complete dependency set. Assignment cannot
+   reseat it. Unambiguous constructors, receiver/parameter returns and selected
+   stored-field accessors retain field-wise origins through concrete generic
+   substitution, calls and cleanup. Inherited borrowed state, user cleanup,
+   global/static/captured storage, arrays of carriers and ambiguous return
+   origins remain rejected. The full current lifetime and escape contract is
+   specified in ownership-and-lifetimes.md. *)
 
 constructor-declaration
                        = [ "constexpr" ] IDENTIFIER

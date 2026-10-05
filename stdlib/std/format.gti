@@ -54,9 +54,62 @@ struct format_spec {
         type('\0') {}
 };
 
+namespace detail {
+struct enum_underlying_probe<T, U> {
+  bool matches() requires std::enum_underlying<T, U> { return true; }
+};
+}
+
 /// Specialize this class for an application-owned type. A specialization
 /// supplies a public safe read-only format method with the formattable contract.
-class formatter<T> {};
+/// The primary formats integral enums using their exact underlying integer.
+class formatter<T> {
+public:
+  expected<void, format_errc> format(T& value, mut string& output,
+                                    format_spec& spec)
+      requires std::integral_enum<T> {
+    if constexpr (requires(detail::enum_underlying_probe<T, int8_t>& probe) {
+      { probe.matches() } -> bool;
+    }) {
+      return this.format_integral<int8_t>(value, output, spec);
+    } else if constexpr (requires(detail::enum_underlying_probe<T, uint8_t>& probe) {
+      { probe.matches() } -> bool;
+    }) {
+      return this.format_integral<uint8_t>(value, output, spec);
+    } else if constexpr (requires(detail::enum_underlying_probe<T, int16_t>& probe) {
+      { probe.matches() } -> bool;
+    }) {
+      return this.format_integral<int16_t>(value, output, spec);
+    } else if constexpr (requires(detail::enum_underlying_probe<T, uint16_t>& probe) {
+      { probe.matches() } -> bool;
+    }) {
+      return this.format_integral<uint16_t>(value, output, spec);
+    } else if constexpr (requires(detail::enum_underlying_probe<T, int32_t>& probe) {
+      { probe.matches() } -> bool;
+    }) {
+      return this.format_integral<int32_t>(value, output, spec);
+    } else if constexpr (requires(detail::enum_underlying_probe<T, uint32_t>& probe) {
+      { probe.matches() } -> bool;
+    }) {
+      return this.format_integral<uint32_t>(value, output, spec);
+    } else if constexpr (requires(detail::enum_underlying_probe<T, int64_t>& probe) {
+      { probe.matches() } -> bool;
+    }) {
+      return this.format_integral<int64_t>(value, output, spec);
+    } else {
+      return this.format_integral<uint64_t>(value, output, spec);
+    }
+  }
+
+private:
+  expected<void, format_errc> format_integral<U>(T& value, mut string& output,
+                                                format_spec& spec)
+      requires std::enum_underlying<T, U> && std::integral<U> {
+    U underlying = std::to_underlying<U, T>(value);
+    return detail::format_result(
+        detail::append_integral(output, underlying, spec));
+  }
+};
 
 concept formattable<T> =
     std::default_initializable<formatter<T>> &&

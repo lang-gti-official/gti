@@ -63,7 +63,7 @@ def main():
                 run([native, terminal], 86)
             for fixture, status, stdout in cases:
                 binary = output / f"{fixture}-{mode}"
-                run([compiler, fixtures / f"{fixture}.gti", "--std", std,
+                run([compiler, fixtures / f"{fixture}.gti", "--progress=never", "--std", std,
                      f"-{opt}", "--keep-cpp", "--execution-profile", "concurrent", "-o", binary,
                      "--", *sanitizers, fixtures / "cthread_once_context.cpp"])
                 execute(binary, status, stdout)

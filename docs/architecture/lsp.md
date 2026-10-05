@@ -356,6 +356,13 @@ the published related information retains the exact requesting user binding.
 Replacing that payload with an eligible value clears the dependency diagnostic
 as well as publishing the new valid document generation.
 
+Mixed shared/exclusive stored-reference aggregates use those same snapshots.
+The composition regression covers four independent fields, selected mutable
+accessor hover/definition, an overlapping owner mutation after a supplementary
+Unicode comment, diagnostic clearing and incomplete-source recovery. Neither
+the LSP nor its fixes reconstructs field permissions or return origins; those
+remain compiler-owned dependency facts.
+
 Range-for diagnostics follow the same boundary. An immutable owner for a
 mutable element reference, a missing exact `begin_mut()`/mutable-dereference
 path, or an unsupported range publishes compiler-owned `GTI-S2083`; changing

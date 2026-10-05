@@ -411,6 +411,7 @@ private:
     std::size_t returnBorrowParameter = 0;
     AccessMode returnBorrowAccess = AccessMode::ReadOnly;
     std::vector<std::size_t> returnBorrowParameters;
+    std::vector<BorrowedFieldOrigin> returnBorrowFields;
     std::optional<BorrowOriginPlace> returnBorrowPlace;
     std::vector<FunctionId> virtualRoots;
     bool compilerPrivate = false;
@@ -439,6 +440,7 @@ private:
     std::size_t returnBorrowParameter = 0;
     AccessMode returnBorrowAccess = AccessMode::ReadOnly;
     std::vector<std::size_t> returnBorrowParameters;
+    std::vector<BorrowedFieldOrigin> returnBorrowFields;
     std::optional<BorrowOriginPlace> returnBorrowPlace;
     std::vector<FunctionId> virtualRoots;
     SemanticType dispatchOwner = SemanticType::Unknown;
@@ -483,6 +485,7 @@ private:
     std::size_t parameter = 0;
     AccessMode access = AccessMode::ReadOnly;
     std::vector<std::size_t> parameters;
+    std::vector<BorrowedFieldOrigin> fields;
     std::optional<BorrowOriginPlace> place;
     std::size_t eligibleParameters = 0;
     bool hasMutableCandidate = false;
@@ -539,6 +542,7 @@ private:
     SemanticLoanId loan = 0;
     const Variable *carrier = nullptr;
     bool transfer = false;
+    std::optional<SemanticLoanDependency> dependency;
   };
 
   enum class StoredCarrierReturnProvenance {
@@ -573,6 +577,7 @@ private:
     const Stmt *statement = nullptr;
     std::vector<ActiveLoanFlowConditionalArm> path;
     std::vector<ActiveLoanFlowSwitchArm> switchPath;
+    std::vector<std::size_t> loops;
     Diagnostic diagnostic;
   };
 
@@ -1250,6 +1255,23 @@ private:
     SemanticType reference = SemanticType::Unknown;
   };
 
+  struct StoredReferenceBinding {
+    StoredReferencePath destination;
+    std::size_t parameter = 0;
+    // A nominal parameter contributes the same path below the initialized
+    // field. A direct reference parameter contributes its referent itself.
+    std::vector<const VariableDecl *> sourceFields;
+  };
+
+  [[nodiscard]] std::vector<StoredReferenceBinding>
+  storedCarrierConstructorBindings(
+      const SemanticType &type, const ConstructorDecl *constructor,
+      std::span<const SemanticType> parameterTypes) const;
+
+  [[nodiscard]] std::vector<SymbolId>
+  storedFieldSymbols(SemanticType type,
+                     std::span<const VariableDecl *const> fields);
+
   // Enumerate every independently checked dependency in declaration order.
   // An empty result means either no reference or an unsupported carrier shape.
   [[nodiscard]] std::vector<StoredReferencePath>
@@ -1289,6 +1311,11 @@ private:
       std::optional<std::size_t> exactReturnParameter = std::nullopt) const;
 
   void applyFunctionReturnBorrowSummary(CallableCandidate &function) const;
+
+  [[nodiscard]] std::optional<FunctionReturnBorrowSummary>
+  storedFieldReturnBorrowSummary(
+      const FunctionInfo &function,
+      SemanticType ownerType = SemanticType::Unknown);
 
   void reportMissingFunctionReturnBorrowSummary(const FunctionDecl &function,
                                                 const FunctionInfo &info);
@@ -1353,6 +1380,10 @@ private:
 
   [[nodiscard]] std::optional<RetainedLoanSource>
   retainedLoanSource(const ExprPtr &expression) const;
+
+  [[nodiscard]] std::optional<SemanticLoanDependency>
+  projectedStoredDependency(const SemanticLoanInfo &loan,
+                            std::span<const PlaceProjection> projections) const;
 
   static void appendUniqueLoan(std::vector<SemanticLoanId> &loans,
                                SemanticLoanId loan);
@@ -3431,7 +3462,6 @@ private:
     NonConcreteRecord,
     BorrowedState,
     UnstableBorrowOwner,
-    MultipleBorrowOwners,
     UnsupportedProducer,
   };
 

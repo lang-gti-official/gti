@@ -376,11 +376,12 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   may have observable effects. An earlier completed mutation followed by a
   newly created borrow is accepted when no existing loan conflicts.
 - `GTI-S2045` owns unsupported stored-reference carrier shapes and incoherent
-  borrowed-value return dependencies. One read-only or mutable reference field,
-  optionally nested through nominal carrier fields, is accepted when every
-  constructor binds the exact field path from one compatible parameter.
+  borrowed-value return dependencies. Any number of read-only or mutable
+  reference fields, optionally nested through nominal carrier fields, is
+  accepted when every constructor binds each exact field path from a compatible
+  parameter and the resulting loans do not conflict.
   Point at the field, constructor binding, storage declaration, or
-  return expression that introduces a second/global/captured origin,
+  return expression that introduces an unproven/global/captured origin,
   custom cleanup, dependency-changing assignment, or ambiguous/incompatible
   return. A mutable carrier is move-only; attempts to copy it use the ordinary
   ownership-transfer diagnostic, while assignment remains the ordinary
@@ -575,9 +576,9 @@ fix changes ownership intent. The LSP publishes these same frontend records.
 - `GTI-S2081` owns a class-value receiver that cannot use the bounded fresh
   temporary receiver capability. Point at the call/operator token and
   distinguish an explicit move from existing storage, an unsupported producer,
-  unstable or multiple stored owner dependencies, borrowed or pointer-like results,
-  non-concrete record, and virtual dispatch. One proven stable dependency does
-  not itself reject an immediate ordinary receiver. Relate the selected
+  unstable stored owner dependencies, borrowed or pointer-like results,
+  non-concrete record, and virtual dispatch. Multiple proven stable dependencies
+  do not themselves reject an immediate ordinary receiver. Relate the selected
   method/operator declaration and suggest a named carrier, or keeping its owner
   in longer-lived named storage when that is the failed condition. Do not offer
   a fix-it because binding name, scope, and

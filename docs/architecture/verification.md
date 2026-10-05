@@ -1,5 +1,67 @@
 # Compiler Verification
 
+## Stored-borrow aggregates and integral-enum formatting
+
+The 0.373.0 aggregate regressions exercise five mixed reference paths, repeated
+shared origins, disjoint fields, nested generic moves, selected-field accessors
+and operators, reordered factory arguments, and last-use behavior across
+branches and loops. Negative source cases reject conflicting loans, duplicated
+exclusive state, escaped local owners and unproven return origins. Independent
+MIR mutations reject erased dependencies, permission upgrades and forged return
+summaries. Production backend admission also rejects an erased dereference in a
+nested receiver path. A mixed nested constructor uses its field's permission,
+not the outer carrier's first dependency.
+
+The borrowing runtime gate runs three fixtures under C++20/C++23 at O0/O1/O3,
+disabled elision and ASan/UBSan. Constructor, relay, later-argument and temporary
+receiver failures additionally check exact failure identity, hosted exit status
+and reverse-order cleanup at O0/O3. The LSP checks the same ownership diagnostics,
+related source information, UTF-16 ranges, repair, hover and definition paths.
+
+Integral-enum regressions cover exact-width signed/unsigned defaults, integer
+presentations, explicit formatter precedence, malformed customization,
+recoverable errors and panic reporting. Unrelated protocol-encoding code uses
+the same checked underlying-value facility. Semantic and MIR mutation checks
+reject wrong types and missing identities; the runtime matrix and LSP exercise
+the source-defined formatting path.
+
+Current local evidence uses a Release/Ninja compiler on macOS arm64 with
+AppleClang 21 and LLVM 22.1.8. The focused borrowing, enum formatting, LSP,
+ephemeral-carrier and backend-preflight checks pass. All 417 first-party C/C++
+files pass clang-format. A refreshed isolated installation passes all eleven
+external CMake consumers, both new examples and the enum LSP checks with checkout
+resource overrides cleared. The nested aggregate fixture also runs from that
+installation at C++20/O0 and C++23/O3. Five C-thread runtime harnesses explicitly
+request `--progress=never` when asserting silent compiler stderr; runtime output
+and sanitizer assertions remain unchanged. The initially failing once and
+create/join matrices pass after this presentation-only test correction, including
+ASan/UBSan and TSan. The hosted constructor-identity test uses the same explicit
+progress setting while retaining its exact project stderr assertion; its eight
+native modes and both package profiles pass.
+
+The full combined run completes 422 tests in 2150.99 seconds, with 416 initial
+passes. The remaining six checks comprise those two C-thread harnesses, the
+hosted constructor harness, an outdated LSP restriction assertion, a cleanup
+mutation assertion and one payload-enum timeout. The LSP regression now rejects
+an uninitialized second dependency and accepts the repaired two-path carrier.
+The cleanup mutation directly checks source/optimized MIR coherence and
+production emission rejection, with unchanged MIR as its positive control:
+moving drops before a global return load need not produce structurally invalid
+MIR. Its previous rejection depended incidentally on a failure-summary proof
+whose global-place shape changed when assignment provenance was preserved.
+No runtime cleanup rule or production verifier was weakened. The payload-enum
+matrix passes alone in 246.93 seconds with its original 300-second limit.
+The cleanup coherence test passes in 0.44 seconds; the four remaining corrected
+CTest gates pass together in 104.09 seconds. Together with the full run, all
+422 registered checks have passing evidence.
+
+All four corpus gates pass over 107 examples: 14,362 MIR bodies and 41,257
+lowered declarations / 14,369 bodies / 3,073 generated artifacts. Tree-sitter
+0.25.10 passes all 70 corpus cases, highlight checks, 169 shipped sources and
+source-text tests. This is local macOS arm64 evidence, not a claim of
+Linux/Windows execution or completed asynchronous publication. The active user
+installation is unchanged.
+
 ## Live build progress
 
 `driver_pipeline` checks exact begin/end phase order, loaded/parsed unit counts,

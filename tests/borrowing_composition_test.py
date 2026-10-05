@@ -38,17 +38,13 @@ def reject_invalid_sources(compiler: pathlib.Path) -> None:
         "temporary-owner": """int main() {
   int a = 1; PairView view{a, 2}; return view.sum();
 }""",
+        "temporary-receiver-owner": """int main() {
+  int a = 1; return PairView(a, 2).sum();
+}""",
         "local-second-owner-return": """PairView bad(int& a) {
   int b = 2; return PairView(a, b);
 }
 int main() { int a = 1; auto view = bad(a); return view.sum(); }
-""",
-        "mixed-exclusive": """class Mixed {
-  int& first; mut int& second;
-public:
-  Mixed(int& a, mut int& b) : first(a), second(b) {}
-};
-int main() { int a = 1; mut int b = 2; Mixed value{a, b}; return 0; }
 """,
         "dependency-reseat": """int main() {
   int a = 1; int b = 2; int c = 3;
@@ -87,10 +83,11 @@ int main() {
   int a = 1; mut int b = 2;
   return PairView(a, b).sum() + change(b);
 }""",
-        "missing-return-dependency": """PairView bad(int& a, int& b) {
+        "path-dependent-return-dependency": """PairView bad(int& a, int& b, bool choose) {
+  if (choose) { return PairView(a, b); }
   return PairView(a, a);
 }
-int main() { int a = 1; int b = 2; auto view = bad(a, b); return view.sum(); }
+int main() { int a = 1; int b = 2; auto view = bad(a, b, true); return view.sum(); }
 """,
         "projected-reference-keeps-group": """int main() {
   mut int a = 1; mut int b = 2;
@@ -103,15 +100,15 @@ int main() { int a = 1; int b = 2; auto view = bad(a, b); return view.sum(); }
         "second-owner-write": "GTI-S2017",
         "copied-second-owner-write": "GTI-S2017",
         "temporary-owner": "GTI-S2045",
+        "temporary-receiver-owner": "GTI-S2012",
         "local-second-owner-return": "GTI-S2045",
-        "mixed-exclusive": "GTI-S2045",
         "dependency-reseat": "GTI-S2003",
         "call-secondary-alias": "GTI-S2017",
         "later-operand-secondary-mutation": "GTI-S2017",
         "receiver-secondary-alias": "GTI-S2017",
         "later-method-argument-secondary-mutation": "GTI-S2017",
         "later-method-operand-secondary-mutation": "GTI-S2017",
-        "missing-return-dependency": "GTI-S2045",
+        "path-dependent-return-dependency": "GTI-S2045",
         "projected-reference-keeps-group": "GTI-S2017",
     }
     with tempfile.TemporaryDirectory(prefix="gti-composed-borrow-negative-") as tmp:
@@ -172,9 +169,83 @@ int main() {
     print("borrowing composition: paired bounds failure cleanup passed O0/O3", flush=True)
 
 
+def check_mixed_failure_cleanup(compiler: pathlib.Path) -> None:
+    prefix = """#include <std/panic>
+#include <std/memory>
+#include <std/string>
+class Guard {
+  std::unique_ptr<int> token;
+public:
+  Guard(int id) : token(std::make_unique<int>(id)) {}
+  ~Guard() { if (this.token != nullptr) std::println(*this.token); }
+};
+struct Services {
+  int& input;
+  mut int& output;
+  mut int& total;
+  Guard member;
+  Services(int& a, mut int& b, mut int& c, bool fail)
+      : input(a), output(b), total(c), member(Guard(2)) {
+    if (fail) { std::panic("constructor failed"); }
+  }
+  int inspect(int unused) { return input; }
+  void fail() mut { std::panic("receiver failed"); }
+};
+Services relay(Services value, bool fail) {
+  Guard local{3};
+  if (fail) { std::panic("relay failed"); }
+  return std::move(value);
+}
+int later() { std::panic("later argument failed"); }
+int inspect(Services value, int unused) { return value.input; }
+int main() {
+  Guard outer{1};
+  int a = 40; mut int b = 0; mut int c = 2;
+"""
+    cases = {
+        "constructor": (
+            "Services value{a, b, c, true}; return value.input;",
+            "constructor failed", "2\n1\n"),
+        "relay": (
+            "Services value{a, b, c, false}; auto moved = relay(std::move(value), true); return moved.input;",
+            "relay failed", "3\n2\n1\n"),
+        "later-argument": (
+            "Services value{a, b, c, false}; return inspect(std::move(value), later());",
+            "later argument failed", "2\n1\n"),
+        "temporary-receiver": (
+            "Services(a, b, c, false).fail(); return 0;",
+            "receiver failed", "2\n1\n"),
+        "temporary-receiver-argument": (
+            "return Services(a, b, c, false).inspect(later());",
+            "later argument failed", "2\n1\n"),
+    }
+    with tempfile.TemporaryDirectory(prefix="gti-mixed-borrow-failure-") as tmp:
+        directory = pathlib.Path(tmp)
+        for name, (operation, message, output) in cases.items():
+            path = directory / f"{name}.gti"
+            source = prefix + operation + "\n}\n"
+            path.write_text(source)
+            line = source[:source.index(f'std::panic("{message}")')].count("\n") + 1
+            for level, standard in (("O0", "c++20"), ("O3", "c++23")):
+                executable = directory / f"{name}-{level}"
+                built = subprocess.run(
+                    [str(compiler), str(path), f"-{level}", "--std", standard,
+                     "-o", str(executable)], capture_output=True, text=True, timeout=120)
+                assert built.returncode == 0, (name, level, built.stdout, built.stderr)
+                result = subprocess.run([str(executable)], capture_output=True,
+                                        text=True, timeout=30)
+                assert result.returncode == 70 and result.stdout == output, (name, level, result)
+                assert result.stderr == (
+                    f'{path.name}:{line}: runtime error[GTI-R0017]: panic: "{message}"\n'
+                ), (name, level, result.stderr)
+    print("borrowing composition: mixed constructor, relay and argument cleanup passed O0/O3", flush=True)
+
+
 if __name__ == "__main__":
     repository = pathlib.Path(__file__).resolve().parent.parent
     os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
     reject_invalid_sources(pathlib.Path(sys.argv[1]).resolve())
-    run_runtime_matrix(names=("borrowing_composition", "paired_span"))
+    run_runtime_matrix(names=("borrowing_composition", "paired_span",
+                             "stored_borrow_aggregates"))
     check_failure_cleanup(pathlib.Path(sys.argv[1]).resolve())
+    check_mixed_failure_cleanup(pathlib.Path(sys.argv[1]).resolve())
