@@ -1,5 +1,33 @@
 # Compiler Verification
 
+## Live build progress
+
+`driver_pipeline` checks exact begin/end phase order, loaded/parsed unit counts,
+semantic-failure short circuiting, balanced lifetimes, and byte-identical emitted
+artifacts with and without an observer. `cli_progress` covers default and plain
+logs, quiet mode, colour policy, exact argument boundaries, direct emit
+compatibility, project check/run, cache reuse across presentation changes,
+native-source rows, previous-artifact preservation after failure, and ordered
+parallel-child output. Its POSIX pseudo-terminal probe holds a native compiler
+process open until elapsed progress arrives, then releases a deliberate native
+failure and verifies live row cleanup and unchanged stdout. It explicitly
+proves the output was visible before the native process exited.
+
+The existing colour parity and exact parallel replay tests use
+`--progress=never` when comparing byte-identical text; the progress-specific
+gate separately tests colours and live terminal presentation. The installed
+driver consumer checks the LLVM-free observer API; unobserved clients remain
+silent. Installed CLI checks exercise the same shipped presentation path. This
+feature changes no source-language rules.
+
+The reconciliation with composable I/O passes all thirteen selected compiler,
+driver, CLI, cache, debug-info, project and LSP gates in 112.16 seconds using a
+Release/Ninja compiler on macOS arm64 (AppleClang 21, LLVM 22.1.8). All eleven
+clean installed-library consumers and the installed CLI progress regression
+pass. All 416 first-party C/C++ files pass clang-format 22.1.8. Version 0.372.0
+keeps this CLI addition distinct from the already published 0.371.0 library
+changes; this is not a claim of full-suite or cross-platform execution.
+
 ## Composable I/O and mutable-buffer validation
 
 `composable_io_runtime` covers memory/file/process-stream transport, exact

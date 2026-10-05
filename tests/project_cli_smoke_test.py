@@ -2423,8 +2423,10 @@ def main():
                 for name in all_target_names
             }
 
+        # Compare deterministic build presentation, not elapsed progress.
+        # Live parallel target waits have their own cli_progress coverage.
         parallel_all = run(
-            [gti, "build", "--all", "--jobs", str(arguments.jobs), "--no-cache"],
+            [gti, "build", "--all", "--jobs", str(arguments.jobs), "--no-cache", "--progress=never"],
             cwd=multi_project,
         )
         built_positions = [
@@ -2437,7 +2439,7 @@ def main():
 
         run([gti, "clean"], cwd=multi_project)
         serial_all = run(
-            [gti, "build", "--all", "--jobs", "1", "--no-cache"],
+            [gti, "build", "--all", "--jobs", "1", "--no-cache", "--progress=never"],
             cwd=multi_project,
         )
         assert serial_all.stdout == parallel_all.stdout
@@ -2468,7 +2470,7 @@ def main():
             failing_manifest, encoding="utf-8"
         )
         parallel_failure = run(
-            [gti, "build", "--all", "--jobs", str(arguments.jobs), "--no-cache"],
+            [gti, "build", "--all", "--jobs", str(arguments.jobs), "--no-cache", "--progress=never"],
             expected=65,
             cwd=multi_project,
         )
@@ -2480,7 +2482,7 @@ def main():
             assert f"Built {name} [dev," in parallel_failure.stdout
         run([gti, "clean"], cwd=multi_project)
         serial_failure = run(
-            [gti, "build", "--all", "--jobs", "1", "--no-cache"],
+            [gti, "build", "--all", "--jobs", "1", "--no-cache", "--progress=never"],
             expected=65,
             cwd=multi_project,
         )

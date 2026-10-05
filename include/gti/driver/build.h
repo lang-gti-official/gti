@@ -343,6 +343,7 @@ struct ExecutableBuildResult {
 };
 
 [[nodiscard]] ExecutableBuildResult
-buildExecutable(const ExecutableBuildRequest &request);
+buildExecutable(const ExecutableBuildRequest &request,
+                ProgressObserver *progress = nullptr);
 
 } // namespace lang::driver
