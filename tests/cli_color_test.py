@@ -23,6 +23,10 @@ def main():
         root = Path(directory)
 
         def run(args, status=0, extra=None):
+            # Exact colour parity excludes elapsed telemetry, which has its
+            # own colour/TTY coverage in cli_progress_test.py.
+            if args and (args[0] in ["build", "check", "run", "test"] or args[0].endswith(".gti")):
+                args = [args[0], "--progress=never", *args[1:]]
             result = subprocess.run([compiler, *args], cwd=root, env=env | (extra or {}),
                                     capture_output=True, text=True, timeout=60)
             assert result.returncode == status, (args, result.stdout, result.stderr)
@@ -79,6 +83,8 @@ def main():
             import threading
 
             def terminal_run(args, extra=None, terminal_stdout=True, status=0):
+                if args and (args[0] in ["build", "check", "run", "test"] or args[0].endswith(".gti")):
+                    args = [args[0], "--progress=never", *args[1:]]
                 master, slave = pty.openpty()
                 chunks = []
                 finished = threading.Event()

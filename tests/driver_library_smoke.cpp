@@ -15,7 +15,26 @@ static_assert(!std::is_default_constructible_v<lang::driver::ProjectFacts>);
 static_assert(std::is_copy_constructible_v<lang::driver::ProjectFacts>);
 static_assert(std::is_move_constructible_v<lang::driver::ProjectFacts>);
 
+class ProgressClient final : public lang::ProgressObserver {
+public:
+  unsigned events = 0;
+  void onProgress(const lang::ProgressEvent &) noexcept override { ++events; }
+};
+
 int main() {
+  // An installed consumer can observe work without LLVM or CLI types in its
+  // public headers, and callbacks are not retained after the invocation.
+  ProgressClient progress;
+  const auto missingInputs = lang::driver::loadCompilationInputs(
+      lang::driver::CompilationRequest(
+          "gti-absent-progress-source.gti",
+          lang::standardLibraryLayout("missing-stdlib"),
+          lang::TargetInfo::host(), lang::OptimizationLevel::O0,
+          lang::CppStandard::Cpp23),
+      &progress);
+  if (missingInputs.succeeded() || progress.events != 3) {
+    return 7;
+  }
   const lang::driver::CompilationRequest compilation(
       "main.gti", lang::standardLibraryLayout("stdlib"),
       lang::TargetInfo{.os = "linux", .vendor = "unknown", .arch = "x86_64"},

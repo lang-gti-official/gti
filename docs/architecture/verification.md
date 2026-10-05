@@ -1,5 +1,25 @@
 # Compiler Verification
 
+## Live build progress
+
+`driver_pipeline` checks exact begin/end phase order, loaded/parsed unit counts,
+semantic-failure short circuiting, balanced lifetimes, and byte-identical emitted
+artifacts with and without an observer. `cli_progress` covers default and plain
+logs, quiet mode, colour policy, exact argument boundaries, direct emit
+compatibility, project check/run, cache reuse across presentation changes,
+native-source rows, previous-artifact preservation after failure, and ordered
+parallel-child output. Its POSIX pseudo-terminal probe holds a native compiler
+process open until elapsed progress arrives, then releases a deliberate native
+failure and verifies live row cleanup and unchanged stdout. It explicitly
+proves the output was visible before the native process exited.
+
+The existing colour parity and exact parallel replay tests use
+`--progress=never` when comparing byte-identical text; the progress-specific
+gate separately tests colours and live terminal presentation. The installed
+driver consumer checks the LLVM-free observer API; unobserved clients remain
+silent. Installed CLI checks exercise the same shipped presentation path. This
+feature changes no source-language rules.
+
 ## Chip8 aggregate admission and generated base construction
 
 `testLargeScalarAggregateAdmission` admits a 1,024-element scalar initializer

@@ -17,7 +17,7 @@ namespace lang::driver {
 namespace {
 
 FrontendResult analyze(const CompilationRequest &request,
-                       CompilationInputs inputs) {
+                       CompilationInputs inputs, ProgressObserver *progress) {
   // Compilation and `check` consume diagnostics, semantics, and symbols; only
   // editor position queries read the occurrence table, so it is not built on
   // this path.
@@ -25,7 +25,8 @@ FrontendResult analyze(const CompilationRequest &request,
       .target = request.target(),
       .configurationFlags = request.configurationFlags(),
       .toolingOccurrences = false,
-      .requireEntryPoint = request.requiresEntryPoint()};
+      .requireEntryPoint = request.requiresEntryPoint(),
+      .progress = progress};
   FrontendResult result = Frontend(options).analyzeLoaded(
       request.entry(), std::move(inputs.sourceGraph), std::move(inputs.sources),
       std::move(inputs.diagnostics), inputs.sourceValid);
@@ -40,8 +41,9 @@ FrontendResult analyze(const CompilationRequest &request,
 
 CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
                                           CompilationInputs inputs,
-                                          Backend &backend) {
-  FrontendResult frontend = analyze(request, std::move(inputs));
+                                          Backend &backend,
+                                          ProgressObserver *progress) {
+  FrontendResult frontend = analyze(request, std::move(inputs), progress);
   CompilationResult result;
   if (!frontend.canGenerateCode()) {
     result.status = CompilationStatus::FrontendFailure;
@@ -50,6 +52,7 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
     return result;
   }
 
+  ProgressScope optimizationProgress(progress, ProgressPhase::Optimizing);
   const OptimizationPipeline optimizationPipeline;
   const OptimizationResult optimizations = optimizationPipeline.run(
       frontend.hir, request.optimization(), request.target());
@@ -59,6 +62,7 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
                           .level = request.optimization(),
                           .target = request.target(),
                           .compatibility = &optimizations});
+  optimizationProgress.finish();
   if (!optimizedProgram.valid()) {
     result.status = CompilationStatus::MirVerificationFailure;
     result.sources = std::move(frontend.sources);
@@ -127,6 +131,8 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
     return result;
   };
 
+  const ProgressScope emissionProgress(progress, ProgressPhase::Emitting,
+                                       backendName);
   LoweredProgramBuild loweredBuild = LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir,
       optimizedProgram.sourceMir, optimizedProgram.mir,
@@ -246,16 +252,20 @@ CompilationRequest CompilationRequest::forExecutable() const {
   return result;
 }
 
-CompilationInputs loadCompilationInputs(const CompilationRequest &request) {
+CompilationInputs loadCompilationInputs(const CompilationRequest &request,
+                                        ProgressObserver *progress) {
   SourceLoader sourceLoader;
   CompilationInputs inputs;
   {
     const PhaseTimeScope timeScope("gti-source-load");
+    const ProgressScope loadProgress(progress, ProgressPhase::Loading);
     inputs.sourceGraph = sourceLoader.load(
         request.entry(), std::nullopt, {request.standardLibrary().prelude}, {},
         {request.standardLibrary().root}, std::nullopt,
         request.packageSources(), request.target(),
         request.configurationFlags());
+    loadProgress.update({}, inputs.sourceGraph.sourceUnits().size(),
+                        inputs.sourceGraph.sourceUnits().size());
   }
   inputs.sources = sourceLoader.sources();
   inputs.diagnostics = sourceLoader.errors();
@@ -267,13 +277,16 @@ CompilationInputs loadCompilationInputs(const CompilationRequest &request) {
 }
 
 CompilationResult compileWithBackend(const CompilationRequest &request,
-                                     Backend &backend) {
-  return compileWithLoadedInputs(request, loadCompilationInputs(request),
-                                 backend);
+                                     Backend &backend,
+                                     ProgressObserver *progress) {
+  return compileWithLoadedInputs(
+      request, loadCompilationInputs(request, progress), backend, progress);
 }
 
-CheckResult checkCompilation(const CompilationRequest &request) {
-  FrontendResult frontend = analyze(request, loadCompilationInputs(request));
+CheckResult checkCompilation(const CompilationRequest &request,
+                             ProgressObserver *progress) {
+  FrontendResult frontend =
+      analyze(request, loadCompilationInputs(request, progress), progress);
   CheckResult result;
   result.sources = std::move(frontend.sources);
   result.diagnostics = std::move(frontend.diagnostics);
@@ -282,25 +295,29 @@ CheckResult checkCompilation(const CompilationRequest &request) {
   return result;
 }
 
-CompilationResult compileToCpp(const CompilationRequest &request) {
+CompilationResult compileToCpp(const CompilationRequest &request,
+                               ProgressObserver *progress) {
   CppBackend backend(request.cppStandard(), request.debugInfo());
-  return compileWithBackend(request, backend);
+  return compileWithBackend(request, backend, progress);
 }
 
 CompilationResult compileToCpp(const CompilationRequest &request,
-                               CompilationInputs inputs) {
+                               CompilationInputs inputs,
+                               ProgressObserver *progress) {
   CppBackend backend(request.cppStandard(), request.debugInfo());
-  return compileWithLoadedInputs(request, std::move(inputs), backend);
+  return compileWithLoadedInputs(request, std::move(inputs), backend, progress);
 }
 
-CompilationResult compileToNativeHeader(const CompilationRequest &request) {
+CompilationResult compileToNativeHeader(const CompilationRequest &request,
+                                        ProgressObserver *progress) {
   NativeHeaderBackend backend;
-  return compileWithBackend(request, backend);
+  return compileWithBackend(request, backend, progress);
 }
 
-CompilationResult compileToMir(const CompilationRequest &request) {
+CompilationResult compileToMir(const CompilationRequest &request,
+                               ProgressObserver *progress) {
   MirBackend backend;
-  return compileWithBackend(request, backend);
+  return compileWithBackend(request, backend, progress);
 }
 
 } // namespace lang::driver

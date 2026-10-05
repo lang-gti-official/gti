@@ -40,6 +40,15 @@ represented as ordered argument, include, library, and framework collections;
 processes are invoked directly from an argument vector without a shell.
 `gti_compiler` has no dependency on the driver.
 
+Live build progress is implemented as optional observational compiler/driver
+events with CLI-owned Cargo-style rendering. Default terminal output refreshes
+the active phase and elapsed time; redirected output retains stage transitions.
+`--progress=plain|never` controls presentation without changing request,
+artifact, cache or program-output policy. Parallel target children remain quiet
+and the parent reports target waits. The current contract and deliberately
+whole-program boundaries are documented in
+[Live Build Progress](../architecture/build-and-driver.md#live-build-progress).
+
 Direct mode and project builds now resolve the same explicit execution-profile
 fact. The direct option is
 `--execution-profile single-threaded|concurrent`; project

@@ -2428,7 +2428,8 @@ ExecutableBuildRequest::buildReport() const {
   return requestedBuildReport;
 }
 
-ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
+ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
+                                      ProgressObserver *progress) {
   ExecutableBuildResult result;
   result.generatedSource = request.generatedSource();
   const auto hasObjectiveCpp = [](const auto &sources) {
@@ -2535,10 +2536,10 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   }
 
   CompilationInputs compilationInputs =
-      loadCompilationInputs(request.compilation());
+      loadCompilationInputs(request.compilation(), progress);
   if (!compilationInputs.succeeded()) {
-    result.compilation =
-        compileToCpp(request.compilation(), std::move(compilationInputs));
+    result.compilation = compileToCpp(request.compilation(),
+                                      std::move(compilationInputs), progress);
     result.status = ExecutableBuildStatus::CompilationFailure;
     return result;
   }
@@ -2615,6 +2616,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   bool corruptCacheEntry = false;
   NativeLinkIdentityPlan linkIdentityPlan;
   if (request.cache()) {
+    const ProgressScope cacheProgress(progress, ProgressPhase::Cache,
+                                      "checking build cache");
     if (request.buildReport()) {
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail =
@@ -2665,6 +2668,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
 
         const CacheLookupResult lookup = lookupCacheEntry(*cacheEntry, *key);
         if (lookup.status == CacheLookupStatus::Hit) {
+          cacheProgress.update("hit; restoring executable");
           result.cache.status = BuildCacheStatus::Hit;
           result.cache.detail = lookup.detail;
           result.resourceError = validateToolchainLayout(
@@ -2737,8 +2741,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
     }
   }
 
-  result.compilation =
-      compileToCpp(request.compilation(), std::move(compilationInputs));
+  result.compilation = compileToCpp(request.compilation(),
+                                    std::move(compilationInputs), progress);
   if (!result.compilation.succeeded()) {
     result.status = ExecutableBuildStatus::CompilationFailure;
     return result;
@@ -2776,6 +2780,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
           const std::filesystem::path &object, CStandard cStandard,
           const std::vector<std::filesystem::path> &includeDirectories,
           const std::vector<std::string> &arguments) {
+        const ProgressScope nativeProgress(
+            progress, ProgressPhase::NativeSource, source.string());
         const std::filesystem::path stagedObject = stagedArtifactPath(object);
         TemporaryArtifact stagedNativeObject(stagedObject, true);
         const NativeCCompileRequest cRequest(
@@ -2819,6 +2825,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
           const std::filesystem::path &object,
           const std::vector<std::filesystem::path> &includeDirectories,
           const std::vector<std::string> &arguments) {
+        const ProgressScope nativeProgress(
+            progress, ProgressPhase::NativeSource, source.string());
         const std::filesystem::path stagedObject = stagedArtifactPath(object);
         TemporaryArtifact stagedNativeObject(stagedObject, true);
         const NativeCppCompileRequest cppRequest(
@@ -2962,9 +2970,12 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
           : std::nullopt,
       request.compilation().debugInfo());
   result.nativeCommand = nativeToolchain.command(nativeRequest);
+  ProgressScope nativeProgress(progress, ProgressPhase::NativeLink,
+                               request.nativeCompiler());
   result.nativeProcess = nativeToolchain.invoke(
       nativeRequest,
       {.captureSuccessfulOutput = request.captureSuccessfulNativeOutput()});
+  nativeProgress.finish();
   if (result.nativeProcess->driverDiagnostic) {
     result.driverDiagnostic = result.nativeProcess->driverDiagnostic;
   }
@@ -3031,6 +3042,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
 
   if (request.compilation().debugInfo() &&
       request.compilation().target().os == "macos") {
+    const ProgressScope symbolProgress(progress, ProgressPhase::Symbols);
     const std::filesystem::path stagedSymbols(stagedOutput.string() + ".dSYM");
     const std::filesystem::path symbols(request.output().string() + ".dSYM");
     // Replacing an owned bundle must not remove a loaded source that was
@@ -3086,6 +3098,10 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
     }
   }
 
+  const ProgressScope publicationProgress(
+      progress, ProgressPhase::Publishing,
+      cacheEntry && !result.cache.key.empty() ? "executable and build cache"
+                                              : "executable");
   result.artifactPublishResult =
       publishArtifact(stagedOutput, request.output());
   if (!result.artifactPublishResult->succeeded()) {

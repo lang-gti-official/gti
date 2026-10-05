@@ -237,10 +237,13 @@ FrontendResult Frontend::analyze(
   const auto sourceLoadStart = std::chrono::steady_clock::now();
   {
     const PhaseTimeScope timeScope("gti-source-load");
+    const ProgressScope loadProgress(options.progress, ProgressPhase::Loading);
     result.sourceGraph = sourceLoader.load(
         entryPath, std::move(entrySource), preludePaths, sourceOverrides,
         standardLibraryRoots, options.completionOffset, packageSourceRoots,
         options.target, options.configurationFlags);
+    loadProgress.update({}, result.sourceGraph.sourceUnits().size(),
+                        result.sourceGraph.sourceUnits().size());
   }
   if (options.workMetrics != nullptr) {
     options.workMetrics->sourceLoadMicroseconds = static_cast<std::size_t>(
@@ -309,10 +312,16 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   const auto parseStart = std::chrono::steady_clock::now();
   {
     const PhaseTimeScope timeScope("gti-parse");
+    const ProgressScope progress(options.progress, ProgressPhase::Parsing, {},
+                                 result.sourceGraph.compilationOrder().size());
+    std::size_t completed = 0;
     for (const SourceUnitId unitId : result.sourceGraph.compilationOrder()) {
       SourceUnit *unit = result.sourceGraph.findUnit(unitId);
       if (unit == nullptr) {
         continue;
+      }
+      if (options.progress != nullptr) {
+        progress.update(unit->path.string(), completed);
       }
       unit->declarationStart = declarations.size();
       StmtList unitDeclarations;
@@ -360,6 +369,10 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       collectExportRequests(unitDeclarations, *unit, options.target);
       declarations.insert(declarations.end(), unitDeclarations.begin(),
                           unitDeclarations.end());
+      ++completed;
+      if (options.progress != nullptr) {
+        progress.update(unit->path.string(), completed);
+      }
     }
   }
   if (options.workMetrics != nullptr) {
@@ -391,6 +404,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   const auto semanticStart = std::chrono::steady_clock::now();
   {
     const PhaseTimeScope timeScope("gti-semantics");
+    const ProgressScope progress(options.progress, ProgressPhase::Checking);
     result.semanticValid = semantic.check(result.program);
   }
   if (options.workMetrics != nullptr) {
@@ -420,6 +434,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   const auto hirStart = std::chrono::steady_clock::now();
   HirLoweringResult hir = [&] {
     const PhaseTimeScope timeScope("gti-hir-lowering");
+    const ProgressScope progress(options.progress, ProgressPhase::HirLowering);
     return HirLowerer(options.target)
         .lower(result.program, semantic.model(), semantic);
   }();
@@ -463,8 +478,10 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   }
 
   const PhaseTimeScope mirTimeScope("gti-mir-lowering");
+  ProgressScope mirProgress(options.progress, ProgressPhase::MirLowering);
   MirLoweringResult mir =
       MirLowerer().lower(result.hir, result.failureMetadata);
+  mirProgress.finish();
   result.mirValid = mir.valid();
   result.mir = std::move(mir.program);
   if (!result.mirValid) {
