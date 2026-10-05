@@ -348,7 +348,9 @@ void writeProjectMetadata(std::ostream &stream,
     writeJsonString(stream, executionProfileName(profile.executionProfile));
     stream << ", \"disabledWarnings\": ";
     writeJsonStrings(stream, profile.warningPolicy.disabledGroups());
-    stream << ", \"keepCpp\": " << (profile.keepCpp ? "true" : "false") << '}';
+    stream << ", \"keepCpp\": " << (profile.keepCpp ? "true" : "false")
+           << ", \"debugInfo\": " << (profile.debugInfo ? "true" : "false")
+           << '}';
   }
   if (!manifest.profiles().empty()) {
     stream << '\n';
@@ -386,6 +388,8 @@ void writeProjectMetadata(std::ostream &stream,
       } else {
         writeJsonStrings(stream, plan->configurationFlags());
       }
+      stream << ", \"debugInfo\": "
+             << (plan != nullptr && plan->debugInfo() ? "true" : "false");
       stream << ", \"native\": ";
       if (plan == nullptr) {
         writeNativeInputs(stream, {});

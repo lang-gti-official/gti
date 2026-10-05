@@ -130,7 +130,8 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
   LoweredProgramBuild loweredBuild = LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir,
       optimizedProgram.sourceMir, optimizedProgram.mir,
-      optimizedProgram.report.transformations, request.target());
+      optimizedProgram.report.transformations, request.target(),
+      request.debugInfo());
   if (!loweredBuild.valid()) {
     const std::string detail =
         loweredBuild.issues.empty()
@@ -186,7 +187,8 @@ CompilationRequest::CompilationRequest(
     TargetInfo target, OptimizationLevel optimization, CppStandard cppStandard,
     std::vector<PackageSourceRoot> packageSourceRoots,
     ConfigurationFlags configurationFlags,
-    OptimizationOutputRequest optimizationOutputs, WarningPolicy warnings)
+    OptimizationOutputRequest optimizationOutputs, WarningPolicy warnings,
+    bool debugInfo)
     : entryPath(std::move(entry)),
       standardLibraryLayout(std::move(standardLibrary)),
       targetInfo(std::move(target)), optimizationLevel(optimization),
@@ -194,7 +196,7 @@ CompilationRequest::CompilationRequest(
       packageSourceRootSet(std::move(packageSourceRoots)),
       configuredFlags(std::move(configurationFlags)),
       requestedOptimizationOutputs(optimizationOutputs),
-      warningPolicy(std::move(warnings)) {
+      warningPolicy(std::move(warnings)), sourceDebugInfo(debugInfo) {
   normalizeConfigurationFlags(configuredFlags);
 }
 
@@ -213,6 +215,8 @@ OptimizationLevel CompilationRequest::optimization() const {
 }
 
 CppStandard CompilationRequest::cppStandard() const { return backendStandard; }
+
+bool CompilationRequest::debugInfo() const { return sourceDebugInfo; }
 
 const std::vector<PackageSourceRoot> &
 CompilationRequest::packageSources() const {
@@ -279,13 +283,13 @@ CheckResult checkCompilation(const CompilationRequest &request) {
 }
 
 CompilationResult compileToCpp(const CompilationRequest &request) {
-  CppBackend backend(request.cppStandard());
+  CppBackend backend(request.cppStandard(), request.debugInfo());
   return compileWithBackend(request, backend);
 }
 
 CompilationResult compileToCpp(const CompilationRequest &request,
                                CompilationInputs inputs) {
-  CppBackend backend(request.cppStandard());
+  CppBackend backend(request.cppStandard(), request.debugInfo());
   return compileWithLoadedInputs(request, std::move(inputs), backend);
 }
 

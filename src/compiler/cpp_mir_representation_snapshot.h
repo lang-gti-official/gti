@@ -53,7 +53,8 @@ struct CppMirCallableTemplateSignature {
 // derived here; no boolean/capability input can bless a row.
 [[nodiscard]] CppMirRepresentationSnapshotBuild
 buildCppMirRepresentationSnapshot(const LoweredProgram &program,
-                                  CppStandard standard = CppStandard::Cpp23);
+                                  CppStandard standard = CppStandard::Cpp23,
+                                  bool debugInfo = false);
 
 // Builds the deterministic copied representation rows the generic MIR body
 // emitter consumes (ADR 016 phase 4). Spellings come only from the extracted

@@ -384,6 +384,12 @@ generated C++ retention, C++ backend standard, and debug information. Built-in
 profiles are `dev` and `release`; manifests may refine them without changing
 their broad intent.
 
+The Boolean `debug-info` setting is implemented, defaulting to false, with
+`-g`/`--debug-info` and `--no-debug-info` executable-build overrides. Its first
+slice enables native file/line breakpoints through the existing C++ backend;
+see [source-level debug builds](../architecture/build-and-driver.md#source-level-debug-builds).
+Rich debugger variables/types and symbol-aware caching are not implied.
+
 ### Workspace
 
 A workspace groups packages developed together and shares a build directory.

@@ -34,8 +34,9 @@ namespace lang {
 class CppProgramEmissionPlanner final {
 public:
   explicit CppProgramEmissionPlanner(const LoweredProgram &program,
-                                     CppStandard standard)
-      : standard(standard), mir(program.mir()), loweredProgram(program) {
+                                     CppStandard standard, bool debugInfo)
+      : standard(standard), mir(program.mir()), loweredProgram(program),
+        debugInfo(debugInfo) {
     const std::vector<LoweredProgramIssue> loweredIssues =
         verifyLoweredProgram(loweredProgram);
     if (!loweredIssues.empty()) {
@@ -45,7 +46,7 @@ public:
     }
 
     CppMirRepresentationSnapshotBuild snapshot =
-        buildCppMirRepresentationSnapshot(loweredProgram, standard);
+        buildCppMirRepresentationSnapshot(loweredProgram, standard, debugInfo);
     if (!snapshot.valid()) {
       const auto internal =
           std::find_if(snapshot.issues.begin(), snapshot.issues.end(),
@@ -2515,7 +2516,10 @@ public:
       cached = constructorTemplatePlans
                    .emplace(instance.id,
                             std::make_unique<TemplateBodyPlan>(
-                                mir, address, constructor.id, std::move(rows)))
+                                mir, address, constructor.id, std::move(rows),
+                                debugInfo ? std::span<const LoweredBody>(
+                                                loweredProgram.bodies())
+                                          : std::span<const LoweredBody>{}))
                    .first;
     }
     const auto &prepared = *cached->second;
@@ -2582,7 +2586,10 @@ public:
                        std::make_unique<TemplateBodyPlan>(
                            mir,
                            MirBodyAddress{MirBodyKind::Destructor, instance.id},
-                           instance.owner, std::move(rows)))
+                           instance.owner, std::move(rows),
+                           debugInfo ? std::span<const LoweredBody>(
+                                           loweredProgram.bodies())
+                                     : std::span<const LoweredBody>{}))
               .first;
     }
     const auto &prepared = *cached->second;
@@ -4576,7 +4583,10 @@ public:
         cached = callableTemplatePlans
                      .emplace(instance->id,
                               std::make_unique<TemplateBodyPlan>(
-                                  mir, address, function.id, std::move(rows)))
+                                  mir, address, function.id, std::move(rows),
+                                  debugInfo ? std::span<const LoweredBody>(
+                                                  loweredProgram.bodies())
+                                            : std::span<const LoweredBody>{}))
                      .first;
       }
       const auto &prepared = *cached->second;
@@ -8235,6 +8245,7 @@ public:
   CppStandard standard;
   const MirProgram &mir;
   const LoweredProgram &loweredProgram;
+  bool debugInfo;
   CppMirProgramPlan programPlan;
   CppMirProgramEmissionPlan generalEmissionPlan;
   std::unordered_map<SymbolId, std::string> moduleGeneralInitializers;
@@ -8274,10 +8285,11 @@ public:
     CppMirBodyEmissionMap representations;
     CppMirBodyEmissionPlan plan;
     TemplateBodyPlan(const MirProgram &program, MirBodyAddress address,
-                     std::size_t declaration, CppMirBodyEmissionMapRows rows)
+                     std::size_t declaration, CppMirBodyEmissionMapRows rows,
+                     std::span<const LoweredBody> debugBodies)
         : declaration(declaration), representations(std::move(rows)),
-          plan(CppMirBodyEmitter(program, representations).buildPlan(address)) {
-    }
+          plan(CppMirBodyEmitter(program, representations, nullptr, debugBodies)
+                   .buildPlan(address)) {}
   };
   mutable std::unordered_map<HirConstructorInstanceId,
                              std::unique_ptr<TemplateBodyPlan>>
@@ -8291,9 +8303,9 @@ public:
 };
 
 CppProgramEmissionPlan
-buildCppProgramEmissionPlan(const LoweredProgram &program,
-                            CppStandard standard) {
-  return CppProgramEmissionPlanner(program, standard).build();
+buildCppProgramEmissionPlan(const LoweredProgram &program, CppStandard standard,
+                            bool debugInfo) {
+  return CppProgramEmissionPlanner(program, standard, debugInfo).build();
 }
 
 } // namespace lang

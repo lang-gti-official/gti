@@ -642,6 +642,8 @@ ProjectBuildPlan makeBuildPlan(
   const CppStandard cppStandard =
       overrides.cppStandard.value_or(selectedProfile.cppStandard);
   const bool keepCpp = overrides.keepCpp.value_or(selectedProfile.keepCpp);
+  const bool debugInfo =
+      overrides.debugInfo.value_or(selectedProfile.debugInfo);
   ConfigurationFlags configurationFlags = manifest.build().defines;
   configurationFlags.insert(configurationFlags.end(),
                             overrides.configurationFlags.begin(),
@@ -679,6 +681,8 @@ ProjectBuildPlan makeBuildPlan(
   nativeInputs.targetPolicy = {.triple = toolchain.nativeTarget,
                                .sysroot = toolchain.sysroot};
   std::string modelIdentity = workspace.modelIdentity();
+  if (debugInfo)
+    modelIdentity += "\ndebug-info:true";
   modelIdentity += "\ntarget:" + targetTriple(resolvedTarget);
   if (toolchain.declared()) {
     modelIdentity +=
@@ -790,7 +794,7 @@ ProjectBuildPlan makeBuildPlan(
       std::move(nativeInputs), std::move(packageSourceRoots),
       configuration.configurationFlags(), std::move(warningPolicy),
       std::move(modelIdentity), std::move(bindgenImports),
-      std::move(buildScripts), std::move(toolchain));
+      std::move(buildScripts), std::move(toolchain), debugInfo);
 }
 
 Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,
@@ -964,7 +968,7 @@ ProjectBuildPlan::ProjectBuildPlan(
     std::string projectModelIdentity,
     std::vector<BindgenImportPlan> bindgenImports,
     std::vector<BuildScriptPlan> buildScripts,
-    ResolvedProjectToolchain toolchain)
+    ResolvedProjectToolchain toolchain, bool debugInfo)
     : projectManifestPath(std::move(manifestPath)),
       projectRoot(std::move(packageRoot)),
       projectWorkspaceRoot(std::move(workspaceRoot)),
@@ -983,7 +987,7 @@ ProjectBuildPlan::ProjectBuildPlan(
       resolvedProjectModelIdentity(std::move(projectModelIdentity)),
       resolvedBindgenImports(std::move(bindgenImports)),
       resolvedBuildScripts(std::move(buildScripts)),
-      resolvedToolchain(std::move(toolchain)) {}
+      resolvedToolchain(std::move(toolchain)), sourceDebugInfo(debugInfo) {}
 
 const std::filesystem::path &ProjectBuildPlan::manifestPath() const {
   return projectManifestPath;
@@ -1038,6 +1042,8 @@ OptimizationLevel ProjectBuildPlan::optimization() const {
 CppStandard ProjectBuildPlan::cppStandard() const { return backendStandard; }
 
 bool ProjectBuildPlan::keepCpp() const { return retainGeneratedSource; }
+
+bool ProjectBuildPlan::debugInfo() const { return sourceDebugInfo; }
 
 const NativeInputs &ProjectBuildPlan::nativeInputs() const {
   return resolvedNativeInputs;

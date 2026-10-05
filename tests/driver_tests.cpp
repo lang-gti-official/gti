@@ -527,6 +527,15 @@ void testNativeCommandConstruction() {
 #endif
   expect(command == expected,
          "native command construction should preserve structured input order");
+  const auto debugCommand = lang::driver::NativeToolchain().command(
+      lang::driver::NativeCompileRequest(
+          "custom-c++", "generated.cpp", "program", lang::CppStandard::Cpp23,
+          lang::OptimizationLevel::O0, {}, std::nullopt, true));
+  expect(
+      std::find(debugCommand.begin(), debugCommand.end(), "-g") !=
+              debugCommand.end() &&
+          std::find(command.begin(), command.end(), "-g") == command.end(),
+      "native debug symbols should be selected by the structured debug policy");
   const std::string rendered = lang::driver::renderCommand(command);
   expect(rendered.starts_with("+ custom-c++ -std=c++20 -O3") &&
              rendered.find("\"-Iruntime include\"") != std::string::npos &&
@@ -2410,6 +2419,7 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
 // fact that moved.
 void testBuildReportRecordRoundTrip() {
   lang::driver::BuildProvenance recorded;
+  recorded.debugInfo = true;
   recorded.producerExecutable = {.canonicalPath = "/opt/gti/bin/gti",
                                  .bytes = 128,
                                  .sha256 = std::string(64, 'a')};
@@ -2519,6 +2529,11 @@ void testBuildReportRecordRoundTrip() {
          "a round-tripped record should compare equal to its source");
   expect(lang::driver::serializeBuildProvenanceJson(*parsed) == serialized,
          "re-serializing a parsed record should reproduce the sidecar");
+  expect(parsed->debugInfo, "build reports should preserve debug policy");
+  auto changedDebug = *parsed;
+  changedDebug.debugInfo = false;
+  expect(!lang::driver::compareBuildProvenance(recorded, changedDebug).empty(),
+         "debug policy drift must be observable to verification");
 
   // The driver owns the staged link output and the dependency-file operand,
   // and both carry a per-invocation identity. Comparing them literally would
