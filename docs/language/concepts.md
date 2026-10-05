@@ -23,15 +23,15 @@ concept scalar<T> =
     std::integral<T> || std::floating_point<T>;
 ```
 
-Every application argument is either one of the declaration's visible
-non-pack type parameters or a closed exact type containing no unresolved
-type/value parameter. An application must supply the referenced concept's
+Every application argument is a visible non-pack type parameter, a closed exact
+type, or a dependent compound type. An application must supply the referenced concept's
 exact arity, but may map, reorder, or reuse enclosing parameters. A closed
 argument such as `char` supplies an exact fact but does not participate in
 generic inference. Its application remains an ordinary predicate branch, so a
 false closed application may be bypassed by a satisfied `||` alternative.
-Dependent compound arguments such as `Wrapper<T>`, packs,
-values, and expressions remain outside this bounded grammar. Concept names
+Dependent compound arguments such as `Wrapper<T>` use ordinary type substitution
+and exact specialization selection; they do not infer generic arguments.
+Unexpanded packs, values, and expressions remain outside this grammar. Concept names
 follow ordinary namespace and direct-source-unit visibility. They may be
 declared after use within a visible source unit. Definitions may use
 `&&`/`and` and `||`/`or`. Conjunction binds more tightly than disjunction, and
@@ -77,8 +77,8 @@ requires-clause       = 'requires' constraint-expression
 ```
 
 Every argument must be a visible non-pack type parameter or closed exact type,
-and every application must have the declared arity. Dependent compound types,
-packs, values, arbitrary expressions, general nested requires-expressions, boolean
+and every application must have the declared arity. Unexpanded packs,
+values, arbitrary expressions, general nested requires-expressions, boolean
 predicates, and negation are not accepted in this clause.
 
 At a concrete call, conjunction requires both operands and disjunction accepts
@@ -151,19 +151,18 @@ The compiler and LSP publish the same structured explanation and do not offer
 an automatic edit that invents an implementation or changes ownership.
 
 This facility is independent of any public library name. It does not by itself
-define a formatter protocol or reject a supported function's dynamic input at
-compile time. A future externally specialized formatter adapter still needs
-general requirements for its static/member operation and argument types, plus
-constraints on heterogeneous packs; the existing nullary read-member query is
-not a substitute for those capabilities. Literal-format validation separately
+reject a supported function's dynamic input at compile time. The source-defined
+formatter protocol uses the exact member signatures below, including mutable
+output parameters. Concrete comma-pack folds check their target's requirements
+for every element before HIR publication. Literal-format validation separately
 needs general call-site constant validation and must reuse the canonical
 constant-evaluation direction, not an optimizer-dependent check or a second
 format grammar embedded in the compiler.
 
-## Exact read-only member requirements
+## Exact member signature requirements
 
-Library authors can describe a public, safe, read-only zero-argument instance
-method with an exact owned result type:
+Library authors can describe a public, safe, nongeneric instance method with
+an exact owned result type:
 
 ```gti
 concept snapshot_as<T, R> =
@@ -177,7 +176,7 @@ T save_snapshot<T>(T& value) requires snapshot_as<T, T> {
 The receiver name is local to the requirement. The requirement inspects a
 signature, not an expression body: it never calls the method, constructs a
 receiver, acquires a loan, or changes runtime ownership. Missing, inaccessible,
-unsafe, static, mutable, consuming, ambiguous or result-mismatched methods do
+unsafe, static, consuming, ambiguous or result-mismatched methods do
 not satisfy it. A method's own requirements must be satisfied. Cyclic member
 requirements fail closed; nested member-requirement checking is bounded to 64
 active checks. The result cannot be a reference or contain tracked
@@ -185,13 +184,30 @@ borrowed state. The method body remains subject to ordinary analysis when used;
 signature satisfaction alone does not prove that every body instantiation is
 valid.
 
-This first slice admits one receiver and one nullary, nongeneric member per
-requirement. Combine separate requirements using `&&` and `||`. Receiver and
-result arguments in named concepts retain the existing plain-parameter or
-closed-type boundary. Inline generic-parameter constraints still exclude
-structural concepts; use a trailing clause. General expression requirements,
-method arguments, generic method deduction, and borrowed-result contracts are
-not implemented by this syntax.
+Each query admits one checked reference receiver and one nongeneric member.
+An immutable `T&` receiver requires a read-only method; `mut T&` requires a
+mutable method. Additional typed parameters describe the exact method signature,
+including reference access. The call must use every declared parameter once in
+declaration order; it cannot contain arbitrary expressions or transfers:
+
+```gti
+concept accumulates<C, V> =
+    requires(mut C& target, V& input, mut V& previous) {
+      { target.add(input, previous) } -> V;
+    };
+```
+
+Value parameters require exactly that value type, `V&` requires a read-only
+reference, and `mut V&` requires a mutable reference. There is no conversion,
+default-argument omission or generic method deduction in signature matching.
+Requirements neither borrow nor execute their synthetic arguments. Actual calls
+still apply ordinary ownership, receiver access and lifetime rules, and each
+concrete instance is reanalyzed before HIR/MIR. A mutable contract never grants
+permission to call through a read-only receiver. Combine separate queries using
+`&&` and `||`; only facts common to all alternatives enter a generic body.
+Receiver, parameter and result types may contain dependent compound types.
+Inline generic-parameter constraints still exclude structural concepts; use a
+trailing clause. Borrowed-result contracts remain unsupported.
 
 The same requirement is a boolean static query in expressions, including
 `if constexpr` and `static_assert`. Unlike C++'s compound requirement syntax,

@@ -1036,6 +1036,17 @@ auto SemanticVisitor::Impl::guaranteedStructuralKinds(
   }
 }
 
+auto SemanticVisitor::Impl::conceptSubstitution(
+    const RegisteredConcept &conceptInfo,
+    std::span<const SemanticType> arguments) const -> TypeSubstitution {
+  TypeSubstitution result;
+  for (std::size_t index = 0;
+       index < arguments.size() && index < conceptInfo.parameterIds.size();
+       ++index)
+    result.emplace(conceptInfo.parameterIds[index], arguments[index]);
+  return result;
+}
+
 auto SemanticVisitor::Impl::expandStructuralRequirements(
     std::span<const AppliedConceptRequirement> requirements) const
     -> std::vector<ExpandedStructuralRequirement> {
@@ -1046,24 +1057,30 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
           {.kind = StructuralConstraintKind::ReadMember,
            .arguments = requirement.arguments,
            .application = requirement.syntax,
-           .memberName =
-               requirement.syntax->memberRequirement->member().lexeme});
+           .memberName = requirement.syntax->memberRequirement->member().lexeme,
+           .mutableReceiver = requirement.syntax->memberRequirement->receiver()
+                                  .referenceMutability.has_value()});
       return result;
     }
     if (requirement.conceptId == 0 || requirement.conceptId > concepts.size()) {
       return result;
     }
     const RegisteredConcept &conceptInfo = concepts[requirement.conceptId - 1];
+    const auto substitution =
+        conceptSubstitution(conceptInfo, requirement.arguments);
     for (const RegisteredConcept::StructuralPattern &pattern :
          conceptInfo.structuralConstraints) {
       ExpandedStructuralRequirement expanded{.kind = pattern.kind,
                                              .application = requirement.syntax,
-                                             .memberName = pattern.memberName};
+                                             .memberName = pattern.memberName,
+                                             .mutableReceiver =
+                                                 pattern.mutableReceiver};
       bool valid = true;
       for (const RegisteredConcept::StructuralPattern::Argument &argument :
            pattern.arguments) {
         if (!argument.parameter) {
-          expanded.arguments.emplace_back(argument.concrete);
+          expanded.arguments.emplace_back(
+              substituteType(argument.concrete, substitution));
           continue;
         }
         if (*argument.parameter >= requirement.arguments.size()) {
@@ -1105,7 +1122,8 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
   const auto sameRequirement = [](const ExpandedStructuralRequirement &left,
                                   const ExpandedStructuralRequirement &right) {
     return left.kind == right.kind && left.arguments == right.arguments &&
-           left.memberName == right.memberName;
+           left.memberName == right.memberName &&
+           left.mutableReceiver == right.mutableReceiver;
   };
   std::function<std::vector<ExpandedStructuralRequirement>(std::size_t)>
       expandNode = [&](std::size_t nodeIndex) {
@@ -1408,10 +1426,12 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
   if (requirement.syntax && requirement.syntax->memberRequirement) {
     const auto &member = requirement.syntax->memberRequirement->member();
     SemanticMemberRequirementFailure memberFailure;
-    if (requirement.arguments.size() == 2 &&
-        readMemberRequirementSatisfied(requirement.arguments[0], member.lexeme,
-                                       requirement.arguments[1],
-                                       &memberFailure)) {
+    if (requirement.arguments.size() >= 2 &&
+        readMemberRequirementSatisfied(
+            requirement.arguments[0], member.lexeme, requirement.arguments[1],
+            &memberFailure, std::span(requirement.arguments).subspan(2),
+            requirement.syntax->memberRequirement->receiver()
+                .referenceMutability.has_value())) {
       return std::nullopt;
     }
     return ConstraintFailure{.parameter = member,
@@ -1515,6 +1535,8 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
     }
   }
   const RegisteredConcept &conceptInfo = concepts[requirement.conceptId - 1];
+  const auto substitution =
+      conceptSubstitution(conceptInfo, requirement.arguments);
   if (conceptInfo.definitionExpression != nullptr &&
       !conceptInfo.definitionRequirements.empty()) {
     std::vector<AppliedConceptRequirement> expanded;
@@ -1530,7 +1552,8 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
       for (const RegisteredConcept::StructuralPattern::Argument &argument :
            pattern.arguments) {
         if (!argument.parameter) {
-          applied.arguments.emplace_back(argument.concrete);
+          applied.arguments.emplace_back(
+              substituteType(argument.concrete, substitution));
         } else if (*argument.parameter < requirement.arguments.size()) {
           applied.arguments.emplace_back(
               requirement.arguments[*argument.parameter]);
@@ -1558,6 +1581,21 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
             *failure->applicationArgumentIndex < pattern->arguments.size()) {
           outerArgument =
               pattern->arguments[*failure->applicationArgumentIndex].parameter;
+          if (!outerArgument) {
+            const auto &compound =
+                pattern->arguments[*failure->applicationArgumentIndex].concrete;
+            for (std::size_t index = 0; index < conceptInfo.parameterIds.size();
+                 ++index) {
+              if (!containsGenericParameter(
+                      compound, conceptInfo.parameterIds[index], false))
+                continue;
+              if (outerArgument) {
+                outerArgument.reset();
+                break;
+              }
+              outerArgument = index;
+            }
+          }
         }
       }
       failure->applicationArgumentIndex = outerArgument;
@@ -4121,20 +4159,22 @@ auto SemanticVisitor::Impl::symbolicReadMemberReturnType(
   std::optional<SemanticType> result;
   for (const auto &requirement : activeStructuralRequirements()) {
     if (requirement.kind != StructuralConstraintKind::ReadMember ||
-        requirement.memberName != member || requirement.arguments.size() != 2 ||
+        requirement.memberName != member || requirement.arguments.size() < 2 ||
         requirement.arguments[0] != receiver) {
       continue;
     }
-    if (result && *result != requirement.arguments[1])
-      return std::nullopt;
-    result = requirement.arguments[1];
+    // This query establishes member presence for callee analysis. The call
+    // checks the complete signature and selects its exact result separately.
+    if (!result)
+      result = requirement.arguments[1];
   }
   return result;
 }
 
 auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
     const SemanticType &receiver, std::string_view member,
-    const SemanticType &result, SemanticMemberRequirementFailure *failure) const
+    const SemanticType &result, SemanticMemberRequirementFailure *failure,
+    std::span<const SemanticType> parameters, bool mutableReceiver) const
     -> bool {
   const auto reject = [&](MemberRequirementFailureKind kind,
                           const CallableCandidate *candidate = nullptr) {
@@ -4150,9 +4190,21 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
     return false;
   };
   if (containsOpenTypeParameter(receiver) ||
-      containsOpenTypeParameter(result)) {
-    return symbolicReadMemberReturnType(receiver, member) == result ||
-           reject(MemberRequirementFailureKind::Unproven);
+      containsOpenTypeParameter(result) ||
+      std::any_of(parameters.begin(), parameters.end(),
+                  containsOpenTypeParameter)) {
+    for (const auto &requirement : activeStructuralRequirements()) {
+      if (requirement.kind == StructuralConstraintKind::ReadMember &&
+          requirement.memberName == member &&
+          requirement.mutableReceiver == mutableReceiver &&
+          requirement.arguments.size() == parameters.size() + 2 &&
+          requirement.arguments[0] == receiver &&
+          requirement.arguments[1] == result &&
+          std::equal(parameters.begin(), parameters.end(),
+                     requirement.arguments.begin() + 2))
+        return true;
+    }
+    return reject(MemberRequirementFailureKind::Unproven);
   }
   // Bound recursively growing receiver types as well as exact cycles.
   constexpr std::size_t memberRequirementDepthLimit = 64;
@@ -4160,10 +4212,15 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
       std::any_of(activeMemberRequirements.begin(),
                   activeMemberRequirements.end(), [&](const auto &active) {
                     return active.receiver == receiver &&
-                           active.member == member && active.result == result;
+                           active.member == member && active.result == result &&
+                           active.mutableReceiver == mutableReceiver &&
+                           std::ranges::equal(active.parameters, parameters);
                   }))
     return reject(MemberRequirementFailureKind::Recursive);
-  activeMemberRequirements.push_back({receiver, std::string(member), result});
+  activeMemberRequirements.push_back(
+      {receiver, std::string(member), result,
+       std::vector<SemanticType>(parameters.begin(), parameters.end()),
+       mutableReceiver});
   struct PopRequirement {
     std::vector<ActiveMemberRequirement> &stack;
     ~PopRequirement() { stack.pop_back(); }
@@ -4181,8 +4238,10 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
   const CallableCandidate *rejectedConstraints = nullptr;
   for (const auto &candidate : overloads.overloads) {
     if (candidate.staticMember || candidate.parameterPack ||
-        !candidate.parameterTypes.empty() ||
-        candidate.receiverMutability != ReceiverMutability::ReadOnly ||
+        !std::ranges::equal(candidate.parameterTypes, parameters) ||
+        candidate.receiverMutability != (mutableReceiver
+                                             ? ReceiverMutability::Mutable
+                                             : ReceiverMutability::ReadOnly) ||
         !candidate.declaration ||
         !candidate.declaration->genericParameters().empty()) {
       if (rejectedShape == nullptr)

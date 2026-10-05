@@ -170,6 +170,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testExactMemberSignatureConcepts",
+      "suite": "declarations"
+    },
+    {
       "name": "testConstraintFailureProvenance",
       "suite": "declarations"
     },

@@ -515,6 +515,7 @@ private:
     std::vector<SemanticType> arguments;
     const ConceptApplication *application = nullptr;
     std::string memberName;
+    bool mutableReceiver = false;
   };
 
   struct ContextualCallableResult {
@@ -951,6 +952,7 @@ private:
       StructuralConstraintKind kind = StructuralConstraintKind::None;
       std::vector<Argument> arguments;
       std::string memberName;
+      bool mutableReceiver = false;
 
       friend bool operator==(const StructuralPattern &,
                              const StructuralPattern &) = default;
@@ -969,6 +971,7 @@ private:
     ConceptResolution resolution = ConceptResolution::Unresolved;
     SymbolId symbol = 0;
     std::vector<SymbolId> parameterSymbols;
+    std::vector<GenericParameterId> parameterIds;
     bool compilerPrivate = false;
   };
 
@@ -1750,18 +1753,25 @@ private:
   [[nodiscard]] bool readMemberRequirementSatisfied(
       const SemanticType &receiver, std::string_view member,
       const SemanticType &result,
-      SemanticMemberRequirementFailure *failure = nullptr) const;
+      SemanticMemberRequirementFailure *failure = nullptr,
+      std::span<const SemanticType> parameters = {},
+      bool mutableReceiver = false) const;
   void recordMemberRequirementReceiver(const MemberRequirement &query,
                                        const SemanticType &type);
   struct ActiveMemberRequirement {
     SemanticType receiver;
     std::string member;
     SemanticType result;
+    std::vector<SemanticType> parameters;
+    bool mutableReceiver = false;
   };
   mutable std::vector<ActiveMemberRequirement> activeMemberRequirements;
   [[nodiscard]] std::optional<SemanticType>
   symbolicReadMemberReturnType(const SemanticType &receiver,
                                std::string_view member) const;
+  [[nodiscard]] TypeSubstitution
+  conceptSubstitution(const RegisteredConcept &conceptInfo,
+                      std::span<const SemanticType> arguments) const;
 
   [[nodiscard]] std::vector<ExpandedStructuralRequirement>
   activeStructuralRequirements() const;

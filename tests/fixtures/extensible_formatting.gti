@@ -1,0 +1,44 @@
+#include <std/format>
+#include <std/string>
+
+namespace app {
+struct Identifier {
+  uint64_t value;
+};
+struct Record {
+  int count;
+};
+}
+
+class std::formatter<app::Identifier> {
+public:
+  expected<void, std::format_errc> format(app::Identifier& value,
+      mut std::string& output, std::format_spec& spec) {
+    std::formatter<uint64_t> numeric{};
+    return numeric.format(value.value, output, spec);
+  }
+};
+
+class std::formatter<app::Record> {
+public:
+  expected<void, std::format_errc> format(app::Record& value,
+      mut std::string& output, std::format_spec& spec) {
+    if (spec.type != '\0') {
+      output.append("discarded");
+      return unexpected(std::format_errc::invalid_format);
+    }
+    return std::try_format_to(output, "Record({})", value.count);
+  }
+};
+
+int main() {
+  app::Identifier id = {.value = uint64_t(42)};
+  app::Record record = {.count = 7};
+  auto text = std::format("ID={:04x} {}", id, record);
+  if (text != "ID=002a Record(7)") { return 1; }
+  mut std::string output{"kept"};
+  auto rejected = std::try_format_to(output, "{:s}", record);
+  if (rejected || rejected.error() != std::format_errc::invalid_format || output != "kept") { return 2; }
+  std::println("{}", text.view());
+  return 0;
+}

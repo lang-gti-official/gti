@@ -1726,6 +1726,15 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti>"
     )
     set_tests_properties(generic_clone_runtime PROPERTIES TIMEOUT 240)
+    add_test(NAME extensible_formatting_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/extensible_formatting_runtime_test.py"
+        "$<TARGET_FILE:gti>")
+    set_tests_properties(extensible_formatting_runtime PROPERTIES TIMEOUT 240)
+    add_test(NAME extensible_formatting_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/extensible_formatting_lsp_test.py"
+        "$<TARGET_FILE:gti_lsp>")
     add_test(
       NAME issues_117_120_regressions
       COMMAND "${Python3_EXECUTABLE}"

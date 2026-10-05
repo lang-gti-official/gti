@@ -137,6 +137,8 @@ is a teaching helper, not a production server.
 | `102-constexpr-frame-budget.gti` | compile-time duration budgets, passive asset metadata, and pre-epoch timestamp decomposition |
 | `103-resource-exchange.gti` | restoring exchange and swap of unrelated move-only resources without copying |
 | `104-move-only-ordering.gti` | sorting and reversing move-only jobs, checked indexed swap, and swapping owning arrays |
+| `105-member-signature-contracts.gti` | exact source-defined mutable receiver and parameter contracts without executing their queries |
+| `106-custom-formatters.gti` | application-owned formatter specializations, presentation delegation and recoverable dynamic errors |
 
 ## Build and run
 
