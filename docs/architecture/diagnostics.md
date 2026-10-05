@@ -704,10 +704,18 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   one accepted `= delete` special-member-policy context.
 - Reserve `GTI-B0001` for internal MIR/backend integrity failure, not ordinary
   invalid source. The reusable driver uses it when `Backend::generate` throws,
-  anchors the diagnostic at byte zero of the selected entry unit, includes the
-  backend's failure detail when a standard exception provides one, and suggests
-  reporting a reduced compiler bug. A non-standard exception receives the same
-  stable code without inventing a native exception description.
+  anchors the diagnostic at byte zero of the selected entry unit, and reports a
+  backend-neutral internal compiler error with a reduced-bug-report hint.
+  Backend identity and the complete exception detail are developer evidence in
+  `CompilationResult::backendFailureDetails`, not the public message. A
+  non-standard exception uses the same code and an honest evidence description.
+  The CLI/build driver saves that evidence in a private log and reports its
+  path; verbose output or failed preservation exposes the original details.
+  Native compile/link failure is not automatically classified as `GTI-B0001`,
+  since external toolchain and link configuration can also cause it. Retained
+  representations are identified by their actual format and path, never claimed
+  when artifact generation failed before an artifact existed. See
+  [build output](build-and-driver.md#live-build-progress).
 - Reserve `GTI-B0002` for internal post-HIR failure-metadata construction or
   verification failure. Anchor it at byte zero of the selected entry unit,
   include the first failed invariant, and do not attach a source fix-it: valid
