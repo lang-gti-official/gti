@@ -692,6 +692,7 @@ private:
     // Name/type checking continues, but this body's flow is not a proof until
     // concrete instance analysis selects every branch and reruns the checks.
     bool deferredConstexprSelection = false;
+    std::size_t rawConditionalExpressionDepth = 0;
     std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
     std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
     std::vector<SemanticLoanId> receiverStorageLoans;
@@ -713,6 +714,87 @@ private:
     const Stmt *currentStatement = nullptr;
   };
 
+  // Address provenance is not a loan: copying it neither retains the source
+  // nor prevents movement. It only preserves facts needed at an unsafe use.
+  struct RawPointerOrigin {
+    PlaceKey place;
+    SourceSpan addressSite;
+    SemanticLoanId throughLoan = 0;
+    bool invalidated = false;
+    // Symbolic input pointee, not the address of the parameter's stack slot.
+    bool parameterPointee = false;
+    // Ephemeral loop transfer variable; place names a pointer, not a pointee.
+    std::size_t loopInput = 0;
+    bool expired = false;
+    // An unresolved source result is not a foreign address. It may be copied
+    // inertly, but memory access requires a completed provenance query.
+    std::size_t sourceResultQuery = 0;
+    std::vector<PlaceKey> lifetimeInvalidations;
+    // A type-only origin has no place and grants no lifetime/access proof.
+    SemanticType pointeeType = SemanticType::Unknown;
+    friend bool operator==(const RawPointerOrigin &,
+                           const RawPointerOrigin &) = default;
+  };
+
+  struct ProjectedRawPointerOrigins {
+    std::vector<PlaceProjection> projections;
+    std::vector<RawPointerOrigin> origins;
+    friend bool operator==(const ProjectedRawPointerOrigins &,
+                           const ProjectedRawPointerOrigins &) = default;
+  };
+
+  struct RawResultOrigin {
+    RawPointerOrigin origin;
+    std::optional<std::size_t> parameter;
+    bool receiver = false;
+    bool pointerInput = false;
+    bool globalInput = false;
+  };
+
+  struct RawResultField {
+    std::vector<PlaceProjection> projections;
+    std::vector<RawResultOrigin> origins;
+  };
+
+  struct RawResultWrite {
+    RawResultOrigin destination;
+    std::vector<RawResultField> fields;
+    bool strong = false;
+  };
+
+  struct RawResultAccess {
+    std::vector<RawResultField> fields;
+    AccessMode access = AccessMode::ReadOnly;
+    bool checksLoans = true;
+    SourceSpan site;
+  };
+
+  struct RawResultQuery {
+    FunctionId function = 0;
+    ConstructorId constructor = 0;
+    ClassId defaultOwner = 0;
+    std::vector<SemanticType> ownerTypes;
+    std::vector<CompileTimeValue> ownerValues;
+    std::vector<SemanticType> types;
+    std::vector<CompileTimeValue> values;
+    std::vector<RawResultField> fields;
+    std::vector<RawResultWrite> writes;
+    std::vector<RawResultAccess> accesses;
+    bool linearWrites = false;
+    bool writesComplete = true;
+    bool accessesComplete = true;
+    std::size_t identity = 0;
+    bool complete = false;
+    bool valid = false;
+    std::optional<Diagnostic> failure;
+  };
+
+  struct RawResultQueryState {
+    std::vector<std::shared_ptr<RawResultQuery>> entries;
+    std::size_t depth = 0;
+    std::optional<bool> hasRawGlobals;
+  };
+
   struct Symbol {
     SemanticType type = SemanticType::Unknown;
     std::optional<ConstantValue> constant;
@@ -721,6 +803,8 @@ private:
     ValueState valueState = ValueState::Available;
     // Diagnostic provenance only; never participates in ownership decisions.
     std::vector<SourceSpan> moveOrigins;
+    std::vector<RawPointerOrigin> rawPointerOrigins;
+    std::vector<ProjectedRawPointerOrigins> rawPointerFields;
     std::vector<CallableCandidate> overloads;
     ClassId ownerClass = 0;
     Token declaration;
@@ -746,10 +830,34 @@ private:
     bool receiver = false;
   };
 
+  struct RawProgramStorageState {
+    Symbol *symbol = nullptr;
+    enum class Namespace {
+      Global,
+      Internal,
+      Visible
+    } space = Namespace::Global;
+    SourceUnitId unit = 0;
+    std::string name;
+    std::vector<RawPointerOrigin> origins;
+    std::vector<ProjectedRawPointerOrigins> fields;
+  };
+
   struct OperatorReceiverState {
     SemanticPlace place;
     bool mutableReceiver = false;
     std::optional<ExpressionInfo> info;
+  };
+
+  // One resolved source invocation, independent of its surface syntax. Operator
+  // resolution supplies this while synthetic receiver places are still alive.
+  struct RawInvocation {
+    ResolvedCallInfo resolved;
+    std::span<const ExprPtr> arguments;
+    const Expr *receiver = nullptr;
+    std::optional<SemanticPlace> receiverPlace;
+    SemanticType receiverType = SemanticType::Unknown;
+    Token site;
   };
 
   struct ResolvedFieldUse {
@@ -770,6 +878,32 @@ private:
     const Stmt *statement = nullptr;
     std::vector<ScopeStack> breakStates;
     std::vector<ScopeStack> continueStates;
+  };
+
+  struct RawPointerLoopUse {
+    std::vector<RawPointerOrigin> origins;
+    std::vector<Diagnostic> diagnostics;
+    std::size_t pendingLoops = 0;
+  };
+
+  struct RawPointerLoop {
+    struct Write {
+      RawPointerOrigin destination;
+      std::vector<PlaceProjection> projections;
+      std::vector<ProjectedRawPointerOrigins> fields;
+    };
+    struct Access {
+      std::vector<RawPointerOrigin> origins;
+      Token site;
+      std::shared_ptr<RawPointerLoopUse> deferred;
+      // A type-only use is inert: check contradictions, not pointee lifetime.
+      SemanticType expectedPointee = SemanticType::Unknown;
+      std::optional<AccessMode> memoryAccess;
+      std::shared_ptr<LoanFlowState> loanContext;
+    };
+    std::size_t identity = 0;
+    std::vector<Access> accesses;
+    std::vector<Write> writes;
   };
 
   struct MemberInfo {
@@ -1944,6 +2078,35 @@ private:
                                         std::string_view surface);
 
   void finalizeCThreadRequirements();
+
+  void recordRawBorrowCall(const Call &call, const ResolvedCallInfo &resolved);
+  void finalizeRawBorrowContracts();
+  bool analyzeRawReferenceReturn(const ExprPtr &expression);
+
+  struct RawBorrowCallArgument {
+    PlaceKey place;
+    std::vector<SemanticLoanDependency> dependencies;
+    std::optional<std::size_t> ownerParameter;
+    std::vector<RawPointerOrigin> origins;
+    std::vector<std::size_t> pointerParameters;
+    bool pointerReceiver = false;
+    std::vector<Diagnostic> lifetimeDiagnostics;
+    std::shared_ptr<RawPointerLoopUse> loopUse;
+  };
+
+  struct RawBorrowCallUse {
+    const FunctionDecl *caller = nullptr;
+    const FunctionDecl *callee = nullptr;
+    IntrinsicKind intrinsic = IntrinsicKind::None;
+    Token location;
+    std::vector<RawBorrowCallArgument> arguments;
+    std::optional<RawBorrowCallArgument> receiver;
+  };
+
+  RawBorrowCallArgument rawBorrowArgument(const ExprPtr &argument,
+                                          const Token &location);
+  void completeRawBorrowArgument(RawBorrowCallArgument &snapshot,
+                                 const Token &location);
 
   void recordMutableBindingUse(SymbolId symbol);
 
@@ -3630,6 +3793,102 @@ private:
   void requireUnsafe(const Expr &expression, UnsafeOperationKind operation,
                      const Token &token, std::string_view description);
 
+  [[nodiscard]] std::vector<RawPointerOrigin>
+  rawPointerOrigins(const ExprPtr &expression);
+  [[nodiscard]] std::vector<RawPointerOrigin>
+  rawPointerOrigins(const Expr *expression);
+  [[nodiscard]] std::vector<ProjectedRawPointerOrigins>
+  rawPointerFields(const Expr *expression);
+  [[nodiscard]] std::vector<ProjectedRawPointerOrigins>
+  rawPointerFieldsAt(const PlaceKey &place);
+  [[nodiscard]] std::vector<std::vector<PlaceProjection>>
+  rawPointerFieldPaths(const SemanticType &type);
+  [[nodiscard]] std::vector<SemanticType>
+  rawPointerTypesAt(const SemanticType &type,
+                    const std::vector<PlaceProjection> &projections);
+  [[nodiscard]] std::vector<RawPointerOrigin>
+  rawCallPointerOrigins(const Expr &expression, bool includeProduced = true);
+  [[nodiscard]] std::vector<ProjectedRawPointerOrigins>
+  rawProducedFields(const Expr &expression,
+                    const std::vector<RawResultField> *fields = nullptr,
+                    const RawInvocation *invocation = nullptr);
+  [[nodiscard]] std::shared_ptr<RawResultQuery>
+  rawResultQuery(const Call &call, const ResolvedCallInfo &resolved);
+  [[nodiscard]] std::shared_ptr<RawResultQuery>
+  rawResultQuery(const ResolvedCallInfo &resolved, SemanticType owner);
+  [[nodiscard]] std::shared_ptr<RawResultQuery>
+  rawConstructorResultQuery(const ResolvedConstructionInfo &resolved);
+  void runRawResultQuery(const std::shared_ptr<RawResultQuery> &query);
+  void recordRawResult(const ExprPtr &expression);
+  void recordRawConstructorResult(const ConstructorDecl &constructor);
+  void
+  collectRawResultFields(const std::vector<ProjectedRawPointerOrigins> &fields,
+                         const std::vector<Parameter> &parameters,
+                         const std::vector<SemanticType> &parameterTypes,
+                         bool constructedReceiver,
+                         std::vector<RawResultField> *output = nullptr);
+  std::vector<RawProgramStorageState> saveRawProgramStorage();
+  void restoreRawProgramStorage(std::vector<RawProgramStorageState> state);
+  void recordRawWrite(const SemanticPlace &place,
+                      const std::vector<ProjectedRawPointerOrigins> &fields,
+                      bool strong);
+  void applyRawCallWrites(const Expr &expression,
+                          const RawInvocation *invocation = nullptr);
+  void applyUnknownRawWrite(const SemanticPlace &place,
+                            const SemanticType &type, const SourceSpan &span,
+                            std::size_t query = 0);
+  void applyRawCleanupWrites(
+      const SemanticType &type, const SourceSpan &span,
+      const std::vector<ProjectedRawPointerOrigins> &fields = {});
+  void applyRawAliasWrites(std::vector<ProjectedRawPointerOrigins> fields,
+                           const SemanticType &type, const SourceSpan &span);
+  void
+  applyRawPointerFields(const SemanticPlace &place,
+                        const std::vector<ProjectedRawPointerOrigins> &fields,
+                        bool strong);
+  static bool rawWritesAreLinear(const StmtList &statements);
+  [[nodiscard]] Symbol *rawPointerRoot(const PlaceKey &place);
+  void preserveRawCallWrites(const Call &call);
+  void invalidateRawCallOrigins(const Call *call,
+                                const RawInvocation *invocation = nullptr);
+  void
+  applyRawPointerLifetimeInvalidations(RawPointerOrigin &origin,
+                                       const std::vector<PlaceKey> &places);
+  void assignRawPointerFields(const SemanticPlace &place, const Expr *value);
+  std::vector<SemanticPlace> rawPointerStoragePlaces(const SemanticPlace &place,
+                                                     bool &weak);
+  void invalidateRawPointerOrigins(const SemanticPlace &place);
+  static void
+  mergeRawPointerFields(std::vector<ProjectedRawPointerOrigins> &target,
+                        const std::vector<ProjectedRawPointerOrigins> &source);
+  static void
+  mergeRawPointerOrigins(std::vector<RawPointerOrigin> &target,
+                         const std::vector<RawPointerOrigin> &source);
+  void validateRawPointerAccess(const ExprPtr &pointer, const Token &site,
+                                AccessMode access);
+  void validateRawPointerOrigins(const std::vector<RawPointerOrigin> &origins,
+                                 const Token &site, AccessMode access,
+                                 bool checksLoans = true);
+  void recordRawAccess(const std::vector<RawPointerOrigin> &origins,
+                       const Token &site, AccessMode access, bool checksLoans);
+  void validateRawCallAccesses(const Expr &expression,
+                               const RawInvocation *invocation = nullptr);
+  void applyRawOperatorInvocation(const Expr &expression,
+                                  const RawInvocation &invocation,
+                                  bool contextual, bool projection);
+  [[nodiscard]] bool rawDispatchAccessFree(const ResolvedCallInfo &resolved,
+                                           const SemanticPlace &receiver);
+  void beginRawPointerLoop();
+  void endRawPointerLoop(const ScopeStack &backedge, bool reachable);
+  std::shared_ptr<RawPointerLoopUse>
+  deferredRawPointerLoopUse(const ExprPtr &pointer, const Token &site);
+  std::shared_ptr<RawPointerLoopUse>
+  deferredRawPointerLoopUse(const std::vector<RawPointerOrigin> &origins,
+                            const Token &site);
+  [[nodiscard]] std::optional<Diagnostic>
+  rawPointerLifetimeDiagnostic(const RawPointerOrigin &origin,
+                               const Token &site);
+
   [[nodiscard]] static bool containsRawPointer(const SemanticType &type);
 
   void requireBool(const ExprPtr &expression, SemanticType type,
@@ -3923,7 +4182,11 @@ private:
   // and their joins are part of the same body-scoped value-flow owner.
   struct ValueFlowState {
     ScopeStack scopes;
+    std::unordered_map<const Expr *, std::vector<ProjectedRawPointerOrigins>>
+        rawOperatorResults;
     std::vector<ValueControlFlowContext> controlFlow;
+    std::vector<RawPointerLoop> rawPointerLoops;
+    std::size_t nextRawPointerLoop = 1;
     std::unordered_map<std::string, Symbol> namespaceSymbols;
     std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
         internalNamespaceSymbols;
@@ -3932,7 +4195,10 @@ private:
 
     void clear() {
       scopes.clear();
+      rawOperatorResults.clear();
       controlFlow.clear();
+      rawPointerLoops.clear();
+      nextRawPointerLoop = 1;
       namespaceSymbols.clear();
       internalNamespaceSymbols.clear();
       visibleNamespaceSymbols.clear();
@@ -4049,6 +4315,10 @@ private:
     std::vector<const Expr *> suppressedProjectedPlaceReads;
     ProgramEffectOwner currentProgramEffectOwner;
     std::vector<CThreadCallUse> cThreadCallUses;
+    std::vector<RawBorrowCallUse> rawBorrowCallUses;
+    std::shared_ptr<RawResultQueryState> rawResultQueries;
+    std::shared_ptr<RawResultQuery> collectingRawResult;
+    std::size_t rawAccessObservation = 0;
     bool hasCThreadRequirements = false;
     std::unordered_map<ProgramEffectOwner, ProgramEffectSummary,
                        ProgramEffectOwnerHash>

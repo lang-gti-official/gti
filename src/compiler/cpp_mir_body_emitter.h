@@ -113,6 +113,9 @@ struct CppMirSymbolRepresentation {
   // copied representation is used only when their shared C++ template
   // definition must spell a direct initializer in terms of T/N parameters.
   std::string declarationTypeSpelling;
+  // Expression access unwraps a conditional byte-preserving field cell. Keep
+  // this separate from the actual member declaration/initializer name.
+  bool bytePreservingFieldCell = false;
   // A runtime-initialized owning program storage row names a backend lifetime
   // slot rather than an already-live semantic value. Module/0 constructs the
   // slot, while ordinary source reads and writes access its engaged value.

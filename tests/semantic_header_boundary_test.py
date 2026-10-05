@@ -52,6 +52,9 @@ def main() -> None:
         "src/compiler/semantic_analyzer_impl.h",
         "tests/semantic_analyzer_header_smoke.cpp",
         "tests/compiler_test_fixture.h",
+        # Reuses one analyzer across requests to verify that raw-reference
+        # assertion state is cleared; the Frontend facade cannot expose this.
+        "tests/raw_borrow_tests.cpp",
     }
     actual: set[str] = set()
     for directory in ("include", "src", "tests"):

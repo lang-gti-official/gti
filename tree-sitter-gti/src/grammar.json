@@ -3835,6 +3835,10 @@
             {
               "type": "STRING",
               "value": "track_caller"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "borrow_origin_attribute"
             }
           ]
         },
@@ -3857,6 +3861,10 @@
                   {
                     "type": "STRING",
                     "value": "track_caller"
+                  },
+                  {
+                    "type": "SYMBOL",
+                    "name": "borrow_origin_attribute"
                   }
                 ]
               }
@@ -3866,6 +3874,40 @@
         {
           "type": "STRING",
           "value": "]]"
+        }
+      ]
+    },
+    "borrow_origin_attribute": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "borrowed_from"
+        },
+        {
+          "type": "STRING",
+          "value": "("
+        },
+        {
+          "type": "FIELD",
+          "name": "origin",
+          "content": {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "identifier"
+              },
+              {
+                "type": "STRING",
+                "value": "this"
+              }
+            ]
+          }
+        },
+        {
+          "type": "STRING",
+          "value": ")"
         }
       ]
     },

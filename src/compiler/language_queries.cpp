@@ -36,6 +36,18 @@ SignaturePrinter::function(const FunctionInfo &info,
   if (info.tracksCaller) {
     result += "[[track_caller]] ";
   }
+  if (info.explicitReturnBorrowOrigin) {
+    if (info.returnBorrowOrigin == BorrowOriginKind::Receiver) {
+      result += "[[borrowed_from(this)]] ";
+    } else if (info.returnBorrowOrigin == BorrowOriginKind::Argument &&
+               declaration != nullptr &&
+               info.returnBorrowParameter < declaration->parameters().size()) {
+      result +=
+          "[[borrowed_from(" +
+          declaration->parameters()[info.returnBorrowParameter].name.lexeme +
+          ")]] ";
+    }
+  }
   if (info.requiresUnsafe) {
     result += "unsafe ";
   }

@@ -700,7 +700,7 @@ int main() {
       generated.find("class string") != std::string::npos &&
           generated.find("::gti_internal::backend::prefix_storage<"
                          "char8_t> data") != std::string::npos &&
-          generated.find("string(const string &) = delete;") !=
+          generated.find("string(const string &other) = delete;") !=
               std::string::npos &&
           generated.find("string(string &&) = default;") != std::string::npos &&
           generated.find("::gti_internal::backend::mir_prefix_read_mut_v1") !=
@@ -1857,6 +1857,38 @@ constexpr int bad = invalid<1>(7);
 }
 
 void testDependentConstexprBranches() {
+  const auto nestedSourceQuery =
+      lang::Frontend().analyze("constexpr-source-query.gti", R"(
+constexpr bool selected<uint64_t N>() {
+  if constexpr (N == 0) { return true; }
+  else { return selected<N - 1>(); }
+}
+int query<uint64_t N>() {
+  if constexpr (selected<N>()) { return 7; }
+  else { return 0; }
+}
+static_assert(selected<3>());
+int main() { return query<3>() - 7; }
+)");
+  expect(nestedSourceQuery.canGenerateCode() &&
+             nestedSourceQuery.diagnostics.empty(),
+         "source access queries and nested staged constants share bounded "
+         "request accounting without rejecting finite generic recursion");
+  const auto cyclicSourceQuery =
+      lang::Frontend().analyze("constexpr-source-query-cycle.gti", R"(
+constexpr bool cycle<uint64_t N>() {
+  if constexpr (cycle<N>()) { return true; }
+  else { return false; }
+}
+static_assert(cycle<0>());
+int main() { return 0; }
+)");
+  expect(!cyclicSourceQuery.canGenerateCode() &&
+             hasDiagnosticCode(cyclicSourceQuery.diagnostics, "GTI-S2057") &&
+             hasDiagnostic(cyclicSourceQuery.diagnostics, "limit"),
+         "alternating source queries and constexpr staging reject cycles "
+         "through the existing resource diagnostic rather than exhausting "
+         "the compiler stack");
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/constexpr_dependent_branches.gti";
   std::ifstream input(fixture);
@@ -4451,6 +4483,7 @@ int main() { return selected_value() + local_state(); }
   expect(appleSemantic.check(program),
          "inactive branches should not participate in Apple semantics");
   const std::string appleCpp = emitAnalyzedSource(source, apple);
+  const auto appleProgramStart = appleCpp.find("namespace __gti_program {");
   expect(
       appleCpp.find("static_cast<std::int32_t>(101)") != std::string::npos &&
           appleCpp.find("static_cast<std::int32_t>(64)") != std::string::npos &&
@@ -4459,7 +4492,8 @@ int main() { return selected_value() + local_state(); }
           appleCpp.find("missing_name") == std::string::npos &&
           appleCpp.find("#include <expected>") == std::string::npos &&
           appleCpp.find("#include <gti/runtime.hpp>") == std::string::npos &&
-          appleCpp.find("#if") == std::string::npos,
+          appleProgramStart != std::string::npos &&
+          appleCpp.find("#if", appleProgramStart) == std::string::npos,
       "Apple lowering should emit only active branches without C++ macros");
 
   const lang::TargetInfo windows{"windows", "pc", "x86_64"};
@@ -4535,8 +4569,12 @@ int main() {
   expect(allowedSemantic.check(errorProgram),
          "inactive #error directives should not affect semantics");
   const std::string allowedCpp = emitAnalyzedSource(errorSource, allowed);
-  expect(allowedCpp.find("#error") == std::string::npos,
-         "#error directives should never leak into backend output");
+  const auto allowedProgramStart = allowedCpp.find("namespace __gti_program {");
+  // Backend-private ABI guards are independent of folded source directives.
+  expect(allowedProgramStart != std::string::npos &&
+             allowedCpp.find("#error", allowedProgramStart) ==
+                 std::string::npos,
+         "source #error directives should never leak into program output");
 
   const lang::TargetInfo blocked{"blocked", "test", "test"};
   lang::SemanticVisitor blockedSemantic(blocked);

@@ -105,12 +105,17 @@ function-contract-attributes = function-contract-attribute
                               { function-contract-attribute } ;
 function-contract-attribute = "[[" function-contract-name
                               { "," function-contract-name } "]]" ;
-function-contract-name = "noreturn" | "track_caller" ;
-(* Defined, non-polymorphic GTI functions only, except trusted compiler
+function-contract-name = "noreturn" | "track_caller"
+                       | "borrowed_from" "(" ( IDENTIFIER | "this" ) ")" ;
+(* noreturn/track_caller: defined, non-polymorphic GTI functions only, except trusted compiler
    intrinsic declarations; operator annotations are rejected semantically.
    noreturn forbids normal returns and reachable
    fallthrough. track_caller propagates the external caller location through
-   direct calls. Neither changes the declared result type. *)
+   direct calls. Neither changes the declared result type.
+   borrowed_from selects one checked reference parameter or a non-static
+   receiver as the returned reference's owner. Safe returns must preserve it.
+   A direct raw dereference returned inside lexical unsafe may assert that
+   relationship, retaining known lifetime/access contradictions. *)
 
 conditional-declaration
                        = conditional-start { declaration }

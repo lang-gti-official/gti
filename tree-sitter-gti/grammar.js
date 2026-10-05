@@ -716,13 +716,16 @@ module.exports = grammar({
         $._function_declaration_body,
       ),
 
-    function_contract_attribute: () =>
+    function_contract_attribute: ($) =>
       seq(
         "[[",
-        choice("noreturn", "track_caller"),
-        repeat(seq(",", choice("noreturn", "track_caller"))),
+        choice("noreturn", "track_caller", $.borrow_origin_attribute),
+        repeat(seq(",", choice("noreturn", "track_caller", $.borrow_origin_attribute))),
         "]]",
       ),
+
+    borrow_origin_attribute: ($) =>
+      seq("borrowed_from", "(", field("origin", choice($.identifier, "this")), ")"),
 
     _function_declaration_body: ($) =>
       seq(

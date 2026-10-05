@@ -56,11 +56,131 @@ Raw pointers are nullable, trivially copyable and movable, and non-owning. A
 raw-pointer value does not keep its pointee alive, arrange destruction, or
 create a semantic loan. Copying a pointer copies only its address.
 
+The compiler also preserves known local address origins through pointer
+bindings, raw-pointer fields, aggregate copies/movement, designated
+construction, fixed-array elements, reseating, qualifications, arithmetic and
+branch joins.
+This metadata does **not** keep the object alive. Dereference, indexing and
+member access reject an origin whose scope has ended or whose owner is known
+to be moved on a possible path (`GTI-S2056`). Replacing or reinitializing a
+consumed object does not revive addresses into its previous lifetime. Access
+also respects overlapping
+checked loans using their ordinary last-use endpoints. Array-element addresses
+conservatively retain the array origin because later raw indexing can select
+another element. Unknown foreign addresses still require unsafe proof.
+
+Loops retain possible origins carried to later iterations, including through
+local pointer aliases. Reseating a pointer before accessing it replaces the
+earlier origins; merely copying or comparing an expired address remains inert
+and does not become an access error at a backedge.
+The same loop transfer follows source setters through aliases that first name
+a destination on a later iteration, and includes raw globals.
+
+Ordinary calls without an exact raw-result summary conservatively retain the
+possible origins of raw input values/fields and addressable reference or
+receiver inputs. The same rule applies to raw fields in constructed or returned
+aggregates. Mutable reference/receiver calls merge possible incoming origins
+into their raw fields rather than claiming an unknown call cleared them.
+
+Source function and constructor results also retain origins produced inside
+the callee, independently of declaration order and for concrete generic
+instances. Returning `&local` does not keep the local alive: copying/comparing
+the returned pointer is inert, but later accessing it or asserting a checked
+borrow is rejected. Returning a global's address preserves its actual identity
+for witness and loan checks. Returned aggregate fields retain their own origin
+sets; cached getters of global raw pointers observe the current pointer facts,
+not the first call's value. Default arguments and constructor field
+initializers use the same rule.
+Inherited raw fields and raw-bearing expected success/error or payload-enum
+alternatives retain these facts too. Tagged alternatives are conservatively
+joined, not proved separately; `.value()`, `.error()`, `.value_or()`, and enum
+pattern extraction preserve the carried addresses rather than treating the
+carrier as their owner. Raw-bearing expected mapper outputs currently retain
+an unresolved-source fact; inert transport remains permitted.
+
+Source setters also preserve known pointer facts written into globals and
+checked/raw formal destinations, including constructor writes. Merely checking
+an uncalled function, constructor, destructor, or lambda does not execute its
+global writes. An exact unconditional ordinary-function setter/reset can replace
+old facts; constructor, conditional, or ambiguous write effects conservatively
+retain their union. Global writes inside caller branches and loops are also
+weak, including short-circuit/conditional expressions; even a definite reseat
+within such a region may conservatively retain older facts. An unconditional
+exact reset after the region remains supported. Unsupported
+recursive write summaries, lambda/deferred writes, and possible source-destructor
+global writes remain unresolved at unsafe memory uses, rather than becoming
+foreign unknown addresses. Destructor effects are conservative across temporary
+cleanup and scope exits. Captured and stored mutable raw aliases retain their
+known destinations: unsupported callable/cleanup effects mark those possible
+destinations unresolved, not unrelated local storage. Precise
+captured-alias/destructor write inference is not implemented.
+
+This source-result analysis is deliberately bounded. Recursive or dynamically dispatched
+calls, lambda/deferred-callable raw results, raw-bearing variadic source
+results, constructor-relative self addresses, unresolved stored-reference raw
+fields, and exhausted/failed analysis retain an unresolved-source fact rather
+than becoming foreign unknown addresses. An unsafe memory use or checked-borrow
+assertion rejects that fact (`GTI-S2056`); inert copies and comparisons remain
+valid. Concrete retained references resolve to their external storage first.
+Ordinary nonvariadic concrete generic calls are supported. The implementation
+limits are 32 active source queries and 2,048 cached concrete queries per
+semantic request.
+Abstract source methods are unresolved dispatch, not foreign bodyless calls.
+Unknown receiver effects also follow stored mutable raw aliases through a
+readonly receiver; readonly access to the carrier does not make its pointees
+immutable.
+
+Source helpers, constructors, and overloaded operators also preserve raw-access
+requirements. A known expired pointer, or a pointer conflicting with a live
+checked loan, cannot become usable merely by passing it to a helper that reads
+or writes through it. Diagnostics point to the caller invocation. Source
+copy/equality-only helpers remain inert. Concrete lambdas may likewise prove
+that their bodies perform no raw access; unknown foreign calls do not establish
+that proof.
+Identity-bound restoring transfer also permits inert address transport when
+the concrete type is structurally relocatable and needs no active cleanup. Types
+whose cleanup may run source code do not gain this access-free proof.
+
+Virtual calls can prove inertness when a checked place identifies an exact
+owning receiver, or when every target in the sealed nongeneric family has a
+complete access-free source summary. Otherwise calls conservatively check
+their possible raw inputs. Open generic/erased callable target families are
+not assumed inert merely because one currently observed target compares an
+address. Passing a known expired address through such an unresolved invocation
+can therefore be rejected even if that particular implementation only copies
+it; copying or comparing the address directly remains permitted. This access
+proof does not make dynamically returned raw addresses or write effects precise.
+
+Mutable calls also conservatively invalidate existing raw addresses into their
+class, array, or compiler-owned storage arguments/receiver. This preserves
+known lifetime loss through ordinary `destroy`, `clear`, release and relocation
+wrappers without recognizing library names. A source method returning a checked
+borrow is not exempt merely for its return type: it can replace storage before
+returning. Exact compiler-owned borrow-only operations preserve existing
+addresses. A bounded source-effect proof also admits a nonvirtual GTI helper
+with a validated explicit borrow origin whose entire body is a direct unsafe
+`return *pointer_parameter;` (optional grouping/nested blocks), and whose value
+parameters require no cleanup. No calls, writes, local objects or other body
+operations are admitted by that proof; parameter destructors also prevent it.
+Consequently
+an innocuous aggregate mutator can require reacquiring an address afterward;
+scalar mutation does not end its object's lifetime and is unaffected. Stale
+addresses may still be copied or compared, but not dereferenced, reborrowed or
+used in pointer arithmetic. Loop-backedge substitution retains these possible
+lifetime-ending events rather than reviving a later iteration's stale address.
+Consequently, a function that actually clears an address or returns unrelated
+storage may be conservatively rejected when an input has contradictory known
+facts. This is a bounded provenance analysis, not a complete interprocedural
+alias proof or a claim that every invalid unsafe program is diagnosed. Storing
+an address in an object's pointer field does not establish ownership of its
+pointee. Broader memory-campaign work remains tracked under `S-ALLOC-04`.
+
 ## Safe Operations
 
 The following operations do not inspect or derive memory and are valid outside
 an unsafe block:
 
+- form `&place` for an admitted addressable place;
 - initialize, copy, move, pass, return, or assign a compatible raw pointer;
 - initialize or assign a raw pointer from `nullptr`;
 - compare compatible raw pointers with `==` or `!=`; and
@@ -70,6 +190,16 @@ Pointee qualification cannot be removed implicitly. GTI provides no implicit
 conversion between a typed pointer and `void*`, no integer-to-pointer or
 pointer-to-integer conversion, and no raw-pointer truthiness. Compare with
 `nullptr` explicitly.
+
+Address formation preserves the actual access of its operand: an ordinary
+read-only `int value` produces `const int*`, while `mut int value` permits
+`int*`. This applies through checked references and fields as well. It creates
+no long-lived loan and does not extend the operand's lifetime. Computing the
+operand still performs its ordinary access and initialization checks. Checked
+array indexing retains bounds checks and evaluates its index once. Raw
+projections beneath `&`, such as `&pointer[index]`, `&pointer->field` and
+`&*pointer`, still require `unsafe`; the outer operation suppresses none of
+their obligations.
 
 ## Unsafe Operations
 
@@ -86,7 +216,6 @@ unsafe {
 
 The gated operations are:
 
-- address formation with `&place`;
 - dereference reads and writes with `*pointer`;
 - raw indexing with `pointer[index]`;
 - raw member access with `pointer->member`;
@@ -121,7 +250,67 @@ remain programmer proof obligations.
 
 Address formation requires a supported addressable place. GTI does not form a
 pointer to a temporary, function, fixed array as a whole, or another raw
-pointer. Taking the address of an array element is valid inside `unsafe`.
+pointer. Taking the address of a supported checked array element does not
+itself require `unsafe`.
+
+## Explicit Owner-Witness Borrowing
+
+`<std/memory>` provides unsafe free functions:
+
+```gti
+unsafe T& assume_ref<T, Owner>(const T* address, Owner& owner);
+unsafe mut T& assume_mut<T, Owner>(T* address, mut Owner& owner);
+```
+
+Generic arguments may be inferred. The caller asserts that the address names
+an aligned, initialized, live `T` whose lifetime is covered by the witness,
+with the requested access. The result is an ordinary checked reference tied
+to the witness. Its live loan prevents incompatible witness access, movement
+and escape. A stored pointer does not independently prove that its enclosing
+object owns the pointee. The mutable operation cannot remove pointee constness.
+
+These helpers are ordinary GTI definitions using a public function contract:
+
+```gti
+[[borrowed_from(owner)]]
+unsafe T& assume_ref<T, Owner>(const T* address, Owner& owner) {
+  unsafe { return *address; }
+}
+```
+
+An application can define the same pattern without access to compiler-private
+declarations. `[[borrowed_from(parameter)]]` resolves one checked-reference
+parameter; `[[borrowed_from(this)]]` selects the non-static receiver. The
+parameter must grant sufficient access for the returned reference. Unambiguous
+existing return-origin inference remains available without an annotation.
+Safe returns must prove the selected origin; the annotation alone cannot
+relabel a local, unrelated parameter, or temporary. A direct `return *address`
+inside lexical `unsafe` explicitly asserts the raw pointer's relationship to
+that owner. Declaring the function `unsafe` does not authorize its body.
+The initial raw-assertion syntax is direct dereference (optional grouping), not
+arbitrary local reference construction or general lifetime parameters.
+
+The contract is preserved through concrete generic analysis, HIR and MIR. A
+safe reference contract can be used on a virtual/interface declaration, but
+raw assertion preconditions are currently rejected in polymorphic bodies;
+they cannot disappear behind a dynamically selected implementation.
+
+Known local origins must lie within the witness, and known expired or replaced
+origins cannot be asserted valid. Source-defined wrappers propagate these
+requirements through formal parameters, including pointer aliases; checking
+does not depend on the public helper's spelling or declaration order. Loop
+backedge origins are checked as well as the first iteration's origin.
+Raw inputs stored in aggregate fields and receivers conservatively retain
+their possible origins. Checked reference fields resolve to their retained
+external owner rather than the carrier shell. Writes through known raw aliases
+update the original storage's raw-field facts; multiple possible destinations
+and dynamic indices weakly retain both old and incoming origins.
+
+These helpers assert a checked lifetime relationship; they do not allocate,
+initialize or release memory. They retain the bounded interprocedural analysis
+described above, rather than promising arbitrary source-call provenance
+inference. Typed allocation and object-lifetime operations are provided
+separately by `std::allocator` and `std::storage<T>`.
 
 ## `void*`
 
@@ -130,9 +319,41 @@ copied, compared, passed, and returned under the same rules as other raw
 pointers. They cannot be dereferenced, indexed, used for member access, or used
 in pointer arithmetic.
 
-GTI does not implicitly convert between `void*` and a typed pointer. This keeps
-type erasure visible at a native wrapper boundary until an audited cast surface
-is designed.
+GTI does not implicitly convert between `void*` and a typed pointer. Explicit
+type-call conversion accepts a namespace- or class-scoped pointer alias:
+
+```gti
+using Erased = void*;
+using ItemAddress = Item*;
+Erased erased = Erased(address);
+ItemAddress restored = ItemAddress(erased);
+```
+
+The source and destination must both be raw pointers. They must have the same
+pointee type, or at least one must point to `void`. The conversion may add
+pointee constness but never remove it. Integer/pointer conversions and direct
+unrelated typed-pointer reinterpretation remain rejected. A dependent target
+type call with a raw-pointer input is checked again in its concrete instance;
+it does not establish a general unconstrained conversion capability.
+
+`<std/memory>` supplies ordinary source helpers:
+
+```gti
+void* erase_address<T>(T* address);
+const void* erase_address<T>(const T* address);
+T* typed_address<T>(void* address);
+const T* typed_address<T>(const void* address);
+```
+
+The erasure helper infers `T`; restoration spells `typed_address<Item>(erased)`.
+These are safe inert address operations, not accesses. They establish no
+initialization, alignment, lifetime, ownership or write permission and create
+no checked loan. Existing origin records survive erasure and restoration,
+including expired/replaced origins and known pointee-type contradictions.
+Known contradictory restoration is rejected rather than becoming an unsafe
+assertion. Actual dereference and checked owner-witness borrowing retain their
+own obligations. Pointer conversions do not extend constant evaluation or
+promise stable object layout. Example 113 demonstrates an unrelated user type.
 
 ## Programmer Proof Obligations
 
@@ -253,6 +474,11 @@ the call must be inside `unsafe`. The contextual address cannot be retained,
 returned, forwarded, or used outside that full expression. The native
 function may replace the pointer value; GTI infers no non-null, ownership,
 lifetime, allocation, or cleanup guarantee from that write.
+The foreign function must not retain the address of the output slot. The C++
+backend stages internal address carriers into native pointer slots for this
+call and copies updated values back before evaluating subsequent source code.
+Repeated output arguments naming the same binding share one native slot;
+native declarations and C-compatible fields retain their actual pointer ABI.
 
 A declaration is not itself an unsafe operation. Calling a pointer-bearing C
 function is unsafe because the declaration cannot express native bounds,
@@ -316,7 +542,8 @@ This feature does not add:
 - anonymous/general function pointers, captured callbacks, or foreign-thread
   GTI callback entry beyond the named exact native callback family;
 - implicit fixed-array decay;
-- typed-pointer/`void*` conversions or raw casts;
+- implicit typed-pointer/`void*` conversion, integer/pointer casts, or unrelated
+  typed-pointer reinterpretation;
 - general C arrays, unions, bit-fields, packing, or platform-layout imports;
 - direct C++ class ABI calls or exception passage;
 - source-level `new`, `delete`, placement construction, or manual object

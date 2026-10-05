@@ -1304,7 +1304,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v74\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v75\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -3497,7 +3497,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v87 ") &&
+  expect(mirDump.starts_with("mir-v88 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -5945,20 +5945,21 @@ int main() { return 0; }
       artifact.contents, "__gti_type_", "BorrowingIterator");
   const bool exactIteratorSpecialMembers =
       !iteratorTypes.empty() &&
-      std::all_of(
-          iteratorTypes.begin(), iteratorTypes.end(),
-          [&](const std::string &name) {
-            return artifact.contents.find("const std::int32_t & value") !=
-                       std::string::npos &&
-                   artifact.contents.find(name + "(const " + name +
-                                          " &) = default") !=
-                       std::string::npos &&
-                   artifact.contents.find(name + "(" + name +
-                                          " &&) = default") !=
-                       std::string::npos &&
-                   artifact.contents.find("operator=(const " + name +
-                                          " &) = delete") != std::string::npos;
-          });
+      std::all_of(iteratorTypes.begin(), iteratorTypes.end(),
+                  [&](const std::string &name) {
+                    return artifact.contents.find(
+                               "const std::int32_t & value") !=
+                               std::string::npos &&
+                           artifact.contents.find(name + "(const " + name +
+                                                  " &other) = default") !=
+                               std::string::npos &&
+                           artifact.contents.find(name + "(" + name +
+                                                  " &&) = default") !=
+                               std::string::npos &&
+                           artifact.contents.find("operator=(const " + name +
+                                                  " &other) = delete") !=
+                               std::string::npos;
+                  });
   expect(exactIteratorSpecialMembers,
          "the C++ backend should preserve read-only storage and frontend "
          "special-member decisions on each concrete iterator application");
@@ -9761,13 +9762,14 @@ int main() {
   expect(
       // The factory's verified-MIR sibling publishes the owner by move
       // into the caller's receiving local.
-      artifact.contents.find("std::construct_at(__gti_mir_out_result, "
-                             "std::move(__gti_mir_p_2.get()))") !=
-              std::string::npos &&
-          artifact.contents.find("unique_ptr(const unique_ptr &) = delete") !=
+      artifact.contents.find(
+          "construct_representation_at(__gti_mir_out_result, "
+          "std::move(__gti_mir_p_2.get()))") != std::string::npos &&
+          artifact.contents.find(
+              "unique_ptr(const unique_ptr &other) = delete") !=
               std::string::npos &&
           artifact.contents.find("unique_ptr(unique_ptr &&other) noexcept : "
-                                 "owner(std::move(other.owner)) {}") !=
+                                 "owner(std::move(other.owner)) {\n      }") !=
               std::string::npos &&
           artifact.contents.find("unique_ptr() noexcept {}") !=
               std::string::npos &&
@@ -11124,7 +11126,10 @@ int main() {
           constructor->parameterTypes.size() == 2 &&
           constructor->parameterTypes[0] == lang::SemanticType::Int32 &&
           constructor->parameterTypes[1] == lang::SemanticType::Bool &&
-          value.parameterTypes.size() == 3) {
+          value.parameterTypes.size() == 4 &&
+          value.parameterTypes[1] == lang::SemanticType::UInt64 &&
+          value.parameterTypes[2] == lang::SemanticType::Int32 &&
+          value.parameterTypes[3] == lang::SemanticType::Bool) {
         foundVariadicHirConstruction = true;
       }
     }
@@ -11648,38 +11653,40 @@ int main() {
       concreteBackendSymbols(artifact.contents, "__gti_type_", "Buffer");
   const std::string concreteBuffer =
       bufferTypes.size() == 1 ? *bufferTypes.begin() : std::string();
-  expect(!concreteBuffer.empty() &&
-             artifact.contents.find("transfer__gti_mir_failure(") !=
-                 std::string::npos &&
-             artifact.contents.find("transfer_nested__gti_mir_failure(") !=
-                 std::string::npos &&
-             artifact.contents.find("std::construct_at(__gti_mir_out_result, "
-                                    "std::move(__gti_mir_p_1.get()));") !=
-                 std::string::npos &&
-             artifact.contents.find(
-                 "scalar-cfg-constructor-failure-v1 constructor-instance 1") !=
-                 std::string::npos &&
-             artifact.contents.find(
-                 "scalar-cfg-constructor-failure-v1 constructor-instance 2") !=
-                 std::string::npos &&
-             artifact.contents.find("mir_allocate_storage_v1<std::int32_t>") !=
-                 std::string::npos &&
-             artifact.contents.find("__gti_entry__gti_mir_failure(") !=
-                 std::string::npos &&
-             artifact.contents.find("return std::move(value)") ==
-                 std::string::npos &&
-             artifact.contents.find(concreteBuffer + "(const " +
-                                    concreteBuffer + " &) = delete;") !=
-                 std::string::npos &&
-             artifact.contents.find(concreteBuffer + "(" + concreteBuffer +
-                                    " &&) = default;") != std::string::npos &&
-             artifact.contents.find(concreteBuffer + " &operator=(const " +
-                                    concreteBuffer + " &) = delete;") !=
-                 std::string::npos &&
-             artifact.contents.find(concreteBuffer + " &operator=(" +
-                                    concreteBuffer + " &&) = default;") !=
-                 std::string::npos,
-         "the backend should keep immutable move-only aggregates transferable");
+  const std::size_t emittedProgram =
+      artifact.contents.find("namespace __gti_program {");
+  expect(
+      !concreteBuffer.empty() && emittedProgram != std::string::npos &&
+          artifact.contents.find("transfer__gti_mir_failure(") !=
+              std::string::npos &&
+          artifact.contents.find("transfer_nested__gti_mir_failure(") !=
+              std::string::npos &&
+          artifact.contents.find(
+              "construct_representation_at(__gti_mir_out_result, "
+              "std::move(__gti_mir_p_1.get()));") != std::string::npos &&
+          artifact.contents.find(
+              "scalar-cfg-constructor-failure-v1 constructor-instance 1") !=
+              std::string::npos &&
+          artifact.contents.find(
+              "scalar-cfg-constructor-failure-v1 constructor-instance 2") !=
+              std::string::npos &&
+          artifact.contents.find("mir_allocate_storage_v1<std::int32_t>") !=
+              std::string::npos &&
+          artifact.contents.find("__gti_entry__gti_mir_failure(") !=
+              std::string::npos &&
+          artifact.contents.find("return std::move(value)", emittedProgram) ==
+              std::string::npos &&
+          artifact.contents.find(concreteBuffer + "(const " + concreteBuffer +
+                                 " &other) = delete;") != std::string::npos &&
+          artifact.contents.find(concreteBuffer + "(" + concreteBuffer +
+                                 " &&) = default;") != std::string::npos &&
+          artifact.contents.find(concreteBuffer + " &operator=(const " +
+                                 concreteBuffer + " &other) = delete;") !=
+              std::string::npos &&
+          artifact.contents.find(concreteBuffer + " &operator=(" +
+                                 concreteBuffer + " &&) = default;") !=
+              std::string::npos,
+      "the backend should keep immutable move-only aggregates transferable");
 
   const lang::FrontendResult invalid =
       analyzeTrustedMemoryFixture("invalid-aggregate-ownership.gti", R"(
@@ -12035,7 +12042,7 @@ int main() {
           artifact.contents.find("if (!" + activeName + ") { return true; }") !=
               std::string::npos &&
           artifact.contents.find(concreteCleanup + "(const " + concreteCleanup +
-                                 " &) = delete;") != std::string::npos &&
+                                 " &other) = delete;") != std::string::npos &&
           artifact.contents.find(concreteCleanup + "(" + concreteCleanup +
                                  " &&other) noexcept") != std::string::npos &&
           artifact.contents.find("other." + activeName + " = false;") !=
@@ -12337,6 +12344,8 @@ int main() {
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::size_t emittedProgram =
+      artifact.contents.find("namespace __gti_program {");
   expect(artifact.contents.find("___gti_operator_arrow") != std::string::npos &&
              artifact.contents.find("___gti_operator_dereference") !=
                  std::string::npos &&
@@ -12362,7 +12371,9 @@ int main() {
                  std::string::npos &&
              artifact.contents.find("___gti_operator_pre_decrement") !=
                  std::string::npos &&
-             artifact.contents.find(" operator*(") == std::string::npos,
+             emittedProgram != std::string::npos &&
+             artifact.contents.find(" operator*(", emittedProgram) ==
+                 std::string::npos,
          "the backend should retain selected method calls while exposing only "
          "validated comparisons as C++ operators for generic representation");
 
@@ -16808,7 +16819,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v87 ") &&
+             mirDump.starts_with("mir-v88 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -17341,7 +17352,7 @@ int main() {
               std::string::npos &&
           cpp23.find("std::expected<std::int32_t &") == std::string::npos &&
           cpp23.find(" = *__gti_mir_loan_") != std::string::npos &&
-          cpp23.find("std::construct_at(__gti_mir_out_result, "
+          cpp23.find("construct_representation_at(__gti_mir_out_result, "
                      "*__gti_mir_loan_") != std::string::npos,
       "both native standards should use GTI's private pointer-backed "
       "fallible-borrow carrier and initialize passive or owning-error "

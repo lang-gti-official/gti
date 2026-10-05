@@ -3034,7 +3034,14 @@ def main():
         assert "static_cast<std::int32_t>(42)" in emitted_source
         assert "#include <expected>" in emitted_source
         assert "std::expected<std::int32_t, std::int32_t>" in emitted_source
-        assert "#if" not in emitted_source
+        # Source target branches must be resolved before program emission.
+        # The backend support preamble independently guards its native ABI;
+        # those host preprocessor checks are not unlowered GTI conditionals.
+        _, program_namespace, emitted_program = emitted_source.partition(
+            "namespace __gti_program {"
+        )
+        assert program_namespace, "expected the lowered program namespace"
+        assert "#if" not in emitted_program
         assert "target.vendor" not in emitted_source
 
         emitted_cpp20 = root / "main-cpp20.cpp"

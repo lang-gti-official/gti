@@ -70,8 +70,10 @@ std::storage<T>
 ```
 
 There is no public `std::mem` namespace, raw allocator handle, allocation
-address, byte slice, `new`, `delete`, `deallocate`, `release`, or unchecked
+address, byte slice, `new`, `delete`, `deallocate`, or unchecked
 slot operation.
+The general-memory extension adds `storage.release()` as explicit owning
+cleanup, not as detachment of a raw allocation from its release authority.
 
 `std::allocator` is initially a stateless process allocator. It creates typed
 storage through two generic methods:
@@ -117,6 +119,7 @@ void storage.destroy(size_t index) mut
 T& storage.get(size_t index)
 mut T& storage.get_mut(size_t index) mut
 void storage.clear() mut
+void storage.release() mut
 ```
 
 Capacity is allocation extent, not logical container size. A container or
@@ -134,7 +137,10 @@ live `T`:
   to the storage receiver;
 - `destroy` requires a live in-bounds slot, ends that value's lifetime exactly
   once, and makes the slot available for a later, distinct lifetime; and
-- `clear` destroys every live value once in descending index order.
+- `clear` destroys every live value once in descending index order; and
+- `release` performs owning cleanup and also releases the allocation, leaving
+  capacity zero. It installs an empty receiver before cleanup of the detached
+  owner, preserving exactly-once cleanup even when an element destructor fails.
 
 Destroying the owner performs the same reverse-slot cleanup for every value
 still live and then releases the allocation. A slot lifetime is not revived by
@@ -184,9 +190,12 @@ forwarding an arbitrary constructor argument pack. Construction of that value
 therefore completes before the storage operation begins. If it raises defined
 failure, no new slot lifetime is published and ordinary MIR cleanup destroys
 every previously live owner, including the storage and its initialized slots.
-Exact in-slot `emplace<Args...>` requires an explicit MIR constructor-failure
-boundary and is deferred rather than routing failure through an untracked C++
-placement call.
+The final-address extension adds `emplace<Args...>(index, args...)`. It reuses
+the MIR constructor-failure protocol: a non-consuming slot preflight precedes
+parameter handoff, and the exact selected constructor runs at the final slot
+address. Partial members are rolled back on failure without publishing a live
+slot. The original constructor failure is propagated, not translated to an
+allocation error. A successful call returns a receiver-tied exclusive borrow.
 
 ### 5. Public policy remains ordinary GTI source
 
@@ -285,6 +294,36 @@ mechanics, not GTI source semantics.
 - Owner-wide borrowing is intentionally conservative. Per-slot disjoint
   mutable borrows require indexed place/epoch precision and must preserve this
   API's stale-reference guarantees.
-- Stateful allocators, allocator propagation, arbitrary in-slot emplacement,
+- Stateful allocators, allocator propagation,
   bulk initialization, growth, shrinking, and generation-bearing pool handles
   are later coherent slices rather than optional parameters on this one.
+
+## General low-level extension
+
+The accepted Phase 1 campaign (`S-ALLOC-04`) revises the original exclusion of
+public raw allocation and manual object lifetime. Checked storage remains the
+safe default; general facilities must additionally permit application-defined
+owners and raw-backed views. Raw addresses alone grant neither ownership nor
+checked lifetime. An explicit unsafe owner-witness bridge, retained known
+provenance, typed layout/allocation authority and verified lifecycle operations
+are required together. The final-address constructor protocol above is a
+prerequisite, not completion of that campaign. `std::assume_ref` and
+`std::assume_mut` now expose the unsafe owner-witness assertion through checked
+MIR loans as ordinary GTI definitions using public `borrowed_from` contracts,
+with source-wrapper, receiver-field and loop requirements. Concrete ordinary
+source-result queries retain callee-produced raw origins; unsupported query
+shapes fail closed at memory access rather than losing known facts. Built-in address
+formation itself is safe when its operand is safe to evaluate. Explicit
+allocation release now uses ordinary GTI movement and MIR cleanup. The
+existing typed allocation request supplies ordinary-object layout authority,
+including owning class elements; this does not expand constexpr layout queries
+or promise a stable foreign ABI. Public erased-address conversions preserve
+constness, known pointee types and origins without creating a checked loan.
+Conservative source-access/write summaries and byte-preserving native-record
+transport are implemented: a safe inert copy does not evaluate an expired
+native pointer subobject. Ordinary source calls, callbacks, virtual families,
+Expected/enum alternatives and storage transport have focused native evidence.
+The full completion suite and installed/tooling checks complement those
+focused checks; the local evidence is recorded in
+[verification](../architecture/verification.md#low-level-memory-phase-1).
+Stateful allocator policies and resource leases remain Phase 2.

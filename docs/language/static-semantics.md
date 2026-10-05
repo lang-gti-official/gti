@@ -140,7 +140,11 @@ The ordinary type surface supports exactly one pointer level. Pointer-to-pointer
 locals, parameters, fields, aliases, and unannotated returns, references to raw
 pointers, anonymous/general function-pointer declarators, pointer-to-array
 types, implicit fixed-array
-decay, casts, and source allocation/deallocation expressions are ill-formed.
+decay, integer/pointer casts, unrelated typed-pointer reinterpretation, and
+source allocation/deallocation expressions are ill-formed. Explicit
+const-preserving typed/`void*` conversions use pointer-alias type calls (or
+concrete dependent target type calls), as specified in
+[Raw pointers](raw-pointers.md#void).
 An exact `[[c_array(count)]] extern "C"` return may add one outer pointer when
 the named parameter is a writable fixed-width integer out pointer; this does
 not admit nested pointers elsewhere. `void*` is opaque and cannot be

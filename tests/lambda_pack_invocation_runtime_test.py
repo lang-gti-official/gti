@@ -8,7 +8,8 @@ import subprocess
 import tempfile
 
 
-def main(names=None, cases=None, execution_profile=None, stdin_by_name=None):
+def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
+         fixture_paths=None):
     fixtures = pathlib.Path(__file__).parent / "fixtures"
     if names is None:
         names = ("lambda_pack_invocation", "stored_callable_signature",
@@ -36,7 +37,7 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None):
     with tempfile.TemporaryDirectory(prefix="gti-lambda-pack-") as temporary:
         for label, flags, native in modes:
             for name in names:
-                source = fixtures / f"{name}.gti"
+                source = (fixture_paths or {}).get(name, fixtures / f"{name}.gti")
                 binary = pathlib.Path(temporary) / f"{name}-{label}"
                 command = [str(compiler), str(source), *flags, "-o", str(binary)]
                 if execution_profile is not None:

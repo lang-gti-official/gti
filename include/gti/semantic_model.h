@@ -19,7 +19,6 @@ enum class SemanticLoanEndKind {
 
 enum class UnsafeOperationKind {
   None,
-  AddressOf,
   RawDereference,
   RawIndex,
   RawMember,
@@ -355,6 +354,9 @@ enum class IntrinsicKind {
   RestoringSwap,
   RestoringIndexedSwap,
   EnumUnderlyingValue,
+  RawBorrow,
+  RawBorrowMut,
+  RawPointerConversion,
   Count,
 };
 
@@ -532,6 +534,21 @@ struct OwnedPointeeProjection {
                          const OwnedPointeeProjection &) = default;
 };
 
+// A source-derived precondition for turning an unknown raw input into a
+// checked borrow. These are not loans: passing a pointer does not retain it.
+// Formal indices survive concrete generic substitution and wrapper calls.
+struct RawBorrowContract {
+  std::size_t pointerParameter = 0;
+  bool pointerReceiver = false;
+  std::optional<std::size_t> ownerParameter;
+  bool ownerReceiver = false;
+  std::vector<PlaceProjection> ownerProjections;
+  AccessMode access = AccessMode::ReadOnly;
+
+  friend bool operator==(const RawBorrowContract &,
+                         const RawBorrowContract &) = default;
+};
+
 struct FunctionInfo {
   FunctionId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -558,6 +575,7 @@ struct FunctionInfo {
   CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
   // Derived from resolved calls, after all source bodies have been analyzed.
   bool requiresCThreadRuntime = false;
+  std::vector<RawBorrowContract> rawBorrowContracts;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   std::optional<std::size_t> cArrayCountParameter;
@@ -566,6 +584,7 @@ struct FunctionInfo {
   bool overrideMethod = false;
   IntrinsicKind intrinsic = IntrinsicKind::None;
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
+  bool explicitReturnBorrowOrigin = false;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> returnBorrowParameters;
@@ -601,6 +620,9 @@ struct LambdaInfo {
   std::vector<SemanticType> parameterTypes;
   std::vector<LambdaCaptureInfo> captures;
   SemanticTypeTraits traits{};
+  // Exact concrete instance proven by ordinary body analysis to perform no
+  // raw memory/address-arithmetic access. Unknown remains conservative.
+  SemanticType rawAccessFreeType = SemanticType::Unknown;
 };
 
 struct LambdaCaptureLink {
@@ -933,6 +955,14 @@ struct ResolvedCallInfo {
   // this invocation. The full expression retains ownership of each value.
   std::vector<std::size_t> ephemeralBorrowArguments;
   std::vector<CallableArgumentBoundary> callableArguments;
+};
+
+// A lexical unsafe raw dereference returned under an explicit declaration
+// contract. The owner is a resolved checked input, never inferred from the
+// pointer's representation. HIR lowers this to the shared raw-borrow operation.
+struct RawReferenceAssertionInfo {
+  PlaceKey owner;
+  SemanticType ownerReference = SemanticType::Unknown;
 };
 
 enum class ExpectedCombinatorKind {
@@ -1453,6 +1483,9 @@ public:
   [[nodiscard]] const CallerLocationOrigin *
   findCallerLocation(const Expr &expression) const;
 
+  [[nodiscard]] const RawReferenceAssertionInfo *
+  findRawReferenceAssertion(const Expr &expression) const;
+
   [[nodiscard]] const ProgramInitializationPlan &
   programInitializationPlan() const;
 
@@ -1751,6 +1784,9 @@ private:
   void recordCallerLocation(const Expr &expression,
                             CallerLocationOrigin origin);
 
+  void recordRawReferenceAssertion(const Expr &expression,
+                                   RawReferenceAssertionInfo info);
+
   void recordPlace(const Expr &expression, PlaceKey place);
 
   void recordOwnershipEvent(const Expr &expression, OwnershipEvent event);
@@ -1993,6 +2029,8 @@ private:
       payloadConstructions;
   std::unordered_map<const Expr *, ResolvedPayloadPatternInfo> payloadPatterns;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
+  std::unordered_map<const Expr *, RawReferenceAssertionInfo>
+      rawReferenceAssertions;
   std::unordered_map<const Call *, ExpectedCombinatorInfo> expectedCombinators;
   std::unordered_map<const Expr *, NativeFunctionConversionInfo>
       nativeFunctionConversions;

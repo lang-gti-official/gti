@@ -1323,10 +1323,11 @@ int32_t main() {
   if (emitter.supportsFailureBodyText(defaultAddress)) {
     const lang::CppMirBodyEmissionText text = emitter.emitFailureBodyText(
         defaultAddress, "concrete-default-return-test-v0", 1);
-    expect(text.text.find("std::construct_at(__gti_mir_out_result);") !=
-               std::string::npos,
-           "the concrete default return should construct directly in its "
-           "uninitialized result storage");
+    expect(
+        text.text.find("construct_representation_at(__gti_mir_out_result);") !=
+            std::string::npos,
+        "the concrete default return should construct directly in its "
+        "uninitialized result storage");
   }
 
   const lang::MirBodyAddress entryAddress{.kind = lang::MirBodyKind::Function,
@@ -1748,7 +1749,7 @@ int main() {
         "__gti_mir_v_" + std::to_string(copiedValue) + "{}";
     expect(text.find("return " + sourceSpelling + ";") != std::string::npos &&
                text.find(local) == std::string::npos &&
-               text.find("std::construct_at(__gti_mir_out_result") ==
+               text.find("construct_representation_at(__gti_mir_out_result") ==
                    std::string::npos,
            "plain copy return should copy directly from the exact source "
            "place without inventing an SSA object or failure ABI");
@@ -1776,7 +1777,7 @@ int main() {
         failureEmitter
             .emitFailureBodyText(address, "failure-copy-return-test-v0", 1)
             .text;
-    expect(text.find("std::construct_at(__gti_mir_out_result, " +
+    expect(text.find("construct_representation_at(__gti_mir_out_result, " +
                      sourceSpelling + ");") != std::string::npos,
            "failure-form copy return should retain placement construction "
            "into the exact out result");

@@ -134,6 +134,13 @@ outside this initial slice.
 
 The current implemented foundation includes:
 
+- `<std/memory>` ordinary `std::erase_address<T>` and
+  `std::typed_address<T>` overloads for explicit typed/`void*` conversion,
+  preserving pointee constness and known provenance without creating access or
+  ownership. `std::assume_ref` and `std::assume_mut` separately require an
+  explicit owner witness and unsafe caller assertion to produce a checked
+  reference; see [raw pointers](raw-pointers.md#void); and
+
 - `<std/panic>` source-defined raw and formatted terminal reporting through
   `std::panic`, with caller attribution and bounded message capture before
   deterministic cleanup. Formatting and stdout convenience APIs use the same
@@ -719,16 +726,31 @@ Both allocator operations return
 host allocation. An explicit alignment must be a nonzero power of two, and the
 effective alignment is never weaker than `alignof(T)`. Allocation is
 failure-atomic and the resulting storage owner, rather than the allocator,
-carries release authority.
+carries release authority. This typed request is also the ordinary-object
+layout interface: allocation derives size and alignment from the concrete `T`,
+including owning classes, without exposing its representation as a stable C
+ABI or requiring application-supplied byte sizes.
 
 Each public storage slot is checked. `construct(index, value)` consumes one
 completed `T` and requires an uninitialized in-bounds slot; `get` and `get_mut`
 require a live slot and return references tied to the storage receiver;
 `destroy` requires a live slot; `initialized` reports checked slot state; and
 `clear` destroys all live slots in reverse index order. Owner destruction
-clears any remaining values and releases the allocation. Arbitrary in-slot
-constructor argument forwarding is not part of this first slice. The surface
-exposes no address, raw byte view, manual deallocation, `new`, or `delete`.
+clears any remaining values and releases the allocation. `release()` performs
+that cleanup explicitly and leaves capacity zero, unlike `clear()`, which
+retains the allocation. It first detaches the old allocation into an ordinary
+local owner and installs an empty receiver; verified MIR cleanup then destroys
+the old live slots and releases its allocation. A destructor failure preserves
+the original failure and cleans up the remaining slots exactly once. Empty
+release is harmless, and live checked element borrows forbid release.
+`emplace(index, args...)`
+constructs `T` at its final slot address and returns a receiver-tied exclusive
+reference. Slot bounds and liveness are checked before prepared arguments pass
+to the constructor. On constructor failure, initialized members are cleaned
+up, the slot remains uninitialized, and the original failure propagates; it is
+not translated to an allocation error. The surface
+exposes no unmanaged allocation address, raw byte view, mismatched
+address/count deallocation, `new`, or `delete`.
 
 `relocate_to(destination, count)` transfers the live prefix `[0, count)` to the
 same empty slots in another storage owner when `T` satisfies

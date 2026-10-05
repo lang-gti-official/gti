@@ -514,11 +514,12 @@ mir_checked_array_read_v1(const Array &array, std::uint64_t index,
     return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
             GTI_FAILURE_DETAIL_FIXED_ARRAY_V1};
   }
-  *result = array[static_cast<std::size_t>(index)];
+  assign_representation(*result, array[static_cast<std::size_t>(index)]);
   return mir_failure_success_v1;
 }
 
 template <typename Array, typename Value>
+  requires (!std::is_trivially_copyable_v<Value>)
 inline mir_failure_status_v1
 mir_checked_array_write_v1(Array &array, std::uint64_t index,
                            Value value) noexcept {
@@ -526,7 +527,22 @@ mir_checked_array_write_v1(Array &array, std::uint64_t index,
     return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
             GTI_FAILURE_DETAIL_FIXED_ARRAY_V1};
   }
-  array[static_cast<std::size_t>(index)] = std::move(value);
+  assign_representation(array[static_cast<std::size_t>(index)], std::move(value));
+  return mir_failure_success_v1;
+}
+
+// Avoid copying native pointer subobjects through a C++ by-value parameter.
+// For trivial values this adds no observable construction or cleanup event.
+template <typename Array, typename Value>
+  requires std::is_trivially_copyable_v<Value>
+inline mir_failure_status_v1
+mir_checked_array_write_v1(Array &array, std::uint64_t index,
+                           const Value &value) noexcept {
+  if (index >= std::size(array)) {
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_FIXED_ARRAY_V1};
+  }
+  assign_representation(array[static_cast<std::size_t>(index)], value);
   return mir_failure_success_v1;
 }
 
@@ -542,7 +558,7 @@ inline mir_failure_status_v1 mir_checked_array_write_v1(
     return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
             GTI_FAILURE_DETAIL_FIXED_ARRAY_V1};
   }
-  array[static_cast<std::size_t>(index)] = value;
+  assign_representation(array[static_cast<std::size_t>(index)], value);
   return mir_failure_success_v1;
 }
 
@@ -589,7 +605,7 @@ public:
 template <typename T, typename... Args>
 inline mir_failure_status_v1
 mir_allocate_unique_scalar_v1(std::unique_ptr<T> *result, Args... args) noexcept {
-  static_assert(std::is_scalar_v<T> && sizeof...(Args) <= 1);
+  static_assert((std::is_scalar_v<T> || is_raw_address_v<T>) && sizeof...(Args) <= 1);
   // A direct allocation-function call cannot be elided as a C++ new-expression;
   // GTI's allocation outcome must remain observable at this MIR instruction.
   void *storage = ::operator new(sizeof(T), std::nothrow);
@@ -630,6 +646,30 @@ mir_storage_construct_v1(::gti_internal::backend::storage<T> &storage,
   if (!storage.try_construct(index, std::forward<Args>(args)...)) {
     return {GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1,
             GTI_FAILURE_DETAIL_ELEMENT_CONSTRUCTION_V1};
+  }
+  return mir_failure_success_v1;
+}
+
+template <typename T>
+inline mir_failure_status_v1 mir_storage_preflight_v1(
+    const ::gti_internal::backend::storage<T> &storage, std::uint64_t index) {
+  if (index >= storage.capacity()) {
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
+  }
+  if (storage.initialized(index)) {
+    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
+            GTI_FAILURE_DETAIL_DUPLICATE_CONSTRUCTION_V1};
+  }
+  return mir_failure_success_v1;
+}
+
+template <typename T, typename Constructor>
+inline mir_failure_status_v1 mir_storage_construct_with_v1(
+    ::gti_internal::backend::storage<T> &storage, std::uint64_t index,
+    ::gti_failure_record_v2 *record, Constructor construct) {
+  if (!storage.construct_with_constructor(index, construct)) {
+    return {record->code, record->detail, true};
   }
   return mir_failure_success_v1;
 }

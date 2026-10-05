@@ -4075,6 +4075,9 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
            "Mutable reference return requires a mutable value.", "GTI-S2017");
     return;
   }
+  if (analyzeRawReferenceReturn(value)) {
+    return;
+  }
   if (isBorrowedCarrierReference(reference)) {
     const FunctionInfo *function = currentFunctionInfo();
     if (function != nullptr &&

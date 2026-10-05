@@ -1,0 +1,153 @@
+#include <std/memory>
+#include <std/utility>
+
+[[c_abi]] struct NativeAddress {
+  mut const int* address;
+  mut int stamp;
+};
+
+struct Packet { mut NativeAddress native; };
+struct Nested { mut Packet packet; };
+struct MovedPacket {
+  NativeAddress native;
+  MovedPacket(NativeAddress value) : native(std::move(value)) {}
+};
+struct Mixed<T, F> {
+  mut T native;
+  F callback;
+  Mixed(T value, F function) : native(value), callback(std::move(function)) {}
+  int invoke() { return this.callback(); }
+};
+extern "C" { NativeAddress empty_native(); }
+
+int retained_transport<T, F>(T native, F callback) {
+  Mixed<T, F> first{native, std::move(callback)};
+  Mixed<T, F> copied = first;
+  const T* address = &copied.native;
+  const void* erased = std::erase_address(address);
+  if (std::typed_address<T>(erased) != address) { return -1; }
+  return copied.invoke();
+}
+
+NativeAddress expired_native() {
+  unsafe {
+    mut NativeAddress result = empty_native();
+    { int former = 7; result.address = &former; }
+    result.stamp = 19;
+    return result;
+  }
+}
+
+expected<NativeAddress, int> success(NativeAddress value) { return value; }
+expected<int, NativeAddress> failure(NativeAddress value) { return unexpected(value); }
+expected<void, NativeAddress> void_failure(NativeAddress value) { return unexpected(value); }
+expected<void, NativeAddress> void_success() { return; }
+expected<T, int> generic_success<T>(T value) { return value; }
+expected<T, int> generic_relay<T>(expected<T, int> value) { return value; }
+expected<int&, NativeAddress> borrow_or_error(int& owner, NativeAddress error,
+                                            bool present) {
+  if (present) { return owner; }
+  return unexpected(error);
+}
+
+enum class Event { address(NativeAddress value), empty };
+mut int drops = 0;
+class Managed {
+public:
+  NativeAddress native;
+  Managed(NativeAddress value) : native(value) {}
+  ~Managed() { ++drops; }
+};
+expected<Managed, int> managed_success(NativeAddress value) {
+  return Managed(value);
+}
+expected<void, Managed> managed_error(NativeAddress value) {
+  return unexpected(Managed(value));
+}
+expected<Managed, NativeAddress> managed_or_native_error(NativeAddress value,
+                                                        bool present) {
+  if (present) { return Managed(value); }
+  return unexpected(value);
+}
+
+int main() {
+  NativeAddress native = expired_native();
+  NativeAddress entries[2] = {native, native};
+  if (entries[0].address != entries[1].address) { return 18; }
+  MovedPacket constructed_move{native};
+  if (constructed_move.native.address != native.address) { return 22; }
+  Packet packet = {.native = native};
+  mut Packet copy = packet;
+  Packet moved = std::move(copy);
+  copy = packet;
+  Nested nested = {.packet = moved};
+  Nested nested_copy = nested;
+  if (nested_copy.packet.native.address != native.address) { return 1; }
+
+  mut auto good = success(native);
+  mut auto good_copy = good;
+  auto good_move = std::move(good);
+  good = good_copy;
+  std::swap(good, good_copy);
+  if (good.value().address != native.address ||
+      good_move.value().stamp != 19) { return 2; }
+  NativeAddress selected = good.value_or(native);
+  if (selected.address != native.address) { return 17; }
+  mut auto bad = failure(native);
+  auto bad_copy = bad;
+  auto bad_move = std::move(bad);
+  bad = bad_copy;
+  if (bad.error().address != native.address ||
+      bad_move.error().stamp != 19) { return 3; }
+  auto empty = void_failure(native);
+  auto empty_copy = empty;
+  if (empty_copy.has_value() || empty_copy.error().address != native.address) {
+    return 4;
+  }
+  if (!void_success().has_value()) { return 12; }
+  auto generic = generic_relay<NativeAddress>(generic_success<NativeAddress>(native));
+  if (generic.value().address != native.address) { return 13; }
+  int owner = 31;
+  auto borrowed = borrow_or_error(owner, native, true);
+  if (borrowed.value() != 31) { return 14; }
+  auto borrow_error = borrow_or_error(owner, native, false);
+  auto borrow_error_copy = borrow_error;
+  if (borrow_error_copy.error().address != native.address) { return 15; }
+  mut Event event = Event::address(native);
+  Event event_copy = event;
+  event = Event::empty;
+  event = event_copy;
+  switch (event) {
+    case Event::address(value):
+      if (value.address != native.address) { return 5; }
+      break;
+    case Event::empty: return 6;
+  }
+
+  auto captured = [native]() -> bool { return native.address != nullptr; };
+  auto captured_copy = captured;
+  if (!captured_copy()) { return 7; }
+  auto inline_capture = [native]() -> int { return native.stamp; };
+  if (inline_capture() != 19) { return 8; }
+  if (retained_transport(native, []() -> int { return 19; }) != 19) { return 16; }
+
+  {
+    auto owned = managed_success(native);
+    auto relocated = std::move(owned);
+    if (relocated.value().native.address != native.address) { return 9; }
+    auto owned_error = managed_error(native);
+    auto relocated_error = std::move(owned_error);
+    if (relocated_error.error().native.address != native.address) { return 10; }
+  }
+  if (drops != 2) { return 11; }
+  {
+    auto owned = managed_or_native_error(native, true);
+    auto moved = std::move(owned);
+    if (moved.value().native.address != native.address) { return 19; }
+    auto failed = managed_or_native_error(native, false);
+    auto moved_error = std::move(failed);
+    if (moved_error.error().address != native.address) { return 20; }
+  }
+  if (drops != 3) { return 21; }
+  return 0;
+}

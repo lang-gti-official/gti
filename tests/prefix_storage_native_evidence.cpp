@@ -203,6 +203,145 @@ int main() {
 }
 )";
 
+// Representation-only probe: exercise the helpers directly, independently of
+// source call/return lowering. Reading a stored pointer's bytes never evaluates
+// its expired pointer value. The full language/native-ABI tests own transport.
+constexpr std::string_view byteCopyProbe = R"(
+namespace {
+struct alignas(64) NativeAddressRecord { int *address; int marker; };
+std::true_type __gti_byte_transport_tag(NativeAddressRecord *);
+static_assert(std::is_trivially_copyable_v<NativeAddressRecord>);
+
+const int byte_copy_probe = [] {
+  using namespace gti_internal::backend;
+  int *allocation = new int(42);
+  const std::uintptr_t expected = reinterpret_cast<std::uintptr_t>(allocation);
+  NativeAddressRecord source{allocation, 17};
+  delete allocation;
+  raw_address<int> captured(source.address);
+  raw_address<const int> qualified(source.address);
+  raw_address<const void> erased(source.address);
+  if (captured != qualified || raw_address<const void>(captured) != erased ||
+      captured == nullptr) std::abort();
+  const auto check = [&](const NativeAddressRecord &value) {
+    std::uintptr_t bits = 0;
+    std::memcpy(&bits, &value.address, sizeof(bits));
+    if (bits != expected || value.marker != 17) std::abort();
+  };
+  std::array<NativeAddressRecord, 2> fixed{};
+  if (mir_checked_array_write_v1(fixed, 0, source).code != 0) std::abort();
+  if (mir_checked_array_write_v1(fixed, 1, source).code != 0) std::abort();
+  NativeAddressRecord observed{};
+  if (mir_checked_array_read_v1(fixed, 1, &observed).code != 0) std::abort();
+  check(observed);
+  if (mir_checked_array_write_v1(fixed, 1, fixed[1],
+                                mir_array_copy_assignment_v1).code != 0)
+    std::abort();
+  check(fixed[1]);
+  if (mir_checked_array_write_v1(fixed, 2, source).code == 0) std::abort();
+  check(fixed[1]);
+  std::array<int *, 1> native_slots{};
+  if (mir_checked_array_write_v1(native_slots, 0, captured).code != 0)
+    std::abort();
+  raw_address<const int> loaded;
+  if (mir_checked_array_read_v1(native_slots, 0, &loaded).code != 0 ||
+      loaded != qualified) std::abort();
+  assign_representation(native_slots[0], native_slots[0]);
+  NativeAddressRecord replacement{};
+  mir_restoring_swap_v1(observed, replacement);
+  check(replacement);
+  mir_restoring_swap_v1(replacement, replacement);
+  check(replacement);
+  mir_lifetime_slot<NativeAddressRecord, true> exchanged;
+  mir_restoring_exchange_into_v1(replacement, std::move(observed),
+                                  exchanged.construction_address());
+  exchanged.mark_constructed();
+  check(exchanged.get());
+  mir_lifetime_slot<NativeAddressRecord, true> temporary;
+  temporary.construct(source);
+  check(temporary.get());
+  expected_result<NativeAddressRecord, int> success{source};
+  auto success_copy = success;
+  auto success_move = std::move(success_copy);
+  success = success_move;
+  check(success.value());
+  check(success_move.value());
+  expected_result<NativeAddressRecord, NativeAddressRecord> alternatives{source};
+  expected_result<NativeAddressRecord, NativeAddressRecord> error{
+      make_unexpected_result(source)};
+  alternatives.swap(error);
+  if (alternatives.has_value() || !error.has_value()) std::abort();
+  check(alternatives.error());
+  check(error.value());
+  alternatives = error;
+  check(alternatives.value());
+  error = make_unexpected_result(source);
+  check(error.error());
+  expected_result<void, NativeAddressRecord> void_success;
+  expected_result<void, NativeAddressRecord> void_error{
+      make_unexpected_result(source)};
+  void_success = void_error;
+  if (void_success.has_value()) std::abort();
+  check(void_success.error());
+  int live = 3;
+  borrowed_expected<int, NativeAddressRecord> borrowed(live);
+  borrowed_expected<int, NativeAddressRecord> failed_borrow{
+      make_unexpected_result(source)};
+  borrowed = failed_borrow;
+  if (borrowed.has_value()) std::abort();
+  check(borrowed.error());
+  byte_field<std::array<NativeAddressRecord, 2>> field{fixed};
+  auto field_copy = field;
+  field = std::move(field_copy);
+  check(field.get()[0]);
+  check(field.get()[1]);
+  static_assert(std::is_same_v<decltype(temporary.take()), NativeAddressRecord &&>);
+  mir_lifetime_slot<NativeAddressRecord, true> transferred;
+  transferred.construct(temporary.take());
+  check(transferred.get());
+  temporary.construct(source);
+  check(temporary.get());
+  optional_storage<NativeAddressRecord> optional;
+  optional.construct(source);
+  check(optional.read());
+  optional_storage<NativeAddressRecord> moved_optional(std::move(optional));
+  check(moved_optional.read());
+  storage<NativeAddressRecord> sparse;
+  if (storage<NativeAddressRecord>::try_allocate(3, 64, &sparse) != 0)
+    std::abort();
+  sparse.construct(1, source);
+  sparse.shift_left(0, 2);
+  check(sparse.read(0));
+  sparse.shift_right(0, 1);
+  check(sparse.read(1));
+  prefix_storage<NativeAddressRecord> prefix;
+  if (!prefix_storage<NativeAddressRecord>::try_allocate(3, &prefix))
+    std::abort();
+  prefix.append(source);
+  prefix.insert_at(0, source);
+  prefix.erase_at(0);
+  check(prefix.read(0));
+  prefix_storage<NativeAddressRecord> destination;
+  if (!prefix_storage<NativeAddressRecord>::try_allocate(3, &destination))
+    std::abort();
+  prefix.relocate_to(destination);
+  check(destination.read(0));
+
+  // The primitive must not bypass a selected nontrivial copy constructor.
+  struct Tracked {
+    int copies;
+    Tracked() : copies(0) {}
+    Tracked(const Tracked &other) : copies(other.copies + 1) {}
+  };
+  const Tracked original;
+  mir_lifetime_slot<Tracked, true> copied;
+  copied.construct(original);
+  if (copied.get().copies != 1) std::abort();
+  return 0;
+}();
+}
+)";
+
 struct GuardScenario {
   std::string_view name;
   std::string_view source;
@@ -315,8 +454,9 @@ int main(int argc, char **argv) {
   std::filesystem::create_directories(directory, error);
 
   const auto emitArtifact =
-      [&](const std::string &name,
-          std::string_view source) -> std::filesystem::path {
+      [&](const std::string &name, std::string_view source,
+          lang::CppStandard standard =
+              lang::CppStandard::Cpp23) -> std::filesystem::path {
     const lang::FrontendResult frontend =
         analyzeTrusted(name, std::string(source));
     if (!frontend.canGenerateCode()) {
@@ -330,8 +470,8 @@ int main(int argc, char **argv) {
     const lang::OptimizationResult optimizations =
         lang::OptimizationPipeline().run(frontend.hir,
                                          lang::OptimizationLevel::O0);
-    const lang::BackendArtifact artifact =
-        gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+    const lang::BackendArtifact artifact = gti_test::emitCpp(
+        frontend, frontend.mir, frontend.mir, optimizations, standard);
     const std::filesystem::path path = directory / (name + ".cpp");
     std::ofstream(path) << artifact.contents;
     return path;
@@ -386,12 +526,39 @@ int main(int argc, char **argv) {
            "the editing fixture must run clean under ASan/UBSan");
   }
 
-  // Every misuse scenario trips exactly the surface that reaches it
-  // first: MIR-emitted mains route storage misuse through the defined
-  // failure contract (GTI-R0007/GTI-R0010 records, exit 70), while a
-  // scenario still reaching the sealed runtime guard pins that guard's
-  // exact diagnostic — the guards remain defense in depth behind the
-  // defined checks.
+  // Complete-object construction must not evaluate expired native pointer
+  // subobjects, even when native copy elision is disabled.
+  for (const std::string standard : {"c++20", "c++23"}) {
+    const std::filesystem::path byteCopy = emitArtifact(
+        "byte-copy-" + standard.substr(3),
+        "int main() { expected<int, int> value = 0; return value.value(); }",
+        standard == "c++20" ? lang::CppStandard::Cpp20
+                            : lang::CppStandard::Cpp23);
+    if (byteCopy.empty())
+      continue;
+    std::ofstream(byteCopy, std::ios::app) << byteCopyProbe;
+    for (const std::string optimization : {"-O0", "-O3"}) {
+      const RunResult run =
+          buildAndRun(compiler, byteCopy, directory,
+                      "byte-copy-" + standard.substr(3) + optimization,
+                      standard, optimization, "-fno-elide-constructors");
+      expect(run.built && run.exitStatus == 0,
+             "byte-preserving storage transport must pass at " + standard +
+                 " " + optimization);
+    }
+    if (standard == "c++23") {
+      const RunResult run = buildAndRun(
+          compiler, byteCopy, directory, "byte-copy-sanitized", "c++23", "-O1",
+          "-fsanitize=address,undefined -fno-sanitize-recover=all");
+      expect(
+          run.built && run.exitStatus == 0,
+          "byte-preserving storage transport must run clean under ASan/UBSan");
+    }
+  }
+
+  // Every misuse scenario trips exactly the surface that reaches it first:
+  // MIR-emitted mains route storage misuse through defined failure; sealed
+  // runtime guards remain defense in depth behind those defined checks.
   for (const GuardScenario &guard : guards) {
     const std::filesystem::path artifact =
         emitArtifact(std::string(guard.name), guard.source);

@@ -51,6 +51,48 @@ enum class empty_storage_adoption {
 }
 
 namespace std {
+namespace detail {
+Target convert_address<Target, T>(T* address) {
+  return Target(address);
+}
+Target convert_address<Target, T>(const T* address) {
+  return Target(address);
+}
+}
+
+/// Erases only the pointee spelling; preserves constness and known origins.
+void* erase_address<T>(T* address) {
+  return detail::convert_address<void*, T>(address);
+}
+
+const void* erase_address<T>(const T* address) {
+  return detail::convert_address<const void*, T>(address);
+}
+
+/// Selects a pointee spelling, without establishing initialization, alignment,
+/// lifetime, ownership or permission to access the pointee.
+T* typed_address<T>(void* address) {
+  return detail::convert_address<T*, void>(address);
+}
+
+const T* typed_address<T>(const void* address) {
+  return detail::convert_address<const T*, void>(address);
+}
+
+/// Asserts that address denotes a live T whose lifetime is covered by owner.
+/// The caller proves alignment, initialization and aliasing. The returned
+/// reference is checked against owner; the raw pointer itself remains nonowning.
+[[borrowed_from(owner)]]
+unsafe T& assume_ref<T, Owner>(const T* address, Owner& owner) {
+  unsafe { return *address; }
+}
+
+/// Asserts exclusive access to a live T for the checked borrow of owner.
+[[borrowed_from(owner)]]
+unsafe mut T& assume_mut<T, Owner>(T* address, mut Owner& owner) {
+  unsafe { return *address; }
+}
+
 /// Exclusive ownership of one dynamically allocated `T`.
 class unique_ptr<T> {
   mut gti_internal::unique_owner<T> owner = nullptr;
@@ -150,8 +192,8 @@ public:
 /// Each slot is independently uninitialized or contains one live `T`.
 /// Construction, access, and destruction are checked. Destruction of the
 /// owner drops every remaining live slot once in reverse slot order and then
-/// releases the allocation. No address or manual deallocation operation is
-/// exposed.
+/// releases the allocation. `release()` performs that cleanup early and
+/// leaves an empty owner; it never detaches an unmanaged allocation address.
 class storage<std::movable T> {
   mut gti_internal::storage<T> data;
 
@@ -185,6 +227,14 @@ public:
   void construct(size_t index, T value) mut {
     gti_internal::index_bounds_check(index, this.capacity());
     gti_internal::storage_construct(this.data, index, std::move(value));
+  }
+
+  /// Constructs directly in the final slot and borrows the completed object.
+  /// Failed construction cleans up its initialized members and leaves the
+  /// slot uninitialized; it propagates the constructor's original failure.
+  mut T& emplace<Args...>(size_t index, Args... args) mut {
+    gti_internal::storage_construct(this.data, index, args...);
+    return gti_internal::storage_read_mut(this.data, index);
   }
 
   /// Destroys the live value in one checked slot.
@@ -224,6 +274,17 @@ public:
         gti_internal::storage_destroy(this.data, index);
       }
     }
+  }
+
+  /// Destroys remaining live slots and releases the backing allocation.
+  /// The receiver becomes empty before cleanup begins, including when an
+  /// element destructor raises defined failure. Releasing an empty owner is
+  /// harmless. Live element borrows prevent this exclusive operation.
+  void release() mut {
+    gti_internal::storage<T> empty =
+        gti_internal::allocate_storage<T>(uint64_t(0));
+    storage<T> previous = storage<T>(std::move(this.data));
+    this.data = std::move(empty);
   }
 };
 
