@@ -9,6 +9,7 @@
 #include "gti/include_suggestions.h"
 #include "gti/mir.h"
 #include "gti/parser.h"
+#include "gti/progress.h"
 #include "gti/semantic_model.h"
 #include "gti/source_graph.h"
 #include "gti/target.h"
@@ -39,6 +40,7 @@ struct FrontendOptions {
   bool toolingOccurrences = true;
   // Set only for an executable root, never inferred from a source filename.
   bool requireEntryPoint = false;
+  ProgressObserver *progress = nullptr;
   // Optional synchronous work accounting. The caller owns this object for the
   // complete Frontend invocation.
   FrontendWorkMetrics *workMetrics = nullptr;

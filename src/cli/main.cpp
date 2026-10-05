@@ -1,3 +1,4 @@
+#include "build_progress.h"
 #include "gti/bindgen/bindgen.h"
 #include "gti/diagnostic.h"
 #include "gti/driver/artifact.h"
@@ -44,6 +45,8 @@ constexpr std::string_view version = GTI_VERSION;
 lang::cli::TerminalStyle terminalStyle;
 using lang::cli::Style;
 std::optional<std::string> runtimeColorOverride;
+lang::cli::ProgressMode progressMode = lang::cli::ProgressMode::Auto;
+bool progressSelected = false;
 
 std::vector<std::pair<std::string, std::string>> programColorEnvironment() {
   if (runtimeColorOverride) {
@@ -75,6 +78,35 @@ ColorArgument parseColorArgument(int argc, char *argv[], int &index) {
     return ColorArgument::Invalid;
   }
   runtimeColorOverride = value;
+  return ColorArgument::Accepted;
+}
+
+ColorArgument parseProgressArgument(int argc, char *argv[], int &index) {
+  const std::string_view argument = argv[index];
+  std::string_view value;
+  if (argument == "--progress") {
+    if (++index >= argc) {
+      std::cerr << "gti: --progress requires auto, plain, or never\n";
+      return ColorArgument::Invalid;
+    }
+    value = argv[index];
+  } else if (argument.starts_with("--progress=")) {
+    value = argument.substr(11);
+  } else {
+    return ColorArgument::NotColor;
+  }
+  if (value == "auto") {
+    progressMode = lang::cli::ProgressMode::Auto;
+  } else if (value == "plain") {
+    progressMode = lang::cli::ProgressMode::Plain;
+  } else if (value == "never") {
+    progressMode = lang::cli::ProgressMode::Never;
+  } else {
+    std::cerr << "gti: invalid --progress value '" << value
+              << "'; expected auto, plain, or never\n";
+    return ColorArgument::Invalid;
+  }
+  progressSelected = true;
   return ColorArgument::Accepted;
 }
 
@@ -258,6 +290,9 @@ void printUsage(std::ostream &stream) {
          "sidecar.\n"
          "  -v, --verbose        Print the native compiler command and "
          "output.\n"
+         "      --progress <mode>\n"
+         "                       Build progress: auto (default), plain, "
+         "never.\n"
          "\n"
          "Project build options:\n"
          "      --package <name> Select a package from the active workspace.\n"
@@ -448,6 +483,11 @@ defaultNativeHeaderPath(const std::filesystem::path &input) {
 
 ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
   for (int index = 1; index < argc; ++index) {
+    const auto progress = parseProgressArgument(argc, argv, index);
+    if (progress == ColorArgument::Invalid)
+      return ArgumentResult::ExitFailure;
+    if (progress == ColorArgument::Accepted)
+      continue;
     const auto color = parseColorArgument(argc, argv, index);
     if (color == ColorArgument::Invalid) {
       return ArgumentResult::ExitFailure;
@@ -748,6 +788,11 @@ bool buildsExecutable(ProjectCommand command) {
 ArgumentResult parseProjectArguments(int argc, char *argv[],
                                      ProjectOptions &options) {
   for (int index = 2; index < argc; ++index) {
+    const auto progress = parseProgressArgument(argc, argv, index);
+    if (progress == ColorArgument::Invalid)
+      return ArgumentResult::ExitFailure;
+    if (progress == ColorArgument::Accepted)
+      continue;
     const auto color = parseColorArgument(argc, argv, index);
     if (color == ColorArgument::Invalid) {
       return ArgumentResult::ExitFailure;
@@ -1819,6 +1864,15 @@ int runDirect(const Options &options, const char *driver) {
       lang::driver::RuntimeProfile::Hosted, options.configurationFlags);
   const lang::TargetInfo &target = configuration.target();
 
+  // Keep emit-only direct invocations silent by default for existing tooling.
+  // Explicit --progress also enables observation for these modes.
+  lang::cli::BuildProgress progress(
+      terminalStyle, progressMode, options.input.filename().string(),
+      "direct, " + lang::driver::targetTriple(target),
+      lang::cli::optimizationNumber(options.optimization), options.verbose,
+      progressSelected ||
+          !(options.emitCpp || options.emitMir || options.emitNativeHeader));
+
   if (options.emitCpp || options.emitNativeHeader || options.emitMir) {
     const lang::driver::CompilationRequest request(
         options.input, toolchain.standardLibrary, target, options.optimization,
@@ -1827,9 +1881,11 @@ int runDirect(const Options &options, const char *driver) {
         lang::WarningPolicy(options.disabledWarnings), options.debugInfo);
     const lang::driver::CompilationResult compilation =
         options.emitNativeHeader
-            ? lang::driver::compileToNativeHeader(request)
-            : (options.emitMir ? lang::driver::compileToMir(request)
-                               : lang::driver::compileToCpp(request));
+            ? lang::driver::compileToNativeHeader(request, progress.observer())
+            : (options.emitMir
+                   ? lang::driver::compileToMir(request, progress.observer())
+                   : lang::driver::compileToCpp(request, progress.observer()));
+    progress.suspend();
     if (!compilation.succeeded()) {
       return reportCompilationFailure(compilation);
     }
@@ -1859,6 +1915,7 @@ int runDirect(const Options &options, const char *driver) {
               << options.output << '\n';
     reportDiagnosticSummary(std::cout,
                             summarizeDiagnostics(compilation.diagnostics));
+    progress.finish(true);
     return exitCode(ExitStatus::Success);
   }
 
@@ -1869,22 +1926,26 @@ int runDirect(const Options &options, const char *driver) {
   lang::driver::NativeInputs nativeInputs;
   nativeInputs.trailingArguments = options.compilerArguments;
   const lang::driver::ExecutableBuildResult result =
-      lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
-          lang::driver::CompilationRequest(
-              options.input, toolchain.standardLibrary, target,
-              options.optimization, options.standard, {},
-              configuration.configurationFlags(),
-              optimizationOutputRequest(options),
-              lang::WarningPolicy(options.disabledWarnings), options.debugInfo),
-          toolchain, generatedSource, options.output,
-          lang::driver::discoverNativeCompiler(options.cxx),
-          std::move(nativeInputs), options.keepCpp, false, options.verbose,
-          std::nullopt, std::nullopt, std::nullopt,
-          options.buildReport
-              ? std::optional<lang::driver::BuildReportRequest>(
-                    {.output = *options.buildReport,
-                     .producerExecutable = lang::executablePath(driver)})
-              : std::nullopt));
+      lang::driver::buildExecutable(
+          lang::driver::ExecutableBuildRequest(
+              lang::driver::CompilationRequest(
+                  options.input, toolchain.standardLibrary, target,
+                  options.optimization, options.standard, {},
+                  configuration.configurationFlags(),
+                  optimizationOutputRequest(options),
+                  lang::WarningPolicy(options.disabledWarnings),
+                  options.debugInfo),
+              toolchain, generatedSource, options.output,
+              lang::driver::discoverNativeCompiler(options.cxx),
+              std::move(nativeInputs), options.keepCpp, false, options.verbose,
+              std::nullopt, std::nullopt, std::nullopt,
+              options.buildReport
+                  ? std::optional<lang::driver::BuildReportRequest>(
+                        {.output = *options.buildReport,
+                         .producerExecutable = lang::executablePath(driver)})
+                  : std::nullopt),
+          progress.observer());
+  progress.suspend();
   const int status = reportBuildResult(result, options.verbose);
   if (status != exitCode(ExitStatus::Success)) {
     return status;
@@ -1918,6 +1979,7 @@ int runDirect(const Options &options, const char *driver) {
   }
   reportDiagnosticSummary(std::cout,
                           summarizeDiagnostics(result.compilation.diagnostics));
+  progress.finish(true);
   return exitCode(ExitStatus::Success);
 }
 
@@ -2074,6 +2136,10 @@ int buildProjectPlan(
     const char *driver = nullptr,
     std::optional<lang::driver::BuildProvenance> *capturedProvenance = nullptr,
     DiagnosticSummary *capturedDiagnostics = nullptr) {
+  lang::cli::BuildProgress progress(
+      terminalStyle, progressMode, plan.targetName(),
+      plan.profileName() + ", " + lang::driver::targetTriple(plan.target()),
+      lang::cli::optimizationNumber(plan.optimization()), options.verbose);
   // Configuration precedence: an explicit command-line option, then the
   // manifest's declared toolchain for the selected target, then the existing
   // environment/default discovery order. A declared toolchain deliberately
@@ -2112,17 +2178,21 @@ int buildProjectPlan(
                 lang::driver::targetTriple(lang::TargetInfo::host())
             ? cppCompiler
             : lang::driver::discoverNativeCompiler();
-    const lang::driver::BuildScriptExecutionResult scripts =
-        lang::driver::executeBuildScripts(
-            plan, {.cCompiler = cCompiler.value_or("cc"),
-                   .cppCompiler = cppCompiler,
-                   .hostCppCompiler = hostCppCompiler,
-                   .compilerIdentity = std::string(version),
-                   .hostToolchain = toolchain,
-                   .jobs = options.jobs ? static_cast<unsigned>(*options.jobs)
-                                        : defaultJobs,
-                   .verbose = options.verbose});
+    const lang::driver::BuildScriptExecutionResult scripts = [&] {
+      const lang::ProgressScope scriptProgress(
+          progress.observer(), lang::ProgressPhase::NativeDependency);
+      return lang::driver::executeBuildScripts(
+          plan, {.cCompiler = cCompiler.value_or("cc"),
+                 .cppCompiler = cppCompiler,
+                 .hostCppCompiler = hostCppCompiler,
+                 .compilerIdentity = std::string(version),
+                 .hostToolchain = toolchain,
+                 .jobs = options.jobs ? static_cast<unsigned>(*options.jobs)
+                                      : defaultJobs,
+                 .verbose = options.verbose});
+    }();
     if (!scripts.succeeded()) {
+      progress.suspend();
       const lang::SourceManager emptySources;
       const lang::SourceManager &sources =
           scripts.diagnosticSources      ? *scripts.diagnosticSources
@@ -2173,17 +2243,21 @@ int buildProjectPlan(
   }
 
   const lang::driver::ExecutableBuildResult result =
-      lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
-          lang::driver::CompilationRequest(
-              plan.entry(), toolchain.standardLibrary, plan.target(),
-              plan.optimization(), plan.cppStandard(), plan.packageSources(),
-              plan.configurationFlags(), {}, plan.warnings(), plan.debugInfo()),
-          toolchain, plan.generatedSource(), plan.output(), cppCompiler,
-          nativeInputs, plan.keepCpp(), true, options.verbose,
-          lang::driver::ManagedOutputPolicy{.trustedRoot = plan.workspaceRoot(),
-                                            .outputRoot = plan.workspaceRoot() /
-                                                          "build" / "gti"},
-          std::move(cCompiler), std::move(cache), std::move(buildReport)));
+      lang::driver::buildExecutable(
+          lang::driver::ExecutableBuildRequest(
+              lang::driver::CompilationRequest(
+                  plan.entry(), toolchain.standardLibrary, plan.target(),
+                  plan.optimization(), plan.cppStandard(),
+                  plan.packageSources(), plan.configurationFlags(), {},
+                  plan.warnings(), plan.debugInfo()),
+              toolchain, plan.generatedSource(), plan.output(), cppCompiler,
+              nativeInputs, plan.keepCpp(), true, options.verbose,
+              lang::driver::ManagedOutputPolicy{
+                  .trustedRoot = plan.workspaceRoot(),
+                  .outputRoot = plan.workspaceRoot() / "build" / "gti"},
+              std::move(cCompiler), std::move(cache), std::move(buildReport)),
+          progress.observer());
+  progress.suspend();
   const int status = reportBuildResult(result, options.verbose);
   if (capturedDiagnostics != nullptr) {
     *capturedDiagnostics = summarizeDiagnostics(result.compilation.diagnostics);
@@ -2191,6 +2265,7 @@ int buildProjectPlan(
   if (capturedProvenance != nullptr) {
     *capturedProvenance = result.provenance;
   }
+  progress.finish(status == exitCode(ExitStatus::Success));
   return status;
 }
 
@@ -2242,12 +2317,17 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
 
   const bool childColor =
       terminalStyle.enabled(std::cout) || terminalStyle.enabled(std::cerr);
+  lang::cli::BuildProgress progress(terminalStyle, progressMode, "all targets",
+                                    options.profile, 0, options.verbose);
   const auto childCommand = [&](const lang::driver::ProjectBuildPlan &plan) {
     std::vector<std::string> command{
         driver,   "build", plan.targetName(), "--profile", options.profile,
         "--jobs", "1"};
     // Children are captured, so resolve auto against the parent's destinations.
     command.emplace_back(childColor ? "--color=always" : "--color=never");
+    // Captured child telemetry would not be live and would make replay depend
+    // on elapsed times. The parent reports the actual target wait instead.
+    command.emplace_back("--progress=never");
     if (options.package) {
       command.emplace_back("--package");
       command.push_back(*options.package);
@@ -2318,7 +2398,13 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
   int firstFailure = exitCode(ExitStatus::Success);
   DiagnosticSummary diagnosticSummary;
   for (std::size_t index = 0; index < targetCount; ++index) {
+    lang::ProgressScope targetProgress(
+        progress.observer(), lang::ProgressPhase::Targets,
+        "waiting for " + resolution.plans[index].targetName() + " [" +
+            std::to_string(index + 1) + "/" + std::to_string(targetCount) +
+            "]");
     const lang::driver::ProcessResult result = running[index].wait();
+    targetProgress.finish();
     if (nextToStart < targetCount) {
       startNext();
     }
@@ -2357,6 +2443,7 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
   }
   std::cerr.flush();
   reportDiagnosticSummary(std::cout, diagnosticSummary);
+  progress.finish(firstFailure == exitCode(ExitStatus::Success));
   return firstFailure;
 }
 
@@ -2474,11 +2561,18 @@ int runProject(const ProjectOptions &options, const char *driver) {
       lang::driver::discoverToolchainLayout(driver);
 
   if (options.command == ProjectCommand::Build && options.emitMir) {
+    lang::cli::BuildProgress progress(
+        terminalStyle, progressMode, plan.targetName(),
+        plan.profileName() + ", " + lang::driver::targetTriple(plan.target()),
+        lang::cli::optimizationNumber(plan.optimization()), options.verbose);
     const lang::driver::CompilationResult compilation =
-        lang::driver::compileToMir(lang::driver::CompilationRequest(
-            plan.entry(), toolchain.standardLibrary, plan.target(),
-            plan.optimization(), plan.cppStandard(), plan.packageSources(),
-            plan.configurationFlags(), {}, plan.warnings()));
+        lang::driver::compileToMir(
+            lang::driver::CompilationRequest(
+                plan.entry(), toolchain.standardLibrary, plan.target(),
+                plan.optimization(), plan.cppStandard(), plan.packageSources(),
+                plan.configurationFlags(), {}, plan.warnings()),
+            progress.observer());
+    progress.suspend();
     if (!compilation.succeeded()) {
       return reportCompilationFailure(compilation);
     }
@@ -2505,16 +2599,23 @@ int runProject(const ProjectOptions &options, const char *driver) {
               << output.string() << '\n';
     reportDiagnosticSummary(std::cout,
                             summarizeDiagnostics(compilation.diagnostics));
+    progress.finish(true);
     return exitCode(ExitStatus::Success);
   }
 
   if (options.command == ProjectCommand::Check) {
+    lang::cli::BuildProgress progress(
+        terminalStyle, progressMode, plan.targetName(),
+        plan.profileName() + ", " + lang::driver::targetTriple(plan.target()),
+        lang::cli::optimizationNumber(plan.optimization()), options.verbose);
     const lang::driver::CheckResult result = lang::driver::checkCompilation(
         lang::driver::CompilationRequest(
             plan.entry(), toolchain.standardLibrary, plan.target(),
             plan.optimization(), plan.cppStandard(), plan.packageSources(),
             plan.configurationFlags(), {}, plan.warnings())
-            .forExecutable());
+            .forExecutable(),
+        progress.observer());
+    progress.suspend();
     if (!result.succeeded()) {
       reportDiagnostics(result.diagnostics, result.sources);
       DiagnosticSummary summary = summarizeDiagnostics(result.diagnostics);
@@ -2531,6 +2632,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
               << plan.entry().string() << '\n';
     reportDiagnosticSummary(std::cout,
                             summarizeDiagnostics(result.diagnostics));
+    progress.finish(true);
     return exitCode(ExitStatus::Success);
   }
 
@@ -3241,10 +3343,17 @@ int runBindgen(int argc, char *argv[]) {
 
 int main(int argc, char *argv[]) {
   lang::installCrashHandlers(argc > 0 ? argv[0] : "gti");
-  // Also permit global colour options before a subcommand, without scanning
-  // through operands (e.g. an output file literally named --color=never).
+  // Permit presentation options before a subcommand, without scanning through
+  // operands (e.g. an output file literally named --progress=never).
   int first = 1;
   for (; first < argc; ++first) {
+    const auto progress = parseProgressArgument(argc, argv, first);
+    if (progress == ColorArgument::Invalid) {
+      return exitCode(ExitStatus::Usage);
+    }
+    if (progress == ColorArgument::Accepted) {
+      continue;
+    }
     const auto color = parseColorArgument(argc, argv, first);
     if (color == ColorArgument::Invalid) {
       return exitCode(ExitStatus::Usage);

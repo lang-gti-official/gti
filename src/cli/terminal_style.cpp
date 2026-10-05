@@ -7,6 +7,7 @@
 #define NOMINMAX
 #include <windows.h>
 #else
+#include <sys/ioctl.h>
 #include <unistd.h>
 #endif
 
@@ -72,6 +73,33 @@ bool TerminalStyle::enabled(const std::ostream &stream) const {
   }
   const bool terminal = terminalSupportsColor(&stream == &std::cerr);
   return mode_ == ColorMode::Always || terminal;
+}
+
+bool TerminalStyle::interactive(const std::ostream &stream) const {
+  const char *term = std::getenv("TERM");
+  return (&stream == &std::cout || &stream == &std::cerr) &&
+         (term == nullptr || std::string_view(term) != "dumb") &&
+         terminalSupportsColor(&stream == &std::cerr);
+}
+
+unsigned TerminalStyle::columns(const std::ostream &stream) const {
+#if defined(_WIN32)
+  CONSOLE_SCREEN_BUFFER_INFO info{};
+  if (GetConsoleScreenBufferInfo(GetStdHandle(&stream == &std::cerr
+                                                  ? STD_ERROR_HANDLE
+                                                  : STD_OUTPUT_HANDLE),
+                                 &info)) {
+    return static_cast<unsigned>(info.srWindow.Right - info.srWindow.Left + 1);
+  }
+#else
+  winsize size{};
+  if (ioctl(&stream == &std::cerr ? STDERR_FILENO : STDOUT_FILENO, TIOCGWINSZ,
+            &size) == 0 &&
+      size.ws_col != 0) {
+    return size.ws_col;
+  }
+#endif
+  return 80;
 }
 
 std::string_view TerminalStyle::code(const std::ostream &stream,

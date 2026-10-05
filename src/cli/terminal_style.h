@@ -14,6 +14,8 @@ class TerminalStyle {
 public:
   bool setMode(std::string_view value);
   [[nodiscard]] bool enabled(const std::ostream &stream) const;
+  [[nodiscard]] bool interactive(const std::ostream &stream) const;
+  [[nodiscard]] unsigned columns(const std::ostream &stream) const;
   [[nodiscard]] std::string_view code(const std::ostream &stream,
                                       Style style) const;
 
