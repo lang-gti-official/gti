@@ -4476,7 +4476,7 @@ int main() {
   }
   const auto unsafeMember =
       lang::Frontend().analyze("member-requirement-unsafe.gti",
-                               "struct Item { [[unsafe]] Item snapshot() { "
+                               "struct Item { unsafe Item snapshot() { "
                                "Item result{}; return result; "
                                "} };",
                                {standardLibraryPrelude()});
@@ -11005,7 +11005,7 @@ int main() { auto holder = retain(callback); return holder.invoke(1); }
          "identity too");
 
   const std::string unsafeSource = R"(
-[[noreturn, track_caller]] [[unsafe]] void halt() { while (true) {} }
+[[noreturn, track_caller]] unsafe void halt() { while (true) {} }
 void invoke() { unsafe { halt(); } }
 int main() { return 0; }
 )";
@@ -11017,13 +11017,13 @@ int main() { return 0; }
   const lang::LanguageQueries queries;
   const auto unsafeUnit = unsafeContract.sourceGraph.entryUnit();
   const std::string expectedSignature =
-      "[[noreturn]] [[track_caller]] [[unsafe]] void halt()";
+      "[[noreturn]] [[track_caller]] unsafe void halt()";
   for (const auto offset :
        {unsafeSource.find("halt()"), unsafeSource.rfind("halt();")}) {
     const auto hover = queries.hover(unsafeContract, unsafeUnit, offset + 1);
     expect(hover && hover->signature == expectedSignature,
            "declaration and selected-call queries must print contract "
-           "attributes before the final unsafe attribute");
+           "contract attributes before the unsafe declaration keyword");
     if (hover) {
       const auto roundTrip = lang::Frontend().analyze(
           "unsafe-function-contract-signature.gti",

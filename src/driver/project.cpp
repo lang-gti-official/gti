@@ -654,6 +654,17 @@ ProjectBuildPlan makeBuildPlan(
                           overrides.warningPolicy.disabledGroups().begin(),
                           overrides.warningPolicy.disabledGroups().end());
   WarningPolicy warningPolicy(std::move(disabledWarnings));
+  std::vector<std::string> dependencyWarningIdentities;
+  const std::string selectedPackageIdentity =
+      workspace.selectedPackage().identity();
+  for (const ResolvedProjectPackage &package : workspace.packages()) {
+    if (package.identity() != selectedPackageIdentity) {
+      dependencyWarningIdentities.push_back(package.identity());
+    }
+  }
+  PackageWarningPolicy packageWarningPolicy(
+      selectedProfile.dependencyWarnings, selectedPackageIdentity,
+      std::move(dependencyWarningIdentities));
   const AnalysisConfiguration configuration(
       target,
       overrides.executionProfile.value_or(selectedProfile.executionProfile),
@@ -681,6 +692,9 @@ ProjectBuildPlan makeBuildPlan(
   nativeInputs.targetPolicy = {.triple = toolchain.nativeTarget,
                                .sysroot = toolchain.sysroot};
   std::string modelIdentity = workspace.modelIdentity();
+  modelIdentity += selectedProfile.dependencyWarnings
+                       ? "\ndependency-warnings:true"
+                       : "\ndependency-warnings:false";
   if (debugInfo)
     modelIdentity += "\ndebug-info:true";
   modelIdentity += "\ntarget:" + targetTriple(resolvedTarget);
@@ -794,7 +808,8 @@ ProjectBuildPlan makeBuildPlan(
       std::move(nativeInputs), std::move(packageSourceRoots),
       configuration.configurationFlags(), std::move(warningPolicy),
       std::move(modelIdentity), std::move(bindgenImports),
-      std::move(buildScripts), std::move(toolchain), debugInfo);
+      std::move(buildScripts), std::move(toolchain), debugInfo,
+      std::move(packageWarningPolicy));
 }
 
 Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,
@@ -968,7 +983,8 @@ ProjectBuildPlan::ProjectBuildPlan(
     std::string projectModelIdentity,
     std::vector<BindgenImportPlan> bindgenImports,
     std::vector<BuildScriptPlan> buildScripts,
-    ResolvedProjectToolchain toolchain, bool debugInfo)
+    ResolvedProjectToolchain toolchain, bool debugInfo,
+    PackageWarningPolicy packageWarnings)
     : projectManifestPath(std::move(manifestPath)),
       projectRoot(std::move(packageRoot)),
       projectWorkspaceRoot(std::move(workspaceRoot)),
@@ -984,6 +1000,7 @@ ProjectBuildPlan::ProjectBuildPlan(
       resolvedPackageSources(std::move(packageSourceRoots)),
       resolvedConfigurationFlags(std::move(configurationFlags)),
       resolvedWarningPolicy(std::move(warningPolicy)),
+      resolvedPackageWarningPolicy(std::move(packageWarnings)),
       resolvedProjectModelIdentity(std::move(projectModelIdentity)),
       resolvedBindgenImports(std::move(bindgenImports)),
       resolvedBuildScripts(std::move(buildScripts)),
@@ -1059,6 +1076,10 @@ const ConfigurationFlags &ProjectBuildPlan::configurationFlags() const {
 
 const WarningPolicy &ProjectBuildPlan::warnings() const {
   return resolvedWarningPolicy;
+}
+
+const PackageWarningPolicy &ProjectBuildPlan::packageWarnings() const {
+  return resolvedPackageWarningPolicy;
 }
 
 const ResolvedProjectToolchain &ProjectBuildPlan::toolchain() const {

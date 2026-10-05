@@ -242,7 +242,7 @@ The current implemented foundation includes:
   overload. Sleep works in either profile and creates no synchronization edge;
   its exact validation and status contract is in
   [Concurrency](concurrency.md#c-style-relative-sleep).
-  Its `[[unsafe]]` `std::thrd_create`/`std::thrd_join` wrappers provide manual
+  Its `unsafe` `std::thrd_create`/`std::thrd_join` wrappers provide manual
   integer-result workers in the concurrent profile, with exact registered
   callback entry, caller-owned context lifetime, and an obligation to join
   before hosted entry returns. Its unsafe C-style mutex family provides explicit

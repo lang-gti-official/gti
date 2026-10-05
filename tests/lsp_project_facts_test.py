@@ -287,6 +287,108 @@ def test_path_dependency_tooling(executable, root):
         session.close()
 
 
+def test_dependency_warning_policy(executable, root):
+    app = root / "warning-app"
+    dependency = root / "warning-library"
+    app_path = app / "src/main.gti"
+    dependency_path = dependency / "src/value.gti"
+    app_source = (
+        "#include <library/value>\n"
+        "int main() { mut int own = 0; return library::value() + own; }\n")
+    dependency_source = (
+        "namespace library { int value() { mut int value = 0; return value; } }\n")
+    write(app_path, app_source)
+    write(dependency_path, dependency_source)
+    manifest_path = app / "gti.toml"
+    base_manifest = (
+        'manifest-version = 1\n[package]\nname = "warning_app"\n'
+        'version = "1.0.0"\n[dependencies]\nlibrary = { path = "../warning-library" }\n'
+        '[targets.app]\nkind = "executable"\nroot = "src/main.gti"\n')
+    write(manifest_path, base_manifest)
+    write(dependency / "gti.toml",
+          'manifest-version = 1\n[package]\nname = "warning_library"\n'
+          'version = "1.0.0"\n[profiles.dev]\ndependency-warnings = false\n')
+
+    session = LspSession(executable)
+    try:
+        initialize(session, watched_files=True)
+        app_uri = open_document(session, app_path, app_source)
+        dependency_uri = dependency_path.resolve().as_uri()
+
+        def publications_for_both():
+            publications = {}
+
+            def received(message):
+                if message.get("method") == "textDocument/publishDiagnostics":
+                    params = message["params"]
+                    if params.get("uri") in (app_uri, dependency_uri):
+                        publications[params["uri"]] = params["diagnostics"]
+                return (len(publications) == 2 and any(
+                    item.get("code") == "GTI-S2096"
+                    for item in publications.get(app_uri, [])))
+
+            session.receive_until(received)
+            return publications
+
+        initial = publications_for_both()
+        assert [item.get("code") for item in initial[app_uri]] == ["GTI-S2096"], initial
+        assert [item.get("code") for item in initial[dependency_uri]] == ["GTI-S2096"], initial
+
+        quiet_profile = "\n[profiles.dev]\ndependency-warnings = false\n"
+
+        def changed_manifest(text):
+            write(manifest_path, text)
+            session.send({"jsonrpc": "2.0", "method": "workspace/didChangeWatchedFiles",
+                          "params": {"changes": [
+                              {"uri": manifest_path.resolve().as_uri(), "type": 2}]}})
+
+        changed_manifest(base_manifest + quiet_profile)
+        suppressed = publications_for_both()
+        assert [item.get("code") for item in suppressed[app_uri]] == ["GTI-S2096"], suppressed
+        assert suppressed[dependency_uri] == [], suppressed
+        session.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover",
+                      "params": {"textDocument": {"uri": app_uri},
+                                 "position": lsp_position(app_source, app_source.index("value()") + 1)}})
+        hover = session.receive_until(lambda message: message.get("id") == 2)["result"]
+        assert hover and "value" in json.dumps(hover), hover
+
+        changed_manifest(base_manifest + quiet_profile + 'disabled-warnings = ["unused-mut"]\n')
+        grouped = diagnostics_for(session, app_uri, version=1,
+                                  predicate=lambda items: not items)
+        assert grouped == [], grouped
+        changed_manifest(base_manifest + quiet_profile)
+        retained = diagnostics_for(session, app_uri, version=1,
+                                   predicate=lambda items: any(
+                                       item.get("code") == "GTI-S2096" for item in items))
+        assert len(retained) == 1, retained
+
+        write(dependency_path,
+              "namespace library { int value() { return missing; } }\n")
+        session.send({"jsonrpc": "2.0", "method": "workspace/didChangeWatchedFiles",
+                      "params": {"changes": [{"uri": dependency_uri, "type": 2}]}})
+        error = diagnostics_for(session, dependency_uri,
+                                predicate=lambda items: any(
+                                    item.get("severity") == 1 for item in items))
+        assert any(item.get("code") == "GTI-S2001" for item in error), error
+        write(dependency_path, dependency_source)
+        session.send({"jsonrpc": "2.0", "method": "workspace/didChangeWatchedFiles",
+                      "params": {"changes": [{"uri": dependency_uri, "type": 2}]}})
+        recovered = publications_for_both()
+        assert recovered[dependency_uri] == [], recovered
+        assert [item.get("code") for item in recovered[app_uri]] == ["GTI-S2096"], recovered
+
+        # A dependency opened as its own project is now the selected package;
+        # its own warnings must remain visible even though the app suppressed it.
+        open_document(session, dependency_path, dependency_source)
+        selected = diagnostics_for(session, dependency_uri, version=1,
+                                   predicate=lambda items: any(
+                                       item.get("code") == "GTI-S2096" for item in items))
+        assert [item.get("code") for item in selected] == ["GTI-S2096"], selected
+        assert not (app / "build").exists(), "warning policy should not build state"
+    finally:
+        session.close()
+
+
 def test_read_only_git_failure(executable, root):
     project = root / "locked-app"
     source_path = project / "src/main.gti"
@@ -368,6 +470,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-lsp-project-facts-") as temp:
         root = pathlib.Path(temp)
         test_path_dependency_tooling(sys.argv[1], root)
+        test_dependency_warning_policy(sys.argv[1], root)
         test_read_only_git_failure(sys.argv[1], root)
         test_standalone_compatibility(sys.argv[1], root)
 

@@ -137,12 +137,16 @@ the syntax-level type-definition capture while semantic tokens retain the exact
 class-versus-namespace meaning.
 
 Function-declaration and selected-call signatures retain `[[noreturn]]`,
-`[[track_caller]]`, and `[[unsafe]]` from the resolved `FunctionInfo`. Contract
-attributes precede `[[unsafe]]`, which the current grammar requires immediately
-before the typed declaration; copying the attributes preserves valid order.
+`[[track_caller]]`, and `unsafe` from the resolved `FunctionInfo`. Contract
+attributes precede the `unsafe` modifier and then `static`/`constexpr`, when
+present. Signature printers preserve that canonical order.
 The LSP publishes `GTI-S2055` and its
 related declaration span from the same frontend; it neither infers safety
 requirements nor offers a fix-it accepting an unsafe obligation.
+The keyword is highlighted as a keyword, not a decorator. The compiler's
+obsolete-spelling migration and `unused-unsafe` diagnostics supply the same
+current-version edits to CLI and LSP; the latter removes only a proven-unused
+keyword while keeping its lexical scope.
 
 C-style create/join, manual mutexes, conditions, and once initialization use that same public declaration path.
 Their `GTI-S2084` profile requirement is derived by semantics from the resolved
@@ -481,6 +485,16 @@ process, performs no fetch or build, and creates no project state. A missing
 manifest preserves standalone analysis; a malformed, unlocked, unmaterialized,
 or checksum-mismatched project publishes the driver's structured diagnostics
 and never invents a partial package graph.
+
+The default profile also supplies warning-group and dependency-warning policy.
+The protocol adapter applies the shared driver's primary-source package
+classifier when publishing diagnostics, not a directory-name heuristic.
+`dependency-warnings = false` removes dependency warnings without hiding
+errors, consumer warnings or their related dependency notes. Filtering does
+not discard the analyzed semantic snapshot: hover, completion and other queries
+remain available. A dependency opened as its own project becomes the selected
+package and retains its own warnings. Watched manifest changes invalidate
+diagnostic snapshots through the existing project-input generation path.
 
 An open document whose canonical path is a declared executable or test root
 also requests the frontend's missing-entry check (`GTI-S2094`). Ordinary

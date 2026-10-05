@@ -80,7 +80,17 @@ adapters validate names against the typed registry before constructing a
 `CompilationRequest`, and that request applies the policy to source-loading
 and frontend diagnostics. Suppression tests both severity and group, so an
 error cannot be hidden merely because it has a group. The currently
-disableable groups are `configuration`, `unreachable-code`, and `unused-mut`.
+disableable groups are `configuration`, `unreachable-code`, `unused-mut`, and
+`unused-unsafe`.
+
+Project profiles may independently set `dependency-warnings = false`. The
+driver's immutable `PackageWarningPolicy` suppresses only warnings whose
+primary source belongs to a registered non-selected package in the resolved
+source graph. It composes with group policy without changing analysis or
+hiding errors, consumer warnings, standard-library warnings or native-tool
+output. The LSP publishes the same default-profile policy through read-only
+project facts; a dependency opened as its own project retains its own warnings.
+See [Dependency warnings](build-and-driver.md#dependency-warnings).
 
 CLI build/check/emission presentation ends with `Diagnostics: <errors>,
 <warnings>` after the ordinary success or failure status. Counts describe the
@@ -522,10 +532,21 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   edit preserves evaluation, remains valid for qualified and nested calls, and
   makes intent explicit, but is not preferred because using the value may be
   the correct repair.
-- `GTI-S2055` also owns calls to `[[unsafe]]` GTI functions outside lexical
+- `GTI-S2100` warns at a non-generic application unsafe-block keyword when no
+  operation used its permission. It carries group `unused-unsafe`, the
+  `Unnecessary` tag, and a keyword-only removal fix that retains lexical scope.
+  Nested unsafe blocks and lambda safety contexts do not use the outer block's
+  permission. Deferred, symbolic generic, compiler-trusted, and invalid bodies
+  are excluded from speculative advice.
+- `GTI-S2055` also owns calls to `unsafe` GTI functions outside lexical
   unsafe context. Point at the call's closing parenthesis and relate the
-  declaration attribute. Do not offer a fix-it that silently accepts a safety
+  declaration keyword. Do not offer a fix-it that silently accepts a safety
   obligation. The same code rejects an unsafe hosted entry point.
+- Obsolete `[[unsafe]]` is parser-owned `GTI-P0001`, not a semantic alias.
+  A contiguous spelling has an exact replacement with `unsafe`, adding a
+  separator before an adjacent type or modifier; embedded
+  comments are retained by withholding a destructive spelling edit. Recovery
+  may retain the declaration for tooling, but the syntax gate prevents codegen.
 - `GTI-S2076` owns the named native callback boundary. Point at the anonymous
   type spelling, invalid ABI component, missing initializer, inexact function
   item, or concurrent-profile conversion that the user can change. State that

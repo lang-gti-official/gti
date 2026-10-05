@@ -61,5 +61,14 @@
     "group": "function-contract",
     "format": "{0}",
     "arguments": 1
+  },
+  {
+    "id": "UnnecessaryUnsafeBlock",
+    "code": "GTI-S2100",
+    "phase": "Semantics",
+    "severity": "Warning",
+    "group": "unused-unsafe",
+    "format": "This unsafe block contains no operation requiring unsafe permission.",
+    "arguments": 0
   }
 ]

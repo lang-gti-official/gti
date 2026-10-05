@@ -87,7 +87,6 @@ declaration            = conditional-declaration
                        | type-alias-declaration
                        | extern-c-declaration
                        | native-function-attributes function-declaration
-                       | unsafe-function-attribute function-declaration
                        | function-contract-attributes function-declaration
                        | [ runtime-binding ] function-declaration
                        | static-variable-declaration
@@ -96,10 +95,10 @@ declaration            = conditional-declaration
 
 empty-declaration      = ";" ;
 
-unsafe-function-attribute = "[[" "unsafe" "]]" ;
+unsafe-function-modifier = "unsafe" ;
 (* Namespace-scope GTI free functions only; not methods, operators, runtime
    bindings, extern-C declarations or hosted main. Every call requires a
-   lexical unsafe block. The attribute grants no unsafe permission to the body
+   lexical unsafe block. The modifier grants no unsafe permission to the body
    and cannot be erased by callback or safe function-item conversion. *)
 
 function-contract-attributes = function-contract-attribute
@@ -554,7 +553,8 @@ non-call-overloadable-operator
                        | "[" "]"
                        | "==" | "!=" | "<" | "<=" | ">" | ">=" ;
 
-function-declaration   = [ "static" ] [ "constexpr" ] [ "mut" ] type IDENTIFIER
+function-declaration   = [ unsafe-function-modifier ] [ "static" ]
+                         [ "constexpr" ] [ "mut" ] type IDENTIFIER
                          [ generic-parameter-clause ]
                          parameter-clause [ requires-clause ]
                          ( block | ";" ) ;

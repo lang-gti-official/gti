@@ -20,6 +20,9 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requirementScopes.clear();
   requestSession.mutableLocalCandidates.clear();
   requestSession.mutableBindingUses.clear();
+  requestSession.unsafeBlockCandidates.clear();
+  requestSession.activeUnsafeBlocks.clear();
+  requestSession.usedUnsafeBlocks.clear();
   typeParameterScopes.clear();
   valueParameterScopes.clear();
   typePackScopes.clear();
@@ -569,10 +572,28 @@ auto SemanticVisitor::Impl::visitBlockStmt(const BlockStmt &stmt) -> void {
   const std::size_t enclosingUnsafeDepth = unsafeDepth;
   if (stmt.isUnsafe()) {
     ++unsafeDepth;
+    requestSession.activeUnsafeBlocks.push_back(&stmt);
+    // A generic body can acquire a required operation only after concrete
+    // selection. Do not suggest removing its permission from symbolic evidence.
+    const bool genericFunction =
+        currentFunctionDeclaration != nullptr &&
+        !currentFunctionDeclaration->genericParameters().empty();
+    const bool genericClass =
+        currentClass && !classInfo(*currentClass).genericParameters.empty();
+    if (!instanceAnalysisActive && !genericFunction && !genericClass &&
+        !isCompilerTrustedRequester(*stmt.unsafeKeyword())) {
+      requestSession.unsafeBlockCandidates.push_back(
+          {.block = &stmt,
+           .keyword = *stmt.unsafeKeyword(),
+           .owner = currentProgramEffectOwner});
+    }
   }
   beginScope();
   analyze(stmt.statements());
   endScope();
+  if (stmt.isUnsafe()) {
+    requestSession.activeUnsafeBlocks.pop_back();
+  }
   unsafeDepth = enclosingUnsafeDepth;
 }
 
@@ -1615,8 +1636,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                                        : functionInfo->returnType,
        .function = &stmt});
   const bool isEntryPoint = functionInfo != nullptr && functionInfo->entryPoint;
-  if (isEntryPoint && stmt.unsafeAttribute()) {
-    report(*stmt.unsafeAttribute(),
+  if (isEntryPoint && stmt.unsafeKeyword()) {
+    report(*stmt.unsafeKeyword(),
            "The hosted entry point cannot require an unsafe caller.",
            "GTI-S2055");
   }

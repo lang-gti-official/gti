@@ -189,7 +189,7 @@ private:
                   "Structured bindings are local declarations and cannot "
                   "appear at namespace scope.");
     }
-    if (isTypedDeclaration()) {
+    if (check(TokenKind::UNSAFE) || isTypedDeclaration()) {
       return typedDeclaration(true);
     }
 
@@ -441,14 +441,15 @@ private:
     std::vector<Token> functionAttributes;
     bool parsedNativeFunctionAttribute = false;
     while (true) {
+      const Token opening = peek();
       consume(TokenKind::LEFT_BRACKET,
               "Expect '[[' before declaration attributes.");
       consume(TokenKind::LEFT_BRACKET,
               "Expect '[[' before declaration attributes.");
       if (match({TokenKind::UNSAFE})) {
-        Token attribute = previous();
+        Token keyword = previous();
         if (parsedNativeFunctionAttribute) {
-          throw error(attribute,
+          throw error(keyword,
                       "[[unsafe]] cannot be combined with a native function "
                       "attribute.");
         }
@@ -458,12 +459,34 @@ private:
                 "Expect ']]' after unsafe attribute.");
         if (linkage != LanguageLinkage::Gti || currentClassName ||
             !isTypedDeclaration()) {
-          throw error(attribute,
+          throw error(keyword,
                       "[[unsafe]] requires a namespace-scope GTI function.");
         }
-        return typedDeclaration(
-            true, std::nullopt, false, false, true, linkage, std::nullopt,
-            std::nullopt, std::move(attribute), std::move(functionAttributes));
+        // Keep the recovered declaration for tooling, but the obsolete spelling
+        // is a syntax error and can never pass the frontend generation gate.
+        SourceSpan spelling = tokenSpan(opening);
+        spelling.end = previous().position + previous().lexeme.size();
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-P0001", DiagnosticPhase::Parsing, spelling,
+            "The '[[unsafe]]' attribute has been replaced by the 'unsafe' "
+            "declaration keyword.");
+        diagnostic.hints.emplace_back(
+            "Write 'unsafe' before the function type.");
+        // Do not discard comments embedded in a non-contiguous attribute.
+        if (spelling.end - spelling.start == 10) {
+          // Attribute delimiters separated the following type/modifier even
+          // without written whitespace. The replacement keyword must do so too.
+          const bool adjacent = peek().source == opening.source &&
+                                peek().position == spelling.end;
+          diagnostic.fixes.push_back(
+              {.span = spelling,
+               .replacement = adjacent ? "unsafe " : "unsafe",
+               .message = "Replace obsolete '[[unsafe]]' with 'unsafe'"});
+        }
+        diagnostics.emplace_back(std::move(diagnostic));
+        return typedDeclaration(true, std::nullopt, false, false, true, linkage,
+                                std::nullopt, std::nullopt, std::move(keyword),
+                                std::move(functionAttributes));
       }
       Token first = consume(TokenKind::IDENTIFIER,
                             "Expect an attribute name after '[['.");
@@ -688,8 +711,23 @@ private:
       bool allowStatic = true, LanguageLinkage linkage = LanguageLinkage::Gti,
       std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
-      std::optional<Token> unsafeAttribute = std::nullopt,
+      std::optional<Token> unsafeKeyword = std::nullopt,
       std::vector<Token> functionAttributes = {}) {
+    if (match({TokenKind::UNSAFE})) {
+      if (unsafeKeyword) {
+        throw error(previous(), "A function cannot repeat 'unsafe'.");
+      }
+      unsafeKeyword = previous();
+    }
+    if (unsafeKeyword && (!allowFunction || currentClassName ||
+                          runtimeBinding || linkage != LanguageLinkage::Gti)) {
+      throw error(*unsafeKeyword,
+                  "An unsafe declaration requires a namespace-scope GTI "
+                  "function, not a member or native binding.");
+    }
+    if (unsafeKeyword && check(TokenKind::UNSAFE)) {
+      throw error(peek(), "A function cannot repeat 'unsafe'.");
+    }
     std::optional<Token> virtualKeyword;
     if (match({TokenKind::VIRTUAL})) {
       virtualKeyword = previous();
@@ -761,7 +799,7 @@ private:
           std::move(operatorName), std::move(staticKeyword),
           std::move(virtualKeyword), linkage, std::move(constexprKeyword),
           std::move(nativeCArray), std::move(nativeLinkName),
-          std::move(unsafeAttribute), std::move(functionAttributes));
+          std::move(unsafeKeyword), std::move(functionAttributes));
     }
 
     if (operatorName) {
@@ -784,9 +822,9 @@ private:
       throw error(nativeLinkName->attribute,
                   "[[link_name(...)]] must annotate a function declaration.");
     }
-    if (unsafeAttribute) {
-      throw error(*unsafeAttribute,
-                  "[[unsafe]] must annotate a function declaration.");
+    if (unsafeKeyword) {
+      throw error(*unsafeKeyword,
+                  "'unsafe' must modify a function declaration.");
     }
     if (!functionAttributes.empty()) {
       throw error(functionAttributes.front(),
@@ -816,7 +854,7 @@ private:
       std::optional<Token> constexprKeyword = std::nullopt,
       std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
-      std::optional<Token> unsafeAttribute = std::nullopt,
+      std::optional<Token> unsafeKeyword = std::nullopt,
       std::vector<Token> functionAttributes = {}) {
     std::vector<Parameter> parameters = parameterList();
     if (operatorName && operatorName->kind == OverloadedOperator::Dereference &&
@@ -894,7 +932,7 @@ private:
           std::move(overrideKeyword), std::move(pureSpecifier), linkage,
           std::move(constexprKeyword), std::move(requiresClause),
           std::move(nativeCArray), std::move(nativeLinkName),
-          std::move(unsafeAttribute), std::move(functionAttributes));
+          std::move(unsafeKeyword), std::move(functionAttributes));
     }
 
     if (match({TokenKind::SEMICOLON})) {
@@ -906,7 +944,7 @@ private:
           std::move(overrideKeyword), std::nullopt, linkage,
           std::move(constexprKeyword), std::move(requiresClause),
           std::move(nativeCArray), std::move(nativeLinkName),
-          std::move(unsafeAttribute), std::move(functionAttributes));
+          std::move(unsafeKeyword), std::move(functionAttributes));
     }
 
     consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
@@ -919,7 +957,7 @@ private:
         std::move(overrideKeyword), std::nullopt, linkage,
         std::move(constexprKeyword), std::move(requiresClause),
         std::move(nativeCArray), std::move(nativeLinkName),
-        std::move(unsafeAttribute), std::move(functionAttributes));
+        std::move(unsafeKeyword), std::move(functionAttributes));
   }
 
   StmtPtr conversionOperatorDeclaration(
@@ -2884,7 +2922,10 @@ private:
   }
 
   [[nodiscard]] bool isTypedDeclaration() const {
-    std::size_t offset = check(TokenKind::VIRTUAL) ? 1 : 0;
+    std::size_t offset = check(TokenKind::UNSAFE) ? 1 : 0;
+    if (peekAt(offset).kind == TokenKind::VIRTUAL) {
+      ++offset;
+    }
     if (peekAt(offset).kind == TokenKind::STATIC) {
       ++offset;
     }

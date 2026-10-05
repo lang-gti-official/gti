@@ -3671,7 +3671,7 @@ auto SemanticVisitor::Impl::functionSignatureSpelling(
                                  declaration.operatorName()->kind))
                            : declaration.name().lexeme;
   if (function.record().requiresUnsafe) {
-    result = "[[unsafe]] " + result;
+    result = "unsafe " + result;
   }
   if (!declaration.genericParameters().empty()) {
     result += '<';
@@ -4267,7 +4267,7 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
     return reject(MemberRequirementFailureKind::Inaccessible, selected);
   if (selected->returnType != result)
     return reject(MemberRequirementFailureKind::Result, selected);
-  if (selected->declaration->unsafeAttribute())
+  if (selected->declaration->unsafeKeyword())
     return reject(MemberRequirementFailureKind::Unsafe, selected);
   if (selected->returnBorrowOrigin != BorrowOriginKind::None ||
       result.kind == SemanticType::Reference ||
@@ -5922,11 +5922,11 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   if (function.record().requiresUnsafe) {
     const bool missing = unsafeDepth == 0;
     requireUnsafe(call, UnsafeOperationKind::DeclaredUnsafeCall, call.paren(),
-                  "Calling an [[unsafe]] function");
+                  "Calling an unsafe function");
     if (missing && !diagnostics.empty() && function.declaration != nullptr &&
-        function.declaration->unsafeAttribute()) {
+        function.declaration->unsafeKeyword()) {
       diagnostics.back().related.push_back(
-          {tokenSpan(*function.declaration->unsafeAttribute()),
+          {tokenSpan(*function.declaration->unsafeKeyword()),
            "This declaration requires the caller to uphold its unsafe "
            "contract."});
     }

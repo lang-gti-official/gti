@@ -2429,6 +2429,21 @@ auto SemanticVisitor::Impl::finalizeAdvisoryDiagnostics() -> void {
   if (hadError() || instanceAnalysisActive) {
     return;
   }
+  std::unordered_set<const BlockStmt *> reportedUnsafeBlocks;
+  for (const auto &candidate : requestSession.unsafeBlockCandidates) {
+    if (requestSession.usedUnsafeBlocks.contains(candidate.block) ||
+        requestSession.deferredFlowOwners.contains(candidate.owner) ||
+        !reportedUnsafeBlocks.insert(candidate.block).second) {
+      continue;
+    }
+    Diagnostic diagnostic =
+        makeDiagnostic(DiagnosticId::UnnecessaryUnsafeBlock, candidate.keyword);
+    diagnostic.tags.push_back(DiagnosticTag::Unnecessary);
+    diagnostic.fixes.push_back({.span = tokenSpan(candidate.keyword),
+                                .replacement = "",
+                                .message = "Remove unnecessary 'unsafe'"});
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
   for (const RequestSessionState::MutableLocalCandidate &candidate :
        requestSession.mutableLocalCandidates) {
     if (requestSession.mutableBindingUses.contains(candidate.symbol) ||
@@ -6642,6 +6657,12 @@ auto SemanticVisitor::Impl::requireUnsafe(const Expr &expression,
     -> void {
   semanticModel.recordUnsafeOperation(expression, operation);
   if (unsafeDepth != 0) {
+    if (!requestSession.activeUnsafeBlocks.empty()) {
+      // Nested blocks discharge their own obligations. Lambda bodies start
+      // unsafeDepth at zero, so they never use an enclosing block's permission.
+      requestSession.usedUnsafeBlocks.insert(
+          requestSession.activeUnsafeBlocks.back());
+    }
     return;
   }
   Diagnostic diagnostic =

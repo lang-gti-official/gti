@@ -6,7 +6,7 @@ extern "C" {
   int32_t* cthread_condition_turn(void* context);
   int32_t* cthread_condition_count(void* context);
 }
-[[unsafe]] int32_t relay(void* context, int32_t role) {
+unsafe int32_t relay(void* context, int32_t role) {
   unsafe {
     std::mtx_t mutex = cthread_condition_mutex(context);
     std::cnd_t condition = cthread_condition_handle(context);

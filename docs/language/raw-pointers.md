@@ -93,7 +93,7 @@ The gated operations are:
 - pointer arithmetic, difference, increment, decrement, and `+=`/`-=`;
 - a call to an `extern "C"` function whose return type or any parameter type is
   a raw pointer; and
-- a call to a GTI function declared `[[unsafe]]`.
+- a call to a GTI function declared `unsafe`.
 
 Unsafe blocks may nest and otherwise follow ordinary block scope and cleanup
 rules. Permission does not escape the closing brace. A nested lambda starts a
@@ -165,12 +165,12 @@ pointer precondition.
 
 ## Functions With A Caller Obligation
 
-Use `[[unsafe]]` when a namespace-scope GTI function requires the caller to
+Use `unsafe` when a namespace-scope GTI function requires the caller to
 establish a precondition that its types and implementation cannot enforce:
 
 ```gti
 // Caller: pointer must address a live, initialized int32_t for this call.
-[[unsafe]] int32_t read_raw(const int32_t* pointer) {
+unsafe int32_t read_raw(const int32_t* pointer) {
   unsafe { return *pointer; }
 }
 ```
@@ -178,9 +178,10 @@ establish a precondition that its types and implementation cannot enforce:
 Every call to this function requires a lexical `unsafe` block, even when its
 body is empty or its signature contains no pointer. Overload resolution first
 selects the ordinary exact declaration; its unsafe requirement is then checked.
-The attribute does not change overload ranking, return types, ownership,
-checked failure, or cleanup. It does not make the function body unsafe: raw
-operations and calls to other unsafe functions still need explicit blocks.
+The declaration modifier does not change overload ranking, return types,
+ownership, checked failure, or cleanup. It does not make the function body
+unsafe: raw operations and calls to other unsafe functions still need explicit
+blocks.
 The implementation must document the actual obligation; the compiler checks
 the caller's acknowledgement, not the truth of a lifetime or aliasing claim.
 
@@ -192,10 +193,28 @@ an unsafe function cannot convert to a native callback or a safe function item,
 including an algorithm argument or managed-thread task, even inside `unsafe`.
 A safe wrapper is appropriate only when it establishes the precondition itself.
 
+The canonical modifier order is `unsafe static constexpr` before the return
+type, omitting modifiers that do not apply. Function contract attributes such
+as `[[noreturn]]` precede these modifiers. The former `[[unsafe]]` spelling is
+rejected with `GTI-P0001`; a contiguous attribute has a spelling-only migration
+fix, including a separating space when the following type/modifier is adjacent.
+It is not a compatibility alias. Attributes containing comments receive
+the migration diagnostic without an edit that would delete those comments.
+
+`GTI-S2100` (group `unused-unsafe`) warns when a checked, non-generic application
+block discharges no unsafe operation. It points to the keyword and offers a
+fix removing only that keyword, preserving braces, scope, and cleanup. An inner
+unsafe block discharges its own operations; a lambda starts a new safety
+context and cannot consume its enclosing block's permission. Symbolic generic
+bodies, deferred compile-time branches, invalid programs, and compiler-trusted
+implementation blocks are not given speculative removal advice. The warning
+does not change program validity and can be disabled with `-Wno-unused-unsafe`
+or a project's existing `disabled-warnings` profile setting.
+
 `std::thrd_create` is the current C-style case that retains a raw context. When
 creation succeeds, the unsafe caller keeps that context and everything
 reachable through it live and appropriately synchronized until successful
-join, not merely until `thrd_create` returns. The `[[unsafe]]` attribute does
+join, not merely until `thrd_create` returns. The `unsafe` modifier does
 not itself enable concurrent native callbacks, runtime attachment, or any
 C-thread operation outside the exact registered `<std/cthread>` contract.
 

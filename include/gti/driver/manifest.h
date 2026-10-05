@@ -187,6 +187,7 @@ struct ProjectProfile {
   CppStandard cppStandard = CppStandard::Cpp23;
   ExecutionProfile executionProfile = ExecutionProfile::SingleThreaded;
   WarningPolicy warningPolicy;
+  bool dependencyWarnings = true;
   bool keepCpp = false;
   bool debugInfo = false;
   SourceSpan declaration;

@@ -37,7 +37,7 @@ SignaturePrinter::function(const FunctionInfo &info,
     result += "[[track_caller]] ";
   }
   if (info.requiresUnsafe) {
-    result += "[[unsafe]] ";
+    result += "unsafe ";
   }
   if (declaration != nullptr && declaration->nativeCArray()) {
     result += "[[c_array(" +

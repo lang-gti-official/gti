@@ -3927,6 +3927,11 @@ private:
       Token name;
       ProgramEffectOwner owner;
     };
+    struct UnsafeBlockCandidate {
+      const BlockStmt *block = nullptr;
+      Token keyword;
+      ProgramEffectOwner owner;
+    };
 
     std::vector<SemanticDiagnostic> diagnostics;
     SemanticModel semanticModel;
@@ -3960,6 +3965,9 @@ private:
     std::vector<std::vector<AppliedConceptRequirement>> requirementScopes;
     std::vector<MutableLocalCandidate> mutableLocalCandidates;
     std::unordered_set<SymbolId> mutableBindingUses;
+    std::vector<UnsafeBlockCandidate> unsafeBlockCandidates;
+    std::vector<const BlockStmt *> activeUnsafeBlocks;
+    std::unordered_set<const BlockStmt *> usedUnsafeBlocks;
     TypeSubstitution instanceTypeSubstitution;
     ValueSubstitution instanceValueSubstitution;
     std::vector<std::string> currentNamespace;

@@ -76,7 +76,7 @@ is a teaching helper, not a production server.
 | `36-c-abi-sockets.gti` | bounded `extern "C"` interoperability with POSIX `socket` and `close` |
 | `37-tcp-socket-owner.gti` | a move-only `std::tcp::socket` owner over the POSIX C ABI |
 | `38-vector-emplace.gti` | move-aware dynamic storage, checked access, read-only iteration, and in-place construction |
-| `39-raw-pointers.gti` | one-level raw pointers, lexical `unsafe`, and pointer arithmetic |
+| `39-raw-pointers.gti` | one-level raw pointers, unsafe declaration/call contracts, lexical `unsafe`, and pointer arithmetic |
 | `40-loan-flow-edges.gti` | bounded switch-exit and immediate-`break` retained-loan endings |
 | `41-owner-dependencies.gti` | single-origin read-only and mutable owner dependencies through factories, generics, moves, and returns |
 | `42-exclusive-reborrows.gti` | nested mutable and read-only reborrows with parent reactivation after its final active child ends |
@@ -221,8 +221,9 @@ invalidates the private handle before calling POSIX `close`, so a native close
 failure cannot be retried or accidentally closed again by cleanup.
 
 `39-raw-pointers.gti` keeps pointer formation, reads, writes, and arithmetic in
-a small `unsafe` block. For the native-resource RAII pattern built on the same
-foundation, see
+a small `unsafe` block and demonstrates an `unsafe` function with separate
+caller and implementation obligations. For the native-resource RAII pattern
+built on the same foundation, see
 [`../docs/language/raw-pointers.md`](../docs/language/raw-pointers.md).
 
 `41-owner-dependencies.gti` builds ordinary source-defined read-only and

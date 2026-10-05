@@ -134,6 +134,16 @@ filesystem-root escapes. `metadata` enumerates all manifest targets,
 profiles, and planned output paths as deterministic schema-versioned JSON
 without compiling or creating build directories.
 
+Profiles also accept Boolean `dependency-warnings`, defaulting to true. A
+consumer may disable compiler warnings from actual non-selected packages while
+retaining selected-package warnings, every error and native-tool diagnostics.
+The immutable package/source graph owns classification, not a dependency-cache
+path or a dependency's own preferences. Resolved build and read-only editor
+facts share the same policy; metadata schema 14 reports it in profiles and
+output plans. Changes to warning policy invalidate artifact-cache reuse for
+fresh analysis; ordinary hits still do not replay semantic warnings. This
+diagnostic-presentation addition changes no source-language safety rule.
+
 The driver also publishes the resolved project as read-only values through
 `gti/driver/project_facts.h`, so a consumer that must agree with `gti build`
 and `gti check` — an editor, a documentation generator, an external analysis
@@ -462,12 +472,14 @@ root = "tests/unit.gti"
 optimization = 0
 cpp-standard = "c++23"
 disabled-warnings = []
+dependency-warnings = true
 keep-cpp = false
 
 [profiles.release]
 optimization = 3
 cpp-standard = "c++23"
 disabled-warnings = ["unused-mut"]
+dependency-warnings = true
 keep-cpp = false
 
 ```

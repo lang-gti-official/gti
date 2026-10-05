@@ -76,7 +76,7 @@ void testDiagnostics() {
   for (const std::string declaration :
        {"int map(bool e) { return 1; }\n", "int map(int& e) { return e; }\n",
         "int map<T>(T e) { return 1; }\n",
-        "[[unsafe]] int map(int e) { return e; }\n", "int map(int e);\n"}) {
+        "unsafe int map(int e) { return e; }\n", "int map(int e);\n"}) {
     reject(producer + declaration +
                "int main() { /* 😀 */ [[discard]] read().transform_error(map); "
                "return 0; }\n",

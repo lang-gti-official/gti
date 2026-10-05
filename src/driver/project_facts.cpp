@@ -136,6 +136,22 @@ const std::string &ProjectFacts::modelIdentity() const {
   return resolvedModelIdentity;
 }
 
+PackageWarningPolicy
+ProjectFacts::packageWarnings(std::string_view profileName) const {
+  const ProjectFactsProfile *profile = findProfile(profileName);
+  if (profile == nullptr) {
+    return {};
+  }
+  std::vector<std::string> dependencies;
+  for (const ProjectFactsPackage &package : resolvedPackages) {
+    if (package.identity != selectedIdentity) {
+      dependencies.push_back(package.identity);
+    }
+  }
+  return PackageWarningPolicy(profile->dependencyWarnings, selectedIdentity,
+                              std::move(dependencies));
+}
+
 ProjectFacts projectFactsFromWorkspace(const ProjectWorkspace &workspace) {
   ProjectFacts facts;
   facts.resolvedWorkspaceRoot = workspace.root();
@@ -160,7 +176,9 @@ ProjectFacts projectFactsFromWorkspace(const ProjectWorkspace &workspace) {
         ProjectFactsProfile{.name = profile.name,
                             .optimization = profile.optimization,
                             .cppStandard = profile.cppStandard,
-                            .executionProfile = profile.executionProfile});
+                            .executionProfile = profile.executionProfile,
+                            .warningPolicy = profile.warningPolicy,
+                            .dependencyWarnings = profile.dependencyWarnings});
   }
 
   facts.resolvedTargets.reserve(manifest.targets().size());

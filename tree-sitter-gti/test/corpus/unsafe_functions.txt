@@ -2,13 +2,12 @@
 Unsafe caller contract
 ==================
 
-[[unsafe]] void retain(void* context) {}
+unsafe void retain(void* context) {}
 
 ---
 
 (source_file
   (function_declaration
-    (unsafe_function_attribute)
     (type)
     (identifier)
     (parameter_clause

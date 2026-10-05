@@ -2904,7 +2904,7 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
           .staticMember = classMember && function->isStatic(),
           .internalLinkage = !classMember && function->isStatic(),
           .constexprFunction = function->isConstexpr(),
-          .requiresUnsafe = function->unsafeAttribute().has_value(),
+          .requiresUnsafe = function->unsafeKeyword().has_value(),
           .neverReturns = function->hasFunctionAttribute("noreturn"),
           .tracksCaller = function->hasFunctionAttribute("track_caller"),
           .linkage = function->linkage(),

@@ -579,7 +579,7 @@ GTI currently emits unused ordinary wrappers conservatively, so importing the
 expanded module can link that archive member without starting the service.
 `cthread_internal.h` is not
 installed. The stable C boundary now exposes create/join plus compiler-generated
-begin/end/enter/leave entries. Ordinary `[[unsafe]]` GTI wrappers expose
+begin/end/enter/leave entries. Ordinary `unsafe` GTI wrappers expose
 `std::thrd_create` and `std::thrd_join`, with raw-pointer and mutable-reference
 output overloads. The frontend recognizes only exact private native
 declarations from the trusted `std/cthread` unit. Their concrete call graph

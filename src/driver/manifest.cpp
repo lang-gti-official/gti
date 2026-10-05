@@ -862,7 +862,8 @@ void applyProfileFields(ProjectProfile &profile, const toml::table &table,
                         std::vector<Diagnostic> &diagnostics) {
   validateFields(table,
                  {"optimization", "cpp-standard", "execution-profile",
-                  "disabled-warnings", "keep-cpp", "debug-info", "native"},
+                  "disabled-warnings", "dependency-warnings", "keep-cpp",
+                  "debug-info", "native"},
                  "profile", sourceName, source, diagnostics);
 
   if (const toml::node *optimization = table.get("optimization")) {
@@ -933,6 +934,17 @@ void applyProfileFields(ProjectProfile &profile, const toml::table &table,
       accepted.push_back(std::move(disabledWarnings[index]));
     }
     profile.warningPolicy = WarningPolicy(std::move(accepted));
+  }
+
+  if (const toml::node *dependencyWarnings = table.get("dependency-warnings")) {
+    const std::optional<bool> value = dependencyWarnings->value_exact<bool>();
+    if (!value) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1004", sourceSpan(sourceName, source, *dependencyWarnings),
+          "Profile field 'dependency-warnings' must be a Boolean."));
+    } else {
+      profile.dependencyWarnings = *value;
+    }
   }
 
   if (const toml::node *debugInfo = table.get("debug-info")) {

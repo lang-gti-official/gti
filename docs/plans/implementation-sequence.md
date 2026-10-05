@@ -25,6 +25,24 @@ files under `docs/plans/`. The documents under
 [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
+## Completed: Unsafe Declaration Keyword Migration
+
+**Status: implemented and locally validated for the 0.373.0 candidate.** Low-level APIs express
+their caller obligation with `unsafe` rather than `[[unsafe]]`. The existing
+namespace-scope free-function boundary and explicit implementation blocks
+remain unchanged; this is syntax/tooling migration, not memory-model expansion.
+The obsolete attribute is rejected with a spelling-only migration fix.
+
+The shared compiler/LSP `unused-unsafe` warning offers keyword-only removal
+when checked non-generic code did not use that block's permission. Existing
+warning suppression controls apply. Complexity scoring and an opt-in
+`unsafe-code` policy remain deferred: they need calibrated audit thresholds
+and warning-enable policy respectively. Neither automatic unsafe wrapping nor
+unsafe methods, constructors, destructors or operators is part of this slice.
+
+Current behavior is specified in [raw pointers](../language/raw-pointers.md#functions-with-a-caller-obligation);
+validation is recorded in [compiler verification](../architecture/verification.md#unsafe-declaration-keyword-migration).
+
 ## Completed: Composable I/O, Mutable Buffers, And Extensible Formatting
 
 **Status: implemented and locally validated for 0.371.0.** The outcome is one parser/copy routine
@@ -3796,7 +3814,7 @@ or MIR prerequisite.
   failure after verified cleanup; it does not adopt managed-thread failure
   re-raising. Remaining lifecycle/synchronization families below still prevent
   declaring the module complete.
-- **Caller-contract prerequisite:** namespace-scope GTI `[[unsafe]]` functions
+- **Caller-contract prerequisite:** namespace-scope GTI `unsafe` functions
   make the raw-context/manual-lifetime obligation visible at direct calls and
   forbid erasing it through safe callable conversion. This does not complete
   create/join by itself: attachment, concurrent entry, synchronization,

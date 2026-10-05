@@ -56,7 +56,7 @@ def check(executable, concurrent, selected="thrd_join"):
                 session.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {
                     "textDocument": {"uri": uri}, "position": position}})
                 hover = session.receive_until(lambda message: message.get("id") == 2)["result"]
-                assert "[[unsafe]]" in hover["contents"]["value"], hover
+                assert "unsafe" in hover["contents"]["value"], hover
                 assert selected in hover["contents"]["value"], hover
                 session.send({"jsonrpc": "2.0", "id": 3, "method": "textDocument/definition", "params": {
                     "textDocument": {"uri": uri}, "position": position}})

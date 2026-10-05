@@ -65,6 +65,8 @@ struct ProjectFactsProfile {
   OptimizationLevel optimization = OptimizationLevel::O0;
   CppStandard cppStandard = CppStandard::Cpp23;
   ExecutionProfile executionProfile = ExecutionProfile::SingleThreaded;
+  WarningPolicy warningPolicy;
+  bool dependencyWarnings = true;
 };
 
 // One declared target of the selected package.
@@ -112,6 +114,11 @@ public:
   [[nodiscard]] std::optional<AnalysisConfiguration>
   analysisConfiguration(std::string_view profileName, TargetInfo target,
                         RuntimeProfile runtimeProfile) const;
+
+  // Consumer-selected profile policy, classified by the resolved graph's
+  // actual package identities. Dependency manifests cannot hide diagnostics.
+  [[nodiscard]] PackageWarningPolicy
+  packageWarnings(std::string_view profileName) const;
 
   // The resolved package graph's identity: equal identities describe the same
   // workspace closure, package versions, and alias edges. A build plan's model

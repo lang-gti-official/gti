@@ -691,8 +691,8 @@
       }
     },
     "39-raw-pointers.gti": {
-      "declarations": 90,
-      "bodies": 23,
+      "declarations": 92,
+      "bodies": 24,
       "generated_items": 1,
       "generated_kinds": {
         "program_initialization": 0,
@@ -1577,8 +1577,8 @@
     }
   },
   "totals": {
-    "declarations": 39471,
-    "bodies": 13863,
+    "declarations": 39473,
+    "bodies": 13864,
     "generated_items": 2995
   }
 }

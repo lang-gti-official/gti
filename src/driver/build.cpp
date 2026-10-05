@@ -964,6 +964,19 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
       static_cast<std::uint64_t>(request.compilation().requiresEntryPoint()));
   identity.add("optimization", static_cast<std::uint64_t>(
                                    request.compilation().optimization()));
+  for (const std::string &group :
+       request.compilation().warnings().disabledGroups()) {
+    identity.add("warning.disabled-group", group);
+  }
+  const PackageWarningPolicy &packageWarnings =
+      request.compilation().packageWarnings();
+  identity.add(
+      "warning.dependency-warnings",
+      static_cast<std::uint64_t>(packageWarnings.dependencyWarnings()));
+  identity.add("warning.selected-package", packageWarnings.selectedPackage());
+  for (const std::string &package : packageWarnings.dependencyPackages()) {
+    identity.add("warning.dependency-package", package);
+  }
   for (const std::string &flag : request.compilation().configurationFlags()) {
     identity.add("configuration.flag", flag);
   }

@@ -99,7 +99,8 @@ root = "src/main.gti"
          "execution-profile = \"concurrent\"\n"
          "disabled-warnings = [\"unused-mut\"]\n"
          "keep-cpp = true\n"
-         "debug-info = true\n";
+         "debug-info = true\n"
+         "dependency-warnings = false\n";
 }
 
 void testDiscoveryParsingAndResolution() {
@@ -178,7 +179,8 @@ void testDiscoveryParsingAndResolution() {
                development->cppStandard == lang::CppStandard::Cpp23 &&
                development->executionProfile ==
                    lang::ExecutionProfile::SingleThreaded &&
-               !development->keepCpp && !development->debugInfo,
+               !development->keepCpp && !development->debugInfo &&
+               development->dependencyWarnings,
            "the built-in dev profile should have stable defaults");
     expect(release != nullptr &&
                release->optimization == lang::OptimizationLevel::O2 &&
@@ -187,7 +189,8 @@ void testDiscoveryParsingAndResolution() {
                    lang::ExecutionProfile::Concurrent &&
                release->warningPolicy.disabledGroups() ==
                    std::vector<std::string>{"unused-mut"} &&
-               release->keepCpp && release->debugInfo,
+               release->keepCpp && release->debugInfo &&
+               !release->dependencyWarnings,
            "manifest profile fields should refine built-in defaults");
   }
 
@@ -222,7 +225,9 @@ void testDiscoveryParsingAndResolution() {
                 lang::ExecutionProfile::SingleThreaded &&
             plan.warnings().disabledGroups() ==
                 (std::vector<std::string>{"unreachable-code", "unused-mut"}) &&
-            !plan.keepCpp() && !plan.debugInfo(),
+            !plan.keepCpp() && !plan.debugInfo() &&
+            !plan.packageWarnings().dependencyWarnings() &&
+            plan.packageWarnings().selectedPackage() == "engine_tools@0.1.0",
         "explicit build overrides should win over profile settings");
   }
 
@@ -333,6 +338,27 @@ void testManifestDiagnostics() {
              loaded.sources.locate(unknownWarning->primary).line == 15,
          "manifest warning suppression should reject unknown groups at the "
          "array element");
+
+  for (const std::string &spelling : {"1", "0", "\"false\"", "[]"}) {
+    std::string invalidDependencyWarnings = validManifest();
+    const std::size_t valueOffset = invalidDependencyWarnings.find("false");
+    invalidDependencyWarnings.replace(valueOffset, 5, spelling);
+    expect(writeFile(manifest, invalidDependencyWarnings),
+           "the invalid dependency-warning fixture should be writable");
+    loaded = lang::driver::loadProjectManifest(manifest);
+    const lang::Diagnostic *invalidDependencyWarning =
+        findDiagnostic(loaded.diagnostics, "GTI-B1004");
+    expect(!loaded.succeeded() && invalidDependencyWarning != nullptr &&
+               invalidDependencyWarning->message.find(
+                   "'dependency-warnings' must be a Boolean") !=
+                   std::string::npos &&
+               invalidDependencyWarning->primary.start == valueOffset &&
+               invalidDependencyWarning->primary.end ==
+                   valueOffset + spelling.size(),
+           "dependency-warnings should reject non-Booleans at the exact "
+           "manifest value: " +
+               spelling);
+  }
 
   std::string invalidKind = validManifest();
   invalidKind.replace(invalidKind.find("executable"),
@@ -1534,6 +1560,8 @@ root = "src/main.gti"
 
 [profiles.release]
 execution-profile = "concurrent"
+dependency-warnings = false
+disabled-warnings = ["unused-mut"]
 )";
   const std::string mathManifest = R"(manifest-version = 1
 
@@ -1541,6 +1569,8 @@ execution-profile = "concurrent"
 name = "math"
 version = "2.0.0"
 source-root = "lib"
+[profiles.dev]
+dependency-warnings = false
 )";
   expect(writeFile(root / "gti.toml", rootManifest) &&
              writeFile(app / "gti.toml", appManifest) &&
@@ -1616,9 +1646,25 @@ source-root = "lib"
          "command selects when none is named");
   const lang::driver::ProjectFactsProfile *releaseProfile =
       facts.findProfile("release");
-  expect(releaseProfile != nullptr && releaseProfile->executionProfile ==
-                                          lang::ExecutionProfile::Concurrent,
-         "a declared profile should carry its resolved execution profile");
+  expect(releaseProfile != nullptr &&
+             releaseProfile->executionProfile ==
+                 lang::ExecutionProfile::Concurrent &&
+             !releaseProfile->dependencyWarnings &&
+             releaseProfile->warningPolicy.disabledGroups() ==
+                 std::vector<std::string>{"unused-mut"},
+         "a declared profile should carry its resolved execution and warning "
+         "policies");
+  const lang::driver::PackageWarningPolicy packageWarnings =
+      facts.packageWarnings("release");
+  expect(!packageWarnings.dependencyWarnings() &&
+             packageWarnings.selectedPackage() == "app@1.0.0" &&
+             packageWarnings.dependencyPackages() ==
+                 (std::vector<std::string>{"math@2.0.0",
+                                           "workspace_root@0.1.0"}) &&
+             facts.packageWarnings("dev").dependencyWarnings() &&
+             facts.packageWarnings("missing").dependencyWarnings(),
+         "read-only facts should resolve selected-package warning ownership "
+         "and preserve visible warnings for default or unknown profiles");
 
   expect(facts.configurationFlags().size() == 1 &&
              facts.configurationFlags().front() == "FEATURE_FAST",
@@ -1638,6 +1684,18 @@ source-root = "lib"
                                      lang::driver::RuntimeProfile::Hosted)
               .has_value(),
          "an undeclared profile should not produce an analysis configuration");
+
+  const auto selectedMath =
+      lang::driver::resolveProjectFacts(root, std::string("math"));
+  expect(
+      selectedMath.succeeded() && selectedMath.facts &&
+          !selectedMath.facts->packageWarnings("dev").dependencyWarnings() &&
+          selectedMath.facts->packageWarnings("dev").selectedPackage() ==
+              "math@2.0.0" &&
+          selectedMath.facts->packageWarnings("dev").dependencyPackages() ==
+              (std::vector<std::string>{"app@1.0.0", "workspace_root@0.1.0"}),
+      "explicit workspace-member selection should change warning ownership "
+      "instead of treating every member as a dependency of the root");
 
   expect(facts.targets().size() == 2 && facts.targets().front().name == "app" &&
              facts.targets().front().kind ==
@@ -1660,7 +1718,13 @@ source-root = "lib"
   expect(built.succeeded() && built.plan, "the same project should build-plan");
   if (built.plan) {
     expect(built.plan->packageSources().size() == roots.size() &&
-               built.plan->configurationFlags() == facts.configurationFlags(),
+               built.plan->configurationFlags() == facts.configurationFlags() &&
+               built.plan->packageWarnings().dependencyWarnings() ==
+                   packageWarnings.dependencyWarnings() &&
+               built.plan->packageWarnings().selectedPackage() ==
+                   packageWarnings.selectedPackage() &&
+               built.plan->packageWarnings().dependencyPackages() ==
+                   packageWarnings.dependencyPackages(),
            "project facts should agree with the build plan about source roots "
            "and configuration flags");
     // A build plan extends the workspace-graph identity with configuration

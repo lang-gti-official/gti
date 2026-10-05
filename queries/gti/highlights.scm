@@ -38,7 +38,7 @@
     name: (identifier) @type.definition))
 (class_attribute_list
   attribute: (identifier) @attribute)
-(unsafe_function_attribute "unsafe" @attribute)
+(function_declaration "unsafe" @keyword)
 (function_contract_attribute ["noreturn" "track_caller"] @attribute)
 (native_c_array_attribute
   attribute: (identifier) @attribute

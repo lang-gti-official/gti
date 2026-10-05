@@ -93,10 +93,10 @@ public:
 
 /// Runs one selected initializer exactly once; every normal return observes
 /// its completed writes. Contenders may yield; no fairness is promised.
-[[unsafe]] void call_once(once_flag& flag, once_initializer_t initializer) {
+unsafe void call_once(once_flag& flag, once_initializer_t initializer) {
   unsafe { flag.invoke(gti_internal::once_access(), initializer); }
 }
-[[unsafe]] void call_once(const once_flag* flag, once_initializer_t initializer) {
+unsafe void call_once(const once_flag* flag, once_initializer_t initializer) {
   unsafe {
     if (flag == nullptr) { gti_internal::runtime::gti_rt_once_invoke_v1(nullptr); return; }
     call_once(*flag, initializer);
@@ -105,45 +105,45 @@ public:
 
 /// Creates a manually destroyed condition variable. Failure preserves output.
 /// Requires the concurrent profile; keep the handle live through every call.
-[[unsafe]] int32_t cnd_init(cnd_t* output) {
+unsafe int32_t cnd_init(cnd_t* output) {
   unsafe { return gti_internal::runtime::gti_rt_cnd_init_v1(output); }
 }
-[[unsafe]] int32_t cnd_init(mut cnd_t& output) {
+unsafe int32_t cnd_init(mut cnd_t& output) {
   unsafe { return cnd_init(&output); }
 }
 /// Requires a live condition with no calls in flight, including reacquiring
 /// waiters. Violations terminate. Success clears this handle, not its copies.
-[[unsafe]] void cnd_destroy(cnd_t* condition) {
+unsafe void cnd_destroy(cnd_t* condition) {
   unsafe {
     if (condition == nullptr) { gti_internal::runtime::gti_rt_cnd_destroy_v1(uint64_t(0)); return; }
     gti_internal::runtime::gti_rt_cnd_destroy_v1(*condition);
     *condition = 0;
   }
 }
-[[unsafe]] void cnd_destroy(mut cnd_t& condition) {
+unsafe void cnd_destroy(mut cnd_t& condition) {
   unsafe { cnd_destroy(&condition); }
 }
 /// Wakes one currently waiting thread, if any. Notifications are not stored.
-[[unsafe]] int32_t cnd_signal(cnd_t condition) {
+unsafe int32_t cnd_signal(cnd_t condition) {
   return gti_internal::runtime::gti_rt_cnd_signal_v1(condition);
 }
-[[unsafe]] int32_t cnd_signal(const cnd_t* condition) {
+unsafe int32_t cnd_signal(const cnd_t* condition) {
   unsafe { if (condition == nullptr) { return thrd_error; } return cnd_signal(*condition); }
 }
 /// Wakes all currently waiting threads; it does not transfer mutex ownership.
-[[unsafe]] int32_t cnd_broadcast(cnd_t condition) {
+unsafe int32_t cnd_broadcast(cnd_t condition) {
   return gti_internal::runtime::gti_rt_cnd_broadcast_v1(condition);
 }
-[[unsafe]] int32_t cnd_broadcast(const cnd_t* condition) {
+unsafe int32_t cnd_broadcast(const cnd_t* condition) {
   unsafe { if (condition == nullptr) { return thrd_error; } return cnd_broadcast(*condition); }
 }
 /// Requires exactly one mutex acquisition by this thread. Atomically enrolls
 /// and unlocks, then relocks before returning, including timeout/wait error.
 /// Recheck shared predicates in a loop. No automatic unlock on GTI failure.
-[[unsafe]] int32_t cnd_wait(cnd_t condition, mtx_t mutex) {
+unsafe int32_t cnd_wait(cnd_t condition, mtx_t mutex) {
   return gti_internal::runtime::gti_rt_cnd_wait_v1(condition, mutex);
 }
-[[unsafe]] int32_t cnd_wait(const cnd_t* condition, const mtx_t* mutex) {
+unsafe int32_t cnd_wait(const cnd_t* condition, const mtx_t* mutex) {
   unsafe {
     if (condition == nullptr || mutex == nullptr) { return thrd_error; }
     return cnd_wait(*condition, *mutex);
@@ -151,10 +151,10 @@ public:
 }
 /// Absolute UTC deadline; thrd_timedout still returns with the mutex locked.
 /// The mutex need not be mtx_timed. Invalid input does not release the mutex.
-[[unsafe]] int32_t cnd_timedwait(cnd_t condition, mtx_t mutex, timespec deadline) {
+unsafe int32_t cnd_timedwait(cnd_t condition, mtx_t mutex, timespec deadline) {
   return gti_internal::runtime::gti_rt_cnd_timedwait_v1(condition, mutex, deadline.tv_sec, deadline.tv_nsec);
 }
-[[unsafe]] int32_t cnd_timedwait(const cnd_t* condition, const mtx_t* mutex, const timespec* deadline) {
+unsafe int32_t cnd_timedwait(const cnd_t* condition, const mtx_t* mutex, const timespec* deadline) {
   unsafe {
     if (condition == nullptr || mutex == nullptr || deadline == nullptr) { return thrd_error; }
     return cnd_timedwait(*condition, *mutex, timespec(deadline->tv_sec, deadline->tv_nsec));
@@ -165,47 +165,47 @@ public:
 /// The concurrent profile is required. Copying the handle does not duplicate
 /// its lifetime. Every access must finish before destruction; no automatic
 /// unlock or destruction is implied on GTI scope exit or defined failure.
-[[unsafe]] int32_t mtx_init(mtx_t* output, int32_t flags) {
+unsafe int32_t mtx_init(mtx_t* output, int32_t flags) {
   unsafe { return gti_internal::runtime::gti_rt_mtx_init_v1(output, flags); }
 }
-[[unsafe]] int32_t mtx_init(mut mtx_t& output, int32_t flags) {
+unsafe int32_t mtx_init(mut mtx_t& output, int32_t flags) {
   unsafe { return mtx_init(&output, flags); }
 }
 
 /// Requires a live, unlocked mutex with no operations in flight. A violation
 /// terminates. Successful destruction clears this handle, not its copies.
-[[unsafe]] void mtx_destroy(mtx_t* mutex) {
+unsafe void mtx_destroy(mtx_t* mutex) {
   unsafe {
     if (mutex == nullptr) { gti_internal::runtime::gti_rt_mtx_destroy_v1(uint64_t(0)); return; }
     gti_internal::runtime::gti_rt_mtx_destroy_v1(*mutex);
     *mutex = 0;
   }
 }
-[[unsafe]] void mtx_destroy(mut mtx_t& mutex) {
+unsafe void mtx_destroy(mut mtx_t& mutex) {
   unsafe { mtx_destroy(&mutex); }
 }
 
 /// Acquires a live mutex, ordering after its prior final unlock on success.
 /// Failure acquires nothing. Recursive locking requires mtx_recursive.
-[[unsafe]] int32_t mtx_lock(mtx_t mutex) {
+unsafe int32_t mtx_lock(mtx_t mutex) {
   return gti_internal::runtime::gti_rt_mtx_lock_v1(mutex);
 }
-[[unsafe]] int32_t mtx_lock(const mtx_t* mutex) {
+unsafe int32_t mtx_lock(const mtx_t* mutex) {
   unsafe { if (mutex == nullptr) { return thrd_error; } return mtx_lock(*mutex); }
 }
-[[unsafe]] int32_t mtx_trylock(mtx_t mutex) {
+unsafe int32_t mtx_trylock(mtx_t mutex) {
   return gti_internal::runtime::gti_rt_mtx_trylock_v1(mutex);
 }
-[[unsafe]] int32_t mtx_trylock(const mtx_t* mutex) {
+unsafe int32_t mtx_trylock(const mtx_t* mutex) {
   unsafe { if (mutex == nullptr) { return thrd_error; } return mtx_trylock(*mutex); }
 }
 
 /// Absolute UTC/Unix seconds and normalized nanoseconds, unlike relative sleep.
 /// Requires mtx_timed. Timeout acquires nothing and returns thrd_timedout.
-[[unsafe]] int32_t mtx_timedlock(mtx_t mutex, timespec deadline) {
+unsafe int32_t mtx_timedlock(mtx_t mutex, timespec deadline) {
   return gti_internal::runtime::gti_rt_mtx_timedlock_v1(mutex, deadline.tv_sec, deadline.tv_nsec);
 }
-[[unsafe]] int32_t mtx_timedlock(const mtx_t* mutex, const timespec* deadline) {
+unsafe int32_t mtx_timedlock(const mtx_t* mutex, const timespec* deadline) {
   unsafe {
     if (mutex == nullptr || deadline == nullptr) { return thrd_error; }
     return mtx_timedlock(*mutex, timespec(deadline->tv_sec, deadline->tv_nsec));
@@ -214,10 +214,10 @@ public:
 
 /// Releases one acquisition on the current thread. Only the final recursive
 /// release makes the mutex available; wrong-thread or unlocked use is an error.
-[[unsafe]] int32_t mtx_unlock(mtx_t mutex) {
+unsafe int32_t mtx_unlock(mtx_t mutex) {
   return gti_internal::runtime::gti_rt_mtx_unlock_v1(mutex);
 }
-[[unsafe]] int32_t mtx_unlock(const mtx_t* mutex) {
+unsafe int32_t mtx_unlock(const mtx_t* mutex) {
   unsafe { if (mutex == nullptr) { return thrd_error; } return mtx_unlock(*mutex); }
 }
 
@@ -225,7 +225,7 @@ public:
 /// and -2 for invalid input or host failure. Only interruption writes remaining.
 /// Non-null pointers must address live, correctly synchronized values; duration
 /// may alias remaining. A null duration is an error; null remaining discards it.
-[[unsafe]] int32_t thrd_sleep(const timespec* duration, timespec* remaining) {
+unsafe int32_t thrd_sleep(const timespec* duration, timespec* remaining) {
   if (duration == nullptr) { return -2; }
   unsafe {
     int64_t seconds = duration->tv_sec;
@@ -270,13 +270,13 @@ int32_t thrd_equal(thrd_t left, thrd_t right) {
 /// Keep context and everything reachable through it live and synchronized
 /// through successful join. Failure preserves output; success requires one
 /// eventual successful join before hosted entry returns. No detach is implied.
-[[unsafe]] int32_t thrd_create(thrd_t* output, thrd_start_t entry, void* context) {
+unsafe int32_t thrd_create(thrd_t* output, thrd_start_t entry, void* context) {
   unsafe {
     return gti_internal::runtime::gti_rt_cthread_create_v1(output, entry, context);
   }
 }
 
-[[unsafe]] int32_t thrd_create(mut thrd_t& output, thrd_start_t entry, void* context) {
+unsafe int32_t thrd_create(mut thrd_t& output, thrd_start_t entry, void* context) {
   unsafe {
     return thrd_create(&output, entry, context);
   }
@@ -285,13 +285,13 @@ int32_t thrd_equal(thrd_t left, thrd_t right) {
 /// Joins once, publishing worker writes and its integer result. A null result
 /// discards the value. An error leaves the caller's output unchanged; a
 /// recoverable native error preserves the live handle for retry.
-[[unsafe]] int32_t thrd_join(thrd_t handle, int32_t* result) {
+unsafe int32_t thrd_join(thrd_t handle, int32_t* result) {
   unsafe {
     return gti_internal::runtime::gti_rt_cthread_join_v1(handle, result);
   }
 }
 
-[[unsafe]] int32_t thrd_join(thrd_t handle, mut int32_t& result) {
+unsafe int32_t thrd_join(thrd_t handle, mut int32_t& result) {
   unsafe {
     return thrd_join(handle, &result);
   }
