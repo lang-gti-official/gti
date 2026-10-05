@@ -315,6 +315,52 @@ int main() {
             assert diagnostics(23)
             change(24, carrier_access)
             assert not diagnostics(24)
+            mixed = """struct Services {
+  int& input;
+  mut int& output;
+  int& offset;
+  mut int& total;
+  Services(int& a, mut int& b, int& c, mut int& d)
+      : input(a), output(b), offset(c), total(d) {}
+  mut int& write() mut { return this.output; }
+};
+int main() {
+  int a = 40; mut int b = 0; int c = 2; mut int d = 0;
+  mut Services services{a, b, c, d};
+  mut int& selected = services.write();
+  // edit here
+  selected = 42;
+  return b - 42;
+}
+"""
+            change(25, mixed)
+            errors = diagnostics(25)
+            assert not errors, errors
+            position = {"textDocument": {"uri": uri},
+                        "position": lsp_position(mixed, mixed.index("write();"))}
+            hover = str(request("textDocument/hover", position))
+            assert "mut int32_t&" in hover and "write" in hover, hover
+            definition = request("textDocument/definition", position)
+            location = definition[0] if isinstance(definition, list) else definition
+            assert location["uri"] == uri and location["range"]["start"] == lsp_position(
+                mixed, mixed.index("write() mut")), definition
+            conflict_source = mixed.replace("// edit here", "/*😀*/ b = 9;")
+            change(26, conflict_source)
+            errors = diagnostics(26)
+            conflict = next((d for d in errors if d.get("code") == "GTI-S2017"), None)
+            assert conflict is not None, errors
+            start = conflict_source.index("b = 9")
+            assert conflict["range"] == {
+                "start": lsp_position(conflict_source, start),
+                "end": lsp_position(conflict_source, start + 1)}, conflict
+            assert conflict.get("relatedInformation"), conflict
+            assert not conflict["data"].get("fixes"), conflict
+            change(27, mixed)
+            assert not diagnostics(27)
+            change(28, mixed.replace("services.write()", "services."))
+            assert diagnostics(28)
+            change(29, mixed)
+            assert not diagnostics(29)
         finally:
             session.close()
 

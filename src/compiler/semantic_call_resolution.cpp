@@ -881,6 +881,10 @@ auto SemanticVisitor::Impl::satisfiesAtomicConstraint(
            semanticFloatFormat(argument).has_value();
   case GenericConstraintKind::Integral:
     return isInteger(argument);
+  case GenericConstraintKind::IntegralEnum:
+    return argument.kind == SemanticType::Enum && argument.enumId != 0 &&
+           argument.enumId <= enums.size() &&
+           !enums[argument.enumId - 1].payload;
   case GenericConstraintKind::SignedIntegral:
     return isSignedInteger(argument);
   case GenericConstraintKind::UnsignedIntegral:
@@ -4018,38 +4022,8 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
     if (receiver != nullptr && receiver->category == ValueCategory::Value &&
         receiver->type.kind == SemanticType::Class &&
         receiver->traits.containsBorrowedState) {
-      // Passive, shared multi-owner carriers already have a checked Value
-      // receiver path. Their complete dependency set survives the call, and
-      // ending that set before the inert shell drop cannot run user cleanup.
-      // Preserve that path without admitting mutable shells or extending the
-      // new single-owner temporary-borrow contract to multiple dependencies.
-      // As for stored initialization, entry dependencies may protect caller
-      // referents without protecting the local parameter shell itself.
-      const auto passiveSharedObservation = [&]() {
-        if (function.receiverMutability != ReceiverMutability::ReadOnly ||
-            !freshTemporaryMethodSupported(function) ||
-            !ephemeralBorrowTargetSupported(function) ||
-            !receiver->traits.copyable ||
-            requiresActiveCleanupFor(receiver->type) ||
-            !hasStableBorrowStorage(member->object()) ||
-            freshTemporaryReceiverValue(member->object()).failure !=
-                FreshTemporaryValueFailure::MultipleBorrowOwners) {
-          return false;
-        }
-        const auto dependencies = storedBorrowDependencies(member->object());
-        return dependencies.size() > 1 &&
-               std::all_of(dependencies.begin(), dependencies.end(),
-                           [](const SemanticLoanDependency &dependency) {
-                             return dependency.access == AccessMode::ReadOnly &&
-                                    (dependency.place.root != 0 ||
-                                     dependency.place.receiver);
-                           });
-      };
-      if (!passiveSharedObservation()) {
-        reportMutableReceiverFailure(member->object(), paren, function,
-                                     "Method");
-        return false;
-      }
+      reportMutableReceiverFailure(member->object(), paren, function, "Method");
+      return false;
     }
   }
 
@@ -4769,6 +4743,11 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     return arguments.size() == 2 &&
            hasBinaryDomainOperator(arguments[0], OverloadedOperator::Multiply,
                                    arguments[1]);
+  case StructuralConstraintKind::EnumUnderlying:
+    return arguments.size() == 2 && arguments[0].kind == SemanticType::Enum &&
+           satisfiesAtomicConstraint(arguments[0],
+                                     GenericConstraintKind::IntegralEnum) &&
+           enums[arguments[0].enumId - 1].underlyingType == arguments[1];
   case StructuralConstraintKind::ReadCallable:
     return unaryCallable(CallableInvocationCapability::Read);
   case StructuralConstraintKind::MutCallable:
@@ -5015,6 +4994,9 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
     case StructuralConstraintKind::SizedRange:
       // size() is a generated member-call fact rather than an operator.
       break;
+    case StructuralConstraintKind::EnumUnderlying:
+      // Enum representation classification grants no numeric operators.
+      break;
 
     // A domain operator produces an owned value of the receiver's own type.
     // The operand is named by reference so the concrete member may take it
@@ -5216,6 +5198,8 @@ auto SemanticVisitor::Impl::resolveSymbolicOperator(
       .borrowOrigin = selected.returnBorrowOrigin,
       .borrowArgument = selected.returnBorrowParameter,
       .borrowAccess = selected.returnBorrowAccess,
+      .borrowArguments = selected.returnBorrowParameters,
+      .borrowFields = selected.returnBorrowFields,
       .capability = callableInvocationCapability(selected.receiverMutability),
       .boundary = boundary,
       .receiverInfo =
@@ -5666,6 +5650,8 @@ auto SemanticVisitor::Impl::resolveOperator(
       .borrowOrigin = selected.returnBorrowOrigin,
       .borrowArgument = selected.returnBorrowParameter,
       .borrowAccess = selected.returnBorrowAccess,
+      .borrowArguments = selected.returnBorrowParameters,
+      .borrowFields = selected.returnBorrowFields,
       .capability = callableInvocationCapability(selected.receiverMutability),
       .boundary = boundary,
       .receiverInfo = [&]() {
@@ -5954,6 +5940,29 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   if (declarationInfo == nullptr && instanceBaseModel != nullptr) {
     declarationInfo = instanceBaseModel->findFunction(function.id);
   }
+  // A generic declaration need not itself have a stored-borrow layout. Resolve
+  // the contract with the same concrete types used to check this selected call;
+  // instance analysis independently checks the body against that contract.
+  std::optional<FunctionInfo> concreteDeclaration;
+  if (declarationInfo != nullptr &&
+      (declarationInfo->returnType != function.returnType ||
+       declarationInfo->parameterTypes != function.parameterTypes ||
+       !function.dispatchOwner.arguments.empty() ||
+       !function.dispatchOwner.valueArguments.empty())) {
+    concreteDeclaration = *declarationInfo;
+    concreteDeclaration->returnType = function.returnType;
+    concreteDeclaration->parameterTypes = function.parameterTypes;
+    if (const auto fields = storedFieldReturnBorrowSummary(
+            *concreteDeclaration, function.dispatchOwner)) {
+      concreteDeclaration->returnBorrowOrigin = fields->origin;
+      concreteDeclaration->returnBorrowParameter = fields->parameter;
+      concreteDeclaration->returnBorrowAccess = fields->access;
+      concreteDeclaration->returnBorrowParameters = fields->parameters;
+      concreteDeclaration->returnBorrowFields = fields->fields;
+      concreteDeclaration->returnBorrowPlace = fields->place;
+      declarationInfo = &*concreteDeclaration;
+    }
+  }
   const FunctionReturnBorrowSummary concreteBorrow =
       functionReturnBorrowSummary(
           function.returnType, function.parameterTypes, function.ownerClass,
@@ -6033,6 +6042,10 @@ auto SemanticVisitor::Impl::recordResolvedCall(
                              ? declarationInfo->returnBorrowParameters
                          : candidateOwnsBorrow ? function.returnBorrowParameters
                                                : concreteBorrow.parameters,
+      .borrowFields = declarationOwnsBorrow
+                          ? declarationInfo->returnBorrowFields
+                      : candidateOwnsBorrow ? function.returnBorrowFields
+                                            : concreteBorrow.fields,
       .borrowPlace = returnBorrowPlace,
       .dispatch =
           function.virtualMethod ? CallDispatch::Virtual : CallDispatch::Static,

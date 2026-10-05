@@ -1,0 +1,33 @@
+#include <std/format>
+#include <std/string>
+
+// Enum identity remains distinct from integer identity. A wire protocol can
+// request the exact declared representation explicitly, without formatting.
+enum class Opcode : uint8_t { ping = 1, data = 42, data_alias = 42 };
+enum class TokenError : int16_t { expired = -7, exhausted = 300 };
+enum class Label { ready };
+
+uint8_t encode_opcode(Opcode value) {
+  return std::to_underlying<uint8_t, Opcode>(value);
+}
+
+// Exact application customizations take precedence over the numeric default.
+class std::formatter<Label> {
+public:
+  expected<void, std::format_errc> format(Label& value, mut std::string& output,
+                                        std::format_spec& spec) {
+    output.append("ready");
+    return;
+  }
+};
+
+int main() {
+  if (encode_opcode(Opcode::data_alias) != uint8_t(42)) { return 1; }
+  std::println("{} opcode={:02x} bits={:08b}", Label::ready, Opcode::data,
+               Opcode::data);
+  auto printed = std::try_println("token creation failed: {}", TokenError::expired);
+  if (!printed) { return 2; }
+  // A payload enum is not an integral enum and needs its own formatter.
+  // Wrong underlying types and implicit enum/integer conversions are rejected.
+  return 0;
+}

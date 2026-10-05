@@ -1,0 +1,47 @@
+#include <std/utility>
+
+// A context borrows its services; it does not own or copy them.
+struct Settings { int frame_step = 2; };
+struct Renderer {
+  mut int frames = 0;
+  void advance(int count) mut { this.frames += count; }
+};
+struct Logger { int events_per_frame = 3; };
+struct Cache { mut int events = 0; };
+
+struct Services {
+  Settings& settings;
+  mut Renderer& renderer;
+  Logger& logger;
+  mut Cache& cache;
+
+  Services(Settings& configuration, mut Renderer& graphics,
+           Logger& log, mut Cache& entries)
+      : settings(configuration), renderer(graphics), logger(log), cache(entries) {}
+
+  void update() mut {
+    this.renderer.advance(this.settings.frame_step);
+    this.cache.events += this.logger.events_per_frame;
+  }
+};
+
+T forward_context<T>(T context) { return std::move(context); }
+
+int main() {
+  Settings settings{};
+  mut Renderer renderer{};
+  Logger logger{};
+  mut Cache cache{};
+
+  Services initial{settings, renderer, logger, cache};
+  // A mixed carrier is move-only: both exclusive dependencies move with it.
+  mut Services active = forward_context<Services>(std::move(initial));
+  active.update();
+  active.update();
+
+  // After the final use, direct access to both exclusive owners resumes.
+  // Accessing either owner before active's final use would be rejected.
+  if (renderer.frames != 4 || cache.events != 6) { return 1; }
+  renderer.advance(1);
+  return renderer.frames - 5;
+}

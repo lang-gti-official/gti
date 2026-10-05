@@ -89,7 +89,7 @@ proveMirExactReceiver(const MirProgram &program, MirBodyAddress address,
           loan.kind != MirLoanKind::Local || loan.parent || loan.entry ||
           loan.storedDependency || loan.escapes ||
           loan.access != AccessMode::ReadOnly ||
-          !loan.additionalSources.empty() || !loan.designatedFields.empty() ||
+          !loan.additionalSources().empty() || !loan.designatedFields.empty() ||
           loan.lifecycleBound || loan.twoPhase)
         return reject("receiver loan is not one confined local origin");
       origin = &loan;
@@ -161,8 +161,11 @@ proveMirExactReceiver(const MirProgram &program, MirBodyAddress address,
   for (const auto &loan : body->loans) {
     if (loan.id != receiverLoan &&
         (touches(loan.source) ||
-         std::any_of(loan.additionalSources.begin(),
-                     loan.additionalSources.end(), touches)))
+         std::any_of(
+             loan.additionalDependencies.begin(),
+             loan.additionalDependencies.end(), [&](const auto &dependency) {
+               return dependency.source != 0 && touches(dependency.source);
+             })))
       return reject("receiver has another loan or escape path");
   }
   for (const auto &block : body->blocks) {

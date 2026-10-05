@@ -49,8 +49,8 @@ def main():
             run([native, "destroy-locked"], 86)
             for fixture in ("cthread_mutex", "cthread_mutex_concurrent", "cthread_mutex_destroy"):
                 binary = output / f"{fixture}-{mode}"
-                command = [compiler, fixtures / f"{fixture}.gti", "--std", std,
-                           f"-{opt}", "--progress=never", "--keep-cpp", "--execution-profile", "concurrent", "-o", binary]
+                command = [compiler, fixtures / f"{fixture}.gti", "--progress=never", "--std", std,
+                           f"-{opt}", "--keep-cpp", "--execution-profile", "concurrent", "-o", binary]
                 extra = [*sanitizers]
                 if fixture.endswith(("concurrent", "destroy")):
                     extra += [fixtures / "cthread_mutex_context.cpp"]

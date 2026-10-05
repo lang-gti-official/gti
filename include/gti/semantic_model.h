@@ -354,6 +354,7 @@ enum class IntrinsicKind {
   RestoringExchange,
   RestoringSwap,
   RestoringIndexedSwap,
+  EnumUnderlyingValue,
   Count,
 };
 
@@ -493,6 +494,21 @@ enum class BorrowOriginKind {
   Global,
 };
 
+// One returned reference-bearing path and the exact caller-relative field
+// path supplying it. Empty resultFields denotes a reference return itself.
+// The semantic declaration owns this contract; HIR/MIR preserve it verbatim
+// and verification checks it against executable return and call publications.
+struct BorrowedFieldOrigin {
+  std::vector<SymbolId> resultFields;
+  BorrowOriginKind origin = BorrowOriginKind::None;
+  std::size_t parameter = 0;
+  std::vector<SymbolId> sourceFields;
+  AccessMode access = AccessMode::ReadOnly;
+
+  friend bool operator==(const BorrowedFieldOrigin &,
+                         const BorrowedFieldOrigin &) = default;
+};
+
 // An exact, domain-independent global/static storage origin. Callers qualify
 // this place into their own semantic/HIR/MIR body domain.
 struct BorrowOriginPlace {
@@ -553,6 +569,7 @@ struct FunctionInfo {
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> returnBorrowParameters;
+  std::vector<BorrowedFieldOrigin> returnBorrowFields;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
   std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   std::vector<FunctionId> virtualRoots;
@@ -838,6 +855,7 @@ struct ResolvedConstructionInfo {
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> borrowArguments;
+  std::vector<BorrowedFieldOrigin> borrowFields;
   bool generatedDefault = false;
   ConstructorKind kind = ConstructorKind::Ordinary;
 };
@@ -901,6 +919,7 @@ struct ResolvedCallInfo {
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> borrowArguments;
+  std::vector<BorrowedFieldOrigin> borrowFields;
   std::optional<BorrowOriginPlace> borrowPlace;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
@@ -1017,6 +1036,8 @@ struct ResolvedOperatorInfo {
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  std::vector<std::size_t> borrowArguments;
+  std::vector<BorrowedFieldOrigin> borrowFields;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::optional<CallableBoundary> boundary;
   // Exact semantic receiver facts used by overload resolution. Synthetic

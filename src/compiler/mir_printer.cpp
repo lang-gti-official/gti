@@ -263,7 +263,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v85 valid=" << program.valid() << '\n';
+    output << "mir-v87 valid=" << program.valid() << '\n';
     for (const MirNativeCallbackAdapter &adapter :
          program.nativeCallbackAdapters()) {
       output << "native-callback @" << adapter.id
@@ -328,6 +328,13 @@ public:
              << (adapter.catchesWorkerFailure ? "catch" : "leak")
              << " native-exception="
              << (adapter.catchesNativeExceptions ? "catch" : "leak") << '\n';
+    }
+    output << "integral-enums " << program.integralEnums().size() << '\n';
+    for (const MirIntegralEnum &enumeration : program.integralEnums()) {
+      output << "integral-enum @" << enumeration.declaration
+             << " source-unit=" << enumeration.sourceUnit << " underlying=";
+      type(enumeration.underlyingType);
+      output << '\n';
     }
     output << "payload-enums " << program.payloadEnums().size() << '\n';
     for (const MirPayloadEnum &enumeration : program.payloadEnums()) {
@@ -521,6 +528,8 @@ public:
       }
       output << "] return-borrow-place=";
       borrowOriginPlace(instance.returnBorrowPlace);
+      output << " return-borrow-fields=";
+      borrowFields(instance.returnBorrowFields);
       output << " owned-pointee=";
       if (instance.ownedPointeeProjection) {
         output << number(instance.ownedPointeeProjection->borrowIntrinsic)
@@ -713,7 +722,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v72\n";
+    output << "mir-body-v74\n";
     body(value, 0);
     return output.str();
   }
@@ -1115,6 +1124,27 @@ private:
     output << "])";
   }
 
+  void borrowFields(const std::vector<BorrowedFieldOrigin> &fields) {
+    output << '[';
+    for (std::size_t index = 0; index < fields.size(); ++index) {
+      separator(index);
+      const auto &field = fields[index];
+      output << "field(result=[";
+      for (std::size_t path = 0; path < field.resultFields.size(); ++path) {
+        separator(path);
+        output << field.resultFields[path];
+      }
+      output << "];origin=" << number(field.origin) << ':' << field.parameter
+             << ";source=[";
+      for (std::size_t path = 0; path < field.sourceFields.size(); ++path) {
+        separator(path);
+        output << field.sourceFields[path];
+      }
+      output << "];access=" << number(field.access) << ')';
+    }
+    output << ']';
+  }
+
   void ownershipEvent(const OwnershipEvent &value) {
     output << "event(kind=" << number(value.kind) << ";place=";
     placeKey(value.place);
@@ -1262,23 +1292,19 @@ private:
       output << value.designatedFields[index];
     }
     output << "] lifecycle-bound=" << value.lifecycleBound
-           << " additional-sources=[";
-    for (std::size_t index = 0; index < value.additionalSources.size();
+           << " additional-dependencies=[";
+    for (std::size_t index = 0; index < value.additionalDependencies.size();
          ++index) {
       separator(index);
-      output << 'p' << value.additionalSources[index];
-    }
-    output << "] additional-designated-fields=[";
-    for (std::size_t index = 0; index < value.additionalDesignatedFields.size();
-         ++index) {
-      separator(index);
-      output << '[';
-      for (std::size_t field = 0;
-           field < value.additionalDesignatedFields[index].size(); ++field) {
+      const auto &dependency = value.additionalDependencies[index];
+      output << "{source=p" << dependency.source
+             << " access=" << number(dependency.access) << " fields=[";
+      for (std::size_t field = 0; field < dependency.designatedFields.size();
+           ++field) {
         separator(field);
-        output << value.additionalDesignatedFields[index][field];
+        output << dependency.designatedFields[field];
       }
-      output << ']';
+      output << "]}";
     }
     output << ']' << " two-phase=" << value.twoPhase << " entry=" << value.entry
            << " escapes=" << value.escapes << '\n';
@@ -1376,6 +1402,8 @@ private:
     }
     output << "] borrow-place=";
     borrowOriginPlace(value.borrowPlace);
+    output << " borrow-fields=";
+    borrowFields(value.borrowFields);
     output << " operation=" << name(value.operation) << " literal=";
     literal(value.literal);
     output << " literal-provenance=";

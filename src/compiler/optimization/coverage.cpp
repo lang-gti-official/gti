@@ -148,6 +148,7 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
     return inapplicable("ordinary instruction/call effects");
   case IntrinsicKind::NumericTypeParameterConversion:
   case IntrinsicKind::NumericAliasConversion:
+  case IntrinsicKind::EnumUnderlyingValue:
   case IntrinsicKind::AllocateStorage:
   case IntrinsicKind::StorageConstruct:
   case IntrinsicKind::StorageRead:

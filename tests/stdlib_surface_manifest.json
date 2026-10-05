@@ -1,7 +1,7 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "95894b4be5b9375c7c5241cbae6b02e50584d01fb2d22e02af1a764c29212187",
+    "stdlib/prelude.gti": "c87bc79c0f19861f9703a4a2b23ab7a645d21db022639c7d54a106b4ab63f8d5",
     "stdlib/std/algorithm.gti": "f989a6357efa6e9d4be6c0b99747794f6c93bc3a918e9890ea01d27df5328f19",
     "stdlib/std/array.gti": "6b738e22e49dc45108dc3c1b90c90f19b765b4fc8bca48a63a9d565818b45233",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
@@ -15,7 +15,7 @@
     "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
     "stdlib/std/filesystem.gti": "1018e88ac78adb603b80f0e83427a431c7c6225e00f39b0924721edcc4820687",
-    "stdlib/std/format.gti": "eb46f3cb7235f74fbf3ae236aebf94b92cc87edec548b758c39a25c1e3697b45",
+    "stdlib/std/format.gti": "724d3f26a7ba1460d21fb02fafecbd531d4c29e6984169fbcdede21815502171",
     "stdlib/std/forward_list.gti": "2152aab44209cfa14a3b1709f6250c3ef85db78e1e665d5bc8299f3cb353a4bf",
     "stdlib/std/functional.gti": "2fa13a7b511a42cb3cd87d6ca1a6550e77c77109320b5457f5292bb3e5333540",
     "stdlib/std/http.gti": "f0064d96b5f74a391dd41e009be1fe76bea7e358067b5ebaad37b74cfceeff44",
@@ -619,6 +619,20 @@
       "source": "tests/fixtures/http_url_operators.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "integral-enum-example",
+      "mode": "run",
+      "source": "examples/110-integral-enums.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "ready opcode=2a bits=00101010\ntoken creation failed: -7\n", "stderr": ""}
+    },
+    {
+      "id": "integral-enum-formatting",
+      "mode": "run",
+      "source": "tests/fixtures/integral_enum_formatting.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "token creation failed: 9\nnamed 18446744073709551615\n", "stderr": ""}
     },
     {
       "id": "iterator",
@@ -1600,7 +1614,7 @@
       "source": "stdlib/std/format.gti",
       "status": "executable",
       "operations": ["std::format", "std::format_spec", "std::format_to", "std::formattable<T>", "std::formatter<T>", "std::print(pattern,Args...)", "std::println(pattern,Args...)", "std::try_format", "std::try_format_to", "std::try_print", "std::try_println"],
-      "case_ids": ["format", "format-customization", "format-panic-adoption"],
+      "case_ids": ["format", "format-customization", "format-panic-adoption", "integral-enum-formatting", "integral-enum-example"],
       "required_instantiations": ["zero arguments", "all fixed-width integer types", "mixed bool,char,int32_t,float,double,string_view,string pack", "counted string view with embedded zero", "indexed and typed format specifications", "custom formatter delegation and composition", "recoverable value-dependent formatter rejection"],
       "evidence": ["tests/fixtures/stdlib_surface_format.gti", "tests/fixtures/extensible_formatting.gti", "stdlib/std/format.gti"]
     },
@@ -2148,6 +2162,15 @@
       "case_ids": ["panic-expected"],
       "required_instantiations": ["raw counted message", "formatted int argument"],
       "evidence": ["tests/fixtures/stdlib_surface_panic_expected.gti", "tests/panic_runtime_test.py", "tests/panic_contract_tests.cpp", "stdlib/std/panic.gti"]
+    },
+    {
+      "id": "prelude.enum-underlying",
+      "source": "stdlib/prelude.gti",
+      "status": "executable",
+      "operations": ["std::enum_underlying", "std::integral_enum", "std::to_underlying"],
+      "case_ids": ["integral-enum-formatting", "integral-enum-example"],
+      "required_instantiations": ["all eight underlying widths", "unrelated wire encoder", "exact signedness and width rejection"],
+      "evidence": ["tests/integral_enum_tests.cpp", "tests/fixtures/integral_enum_formatting.gti", "examples/110-integral-enums.gti"]
     },
     {
       "id": "prelude.expected-ergonomics",

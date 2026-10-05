@@ -411,10 +411,31 @@ namespace std {
 
 The built-in admitted arguments are `bool`, `char`, every fixed-width integer,
 binary32 `float`, binary64 `double`, `std::string_view`, and `std::string`.
+Integral enums are also admitted by the ordinary primary `formatter<T>`:
+their default is the exact underlying integer's numeric presentation, including
+its full signed or unsigned width. All integer specifiers and dynamic error
+rules apply unchanged. An exact application `formatter<MyEnum>` takes
+precedence; an invalid selected specialization fails the `formattable` contract
+and never falls back to numeric formatting. Payload enums require an explicit
+formatter.
 Booleans render as `true` or `false`; characters append their one code unit;
 integers default to canonical base-10 text; and floating values default to the
 shortest round-tripping decimal representation. String values preserve all
 counted bytes, including embedded zero bytes.
+
+The general prelude concepts `std::integral_enum<T>` and
+`std::enum_underlying<T, U>` classify integral enums and their exact declared
+underlying type. `std::to_underlying<U, E>(value)` extracts that exact integer
+value, independently of formatting; for example, a protocol encoder can use
+`std::to_underlying<uint8_t, Opcode>(opcode)`. A different width or signedness is
+rejected. The result type is deliberately explicit because GTI does not yet
+deduce function return types or support dependent underlying-type aliases;
+both generic arguments are required because partial explicit argument lists
+are unsupported. Extraction is runtime-only in this slice. The concepts
+constrain ordinary declarations; bounded member queries on constrained members
+can select `if constexpr` branches, as the formatter does. No implicit
+enum/integer conversion is introduced. See
+[`110-integral-enums.gti`](../../examples/110-integral-enums.gti).
 
 ```gti
 mut std::string host = std::string("gitea.example");
@@ -527,9 +548,10 @@ The specialization must be default-initializable and provide exactly this
 public, safe, read-only, nongeneric method signature. `std::formattable<T>` is a
 source-defined conjunction of default initialization and the exact method
 requirement, not a compiler-known capability. Normal primary-or-argument package
-ownership controls specialization coherence. The empty primary has no fallback
-conversion and does not satisfy the contract. A user may constrain a forwarding
-generic with `requires std::formattable<T>`.
+ownership controls specialization coherence. The primary satisfies the contract
+only for integral enums; other application types need an exact specialization.
+A selected specialization must satisfy the contract itself. A user may
+constrain a forwarding generic with `requires std::formattable<T>`.
 
 `format_spec` exposes the parsed common presentation fields: `fill`, `alignment`,
 `sign`, `alternate`, `zero_pad`, `width`, `has_precision`, `precision`, and `type`.
