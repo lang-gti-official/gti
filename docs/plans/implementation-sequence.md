@@ -59,7 +59,7 @@ the canonical [library contract](../language/standard-library.md).
 | Owned Expected propagation, `expect`, `transform`, `and_then`, and `transform_error`; exact error identity and consuming receiver rules remain. Version 0.366.0 also supports checked read-only `expected<T&, E>` extraction through `?` and `expect`; borrowed combinators remain excluded. | Simplify owned fallible pipelines and checked borrowed lookups now. | `L-UP-01`, `L-UP-09`; [Expected](../language/expected.md). |
 | Explicit movement, bounded implicit return of an exact whole move-only local, generated lifecycle policy, immediate borrowed-carrier receivers, and sealed restoring/indexed transfers. None permits unrestricted consumption through references or dynamic indices. | Move owned mapper results, exchange initialized mutable places, and reverse/sort relocatable move-only vectors without cloning. | `L-UP-03`, `L-UP-07/08`; [ownership](../language/ownership-and-lifetimes.md). |
 | Nested owner-tied text relay, shared multi-origin carriers, checked exclusive access, storage shift/relocation, and source-defined explicit cloning. Multi-owner projections remain conservative. | Remove duplicate URL view backing; retain owner invalidation. Precise range projection and proxy iteration remain separate work. | `L-UP-02`, `L-UP-16`; [relay fixture](../../tests/fixtures/text_owner_relay.gti). |
-| Exact operation/comparator concepts, bounded ordinary-method requirements, exact class specialization, nullary read-member requirements, and attributable contract diagnostics. Argument-bearing/static member queries, pack constraints, and conditional operators are not implemented. | Improve ordinary API constraints now; custom formatting and conditional indexing require general compiler extensions. | `L-UP-04`, `L-UP-13/15`; [concepts](../language/concepts.md). |
+| Exact operation/comparator concepts, bounded ordinary-method requirements, exact class specialization, exact argument-bearing read/mut member requirements, dependent compound concept arguments, constrained heterogeneous call-pack elements, and attributable contract diagnostics. Static queries, general expression requirements, reference packs, and conditional operators are not implemented. | Source-defined public formatter customization and ordinary read/write protocols now use these facts; conditional indexing remains separate. | `L-UP-04`, `L-UP-13/15`; [concepts](../language/concepts.md). |
 | Constructor-local type packs and final-field construction have positive immovable-node evidence. Borrowed argument forwarding still has a recorded backend composition blocker. Optional publication currently transfers a completed payload. | Finish that correctness slice, then adopt node emplacement. Direct inline emplacement is not a forwarding-only rewrite. | `L-UP-10/11/12`; [existing emplacement checkpoint](#active-request-complete-the-existing-standard-library). |
 | Staged verified-MIR constant evaluation supports passive records, constructors, read-only methods, fixed arrays and literal-backed text. Allocation, owning aggregates, general Expected/payload execution, packs and mutable receivers are outside the completed profile; the older bounded checked-integer constant-result family already exists. | Add eligible pure chrono observers now. Automatic literal-format checking still needs a general call-site contract. | `L-UP-06/14`; [`L-CONST-01`](#l-const-01-remaining-bounded-compile-time-programming). |
 | Exact function items, source-defined owning callable erasure, modules, panic/caller tracking, managed threads, atomic order tags and mutex guards are implemented within documented bounds. | Do not schedule these as absent. Measure callback erasure costs; preserve host error and concurrency policies. Modules do not require a global include-to-import rewrite. | [callable checkpoint](#l-call-02-source-defined-owning-function-wrappers), [concurrency](../language/concurrency.md), [module contract](../language/programs-and-targets.md). |
@@ -95,7 +95,7 @@ the same vertical slice. It does not mean the missing capability exists.
 | 10 / `L-UP-10` | ready / correctness prerequisite | existing constructor-pack implementation and retained failure | Borrowed constructor-pack composition succeeds end to end. |
 | 11 / `L-UP-11` | blocked | `L-UP-10` | Node-container emplacement constructs immovable mapped values at their final address. |
 | 12 / `L-UP-12` | blocked | `L-UP-10`; selected-constructor/final-slot initialization contract | Direct sparse/inline emplacement for currently eligible payloads, without an intermediate T temporary/move. |
-| 13 / `L-UP-13` | ready / new capability | current exact concepts and diagnostic facts | Public user-defined formatter protocol and compile-time unsupported-type diagnostics. |
+| 13 / `L-UP-13` | implemented bounded slice; combined release validation pending | exact argument-bearing read/mut signatures, dependent compound concept facts, constrained pack calls | Public source-defined formatter protocol and compile-time unsupported-type diagnostics; examples 105/106 and focused compiler/runtime/editor/corpus gates pass. |
 | 14 / `L-UP-14` | ready / new capability, staged | current literal-text/passive-record MIR constant profile; shared validator before call-site admission | Bad literal format strings fail before execution; dynamic strings stay recoverable. |
 | 15 / `L-UP-15` | ready / new capability | current validity-only requirements and operator selection | Conditionally available map indexing without imposing default construction on every mapped type. |
 | 16 / `L-UP-16` | ready / new capability | current multi-origin shared-carrier facts | Precisely projected read-only views retain only their actual owner dependencies. |
@@ -515,31 +515,33 @@ coordinate integration and select an independent adoption row.
 
 ### L-UP-13: General Formatter Contracts And Useful Type Errors
 
-- **Adoption audit (2026-10-04):** still needs new contracts. The current
-  parser's `memberRequirement` requires exactly a read-only receiver and a
-  nullary call; the source writer needs arguments and output policy. The
-  private primary writer still reports `unsupported`. No general all-pack
-  public formatter contract was discovered; exposing private specializations
-  would not satisfy this row.
-- **Client/evidence:** [`format.gti`](../../stdlib/std/format.gti) has a
-  closed private `format_argument_writer<T>` whose default reports
-  `unsupported` at runtime even for a statically known unsupported argument.
-  Existing nullary member requirements cannot describe its operation.
-- **General rule/steps:** add bounded exact argument-bearing/static member
-  requirements and all-element heterogeneous-pack contracts sufficient for a
-  public source-defined formatter customization protocol. Prove the requirement
-  with an unrelated application serializer/validator; do not broaden overload
-  ranking or infer associated types. Co-deliver custom formatting for an asset
-  handle/error type and rejection of an unsupported argument at the call site.
+- **Implemented bounded slice:** [`format.gti`](../../stdlib/std/format.gti)
+  exposes source-defined `std::formatter<T>`, `std::format_spec`, and
+  `std::formattable<T>`. Built-in and application specializations use one exact
+  safe read-only instance method returning `expected<void, format_errc>`.
+  Missing static formatters are ordinary source contract errors, including
+  unused later heterogeneous pack arguments. Format/print/panic twins all use
+  the same implementation and retain dynamic error categories.
+- **General rule:** exact argument-bearing member requirements accept checked
+  read-only or mutable receivers and exact value/read/mut parameter types.
+  Dependent compound concept arguments use canonical substitution; constrained
+  call-pack folds validate every concrete element through ordinary function
+  viability. Symbolic generic bodies consume these same signature facts.
+  Unrelated counters/policies prove the rule without stdlib names. No static
+  member-query, general expression probing, reference pack, associated-type
+  inference, or overload ranking was needed or added.
 - **Boundary:** preserve counted text, ordinary source grammar/parser ownership,
   exact return/borrow modes, dynamic format errors and panic-versus-try policy.
   Decide borrowed adapter inputs explicitly; avoiding a clone is not permission
   to retain a caller's owner. Do not expose the private detail namespace as the
   supported extension API or recognize `std::format` in semantics.
-- **Exit:** positive custom formatters, inaccessible/inexact/wrong-access
-  adapters and pack-element attribution; declaration-related CLI/LSP errors,
-  cleanup and installed consumers. Dynamic unsupported presentation remains a
-  runtime domain error; literal validation is the next distinct row.
+- **Evidence:** runnable examples 105/106, compiler signature/negative tests,
+  dynamic custom formatter rejection and move-only exactly-once cleanup,
+  native optimization/standard/sanitizer matrix, CLI/LSP argument attribution
+  and edit recovery, Tree-sitter corpus, and whole-example native corpus oracle.
+  Installed consumer validation remains a combined-release gate. Dynamic
+  unsupported presentation remains a runtime domain error; literal validation
+  is the next distinct row.
 
 ### L-UP-14: Validate Literal Patterns Through One Parser
 
@@ -6214,9 +6216,9 @@ consumer, and release refreshes remain outstanding for the full campaign.
   replacement slice is no longer blocked on `L-RANGE-03` or the remaining
   `L-CALL-01` work: exact source-defined argument adapters, indexed counted
   text, a bounded call-pack fold, and scalar byte output are sufficient.
-  Generalized formatter customization and range-oriented text algorithms still
-  take their applicable range/callable prerequisites rather than being
-  inferred from this fold. All are systems-readiness work. Each additional
+  Public formatter customization is now implemented by `L-UP-13` with exact
+  member-signature concepts and constrained pack calls. Range-oriented text
+  algorithms retain their applicable range/callable prerequisites. Each additional
   float width joins formatting/parsing in its own numeric sub-slice rather than
   blocking the whole text layer.
 - **Implemented source-text sub-slice:** Source units are strict UTF-8 with one
@@ -6228,9 +6230,11 @@ consumer, and release refreshes remain outstanding for the full campaign.
 - **Remaining scope:** State the public runtime byte/UTF-8 policy,
   owning/view conversions, numeric parsing, formatting, and explicit failure.
   Prefer ordinary GTI algorithms and narrow host calls over exposing C buffers.
-  The current formatter recognizes sequential `{}` plus `{{`/`}}` and
-  validates before stdout; indexing, names, specifiers, binary64 arguments,
-  and customization remain later breadth. Named move-only strings use an
+  The current formatter recognizes automatic or numeric-indexed fields,
+  escaped braces, bounded presentation specifiers, binary32/binary64 values,
+  and public exact `std::formatter<T>` specializations. It validates before
+  stdout; named/dynamic fields and compile-time literal validation remain
+  later breadth. Named move-only strings use an
   owner-tied view because GTI does not yet admit `Args&...` reference packs.
   Recoverable counted stderr output is now supplied by `L-HOST-01`.
 - **Implemented binary32 text sub-slice:** `std::to_string(float)` plus the
@@ -6246,12 +6250,12 @@ consumer, and release refreshes remain outstanding for the full campaign.
   binary64, where a binary32 fraction times ten needs at most 28 significant
   bits and is therefore exact. Output is pinned byte-for-byte against C's
   `printf("%f", (float)x)` across O0/O3 and C++20/C++23.
-- **Named next sub-slices:** binary64 text and formatting (its own numeric
-  sub-slice, since a binary64 fraction times ten is not exact in binary64),
-  float parsing, and public formatter customization. Exact package-scope
-  specializations over one private source adapter closed the former
-  heterogeneous dispatch blocker without compiler recognition of
-  `std::format` or any public string type.
+- **Named next sub-slices:** literal format validation (`L-UP-14`), named and
+  dynamic fields, and client-driven range/text breadth. Binary64 text/parsing
+  and public formatter customization have separate implemented slices.
+  Exact package-scope specializations closed the heterogeneous dispatch
+  blocker; general signature concepts now make the public protocol checkable
+  without compiler recognition of `std::format` or any public string type.
 - **Exit gate:** the selected byte/UTF-8 policy is normative; owning/view and
   numeric round trips cover valid, invalid, boundary, and allocation-failure
   cases; APIs expose no native buffer lifetime and behave identically at O0/O3.

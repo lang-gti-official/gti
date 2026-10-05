@@ -1082,16 +1082,8 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
           const SemanticType concrete = typeOf(argument);
           if (concrete == SemanticType::Unknown) {
             report(argumentToken,
-                   declaration.typeParameters().size() == 1
-                       ? "Concept requirements must apply to the "
-                         "declaration's type parameter '" +
-                             declaration.typeParameters().front().lexeme +
-                             "' or a closed exact type; dependent compound "
-                             "types are not supported."
-                       : "Concept requirements must apply to one of the "
-                         "declaration's type parameters or a closed exact "
-                         "type; dependent compound types are not "
-                         "supported.",
+                   "Concept requirement argument must name a visible type "
+                   "or a compound type formed from the concept's parameters.",
                    "GTI-S2049");
             argumentMap.push_back({});
             valid = false;

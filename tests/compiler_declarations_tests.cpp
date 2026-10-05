@@ -4626,6 +4626,10 @@ int main() { mut Processor p{}; int input = 7; mut int output = 0;
                hasDiagnosticCode(invalid.diagnostics, "GTI-S2029"),
            "signature requirements must reject receiver, access, arity, "
            "result, static and private mismatches");
+    expect(hasRelatedDiagnostic(invalid.diagnostics,
+                                "apply(V&, mut V&) mut -> int"),
+           "requirement diagnostics must show exact parameters and receiver "
+           "access instead of a misleading nullary signature");
   }
   const auto illegalMutation = analyze(contract + R"(
 int bad<C>(C& receiver, int& input, mut int& output)
@@ -4655,6 +4659,43 @@ int main() { int x = 7; auto result = get(x); return result.value - 7; }
   expect(unrelated.canGenerateCode(),
          "dependent receiver/result compounds must substitute through nested "
          "concepts");
+
+  const auto nestedAliases = analyze(R"(
+namespace app {
+using count = int;
+struct Result<T> { T value; };
+namespace nested {
+struct Reader {
+  Result<count> read() mut { Result<count> r = {.value = 3}; return r; }
+};
+concept reader<R> = requires(mut R& stream) {
+  { stream.read() } -> Result<count>;
+};
+Result<count> call<R>(mut R& stream) requires reader<R> { return stream.read(); }
+}
+}
+int main() { mut app::nested::Reader r{}; auto result = app::nested::call(r); return 0; }
+)");
+  expect(nestedAliases.canGenerateCode(),
+         "compound signature types must resolve enclosing namespace aliases");
+  const auto overloaded = analyze(R"(
+struct Overloaded {
+  int get(int& value) { return value; }
+  bool get(bool& value) { return value; }
+};
+concept reads_both<R> =
+  requires(R& receiver, int& value) { { receiver.get(value) } -> int; } &&
+  requires(R& receiver, bool& value) { { receiver.get(value) } -> bool; };
+int read<R>(R& reader, int& value, bool& condition) requires reads_both<R> {
+  if (reader.get(condition)) { return reader.get(value); }
+  return 0;
+}
+int main() { Overloaded r{}; int value = 7; bool condition = true;
+  return read(r, value, condition) - 7; }
+)");
+  expect(overloaded.canGenerateCode(),
+         "symbolic member calls must select the exact required overload, not "
+         "only a member name or result");
 
   const std::string formatPrefix =
       "#include <std/format>\n#include <std/string>\nstruct Item {};\n";
@@ -4795,7 +4836,7 @@ int main() { return 0; }
              hasDiagnostic(invalid.diagnostics,
                            "Concept definition cycle involving") &&
              hasDiagnostic(invalid.diagnostics,
-                           "must apply to the declaration's type parameter") &&
+                           "must name a visible type") &&
              hasDiagnostic(invalid.diagnostics,
                            "Duplicate declaration of 'duplicate'") &&
              hasDiagnostic(invalid.diagnostics,

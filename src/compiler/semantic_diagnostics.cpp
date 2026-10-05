@@ -304,9 +304,22 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
                   memberQuery->member().lexeme + "()'."
             : "Generic arguments do not satisfy concept '" + constraint + "'.");
     if (memberQuery != nullptr) {
+      std::string signature = memberQuery->member().lexeme + "(";
+      for (std::size_t index = 0; index < memberQuery->parameters().size();
+           ++index) {
+        if (index != 0)
+          signature += ", ";
+        const TypeRef &parameter = memberQuery->parameters()[index];
+        if (parameter.referenceMutability)
+          signature += "mut ";
+        signature += semantic_spelling::typeRefSpelling(parameter);
+      }
+      signature += ")";
+      if (memberQuery->receiver().referenceMutability)
+        signature += " mut";
       diagnostic.related.push_back(
           {tokenSpan(memberQuery->member()),
-           "Required here as '" + memberQuery->member().lexeme + "() -> " +
+           "Required here as '" + signature + " -> " +
                semantic_spelling::typeRefSpelling(memberQuery->result()) +
                "' on '" +
                semantic_spelling::typeRefSpelling(memberQuery->receiver()) +
