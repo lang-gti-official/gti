@@ -1164,7 +1164,7 @@ interrupted previous sweep is not completion evidence.
 
 The non-scalar in-place input candidate now preserves selected constructor
 parameter roles and retains prepared argument obligations through a distinct
-`PrefixAppendPreflight`. Its unique success continuation transfers them once at
+`StorageConstructPreflight`. Its unique success continuation transfers them once at
 constructor entry and publishes prefix length only on success. Independent
 verification ties both steps to the same storage, target, call inputs and
 failure control flow; the storage input's extra non-consuming use is confined
@@ -3539,6 +3539,151 @@ do not expose C++ object layout as GTI semantics.
   evidence rejects copying, nonmovable elements, forged storage adoption, and
   mutation during a retained element borrow. The compiler recognizes only the
   pre-existing exact private storage operations.
+
+### S-ALLOC-04: General Low-Level Memory Facilities
+
+- **State/role:** implemented and locally validated, full Phase 1 campaign.
+  This extends ADR 022; the existing checked typed-storage interface remains
+  supported.
+- **Outcome:** unrelated application-defined owners, raw-backed views, and
+  storage abstractions can expose safe, lifetime-checked interfaces.
+- **Current progress:** sparse final-address construction and rollback are
+  implemented. Raw origins survive copies, projected fields, aggregate
+  transport, branch joins, loop backedges and object replacement. Ordinary
+  unsummarized call transport conservatively retains possible input origins.
+  The explicit owner-witness bridge reaches verified MIR and C++20/23, with
+  source-wrapper parameter obligations and loop-origin checking. Receiver and
+  aggregate raw-field obligations now propagate, and compact retained-reference
+  witnesses resolve to their external owners. Callee-produced result origins
+  now use bounded isolated queries of the ordinary semantic analyzer, preserving
+  local expiry, formal/receiver/global origins, default arguments and constructor
+  fields. Unsupported source-result families retain an unresolved marker rather
+  than being mistaken for unknown foreign addresses. Safe address formation is
+  implemented independently of unsafe operand evaluation. Integer-backed raw
+  carriers and byte-preserving native-record transport implement inert expired
+  addresses; focused warning, syntax and editor checks pass. Explicit allocation
+  release now reuses ordinary movement and cleanup, including original
+  destructor panic and reverse-slot
+  cleanup. The existing typed allocation request supplies ordinary-object
+  layout authority without new constexpr/ABI promises. Erased-address
+  conversions preserve constness, known pointee types and lifetime facts;
+  focused semantic/MIR/LSP and all eight runtime modes pass. Broad
+  completion verification is recorded below; native ABI transport has focused
+  six-mode and container eight-mode evidence as well.
+- **Approved public-language amendment:** application authors must be able to
+  define a raw-to-checked-reference helper without a privileged library call.
+  Add an optional declaration-level, identity-resolved return-borrow origin
+  selecting a parameter or receiver, retaining unambiguous inference. Safe
+  returns must prove the declared origin; unsafe raw-reference creation must
+  explicitly assert validity within lexical `unsafe` and cannot contradict
+  known origins or access. Reuse the implemented bridge/loan facts and replace
+  the convenience helpers' private-only implementation with ordinary GTI.
+  This is not general lifetime generics or permission to relabel a local borrow.
+  The `[[borrowed_from(owner)]]`/`[[borrowed_from(this)]]` syntax, explicit-summary
+  precedence, direct lexical-unsafe return assertion and ordinary GTI helpers
+  are now implemented. Focused syntax/semantic/MIR/runtime and editor checks
+  cover this path. An intermediate audit exposed additional
+  source-callee-produced raw result origins (local expiry/global identity) that
+  the conservative input union did not retain. The source-query repair below
+  preserves those facts through call-result provenance. Polymorphic
+  raw-assertion requirements fail closed rather than being lost through a
+  virtual prototype. The query implementation rejects the original probe
+  (returning `&local` and asserting it against an unrelated live witness)
+  and adds local/global/default/aggregate/constructor positive and negative
+  regressions. Produced-origin and write summaries preserve declaration-order
+  and concrete-instance independence without exporting body-local loans;
+  pending summaries remain distinct from genuinely unknown native addresses.
+  Lambda/deferred/dynamically dispatched, variadic,
+  recursive, incomplete and budget-exhausted source queries conservatively
+  block access to their unresolved raw outputs, while allowing inert transport.
+  The raw-pointer, raw-borrow and conversion contracts pass on the rebuilt
+  Release compiler. These bounded summaries do not claim full interprocedural
+  inference.
+- **Contract:** raw pointers remain non-owning. Unsafe code may assert unknown
+  validity but cannot erase known invalid provenance, access, or lifetime
+  facts. An explicit raw-to-reference assertion names an owner/lifetime
+  witness; storing a pointer in a field is not such a witness. Returned shared
+  or exclusive references use the existing place, loan, and escape model.
+  Built-in `&place` is safe when its supported operand is safe to evaluate;
+  it preserves access/provenance but creates no lasting loan. Nested raw
+  dereference/index/member operations retain their independent unsafe checks.
+  Copying an expired address is distinct from accessing its dead pointee;
+  the native representation must substantiate that distinction.
+- **Native-representation contract (implemented):** a native `T*`
+  carrier alone does not establish the promised inert expired-address copy/equality
+  semantics across arbitrary selected C++20/C++23 toolchains. WG21
+  [P3347R5](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2025/p3347r5.pdf)
+  documents the implementation-defined invalid-pointer operations and the
+  need to capture integer addresses before expiry. LLVM's
+  [object-lifetime contract](https://llvm.org/docs/LangRef.html#object-lifetime)
+  permits non-dereferencing IR operations, but is not a blanket guarantee for
+  arbitrary C++ frontends. The accepted repair is a typed internal integer
+  address carrier, captured while the native pointer is valid, with integer
+  copy/equality and explicit pointer recovery at unsafe access/foreign calls.
+  Preserve native pointer ABI for C-facing fields and signatures through
+  explicit boundary conversion, and gate the supported integral-pointer ABI.
+  Exact-toolchain runtime tests are evidence, not a substitute for this
+  representation contract. The ordinary integer carrier and reference-based
+  byte staging for contextual native output slots are implemented. Focused
+  runtime evidence covers expired address transport through source calls,
+  passive source records, arrays and erased conversions. C-compatible native
+  record fields now use byte-preserving staging for internal copy, argument,
+  result and container transport without changing external ABI. The container
+  matrix passes all eight modes and the native transport matrix passes six
+  modes with the integrated access summaries. Restoring transfers reuse
+  semantic cleanup/relocation facts to distinguish inert transport from
+  possible user execution. These focused passes complement the full completion
+  evidence below rather than replacing it.
+- **Virtual transport closure implemented:** a shared lowered virtual-root
+  query selects a uniform optional output channel for class-bound symbolic
+  results and every connected override. Native-record instances use indirect
+  publication; scalar and owning instances retain their existing return/drop
+  convention. The optimized `raw_native_record_transport_runtime` gate passes
+  C++20/C++23 at O0/O2/O3 for unrelated generic interface/model relays,
+  nongeneric overrides of generic bases, and exactly-once owning-result
+  cleanup. This preserves a family accepted by the canonical `Release`
+  version `0.374.0`, rather than disguising a regression as an unsupported
+  language shape. The same six-mode gate also covers class-owned callback
+  argument packs and two method-type variants sharing one retained owner;
+  emitted-signature assertions guard against silent native by-value copies.
+- **Implementation sequence:** (1) generalize the existing final-slot
+  constructor/preflight protocol to sparse storage, preserving partial-member
+  rollback and exact constructor failure records; (2) expose typed allocation,
+  explicit construction/destruction/release and typed transfer, using a typed
+  request as the ordinary-object layout authority; (3) implement explicit
+  erased/typed address conversion and owner-witness checked-reference bridges;
+  (4) preserve and reject contradictory known raw provenance across these
+  operations and existing pointer operations; (5) close runtime, verifier,
+  optimizer, LSP, installed-toolchain and documentation/example evidence.
+- **Required evidence:** an unrelated owner and raw-backed view demonstrate
+  final-address construction, shared/exclusive checked borrowing, movement,
+  destruction and constructor-failure cleanup. Reject lifetime escape,
+  conflicting checked/raw access and permission upgrades. Allocation failure
+  remains recoverable; constructor panic propagates its original identity and
+  never becomes an allocation error. Prove exactly-once cleanup, including
+  partial construction, optimized builds and C++20/C++23 parity. Independent
+  MIR mutations must reject forged lifecycle, loan and failure metadata.
+  Also prove unrelated source-defined safe multi-input origin selection and
+  unsafe raw-reference helpers, malformed-contract diagnostics, ordinary
+  wrapper/generic preservation, and compiler/LSP/syntax-tooling agreement.
+- **Boundaries:** no stable foreign ABI promise, arbitrary integer/address
+  conversion, implicit ownership inference, or new lifetime syntax. Private
+  mechanisms retain declaration-bound identity; public policy remains source
+  defined. No requirement to null moved-from pointers. Stateful allocator
+  protocols, resource leases and allocator-aware containers belong to Phase 2,
+  not this campaign. Completing only emplacement or checked storage does not
+  satisfy Phase 1.
+- **Completion evidence (2026-10-06):** the optimized macOS arm64 compiler
+  passes all 433 registered gates across the full run (429 passes) and a
+  four-test rerun after test-only representation/allowlist corrections. No
+  production changes intervened. This includes optimizer/evidence, verifier,
+  corpus, runtime/failure, library, native-boundary and LSP gates. The isolated
+  install passes eleven external SDK consumers, CLI/project/LSP checks, local
+  archive Neovim smoke, and examples 111–114 at C++20/O0 and C++23/O3.
+  Tree-sitter corpus/query/shipped-source checks and all 422 first-party
+  C/C++ formatting checks pass. This evidence does not claim Linux/Windows
+  execution or bundled-LLVM release packaging; see
+  [verification](../architecture/verification.md#low-level-memory-phase-1).
 
 ### S-FREE-01: Freestanding Target Profile
 

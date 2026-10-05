@@ -3779,6 +3779,365 @@ auto SemanticVisitor::Impl::typeRequiresThreads(const SemanticType &type) const
   return typeRequiresThreads(type, visiting);
 }
 
+auto SemanticVisitor::Impl::rawBorrowArgument(const ExprPtr &argument,
+                                              const Token &location)
+    -> RawBorrowCallArgument {
+  RawBorrowCallArgument snapshot;
+  snapshot.place = loanPlace(argument);
+  snapshot.dependencies = storedBorrowDependencies(argument);
+  if (snapshot.dependencies.size() == 1 &&
+      snapshot.dependencies.front().designatedFields.empty()) {
+    const auto type = semanticModel.typeOf(*argument);
+    const auto paths = storedReferencePaths(type);
+    if (paths.size() == 1)
+      snapshot.dependencies.front().designatedFields =
+          storedFieldSymbols(type, paths.front().fields);
+  }
+  for (const auto &field : rawPointerFields(argument.get()))
+    mergeRawPointerOrigins(snapshot.origins, field.origins);
+  completeRawBorrowArgument(snapshot, location);
+  return snapshot;
+}
+
+auto SemanticVisitor::Impl::completeRawBorrowArgument(
+    RawBorrowCallArgument &snapshot, const Token &location) -> void {
+  const auto formalParameter =
+      [&](SymbolId root) -> std::optional<std::size_t> {
+    if (!root || !currentFunctionDeclaration)
+      return std::nullopt;
+    const auto &parameters = currentFunctionDeclaration->parameters();
+    for (std::size_t index = 0; index < parameters.size(); ++index)
+      if (symbolForDeclaration(parameters[index].name) == root)
+        return index;
+    return std::nullopt;
+  };
+  snapshot.ownerParameter = formalParameter(snapshot.place.root);
+  if (std::any_of(snapshot.origins.begin(), snapshot.origins.end(),
+                  [](const auto &origin) { return origin.loopInput != 0; }))
+    snapshot.loopUse = deferredRawPointerLoopUse(snapshot.origins, location);
+  for (const auto &origin : snapshot.origins) {
+    if (origin.parameterPointee) {
+      snapshot.pointerReceiver |= origin.place.receiver;
+      if (auto index = formalParameter(origin.place.root);
+          index && std::find(snapshot.pointerParameters.begin(),
+                             snapshot.pointerParameters.end(),
+                             *index) == snapshot.pointerParameters.end())
+        snapshot.pointerParameters.push_back(*index);
+    } else if (auto diagnostic =
+                   rawPointerLifetimeDiagnostic(origin, location)) {
+      snapshot.lifetimeDiagnostics.push_back(std::move(*diagnostic));
+    }
+  }
+}
+
+auto SemanticVisitor::Impl::recordRawBorrowCall(
+    const Call &call, const ResolvedCallInfo &resolved) -> void {
+  if (resolved.declaration == nullptr ||
+      (resolved.intrinsic != IntrinsicKind::None &&
+       resolved.intrinsic != IntrinsicKind::RawBorrow &&
+       resolved.intrinsic != IntrinsicKind::RawBorrowMut))
+    return;
+  RawBorrowCallUse use{.caller = currentFunctionDeclaration,
+                       .callee = resolved.declaration,
+                       .intrinsic = resolved.intrinsic,
+                       .location = call.paren()};
+  for (const auto &argument : call.arguments()) {
+    use.arguments.push_back(rawBorrowArgument(argument, call.paren()));
+  }
+  if (const auto *member = exprAs<Get>(call.callee().get());
+      member && resolved.receiverMode != CallReceiverMode::None) {
+    use.receiver = rawBorrowArgument(member->object(), call.paren());
+  } else if (resolved.receiverMode != CallReceiverMode::None) {
+    use.receiver.emplace();
+    use.receiver->place = {.receiver = true};
+    for (const auto &field : rawPointerFieldsAt(use.receiver->place))
+      mergeRawPointerOrigins(use.receiver->origins, field.origins);
+    completeRawBorrowArgument(*use.receiver, call.paren());
+  }
+  if (use.receiver ||
+      std::any_of(use.arguments.begin(), use.arguments.end(),
+                  [](const auto &arg) { return !arg.origins.empty(); }))
+    requestSession.rawBorrowCallUses.push_back(std::move(use));
+}
+
+auto SemanticVisitor::Impl::analyzeRawReferenceReturn(const ExprPtr &expression)
+    -> bool {
+  const FunctionInfo *function = currentFunctionInfo();
+  const Expr *source = expression.get();
+  while (const auto *group = exprAs<Grouping>(source))
+    source = group->expression().get();
+  const auto *dereference = exprAs<Unary>(source);
+  if (!function || !function->explicitReturnBorrowOrigin || unsafeDepth == 0 ||
+      !dereference || dereference->oper().kind != TokenKind::STAR ||
+      semanticModel.typeOf(*dereference->right()).kind !=
+          SemanticType::RawPointer)
+    return false;
+
+  RawReferenceAssertionInfo assertion;
+  RawBorrowCallArgument witness;
+  const AccessMode access = currentReturnType.referenceAccess;
+  if (function->returnBorrowOrigin == BorrowOriginKind::Argument &&
+      function->declaration &&
+      function->returnBorrowParameter < function->parameterTypes.size()) {
+    const auto index = function->returnBorrowParameter;
+    const auto *binding =
+        semanticModel.findBinding(function->declaration->parameters()[index]);
+    if (!binding ||
+        function->parameterTypes[index].kind != SemanticType::Reference)
+      return false;
+    assertion.owner = {.root = binding->symbol};
+    assertion.ownerReference = SemanticType::referenceTo(
+        function->parameterTypes[index].arguments.front(), access);
+    witness.ownerParameter = index;
+  } else if (function->returnBorrowOrigin == BorrowOriginKind::Receiver) {
+    const Symbol *receiver = receiverStateSymbol();
+    if (!receiver || (access == AccessMode::Mutable &&
+                      currentReceiverMutability != ReceiverMutability::Mutable))
+      return false;
+    assertion.owner = {.receiver = true};
+    assertion.ownerReference =
+        SemanticType::referenceTo(receiver->type, access);
+  } else {
+    return false;
+  }
+  witness.place = assertion.owner;
+  // Reuse the same assertion obligations as explicit bridge calls, including
+  // wrapper propagation and deferred loop-backedge provenance. This contract
+  // does not make a known unrelated, expired or read-only address valid.
+  validateRawPointerAccess(dereference->right(), dereference->oper(), access);
+  RawBorrowCallUse use{.caller = currentFunctionDeclaration,
+                       .intrinsic = access == AccessMode::Mutable
+                                        ? IntrinsicKind::RawBorrowMut
+                                        : IntrinsicKind::RawBorrow,
+                       .location = dereference->oper(),
+                       .arguments = {rawBorrowArgument(dereference->right(),
+                                                       dereference->oper()),
+                                     std::move(witness)}};
+  requestSession.rawBorrowCallUses.push_back(std::move(use));
+  semanticModel.recordRawReferenceAssertion(*source, std::move(assertion));
+  return true;
+}
+
+auto SemanticVisitor::Impl::finalizeRawBorrowContracts() -> void {
+  const auto inputFor = [](const RawBorrowCallUse &use, bool receiver,
+                           std::size_t index) -> const RawBorrowCallArgument * {
+    if (receiver)
+      return use.receiver ? &*use.receiver : nullptr;
+    return index < use.arguments.size() ? &use.arguments[index] : nullptr;
+  };
+  const auto witnessFor = [](const RawBorrowCallArgument &owner,
+                             const RawBorrowContract &contract) {
+    auto witness = owner.place;
+    auto projections = contract.ownerProjections;
+    // A reference field retains external storage; its shell is not that
+    // storage. Resolve the field using the same checked dependency identity
+    // as ordinary projected borrowing, then append any subobject path.
+    for (const auto &dependency : owner.dependencies) {
+      const auto &fields = dependency.designatedFields;
+      if (fields.empty() || fields.size() > projections.size())
+        continue;
+      bool matches = true;
+      for (std::size_t index = 0; index < fields.size(); ++index)
+        matches &= projections[index].kind == PlaceProjectionKind::Field &&
+                   projections[index].field == fields[index];
+      if (!matches)
+        continue;
+      witness = dependency.place;
+      projections.erase(projections.begin(),
+                        projections.begin() + fields.size());
+      break;
+    }
+    witness.projections.insert(witness.projections.end(), projections.begin(),
+                               projections.end());
+    return witness;
+  };
+  const auto contractsFor = [&](const RawBorrowCallUse &use) {
+    if (use.intrinsic == IntrinsicKind::RawBorrow ||
+        use.intrinsic == IntrinsicKind::RawBorrowMut)
+      return std::vector<RawBorrowContract>{
+          {.pointerParameter = 0,
+           .ownerParameter = 1,
+           .access = use.intrinsic == IntrinsicKind::RawBorrowMut
+                         ? AccessMode::Mutable
+                         : AccessMode::ReadOnly}};
+    const auto *callee = semanticModel.findFunction(*use.callee);
+    if (!callee && instanceBaseModel)
+      callee = instanceBaseModel->findFunction(*use.callee);
+    return callee ? callee->rawBorrowContracts
+                  : std::vector<RawBorrowContract>{};
+  };
+  // Bodies may occur after their callers, and wrappers may be recursive.
+  // Propagate finite formal-parameter obligations, not source spellings.
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (const auto &use : requestSession.rawBorrowCallUses) {
+      if (!use.caller)
+        continue;
+      const auto *caller = semanticModel.findFunction(*use.caller);
+      if (!caller)
+        continue;
+      auto updated = *caller;
+      for (const auto &contract : contractsFor(use)) {
+        const auto *input =
+            inputFor(use, contract.pointerReceiver, contract.pointerParameter);
+        if (!input)
+          continue;
+        const auto &argument = *input;
+        auto inputs = argument.pointerParameters;
+        bool receiverInput = argument.pointerReceiver;
+        if (argument.loopUse && argument.loopUse->pendingLoops == 0) {
+          for (const auto &origin : argument.loopUse->origins) {
+            if (!origin.parameterPointee)
+              continue;
+            receiverInput |= origin.place.receiver;
+            const auto &parameters = use.caller->parameters();
+            for (std::size_t index = 0; index < parameters.size(); ++index)
+              if (symbolForDeclaration(parameters[index].name) ==
+                      origin.place.root &&
+                  std::find(inputs.begin(), inputs.end(), index) ==
+                      inputs.end())
+                inputs.push_back(index);
+          }
+        }
+        // Receiver input uses one distinct sentinel in this local iteration;
+        // published contracts retain an explicit receiver identity.
+        if (receiverInput)
+          inputs.push_back(use.caller->parameters().size());
+        for (const auto pointer : inputs) {
+          const bool fromReceiver = pointer == use.caller->parameters().size();
+          RawBorrowContract forwarded{.pointerParameter =
+                                          fromReceiver ? 0 : pointer,
+                                      .pointerReceiver = fromReceiver,
+                                      .access = contract.access};
+          if (contract.ownerReceiver || contract.ownerParameter) {
+            const auto *owner = inputFor(use, contract.ownerReceiver,
+                                         contract.ownerParameter.value_or(0));
+            if (owner) {
+              const auto witness = witnessFor(*owner, contract);
+              forwarded.ownerReceiver = witness.receiver;
+              for (std::size_t index = 0;
+                   index < use.caller->parameters().size(); ++index)
+                if (witness.root != 0 &&
+                    symbolForDeclaration(
+                        use.caller->parameters()[index].name) == witness.root)
+                  forwarded.ownerParameter = index;
+              if (forwarded.ownerParameter || forwarded.ownerReceiver)
+                forwarded.ownerProjections = witness.projections;
+            }
+          }
+          // Recursive field traversal can produce an unbounded path summary.
+          // Fail closed at the analysis budget; never erase the witness.
+          if (forwarded.ownerProjections.size() > 32) {
+            report(use.location,
+                   "Raw-borrow wrapper analysis exceeds its owner-projection "
+                   "limit.",
+                   "GTI-S2056");
+            return;
+          }
+          if (std::find(updated.rawBorrowContracts.begin(),
+                        updated.rawBorrowContracts.end(),
+                        forwarded) == updated.rawBorrowContracts.end()) {
+            updated.rawBorrowContracts.push_back(std::move(forwarded));
+            changed = true;
+          }
+        }
+      }
+      semanticModel.record(*use.caller, std::move(updated));
+    }
+  }
+  std::unordered_set<const FunctionDecl *> checkedDispatchContracts;
+  for (const auto &use : requestSession.rawBorrowCallUses) {
+    if (!use.caller || !checkedDispatchContracts.insert(use.caller).second)
+      continue;
+    const auto *function = semanticModel.findFunction(*use.caller);
+    if (function && function->virtualMethod &&
+        !function->rawBorrowContracts.empty()) {
+      report(use.caller->name(),
+             "Raw-reference assertion requirements cannot cross virtual or "
+             "interface dispatch in this slice; use a statically selected "
+             "helper that establishes the checked reference first.",
+             "GTI-S2056");
+    }
+  }
+  for (const auto &use : requestSession.rawBorrowCallUses) {
+    std::vector<std::size_t> checkedPointers;
+    for (const auto &contract : contractsFor(use)) {
+      const auto *input =
+          inputFor(use, contract.pointerReceiver, contract.pointerParameter);
+      if (!input)
+        continue;
+      const auto &pointer = *input;
+      auto origins = pointer.origins;
+      const bool hasLoopInputs =
+          std::any_of(origins.begin(), origins.end(),
+                      [](const auto &origin) { return origin.loopInput != 0; });
+      if (hasLoopInputs &&
+          (!pointer.loopUse || pointer.loopUse->pendingLoops != 0 ||
+           std::any_of(
+               pointer.loopUse->origins.begin(), pointer.loopUse->origins.end(),
+               [](const auto &origin) { return origin.loopInput != 0; }))) {
+        report(use.location,
+               "A loop-carried raw address requires a proven backedge origin "
+               "before checked borrowing.",
+               "GTI-S2056");
+        continue;
+      }
+      if (hasLoopInputs) {
+        // All enclosing loop transfers completed. Replace symbolic input
+        // slots with their concrete backedge origin union, including origins
+        // whose lifetime expired or whose live owner differs from the witness.
+        std::erase_if(origins,
+                      [](const auto &origin) { return origin.loopInput != 0; });
+        mergeRawPointerOrigins(origins, pointer.loopUse->origins);
+      }
+      const auto pointerIndex = contract.pointerReceiver
+                                    ? use.arguments.size()
+                                    : contract.pointerParameter;
+      if (std::find(checkedPointers.begin(), checkedPointers.end(),
+                    pointerIndex) == checkedPointers.end()) {
+        diagnostics.insert(diagnostics.end(),
+                           pointer.lifetimeDiagnostics.begin(),
+                           pointer.lifetimeDiagnostics.end());
+        if (pointer.loopUse)
+          diagnostics.insert(diagnostics.end(),
+                             pointer.loopUse->diagnostics.begin(),
+                             pointer.loopUse->diagnostics.end());
+        checkedPointers.push_back(pointerIndex);
+      }
+      if (!contract.ownerParameter && !contract.ownerReceiver)
+        continue;
+      const auto *owner = inputFor(use, contract.ownerReceiver,
+                                   contract.ownerParameter.value_or(0));
+      if (!owner)
+        continue;
+      const auto witness = witnessFor(*owner, contract);
+      for (const auto &origin : origins) {
+        if (origin.parameterPointee || !origin.place.valid() ||
+            !witness.valid())
+          continue;
+        const auto relation = placeRelation(witness, origin.place);
+        if (relation.compatibleDomain &&
+            (relation.relation == PlaceRelation::Equal ||
+             relation.relation == PlaceRelation::LeftStrictPrefix))
+          continue;
+        auto diagnostic = makeDiagnostic(
+            "GTI-S2056", DiagnosticPhase::Semantics, use.location,
+            "The raw address's known origin is not contained in its checked "
+            "owner witness.");
+        diagnostic.related.push_back(
+            {origin.addressSite, "Raw address obtained from this storage."});
+        diagnostic.hints.emplace_back(
+            "Use the actual enclosing owner as the lifetime witness; unsafe "
+            "does not replace a known origin with an unrelated object.");
+        diagnostics.push_back(std::move(diagnostic));
+        break;
+      }
+    }
+  }
+  requestSession.rawBorrowCallUses.clear();
+}
+
 auto SemanticVisitor::Impl::finalizeCThreadRequirements() -> void {
   // Declaration order and wrapper spelling must not determine availability.
   // Propagate the exact native requirement through resolved source calls.
@@ -3947,6 +4306,9 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
       receiverAllowsMutation(function.receiverMutability)
           ? AccessMode::Mutable
           : AccessMode::ReadOnly;
+  if (member && member->access().kind == TokenKind::ARROW &&
+      semanticModel.typeOf(*member->object()).kind == SemanticType::RawPointer)
+    validateRawPointerAccess(member->object(), paren, selectedReceiverAccess);
   AccessMode callReceiverAccess = selectedReceiverAccess;
   std::optional<SemanticLoanPlace> receiverPlace;
   SemanticLoanId receiverLoan = 0;
@@ -5670,6 +6032,24 @@ auto SemanticVisitor::Impl::resolveOperator(
                                   ? AccessMode::Mutable
                                   : AccessMode::ReadOnly);
       }()};
+  RawInvocation rawInvocation{
+      .resolved = {.function = selected.id,
+                   .declaration = selected.declaration,
+                   .returnType = selected.returnType,
+                   .parameterTypes = selected.parameterTypes,
+                   .dispatch = resolved.dispatch,
+                   .dispatchOwner = selected.dispatchOwner,
+                   .receiverMode = selectedReceiverMode},
+      .arguments = arguments,
+      .receiver = receiverState ? nullptr : receiver.get(),
+      .receiverPlace =
+          receiverState ? std::optional{receiverState->place} : std::nullopt,
+      .receiverType = selected.dispatchOwner.kind == SemanticType::Class
+                          ? selected.dispatchOwner
+                          : receiverType,
+      .site = token};
+  applyRawOperatorInvocation(site, rawInvocation, contextual,
+                             projection || kind == OverloadedOperator::Arrow);
   if (contextual) {
     semanticModel.recordContextualConversion(site, std::move(resolved));
   } else if (projection) {
@@ -5703,6 +6083,10 @@ auto SemanticVisitor::Impl::arrowTargetType(const Expr &site,
     }
     requireUnsafe(site, UnsafeOperationKind::RawMember, token,
                   "Raw pointer member access");
+    validateRawPointerAccess(receiver, token,
+                             site.exprKind() == ExprKind::Set
+                                 ? AccessMode::Mutable
+                                 : AccessMode::ReadOnly);
     return receiverType.arguments.front();
   }
   if (receiverType.kind == SemanticType::Class) {
@@ -5802,6 +6186,7 @@ auto SemanticVisitor::Impl::callArgumentGeometry(const Call &call)
 
 auto SemanticVisitor::Impl::recordSelectedCallOccurrence(
     const Call &call, ResolvedCallInfo resolved) -> void {
+  recordRawBorrowCall(call, resolved);
   const Token token = callableToken(call.callee());
   if (token.generated) {
     return;

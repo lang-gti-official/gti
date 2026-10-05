@@ -258,7 +258,8 @@ void SemanticDatabase::beginInstanceDelta(
     const SemanticDatabase &baseDatabase) {
   clear();
   base = &baseDatabase;
-  baseSymbolCount = baseDatabase.symbolRecords.size();
+  baseSymbolCount =
+      baseDatabase.baseSymbolCount + baseDatabase.symbolRecords.size();
 }
 
 void SemanticDatabase::rebase(const SemanticDatabase *baseDatabase) {
@@ -274,7 +275,7 @@ SymbolId SemanticDatabase::recordSymbol(SymbolRecord symbol) {
                            symbol.generated ? symbol.name : std::string{}};
   if (const auto found = symbolsByDeclaration.find(key);
       found != symbolsByDeclaration.end()) {
-    SymbolRecord &existing = symbolRecords[found->second - 1];
+    SymbolRecord &existing = symbolRecords[found->second - baseSymbolCount - 1];
     if (existing.qualifiedName.empty()) {
       existing.qualifiedName = std::move(symbol.qualifiedName);
     }
@@ -305,12 +306,12 @@ SymbolId SemanticDatabase::recordSymbol(SymbolRecord symbol) {
   }
 
   if (base != nullptr) {
-    if (const auto inherited = base->symbolsByDeclaration.find(key);
-        inherited != base->symbolsByDeclaration.end()) {
+    if (const auto inherited = base->symbolForDeclaration(
+            symbol.sourceUnit, symbol.nameSpan, key.generatedName)) {
       // The declaration already has a base identity; instance analysis
       // reuses it and skips base-record enrichment (the delta is
       // discarded after lowering, so enrichment would be invisible).
-      return inherited->second;
+      return inherited;
     }
   }
 
@@ -443,6 +444,20 @@ SemanticModel::findCallerLocation(const Expr &expression) const {
 
 const SemanticAnalysisSeal &SemanticModel::analysisSeal() const {
   return base == nullptr ? semanticAnalysisSeal : base->analysisSeal();
+}
+
+const RawReferenceAssertionInfo *
+SemanticModel::findRawReferenceAssertion(const Expr &expression) const {
+  const auto found = rawReferenceAssertions.find(&expression);
+  if (found != rawReferenceAssertions.end())
+    return &found->second;
+  return base == nullptr ? nullptr
+                         : base->findRawReferenceAssertion(expression);
+}
+
+void SemanticModel::recordRawReferenceAssertion(
+    const Expr &expression, RawReferenceAssertionInfo info) {
+  rawReferenceAssertions.insert_or_assign(&expression, std::move(info));
 }
 
 const ProgramInitializationPlan &
@@ -1280,6 +1295,7 @@ void SemanticModel::clear() {
   semanticAnalysisSeal = {};
   constants.clear();
   unsafeOperations.clear();
+  rawReferenceAssertions.clear();
   definedFailures.clear();
   callerLocations.clear();
   programInitialization = {};

@@ -24,7 +24,7 @@
     "stdlib/std/json.gti": "3de0a06f6b25109551714c74f21f62fe9421f97e520efd73a428178dc8af21f9",
     "stdlib/std/list.gti": "f208f55111c02facf979574b9eceab97ab9676bb91cb8e52ff5a27ee09ca8244",
     "stdlib/std/map.gti": "39a314ff20943e99786f0165a77baca5d9276a73c6b31d253d8a5967647d706b",
-    "stdlib/std/memory.gti": "2b6874edf04c2f9a167f6ac2d42959d2f2fce71394617757bc9dd45156b3cdce",
+    "stdlib/std/memory.gti": "1638cd5ac53f5f829bd1a384b11b8261c6f8936730bafec3e6e7e2a32fe463fb",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2fe329a8585d1eee0a1be02f42b9cb6d388c80e898a3f58d34e9de12989388fb",
     "stdlib/std/optional.gti": "0e4556056be7121c4abd6ed1a416c259b7a210f9e46cbbec12620c084405fae9",
@@ -857,6 +857,20 @@
       }
     },
     {
+      "id": "raw-owner-witness",
+      "mode": "run",
+      "source": "tests/fixtures/raw_owner_witness.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "raw-pointer-conversion",
+      "mode": "run",
+      "source": "tests/fixtures/raw_pointer_conversion.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "restoring-exchange-example",
       "mode": "run",
       "source": "examples/103-resource-exchange.gti",
@@ -925,6 +939,27 @@
       "source": "tests/fixtures/span_owner_dependent.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "storage-final-address",
+      "mode": "run",
+      "source": "tests/fixtures/storage_final_address.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "30\n20\n10\n90\n30\n20\n13\n", "stderr": ""}
+    },
+    {
+      "id": "storage-owning-view",
+      "mode": "run",
+      "source": "examples/114-owning-storage-view.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "storage-release",
+      "mode": "run",
+      "source": "tests/fixtures/storage_release.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "30\n10\n77\n90\n", "stderr": ""}
     },
     {
       "id": "string",
@@ -1960,6 +1995,9 @@
         "std::arena<T>::size",
         "std::arena<T>::try_insert",
         "std::arena_errc",
+        "std::assume_mut<T,Owner>",
+        "std::assume_ref<T,Owner>",
+        "std::erase_address<T>",
         "std::pool<T>",
         "std::pool<T>::capacity",
         "std::pool<T>::clear",
@@ -1977,14 +2015,17 @@
         "std::storage<T>::clear",
         "std::storage<T>::construct",
         "std::storage<T>::destroy",
+        "std::storage<T>::emplace",
         "std::storage<T>::get",
         "std::storage<T>::get_mut",
         "std::storage<T>::initialized",
+        "std::storage<T>::release",
         "std::storage<T>::relocate_to",
         "std::try_make_arena<T>",
-        "std::try_make_pool<T>"
+        "std::try_make_pool<T>",
+        "std::typed_address<T>"
       ],
-      "case_ids": ["allocator-storage", "arena-pool", "structural-relocation", "owned-error-pipelines"],
+      "case_ids": ["allocator-storage", "storage-final-address", "storage-owning-view", "storage-release", "arena-pool", "raw-owner-witness", "raw-pointer-conversion", "structural-relocation", "owned-error-pipelines"],
       "required_instantiations": [
         "std::alignment(64)",
         "std::arena<int32_t>",
@@ -1996,6 +2037,9 @@
       ],
       "evidence": [
         "tests/allocator_storage_runtime_test.py",
+        "tests/storage_final_address_runtime_test.py",
+        "tests/fixtures/storage_final_address.gti",
+        "tests/fixtures/storage_release.gti",
         "tests/arena_pool_runtime_test.py",
         "tests/fixtures/allocator_storage.gti",
         "tests/fixtures/arena_pool.gti",

@@ -647,6 +647,12 @@ requireCapture(functionContractRow, "noreturn", "attribute");
 requireCapture(functionContractRow, "track_caller", "attribute");
 requireCapture(functionContractRow, "terminal_highlight", "function");
 
+const borrowOriginRow = fixtureLines.findIndex((line) =>
+  line.includes("int& borrow_highlight"),
+);
+requireCapture(borrowOriginRow, "borrowed_from", "attribute");
+requireCaptureCount(borrowOriginRow, "owner", "variable.parameter", 2);
+
 const memberRequirementRow = fixtureLines.findIndex((line) =>
   line.includes("requires(T& item)"),
 );

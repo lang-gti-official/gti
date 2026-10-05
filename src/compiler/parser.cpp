@@ -438,7 +438,7 @@ private:
   StmtPtr bracketAttributedDeclaration(LanguageLinkage linkage) {
     std::optional<NativeCArrayAttribute> nativeCArray;
     std::optional<NativeLinkNameAttribute> nativeLinkName;
-    std::vector<Token> functionAttributes;
+    std::vector<FunctionAttribute> functionAttributes;
     bool parsedNativeFunctionAttribute = false;
     while (true) {
       const Token opening = peek();
@@ -539,33 +539,48 @@ private:
                                 std::move(nativeCArray),
                                 std::move(nativeLinkName));
       }
-      if (check(TokenKind::LEFT_PAREN)) {
-        throw error(first, "Unknown function attribute '[[" + first.lexeme +
-                               "(...)]]'.");
-      }
       if (parsedNativeFunctionAttribute) {
         throw error(first, "Only [[c_array(...)]] and [[link_name(...)]] may "
                            "be combined on a native function.");
       }
 
-      std::vector<Token> attributes;
-      attributes.emplace_back(std::move(first));
+      auto parseAttribute = [&](Token name) {
+        FunctionAttribute attribute{.name = std::move(name),
+                                    .argument = std::nullopt};
+        if (attribute.name.lexeme == "borrowed_from") {
+          consume(TokenKind::LEFT_PAREN, "Expect '(' after 'borrowed_from'.");
+          if (!match({TokenKind::IDENTIFIER, TokenKind::THIS})) {
+            throw error(peek(), "Expect an owner parameter name or 'this' in "
+                                "'[[borrowed_from(...)]]'.");
+          }
+          attribute.argument = previous();
+          consume(TokenKind::RIGHT_PAREN,
+                  "Expect ')' after the borrowed_from owner.");
+        } else if (check(TokenKind::LEFT_PAREN)) {
+          throw error(attribute.name, "Unknown function attribute '[[" +
+                                          attribute.name.lexeme + "(...)]]'.");
+        }
+        return attribute;
+      };
+      std::vector<FunctionAttribute> attributes;
+      attributes.emplace_back(parseAttribute(std::move(first)));
       while (match({TokenKind::COMMA})) {
-        attributes.emplace_back(consume(
-            TokenKind::IDENTIFIER, "Expect an attribute name after '[['."));
+        attributes.emplace_back(parseAttribute(consume(
+            TokenKind::IDENTIFIER, "Expect an attribute name after '[['.")));
       }
       consume(TokenKind::RIGHT_BRACKET,
               "Expect ']]' after declaration attributes.");
       consume(TokenKind::RIGHT_BRACKET,
               "Expect ']]' after declaration attributes.");
       bool functionAttributeList = !functionAttributes.empty();
-      for (const Token &attribute : attributes) {
+      for (const FunctionAttribute &attribute : attributes) {
         functionAttributeList = functionAttributeList ||
-                                attribute.lexeme == "noreturn" ||
-                                attribute.lexeme == "track_caller";
+                                attribute.name.lexeme == "noreturn" ||
+                                attribute.name.lexeme == "track_caller" ||
+                                attribute.name.lexeme == "borrowed_from";
       }
       if (functionAttributeList) {
-        for (Token &attribute : attributes) {
+        for (FunctionAttribute &attribute : attributes) {
           functionAttributes.push_back(std::move(attribute));
         }
         if (check(TokenKind::LEFT_BRACKET) &&
@@ -586,7 +601,11 @@ private:
         throw error(peek(), "These attributes apply only to class, "
                             "struct, interface, or union declarations.");
       }
-      return classDeclaration(std::move(attributes), previous());
+      std::vector<Token> classAttributes;
+      for (FunctionAttribute &attribute : attributes) {
+        classAttributes.emplace_back(std::move(attribute.name));
+      }
+      return classDeclaration(std::move(classAttributes), previous());
     }
   }
 
@@ -712,7 +731,7 @@ private:
       std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
       std::optional<Token> unsafeKeyword = std::nullopt,
-      std::vector<Token> functionAttributes = {}) {
+      std::vector<FunctionAttribute> functionAttributes = {}) {
     if (match({TokenKind::UNSAFE})) {
       if (unsafeKeyword) {
         throw error(previous(), "A function cannot repeat 'unsafe'.");
@@ -827,7 +846,7 @@ private:
                   "'unsafe' must modify a function declaration.");
     }
     if (!functionAttributes.empty()) {
-      throw error(functionAttributes.front(),
+      throw error(functionAttributes.front().name,
                   "Function attributes must annotate a function declaration.");
     }
     if (virtualKeyword) {
@@ -855,7 +874,7 @@ private:
       std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
       std::optional<Token> unsafeKeyword = std::nullopt,
-      std::vector<Token> functionAttributes = {}) {
+      std::vector<FunctionAttribute> functionAttributes = {}) {
     std::vector<Parameter> parameters = parameterList();
     if (operatorName && operatorName->kind == OverloadedOperator::Dereference &&
         !parameters.empty()) {

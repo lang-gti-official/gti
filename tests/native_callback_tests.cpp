@@ -184,8 +184,9 @@ int main() {
                  std::string::npos,
          "the C++ backend should emit typed noexcept adapters that contain "
          "both defined failure and native exceptions without pointer casts");
-  expect(cpp.find("_resolve_callback(void* instance, const char* name);") !=
-                 std::string::npos &&
+  expect(cpp.find("_resolve_callback("
+                  "::gti_internal::backend::raw_address<void> instance, "
+                  "const char* name);") != std::string::npos &&
              cpp.find("const const char*") == std::string::npos,
          "c_string parameters should retain their pointee constness without "
          "adding a duplicate top-level const qualifier");

@@ -1278,6 +1278,11 @@ public:
     return cppSemanticTypeSpelling(lowered, standard, type);
   }
 
+  [[nodiscard]] std::string nativeTypeSpelling(CppStandard standard,
+                                               const SemanticType &type) const {
+    return cppNativeTypeSpelling(lowered, standard, type);
+  }
+
   [[nodiscard]] std::string classTemplateName(ClassId id) const {
     return cppClassTemplateNameSpelling(lowered, id);
   }
@@ -2042,8 +2047,12 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
         continue;
       }
       std::string declarationTypeSpelling;
-      if (!facts.usesDirectClassRepresentation(instance.type) &&
-          record->type != field.type && containsDependentType(record->type)) {
+      if (instance.cAbiRecord && field.type.kind == SemanticType::RawPointer) {
+        declarationTypeSpelling =
+            facts.nativeTypeSpelling(standard, field.type);
+      } else if (!facts.usesDirectClassRepresentation(instance.type) &&
+                 record->type != field.type &&
+                 containsDependentType(record->type)) {
         declarationTypeSpelling = facts.typeSpelling(standard, record->type);
         if (declarationTypeSpelling == "void") {
           declarationTypeSpelling.clear();
@@ -2056,7 +2065,12 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
            .ordinal = 0,
            .type = field.type,
            .spelling = record->name,
-           .declarationTypeSpelling = std::move(declarationTypeSpelling)});
+           .declarationTypeSpelling = std::move(declarationTypeSpelling),
+           .bytePreservingFieldCell =
+               !instance.cAbiRecord &&
+               !facts.usesDirectClassRepresentation(instance.type) &&
+               cppUsesDependentByteField(record->type) &&
+               cppRequiresIndirectValueTransport(mir, field.type)});
       builder.addType(field.type);
     }
   }

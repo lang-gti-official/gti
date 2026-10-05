@@ -554,9 +554,10 @@ enum class MirInstructionKind {
   // enclosing representation stays live but disarmed/empty, including on
   // failure. RHS ownership is untouched until the success-path Assign.
   CleanupBeforeAssign,
-  // Reads prefix capacity before an in-place constructor receives any prepared
-  // parameters. The exact paired Append is its sole success continuation.
-  PrefixAppendPreflight,
+  // Checks prefix capacity or a sparse slot's bounds/liveness before an
+  // in-place constructor receives prepared parameters. Its exact paired
+  // construction is the sole success continuation.
+  StorageConstructPreflight,
   Count,
 };
 
@@ -734,9 +735,9 @@ struct MirInstruction {
   // Body-local ObjectAllocation obligation consumed by unique construction,
   // or established by AllocateObject. It is not a source-visible owner value.
   MirDropObligationId objectAllocation = 0;
-  // Exact non-consuming capacity check preceding parameter transfer into an
-  // ordinary PrefixStorageAppend constructor. Zero for all other instructions.
-  MirInstructionId prefixPreflight = 0;
+  // Exact non-consuming slot check preceding parameter transfer into an
+  // ordinary storage constructor. Zero for all other instructions.
+  MirInstructionId storagePreflight = 0;
   std::optional<MirBodyAddress> bodyTarget;
   ConstructorKind constructorKind = ConstructorKind::Ordinary;
   std::optional<HirLambdaId> lambdaTarget;
@@ -774,7 +775,8 @@ makeMirInstructionTombstone(const MirInstruction &instruction);
 // constructor signature and body-local verification checks staged ownership.
 struct MirBody;
 [[nodiscard]] const MirInstruction *
-mirPrefixAppendForPreflight(const MirBody &body, MirInstructionId preflight);
+mirStorageConstructForPreflight(const MirBody &body,
+                                MirInstructionId preflight);
 
 struct MirScalarPromotionRewrite {
   MirPlaceId place = 0;

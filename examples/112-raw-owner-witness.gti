@@ -1,0 +1,38 @@
+#include <std/memory>
+
+struct Reading {
+  mut int value = 42;
+};
+
+// The public language contract also lets an application define this bridge.
+// Unknown address validity is the unsafe caller's obligation; known invalid
+// origins and incompatible access are still rejected by the compiler.
+[[borrowed_from(owner)]]
+unsafe int& read_address(const int* address, Reading& owner) {
+  unsafe { return *address; }
+}
+
+// The address is nonowning. A separate checked reference retains the owner.
+class ReadingView {
+  const int* address = nullptr;
+  Reading& owner;
+public:
+  ReadingView(Reading& source) : address(&source.value), owner(source) {}
+
+  int& get() {
+    // Audited assertion: address points into the retained owner. The result
+    // obeys ordinary checked borrowing; storing a pointer alone proves nothing.
+    unsafe { return read_address(this.address, this.owner); }
+  }
+};
+
+int main() {
+  mut Reading owner{};
+  int* address = &owner.value; // Forming an address is safe and creates no loan.
+  unsafe {
+    mut int& writable = std::assume_mut(address, owner);
+    writable = 43;
+  }
+  ReadingView view{owner};
+  return view.get() - 43;
+}

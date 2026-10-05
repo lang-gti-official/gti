@@ -1,6 +1,23 @@
 #include "semantic_analyzer_impl.h"
 
 namespace lang {
+namespace {
+void preserveStorageConstructorParameters(
+    const SemanticModel &model, const Call &call, std::size_t storageArguments,
+    std::vector<SemanticType> &parameters) {
+  if (const auto *construction = model.findConstruction(call);
+      construction != nullptr &&
+      construction->kind == ConstructorKind::Ordinary &&
+      construction->constructor != 0 && !construction->generatedDefault &&
+      parameters.size() >= storageArguments) {
+    // The selected signature owns reference/value roles, including when
+    // concrete argument expressions still carry a grouped pack type.
+    parameters.resize(storageArguments);
+    parameters.insert(parameters.end(), construction->parameterTypes.begin(),
+                      construction->parameterTypes.end());
+  }
+}
+} // namespace
 
 auto SemanticVisitor::Impl::reportMissingLambdaCapture(const Token &use)
     -> bool {
@@ -1382,9 +1399,42 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
 
 auto SemanticVisitor::Impl::applyFunctionReturnBorrowSummary(
     CallableCandidate &function) const -> void {
-  const FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
+  FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
       function.returnType, function.parameterTypes, function.ownerClass,
       function.staticMember, function.record().intrinsic);
+  if (function.declaration != nullptr) {
+    if (const auto *attribute =
+            function.declaration->findFunctionAttribute("borrowed_from")) {
+      // Resolve source spelling to the existing declaration-relative origin.
+      // Malformed contracts are diagnosed at the declaration, never inferred
+      // afresh by HIR/MIR or the backend.
+      summary = {};
+      if (function.returnType.kind == SemanticType::Reference &&
+          attribute->argument) {
+        summary.access = function.returnType.referenceAccess;
+        if (attribute->argument->kind == TokenKind::THIS) {
+          if (function.ownerClass && !function.staticMember)
+            summary.origin = BorrowOriginKind::Receiver;
+        } else {
+          const auto &parameters = function.declaration->parameters();
+          for (std::size_t index = 0; index < parameters.size() &&
+                                      index < function.parameterTypes.size();
+               ++index) {
+            const auto &type = function.parameterTypes[index];
+            if (parameters[index].name.lexeme == attribute->argument->lexeme &&
+                type.kind == SemanticType::Reference &&
+                !parameters[index].pack &&
+                (summary.access == AccessMode::ReadOnly ||
+                 type.referenceAccess == AccessMode::Mutable)) {
+              summary.origin = BorrowOriginKind::Argument;
+              summary.parameter = index;
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
   function.returnBorrowOrigin = summary.origin;
   function.returnBorrowParameter = summary.parameter;
   function.returnBorrowAccess = summary.access;
@@ -6619,6 +6669,7 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
     return;
   }
   const ValueState before = mutableSymbol->valueState;
+  invalidateRawPointerOrigins(placeForSymbol(*mutableSymbol));
   mutableSymbol->valueState = ValueState::Moved;
   mutableSymbol->moveOrigins = {tokenSpan(variable->name())};
   if (mutableSymbol->variableDeclaration != nullptr) {
@@ -6704,6 +6755,7 @@ auto SemanticVisitor::Impl::analyzeImplicitReturnMove(
   }
 
   const ValueState before = mutableSymbol->valueState;
+  invalidateRawPointerOrigins(placeForSymbol(*mutableSymbol));
   mutableSymbol->valueState = ValueState::Moved;
   mutableSymbol->moveOrigins = {tokenSpan(variable->name())};
   if (mutableSymbol->variableDeclaration != nullptr) {
@@ -7269,18 +7321,7 @@ auto SemanticVisitor::Impl::analyzePrefixStorageIntrinsicCall(
       intrinsic == IntrinsicKind::PrefixStorageCString ||
       intrinsic == IntrinsicKind::PrefixStorageTryCString;
   if (intrinsic == IntrinsicKind::PrefixStorageAppend) {
-    if (const auto *construction = semanticModel.findConstruction(expr);
-        construction != nullptr &&
-        construction->kind == ConstructorKind::Ordinary &&
-        construction->constructor != 0 && !construction->generatedDefault &&
-        !argumentTypes.empty()) {
-      // Preserve the selected constructor's reference/value roles rather than
-      // replacing them with the expressions' (possibly pack-grouped) types.
-      argumentTypes.resize(1);
-      argumentTypes.insert(argumentTypes.end(),
-                           construction->parameterTypes.begin(),
-                           construction->parameterTypes.end());
-    }
+    preserveStorageConstructorParameters(semanticModel, expr, 1, argumentTypes);
   }
   semanticModel.record(
       expr,
@@ -7850,6 +7891,9 @@ auto SemanticVisitor::Impl::analyzeStorageIntrinsicCall(const Call &expr,
 
   const bool borrowsStorage = intrinsic == IntrinsicKind::StorageRead ||
                               intrinsic == IntrinsicKind::StorageReadMut;
+  if (intrinsic == IntrinsicKind::StorageConstruct) {
+    preserveStorageConstructorParameters(semanticModel, expr, 2, argumentTypes);
+  }
   semanticModel.record(
       expr,
       ResolvedCallInfo{

@@ -168,6 +168,9 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
       worker->constexprDefinitionsAnalyzed = constexprDefinitionsAnalyzed;
       worker->constexprConstructorsAnalyzed = constexprConstructorsAnalyzed;
       worker->requestSession.constexprWork = context.work;
+      // Concrete constant bodies also demand source access summaries. Share
+      // their request-local cycle/depth accounting, not mutable body state.
+      worker->requestSession.rawResultQueries = requestSession.rawResultQueries;
       worker->genericDefaultConstants = genericDefaultConstants;
       worker->defaultArgumentSyntax = defaultArgumentSyntax;
       worker->defaultArgumentDependencies = defaultArgumentDependencies;

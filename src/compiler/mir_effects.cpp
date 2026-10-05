@@ -1,5 +1,6 @@
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
+#include "mir_verification_queries.h"
 
 #include <algorithm>
 #include <array>
@@ -86,7 +87,7 @@ constexpr auto instructionEffects = std::to_array<MirEffectTraits>({
                     .invokesUserCode = true}, // CleanupBeforeAssign.
     MirEffectTraits{.readsPlace = true,
                     .mayTrap = true,
-                    .dependsOnLoan = true}, // PrefixAppendPreflight.
+                    .dependsOnLoan = true}, // StorageConstructPreflight.
 });
 
 constexpr auto operationEffects = std::to_array<MirEffectTraits>({
@@ -425,6 +426,13 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .mayTrap = true,
                     .movesValue = true}, // RestoringIndexedSwap
     harmless(),                          // EnumUnderlyingValue
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .startsLoan = true,
+                    .dependsOnLoan = true}, // RawBorrow
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .startsLoan = true,
+                    .dependsOnLoan = true}, // RawBorrowMut
+    harmless(), // RawPointerConversion: inert address, no pointee access.
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -497,7 +505,7 @@ constexpr auto instructionNames = std::to_array<std::string_view>({
     "allocate-object",
     "initialize-base",
     "cleanup-before-assign",
-    "prefix-append-preflight",
+    "storage-construct-preflight",
 });
 
 constexpr auto operationNames = std::to_array<std::string_view>({
@@ -656,6 +664,9 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "restoring-swap",
     "restoring-indexed-swap",
     "enum-underlying-value",
+    "raw-borrow",
+    "raw-borrow-mut",
+    "raw-pointer-conversion",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({
@@ -798,7 +809,9 @@ finishInstructionEffects(const MirInstruction &instruction,
   } else if (result == MirEffectTraits{}) {
     result = effects(instruction.kind);
   }
-  result = merge(result, effects(instruction.operation));
+  result = merge(result, mir_detail::rawPointerConversion(instruction)
+                             ? harmless()
+                             : effects(instruction.operation));
   result = merge(result, effects(instruction.synchronization.kind));
   if (instruction.hostedStartupOperation != 0) {
     // Generated hosted operations may read native wrapper state even when
@@ -874,7 +887,7 @@ finishInstructionEffects(const MirInstruction &instruction,
     result.targetDependent = true;
   }
   if (instruction.unsafeOperation == UnsafeOperationKind::PointerArithmetic ||
-      instruction.unsafeOperation == UnsafeOperationKind::AddressOf) {
+      instruction.operation == MirOperation::AddressOf) {
     result.targetDependent = true;
   }
   if (!instruction.definedFailure.empty()) {
@@ -1028,9 +1041,10 @@ struct ExactTargets {
            .owner = static_cast<std::size_t>(destructor)});
     }
   } else if (instruction.kind == MirInstructionKind::Call &&
-             instruction.intrinsic == IntrinsicKind::PrefixStorageAppend &&
+             (instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+              instruction.intrinsic == IntrinsicKind::StorageConstruct) &&
              instruction.constructorTarget &&
-             instruction.prefixPreflight != 0) {
+             instruction.storagePreflight != 0) {
     // The sealed slot operation also executes the exact source constructor;
     // retain its memory, synchronization and escape effects in the shared
     // interprocedural analysis rather than treating it as only a helper.

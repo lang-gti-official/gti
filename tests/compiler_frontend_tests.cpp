@@ -1499,9 +1499,9 @@ int main() {
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact generated =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  const auto publication =
-      generated.contents.find("std::construct_at(__gti_mir_out_result, "
-                              "std::move(__gti_mir_p_4.get()));");
+  const auto publication = generated.contents.find(
+      "construct_representation_at(__gti_mir_out_result, "
+      "std::move(__gti_mir_p_4.get()));");
   const auto retirement =
       generated.contents.find("__gti_mir_p_4.destroy();", publication);
   const auto rightCleanup =

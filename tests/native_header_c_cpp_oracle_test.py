@@ -75,6 +75,8 @@ extern "C" {
 extern "C" {
   NativeCounter* c_counter_create(int32_t initial);
   int32_t c_counter_open(int32_t initial, NativeCounter** out_counter);
+  int32_t c_counter_alias_out(NativeCounter* original,
+                              NativeCounter** first, NativeCounter** second);
   void c_counter_destroy(NativeCounter* counter);
   int32_t c_counter_read(const NativeCounter* counter);
   [[c_array(count)]] NativeCounter** c_counter_array(int32_t* count);
@@ -106,6 +108,8 @@ int main() {
     NativeCounter* counter = c_counter_create(17);
     mut NativeCounter* opened_counter = nullptr;
     open_status = c_counter_open(19, &opened_counter);
+    open_status += c_counter_alias_out(opened_counter, &opened_counter,
+                                       &opened_counter);
     bridge_cpp::Engine* engine = bridge_cpp::cpp_engine_create(2.0);
     point = bridge_cpp::cpp_engine_apply(engine, point);
     point = cpp_point_scale(point, 1.0);
@@ -119,6 +123,10 @@ int main() {
     counter_value += c_c_string_length(names[1]);
     bridge_cpp::cpp_engine_destroy(engine);
     c_counter_destroy(counter);
+    c_counter_destroy(opened_counter);
+    // The old handle is inert storage after destruction. Opening replaces its
+    // bytes without evaluating that expired pointer merely to stage an out arg.
+    open_status += c_counter_open(23, &opened_counter);
     c_counter_destroy(opened_counter);
     c_replace_description(&description);
   }
@@ -166,6 +174,15 @@ int32_t c_counter_open(int32_t initial, NativeCounter** out_counter) {
   }
   *out_counter = c_counter_create(initial);
   return *out_counter == NULL ? 2 : 0;
+}
+
+int32_t c_counter_alias_out(NativeCounter* original,
+                            NativeCounter** first, NativeCounter** second) {
+  if (first != second || *first != original) return 3;
+  *first = NULL;
+  if (*second != NULL) return 4;
+  *second = original;
+  return 0;
 }
 
 void c_counter_destroy(NativeCounter* counter) { free(counter); }

@@ -19,9 +19,7 @@ auto SemanticVisitor::Impl::recordProgramStorageEffect(
       semanticModel.findConstant(expression);
   const bool valueSubstitutionCandidate =
       programStoragePlaceUseDepth == 0 &&
-      !hasRole(roles, OccurrenceRole::Write) &&
-      semanticModel.unsafeOperation(expression) !=
-          UnsafeOperationKind::AddressOf;
+      !hasRole(roles, OccurrenceRole::Write);
   const bool substitution = constant && valueSubstitutionCandidate &&
                             canMaterializeProgramConstant(*constant);
   if (substitution) {
@@ -1809,6 +1807,14 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
                             DefinedFailureDetail::DuplicateConstruction);
           addFailureOutcome(operation, DefinedFailureCode::AllocationFailure,
                             DefinedFailureDetail::ElementConstruction);
+          if (const auto *construction = semanticModel.findConstruction(expr);
+              construction != nullptr &&
+              construction->kind == ConstructorKind::Ordinary &&
+              construction->constructor != 0 &&
+              construction->constructedType.kind == SemanticType::Class &&
+              !construction->generatedDefault) {
+            operation.propagation = FailurePropagationKind::Constructor;
+          }
           break;
         case IntrinsicKind::StorageRead:
         case IntrinsicKind::StorageReadMut:
@@ -1970,6 +1976,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
               DefinedFailureDetail::OccupiedRelocationDestination);
           break;
         case IntrinsicKind::ExactTypeParameterConstruction:
+        case IntrinsicKind::RawPointerConversion:
         case IntrinsicKind::DefaultTypeParameterConstruction:
         case IntrinsicKind::Move:
         case IntrinsicKind::UniqueOwnerIsNull:
@@ -1977,6 +1984,8 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::RestoringExchange:
         case IntrinsicKind::RestoringSwap:
         case IntrinsicKind::EnumUnderlyingValue:
+        case IntrinsicKind::RawBorrow:
+        case IntrinsicKind::RawBorrowMut:
         case IntrinsicKind::UniqueOwnerUpcast:
         case IntrinsicKind::SharedOwnerEmpty:
         case IntrinsicKind::SharedOwnerIsNull:
@@ -2191,8 +2200,17 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   if (instanceAnalysisActive) {
     semanticModel.suppressInheritedOperator(expr);
   }
+  valueFlow.rawOperatorResults.erase(&expr);
   expr.accept(*this);
   SemanticType result = currentType;
+  if (exprAs<Call>(&expr) || semanticModel.findConstruction(expr))
+    validateRawCallAccesses(expr);
+  if (const auto *call = exprAs<Call>(&expr))
+    preserveRawCallWrites(*call);
+  if (const auto *call = exprAs<Call>(&expr))
+    invalidateRawCallOrigins(call);
+  if (exprAs<Call>(&expr) || semanticModel.findConstruction(expr))
+    applyRawCallWrites(expr);
   ExpressionInfo info = classifyExpression(expr, result);
   if (semanticModel.findOperator(expr) == nullptr && isNumeric(result)) {
     const auto compound = [&](TokenKind token, const ExprPtr &right) {
@@ -2221,6 +2239,29 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   }
   semanticModel.record(expr, info);
   semanticModel.recordDefinedFailure(expr, classifyDefinedFailure(expr, info));
+  if (expr.exprKind() == ExprKind::Call &&
+      info.type.kind == SemanticType::RawPointer &&
+      info.type.arguments.size() == 1 &&
+      info.type.arguments.front() != SemanticType::Void &&
+      !containsOpenTypeParameter(info.type)) {
+    const auto origins = rawPointerOrigins(&expr);
+    for (auto &loop : valueFlow.rawPointerLoops)
+      loop.accesses.push_back(
+          {origins, expressionToken(expr), {}, info.type.arguments.front()});
+    for (const auto &origin : origins) {
+      if (origin.pointeeType != SemanticType::Unknown &&
+          !containsOpenTypeParameter(origin.pointeeType) &&
+          origin.pointeeType != info.type.arguments.front()) {
+        report(expressionToken(expr),
+               "Raw pointer result contradicts the known pointee type '" +
+                   typeSpelling(origin.pointeeType) + "'.",
+               "GTI-S2014");
+        diagnostics.back().related.push_back(
+            {origin.addressSite, "Pointee type retained at this conversion."});
+        break;
+      }
+    }
+  }
   // Keep a source token for calls, including source operations that select an
   // ordinary operator and expected's synthesized mapper/failure branches.
   // This is location provenance only, not a transitive failure category set.
@@ -2382,6 +2423,8 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   if (info.category == ValueCategory::Value &&
       requiresActiveCleanupFor(info.type)) {
     recordProgramCleanupEffects(info.type, tokenSpan(expressionToken(expr)));
+    applyRawCleanupWrites(info.type, tokenSpan(expressionToken(expr)),
+                          rawPointerFields(&expr));
   }
   recordSemanticLoanUse(symbolId);
   if (!token.generated) {
@@ -3443,6 +3486,24 @@ auto SemanticVisitor::Impl::declare(const Token &name, Symbol symbol) -> bool {
                                   "Previous declaration is here."});
     diagnostics.emplace_back(std::move(diagnostic));
     return false;
+  }
+  if (symbol.parameterDeclaration) {
+    const auto place = placeKey(placeForSymbol(symbol));
+    if (place.valid()) {
+      for (auto path : rawPointerFieldPaths(symbol.type)) {
+        auto originPlace = place;
+        originPlace.projections.insert(originPlace.projections.end(),
+                                       path.begin(), path.end());
+        RawPointerOrigin origin{.place = std::move(originPlace),
+                                .addressSite = tokenSpan(name),
+                                .parameterPointee = true};
+        if (path.empty() && symbol.type.kind == SemanticType::RawPointer)
+          symbol.rawPointerOrigins.push_back(std::move(origin));
+        else
+          symbol.rawPointerFields.push_back(
+              {std::move(path), {std::move(origin)}});
+      }
+    }
   }
   scopes.back().emplace(name.lexeme, std::move(symbol));
   return true;
@@ -5889,10 +5950,21 @@ auto SemanticVisitor::Impl::declareReceiverState() -> void {
   if (!currentClass || scopes.empty()) {
     return;
   }
-  scopes.back().insert_or_assign(
-      std::string(receiverStateName),
-      Symbol{.type = openClassType(*currentClass),
-             .assignable = receiverAllowsMutation(currentReceiverMutability)});
+  Symbol state{.type = openClassType(*currentClass),
+               .assignable = receiverAllowsMutation(currentReceiverMutability)};
+  for (auto path : constructorDepth == 0
+                       ? rawPointerFieldPaths(state.type)
+                       : std::vector<std::vector<PlaceProjection>>{}) {
+    auto originPlace = placeKey({.root = &state, .receiver = true});
+    originPlace.projections = path;
+    state.rawPointerFields.push_back(
+        {std::move(path),
+         {{.place = std::move(originPlace),
+           .addressSite = tokenSpan(classInfo(*currentClass).name),
+           .parameterPointee = true}}});
+  }
+  scopes.back().insert_or_assign(std::string(receiverStateName),
+                                 std::move(state));
 }
 
 auto SemanticVisitor::Impl::receiverStateSymbol() -> Symbol * {
@@ -6023,6 +6095,8 @@ auto SemanticVisitor::Impl::semanticPlace(const Expr *expression)
       if (const std::optional<PlaceProjection> projection =
               fixedArrayIndexProjection(*objectType, index->index(), *index)) {
         place.projections.push_back(*projection);
+      } else if (objectType->kind == SemanticType::RawPointer) {
+        place.projections.push_back({.kind = PlaceProjectionKind::Dereference});
       }
     }
     return place;
@@ -6094,6 +6168,8 @@ auto SemanticVisitor::Impl::semanticPlace(const IndexSet &expression)
             fixedArrayIndexProjection(*objectType, expression.index(),
                                       expression)) {
       place.projections.push_back(*projection);
+    } else if (objectType->kind == SemanticType::RawPointer) {
+      place.projections.push_back({.kind = PlaceProjectionKind::Dereference});
     }
   }
   return place;
@@ -6200,6 +6276,8 @@ auto SemanticVisitor::Impl::setProjectedValueState(const SemanticPlace &place,
   if (place.root == nullptr || (place.projections.empty() && !place.receiver)) {
     return;
   }
+  if (state != ValueState::Available)
+    invalidateRawPointerOrigins(place);
   auto found = std::find_if(place.root->projectedValueStates.begin(),
                             place.root->projectedValueStates.end(),
                             [&](const ProjectedValueState &candidate) {
@@ -6457,6 +6535,12 @@ auto SemanticVisitor::Impl::mergeValueStates(const ScopeStack &base,
         }
         target->second.projectedValueStates =
             mergedProjectedValueStates(leftSymbol->second, rightSymbol->second);
+        target->second.rawPointerOrigins = leftSymbol->second.rawPointerOrigins;
+        mergeRawPointerOrigins(target->second.rawPointerOrigins,
+                               rightSymbol->second.rawPointerOrigins);
+        target->second.rawPointerFields = leftSymbol->second.rawPointerFields;
+        mergeRawPointerFields(target->second.rawPointerFields,
+                              rightSymbol->second.rawPointerFields);
         target->second.storageLoans = leftSymbol->second.storageLoans;
         for (const SemanticLoanId loan : rightSymbol->second.storageLoans) {
           appendUniqueLoan(target->second.storageLoans, loan);
@@ -6498,6 +6582,8 @@ auto SemanticVisitor::Impl::applyMoveStates(const ScopeStack &source) -> void {
       }
       target.valueState = found->second.valueState;
       target.moveOrigins = found->second.moveOrigins;
+      target.rawPointerOrigins = found->second.rawPointerOrigins;
+      target.rawPointerFields = found->second.rawPointerFields;
       target.projectedValueStates = found->second.projectedValueStates;
     }
   }
@@ -6635,8 +6721,39 @@ auto SemanticVisitor::Impl::endScope() -> void {
   if (scopes.empty()) {
     return;
   }
+  std::unordered_set<SymbolId> expired;
   for (auto &[_, symbol] : scopes.back()) {
+    if (symbol.valueState == ValueState::Available)
+      applyRawCleanupWrites(symbol.type, tokenSpan(symbol.declaration),
+                            symbol.rawPointerFields);
     removeLoanCarrier(symbol);
+    expired.insert(symbolForDeclaration(symbol.declaration));
+  }
+  for (auto &scope : scopes) {
+    for (auto &[_, carrier] : scope) {
+      const auto expire = [&](auto &origins) {
+        for (auto &origin : origins)
+          if (!origin.parameterPointee && origin.loopInput == 0 &&
+              expired.contains(origin.place.root))
+            origin.expired = true;
+      };
+      expire(carrier.rawPointerOrigins);
+      for (auto &field : carrier.rawPointerFields)
+        expire(field.origins);
+    }
+  }
+  auto *globals = currentNamespaceSymbolsMutable();
+  auto &bindings = globals ? *globals : valueFlow.namespaceSymbols;
+  for (auto &[_, carrier] : bindings) {
+    const auto expire = [&](auto &origins) {
+      for (auto &origin : origins)
+        if (!origin.parameterPointee && origin.loopInput == 0 &&
+            expired.contains(origin.place.root))
+          origin.expired = true;
+    };
+    expire(carrier.rawPointerOrigins);
+    for (auto &field : carrier.rawPointerFields)
+      expire(field.origins);
   }
   scopes.pop_back();
 }
@@ -6646,12 +6763,2850 @@ auto SemanticVisitor::Impl::report(const Token &token, std::string message,
   reporter.report(token, std::move(message), std::move(code));
 }
 
+auto SemanticVisitor::Impl::mergeRawPointerOrigins(
+    std::vector<RawPointerOrigin> &target,
+    const std::vector<RawPointerOrigin> &source) -> void {
+  for (const auto &origin : source) {
+    const auto existing =
+        std::find_if(target.begin(), target.end(), [&](const auto &existing) {
+          return existing.place == origin.place &&
+                 existing.throughLoan == origin.throughLoan &&
+                 existing.parameterPointee == origin.parameterPointee &&
+                 existing.loopInput == origin.loopInput &&
+                 existing.pointeeType == origin.pointeeType &&
+                 existing.sourceResultQuery == origin.sourceResultQuery;
+        });
+    if (existing == target.end())
+      target.push_back(origin);
+    else {
+      existing->invalidated |= origin.invalidated;
+      existing->expired |= origin.expired;
+      for (const auto &place : origin.lifetimeInvalidations)
+        if (std::find(existing->lifetimeInvalidations.begin(),
+                      existing->lifetimeInvalidations.end(),
+                      place) == existing->lifetimeInvalidations.end())
+          existing->lifetimeInvalidations.push_back(place);
+    }
+  }
+}
+
+auto SemanticVisitor::Impl::mergeRawPointerFields(
+    std::vector<ProjectedRawPointerOrigins> &target,
+    const std::vector<ProjectedRawPointerOrigins> &source) -> void {
+  for (const auto &field : source) {
+    const auto existing =
+        std::find_if(target.begin(), target.end(), [&](const auto &candidate) {
+          return candidate.projections == field.projections;
+        });
+    if (existing == target.end())
+      target.push_back(field);
+    else
+      mergeRawPointerOrigins(existing->origins, field.origins);
+  }
+}
+
+auto SemanticVisitor::Impl::rawPointerFields(const Expr *expression)
+    -> std::vector<ProjectedRawPointerOrigins> {
+  if (!expression)
+    return {};
+  if (const auto found = valueFlow.rawOperatorResults.find(expression);
+      found != valueFlow.rawOperatorResults.end())
+    return found->second;
+  if (const auto *group = exprAs<Grouping>(expression))
+    return rawPointerFields(group->expression().get());
+  if (const auto *conversion = exprAs<Conversion>(expression))
+    return rawPointerFields(conversion->value().get());
+  if (const auto *unexpected = exprAs<Unexpected>(expression))
+    return rawPointerFields(unexpected->error().get());
+  if (const auto *call = exprAs<Call>(expression)) {
+    if (semanticModel.findPayloadConstruction(*call)) {
+      std::vector<ProjectedRawPointerOrigins> fields;
+      for (const auto &argument : call->arguments())
+        mergeRawPointerFields(fields, rawPointerFields(argument.get()));
+      return fields;
+    }
+    const auto intrinsic = resolvedIntrinsicKind(*call);
+    const auto *combinator = semanticModel.findExpectedCombinator(*call);
+    const bool observer =
+        intrinsic == IntrinsicKind::ExpectedValue ||
+        intrinsic == IntrinsicKind::ExpectedError ||
+        intrinsic == IntrinsicKind::ExpectedValueOr ||
+        (combinator && combinator->kind == ExpectedCombinatorKind::Expect);
+    if (observer || combinator) {
+      std::vector<ProjectedRawPointerOrigins> fields;
+      if (const auto *member = exprAs<Get>(call->callee().get()))
+        fields = rawPointerFields(member->object().get());
+      if (intrinsic == IntrinsicKind::ExpectedValueOr)
+        for (const auto &argument : call->arguments())
+          mergeRawPointerFields(fields, rawPointerFields(argument.get()));
+      // Tagged alternatives currently share a conservative raw-origin union.
+      // An observer returns the carried address, never the carrier's address.
+      // Mapping may produce new addresses inside an unqueried callable body.
+      if (combinator && !observer)
+        for (auto path : rawPointerFieldPaths(combinator->resultType))
+          mergeRawPointerFields(
+              fields, {{std::move(path),
+                        {{.addressSite = tokenSpan(call->paren()),
+                          .sourceResultQuery =
+                              std::numeric_limits<std::size_t>::max()}}}});
+      return fields;
+    }
+  }
+  if (const auto *call = exprAs<Call>(expression);
+      call && resolvedIntrinsicKind(*call) == IntrinsicKind::Move &&
+      call->arguments().size() == 1)
+    return rawPointerFields(call->arguments().front().get());
+  const Expr *rawObject = nullptr;
+  if (const auto *unary = exprAs<Unary>(expression);
+      unary && unary->oper().kind == TokenKind::STAR &&
+      semanticModel.typeOf(*unary->right()).kind == SemanticType::RawPointer)
+    rawObject = unary->right().get();
+  if (rawObject) {
+    const auto place = semanticPlace(expression);
+    if (place.root)
+      return rawPointerFieldsAt(placeKey(place));
+    std::vector<ProjectedRawPointerOrigins> result;
+    for (const auto &origin : rawPointerOrigins(rawObject))
+      if (!origin.parameterPointee && origin.loopInput == 0)
+        mergeRawPointerFields(result, rawPointerFieldsAt(origin.place));
+    return result;
+  }
+  if (semanticModel.typeOf(*expression).kind == SemanticType::RawPointer)
+    return {{{}, rawPointerOrigins(expression)}};
+  if (const auto *lambda = exprAs<Lambda>(expression)) {
+    std::vector<ProjectedRawPointerOrigins> result;
+    if (const auto *info = semanticModel.findLambda(*lambda))
+      for (const auto &capture : info->captures) {
+        auto fields = rawPointerFields(capture.initializer);
+        for (auto &field : fields)
+          field.projections.insert(field.projections.begin(),
+                                   {.kind = PlaceProjectionKind::Field,
+                                    .field = capture.bindingSymbol});
+        mergeRawPointerFields(result, fields);
+      }
+    return result;
+  }
+  if (const auto *conditional = exprAs<ConditionalExpr>(expression)) {
+    auto fields = rawPointerFields(conditional->thenExpression().get());
+    mergeRawPointerFields(
+        fields, rawPointerFields(conditional->elseExpression().get()));
+    return fields;
+  }
+  const auto place = semanticPlace(expression);
+  if (place.root)
+    return rawPointerFieldsAt(placeKey(place));
+  if (const auto *member = exprAs<Get>(expression);
+      member && member->access().kind != TokenKind::ARROW) {
+    if (const auto *field =
+            findMember(memberAccessObjectType(*member), member->name())) {
+      std::vector<ProjectedRawPointerOrigins> result;
+      for (auto input : rawPointerFields(member->object().get()))
+        if (!input.projections.empty() &&
+            input.projections.front().kind == PlaceProjectionKind::Field &&
+            input.projections.front().field ==
+                toolingSymbolFor(field->symbol)) {
+          input.projections.erase(input.projections.begin());
+          mergeRawPointerFields(result, {input});
+        }
+      return result;
+    }
+  }
+  if (const auto *index = exprAs<Index>(expression)) {
+    std::vector<ProjectedRawPointerOrigins> result;
+    for (auto input : rawPointerFields(index->object().get()))
+      if (!input.projections.empty() &&
+          (input.projections.front().kind ==
+               PlaceProjectionKind::ConstantIndex ||
+           input.projections.front().kind ==
+               PlaceProjectionKind::DynamicIndex)) {
+        input.projections.erase(input.projections.begin());
+        mergeRawPointerFields(result, {input});
+      }
+    // An array-valued temporary has no named place; conservatively join its
+    // possible element fields using the ordinary index projection family.
+    if (semanticModel.typeOf(*index->object()).kind == SemanticType::Array)
+      return result;
+  }
+  if (const auto *construction = semanticModel.findConstruction(*expression)) {
+    // Generated copy/move construction preserves the source's projection map.
+    if (construction->kind == ConstructorKind::Copy ||
+        construction->kind == ConstructorKind::Move) {
+      if (const auto *call = exprAs<Call>(expression);
+          call && call->arguments().size() == 1)
+        return rawPointerFields(call->arguments().front().get());
+      if (const auto *direct = exprAs<DirectInitializer>(expression);
+          direct && direct->arguments().size() == 1)
+        return rawPointerFields(direct->arguments().front().get());
+    }
+    if (!construction->designatedArguments.empty()) {
+      const auto *owner = classInfo(construction->constructedType);
+      std::vector<ProjectedRawPointerOrigins> result;
+      if (!owner ||
+          owner->fields.size() != construction->designatedArguments.size())
+        return result;
+      for (std::size_t index = 0; index < owner->fields.size(); ++index) {
+        auto fields =
+            rawPointerFields(construction->designatedArguments[index]);
+        const auto &field = *owner->fields[index].declaration;
+        const auto member = owner->members.find(field.name().lexeme);
+        if (member == owner->members.end())
+          continue;
+        for (auto &entry : fields)
+          entry.projections.insert(
+              entry.projections.begin(),
+              {.kind = PlaceProjectionKind::Field,
+               .field = toolingSymbolFor(member->second.symbol)});
+        mergeRawPointerFields(result, fields);
+      }
+      return result;
+    }
+  }
+  if (const auto *array = exprAs<ArrayInitializer>(expression)) {
+    std::vector<ProjectedRawPointerOrigins> result;
+    for (std::size_t index = 0; index < array->elements().size(); ++index) {
+      auto fields = rawPointerFields(array->elements()[index].get());
+      for (auto &entry : fields)
+        entry.projections.insert(
+            entry.projections.begin(),
+            {.kind = PlaceProjectionKind::ConstantIndex, .index = index});
+      mergeRawPointerFields(result, fields);
+    }
+    return result;
+  }
+  if (exprAs<Call>(expression) || semanticModel.findConstruction(*expression)) {
+    const auto *call = exprAs<Call>(expression);
+    const auto *resolved = call ? semanticModel.findCall(*call) : nullptr;
+    const auto *construction = semanticModel.findConstruction(*expression);
+    const auto query = construction ? rawConstructorResultQuery(*construction)
+                       : resolved   ? rawResultQuery(*call, *resolved)
+                                    : nullptr;
+    auto produced = rawProducedFields(*expression);
+    const bool unresolved =
+        std::any_of(produced.begin(), produced.end(), [](const auto &field) {
+          return std::any_of(field.origins.begin(), field.origins.end(),
+                             [](const auto &origin) {
+                               return origin.sourceResultQuery != 0 ||
+                                      origin.loopInput != 0;
+                             });
+        });
+    // A completed ordinary query owns its projected output map. The older
+    // input union is a fallback, not permission to contaminate every exact
+    // output field with every unrelated argument or receiver-shell address.
+    if (query && query->complete && query->valid && !unresolved)
+      return produced;
+    const auto origins = rawCallPointerOrigins(*expression, false);
+    std::vector<ProjectedRawPointerOrigins> result;
+    if (!origins.empty())
+      for (auto path : rawPointerFieldPaths(semanticModel.typeOf(*expression)))
+        result.push_back({std::move(path), origins});
+    mergeRawPointerFields(result, produced);
+    return result;
+  }
+  std::vector<ProjectedRawPointerOrigins> unresolved;
+  std::vector<RawPointerOrigin> available;
+  if (const auto *index = exprAs<Index>(expression))
+    for (const auto &field : rawPointerFields(index->object().get()))
+      mergeRawPointerOrigins(available, field.origins);
+  else if (const auto *member = exprAs<Get>(expression))
+    for (const auto &field : rawPointerFields(member->object().get()))
+      mergeRawPointerOrigins(available, field.origins);
+  else if (const auto *assignment = exprAs<Assign>(expression))
+    for (const auto &field : rawPointerFields(assignment->value().get()))
+      mergeRawPointerOrigins(available, field.origins);
+  else if (const auto *assignment = exprAs<Set>(expression))
+    for (const auto &field : rawPointerFields(assignment->value().get()))
+      mergeRawPointerOrigins(available, field.origins);
+  mergeRawPointerOrigins(
+      available,
+      {{.addressSite = tokenSpan(expressionToken(*expression)),
+        .sourceResultQuery = requestSession.collectingRawResult
+                                 ? requestSession.collectingRawResult->identity
+                                 : std::numeric_limits<std::size_t>::max()}});
+  for (auto path : rawPointerFieldPaths(semanticModel.typeOf(*expression)))
+    unresolved.push_back({std::move(path), available});
+  return unresolved;
+}
+
+auto SemanticVisitor::Impl::rawPointerFieldsAt(const PlaceKey &place)
+    -> std::vector<ProjectedRawPointerOrigins> {
+  std::vector<ProjectedRawPointerOrigins> result;
+  Symbol *root = rawPointerRoot(place);
+  if (!root)
+    return result;
+  const SemanticPlace selected{.root = root,
+                               .rootIdentity = place.root,
+                               .projections = place.projections,
+                               .receiver = place.receiver};
+  // Stored checked references borrow separate storage. Resolve a concrete
+  // retained loan before looking in the carrier's owned field map.
+  const auto referent = loanPlace(selected);
+  if (referent.valid() &&
+      (referent.root != place.root || referent.receiver != place.receiver ||
+       referent.projections != place.projections))
+    return rawPointerFieldsAt(referent);
+  auto selectedType = root->type;
+  bool borrowedStorage = false;
+  for (const auto &projection : place.projections) {
+    if (selectedType.kind == SemanticType::Reference &&
+        selectedType.arguments.size() == 1)
+      selectedType = SemanticType(selectedType.arguments.front());
+    if (projection.kind == PlaceProjectionKind::Field) {
+      const auto *field = semanticModel.database().findSymbol(projection.field);
+      selectedType = field ? field->type : SemanticType::Unknown;
+      borrowedStorage |= selectedType.kind == SemanticType::Reference;
+    } else if (!selectedType.arguments.empty()) {
+      selectedType = SemanticType(selectedType.arguments.front());
+    } else {
+      selectedType = SemanticType::Unknown;
+    }
+  }
+  bool weak = false;
+  for (const auto &storage :
+       rawPointerStoragePlaces({.root = root,
+                                .rootIdentity = place.root,
+                                .projections = place.projections,
+                                .receiver = place.receiver},
+                               weak)) {
+    if (storage.projections.empty() &&
+        storage.root->type.kind == SemanticType::RawPointer) {
+      mergeRawPointerFields(result, {{{}, storage.root->rawPointerOrigins}});
+      continue;
+    }
+    for (const auto &field : storage.root->rawPointerFields) {
+      if (field.projections.size() < storage.projections.size())
+        continue;
+      auto prefix = field.projections;
+      prefix.resize(storage.projections.size());
+      const auto relation =
+          placeRelation(placeKey(storage), projectedPlaceKey(storage, prefix));
+      if (relation.relation == PlaceRelation::Equal ||
+          relation.relation == PlaceRelation::MayAlias)
+        mergeRawPointerFields(
+            result, {{{field.projections.begin() + storage.projections.size(),
+                       field.projections.end()},
+                      field.origins}});
+    }
+  }
+  if (borrowedStorage && result.empty())
+    for (auto path : rawPointerFieldPaths(selectedType))
+      result.push_back({std::move(path),
+                        {{.addressSite = tokenSpan(root->declaration),
+                          .sourceResultQuery =
+                              requestSession.collectingRawResult
+                                  ? requestSession.collectingRawResult->identity
+                                  : std::numeric_limits<std::size_t>::max()}}});
+  return result;
+}
+
+auto SemanticVisitor::Impl::rawPointerFieldPaths(const SemanticType &type)
+    -> std::vector<std::vector<PlaceProjection>> {
+  std::vector<SemanticType> active;
+  const auto visit =
+      [&](const auto &self, const SemanticType &current,
+          bool root) -> std::vector<std::vector<PlaceProjection>> {
+    if (current.kind == SemanticType::RawPointer)
+      return {{}};
+    // A reference parameter denotes its referent. References stored inside
+    // that referent are separate borrowed storage, not fields owned by its
+    // shell; following them also turns recursive reference graphs into cycles.
+    if (current.kind == SemanticType::Reference)
+      return root && current.arguments.size() == 1
+                 ? self(self, current.arguments.front(), false)
+                 : std::vector<std::vector<PlaceProjection>>{};
+    if (current.kind == SemanticType::Array && current.arguments.size() == 1) {
+      auto paths = self(self, current.arguments.front(), false);
+      for (auto &path : paths)
+        path.insert(path.begin(), {.kind = PlaceProjectionKind::DynamicIndex});
+      return paths;
+    }
+    if (current.kind == SemanticType::Expected ||
+        current.kind == SemanticType::Unexpected ||
+        current.kind == SemanticType::Enum) {
+      if (active.size() >= 128 ||
+          std::find(active.begin(), active.end(), current) != active.end())
+        return {};
+      active.push_back(current);
+      std::vector<std::vector<PlaceProjection>> result;
+      const auto append = [&](const SemanticType &payload) {
+        for (auto path : self(self, payload, false))
+          if (std::find(result.begin(), result.end(), path) == result.end())
+            result.push_back(std::move(path));
+      };
+      if (current.kind == SemanticType::Enum) {
+        if (const auto *info = semanticModel.findEnumType(current.enumId))
+          for (const auto &variant : info->enumerators)
+            for (const auto &payload : variant.payloadTypes)
+              append(payload);
+      } else {
+        for (const auto &payload : current.arguments)
+          append(payload);
+      }
+      active.pop_back();
+      return result;
+    }
+    if (current.kind == SemanticType::Lambda && current.hasLambdaShape()) {
+      std::vector<std::vector<PlaceProjection>> result;
+      if (const auto *lambda = semanticModel.findLambda(current.lambdaId)) {
+        const auto captures = current.lambdaCaptureTypes();
+        for (std::size_t index = 0;
+             index < captures.size() && index < lambda->captures.size();
+             ++index) {
+          auto paths = self(self, captures[index], false);
+          for (auto &path : paths) {
+            path.insert(path.begin(),
+                        {.kind = PlaceProjectionKind::Field,
+                         .field = lambda->captures[index].bindingSymbol});
+            result.push_back(std::move(path));
+          }
+        }
+      }
+      return result;
+    }
+    if (current.kind != SemanticType::Class)
+      return {};
+    // Invalid by-value recursive types are diagnosed by type/lifecycle
+    // analysis. Provenance collection must also terminate during recovery,
+    // including a generic recursion that grows a fresh type each step.
+    if (active.size() >= 128 ||
+        std::find(active.begin(), active.end(), current) != active.end())
+      return {};
+    const auto *owner = classInfo(current);
+    if (!owner)
+      return {};
+    active.push_back(current);
+    std::vector<std::vector<PlaceProjection>> result;
+    for (const auto &base : owner->bases)
+      if (!base.interface) {
+        auto paths = self(
+            self, substituteType(base.type, classSubstitution(current)), false);
+        result.insert(result.end(), paths.begin(), paths.end());
+      }
+    for (const auto &field : owner->fields) {
+      const auto member = owner->members.find(field.declaration->name().lexeme);
+      if (member == owner->members.end())
+        continue;
+      auto paths = self(
+          self, substituteSymbol(member->second.symbol, current).type, false);
+      for (auto &path : paths) {
+        path.insert(path.begin(),
+                    {.kind = PlaceProjectionKind::Field,
+                     .field = toolingSymbolFor(member->second.symbol)});
+        result.push_back(std::move(path));
+      }
+    }
+    active.pop_back();
+    return result;
+  };
+  return visit(visit, type, true);
+}
+
+auto SemanticVisitor::Impl::rawPointerTypesAt(
+    const SemanticType &type, const std::vector<PlaceProjection> &projections)
+    -> std::vector<SemanticType> {
+  std::vector<std::pair<SemanticType, std::size_t>> visited;
+  std::vector<SemanticType> result;
+  const auto visit = [&](const auto &self, SemanticType current,
+                         std::size_t index) -> void {
+    if (current.kind == SemanticType::Reference &&
+        current.arguments.size() == 1)
+      current = SemanticType(current.arguments.front());
+    const auto key = std::pair{current, index};
+    if (visited.size() >= 128 ||
+        std::find(visited.begin(), visited.end(), key) != visited.end())
+      return;
+    visited.push_back(key);
+    if (current.kind == SemanticType::Expected ||
+        current.kind == SemanticType::Unexpected) {
+      for (const auto &payload : current.arguments)
+        self(self, payload, index);
+      return;
+    }
+    if (current.kind == SemanticType::Enum) {
+      if (const auto *info = semanticModel.findEnumType(current.enumId))
+        for (const auto &variant : info->enumerators)
+          for (const auto &payload : variant.payloadTypes)
+            self(self, payload, index);
+      return;
+    }
+    if (index == projections.size()) {
+      if (current.kind == SemanticType::RawPointer &&
+          std::find(result.begin(), result.end(), current) == result.end())
+        result.push_back(std::move(current));
+      return;
+    }
+    const auto &projection = projections[index];
+    if (projection.kind != PlaceProjectionKind::Field) {
+      if (!current.arguments.empty())
+        self(self, current.arguments.front(), index + 1);
+    } else if (current.kind == SemanticType::Lambda &&
+               current.hasLambdaShape()) {
+      if (const auto *lambda = semanticModel.findLambda(current.lambdaId)) {
+        const auto captures = current.lambdaCaptureTypes();
+        for (std::size_t capture = 0;
+             capture < captures.size() && capture < lambda->captures.size();
+             ++capture)
+          if (lambda->captures[capture].bindingSymbol == projection.field)
+            self(self, captures[capture], index + 1);
+      }
+    } else if (const auto *owner = classInfo(current)) {
+      for (const auto &[_, member] : owner->members)
+        if (toolingSymbolFor(member.symbol) == projection.field)
+          self(self, substituteSymbol(member.symbol, current).type, index + 1);
+      for (const auto &base : owner->bases)
+        if (!base.interface)
+          self(self, substituteType(base.type, classSubstitution(current)),
+               index);
+    }
+  };
+  visit(visit, type, 0);
+  return result;
+}
+
+auto SemanticVisitor::Impl::rawPointerRoot(const PlaceKey &place) -> Symbol * {
+  if (place.receiver)
+    return receiverStateSymbol();
+  if (place.root == 0)
+    return nullptr;
+  const auto find = [&](auto &bindings) -> Symbol * {
+    for (auto &[_, symbol] : bindings)
+      if (symbolForDeclaration(symbol.declaration) == place.root)
+        return &symbol;
+    return nullptr;
+  };
+  for (auto &scope : scopes)
+    if (auto *symbol = find(scope))
+      return symbol;
+  // A source-unit view owns the current flow facts when source loading is
+  // active. Its declaration-index copy may still contain the initializer.
+  if (auto *bindings = currentNamespaceSymbolsMutable())
+    if (auto *symbol = find(*bindings))
+      return symbol;
+  if (auto *symbol = find(valueFlow.namespaceSymbols))
+    return symbol;
+  for (auto &[_, bindings] : valueFlow.internalNamespaceSymbols)
+    if (auto *symbol = find(bindings))
+      return symbol;
+  for (auto &[_, bindings] : valueFlow.visibleNamespaceSymbols)
+    if (auto *symbol = find(bindings))
+      return symbol;
+  return nullptr;
+}
+
+auto SemanticVisitor::Impl::recordRawResult(const ExprPtr &expression) -> void {
+  const auto query = requestSession.collectingRawResult;
+  const auto *function = currentFunctionInfo();
+  if (!query || !function || function->id != query->function ||
+      lambdaDepth != 0)
+    return;
+  collectRawResultFields(rawPointerFields(expression.get()),
+                         function->declaration->parameters(),
+                         function->parameterTypes, false);
+}
+
+auto SemanticVisitor::Impl::recordRawConstructorResult(
+    const ConstructorDecl &constructor) -> void {
+  const auto query = requestSession.collectingRawResult;
+  const auto *info = semanticModel.findConstructor(constructor);
+  if (!query || !info || info->id != query->constructor)
+    return;
+  std::vector<SemanticType> parameterTypes;
+  for (const auto &parameter : constructor.parameters())
+    parameterTypes.push_back(typeOf(parameter));
+  collectRawResultFields(rawPointerFieldsAt({.receiver = true}),
+                         constructor.parameters(), parameterTypes, true);
+}
+
+auto SemanticVisitor::Impl::collectRawResultFields(
+    const std::vector<ProjectedRawPointerOrigins> &fields,
+    const std::vector<Parameter> &parameters,
+    const std::vector<SemanticType> &parameterTypes, bool constructedReceiver,
+    std::vector<RawResultField> *outputRecords) -> void {
+  const auto query = requestSession.collectingRawResult;
+  for (const auto &field : fields) {
+    RawResultField output{.projections = field.projections};
+    for (auto origin : field.origins) {
+      RawResultOrigin result{.origin = origin};
+      if (origin.loopInput != 0) {
+        // A return observed before its loop closes is not a completed query.
+        // Retain uncertainty until an actual access, rather than asserting a
+        // foreign address or rejecting an inert return/copy.
+        result.origin.loopInput = 0;
+        result.origin.sourceResultQuery = query->identity;
+        result.origin.place = {};
+      } else if (origin.place.receiver) {
+        if (constructedReceiver) {
+          result.origin.place = {};
+          result.origin.sourceResultQuery = query->identity;
+        } else {
+          result.receiver = true;
+          result.pointerInput = origin.parameterPointee;
+        }
+      } else {
+        for (std::size_t index = 0; index < parameters.size(); ++index) {
+          if (symbolForDeclaration(parameters[index].name) != origin.place.root)
+            continue;
+          if (origin.parameterPointee ||
+              (index < parameterTypes.size() &&
+               parameterTypes[index].kind == SemanticType::Reference)) {
+            result.parameter = index;
+            result.pointerInput = origin.parameterPointee;
+          }
+          break;
+        }
+        if (!result.parameter && !origin.sourceResultQuery) {
+          const auto *symbol =
+              semanticModel.database().findSymbol(origin.place.root);
+          const auto *binding = rawPointerRoot(origin.place);
+          result.globalInput =
+              origin.parameterPointee && binding &&
+              (binding->bindingKind == SemanticBindingKind::GlobalVariable ||
+               binding->bindingKind == SemanticBindingKind::StaticField);
+          if (symbol && (symbol->kind == SymbolKind::LocalVariable ||
+                         symbol->kind == SymbolKind::Parameter))
+            result.origin.expired = true;
+        }
+      }
+      // Loan identities belong to the producing body. Formal sources acquire
+      // the actual caller's identity when the result is instantiated.
+      result.origin.throughLoan = 0;
+      output.origins.push_back(std::move(result));
+    }
+    (outputRecords ? *outputRecords : query->fields)
+        .push_back(std::move(output));
+  }
+}
+
+auto SemanticVisitor::Impl::rawResultQuery(const Call &call,
+                                           const ResolvedCallInfo &resolved)
+    -> std::shared_ptr<RawResultQuery> {
+  auto owner = resolved.dispatchOwner;
+  if (owner.kind != SemanticType::Class) {
+    if (const auto *member = exprAs<Get>(call.callee().get()))
+      owner = memberAccessObjectType(*member);
+    else if (currentClass)
+      owner = openClassType(*currentClass);
+  }
+  return rawResultQuery(resolved, std::move(owner));
+}
+
+auto SemanticVisitor::Impl::rawResultQuery(const ResolvedCallInfo &resolved,
+                                           SemanticType owner)
+    -> std::shared_ptr<RawResultQuery> {
+  const auto *function = semanticModel.findFunction(resolved.function);
+  if (!function || !function->declaration ||
+      function->linkage != LanguageLinkage::Gti ||
+      function->intrinsic != IntrinsicKind::None ||
+      function->declaration->runtimeBinding())
+    return nullptr;
+  // A bodyless source dispatch signature is not a foreign implementation.
+  // Check before cache lookup: a static query for the same method must not
+  // accidentally become a complete summary of its whole dispatch family.
+  if (resolved.dispatch != CallDispatch::Static) {
+    auto entry = std::make_shared<RawResultQuery>();
+    entry->function = resolved.function;
+    entry->identity = std::numeric_limits<std::size_t>::max();
+    entry->complete = true;
+    entry->valid = false;
+    entry->writesComplete = false;
+    return entry;
+  }
+  if (!function->declaration->body())
+    return nullptr;
+  if (function->ownerClass == 0)
+    owner = SemanticType::Unknown;
+  // Symbolic primary bodies are checked again with concrete arguments. Do not
+  // cache a primary's provisional facts under a concrete instance's identity.
+  if (containsOpenTypeParameter(resolved.returnType) ||
+      containsOpenTypeParameter(owner) ||
+      std::any_of(resolved.typeArguments.begin(), resolved.typeArguments.end(),
+                  containsOpenTypeParameter) ||
+      std::any_of(resolved.parameterTypes.begin(),
+                  resolved.parameterTypes.end(), containsOpenTypeParameter))
+    return nullptr;
+  if (!requestSession.rawResultQueries)
+    requestSession.rawResultQueries = std::make_shared<RawResultQueryState>();
+  auto state = requestSession.rawResultQueries;
+  const auto ownerTypes = owner.kind == SemanticType::Class
+                              ? owner.arguments
+                              : std::vector<SemanticType>{};
+  const auto ownerValues = owner.kind == SemanticType::Class
+                               ? owner.valueArguments
+                               : std::vector<CompileTimeValue>{};
+  for (const auto &entry : state->entries)
+    if (entry->function == resolved.function &&
+        entry->ownerTypes == ownerTypes && entry->ownerValues == ownerValues &&
+        entry->types == resolved.typeArguments &&
+        entry->values == resolved.valueArguments)
+      return entry;
+  auto entry = std::make_shared<RawResultQuery>();
+  entry->function = resolved.function;
+  entry->linearWrites =
+      rawWritesAreLinear(function->declaration->body()->statements());
+  entry->ownerTypes = ownerTypes;
+  entry->ownerValues = ownerValues;
+  entry->types = resolved.typeArguments;
+  entry->values = resolved.valueArguments;
+  entry->identity = state->entries.size() + 1;
+  if (state->entries.size() >= 2048 || state->depth >= 32) {
+    entry->complete = true;
+    return entry;
+  }
+  state->entries.push_back(entry);
+  runRawResultQuery(entry);
+  // The current projected-input contract has one slot per ordinary formal.
+  // An expanded pack needs a per-element substitution before it can claim a
+  // complete raw-output summary. Keep any proved origins, but not an empty
+  // precision claim that could erase a packed input's known facts.
+  if (function->parameterPack) {
+    entry->valid = false;
+    entry->writesComplete = false;
+  }
+  return entry;
+}
+
+auto SemanticVisitor::Impl::rawConstructorResultQuery(
+    const ResolvedConstructionInfo &resolved)
+    -> std::shared_ptr<RawResultQuery> {
+  if ((!resolved.generatedDefault &&
+       (!resolved.declaration || !resolved.declaration->body() ||
+        resolved.kind != ConstructorKind::Ordinary)) ||
+      containsOpenTypeParameter(resolved.constructedType) ||
+      std::any_of(resolved.typeArguments.begin(), resolved.typeArguments.end(),
+                  containsOpenTypeParameter))
+    return nullptr;
+  if (!requestSession.rawResultQueries)
+    requestSession.rawResultQueries = std::make_shared<RawResultQueryState>();
+  auto state = requestSession.rawResultQueries;
+  for (const auto &entry : state->entries)
+    if (entry->constructor == resolved.constructor && entry->function == 0 &&
+        entry->defaultOwner == (resolved.generatedDefault
+                                    ? resolved.constructedType.classId
+                                    : 0) &&
+        entry->ownerTypes == resolved.constructedType.arguments &&
+        entry->ownerValues == resolved.constructedType.valueArguments &&
+        entry->types == resolved.typeArguments &&
+        entry->values == resolved.valueArguments)
+      return entry;
+  auto entry = std::make_shared<RawResultQuery>();
+  entry->constructor = resolved.constructor;
+  // Constructor writes remain weak: a body-only linearity test cannot prove
+  // dominance across member/base/default-field initializer evaluation.
+  entry->defaultOwner =
+      resolved.generatedDefault ? resolved.constructedType.classId : 0;
+  entry->ownerTypes = resolved.constructedType.arguments;
+  entry->ownerValues = resolved.constructedType.valueArguments;
+  entry->types = resolved.typeArguments;
+  entry->values = resolved.valueArguments;
+  entry->identity = state->entries.size() + 1;
+  if (state->entries.size() >= 2048 || state->depth >= 32) {
+    entry->complete = true;
+    return entry;
+  }
+  state->entries.push_back(entry);
+  runRawResultQuery(entry);
+  if (resolved.declaration &&
+      std::any_of(
+          resolved.declaration->parameters().begin(),
+          resolved.declaration->parameters().end(),
+          [](const auto &parameter) { return parameter.pack.has_value(); }))
+    entry->valid = false;
+  return entry;
+}
+
+auto SemanticVisitor::Impl::runRawResultQuery(
+    const std::shared_ptr<RawResultQuery> &entry) -> void {
+  const auto state = requestSession.rawResultQueries;
+  ++state->depth;
+  // As in constexpr staging, concrete analysis must never reset an active
+  // caller's scope/loan state. Reuse the ordinary analyzer in an isolated
+  // snapshot; only the normalized result facts leave this worker.
+  auto worker =
+      std::make_unique<Impl>(target, sourceGraph, false, nullptr, sources);
+  worker->catalog = catalog.snapshotForInstanceAnalysis();
+  worker->semanticModel = semanticModel;
+  worker->valueFlow = valueFlow;
+  // Cached summaries must describe global pointer inputs, not freeze the
+  // first caller's current value. Direct addresses of globals stay ordinary
+  // absolute places; only raw values loaded from their storage are symbolic.
+  const auto seedGlobals = [&](auto &bindings) {
+    for (auto &[_, symbol] : bindings) {
+      if (symbol.bindingKind != SemanticBindingKind::GlobalVariable &&
+          symbol.bindingKind != SemanticBindingKind::StaticField)
+        continue;
+      const auto place = worker->placeKey(worker->placeForSymbol(symbol));
+      if (!place.valid())
+        continue;
+      symbol.rawPointerOrigins.clear();
+      symbol.rawPointerFields.clear();
+      for (auto path : worker->rawPointerFieldPaths(symbol.type)) {
+        auto input = place;
+        input.projections.insert(input.projections.end(), path.begin(),
+                                 path.end());
+        RawPointerOrigin origin{.place = std::move(input),
+                                .addressSite = tokenSpan(symbol.declaration),
+                                .parameterPointee = true};
+        if (path.empty() && symbol.type.kind == SemanticType::RawPointer)
+          symbol.rawPointerOrigins.push_back(std::move(origin));
+        else
+          symbol.rawPointerFields.push_back(
+              {std::move(path), {std::move(origin)}});
+      }
+    }
+  };
+  seedGlobals(worker->valueFlow.namespaceSymbols);
+  for (auto &[_, bindings] : worker->valueFlow.internalNamespaceSymbols)
+    seedGlobals(bindings);
+  for (auto &[_, bindings] : worker->valueFlow.visibleNamespaceSymbols)
+    seedGlobals(bindings);
+  worker->constexprDefinitionsAnalyzed = constexprDefinitionsAnalyzed;
+  worker->constexprConstructorsAnalyzed = constexprConstructorsAnalyzed;
+  worker->genericDefaultConstants = genericDefaultConstants;
+  worker->defaultArgumentSyntax = defaultArgumentSyntax;
+  worker->defaultArgumentDependencies = defaultArgumentDependencies;
+  worker->nextLambdaId = nextLambdaId;
+  // Source-summary analysis can require staged constants. Keep their bounded
+  // work account across this isolated worker instead of restarting it.
+  worker->requestSession.constexprWork = requestSession.constexprWork;
+  worker->requestSession.rawResultQueries = state;
+  worker->requestSession.collectingRawResult = entry;
+  const auto analysis =
+      entry->defaultOwner
+          ? worker->analyzeClassFieldInitializers(
+                entry->defaultOwner, entry->ownerTypes, entry->ownerValues)
+      : entry->constructor
+          ? worker->analyzeConstructorInstance(
+                entry->constructor, entry->ownerTypes, entry->ownerValues,
+                entry->types, entry->values)
+          : worker->analyzeFunctionInstance(entry->function, entry->ownerTypes,
+                                            entry->ownerValues, entry->types,
+                                            entry->values);
+  entry->valid = analysis.valid();
+  if (!entry->valid)
+    for (const auto &diagnostic : analysis.diagnostics)
+      if (diagnostic.severity == DiagnosticSeverity::Error) {
+        entry->failure = diagnostic;
+        break;
+      }
+  entry->complete = true;
+  --state->depth;
+}
+
+auto SemanticVisitor::Impl::rawProducedFields(
+    const Expr &expression, const std::vector<RawResultField> *suppliedFields,
+    const RawInvocation *invocation)
+    -> std::vector<ProjectedRawPointerOrigins> {
+  const auto *call = exprAs<Call>(&expression);
+  const auto *direct = exprAs<DirectInitializer>(&expression);
+  const auto *resolved = invocation ? &invocation->resolved
+                         : call     ? semanticModel.findCall(*call)
+                                    : nullptr;
+  const auto *construction =
+      invocation ? nullptr : semanticModel.findConstruction(expression);
+  const auto type = construction ? construction->constructedType
+                    : resolved   ? resolved->returnType
+                                 : semanticModel.typeOf(expression);
+  const auto paths = rawPointerFieldPaths(type);
+  if (paths.empty() && !suppliedFields)
+    return {};
+  if (!invocation && call &&
+      (semanticModel.findLambdaCall(*call) ||
+       semanticModel.findDeferredCallableCall(*call))) {
+    std::vector<ProjectedRawPointerOrigins> unresolved;
+    for (auto path : paths)
+      unresolved.push_back(
+          {std::move(path),
+           {{.addressSite = tokenSpan(expressionToken(expression)),
+             .sourceResultQuery = std::numeric_limits<std::size_t>::max()}}});
+    return unresolved;
+  }
+  const auto query = suppliedFields ? nullptr
+                     : invocation
+                         ? rawResultQuery(*resolved, invocation->receiverType)
+                     : construction ? rawConstructorResultQuery(*construction)
+                     : resolved     ? rawResultQuery(*call, *resolved)
+                                    : nullptr;
+  if (!query && !suppliedFields)
+    return {};
+  const std::span<const ExprPtr> arguments =
+      invocation ? invocation->arguments
+      : call     ? std::span<const ExprPtr>{call->arguments()}
+      : direct   ? std::span<const ExprPtr>{direct->arguments()}
+                 : std::span<const ExprPtr>{};
+  const auto &defaults = construction ? construction->defaultArguments
+                                      : resolved->defaultArguments;
+  std::vector<ProjectedRawPointerOrigins> result;
+  if (query && (!query->complete || !query->valid)) {
+    for (auto path : paths)
+      result.push_back({std::move(path),
+                        {{.addressSite = tokenSpan(expressionToken(expression)),
+                          .sourceResultQuery = query->identity}}});
+    // Even an incomplete query may have already proved a contradictory local
+    // origin. Keep these facts alongside its uncertainty marker.
+  }
+  for (const auto &field : suppliedFields ? *suppliedFields : query->fields) {
+    std::vector<RawPointerOrigin> origins;
+    for (const auto &source : field.origins) {
+      const Expr *actual = nullptr;
+      if (source.parameter && *source.parameter < arguments.size())
+        actual = arguments[*source.parameter].get();
+      else if (source.parameter &&
+               *source.parameter - arguments.size() < defaults.size())
+        actual = defaults[*source.parameter - arguments.size()];
+      else if (source.receiver && invocation)
+        actual = invocation->receiver;
+      else if (source.receiver && call)
+        if (const auto *member = exprAs<Get>(call->callee().get()))
+          actual = member->object().get();
+      if (source.globalInput) {
+        auto place = source.origin.place;
+        if (place.domain.snapshot != 0)
+          place.domain.snapshot = semanticModel.placeSnapshot();
+        for (const auto &input : rawPointerFieldsAt(place)) {
+          auto forwarded = input.origins;
+          for (auto &origin : forwarded) {
+            origin.invalidated |= source.origin.invalidated;
+            origin.expired |= source.origin.expired;
+            applyRawPointerLifetimeInvalidations(
+                origin, source.origin.lifetimeInvalidations);
+          }
+          mergeRawPointerOrigins(origins, forwarded);
+        }
+      } else if (!source.parameter && !source.receiver) {
+        auto origin = source.origin;
+        if (origin.place.domain.snapshot != 0)
+          origin.place.domain.snapshot = semanticModel.placeSnapshot();
+        mergeRawPointerOrigins(origins, {origin});
+      } else if (source.pointerInput) {
+        const auto fields =
+            actual ? rawPointerFields(actual)
+            : invocation && invocation->receiverPlace
+                ? rawPointerFieldsAt(loanPlace(*invocation->receiverPlace))
+                : rawPointerFieldsAt({.receiver = true});
+        for (const auto &input : fields) {
+          const PlaceKey expected{
+              .receiver = true, .projections = source.origin.place.projections};
+          const PlaceKey candidate{.receiver = true,
+                                   .projections = input.projections};
+          const auto relation = placeRelation(expected, candidate);
+          if (relation.relation == PlaceRelation::Equal ||
+              relation.relation == PlaceRelation::MayAlias) {
+            auto forwarded = input.origins;
+            for (auto &origin : forwarded) {
+              origin.invalidated |= source.origin.invalidated;
+              origin.expired |= source.origin.expired;
+              applyRawPointerLifetimeInvalidations(
+                  origin, source.origin.lifetimeInvalidations);
+            }
+            mergeRawPointerOrigins(origins, forwarded);
+          }
+        }
+      } else {
+        std::vector<RawPointerOrigin> bases;
+        if (actual &&
+            semanticModel.typeOf(*actual).kind == SemanticType::RawPointer)
+          bases = rawPointerOrigins(actual);
+        else {
+          const auto place = actual ? loanPlace(semanticPlace(actual))
+                             : invocation && invocation->receiverPlace
+                                 ? loanPlace(*invocation->receiverPlace)
+                                 : PlaceKey{.receiver = true};
+          if (place.valid())
+            bases.push_back(
+                {.place = place,
+                 .addressSite = source.origin.addressSite,
+                 .throughLoan =
+                     actual ? accessLoan(semanticPlace(actual)) : 0});
+        }
+        for (auto &origin : bases) {
+          origin.place.projections.insert(
+              origin.place.projections.end(),
+              source.origin.place.projections.begin(),
+              source.origin.place.projections.end());
+          origin.invalidated |= source.origin.invalidated;
+          origin.expired |= source.origin.expired;
+          applyRawPointerLifetimeInvalidations(
+              origin, source.origin.lifetimeInvalidations);
+          mergeRawPointerOrigins(origins, {origin});
+        }
+      }
+    }
+    mergeRawPointerFields(result, {{field.projections, std::move(origins)}});
+  }
+  return result;
+}
+
+auto SemanticVisitor::Impl::rawCallPointerOrigins(const Expr &expression,
+                                                  bool includeProduced)
+    -> std::vector<RawPointerOrigin> {
+  if (const auto *call = exprAs<Call>(&expression)) {
+    const auto intrinsic = resolvedIntrinsicKind(*call);
+    if (intrinsic == IntrinsicKind::ExpectedValue ||
+        intrinsic == IntrinsicKind::ExpectedError ||
+        intrinsic == IntrinsicKind::ExpectedValueOr ||
+        semanticModel.findExpectedCombinator(*call)) {
+      std::vector<RawPointerOrigin> result;
+      for (const auto &field : rawPointerFields(&expression))
+        mergeRawPointerOrigins(result, field.origins);
+      return result;
+    }
+  }
+  // A source call without an exact origin summary may forward any pointer
+  // input (including pointer fields), or derive an address from a checked
+  // reference/receiver. Keep this union rather than treating the result as a
+  // foreign address and silently dropping contradictory known facts.
+  std::vector<RawPointerOrigin> result;
+  const auto addValue = [&](const Expr *value) {
+    for (const auto &field : rawPointerFields(value))
+      for (const auto &origin : field.origins) {
+        // A call may select a differently typed subobject. The conservative
+        // storage-origin union is not an exact output-pointee proof; those
+        // type-only facts must come from the selected source-result query.
+        if (!origin.place.valid() &&
+            origin.pointeeType != SemanticType::Unknown &&
+            origin.sourceResultQuery == 0)
+          continue;
+        mergeRawPointerOrigins(result, {origin});
+      }
+  };
+  const auto addReference = [&](const ExprPtr &value) {
+    const auto place = loanPlace(value);
+    if (place.valid())
+      mergeRawPointerOrigins(result, {{place, tokenSpan(expressionToken(value)),
+                                       accessLoan(value)}});
+  };
+  const ExprList *arguments = nullptr;
+  const std::vector<SemanticType> *parameters = nullptr;
+  if (const auto *call = exprAs<Call>(&expression)) {
+    arguments = &call->arguments();
+    if (const auto *resolved = semanticModel.findCall(*call))
+      parameters = &resolved->parameterTypes;
+    if (const auto *member = exprAs<Get>(call->callee().get())) {
+      addValue(member->object().get());
+      if (semanticModel.typeOf(*member->object()).kind !=
+          SemanticType::RawPointer)
+        addReference(member->object());
+    }
+  } else if (const auto *direct = exprAs<DirectInitializer>(&expression)) {
+    arguments = &direct->arguments();
+  }
+  if (const auto *construction = semanticModel.findConstruction(expression))
+    parameters = &construction->parameterTypes;
+  if (arguments) {
+    for (std::size_t index = 0; index < arguments->size(); ++index) {
+      addValue((*arguments)[index].get());
+      if (parameters && index < parameters->size() &&
+          (*parameters)[index].kind == SemanticType::Reference)
+        addReference((*arguments)[index]);
+    }
+  }
+  if (includeProduced)
+    for (const auto &field : rawProducedFields(expression))
+      mergeRawPointerOrigins(result, field.origins);
+  return result;
+}
+
+auto SemanticVisitor::Impl::saveRawProgramStorage()
+    -> std::vector<RawProgramStorageState> {
+  std::vector<RawProgramStorageState> result;
+  const auto save = [&](auto &bindings, RawProgramStorageState::Namespace space,
+                        SourceUnitId unit = 0) {
+    for (auto &[name, symbol] : bindings)
+      if ((symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
+           symbol.bindingKind == SemanticBindingKind::StaticField) &&
+          !rawPointerFieldPaths(symbol.type).empty())
+        result.push_back({&symbol, space, unit, name, symbol.rawPointerOrigins,
+                          symbol.rawPointerFields});
+  };
+  save(valueFlow.namespaceSymbols, RawProgramStorageState::Namespace::Global);
+  for (auto &[unit, bindings] : valueFlow.internalNamespaceSymbols)
+    save(bindings, RawProgramStorageState::Namespace::Internal, unit);
+  for (auto &[unit, bindings] : valueFlow.visibleNamespaceSymbols)
+    save(bindings, RawProgramStorageState::Namespace::Visible, unit);
+  return result;
+}
+
+auto SemanticVisitor::Impl::restoreRawProgramStorage(
+    std::vector<RawProgramStorageState> state) -> void {
+  for (auto &saved : state) {
+    auto *bindings = &valueFlow.namespaceSymbols;
+    if (saved.space != RawProgramStorageState::Namespace::Global) {
+      auto &spaces = saved.space == RawProgramStorageState::Namespace::Internal
+                         ? valueFlow.internalNamespaceSymbols
+                         : valueFlow.visibleNamespaceSymbols;
+      const auto found = spaces.find(saved.unit);
+      if (found == spaces.end())
+        continue;
+      bindings = &found->second;
+    }
+    const auto found = bindings->find(saved.name);
+    if (found != bindings->end()) {
+      found->second.rawPointerOrigins = std::move(saved.origins);
+      found->second.rawPointerFields = std::move(saved.fields);
+    }
+  }
+}
+
+auto SemanticVisitor::Impl::rawWritesAreLinear(const StmtList &statements)
+    -> bool {
+  // This is only a dominance bound for strong updates, not a body evaluator.
+  // All targets and values below still come from ordinary semantic analysis.
+  const auto inert = [&](const auto &self, const Expr *expression) -> bool {
+    if (!expression)
+      return true;
+    if (exprAs<LiteralExpr>(expression) || exprAs<Variable>(expression) ||
+        exprAs<QualifiedName>(expression))
+      return true;
+    if (const auto *group = exprAs<Grouping>(expression))
+      return self(self, group->expression().get());
+    if (const auto *get = exprAs<Get>(expression))
+      return self(self, get->object().get());
+    if (const auto *unary = exprAs<Unary>(expression))
+      return unary->oper().kind == TokenKind::AMPERSAND &&
+             self(self, unary->right().get());
+    return false;
+  };
+  for (const auto &statement : statements) {
+    if (const auto *block = stmtAs<BlockStmt>(statement.get())) {
+      if (!rawWritesAreLinear(block->statements()))
+        return false;
+    } else if (const auto *variable = stmtAs<VariableDecl>(statement.get())) {
+      if (!inert(inert, variable->initializer().get()))
+        return false;
+    } else if (const auto *expression =
+                   stmtAs<ExpressionStmt>(statement.get())) {
+      const auto *value = expression->expression().get();
+      if (const auto *assign = exprAs<Assign>(value)) {
+        if (assign->oper().kind != TokenKind::EQUAL ||
+            !inert(inert, assign->value().get()))
+          return false;
+      } else if (const auto *set = exprAs<Set>(value)) {
+        if (!inert(inert, set->object().get()) ||
+            !inert(inert, set->value().get()))
+          return false;
+      } else if (const auto *call = exprAs<Call>(value)) {
+        if (!inert(inert, call->callee().get()) ||
+            !std::all_of(call->arguments().begin(), call->arguments().end(),
+                         [&](const auto &argument) {
+                           return inert(inert, argument.get());
+                         }))
+          return false;
+      } else
+        return false;
+    } else if (!stmtAs<EmptyStmt>(statement.get()))
+      return false;
+  }
+  return true;
+}
+
+auto SemanticVisitor::Impl::recordRawWrite(
+    const SemanticPlace &place,
+    const std::vector<ProjectedRawPointerOrigins> &fields, bool strong)
+    -> void {
+  const auto query = requestSession.collectingRawResult;
+  const auto *function = currentFunctionInfo();
+  if (!query || lambdaDepth || destructorDepth || !place.root)
+    return;
+  if ((query->constructor || query->defaultOwner) && place.receiver)
+    return;
+  std::vector<Parameter> noParameters;
+  std::vector<SemanticType> parameterTypes;
+  const auto *parameters = &noParameters;
+  if (query->function) {
+    if (!function || query->function != function->id || constructorDepth)
+      return;
+    parameters = &function->declaration->parameters();
+    parameterTypes = function->parameterTypes;
+  } else if (query->constructor && currentClass) {
+    const auto &constructors = classInfo(*currentClass).constructors;
+    const auto constructor = std::find_if(
+        constructors.begin(), constructors.end(), [&](const auto &candidate) {
+          return candidate.id == query->constructor;
+        });
+    if (constructor == constructors.end() || !constructor->declaration)
+      return;
+    parameters = &constructor->declaration->parameters();
+    for (const auto &parameter : *parameters)
+      parameterTypes.push_back(typeOf(parameter));
+  } else if (!query->defaultOwner)
+    return;
+  RawResultWrite write;
+  write.destination.origin.place = placeKey(place);
+  write.strong = strong && query->linearWrites;
+  bool external = place.receiver;
+  write.destination.receiver = place.receiver;
+  const bool throughPointer =
+      std::any_of(place.projections.begin(), place.projections.end(),
+                  [](const auto &projection) {
+                    return projection.kind == PlaceProjectionKind::Dereference;
+                  });
+  write.destination.pointerInput = place.receiver && throughPointer;
+  for (std::size_t index = 0; index < parameters->size(); ++index) {
+    if (symbolForDeclaration((*parameters)[index].name) !=
+        write.destination.origin.place.root)
+      continue;
+    const auto &type = parameterTypes[index];
+    if (type.kind == SemanticType::Reference || throughPointer) {
+      write.destination.parameter = index;
+      write.destination.pointerInput = throughPointer;
+      external = true;
+    }
+    break;
+  }
+  external |= place.root->bindingKind == SemanticBindingKind::GlobalVariable ||
+              place.root->bindingKind == SemanticBindingKind::StaticField;
+  if (!external) {
+    if (place.root->type.kind == SemanticType::RawPointer &&
+        !place.projections.empty() &&
+        place.projections.front().kind == PlaceProjectionKind::Dereference)
+      for (const auto &origin : place.root->rawPointerOrigins)
+        if (origin.parameterPointee) {
+          auto symbolic = place;
+          symbolic.root = rawPointerRoot(origin.place);
+          symbolic.rootIdentity = origin.place.root;
+          symbolic.receiver = origin.place.receiver;
+          symbolic.projections.insert(symbolic.projections.begin(),
+                                      origin.place.projections.begin(),
+                                      origin.place.projections.end());
+          if (symbolic.root && symbolic.root != place.root)
+            recordRawWrite(symbolic, fields, false);
+        }
+    return;
+  }
+  auto type = place.root->type;
+  for (const auto &projection : place.projections) {
+    if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+      type = SemanticType(type.arguments.front());
+    if (projection.kind == PlaceProjectionKind::Field) {
+      const auto *field = semanticModel.database().findSymbol(projection.field);
+      type = field ? field->type : SemanticType::Unknown;
+    } else if (!type.arguments.empty())
+      type = SemanticType(type.arguments.front());
+    else
+      type = SemanticType::Unknown;
+  }
+  if (rawPointerFieldPaths(type).empty())
+    return;
+  collectRawResultFields(fields, *parameters, parameterTypes,
+                         query->constructor != 0, &write.fields);
+  query->writes.push_back(std::move(write));
+}
+
+auto SemanticVisitor::Impl::applyRawCallWrites(const Expr &expression,
+                                               const RawInvocation *invocation)
+    -> void {
+  const auto *call = exprAs<Call>(&expression);
+  const auto *direct = exprAs<DirectInitializer>(&expression);
+  const auto *resolved = invocation ? &invocation->resolved
+                         : call     ? semanticModel.findCall(*call)
+                                    : nullptr;
+  const auto *construction =
+      invocation ? nullptr : semanticModel.findConstruction(expression);
+  const auto *lambda =
+      !invocation && call ? semanticModel.findLambdaCall(*call) : nullptr;
+  const auto *deferred = !invocation && call
+                             ? semanticModel.findDeferredCallableCall(*call)
+                             : nullptr;
+  if ((!resolved && !construction && !lambda && !deferred) ||
+      (resolved && resolved->intrinsic != IntrinsicKind::None))
+    return;
+  const auto &parameterTypes = construction ? construction->parameterTypes
+                               : resolved   ? resolved->parameterTypes
+                               : lambda     ? lambda->parameterTypes
+                                            : deferred->parameterTypes;
+  const std::span<const ExprPtr> arguments =
+      invocation ? invocation->arguments
+      : call     ? std::span<const ExprPtr>{call->arguments()}
+      : direct   ? std::span<const ExprPtr>{direct->arguments()}
+                 : std::span<const ExprPtr>{};
+  const auto span =
+      tokenSpan(invocation ? invocation->site : expressionToken(expression));
+  if (!requestSession.rawResultQueries)
+    requestSession.rawResultQueries = std::make_shared<RawResultQueryState>();
+  const auto state = requestSession.rawResultQueries;
+  // A declaration's inferred/global binding type may be completed after an
+  // earlier source body was checked. A negative answer is not yet permanent.
+  if (!state->hasRawGlobals || !*state->hasRawGlobals)
+    state->hasRawGlobals = !saveRawProgramStorage().empty();
+  const bool inputStorage = std::any_of(
+      parameterTypes.begin(), parameterTypes.end(), [&](const auto &type) {
+        return ((type.kind == SemanticType::Reference ||
+                 type.kind == SemanticType::RawPointer) &&
+                type.arguments.size() == 1 &&
+                !rawPointerFieldPaths(type.arguments.front()).empty()) ||
+               (type.kind != SemanticType::RawPointer &&
+                !rawPointerFieldPaths(type).empty());
+      });
+  const auto *member = call ? exprAs<Get>(call->callee().get()) : nullptr;
+  const bool receiverStorage =
+      resolved && resolved->receiverMode != CallReceiverMode::None &&
+      !rawPointerFieldPaths(invocation ? invocation->receiverType
+                            : member   ? semanticModel.typeOf(*member->object())
+                                       : resolved->dispatchOwner)
+           .empty();
+  const auto capturedFields = lambda || deferred
+                                  ? rawPointerFields(call->callee().get())
+                                  : std::vector<ProjectedRawPointerOrigins>{};
+  if (!*state->hasRawGlobals && !inputStorage && !receiverStorage &&
+      capturedFields.empty())
+    return;
+  const auto query = invocation
+                         ? rawResultQuery(*resolved, invocation->receiverType)
+                     : construction ? rawConstructorResultQuery(*construction)
+                     : resolved     ? rawResultQuery(*call, *resolved)
+                                    : nullptr;
+  if (!query && !lambda && !deferred)
+    return;
+  const bool incomplete =
+      !query || !query->complete || !query->valid || !query->writesComplete;
+  struct InstantiatedWrite {
+    SemanticPlace place;
+    std::vector<ProjectedRawPointerOrigins> fields;
+    bool strong;
+  };
+  std::vector<InstantiatedWrite> writes;
+  const std::vector<RawResultWrite> noWrites;
+  for (const auto &write : query ? query->writes : noWrites) {
+    const auto &target = write.destination;
+    const Expr *actual = nullptr;
+    if (target.parameter && *target.parameter < arguments.size())
+      actual = arguments[*target.parameter].get();
+    else if (target.parameter) {
+      const auto &defaults = construction ? construction->defaultArguments
+                                          : resolved->defaultArguments;
+      if (*target.parameter - arguments.size() < defaults.size())
+        actual = defaults[*target.parameter - arguments.size()];
+    } else if (target.receiver && invocation)
+      actual = invocation->receiver;
+    else if (target.receiver && call)
+      if (const auto *member = exprAs<Get>(call->callee().get()))
+        actual = member->object().get();
+    std::vector<PlaceKey> bases;
+    std::vector<RawPointerOrigin> deferredBases;
+    auto projections = target.origin.place.projections;
+    if (target.pointerInput) {
+      const auto dereference = std::find_if(
+          projections.begin(), projections.end(), [](const auto &projection) {
+            return projection.kind == PlaceProjectionKind::Dereference;
+          });
+      const PlaceKey selected{
+          .receiver = true, .projections = {projections.begin(), dereference}};
+      if (dereference == projections.end())
+        continue;
+      projections.erase(projections.begin(), dereference + 1);
+      std::vector<RawPointerOrigin> selectedOrigins;
+      const auto inputs =
+          actual ? rawPointerFields(actual)
+          : invocation && invocation->receiverPlace
+              ? rawPointerFieldsAt(loanPlace(*invocation->receiverPlace))
+          : target.receiver ? rawPointerFieldsAt({.receiver = true})
+                            : std::vector<ProjectedRawPointerOrigins>{};
+      for (const auto &input : inputs) {
+        const auto relation = placeRelation(
+            selected, {.receiver = true, .projections = input.projections});
+        if (relation.relation == PlaceRelation::Equal ||
+            relation.relation == PlaceRelation::MayAlias)
+          mergeRawPointerOrigins(selectedOrigins, input.origins);
+      }
+      for (const auto &origin : selectedOrigins)
+        if (origin.place.valid()) {
+          if (origin.loopInput != 0) {
+            deferredBases.push_back(origin);
+            continue;
+          }
+          auto base = origin.place;
+          if (origin.parameterPointee)
+            base.projections.push_back(
+                {.kind = PlaceProjectionKind::Dereference});
+          else if (auto *root = rawPointerRoot(base);
+                   root && root->type.kind == SemanticType::Array &&
+                   base.projections.empty())
+            base.projections.push_back(
+                {.kind = PlaceProjectionKind::DynamicIndex});
+          bases.push_back(std::move(base));
+        }
+    } else if (target.parameter || target.receiver) {
+      bases.push_back(actual ? loanPlace(semanticPlace(actual))
+                      : invocation && invocation->receiverPlace
+                          ? loanPlace(*invocation->receiverPlace)
+                          : PlaceKey{.receiver = true});
+    } else
+      bases.push_back(target.origin.place);
+    const auto fields =
+        rawProducedFields(expression, &write.fields, invocation);
+    for (const auto &origin : deferredBases)
+      for (auto &loop : valueFlow.rawPointerLoops)
+        if (loop.identity == origin.loopInput)
+          loop.writes.push_back({origin, projections, fields});
+    for (auto base : bases) {
+      if (target.parameter || target.receiver)
+        base.projections.insert(base.projections.end(), projections.begin(),
+                                projections.end());
+      if (auto *root = rawPointerRoot(base))
+        writes.push_back({{.root = root,
+                           .rootIdentity = base.root,
+                           .projections = base.projections,
+                           .receiver = base.receiver},
+                          fields,
+                          write.strong && bases.size() == 1 && !incomplete});
+    }
+  }
+  for (const auto &write : writes)
+    applyRawPointerFields(write.place, write.fields, write.strong);
+  if (incomplete) {
+    if (!capturedFields.empty())
+      applyRawAliasWrites(capturedFields, semanticModel.typeOf(*call->callee()),
+                          span);
+    if (resolved && resolved->receiverMode != CallReceiverMode::None) {
+      if (invocation)
+        applyRawAliasWrites(
+            invocation->receiver ? rawPointerFields(invocation->receiver)
+            : invocation->receiverPlace
+                ? rawPointerFieldsAt(loanPlace(*invocation->receiverPlace))
+                : std::vector<ProjectedRawPointerOrigins>{},
+            invocation->receiverType, span);
+      else if (member)
+        applyRawAliasWrites(rawPointerFields(member->object().get()),
+                            semanticModel.typeOf(*member->object()), span);
+      else if (auto *receiver = receiverStateSymbol())
+        applyRawAliasWrites(receiver->rawPointerFields, receiver->type, span);
+    }
+    const auto poison = [&](const SemanticPlace &place,
+                            const SemanticType &type) {
+      applyUnknownRawWrite(place, type, span, query ? query->identity : 0);
+    };
+    if (*state->hasRawGlobals)
+      for (const auto &global : saveRawProgramStorage())
+        poison(placeForSymbol(*global.symbol), global.symbol->type);
+    for (std::size_t index = 0;
+         index < arguments.size() && index < parameterTypes.size(); ++index) {
+      const auto &type = parameterTypes[index];
+      applyRawAliasWrites(rawPointerFields(arguments[index].get()), type, span);
+      if (type.kind == SemanticType::Reference &&
+          type.referenceAccess == AccessMode::Mutable)
+        poison(semanticPlace(arguments[index]), type);
+      else if (type.kind == SemanticType::RawPointer &&
+               type.pointerAccess == AccessMode::Mutable &&
+               type.arguments.size() == 1)
+        for (const auto &origin : rawPointerOrigins(arguments[index]))
+          if (auto *root = rawPointerRoot(origin.place))
+            poison({.root = root,
+                    .rootIdentity = origin.place.root,
+                    .projections = origin.place.projections,
+                    .receiver = origin.place.receiver},
+                   type.arguments.front());
+    }
+    if (resolved && resolved->receiverMode == CallReceiverMode::MutablePlace) {
+      if (invocation)
+        poison(invocation->receiver
+                   ? semanticPlace(invocation->receiver)
+                   : invocation->receiverPlace.value_or(SemanticPlace{}),
+               invocation->receiverType);
+      else if (const auto *member = exprAs<Get>(call->callee().get()))
+        poison(semanticPlace(member->object()),
+               semanticModel.typeOf(*member->object()));
+      else if (auto *receiver = receiverStateSymbol())
+        poison(placeForSymbol(*receiver), receiver->type);
+    }
+  }
+}
+
+auto SemanticVisitor::Impl::applyUnknownRawWrite(const SemanticPlace &place,
+                                                 const SemanticType &type,
+                                                 const SourceSpan &span,
+                                                 std::size_t query) -> void {
+  std::vector<ProjectedRawPointerOrigins> fields;
+  for (auto path : rawPointerFieldPaths(type))
+    fields.push_back(
+        {std::move(path),
+         {{.addressSite = span,
+           .sourceResultQuery =
+               query ? query : std::numeric_limits<std::size_t>::max()}}});
+  if (!fields.empty())
+    applyRawPointerFields(place, fields, false);
+}
+
+auto SemanticVisitor::Impl::applyRawCleanupWrites(
+    const SemanticType &type, const SourceSpan &span,
+    const std::vector<ProjectedRawPointerOrigins> &fields) -> void {
+  // Cleanup is structurally known, but destructor write transport has no
+  // normalized query yet. Preserve uncertainty only when source cleanup can
+  // execute, never by executing a destructor body during declaration checking.
+  if (!requiresActiveCleanupFor(type))
+    return;
+  const auto globals = saveRawProgramStorage();
+  if (globals.empty() && fields.empty())
+    return;
+  std::vector<SemanticType> active;
+  const auto hasSourceCleanup = [&](const auto &self,
+                                    const SemanticType &current) -> bool {
+    if (!requiresActiveCleanupFor(current) || active.size() >= 128 ||
+        std::find(active.begin(), active.end(), current) != active.end())
+      return false;
+    active.push_back(current);
+    bool result = false;
+    if (current.kind == SemanticType::Class) {
+      if (const auto *owner = classInfo(current)) {
+        result = hasSourceDestructorBody(*owner);
+        for (const auto &field : owner->fields) {
+          const auto member =
+              owner->members.find(field.declaration->name().lexeme);
+          if (member != owner->members.end())
+            result |= self(
+                self, substituteSymbol(member->second.symbol, current).type);
+        }
+        for (const auto &base : owner->bases)
+          if (!base.interface)
+            result |= self(
+                self, substituteType(base.type, classSubstitution(current)));
+      }
+    } else if (current.kind == SemanticType::Lambda &&
+               current.hasLambdaShape()) {
+      for (const auto &capture : current.lambdaCaptureTypes())
+        result |= self(self, capture);
+    } else if (current.kind == SemanticType::Array ||
+               current.kind == SemanticType::UniqueOwner ||
+               current.kind == SemanticType::SharedPointer ||
+               current.kind == SemanticType::Expected ||
+               current.kind == SemanticType::Unexpected) {
+      for (const auto &argument : current.arguments)
+        result |= self(self, argument);
+    }
+    active.pop_back();
+    return result;
+  };
+  if (!hasSourceCleanup(hasSourceCleanup, type))
+    return;
+  applyRawAliasWrites(fields, type, span);
+  for (const auto &global : globals)
+    applyUnknownRawWrite(placeForSymbol(*global.symbol), global.symbol->type,
+                         span);
+}
+
+auto SemanticVisitor::Impl::applyRawAliasWrites(
+    std::vector<ProjectedRawPointerOrigins> fields, const SemanticType &type,
+    const SourceSpan &span) -> void {
+  // Only aliases actually carried by this value contribute possible write
+  // destinations. Copy the small map before updating any aliased carrier.
+  for (const auto &field : fields) {
+    for (const auto &pointerType : rawPointerTypesAt(type, field.projections)) {
+      if (pointerType.kind != SemanticType::RawPointer ||
+          pointerType.pointerAccess != AccessMode::Mutable ||
+          pointerType.arguments.size() != 1)
+        continue;
+      for (const auto &origin : field.origins) {
+        if (origin.loopInput != 0) {
+          std::vector<ProjectedRawPointerOrigins> unresolved;
+          for (auto path : rawPointerFieldPaths(pointerType.arguments.front()))
+            unresolved.push_back(
+                {std::move(path),
+                 {{.addressSite = span,
+                   .sourceResultQuery =
+                       std::numeric_limits<std::size_t>::max()}}});
+          for (auto &loop : valueFlow.rawPointerLoops)
+            if (loop.identity == origin.loopInput && !unresolved.empty())
+              loop.writes.push_back({origin, {}, unresolved});
+          continue;
+        }
+        auto *root = rawPointerRoot(origin.place);
+        if (!root)
+          continue;
+        SemanticPlace destination{.root = root,
+                                  .rootIdentity = origin.place.root,
+                                  .projections = origin.place.projections,
+                                  .receiver = origin.place.receiver};
+        if (origin.parameterPointee)
+          destination.projections.push_back(
+              {.kind = PlaceProjectionKind::Dereference});
+        else if (root->type.kind == SemanticType::Array &&
+                 destination.projections.empty())
+          destination.projections.push_back(
+              {.kind = PlaceProjectionKind::DynamicIndex});
+        applyUnknownRawWrite(destination, pointerType.arguments.front(), span);
+      }
+    }
+  }
+}
+
+auto SemanticVisitor::Impl::preserveRawCallWrites(const Call &call) -> void {
+  const auto *resolved = semanticModel.findCall(call);
+  if (!resolved || resolved->intrinsic != IntrinsicKind::None)
+    return;
+  const bool mutableReference =
+      std::any_of(resolved->parameterTypes.begin(),
+                  resolved->parameterTypes.end(), [](const auto &type) {
+                    return type.kind == SemanticType::Reference &&
+                           type.referenceAccess == AccessMode::Mutable;
+                  });
+  if (!mutableReference &&
+      resolved->receiverMode != CallReceiverMode::MutablePlace)
+    return;
+  if (const auto query = rawResultQuery(call, *resolved);
+      query && query->complete && query->valid && query->writesComplete)
+    return;
+  const auto origins = rawCallPointerOrigins(call, false);
+  if (origins.empty())
+    return;
+  const auto preserve = [&](const ExprPtr &expression,
+                            const SemanticType &type) {
+    const auto key = loanPlace(expression);
+    if (!key.valid())
+      return;
+    Symbol *root = rawPointerRoot(key);
+    if (!root)
+      return;
+    std::vector<ProjectedRawPointerOrigins> fields;
+    for (auto path : rawPointerFieldPaths(type)) {
+      path.insert(path.begin(), key.projections.begin(), key.projections.end());
+      fields.push_back({std::move(path), origins});
+    }
+    mergeRawPointerFields(root->rawPointerFields, fields);
+  };
+  for (std::size_t index = 0; index < call.arguments().size() &&
+                              index < resolved->parameterTypes.size();
+       ++index) {
+    const auto &parameter = resolved->parameterTypes[index];
+    if (parameter.kind == SemanticType::Reference &&
+        parameter.referenceAccess == AccessMode::Mutable)
+      preserve(call.arguments()[index], parameter);
+  }
+  if (resolved->receiverMode == CallReceiverMode::MutablePlace)
+    if (const auto *member = exprAs<Get>(call.callee().get()))
+      preserve(member->object(), semanticModel.typeOf(*member->object()));
+}
+
+auto SemanticVisitor::Impl::invalidateRawCallOrigins(
+    const Call *call, const RawInvocation *invocation) -> void {
+  const auto *resolved =
+      invocation ? &invocation->resolved : semanticModel.findCall(*call);
+  if (!resolved)
+    return;
+  // These exact capabilities only produce a checked borrow; they do not end
+  // an object lifetime. A source-defined borrow-returning method is not proof
+  // of purity: it may replace its allocation before returning the new object.
+  switch (resolved->intrinsic) {
+  case IntrinsicKind::RawBorrow:
+  case IntrinsicKind::RawBorrowMut:
+  case IntrinsicKind::UniqueOwnerBorrow:
+  case IntrinsicKind::UniqueOwnerBorrowMut:
+  case IntrinsicKind::SharedOwnerBorrow:
+  case IntrinsicKind::StorageRead:
+  case IntrinsicKind::StorageReadMut:
+  case IntrinsicKind::PrefixStorageRead:
+  case IntrinsicKind::PrefixStorageReadMut:
+  case IntrinsicKind::OptionalStorageRead:
+  case IntrinsicKind::OptionalStorageReadMut:
+  case IntrinsicKind::MutexGuardRead:
+  case IntrinsicKind::MutexGuardReadMut:
+    return;
+  default:
+    break;
+  }
+  // A bounded source-effect proof, not a privilege attached to borrowed_from:
+  // a direct assertion over a raw formal cannot replace any object. Inspect
+  // only this normalized syntax shape so the proof is declaration-order
+  // independent; ordinary semantic analysis still validates its raw assertion.
+  // Even an otherwise empty body can run user code when value parameters drop.
+  const auto inertRawAssertion = [&]() {
+    const auto *function = semanticModel.findFunction(resolved->function);
+    if (!function || !function->explicitReturnBorrowOrigin ||
+        function->returnType.kind != SemanticType::Reference ||
+        function->virtualMethod || function->linkage != LanguageLinkage::Gti ||
+        resolved->dispatch != CallDispatch::Static || !function->declaration ||
+        !function->declaration->body() ||
+        function->declaration->runtimeBinding() ||
+        function->intrinsic != IntrinsicKind::None)
+      return false;
+    for (const auto &parameter : resolved->parameterTypes)
+      if (containsOpenTypeParameter(parameter) ||
+          (parameter.kind != SemanticType::Reference &&
+           typeTraits(parameter).drop != DropKind::Trivial))
+        return false;
+    const BlockStmt *block = function->declaration->body().get();
+    bool unsafe = function->requiresUnsafe;
+    const ReturnStmt *returned = nullptr;
+    while (block) {
+      unsafe |= block->isUnsafe();
+      if (block->statements().size() != 1)
+        return false;
+      const Stmt *statement = block->statements().front().get();
+      returned = stmtAs<ReturnStmt>(statement);
+      if (returned)
+        break;
+      block = stmtAs<BlockStmt>(statement);
+    }
+    if (!unsafe || !returned)
+      return false;
+    const Expr *expression = returned->value().get();
+    while (const auto *group = exprAs<Grouping>(expression))
+      expression = group->expression().get();
+    const auto *dereference = exprAs<Unary>(expression);
+    if (!dereference || dereference->oper().kind != TokenKind::STAR)
+      return false;
+    expression = dereference->right().get();
+    while (const auto *group = exprAs<Grouping>(expression))
+      expression = group->expression().get();
+    const auto *variable = exprAs<Variable>(expression);
+    if (!variable)
+      return false;
+    const auto &parameters = function->declaration->parameters();
+    for (std::size_t index = 0;
+         index < parameters.size() && index < resolved->parameterTypes.size();
+         ++index)
+      if (parameters[index].name.lexeme == variable->name().lexeme &&
+          resolved->parameterTypes[index].kind == SemanticType::RawPointer)
+        return true;
+    return false;
+  };
+  if (inertRawAssertion())
+    return;
+  const auto invalidate = [&](PlaceKey key, SemanticType type) {
+    if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+      type = SemanticType(type.arguments.front());
+    // Scalar writes update a value, not its object lifetime. Class/array and
+    // compiler-owned resource mutation can replace objects or backing storage.
+    if (!key.valid() ||
+        (type.kind != SemanticType::Class && type.kind != SemanticType::Array &&
+         type.kind != SemanticType::Storage &&
+         type.kind != SemanticType::PrefixStorage &&
+         type.kind != SemanticType::UniqueOwner &&
+         type.kind != SemanticType::SharedPointer))
+      return;
+    Symbol *root = rawPointerRoot(key);
+    if (root)
+      invalidateRawPointerOrigins({.root = root,
+                                   .rootIdentity = key.root,
+                                   .projections = key.projections,
+                                   .receiver = key.receiver});
+  };
+  const std::span<const ExprPtr> arguments =
+      invocation ? invocation->arguments
+                 : std::span<const ExprPtr>{call->arguments()};
+  for (std::size_t index = 0;
+       index < arguments.size() && index < resolved->parameterTypes.size();
+       ++index) {
+    const auto &type = resolved->parameterTypes[index];
+    if (type.kind == SemanticType::Reference &&
+        type.referenceAccess == AccessMode::Mutable)
+      invalidate(loanPlace(arguments[index]), type);
+  }
+  if (resolved->receiverMode == CallReceiverMode::MutablePlace) {
+    if (invocation)
+      invalidate(
+          invocation->receiver ? loanPlace(semanticPlace(invocation->receiver))
+          : invocation->receiverPlace ? loanPlace(*invocation->receiverPlace)
+                                      : PlaceKey{},
+          invocation->receiverType);
+    else if (const auto *member = exprAs<Get>(call->callee().get()))
+      invalidate(loanPlace(member->object()),
+                 semanticModel.typeOf(*member->object()));
+    else if (const Symbol *receiver = receiverStateSymbol())
+      invalidate({.receiver = true}, receiver->type);
+  }
+}
+
+auto SemanticVisitor::Impl::rawPointerStoragePlaces(const SemanticPlace &place,
+                                                    bool &weak)
+    -> std::vector<SemanticPlace> {
+  if (!place.root)
+    return {};
+  const auto typeAt = [&](const SemanticPlace &selected) {
+    auto type = selected.root->type;
+    for (const auto &projection : selected.projections) {
+      if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+        type = SemanticType(type.arguments.front());
+      if (projection.kind == PlaceProjectionKind::Field) {
+        const auto *field =
+            semanticModel.database().findSymbol(projection.field);
+        type = field ? field->type : SemanticType::Unknown;
+      } else if (!type.arguments.empty()) {
+        type = SemanticType(type.arguments.front());
+      } else {
+        type = SemanticType::Unknown;
+      }
+    }
+    return type;
+  };
+  auto rootPlace = place;
+  rootPlace.projections.clear();
+  std::vector<SemanticPlace> places{rootPlace};
+  for (const auto &projection : place.projections) {
+    std::vector<SemanticPlace> next;
+    for (auto selected : places) {
+      if (projection.kind != PlaceProjectionKind::Dereference ||
+          typeAt(selected).kind != SemanticType::RawPointer) {
+        weak |= projection.kind == PlaceProjectionKind::DynamicIndex;
+        selected.projections.push_back(projection);
+        next.push_back(std::move(selected));
+        continue;
+      }
+      std::vector<RawPointerOrigin> origins;
+      if (selected.projections.empty()) {
+        origins = selected.root->rawPointerOrigins;
+      } else {
+        for (const auto &field : selected.root->rawPointerFields) {
+          if (field.projections.size() != selected.projections.size())
+            continue;
+          const auto relation =
+              placeRelation(placeKey(selected),
+                            projectedPlaceKey(selected, field.projections));
+          if (relation.relation == PlaceRelation::Equal ||
+              relation.relation == PlaceRelation::MayAlias)
+            mergeRawPointerOrigins(origins, field.origins);
+        }
+      }
+      weak |= origins.size() != 1;
+      for (const auto &origin : origins) {
+        if (origin.parameterPointee || origin.loopInput != 0 ||
+            origin.expired || origin.invalidated) {
+          weak = true;
+          continue;
+        }
+        Symbol *root = rawPointerRoot(origin.place);
+        if (!root) {
+          weak = true;
+          continue;
+        }
+        SemanticPlace destination{.root = root,
+                                  .rootIdentity = origin.place.root,
+                                  .projections = origin.place.projections,
+                                  .receiver = origin.place.receiver};
+        // Array addresses retain their allocation origin rather than the
+        // initial element: arithmetic and raw indexing may select any element.
+        if (typeAt(destination).kind == SemanticType::Array) {
+          destination.projections.push_back(
+              {.kind = PlaceProjectionKind::DynamicIndex});
+          weak = true;
+        }
+        weak |=
+            std::any_of(destination.projections.begin(),
+                        destination.projections.end(), [](const auto &part) {
+                          return part.kind == PlaceProjectionKind::DynamicIndex;
+                        });
+        next.push_back(std::move(destination));
+      }
+    }
+    places = std::move(next);
+  }
+  weak |= places.size() != 1;
+  return places;
+}
+
+auto SemanticVisitor::Impl::assignRawPointerFields(const SemanticPlace &place,
+                                                   const Expr *value) -> void {
+  applyRawPointerFields(place, rawPointerFields(value), true);
+}
+
+auto SemanticVisitor::Impl::applyRawPointerFields(
+    const SemanticPlace &place,
+    const std::vector<ProjectedRawPointerOrigins> &incoming, bool strong)
+    -> void {
+  bool weak = !strong;
+  const auto destinations = rawPointerStoragePlaces(place, weak);
+  if (destinations.empty())
+    recordRawWrite(place, incoming, strong);
+  for (const auto &destination : destinations) {
+    const bool programStorage =
+        destination.root->bindingKind == SemanticBindingKind::GlobalVariable ||
+        destination.root->bindingKind == SemanticBindingKind::StaticField;
+    // Namespace state is not part of ScopeStack branch snapshots. Conditional
+    // writes retain earlier paths, including a loop that never executes.
+    const bool destinationWeak =
+        weak ||
+        (programStorage && (!loanFlow.activeConditionalArms.empty() ||
+                            !loanFlow.activeSwitchArms.empty() ||
+                            loanFlow.rawConditionalExpressionDepth != 0 ||
+                            !valueFlow.rawPointerLoops.empty()));
+    recordRawWrite(destination, incoming, !destinationWeak);
+    if (destination.projections.empty() &&
+        destination.root->type.kind == SemanticType::RawPointer) {
+      if (!destinationWeak)
+        destination.root->rawPointerOrigins.clear();
+      for (const auto &field : incoming)
+        if (field.projections.empty())
+          mergeRawPointerOrigins(destination.root->rawPointerOrigins,
+                                 field.origins);
+      continue;
+    }
+    // Only an exact destination replaces its old subtree. A write that may
+    // select several objects/elements cannot prove any previous fact cleared.
+    if (!destinationWeak)
+      std::erase_if(destination.root->rawPointerFields, [&](const auto &field) {
+        return field.projections.size() >= destination.projections.size() &&
+               std::equal(destination.projections.begin(),
+                          destination.projections.end(),
+                          field.projections.begin());
+      });
+    auto fields = incoming;
+    for (auto &field : fields)
+      field.projections.insert(field.projections.begin(),
+                               destination.projections.begin(),
+                               destination.projections.end());
+    mergeRawPointerFields(destination.root->rawPointerFields, fields);
+  }
+}
+
+auto SemanticVisitor::Impl::applyRawPointerLifetimeInvalidations(
+    RawPointerOrigin &origin, const std::vector<PlaceKey> &places) -> void {
+  if (origin.loopInput != 0 || origin.sourceResultQuery != 0) {
+    for (const auto &place : places)
+      if (std::find(origin.lifetimeInvalidations.begin(),
+                    origin.lifetimeInvalidations.end(),
+                    place) == origin.lifetimeInvalidations.end())
+        origin.lifetimeInvalidations.push_back(place);
+    return;
+  }
+  if (origin.parameterPointee || !origin.place.valid())
+    return;
+  for (const auto &place : places) {
+    const auto relation = placeRelation(place, origin.place);
+    if (!relation.compatibleDomain ||
+        relation.relation != PlaceRelation::Disjoint)
+      origin.invalidated = true;
+  }
+}
+
+auto SemanticVisitor::Impl::invalidateRawPointerOrigins(
+    const SemanticPlace &place) -> void {
+  // Raw origins use the checked-loan analysis-local domain. The snapshot
+  // qualified storage identity belongs to ownership state, not this relation;
+  // mixing the two makes unrelated local roots conservatively alias.
+  const PlaceKey lifetimePlace = loanPlace(place);
+  const auto invalidate = [&](auto &origins) {
+    for (auto &origin : origins) {
+      applyRawPointerLifetimeInvalidations(origin, {lifetimePlace});
+    }
+  };
+  for (auto &scope : scopes)
+    for (auto &[_, symbol] : scope) {
+      invalidate(symbol.rawPointerOrigins);
+      for (auto &field : symbol.rawPointerFields)
+        invalidate(field.origins);
+    }
+  // Update the active source-unit flow, not stale declaration-index copies.
+  auto *globals = currentNamespaceSymbolsMutable();
+  auto &bindings = globals ? *globals : valueFlow.namespaceSymbols;
+  for (auto &[_, symbol] : bindings) {
+    invalidate(symbol.rawPointerOrigins);
+    for (auto &field : symbol.rawPointerFields)
+      invalidate(field.origins);
+  }
+}
+
+auto SemanticVisitor::Impl::rawPointerOrigins(const ExprPtr &expression)
+    -> std::vector<RawPointerOrigin> {
+  return rawPointerOrigins(expression.get());
+}
+
+auto SemanticVisitor::Impl::rawPointerOrigins(const Expr *expression)
+    -> std::vector<RawPointerOrigin> {
+  if (!expression)
+    return {};
+  if (const auto found = valueFlow.rawOperatorResults.find(expression);
+      found != valueFlow.rawOperatorResults.end()) {
+    std::vector<RawPointerOrigin> origins;
+    for (const auto &field : found->second)
+      mergeRawPointerOrigins(origins, field.origins);
+    return origins;
+  }
+  if (const auto *group = exprAs<Grouping>(expression))
+    return rawPointerOrigins(group->expression());
+  if (const auto *conversion = exprAs<Conversion>(expression))
+    return rawPointerOrigins(conversion->value());
+  if (const auto *call = exprAs<Call>(expression);
+      call &&
+      resolvedIntrinsicKind(*call) == IntrinsicKind::RawPointerConversion &&
+      call->arguments().size() == 1) {
+    auto origins = rawPointerOrigins(call->arguments().front());
+    const auto &source = semanticModel.typeOf(*call->arguments().front());
+    if (source.kind == SemanticType::RawPointer &&
+        source.arguments.size() == 1 &&
+        source.arguments.front() != SemanticType::Void) {
+      mergeRawPointerOrigins(origins,
+                             {{.addressSite = tokenSpan(call->paren()),
+                               .pointeeType = source.arguments.front()}});
+    }
+    return origins;
+  }
+  if (const auto *postfix = exprAs<Postfix>(expression))
+    return rawPointerOrigins(postfix->expression());
+  if (const auto *assignment = exprAs<Assign>(expression)) {
+    if (assignment->oper().kind == TokenKind::EQUAL)
+      return rawPointerOrigins(assignment->value());
+    const auto *symbol = assignment->path().segments.size() > 1
+                             ? resolveQualified(assignment->path())
+                             : resolve(assignment->name());
+    return symbol ? symbol->rawPointerOrigins : std::vector<RawPointerOrigin>{};
+  }
+  if (const auto *unary = exprAs<Unary>(expression);
+      unary && (unary->oper().kind == TokenKind::PLUS_PLUS ||
+                unary->oper().kind == TokenKind::MINUS_MINUS))
+    return rawPointerOrigins(unary->right());
+  if (const auto *unary = exprAs<Unary>(expression);
+      unary && unary->oper().kind == TokenKind::AMPERSAND) {
+    if (const auto *indirect = exprAs<Unary>(unary->right().get());
+        indirect && indirect->oper().kind == TokenKind::STAR &&
+        semanticModel.typeOf(*indirect->right()).kind ==
+            SemanticType::RawPointer)
+      return rawPointerOrigins(indirect->right());
+    if (const auto *index = exprAs<Index>(unary->right().get());
+        index &&
+        semanticModel.typeOf(*index->object()).kind == SemanticType::RawPointer)
+      return rawPointerOrigins(index->object());
+    if (const auto *member = exprAs<Get>(unary->right().get());
+        member && member->access().kind == TokenKind::ARROW &&
+        semanticModel.typeOf(*member->object()).kind ==
+            SemanticType::RawPointer) {
+      bool weak = false;
+      const auto places =
+          rawPointerStoragePlaces(semanticPlace(unary->right()), weak);
+      if (!places.empty()) {
+        std::vector<RawPointerOrigin> origins;
+        for (const auto &place : places)
+          origins.push_back({placeKey(place), tokenSpan(unary->oper()),
+                             accessLoan(unary->right())});
+        return origins;
+      }
+      auto origins = rawPointerOrigins(member->object());
+      if (const auto *field =
+              findMember(memberAccessObjectType(*member), member->name()))
+        for (auto &origin : origins) {
+          if (origin.place.valid())
+            origin.place.projections.push_back(
+                {.kind = PlaceProjectionKind::Field,
+                 .field = toolingSymbolFor(field->symbol)});
+          if (origin.pointeeType != SemanticType::Unknown) {
+            const auto addressType = semanticModel.typeOf(*expression);
+            if (addressType.kind == SemanticType::RawPointer &&
+                addressType.arguments.size() == 1)
+              origin.pointeeType = addressType.arguments.front();
+          }
+        }
+      return origins;
+    }
+    auto place = loanPlace(unary->right());
+    // Raw arithmetic can select another element of the same array. Retain
+    // the array origin conservatively rather than claiming every later raw
+    // access still selects the original constant index.
+    if (!place.projections.empty() &&
+        (place.projections.back().kind == PlaceProjectionKind::ConstantIndex ||
+         place.projections.back().kind == PlaceProjectionKind::DynamicIndex))
+      place.projections.pop_back();
+    if (place.valid())
+      return {{place, tokenSpan(unary->oper()), accessLoan(unary->right())}};
+  }
+  if (const auto *binary = exprAs<Binary>(expression);
+      binary && (binary->oper().kind == TokenKind::PLUS ||
+                 binary->oper().kind == TokenKind::MINUS)) {
+    auto origins = rawPointerOrigins(binary->left());
+    mergeRawPointerOrigins(origins, rawPointerOrigins(binary->right()));
+    return origins;
+  }
+  if (const auto *conditional = exprAs<ConditionalExpr>(expression)) {
+    auto origins = rawPointerOrigins(conditional->thenExpression());
+    mergeRawPointerOrigins(origins,
+                           rawPointerOrigins(conditional->elseExpression()));
+    return origins;
+  }
+  if (const auto *call = exprAs<Call>(expression);
+      call && resolvedIntrinsicKind(*call) == IntrinsicKind::Move &&
+      call->arguments().size() == 1)
+    return rawPointerOrigins(call->arguments().front());
+  if (exprAs<Call>(expression))
+    return rawCallPointerOrigins(*expression);
+  if (const auto *member = exprAs<Get>(expression)) {
+    std::vector<RawPointerOrigin> result;
+    const auto place = semanticPlace(expression);
+    if (place.root) {
+      for (const auto &field : rawPointerFieldsAt(placeKey(place)))
+        if (field.projections.empty())
+          mergeRawPointerOrigins(result, field.origins);
+      return result;
+    }
+    const auto *field =
+        findMember(memberAccessObjectType(*member), member->name());
+    if (!field)
+      return result;
+    if (member->access().kind != TokenKind::ARROW) {
+      for (const auto &candidate : rawPointerFields(member->object().get()))
+        if (!candidate.projections.empty() &&
+            candidate.projections.front().kind == PlaceProjectionKind::Field &&
+            candidate.projections.front().field ==
+                toolingSymbolFor(field->symbol))
+          mergeRawPointerOrigins(result, candidate.origins);
+      return result;
+    }
+    for (const auto &owner : rawPointerOrigins(member->object())) {
+      if (owner.parameterPointee || owner.loopInput != 0)
+        continue;
+      auto selected = owner.place;
+      selected.projections.push_back(
+          {.kind = PlaceProjectionKind::Field,
+           .field = toolingSymbolFor(field->symbol)});
+      for (const auto &candidate : rawPointerFieldsAt(selected))
+        mergeRawPointerOrigins(result, candidate.origins);
+    }
+    return result;
+  }
+  const auto place = semanticPlace(expression);
+  if (place.root) {
+    std::vector<RawPointerOrigin> result;
+    for (const auto &field : rawPointerFieldsAt(placeKey(place)))
+      if (field.projections.empty())
+        mergeRawPointerOrigins(result, field.origins);
+    return result;
+  }
+  // Foreign pointers and unsummarized calls carry no local proof. They still
+  // require the caller's unsafe validity assertion, not an invented owner.
+  return {};
+}
+
+auto SemanticVisitor::Impl::rawPointerLifetimeDiagnostic(
+    const RawPointerOrigin &origin, const Token &site)
+    -> std::optional<Diagnostic> {
+  if (origin.parameterPointee || origin.loopInput != 0)
+    return std::nullopt;
+  if (origin.sourceResultQuery != 0) {
+    auto diagnostic =
+        makeDiagnostic("GTI-S2056", DiagnosticPhase::Semantics, site,
+                       "Raw pointer access requires a completed source-result "
+                       "provenance query.");
+    diagnostic.related.push_back(
+        {origin.addressSite, "Source result remains unresolved here."});
+    diagnostic.hints.emplace_back(
+        "Recursive, indirect, unresolved borrowed-storage, or analysis-limited "
+        "source results cannot be "
+        "asserted valid; copying or comparing the address remains permitted.");
+    if (requestSession.rawResultQueries)
+      for (const auto &query : requestSession.rawResultQueries->entries)
+        if (query->identity == origin.sourceResultQuery && query->failure)
+          diagnostic.hints.push_back("Source-result analysis: " +
+                                     query->failure->message);
+    return diagnostic;
+  }
+  Symbol *root = origin.place.receiver ? receiverStateSymbol() : nullptr;
+  for (auto &scope : scopes) {
+    if (root)
+      break;
+    for (auto &[_, symbol] : scope) {
+      if (symbolForDeclaration(symbol.declaration) == origin.place.root) {
+        root = &symbol;
+        break;
+      }
+    }
+    if (root)
+      break;
+  }
+  const auto *declaration =
+      semanticModel.database().findSymbol(origin.place.root);
+  // Nonlocal storage is not invalid merely because it is outside this
+  // body's lexical scope stack.
+  const bool local =
+      declaration && (declaration->kind == SymbolKind::LocalVariable ||
+                      declaration->kind == SymbolKind::Parameter);
+  const bool unavailable =
+      root &&
+      (root->valueState != ValueState::Available ||
+       unavailableProjectedState({.root = root,
+                                  .rootIdentity = origin.place.root,
+                                  .projections = origin.place.projections,
+                                  .receiver = origin.place.receiver}));
+  if ((local && !root) || unavailable || origin.invalidated || origin.expired) {
+    auto diagnostic = makeDiagnostic(
+        "GTI-S2056", DiagnosticPhase::Semantics, site,
+        origin.expired
+            ? "Raw pointer access refers to storage whose scope has ended."
+        : unavailable
+            ? "Raw pointer access refers to an owner that was moved on a "
+              "possible path."
+        : origin.invalidated
+            ? "Raw pointer access refers to an object whose "
+              "lifetime was replaced."
+            : "Raw pointer access refers to storage whose scope has ended.");
+    diagnostic.related.push_back(
+        {origin.addressSite, "Raw address obtained here."});
+    diagnostic.hints.emplace_back(
+        "Keep the source object live through this operation; unsafe does not "
+        "erase known lifetime facts.");
+    return diagnostic;
+  }
+  return std::nullopt;
+}
+
+auto SemanticVisitor::Impl::validateRawPointerAccess(const ExprPtr &pointer,
+                                                     const Token &site,
+                                                     AccessMode access)
+    -> void {
+  validateRawPointerOrigins(rawPointerOrigins(pointer), site, access);
+}
+
+auto SemanticVisitor::Impl::recordRawAccess(
+    const std::vector<RawPointerOrigin> &origins, const Token &site,
+    AccessMode access, bool checksLoans) -> void {
+  const auto query = requestSession.collectingRawResult;
+  if (!query || lambdaDepth || destructorDepth)
+    return;
+  std::vector<Parameter> noParameters;
+  const auto *parameters = &noParameters;
+  std::vector<SemanticType> parameterTypes;
+  if (query->function) {
+    const auto *function = currentFunctionInfo();
+    if (!function || function->id != query->function || constructorDepth)
+      return;
+    parameters = &function->declaration->parameters();
+    parameterTypes = function->parameterTypes;
+  } else if (query->constructor && currentClass) {
+    const auto &constructors = classInfo(*currentClass).constructors;
+    const auto constructor = std::find_if(
+        constructors.begin(), constructors.end(), [&](const auto &candidate) {
+          return candidate.id == query->constructor;
+        });
+    if (constructor == constructors.end() || !constructor->declaration)
+      return;
+    parameters = &constructor->declaration->parameters();
+    for (const auto &parameter : *parameters)
+      parameterTypes.push_back(typeOf(parameter));
+  } else if (!query->defaultOwner)
+    return;
+  auto inputs = origins;
+  // Loop inputs are expanded by the existing backedge protocol before being
+  // recorded. A marker names a pointer carrier, not an accessed allocation.
+  std::erase_if(inputs,
+                [](const auto &origin) { return origin.loopInput != 0; });
+  RawResultAccess requirement{
+      .access = access, .checksLoans = checksLoans, .site = tokenSpan(site)};
+  collectRawResultFields({{{}, std::move(inputs)}}, *parameters, parameterTypes,
+                         query->constructor || query->defaultOwner,
+                         &requirement.fields);
+  for (auto &field : requirement.fields)
+    std::erase_if(field.origins, [&](const auto &source) {
+      if (source.parameter || source.receiver || source.globalInput ||
+          source.origin.sourceResultQuery)
+        return false;
+      const auto *root = rawPointerRoot(source.origin.place);
+      // Callee-local accesses were checked while that storage was live. They
+      // are not caller obligations (unlike an address returned after death).
+      return !root ||
+             (root->bindingKind != SemanticBindingKind::GlobalVariable &&
+              root->bindingKind != SemanticBindingKind::StaticField);
+    });
+  std::erase_if(requirement.fields,
+                [](const auto &field) { return field.origins.empty(); });
+  if (!requirement.fields.empty())
+    query->accesses.push_back(std::move(requirement));
+}
+
+auto SemanticVisitor::Impl::rawDispatchAccessFree(
+    const ResolvedCallInfo &resolved, const SemanticPlace &receiver) -> bool {
+  if (resolved.dispatch == CallDispatch::Static)
+    return false;
+  const auto *selected = semanticModel.findFunction(resolved.function);
+  if (!selected || selected->virtualRoots.empty())
+    return false;
+  const auto roots = selected->virtualRoots;
+  const auto matches = [&](const CallableCandidate &candidate) {
+    return candidate.virtualMethod &&
+           std::any_of(candidate.virtualRoots.begin(),
+                       candidate.virtualRoots.end(), [&](FunctionId root) {
+                         return std::find(roots.begin(), roots.end(), root) !=
+                                roots.end();
+                       });
+  };
+  const auto prove = [&](const ClassInfo &owner, const SemanticType &type) {
+    if (containsOpenTypeParameter(type))
+      return false;
+    bool found = false;
+    for (const auto &[_, member] : owner.members) {
+      const auto concrete = substituteSymbol(member.symbol, type);
+      for (const auto &candidate : concrete.overloads) {
+        if (!matches(candidate))
+          continue;
+        if (candidate.pureVirtual)
+          return false;
+        found = true;
+        ResolvedCallInfo target{.function = candidate.id,
+                                .declaration = candidate.declaration,
+                                .returnType = candidate.returnType,
+                                .parameterTypes = candidate.parameterTypes,
+                                .dispatch = CallDispatch::Static,
+                                .dispatchOwner = candidate.dispatchOwner};
+        const auto query = rawResultQuery(
+            target, candidate.dispatchOwner.kind == SemanticType::Class
+                        ? candidate.dispatchOwner
+                        : type);
+        if (!query || !query->complete || !query->valid ||
+            !query->accessesComplete || !query->accesses.empty())
+          return false;
+      }
+    }
+    return found;
+  };
+  // A checked reference may name an exact owning local. Never infer a dynamic
+  // type merely from the base-typed reference declaration or an arbitrary
+  // projection: only the existing canonical whole-object place is a proof.
+  const auto place = loanPlace(receiver);
+  if (place.valid() && !place.receiver && place.projections.empty())
+    if (const auto *root = rawPointerRoot(place);
+        root && root->type.kind == SemanticType::Class &&
+        !containsOpenTypeParameter(root->type))
+      if (const auto *owner = classInfo(root->type); owner && !owner->abstract)
+        return prove(*owner, root->type);
+
+  // The declaration catalog is sealed before body analysis. Its inherited
+  // member sets describe every nongeneric implementation in this program.
+  // An open family is not bounded by whichever instances happen to exist yet.
+  bool found = false;
+  for (const auto &owner : classes) {
+    if (owner.abstract)
+      continue;
+    bool possible = false;
+    for (const auto &[_, member] : owner.members)
+      possible |= std::any_of(member.symbol.overloads.begin(),
+                              member.symbol.overloads.end(), matches);
+    if (!possible)
+      continue;
+    if (!owner.genericParameters.empty() ||
+        !prove(owner, openClassType(owner.id)))
+      return false;
+    found = true;
+  }
+  return found;
+}
+
+auto SemanticVisitor::Impl::validateRawCallAccesses(
+    const Expr &expression, const RawInvocation *invocation) -> void {
+  const auto *call = exprAs<Call>(&expression);
+  const auto *resolved = invocation ? &invocation->resolved
+                         : call     ? semanticModel.findCall(*call)
+                                    : nullptr;
+  const auto *construction =
+      invocation ? nullptr : semanticModel.findConstruction(expression);
+  const auto *lambda =
+      !invocation && call ? semanticModel.findLambdaCall(*call) : nullptr;
+  const auto *deferred = !invocation && call
+                             ? semanticModel.findDeferredCallableCall(*call)
+                             : nullptr;
+  const auto unknownAccess = [&]() {
+    ++requestSession.rawAccessObservation;
+    if (requestSession.collectingRawResult && lambdaDepth == 0 &&
+        destructorDepth == 0)
+      requestSession.collectingRawResult->accessesComplete = false;
+  };
+  if (!resolved && !construction && !lambda && !deferred)
+    return;
+  if (resolved && resolved->intrinsic != IntrinsicKind::None && !construction) {
+    // Identity-bound address transport and checked-carrier observations do
+    // not access the raw pointee. Other primitives cannot certify purity of
+    // an enclosing source callable merely by bypassing source-body queries.
+    switch (resolved->intrinsic) {
+    case IntrinsicKind::Move:
+    case IntrinsicKind::RawPointerConversion:
+    case IntrinsicKind::NumericTypeParameterConversion:
+    case IntrinsicKind::NumericAliasConversion:
+    case IntrinsicKind::DefaultTypeParameterConstruction:
+    case IntrinsicKind::ExpectedHasValue:
+    case IntrinsicKind::ExpectedValue:
+    case IntrinsicKind::ExpectedError:
+    case IntrinsicKind::ArraySize:
+    case IntrinsicKind::IntegerWrappingAdd:
+    case IntrinsicKind::IntegerWrappingSubtract:
+    case IntrinsicKind::IntegerWrappingMultiply:
+    case IntrinsicKind::IntegerSaturatingAdd:
+    case IntrinsicKind::IntegerSaturatingSubtract:
+    case IntrinsicKind::IntegerSaturatingMultiply:
+    case IntrinsicKind::IntegerCheckedAdd:
+    case IntrinsicKind::IntegerCheckedSubtract:
+    case IntrinsicKind::IntegerCheckedMultiply:
+    case IntrinsicKind::EnumUnderlyingValue:
+      return;
+    case IntrinsicKind::RestoringSwap:
+    case IntrinsicKind::RestoringExchange:
+    case IntrinsicKind::RestoringIndexedSwap:
+      if (resolved->typeArguments.size() == 1 &&
+          !containsOpenTypeParameter(resolved->typeArguments.front())) {
+        const auto traits = typeTraits(resolved->typeArguments.front());
+        if (traits.relocation != RelocationKind::Unavailable &&
+            !requiresActiveCleanupFor(resolved->typeArguments.front()))
+          return;
+      }
+      unknownAccess();
+      return;
+    default:
+      unknownAccess();
+      return;
+    }
+  }
+  if (lambda)
+    if (const auto *info = semanticModel.findLambda(lambda->lambda);
+        info && info->rawAccessFreeType != SemanticType::Unknown &&
+        info->rawAccessFreeType == semanticModel.typeOf(*call->callee()))
+      return;
+  // Demand ordinary source summaries even for scalar signatures: a source
+  // body can form a raw address of program storage without taking a pointer.
+  const auto query = invocation
+                         ? rawResultQuery(*resolved, invocation->receiverType)
+                     : construction ? rawConstructorResultQuery(*construction)
+                     : resolved     ? rawResultQuery(*call, *resolved)
+                                    : nullptr;
+  if (!query && !lambda && !deferred) {
+    if (resolved) {
+      unknownAccess();
+      return; // Preserve the explicit foreign-call boundary.
+    }
+    if (!construction || !construction->declaration ||
+        !construction->declaration->body())
+      return; // Generated copy/move is inert transport, not a source body.
+    // An unsupported selected source constructor is still possible execution.
+    // Let the ordinary incomplete-input check below validate its actuals.
+  }
+  const Token site =
+      invocation ? invocation->site : expressionToken(expression);
+  const auto accesses =
+      query ? query->accesses : std::vector<RawResultAccess>{};
+  for (const auto &requirement : accesses) {
+    std::vector<RawPointerOrigin> origins;
+    for (const auto &field :
+         rawProducedFields(expression, &requirement.fields, invocation))
+      mergeRawPointerOrigins(origins, field.origins);
+    validateRawPointerOrigins(origins, site, requirement.access,
+                              requirement.checksLoans);
+  }
+  if (query && query->complete && query->valid && query->accessesComplete)
+    return;
+  if (resolved && resolved->dispatch != CallDispatch::Static) {
+    SemanticPlace receiver;
+    if (invocation)
+      receiver = invocation->receiverPlace.value_or(
+          semanticPlace(invocation->receiver));
+    else if (call)
+      if (const auto *member = exprAs<Get>(call->callee().get()))
+        receiver = semanticPlace(member->object());
+    if (rawDispatchAccessFree(*resolved, receiver))
+      return;
+  }
+  unknownAccess();
+  const auto possibleAccess = [&](const auto &fields,
+                                  const SemanticType &type) {
+    for (const auto &field : fields) {
+      const auto pointers = rawPointerTypesAt(type, field.projections);
+      if (pointers.empty())
+        validateRawPointerOrigins(field.origins, site, AccessMode::Mutable);
+      for (const auto &pointer : pointers)
+        validateRawPointerOrigins(field.origins, site, pointer.pointerAccess);
+    }
+  };
+  if (invocation) {
+    for (const auto &argument : invocation->arguments)
+      possibleAccess(rawPointerFields(argument.get()),
+                     semanticModel.typeOf(*argument));
+    possibleAccess(
+        invocation->receiver ? rawPointerFields(invocation->receiver)
+        : invocation->receiverPlace
+            ? rawPointerFieldsAt(loanPlace(*invocation->receiverPlace))
+            : std::vector<ProjectedRawPointerOrigins>{},
+        invocation->receiverType);
+  } else if (call) {
+    for (const auto &argument : call->arguments())
+      possibleAccess(rawPointerFields(argument.get()),
+                     semanticModel.typeOf(*argument));
+    if (lambda || deferred)
+      possibleAccess(rawPointerFields(call->callee().get()),
+                     semanticModel.typeOf(*call->callee()));
+    else if (const auto *member = exprAs<Get>(call->callee().get()))
+      possibleAccess(rawPointerFields(member->object().get()),
+                     semanticModel.typeOf(*member->object()));
+    else if (resolved && resolved->receiverMode != CallReceiverMode::None)
+      if (auto *receiver = receiverStateSymbol())
+        possibleAccess(receiver->rawPointerFields, receiver->type);
+  } else if (const auto *direct = exprAs<DirectInitializer>(&expression)) {
+    for (const auto &argument : direct->arguments())
+      possibleAccess(rawPointerFields(argument.get()),
+                     semanticModel.typeOf(*argument));
+  }
+  for (const auto &global : saveRawProgramStorage()) {
+    auto fields = global.fields;
+    if (global.symbol->type.kind == SemanticType::RawPointer)
+      fields.push_back({{}, global.origins});
+    possibleAccess(fields, global.symbol->type);
+  }
+}
+
+auto SemanticVisitor::Impl::applyRawOperatorInvocation(
+    const Expr &expression, const RawInvocation &invocation, bool contextual,
+    bool projection) -> void {
+  validateRawCallAccesses(expression, &invocation);
+  invalidateRawCallOrigins(nullptr, &invocation);
+  // Capture the selected result before applying caller writes. Its normalized
+  // sources describe the invocation inputs, not an unrelated later value of a
+  // mutable argument. Each contextual edge has effects but no replacement for
+  // the value on which contextual conversion was requested.
+  auto fields = rawProducedFields(expression, nullptr, &invocation);
+  if (!rawResultQuery(invocation.resolved, invocation.receiverType)) {
+    // Foreign operator results retain contradictory known inputs just as
+    // ordinary foreign calls do, without inventing a foreign lifetime fact.
+    std::vector<RawPointerOrigin> inputs;
+    const auto retain = [&](const auto &carried) {
+      for (const auto &field : carried)
+        for (const auto &origin : field.origins)
+          if (origin.place.valid() || origin.sourceResultQuery ||
+              origin.loopInput)
+            mergeRawPointerOrigins(inputs, {origin});
+    };
+    for (const auto &argument : invocation.arguments)
+      retain(rawPointerFields(argument.get()));
+    if (invocation.receiver)
+      retain(rawPointerFields(invocation.receiver));
+    else if (invocation.receiverPlace)
+      retain(rawPointerFieldsAt(loanPlace(*invocation.receiverPlace)));
+    for (auto path : rawPointerFieldPaths(invocation.resolved.returnType))
+      mergeRawPointerFields(fields, {{std::move(path), inputs}});
+  }
+  applyRawCallWrites(expression, &invocation);
+  if (projection) {
+    // operator-> is attached to the enclosing member expression, not a
+    // standalone AST value. Keep only the selected field's relative paths.
+    const auto *get = exprAs<Get>(&expression);
+    const auto &type = invocation.resolved.returnType;
+    const auto *owner =
+        type.kind == SemanticType::Reference && type.arguments.size() == 1
+            ? classInfo(type.arguments.front())
+            : nullptr;
+    if (!get || !owner)
+      return;
+    const auto member = owner->members.find(get->name().lexeme);
+    if (member == owner->members.end() ||
+        member->second.symbol.type == SemanticType::Function)
+      return;
+    const auto field = toolingSymbolFor(member->second.symbol);
+    std::erase_if(fields, [&](const auto &entry) {
+      return entry.projections.empty() ||
+             entry.projections.front().kind != PlaceProjectionKind::Field ||
+             entry.projections.front().field != field;
+    });
+    for (auto &entry : fields)
+      entry.projections.erase(entry.projections.begin());
+  }
+  if (!contextual)
+    valueFlow.rawOperatorResults[&expression] = std::move(fields);
+}
+
+auto SemanticVisitor::Impl::validateRawPointerOrigins(
+    const std::vector<RawPointerOrigin> &origins, const Token &site,
+    AccessMode access, bool checksLoans) -> void {
+  ++requestSession.rawAccessObservation;
+  recordRawAccess(origins, site, access, checksLoans);
+  std::shared_ptr<LoanFlowState> context;
+  if (checksLoans && !valueFlow.rawPointerLoops.empty() &&
+      std::any_of(origins.begin(), origins.end(),
+                  [](const auto &origin) { return origin.loopInput != 0; })) {
+    context = std::make_shared<LoanFlowState>(loanFlow);
+    ++loanFlow.nextSequence;
+  }
+  for (auto &loop : valueFlow.rawPointerLoops)
+    loop.accesses.push_back(
+        {.origins = origins,
+         .site = site,
+         .memoryAccess = checksLoans ? std::optional{access} : std::nullopt,
+         .loanContext = context});
+  for (const auto &origin : origins) {
+    if (origin.parameterPointee || origin.loopInput != 0)
+      continue;
+    if (auto diagnostic = rawPointerLifetimeDiagnostic(origin, site)) {
+      diagnostics.emplace_back(std::move(*diagnostic));
+      continue;
+    }
+    if (checksLoans)
+      reportLoanPlaceConflict(site, origin.place, access,
+                              "Cannot access raw storage while an overlapping "
+                              "checked borrow may still be live.",
+                              origin.throughLoan);
+  }
+}
+
+auto SemanticVisitor::Impl::beginRawPointerLoop() -> void {
+  const auto identity = valueFlow.nextRawPointerLoop++;
+  valueFlow.rawPointerLoops.push_back({.identity = identity});
+  const auto seed = [&](Symbol &symbol) {
+    const auto place = placeKey(placeForSymbol(symbol));
+    if (!place.valid())
+      return;
+    if (symbol.type.kind == SemanticType::RawPointer)
+      symbol.rawPointerOrigins.push_back(
+          {.place = place, .loopInput = identity});
+    for (auto &field : symbol.rawPointerFields) {
+      auto fieldPlace = place;
+      fieldPlace.projections.insert(fieldPlace.projections.end(),
+                                    field.projections.begin(),
+                                    field.projections.end());
+      field.origins.push_back(
+          {.place = std::move(fieldPlace), .loopInput = identity});
+    }
+  };
+  for (auto &scope : scopes) {
+    for (auto &[_, symbol] : scope)
+      seed(symbol);
+  }
+  for (const auto &global : saveRawProgramStorage())
+    seed(*global.symbol);
+}
+
+auto SemanticVisitor::Impl::deferredRawPointerLoopUse(const ExprPtr &pointer,
+                                                      const Token &site)
+    -> std::shared_ptr<RawPointerLoopUse> {
+  return deferredRawPointerLoopUse(rawPointerOrigins(pointer), site);
+}
+
+auto SemanticVisitor::Impl::deferredRawPointerLoopUse(
+    const std::vector<RawPointerOrigin> &origins, const Token &site)
+    -> std::shared_ptr<RawPointerLoopUse> {
+  auto use = std::make_shared<RawPointerLoopUse>();
+  use->pendingLoops = valueFlow.rawPointerLoops.size();
+  for (auto &loop : valueFlow.rawPointerLoops)
+    loop.accesses.push_back({origins, site, use});
+  return use;
+}
+
+auto SemanticVisitor::Impl::endRawPointerLoop(const ScopeStack &backedge,
+                                              bool reachable) -> void {
+  if (valueFlow.rawPointerLoops.empty())
+    return;
+  auto loop = std::move(valueFlow.rawPointerLoops.back());
+  valueFlow.rawPointerLoops.pop_back();
+  auto resolvedBackedge = backedge;
+  resolvedBackedge.emplace_back();
+  for (const auto &global : saveRawProgramStorage())
+    resolvedBackedge.back().emplace(
+        std::to_string(resolvedBackedge.back().size()), *global.symbol);
+  const auto substitute = [&](const std::vector<RawPointerOrigin> &inputs,
+                              bool markersOnly) {
+    std::vector<RawPointerOrigin> result;
+    std::vector<RawPointerOrigin> visited;
+    const auto expand = [&](const auto &self,
+                            const RawPointerOrigin &origin) -> void {
+      if (origin.loopInput != loop.identity) {
+        mergeRawPointerOrigins(result, {origin});
+        return;
+      }
+      auto previous = std::find_if(visited.begin(), visited.end(),
+                                   [&](const auto &candidate) {
+                                     return candidate.place == origin.place;
+                                   });
+      if (previous != visited.end()) {
+        const bool covered = std::all_of(
+            origin.lifetimeInvalidations.begin(),
+            origin.lifetimeInvalidations.end(), [&](const auto &place) {
+              return std::find(previous->lifetimeInvalidations.begin(),
+                               previous->lifetimeInvalidations.end(),
+                               place) != previous->lifetimeInvalidations.end();
+            });
+        if (covered)
+          return;
+      }
+      mergeRawPointerOrigins(visited, {origin});
+      const auto forward = [&](const RawPointerOrigin &candidate) {
+        auto next = candidate;
+        applyRawPointerLifetimeInvalidations(next,
+                                             origin.lifetimeInvalidations);
+        self(self, next);
+      };
+      for (const auto &scope : resolvedBackedge) {
+        for (const auto &[_, symbol] : scope) {
+          if (symbolForDeclaration(symbol.declaration) != origin.place.root)
+            continue;
+          if (origin.place.projections.empty()) {
+            for (const auto &next : symbol.rawPointerOrigins)
+              forward(next);
+          } else {
+            for (const auto &field : symbol.rawPointerFields)
+              if (field.projections == origin.place.projections)
+                for (const auto &next : field.origins)
+                  forward(next);
+          }
+        }
+      }
+    };
+    for (const auto &origin : inputs)
+      if (!markersOnly || origin.loopInput == loop.identity)
+        expand(expand, origin);
+    return result;
+  };
+  // A write through a loop-carried pointer can target storage first selected
+  // by a later iteration. Close the same finite origin transfer over writes
+  // before checking uses; do not execute or re-analyze the source body.
+  if (reachable && !loop.writes.empty()) {
+    const auto destinationPlace = [&](const RawPointerOrigin &origin,
+                                      const auto &projections) {
+      auto place = origin.place;
+      if (origin.parameterPointee)
+        place.projections.push_back({.kind = PlaceProjectionKind::Dereference});
+      else if (auto *root = rawPointerRoot(place);
+               root && root->type.kind == SemanticType::Array &&
+               place.projections.empty())
+        place.projections.push_back(
+            {.kind = PlaceProjectionKind::DynamicIndex});
+      place.projections.insert(place.projections.end(), projections.begin(),
+                               projections.end());
+      return place;
+    };
+    bool changed;
+    do {
+      changed = false;
+      for (const auto &write : loop.writes) {
+        auto fields = write.fields;
+        for (auto &field : fields)
+          field.origins = substitute(field.origins, false);
+        for (const auto &origin : substitute({write.destination}, false)) {
+          if (!origin.place.valid() || origin.loopInput != 0)
+            continue;
+          const auto place = destinationPlace(origin, write.projections);
+          auto projected = fields;
+          for (auto &field : projected)
+            field.projections.insert(field.projections.begin(),
+                                     place.projections.begin(),
+                                     place.projections.end());
+          for (auto &scope : resolvedBackedge)
+            for (auto &[_, symbol] : scope) {
+              if (symbolForDeclaration(symbol.declaration) != place.root)
+                continue;
+              if (place.projections.empty() &&
+                  symbol.type.kind == SemanticType::RawPointer) {
+                const auto before = symbol.rawPointerOrigins;
+                for (const auto &field : projected)
+                  if (field.projections.empty())
+                    mergeRawPointerOrigins(symbol.rawPointerOrigins,
+                                           field.origins);
+                changed |= before != symbol.rawPointerOrigins;
+              } else {
+                const auto before = symbol.rawPointerFields;
+                mergeRawPointerFields(symbol.rawPointerFields, projected);
+                changed |= before != symbol.rawPointerFields;
+              }
+            }
+        }
+      }
+    } while (changed);
+    for (const auto &write : loop.writes) {
+      auto fields = write.fields;
+      for (auto &field : fields)
+        field.origins = substitute(field.origins, false);
+      for (const auto &origin : substitute({write.destination}, false)) {
+        if (origin.loopInput != 0) {
+          for (auto &outer : valueFlow.rawPointerLoops)
+            if (outer.identity == origin.loopInput)
+              outer.writes.push_back({origin, write.projections, fields});
+          continue;
+        }
+        const auto place = destinationPlace(origin, write.projections);
+        if (auto *root = rawPointerRoot(place))
+          applyRawPointerFields({.root = root,
+                                 .rootIdentity = place.root,
+                                 .projections = place.projections,
+                                 .receiver = place.receiver},
+                                fields, false);
+      }
+    }
+  }
+  for (const auto &use : loop.accesses) {
+    if (!use.deferred)
+      continue;
+    if (reachable)
+      use.deferred->origins = substitute(use.deferred->origins, false);
+    else
+      std::erase_if(use.deferred->origins, [&](const auto &origin) {
+        return origin.loopInput == loop.identity;
+      });
+  }
+  if (reachable) {
+    for (const auto &use : loop.accesses) {
+      for (const auto &origin : substitute(use.origins, true)) {
+        if (use.expectedPointee != SemanticType::Unknown) {
+          if (origin.pointeeType != SemanticType::Unknown &&
+              !containsOpenTypeParameter(origin.pointeeType) &&
+              origin.pointeeType != use.expectedPointee) {
+            report(use.site,
+                   "Raw pointer conversion contradicts a known pointee type "
+                   "from a later loop iteration.",
+                   "GTI-S2014");
+            diagnostics.back().related.push_back(
+                {origin.addressSite,
+                 "Pointee type retained at this conversion."});
+          }
+          continue;
+        }
+        if (use.deferred)
+          mergeRawPointerOrigins(use.deferred->origins, {origin});
+        recordRawAccess({origin}, use.site,
+                        use.memoryAccess.value_or(AccessMode::ReadOnly),
+                        use.memoryAccess.has_value());
+        if (auto diagnostic = rawPointerLifetimeDiagnostic(origin, use.site)) {
+          diagnostic->hints.emplace_back(
+              "This origin can reach the access through a later loop "
+              "iteration; reseat the pointer before accessing it.");
+          if (use.deferred)
+            use.deferred->diagnostics.emplace_back(std::move(*diagnostic));
+          else
+            diagnostics.emplace_back(std::move(*diagnostic));
+        } else if (use.memoryAccess && use.loanContext &&
+                   !origin.parameterPointee && origin.loopInput == 0) {
+          // Resolve the new place against the loans and sequence at the use,
+          // not the (potentially already cleaned-up) loop-exit loan state.
+          auto enclosing = std::move(loanFlow);
+          loanFlow = *use.loanContext;
+          const auto first = loanFlow.conflicts.size();
+          reportLoanPlaceConflict(
+              use.site, origin.place, *use.memoryAccess,
+              "Cannot access raw storage while an overlapping checked borrow "
+              "may still be live.",
+              origin.throughLoan);
+          std::vector<PendingBorrowConflict> conflicts;
+          for (std::size_t index = first; index < loanFlow.conflicts.size();
+               ++index) {
+            loanFlow.conflicts[index].sequence = use.loanContext->nextSequence;
+            conflicts.push_back(std::move(loanFlow.conflicts[index]));
+          }
+          loanFlow = std::move(enclosing);
+          for (auto &conflict : conflicts)
+            loanFlow.conflicts.push_back(std::move(conflict));
+        }
+      }
+    }
+  }
+  for (const auto &use : loop.accesses)
+    if (use.deferred && use.deferred->pendingLoops != 0)
+      --use.deferred->pendingLoops;
+  const auto removeMarkers = [&](auto &origins) {
+    std::erase_if(origins, [&](const auto &origin) {
+      return origin.loopInput == loop.identity;
+    });
+  };
+  for (auto &scope : scopes)
+    for (auto &[_, symbol] : scope) {
+      removeMarkers(symbol.rawPointerOrigins);
+      for (auto &field : symbol.rawPointerFields)
+        removeMarkers(field.origins);
+    }
+  for (const auto &global : saveRawProgramStorage()) {
+    removeMarkers(global.symbol->rawPointerOrigins);
+    for (auto &field : global.symbol->rawPointerFields)
+      removeMarkers(field.origins);
+  }
+  for (auto &outer : valueFlow.rawPointerLoops)
+    for (auto &use : outer.accesses)
+      use.origins = substitute(use.origins, false);
+}
+
 auto SemanticVisitor::Impl::requireUnsafe(const Expr &expression,
                                           UnsafeOperationKind operation,
                                           const Token &token,
                                           std::string_view description)
     -> void {
   semanticModel.recordUnsafeOperation(expression, operation);
+  if (operation == UnsafeOperationKind::PointerArithmetic) {
+    // Arithmetic asserts an allocation/lifetime obligation but does not read
+    // the pointee or acquire a checked loan. Inert copying/equality never enter
+    // this path.
+    validateRawPointerOrigins(rawPointerOrigins(&expression), token,
+                              AccessMode::ReadOnly, false);
+  }
   if (unsafeDepth != 0) {
     if (!requestSession.activeUnsafeBlocks.empty()) {
       // Nested blocks discharge their own obligations. Lambda bodies start

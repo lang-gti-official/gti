@@ -678,8 +678,9 @@ void testConstructionOnlyPayloadEnumFieldAdmission() {
           const auto retirement = text.text.find(
               "std::destroy_at(std::addressof(" + fieldSpelling + "));");
           const auto publication = text.text.find(
-              "std::construct_at(std::addressof(" + fieldSpelling +
-              "), std::move(" + sourceSpelling + ".get()));");
+              "::gti_internal::backend::construct_representation_at(std::"
+              "addressof(" +
+              fieldSpelling + "), std::move(" + sourceSpelling + ".get()));");
           const auto sourceRetirement = text.text.find(
               sourceSpelling + ".destroy(); // end transferred "
                                "payload-enum field representation");
@@ -2125,13 +2126,16 @@ int64_t raw_distance() {
   }
   const lang::CppMirBodyEmissionText text =
       emitter.emitBodyText(address, "raw-pointer-test-v0", 1);
-  expect(text.text.find(" = (&__gti_mir_p_") != std::string::npos &&
+  expect(text.text.find(
+             " = ::gti_internal::backend::raw_address_of(&__gti_mir_p_") !=
+                 std::string::npos &&
              text.text.find("[__gti_mir_v_") != std::string::npos &&
              text.text.find("(*__gti_mir_v_") != std::string::npos &&
              text.text.find(" + ") != std::string::npos &&
              text.text.find(" - ") != std::string::npos,
-         "raw-pointer MIR text should spell address formation, unchecked "
-         "index/dereference lvalues, and pointer arithmetic directly");
+         "raw-pointer MIR text should preserve checked MIR authority through "
+         "carrier-backed address formation, index/dereference lvalues, and "
+         "pointer arithmetic");
 }
 
 void testConcreteGenericFieldOwner() {
@@ -2308,6 +2312,152 @@ int32_t read_state() { return state; }
           lang::CppMirBodyEmissionIssueKind::MissingProgramInitializationMir),
       "same-Symbol static rows from multiple owners must stay ambiguous "
       "without concrete initialization/storage authority");
+}
+
+void testByteFieldRepresentationFailsClosed() {
+  const auto frontend = analyze("cpp-mir-byte-field-mutation.gti", R"(
+struct Packet { int value = 7; };
+int main() { Packet packet{}; return packet.value; }
+)");
+  expect(frontend.canGenerateCode(), "byte-field mutation fixture is valid");
+  const auto *function = firstSourceFunction(frontend.mir);
+  if (!frontend.canGenerateCode() || function == nullptr)
+    return;
+  auto rows = buildRows(frontend, frontend.mir);
+  const auto field = std::find_if(
+      rows.symbols.begin(), rows.symbols.end(), [](const auto &row) {
+        return row.kind == lang::CppMirSymbolRepresentationKind::Field;
+      });
+  expect(field != rows.symbols.end(), "byte-field mutation has a field row");
+  if (field == rows.symbols.end())
+    return;
+  field->bytePreservingFieldCell = true;
+  const auto forged =
+      lang::CppMirBodyEmitter(frontend.mir,
+                              lang::CppMirBodyEmissionMap(std::move(rows)))
+          .analyze(
+              {.kind = lang::MirBodyKind::Function, .owner = function->id});
+  expect(hasIssue(forged,
+                  lang::CppMirBodyEmissionIssueKind::InvalidRepresentationRow),
+         "scalar field cannot forge a native byte-cell accessor");
+
+  const auto nativeFrontend =
+      analyze("cpp-mir-concrete-byte-field-mutation.gti", R"(
+[[c_abi]] struct Native { const int* pointer; int value; };
+struct Packet { Native native; };
+int read(Packet value) { return value.native.value; }
+int main() { return 0; }
+)");
+  expect(nativeFrontend.canGenerateCode(),
+         "concrete native-field mutation fixture is valid");
+  const auto *nativeFunction = firstSourceFunction(nativeFrontend.mir);
+  if (!nativeFrontend.canGenerateCode() || nativeFunction == nullptr)
+    return;
+  auto nativeRows = buildRows(nativeFrontend, nativeFrontend.mir);
+  const auto nativeField = std::find_if(
+      nativeRows.symbols.begin(), nativeRows.symbols.end(),
+      [](const auto &row) {
+        return row.kind == lang::CppMirSymbolRepresentationKind::Field &&
+               row.spelling == "native";
+      });
+  expect(nativeField != nativeRows.symbols.end(),
+         "concrete native-field row exists");
+  if (nativeField == nativeRows.symbols.end())
+    return;
+  nativeField->bytePreservingFieldCell = true;
+  const auto concreteForged =
+      lang::CppMirBodyEmitter(nativeFrontend.mir, lang::CppMirBodyEmissionMap(
+                                                      std::move(nativeRows)))
+          .analyze({.kind = lang::MirBodyKind::Function,
+                    .owner = nativeFunction->id});
+  expect(
+      hasIssue(concreteForged,
+               lang::CppMirBodyEmissionIssueKind::InvalidRepresentationRow),
+      "ordinary concrete native field cannot forge a dependent cell accessor");
+}
+
+void testNativeExpectedCopyPublication() {
+  auto frontend = analyze("cpp-mir-native-expected-copy.gti", R"(
+[[c_abi]] struct Native { const int* pointer; int value; };
+extern "C" { Native empty_native(); }
+expected<Native, int> success(Native value) { return value; }
+expected<T, int> generic_success<T>(T value) { return value; }
+expected<T, int> relay<T>(expected<T, int> value) { return value; }
+int main() {
+  unsafe {
+  Native native = empty_native();
+  mut auto original = success(native);
+  auto copied = original;
+  original = copied;
+  auto relayed = relay<Native>(generic_success<Native>(native));
+  return 0;
+  }
+}
+)");
+  expect(frontend.canGenerateCode(), "native Expected copy fixture is valid");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto &functions = frontend.mir.functionInstances();
+  const auto entry = std::find_if(
+      functions.begin(), functions.end(), [](const auto &function) {
+        return function.entryKind != lang::ProgramEntryKind::None;
+      });
+  expect(entry != functions.end(), "native Expected copy has an entry body");
+  if (entry == functions.end())
+    return;
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.supportsFailureBodyText(address),
+         "native Expected copy retains lexical cleanup admission");
+  if (!emitter.supportsFailureBodyText(address))
+    return;
+  const auto text =
+      emitter.emitFailureBodyText(address, "native-expected-copy", 1);
+  expect(text.text.find("copied Expected initializes") != std::string::npos,
+         "native Expected copy constructs one final binding slot");
+  auto mutated = frontend.mir;
+  auto *function = const_cast<lang::MirFunctionInstance *>(
+      mutated.findFunctionInstance(entry->id));
+  bool changed = false;
+  for (auto &block : function->body.blocks) {
+    for (std::size_t index = 1; index < block.instructions.size(); ++index) {
+      auto &instruction = block.instructions[index];
+      if (instruction.kind == lang::MirInstructionKind::Initialize &&
+          instruction.info.type.kind == lang::SemanticType::Expected &&
+          block.instructions[index - 1].kind ==
+              lang::MirInstructionKind::Load &&
+          instruction.lifecycle.size() == 1) {
+        instruction.lifecycle.front().target = 0;
+        changed = true;
+      }
+    }
+  }
+  expect(changed, "native Expected copy mutation finds binding activation");
+  expect(
+      !lang::CppMirBodyEmitter(mutated, map).supportsFailureBodyText(address),
+      "native Expected copy cannot lose its destination lexical drop");
+  auto cleanupMutation = frontend.mir;
+  auto *cleanupFunction = const_cast<lang::MirFunctionInstance *>(
+      cleanupMutation.findFunctionInstance(entry->id));
+  bool changedCleanup = false;
+  for (auto &block : cleanupFunction->body.blocks) {
+    for (auto &instruction : block.instructions) {
+      if (instruction.kind == lang::MirInstructionKind::CleanupBeforeAssign &&
+          instruction.replacementCleanup &&
+          instruction.replacementCleanup->type.kind ==
+              lang::SemanticType::Expected) {
+        instruction.replacementCleanup->requiresActiveCleanup = true;
+        changedCleanup = true;
+      }
+    }
+  }
+  expect(changedCleanup,
+         "native Expected assignment has a passive cleanup recipe");
+  expect(!lang::CppMirBodyEmitter(cleanupMutation, map)
+              .supportsFailureBodyText(address),
+         "native Expected assignment cannot fuse across active cleanup");
 }
 
 void testGlobalClassStorageMemberProjection() {
@@ -4487,6 +4637,51 @@ int main() {
   expect(emitter.supportsFailureBodyText(address),
          "the moved-parameter field publication must keep its admitted "
          "failure form");
+
+  auto nativeForm =
+      analyzeWithStandardLibrary("cpp-mir-native-parameter-field.gti", R"(
+[[c_abi]] struct Native { const int* pointer; int value; };
+class Holder {
+public:
+  Native inner;
+  Holder(Native payload) : inner(std::move(payload)) {}
+};
+int read(Native value) { Holder holder{value}; return holder.inner.value; }
+int main() { return 0; }
+)");
+  expect(nativeForm.canGenerateCode(),
+         "native parameter field fixture is valid");
+  auto *nativeConstructor = findHolderConstructor(nativeForm);
+  if (!nativeForm.canGenerateCode() || nativeConstructor == nullptr)
+    return;
+  const auto nativeBindings = lang::cppMirOwnedParameterFieldBindings(
+      nativeForm.mir, *nativeConstructor);
+  expect(nativeBindings && nativeBindings->size() == 1,
+         "trivial native field move retains exact parameter publication proof");
+  const lang::CppMirBodyEmissionMap nativeMap(
+      buildRows(nativeForm, nativeForm.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter nativeEmitter(nativeForm.mir, nativeMap);
+  const lang::MirBodyAddress nativeAddress{
+      .kind = lang::MirBodyKind::Constructor, .owner = nativeConstructor->id};
+  expect(nativeEmitter.supportsFailureBodyText(nativeAddress),
+         "native field movement admits its byte-preserving failure form");
+  if (nativeEmitter.supportsFailureBodyText(nativeAddress)) {
+    const auto text =
+        nativeEmitter.emitFailureBodyText(nativeAddress, "native-field-v1", 1);
+    expect(text.text.find("::gti_internal::backend::assign_representation(") !=
+               std::string::npos,
+           "native field publication must not perform native pointer copying");
+    expect(text.text.find(", __gti_mir_arg_0);") != std::string::npos,
+           "native moved field publication reads its exact source parameter");
+  }
+  auto *nativeOwner = const_cast<lang::MirClassInstance *>(
+      nativeForm.mir.findClassInstance(nativeConstructor->owner));
+  if (nativeOwner != nullptr && !nativeOwner->declaredFields.empty()) {
+    nativeOwner->declaredFields.front().requiresActiveCleanup = true;
+    expect(!lang::cppMirOwnedParameterFieldBindings(nativeForm.mir,
+                                                    *nativeConstructor),
+           "native no-drop publication rejects forged active cleanup");
+  }
 }
 
 void testFailureFormSubscriptCompatibilityBoundary() {
@@ -4612,6 +4807,9 @@ constexpr NamedTest kTests[] = {
      testAmbiguousStaticStorageFailsClosed},
     {"testGlobalClassStorageMemberProjection",
      testGlobalClassStorageMemberProjection},
+    {"testByteFieldRepresentationFailsClosed",
+     testByteFieldRepresentationFailsClosed},
+    {"testNativeExpectedCopyPublication", testNativeExpectedCopyPublication},
     {"testConcreteClassStaticStorage", testConcreteClassStaticStorage},
     {"testDischargedStorageReadAnalysis", testDischargedStorageReadAnalysis},
     {"testDefaultPrefixConstructorStatusAdmission",

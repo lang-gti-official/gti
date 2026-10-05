@@ -90,7 +90,7 @@ void checkActiveStorage() {
       std::regex_search(
           cpp,
           std::regex(
-              R"(std::destroy_at\(std::addressof\((__gti_mir_p_[0-9]+)\)\);\s*std::construct_at\(std::addressof\(\1\)\);\s*__gti_mir_construct_success_[0-9]+ = true;)")),
+              R"(std::destroy_at\(std::addressof\((__gti_mir_p_[0-9]+)\)\);\s*::gti_internal::backend::construct_representation_at\(std::addressof\(\1\)\);\s*__gti_mir_construct_success_[0-9]+ = true;)")),
       "sealed native empty storage uses plain placement and explicit success");
   const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
   std::size_t checked = 0;

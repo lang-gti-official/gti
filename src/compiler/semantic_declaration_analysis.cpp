@@ -3332,6 +3332,22 @@ auto SemanticVisitor::Impl::mergeDeclaredMember(ClassInfo &owner,
         diagnostics.emplace_back(std::move(diagnostic));
         validOverride = false;
       }
+      if (candidate.returnType.kind == SemanticType::Reference &&
+          (candidate.returnBorrowOrigin != base.returnBorrowOrigin ||
+           candidate.returnBorrowAccess != base.returnBorrowAccess ||
+           (candidate.returnBorrowOrigin == BorrowOriginKind::Argument &&
+            candidate.returnBorrowParameter != base.returnBorrowParameter))) {
+        Diagnostic diagnostic =
+            makeDiagnostic("GTI-S2042", DiagnosticPhase::Semantics,
+                           candidate.declaration->name(),
+                           "Override reference lifetime must use the same "
+                           "borrow origin as the base declaration.");
+        diagnostic.related.push_back(
+            {tokenSpan(base.declaration->name()),
+             "Base borrow-origin contract is declared here."});
+        diagnostics.emplace_back(std::move(diagnostic));
+        validOverride = false;
+      }
       roots.insert(roots.end(), base.virtualRoots.begin(),
                    base.virtualRoots.end());
     }
@@ -5560,6 +5576,14 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
       ++workMetrics->semanticBorrowSummaryFunctions;
     }
     FunctionInfo updated = *existing;
+    if (updated.explicitReturnBorrowOrigin) {
+      // A declaration contract is authoritative even when invalid (None).
+      // Body-based inference must neither overwrite it nor rescue a typo.
+      updated.ownedPointeeProjection = ownedPointeeReturnProjection(updated);
+      semanticModel.record(*declaration, updated);
+      publishFunctionBorrowSummary(updated, candidateIndex);
+      continue;
+    }
     FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
         updated.returnType, updated.parameterTypes, updated.ownerClass,
         updated.staticMember, updated.intrinsic);
@@ -6373,6 +6397,9 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .overrideMethod = declaration.overrideMethod,
       .intrinsic = declaration.intrinsic,
       .returnBorrowOrigin = declaration.returnBorrowOrigin,
+      .explicitReturnBorrowOrigin =
+          declaration.syntax != nullptr &&
+          declaration.syntax->hasFunctionAttribute("borrowed_from"),
       .returnBorrowParameter = declaration.returnBorrowParameter,
       .returnBorrowAccess = declaration.returnBorrowAccess,
       .returnBorrowParameters = declaration.returnBorrowParameters,
@@ -6399,7 +6426,8 @@ auto SemanticVisitor::Impl::publishCallableDeclaration(
           candidate.returnType, candidate.parameterTypes, ownerClass,
           candidate.staticMember, candidate.record().intrinsic);
   const bool candidateOwnsBorrow =
-      candidate.returnBorrowOrigin != BorrowOriginKind::None;
+      candidate.returnBorrowOrigin != BorrowOriginKind::None ||
+      function.hasFunctionAttribute("borrowed_from");
   declaration->qualifiedName =
       qualifiedName(qualifiedScope, function.name().lexeme);
   declaration->namespaceScope = namespaceScope;

@@ -78,6 +78,14 @@
       "suite": "preflight"
     },
     {
+      "name": "testByteFieldRepresentationFailsClosed",
+      "suite": "preflight"
+    },
+    {
+      "name": "testNativeExpectedCopyPublication",
+      "suite": "preflight"
+    },
+    {
       "name": "testConcreteClassStaticStorage",
       "suite": "preflight"
     },

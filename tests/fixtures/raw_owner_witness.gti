@@ -1,0 +1,65 @@
+#include <std/memory>
+
+struct Reading { mut int value = 42; };
+
+[[borrowed_from(owner)]]
+unsafe T& observe<T, Owner>(const T* address, Owner& owner) {
+  unsafe { return *address; }
+}
+
+class ReadingView {
+  const int* address = nullptr;
+  Reading& owner;
+public:
+  ReadingView(Reading& source) : address(&source.value), owner(source) {}
+  int& get() { unsafe { return observe(this.address, this.owner); } }
+};
+
+// Ordinary source calls and aggregate transport must copy address bits even
+// after the original allocation has gone. None of these functions accesses it.
+struct Address {
+  const int* value = nullptr;
+};
+
+Address relay(Address address) { return address; }
+
+Address expired_address() {
+  int local = 9;
+  Address result = {.value = &local};
+  return result;
+}
+
+int main() {
+  mut Reading owner{};
+  int* address = &owner.value;
+  unsafe {
+    mut int& writable = std::assume_mut(address, owner);
+    writable = 43;
+  }
+  for (mut int index = 0; index < 2; ++index) {
+    unsafe {
+      int& readable = std::assume_ref(address, owner);
+      if (readable != 43) { return 1; }
+    }
+  }
+  ReadingView view{owner};
+  if (view.get() != 43) { return 3; }
+  // An inert address may outlive its pointee. This does not authorize access.
+  mut const int* expired = nullptr;
+  { int former = 7; expired = &former; }
+  const int* copied = expired;
+  if (copied != expired || copied == nullptr) { return 2; }
+  Address packet = {.value = copied};
+  Address transported = relay(packet);
+  const int* entries[2] = {transported.value, expired};
+  if (entries[0] != entries[1]) { return 4; }
+  Address callee_expired = expired_address();
+  Address repeated = relay(callee_expired);
+  if (repeated.value != callee_expired.value || repeated.value == nullptr) {
+    return 5;
+  }
+  const void* erased = std::erase_address(repeated.value);
+  const int* restored = std::typed_address<int>(erased);
+  if (restored != repeated.value) { return 6; }
+  return 0;
+}

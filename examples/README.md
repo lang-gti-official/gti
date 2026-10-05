@@ -146,6 +146,10 @@ is a teaching helper, not a production server.
 | `108-mutable-slices.gti` | exclusive subviews, shared projections and parent reactivation |
 | `109-borrowed-aggregates.gti` | mixed shared/exclusive service dependencies, generic movement and owner reactivation |
 | `110-integral-enums.gti` | exact enum extraction, numeric formatting and application customization |
+| `111-final-address-storage.gti` | in-slot construction, checked borrowing, allocation-owner movement, slot reuse and explicit release |
+| `112-raw-owner-witness.gti` | safe address formation and explicit unsafe conversion into owner-tied checked references |
+| `113-erased-addresses.gti` | explicit const-preserving typed/erased address conversion and separate owner-witness borrowing |
+| `114-owning-storage-view.gti` | application-defined allocation owner and raw-backed view, final-address construction, checked lifetime, movement and explicit release |
 
 ## Build and run
 

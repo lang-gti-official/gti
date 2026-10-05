@@ -971,6 +971,25 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
     return SemanticClassification{Decorator, 0};
   }
 
+  // Attribute spelling is lexical. The owner argument is deliberately left to
+  // compiler occurrences so definition/rename and parameter tokens share its
+  // resolved symbol identity, including on recovered declarations.
+  if (token.lexeme == "borrowed_from" && index + 1 < tokens.size() &&
+      tokens[index + 1].kind == LEFT_PAREN) {
+    std::size_t begin = index;
+    while (begin > 0 &&
+           (tokens[begin - 1].kind == IDENTIFIER ||
+            tokens[begin - 1].kind == THIS || tokens[begin - 1].kind == COMMA ||
+            tokens[begin - 1].kind == LEFT_PAREN ||
+            tokens[begin - 1].kind == RIGHT_PAREN)) {
+      --begin;
+    }
+    if (begin >= 2 && tokens[begin - 2].kind == LEFT_BRACKET &&
+        tokens[begin - 1].kind == LEFT_BRACKET) {
+      return SemanticClassification{Decorator, 0};
+    }
+  }
+
   if (token.lexeme == "link_name" && index >= 2 && index + 5 < tokens.size() &&
       tokens[index - 2].kind == LEFT_BRACKET &&
       tokens[index - 1].kind == LEFT_BRACKET &&

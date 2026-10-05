@@ -105,7 +105,7 @@ int main() {
       unsafeFunctions == 3 && unsafeCalls == 3,
       "only exact unsafe overloads and concrete instances carry the contract");
   const auto dump = lang::MirPrinter().print(frontend.mir);
-  expect(dump.starts_with("mir-v87 ") &&
+  expect(dump.starts_with("mir-v88 ") &&
              dump.find("requires-unsafe=1") != std::string::npos,
          "the deterministic MIR snapshot includes the unsafe contract");
   const auto lowered =
@@ -359,6 +359,11 @@ void testKeywordMigrationAndUnusedBlocks() {
                              return diagnostic.code == "GTI-S2100";
                            }) == 1,
          "a nested block discharges its own obligations, not its parent's");
+  const auto addressOnly = analyze(
+      "int main() { int32_t value = 7; unsafe { const int32_t* p = &value; "
+      "return p == nullptr ? 1 : 0; } }");
+  expect(addressOnly.canGenerateCode() && hasCode(addressOnly, "GTI-S2100"),
+         "address formation alone does not consume unsafe permission");
   const auto lambda = analyze(
       "int main() { unsafe { auto read = []() -> int32_t { int32_t value = 7; "
       "unsafe { return *(&value); } }; return read(); } }");

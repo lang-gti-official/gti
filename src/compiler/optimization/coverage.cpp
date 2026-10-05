@@ -62,7 +62,7 @@ MirOptimizationCoverage optimizationCoverage(MirInstructionKind kind) {
     return barrier("exact body effects; no contextual range transfer");
   case MirInstructionKind::AllocateObject:
     return barrier("allocation, failure and rollback effects");
-  case MirInstructionKind::PrefixAppendPreflight:
+  case MirInstructionKind::StorageConstructPreflight:
     return barrier(
         "capacity preflight before prepared-parameter ownership transfer");
   case MirInstructionKind::Count:
@@ -144,10 +144,14 @@ MirOptimizationCoverage optimizationCoverage(MirOperation operation) {
 
 MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   switch (intrinsic) {
+  case IntrinsicKind::RawBorrow:
+  case IntrinsicKind::RawBorrowMut:
+    return barrier("unsafe raw address to owner-witness checked loan");
   case IntrinsicKind::None:
     return inapplicable("ordinary instruction/call effects");
   case IntrinsicKind::NumericTypeParameterConversion:
   case IntrinsicKind::NumericAliasConversion:
+  case IntrinsicKind::RawPointerConversion:
   case IntrinsicKind::EnumUnderlyingValue:
   case IntrinsicKind::AllocateStorage:
   case IntrinsicKind::StorageConstruct:
@@ -500,7 +504,6 @@ MirOptimizationCoverage optimizationCoverage(UnsafeOperationKind kind) {
   switch (kind) {
   case UnsafeOperationKind::None:
     return inapplicable("no unsafe operation");
-  case UnsafeOperationKind::AddressOf:
   case UnsafeOperationKind::RawDereference:
   case UnsafeOperationKind::RawIndex:
   case UnsafeOperationKind::RawMember:
