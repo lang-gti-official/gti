@@ -9,13 +9,13 @@ public:
 
 namespace raw {
 // Caller guarantees that pointer addresses a live initialized int32_t.
-[[unsafe]] int32_t read(const int32_t* pointer) {
+unsafe int32_t read(const int32_t* pointer) {
   unsafe { return *pointer; }
 }
 
-[[unsafe]] T relay<T>(T value) { return value; }
+unsafe T relay<T>(T value) { return value; }
 
-[[unsafe]] int32_t divide(int32_t numerator, int32_t divisor) {
+unsafe int32_t divide(int32_t numerator, int32_t divisor) {
   Trace inner = Trace();
   return numerator / divisor;
 }

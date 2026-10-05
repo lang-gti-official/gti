@@ -1,5 +1,79 @@
 # Compiler Verification
 
+## Unsafe declaration keyword migration and dependency warnings
+
+`unsafe_function_contract` covers namespace/static/generic/constexpr call
+contracts, implementation and lambda safety boundaries, hosted-entry and
+callable-erasure rejection, parser recovery, canonical modifier order, obsolete
+spelling migration and comment preservation. Its existing HIR/MIR/LoweredProgram
+mutations retain independent rejection of erased unsafe contracts. The new
+`unused-unsafe` cases prove warning policy, exact keyword spans, safe removal,
+nested-block/lambda ownership of permission, and conservative generic deferral.
+`unsafe_function_runtime` preserves success, failure and cleanup through the
+production MIR backend at C++20/C++23 O0/O1/O3.
+
+`unsafe_function_lsp` checks the same errors and warning, exact source/UTF-16
+ranges, related declaration keyword, keyword semantic tokens, hover, preferred
+spelling/removal edits and stale-action rejection. CLI and project workflows
+test the existing warning suppression controls. Example 39 demonstrates
+separate caller and implementation obligations; its reviewed inventories gain
+one body and two LoweredProgram declarations without changing other examples.
+
+`driver_pipeline` and `project_model` cover the consumer-owned package-warning
+policy: defaults, strict Boolean manifest values and exact spans, direct and
+transitive package identities, workspace selection, selected files with
+misleading dependency-directory names, primary-versus-related ownership,
+severity guards and composition with warning groups. Cache tests require fresh
+analysis after policy changes. `project_cli_workflow` checks local/transitive
+and pinned-Git dependencies, dev/release/custom profiles, native builds,
+emission, cache transitions, metadata and retained errors. `lsp_project_facts`
+checks watched manifest changes, warning removal/reappearance, group policy,
+retained hover, dependency error recovery and a dependency opened as its own
+selected package. The installed driver consumer exercises the LLVM-free public
+policy contract.
+
+The 0.373.0 candidate uses an all-target Release/Ninja build on macOS arm64
+with AppleClang 21 and LLVM 22.1.8. All eleven isolated installed-library
+consumers pass, including the unsafe-function contract consumer. The installed
+LSP regression and example 39 at C++20/O0 and C++23/O3 pass outside the checkout
+with resource overrides cleared. Tree-sitter 0.25.10 passes all 70 corpus
+cases, highlight/locals/rainbow checks, 167 shipped sources and source-text
+checks in an isolated parser cache; ABI14 regeneration is byte-identical.
+The temporary-archive Neovim smoke test and deterministic API documentation
+projection pass. All 416 first-party C/C++ files pass clang-format 22.1.8.
+
+Before the dependency-warning addition, the full 419-test run completes in
+2484.86 seconds. Seven initial failures are
+test integration issues: six runtime fixtures assumed stderr contained no new
+build progress, and the standard-library manifest still had the pre-migration
+`cthread.gti` fingerprint. Quiet progress selection retains their exact runtime
+and diagnostic assertions; the reviewed fingerprint changes only declaration
+spelling. All seven corrected gates pass on rerun. Together these runs supply
+passing evidence for all 419 gates, including all four 105-example corpus
+checks. The final adjacent-token migration fix then passes ten rebuilt
+compiler/LSP/safety gates and all eleven refreshed installed-library consumers.
+
+The dependency-warning reconciliation passes the optimized all-target build
+and all 28 selected compiler, driver, CLI, safety, cache, metadata and editor
+gates across the initial 111.55-second run and a 51.31-second, twelve-gate
+rerun. The rerun corrects two new fixture expectations to `GTI-S2001` and
+fixes actual integer-to-Boolean coercion in the new manifest field; exact
+retrieval now rejects `0`, `1`, strings and arrays with unchanged span checks.
+All eleven final installed consumers pass, as do the installed dependency-policy
+CLI and project-facts LSP regressions outside the checkout with resource
+overrides cleared. This addition has focused combined evidence, not a second
+complete 419-test execution. Formatting still covers all 416 first-party files.
+
+The optional full audit passes 23 contract cases, 24 typed differential
+programs, four compositions, 100 malformed mutations and its 96-example,
+four-variant matrix. It then fails at the already missing
+`examples/gti-vs-cpp/verify.py` comparison runner. This is not a complete
+optional-audit pass; its example selector still omits three-digit examples.
+The installed stage uses system LLVM, so the bundled-release packaging probe
+rejects it for lacking `lib/gti/llvm/libLLVMDemangle.a`; no bundled-LLVM release
+archive or Linux/Windows validation is claimed. The active user installation
+and unrelated main-checkout files remain untouched.
+
 ## Live build progress
 
 `driver_pipeline` checks exact begin/end phase order, loaded/parsed unit counts,

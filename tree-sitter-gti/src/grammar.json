@@ -3710,10 +3710,6 @@
                 },
                 {
                   "type": "SYMBOL",
-                  "name": "unsafe_function_attribute"
-                },
-                {
-                  "type": "SYMBOL",
                   "name": "function_contract_attribute"
                 }
               ]
@@ -3729,6 +3725,22 @@
               "content": {
                 "type": "SYMBOL",
                 "name": "runtime_binding"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "unsafe",
+              "content": {
+                "type": "STRING",
+                "value": "unsafe"
               }
             },
             {
@@ -3803,23 +3815,6 @@
         {
           "type": "SYMBOL",
           "name": "_function_declaration_body"
-        }
-      ]
-    },
-    "unsafe_function_attribute": {
-      "type": "SEQ",
-      "members": [
-        {
-          "type": "STRING",
-          "value": "[["
-        },
-        {
-          "type": "STRING",
-          "value": "unsafe"
-        },
-        {
-          "type": "STRING",
-          "value": "]]"
         }
       ]
     },

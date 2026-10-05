@@ -10,7 +10,7 @@
     "stdlib/std/chrono.gti": "cd8448851fa4e487b0c62c0db24d429d31d195863bc74a1290839c484470c75a",
     "stdlib/std/cmath.gti": "ce64a3e07f35f48079a95b6784d4e5aa11c7829691f6436d18a3932319e2773d",
     "stdlib/std/cstdio.gti": "8081db343694df6698be59fbc91574fb92cc366e0471681daff43ea17cc7e7f3",
-    "stdlib/std/cthread.gti": "4b583b04dd052f5f05d0af2444718360eb12c2da546d4c6f1eddc05a39e8858f",
+    "stdlib/std/cthread.gti": "8980aedce805131cd3f0a528b55ec31b8e3626b267bfb4321501e236138217d9",
     "stdlib/std/deque.gti": "5e014f240f4655824f1c245d507a96805ce4bfb1444570af4af2e6a222c1bba7",
     "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",

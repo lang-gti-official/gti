@@ -388,7 +388,7 @@ accept `-g` / `--debug-info`. `--no-debug-info` disables it; the last explicit
 selection wins. Profiles accept the Boolean `debug-info` field, defaulting to
 false in both built-in profiles. A CLI override wins over the profile. Debug
 info is independent of optimization: use `-O0` for predictable breakpoints.
-Metadata schema 13 reports `debugInfo` in each profile and resolved output plan.
+Metadata schema 14 reports `debugInfo` in each profile and resolved output plan.
 Analysis-only `check` and MIR/native-header emission do not enable debug
 output. Direct `--emit-cpp -g` emits mappings for a separately invoked native
 compiler, which must also receive `-g`.
@@ -467,7 +467,7 @@ An optional top-level `[build]` table accepts
 they are sorted and deduplicated. Repeatable project-command `-D NAME` values
 are added to the manifest set. The effective set is immutable in every
 `ProjectBuildPlan`, participates in its model identity, and is passed through
-the shared frontend request. Metadata schema 13 reports that effective `defines`
+the shared frontend request. Metadata schema 14 reports that effective `defines`
 array beside each target/profile output plan.
 
 `gti build --all` builds every declared executable and test target of the
@@ -1178,7 +1178,9 @@ direct alias edges, the package source-root graph, the selected package's
 declared profiles and targets, package-level configuration flags, the profile
 a command selects when none is named, and the workspace-graph model identity.
 `analysisConfiguration` assembles one declared profile's configuration exactly
-as the build path assembles it. Native settings, output layout, and cache
+as the build path assembles it. Profiles also publish their warning groups and
+dependency-warning setting; `packageWarnings` resolves the same consumer-owned
+package policy used by build plans. Native settings, output layout, and cache
 policy are build concerns and are deliberately absent.
 
 Resolution runs no native tool, no git process, and no build, and creates no
@@ -1405,13 +1407,54 @@ resolved through the shared analysis configuration into the plan's
 The same table may set `disabled-warnings = ["unused-mut", ...]`; validated
 command-line warning suppressions are unioned with that profile policy and
 carried through the resolved build plan. Warning policy does not change emitted
-program semantics, while the ordinary project model identity still
-conservatively covers manifest changes. Metadata schema 13 publishes both
-profile fields for every profile plus the selected workspace and sorted
-package/dependency graph. The execution profile selects static language policy
+program semantics. Warning groups and resolved dependency-warning policy join
+the cache key; changing either forces frontend analysis under the new policy.
+Cache hits retain the existing contract: they restore artifacts without running
+semantic analysis or replaying its advisory warnings. Use `gti check` or
+`--no-cache` to request fresh diagnostics without relying on artifact reuse.
+Metadata schema 14 publishes the profile fields for every profile plus the
+selected workspace and sorted package/dependency graph. The execution profile
+selects static language policy
 only; the independently selected runtime profile derives the target/runtime
 `threads` capability. Public managed-thread and atomic operations require both
 the concurrent execution profile and that capability.
+
+### Dependency warnings
+
+The selected package may silence GTI compiler warnings from other packages for
+one profile:
+
+```toml
+[profiles.dev]
+dependency-warnings = false
+```
+
+The Boolean defaults to `true` in every profile. Set it independently in
+`[profiles.release]` or a named profile when that command should also be quiet.
+Errors are never suppressed. Warnings in the selected package, including its
+ordinary source includes, remain visible; use `disabled-warnings` or
+`-Wno-<group>` when intentionally suppressing a warning group in your own code.
+
+The driver resolves an immutable `PackageWarningPolicy` from the consumer's
+profile and actual workspace package identities before source loading. It
+filters only a `Warning` whose primary span belongs to an application
+`SourceUnit` owned by a registered non-selected package. This covers local,
+locked Git, transitive and workspace-member dependencies without guessing from
+`build/gti/deps` path spelling. A selected package's own file under a directory
+with that name is still its own code. Dependency-related notes do not hide a
+consumer-primary diagnostic. Unowned sources, prelude/standard-library units,
+synthetic bindgen packages and native-tool output are outside this policy.
+
+Only the selected package's profile is authoritative; a dependency cannot
+silence consumer diagnostics through its own manifest. Workspace `--package`
+selection changes the selected identity, so a member's own warnings stay
+visible when building that member. The LSP receives the same policy from
+read-only `ProjectFacts` and applies the same primary-source classifier when
+publishing frontend diagnostics. A dependency opened as its own project is its
+selected package, not a globally muted directory. Manifest changes invalidate
+editor snapshots. Direct compilation stays manifest-independent and keeps
+dependency warnings enabled by default. Metadata schema 14 reports
+`dependencyWarnings` on both profiles and resolved output plans.
 
 Arguments after `gti run --` are passed as exact program arguments and become
 owned values when the target uses

@@ -42,8 +42,25 @@ int main() {
       {.capturePreMir = true, .capturePostMir = true, .captureReport = true});
   if (compilation.entry() != "main.gti" || compilation.target().os != "linux" ||
       compilation.standardLibrary().prelude != "stdlib/prelude.gti" ||
-      !compilation.optimizationOutputs().requested()) {
+      !compilation.optimizationOutputs().requested() ||
+      !compilation.packageWarnings().dependencyWarnings()) {
     return 1;
+  }
+
+  const lang::driver::PackageWarningPolicy packageWarnings(
+      false, "application@1.0.0",
+      {"library@1.0.0", "application@1.0.0", "library@1.0.0"});
+  const lang::SourceGraph unownedSources;
+  lang::Diagnostic diagnostic = lang::makeDiagnostic(
+      "GTI-S2096", lang::DiagnosticPhase::Semantics,
+      {"build/gti/deps/not-owned.gti", 0, 3, 1}, "test warning");
+  diagnostic.severity = lang::DiagnosticSeverity::Warning;
+  if (packageWarnings.dependencyWarnings() ||
+      packageWarnings.selectedPackage() != "application@1.0.0" ||
+      packageWarnings.dependencyPackages() !=
+          std::vector<std::string>{"library@1.0.0"} ||
+      packageWarnings.suppresses(diagnostic, unownedSources)) {
+    return 8;
   }
 
   lang::driver::NativeInputs inputs;

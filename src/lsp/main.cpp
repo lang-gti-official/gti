@@ -1593,6 +1593,8 @@ struct DiagnosticPublication {
 struct ProjectAnalysisInputs {
   lang::driver::AnalysisConfiguration configuration;
   std::vector<lang::PackageSourceRoot> packageSourceRoots;
+  lang::WarningPolicy warnings;
+  lang::driver::PackageWarningPolicy packageWarnings;
   lang::SourceManager sources;
   std::vector<lang::Diagnostic> diagnostics;
   bool requireEntryPoint = false;
@@ -1642,6 +1644,10 @@ ProjectAnalysisInputs resolveProjectAnalysisInputs(
         result.configuration.configurationFlags());
   }
   result.packageSourceRoots = facts.packageSourceRoots();
+  if (const auto *profile = facts.findProfile(facts.defaultProfileName())) {
+    result.warnings = profile->warningPolicy;
+    result.packageWarnings = facts.packageWarnings(profile->name);
+  }
   result.includeSearchRoots = lang::driver::projectIncludeSearchRoots(facts);
   for (const auto &target : facts.targets()) {
     if (canonicalPath(target.root) == canonicalPath(entryPath)) {
@@ -2863,6 +2869,11 @@ private:
       }
     }
     for (const lang::Diagnostic &diagnostic : analysis.diagnostics) {
+      if (project.warnings.suppresses(diagnostic) ||
+          project.packageWarnings.suppresses(diagnostic,
+                                             analysis.sourceGraph)) {
+        continue;
+      }
       result.diagnostics.push_back(convertDiagnostic(
           diagnostic, analysis.sources, rootPath, uri, source));
     }

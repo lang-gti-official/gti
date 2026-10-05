@@ -190,6 +190,14 @@ scan written comment ranges separately.
 
 ## Parser And AST
 
+`FunctionDecl::unsafeKeyword()` retains the written `unsafe` declaration
+modifier separately from contract attributes. The parser admits it only on
+namespace-scope GTI free functions, in `unsafe static constexpr` order before
+the return type. It rejects the obsolete `[[unsafe]]` spelling with a
+spelling-only migration diagnostic while retaining a recovered declaration
+for tooling. Neither syntax form grants implicit permission to the body;
+semantics owns the caller contract and each lexical unsafe operation.
+
 Qualified namespace declarations (`namespace outer::inner { ... }`) expand
 directly into the same nested `NamespaceDecl` nodes as explicit blocks. Each
 component retains its original name token and a declaration extent ending at

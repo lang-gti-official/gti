@@ -81,6 +81,102 @@ def host_target_os():
     return "unknown"
 
 
+def test_dependency_warning_policy(gti, root):
+    project = root / "dependency-warning-app"
+    library = root / "warning-library"
+    leaf = root / "warning-leaf"
+    source = project / "src/main.gti"
+    own = project / "src/build/gti/deps/owned.gti"
+    library_source = library / "src/value.gti"
+    leaf_source = leaf / "src/value.gti"
+    for path in (source, own, library_source, leaf_source):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(
+        '#include <library/value>\n#include "build/gti/deps/owned.gti"\n'
+        "int main() { mut int own = 0; return library::value() + owned() + own; }\n",
+        encoding="utf-8",
+    )
+    own.write_text(
+        "int owned() { mut int own = 0; return own; }\n", encoding="utf-8")
+    library_text = (
+        "#include <leaf/value>\nnamespace library { int value() { "
+        "mut int value = 0; return leaf::value() + value; } }\n")
+    library_source.write_text(library_text, encoding="utf-8")
+    leaf_source.write_text(
+        "namespace leaf { int value() { mut int value = 0; return value; } }\n",
+        encoding="utf-8",
+    )
+    # Dependencies cannot impose their diagnostic preferences on the consumer.
+    (library / "gti.toml").write_text(
+        'manifest-version = 1\n[package]\nname = "warning_library"\n'
+        'version = "1.0.0"\n[dependencies]\nleaf = { path = "../warning-leaf" }\n'
+        '[profiles.dev]\ndependency-warnings = false\n'
+        'disabled-warnings = ["unused-mut"]\n', encoding="utf-8")
+    (leaf / "gti.toml").write_text(
+        'manifest-version = 1\n[package]\nname = "warning_leaf"\n'
+        'version = "1.0.0"\n', encoding="utf-8")
+    base_manifest = manifest(
+        '[dependencies]\nlibrary = { path = "../warning-library" }\n'
+        '[targets.app]\nkind = "executable"\nroot = "src/main.gti"\n')
+    manifest_path = project / "gti.toml"
+    manifest_path.write_text(base_manifest, encoding="utf-8")
+    visible = run([gti, "check"], cwd=project)
+    assert visible.stderr.count("warning[GTI-S2096]") == 4, visible.stderr
+    assert "Diagnostics: 0 errors, 4 warnings" in visible.stdout
+
+    quiet_profile = "\n[profiles.dev]\ndependency-warnings = false\n"
+    manifest_path.write_text(base_manifest + quiet_profile, encoding="utf-8")
+    for options in (["check"], ["build", "--emit-mir"]):
+        suppressed = run([gti, *options], cwd=project)
+        assert suppressed.stderr.count("warning[GTI-S2096]") == 2, suppressed.stderr
+        assert str(library_source) not in suppressed.stderr
+        assert str(leaf_source) not in suppressed.stderr
+        assert str(own) in suppressed.stderr
+        assert "Diagnostics: 0 errors, 2 warnings" in suppressed.stdout
+    metadata = json.loads(run([gti, "metadata"], cwd=project).stdout)
+    assert metadata["schemaVersion"] == 14
+    assert [profile["dependencyWarnings"] for profile in metadata["profiles"]] == [
+        False, True]
+    assert [output["dependencyWarnings"]
+            for output in metadata["targets"][0]["outputs"]] == [False, True]
+
+    built = run([gti, "build", "--verbose"], cwd=project)
+    assert built.stderr.count("warning[GTI-S2096]") == 2, built.stderr
+    cached = run([gti, "build", "--verbose"], cwd=project)
+    assert "gti: cache hit " in cached.stderr, cached.stderr
+    manifest_path.write_text(
+        base_manifest + quiet_profile.replace("false", "true"), encoding="utf-8")
+    reenabled = run([gti, "build", "--verbose"], cwd=project)
+    assert "gti: cache miss " in reenabled.stderr, reenabled.stderr
+    assert reenabled.stderr.count("warning[GTI-S2096]") == 4, reenabled.stderr
+    manifest_path.write_text(base_manifest + quiet_profile, encoding="utf-8")
+    grouped = run([gti, "check", "-Wno-unused-mut"], cwd=project)
+    assert "warning[" not in grouped.stderr, grouped.stderr
+    assert "Diagnostics: 0 errors, 0 warnings" in grouped.stdout
+    release = run([gti, "check", "--release"], cwd=project)
+    assert release.stderr.count("warning[GTI-S2096]") == 4, release.stderr
+    custom_profile = "\n[profiles.quiet]\ndependency-warnings = false\n"
+    manifest_path.write_text(
+        base_manifest + quiet_profile + custom_profile, encoding="utf-8")
+    custom = run([gti, "check", "--profile", "quiet"], cwd=project)
+    assert custom.stderr.count("warning[GTI-S2096]") == 2, custom.stderr
+    direct_source = project / "src/direct.gti"
+    direct_source.write_text(
+        "int main() { mut int own = 0; return own; }\n", encoding="utf-8")
+    direct = run([gti, str(direct_source), "--emit-mir"], cwd=project)
+    assert direct.stderr.count("warning[GTI-S2096]") == 1, direct.stderr
+    library_source.write_text(
+        "namespace library { int value() { return missing; } }\n", encoding="utf-8")
+    error = run([gti, "check"], expected=65, cwd=project)
+    assert "error[GTI-S2001]" in error.stderr and str(library_source) in error.stderr
+    library_source.write_text(library_text, encoding="utf-8")
+    manifest_path.write_text(
+        base_manifest + quiet_profile.replace("false", '"false"'), encoding="utf-8")
+    malformed = run([gti, "check"], expected=65, cwd=project)
+    assert "error[GTI-B1004]" in malformed.stderr
+    assert "'dependency-warnings' must be a Boolean" in malformed.stderr
+
+
 def parse_arguments(arguments=None):
     parser = argparse.ArgumentParser(description="Exercise the GTI project CLI.")
     parser.add_argument("gti", help="path to the GTI executable")
@@ -424,6 +520,18 @@ def main():
             == "Diagnostics: 0 errors, 0 warnings"
         )
 
+        warning_source.write_text("int main() { unsafe { return 0; } }\n", encoding="utf-8")
+        unsafe_warning = run([gti, "check"], cwd=warning_project)
+        assert "warning[GTI-S2100]" in unsafe_warning.stderr
+        warning_manifest.write_text(
+            warning_manifest.read_text(encoding="utf-8") +
+            'disabled-warnings = ["unused-unsafe"]\n', encoding="utf-8")
+        unsafe_suppressed = run([gti, "check"], cwd=warning_project)
+        assert "GTI-S2100" not in unsafe_suppressed.stderr
+        assert unsafe_suppressed.stdout.splitlines()[-1] == "Diagnostics: 0 errors, 0 warnings"
+
+        test_dependency_warning_policy(gti, root)
+
         missing_new_path = run([gti, "new"], expected=64, cwd=root)
         assert "requires a destination path" in missing_new_path.stderr
         unknown_init_option = run(
@@ -521,7 +629,7 @@ def main():
         configuration_metadata = json.loads(
             run([gti, "metadata"], cwd=configuration_project).stdout
         )
-        assert configuration_metadata["schemaVersion"] == 13
+        assert configuration_metadata["schemaVersion"] == 14
         assert configuration_metadata["targets"][0]["outputs"][0][
             "defines"
         ] == ["MANIFEST_FLAG"]
@@ -704,7 +812,7 @@ def main():
         )
         metadata = run([gti, "metadata"], cwd=check_project)
         metadata_document = json.loads(metadata.stdout)
-        assert metadata_document["schemaVersion"] == 13
+        assert metadata_document["schemaVersion"] == 14
         assert metadata_document["manifestVersion"] == 1
         assert metadata_document["package"]["name"] == "sample"
         assert metadata_document["profiles"] == [
@@ -714,6 +822,7 @@ def main():
                 "cppStandard": "c++23",
                 "executionProfile": "single-threaded",
                 "disabledWarnings": [],
+                "dependencyWarnings": True,
                 "keepCpp": False,
                 "debugInfo": False,
             },
@@ -723,6 +832,7 @@ def main():
                 "cppStandard": "c++23",
                 "executionProfile": "concurrent",
                 "disabledWarnings": ["unused-mut"],
+                "dependencyWarnings": True,
                 "keepCpp": False,
                 "debugInfo": False,
             },
@@ -781,7 +891,7 @@ def main():
         test_metadata = json.loads(
             run([gti, "metadata"], cwd=test_project).stdout
         )
-        assert test_metadata["schemaVersion"] == 13
+        assert test_metadata["schemaVersion"] == 14
         assert [
             (target["name"], target["kind"])
             for target in test_metadata["targets"]
@@ -992,7 +1102,7 @@ def main():
         assert repeated_native_metadata.stdout == native_metadata.stdout
         native_document = json.loads(native_metadata.stdout)
         native_inputs = native_document["targets"][0]["outputs"][0]["native"]
-        assert native_document["schemaVersion"] == 13
+        assert native_document["schemaVersion"] == 14
         assert native_inputs["cSources"] == [str(native_implementation.resolve())]
         assert native_inputs["cStandard"] == "c17"
         assert native_inputs["cCompileArguments"] == [
@@ -1316,7 +1426,7 @@ def main():
         workspace_metadata = json.loads(
             run([gti, "metadata", "--package", "app"], cwd=workspace).stdout
         )
-        assert workspace_metadata["schemaVersion"] == 13
+        assert workspace_metadata["schemaVersion"] == 14
         assert workspace_metadata["workspace"]["declared"] is True
         assert workspace_metadata["workspace"]["selectedPackage"] == "app"
         assert [
@@ -1512,8 +1622,8 @@ def main():
             )
             (path / "src/add.gti").write_text(
                 f"namespace {name} {{\n"
-                f"int add(int left, int right) {{ return left + right"
-                f" + {add_bias}; }}\n"
+                f"int add(int left, int right) {{ mut int bias = {add_bias}; "
+                "return left + right + bias; }\n"
                 "}\n",
                 encoding="utf-8",
             )
@@ -1570,6 +1680,16 @@ def main():
         refetched = run([gti, "fetch"], cwd=git_app)
         assert "gti.lock is up to date (1 git dependency)" in refetched.stdout
         assert lock_path.read_text(encoding="utf-8") == lock_text
+
+        git_warnings = run([gti, "check", "--offline"], cwd=git_app)
+        assert git_warnings.stderr.count("warning[GTI-S2096]") == 1, git_warnings.stderr
+        original_git_manifest = (git_app / "gti.toml").read_text(encoding="utf-8")
+        (git_app / "gti.toml").write_text(
+            original_git_manifest +
+            "\n[profiles.dev]\ndependency-warnings = false\n", encoding="utf-8")
+        git_suppressed = run([gti, "check", "--offline"], cwd=git_app)
+        assert "warning[GTI-S2096]" not in git_suppressed.stderr
+        (git_app / "gti.toml").write_text(original_git_manifest, encoding="utf-8")
 
         run([gti, "build"], cwd=git_app)
         run([gti, "run"], cwd=git_app)
@@ -2588,7 +2708,7 @@ def main():
         scripted_metadata = json.loads(
             run([gti, "metadata"], cwd=scripted_app).stdout
         )
-        assert scripted_metadata["schemaVersion"] == 13
+        assert scripted_metadata["schemaVersion"] == 14
         assert scripted_metadata["build"]["allowBuildScripts"] == [
             "scripted-native@0.1.0"
         ]
@@ -2741,7 +2861,7 @@ def main():
         composed_native = composed_metadata["targets"][0]["outputs"][0][
             "native"
         ]
-        assert composed_metadata["schemaVersion"] == 13
+        assert composed_metadata["schemaVersion"] == 14
         assert [
             (group["package"], group["cMacroDefinitions"])
             for group in composed_native["dependencyNative"]

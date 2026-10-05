@@ -703,20 +703,18 @@ module.exports = grammar({
             choice(
               $.native_c_array_attribute,
               $.native_link_name_attribute,
-              $.unsafe_function_attribute,
               $.function_contract_attribute,
             ),
           ),
         ),
         optional(field("binding", $.runtime_binding)),
+        optional(field("unsafe", "unsafe")),
         optional(field("virtual", "virtual")),
         optional(field("storage", "static")),
         optional(field("constant", "constexpr")),
         optional(field("return_mutable", "mut")),
         $._function_declaration_body,
       ),
-
-    unsafe_function_attribute: () => seq("[[", "unsafe", "]]"),
 
     function_contract_attribute: () =>
       seq(

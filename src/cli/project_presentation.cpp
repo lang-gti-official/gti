@@ -348,6 +348,8 @@ void writeProjectMetadata(std::ostream &stream,
     writeJsonString(stream, executionProfileName(profile.executionProfile));
     stream << ", \"disabledWarnings\": ";
     writeJsonStrings(stream, profile.warningPolicy.disabledGroups());
+    stream << ", \"dependencyWarnings\": "
+           << (profile.dependencyWarnings ? "true" : "false");
     stream << ", \"keepCpp\": " << (profile.keepCpp ? "true" : "false")
            << ", \"debugInfo\": " << (profile.debugInfo ? "true" : "false")
            << '}';
@@ -390,6 +392,10 @@ void writeProjectMetadata(std::ostream &stream,
       }
       stream << ", \"debugInfo\": "
              << (plan != nullptr && plan->debugInfo() ? "true" : "false");
+      stream << ", \"dependencyWarnings\": "
+             << (plan == nullptr || plan->packageWarnings().dependencyWarnings()
+                     ? "true"
+                     : "false");
       stream << ", \"native\": ";
       if (plan == nullptr) {
         writeNativeInputs(stream, {});

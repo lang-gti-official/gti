@@ -904,7 +904,7 @@ int main() { Wrong callback = work; return 0; }
          "concurrent native entry does not admit unrelated signatures");
   const auto ordinary = analyze(R"(
 namespace std {
-  [[unsafe]] int32_t thrd_join(uint64_t handle, mut int32_t& result) { return 0; }
+  unsafe int32_t thrd_join(uint64_t handle, mut int32_t& result) { return 0; }
 }
 int main() {
   uint64_t handle = 0;
@@ -917,7 +917,7 @@ int main() {
          "public std spelling does not confer compiler runtime identity");
   const std::string genericSource = R"(
 #include <std/cthread>
-[[unsafe]] int32_t relay<T>(T ignored, std::thrd_t handle) {
+unsafe int32_t relay<T>(T ignored, std::thrd_t handle) {
   unsafe { return std::thrd_join(handle, nullptr); }
 }
 int main() { std::thrd_t handle = 0; unsafe { return relay(1, handle); } }

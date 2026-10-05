@@ -156,7 +156,8 @@ public:
                    std::vector<BindgenImportPlan> bindgenImports = {},
                    std::vector<BuildScriptPlan> buildScripts = {},
                    ResolvedProjectToolchain toolchain = {},
-                   bool debugInfo = false);
+                   bool debugInfo = false,
+                   PackageWarningPolicy packageWarnings = {});
 
   [[nodiscard]] const std::filesystem::path &manifestPath() const;
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
@@ -178,6 +179,7 @@ public:
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
   [[nodiscard]] const WarningPolicy &warnings() const;
+  [[nodiscard]] const PackageWarningPolicy &packageWarnings() const;
   [[nodiscard]] const std::string &projectModelIdentity() const;
   [[nodiscard]] const std::vector<BindgenImportPlan> &bindgenImports() const;
   [[nodiscard]] const std::vector<BuildScriptPlan> &buildScripts() const;
@@ -203,6 +205,7 @@ private:
   std::vector<PackageSourceRoot> resolvedPackageSources;
   ConfigurationFlags resolvedConfigurationFlags;
   WarningPolicy resolvedWarningPolicy;
+  PackageWarningPolicy resolvedPackageWarningPolicy;
   std::string resolvedProjectModelIdentity;
   std::vector<BindgenImportPlan> resolvedBindgenImports;
   std::vector<BuildScriptPlan> resolvedBuildScripts;

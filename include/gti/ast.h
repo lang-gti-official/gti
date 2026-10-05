@@ -2117,7 +2117,7 @@ public:
       std::optional<RequiresClause> requiresClause = std::nullopt,
       std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
-      std::optional<Token> unsafeAttribute = std::nullopt,
+      std::optional<Token> unsafeKeyword = std::nullopt,
       std::vector<Token> functionAttributes = {})
       : returnType_(std::move(returnType)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
@@ -2134,7 +2134,7 @@ public:
         requiresClause_(std::move(requiresClause)),
         nativeCArray_(std::move(nativeCArray)),
         nativeLinkName_(std::move(nativeLinkName)),
-        unsafeAttribute_(std::move(unsafeAttribute)),
+        unsafeKeyword_(std::move(unsafeKeyword)),
         functionAttributes_(std::move(functionAttributes)) {}
 
   void accept(StmtVisitor &visitor) const override {
@@ -2199,8 +2199,8 @@ public:
   nativeLinkName() const {
     return nativeLinkName_;
   }
-  [[nodiscard]] const std::optional<Token> &unsafeAttribute() const {
-    return unsafeAttribute_;
+  [[nodiscard]] const std::optional<Token> &unsafeKeyword() const {
+    return unsafeKeyword_;
   }
   [[nodiscard]] const std::vector<Token> &functionAttributes() const {
     return functionAttributes_;
@@ -2233,7 +2233,7 @@ private:
   std::optional<RequiresClause> requiresClause_;
   std::optional<NativeCArrayAttribute> nativeCArray_;
   std::optional<NativeLinkNameAttribute> nativeLinkName_;
-  std::optional<Token> unsafeAttribute_;
+  std::optional<Token> unsafeKeyword_;
   std::vector<Token> functionAttributes_;
 };
 

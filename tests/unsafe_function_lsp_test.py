@@ -5,13 +5,13 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import LspSession, lsp_position
+from lsp_smoke_test import LspSession, lsp_position, semantic_tokens_by_position
 
 
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: unsafe_function_lsp_test.py <gti_lsp>")
-    source = "// 😀 UTF-16 control\n[[unsafe]] int32_t raw() { return 1; }\nint main() { return raw(); }\n"
+    source = "// 😀 UTF-16 control\nunsafe int32_t raw() { return 1; }\nint main() { return raw(); }\n"
     with tempfile.TemporaryDirectory(prefix="gti-unsafe-lsp-") as directory:
         path = pathlib.Path(directory) / "unsafe.gti"
         path.write_text(source)
@@ -19,8 +19,16 @@ def main():
         session = LspSession(sys.argv[1])
         try:
             session.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-                "capabilities": {"textDocument": {"publishDiagnostics": {"relatedInformation": True}}}}})
-            session.receive_until(lambda message: message.get("id") == 1)
+                "capabilities": {
+                    "workspace": {"workspaceEdit": {"documentChanges": True}},
+                    "textDocument": {
+                        "publishDiagnostics": {"relatedInformation": True, "dataSupport": True,
+                                               "tagSupport": {"valueSet": [1]}},
+                        "codeAction": {"isPreferredSupport": True,
+                                       "codeActionLiteralSupport": {"codeActionKind": {"valueSet": ["quickfix"]}}}
+                    }}}})
+            initialization = session.receive_until(lambda message: message.get("id") == 1)
+            token_types = initialization["result"]["capabilities"]["semanticTokensProvider"]["legend"]["tokenTypes"]
             session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
             session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
                 "textDocument": {"uri": uri, "languageId": "gti", "version": 1, "text": source}}})
@@ -37,10 +45,10 @@ def main():
             assert error["range"] == {"start": lsp_position(source, closing),
                                       "end": lsp_position(source, closing + 1)}, error
             related = error["relatedInformation"][0]["location"]
-            attribute = source.index("unsafe")
+            keyword = source.index("unsafe")
             assert related == {"uri": uri, "range": {
-                "start": lsp_position(source, attribute),
-                "end": lsp_position(source, attribute + 6)}}, error
+                "start": lsp_position(source, keyword),
+                "end": lsp_position(source, keyword + 6)}}, error
             valid = source.replace("return raw();", "unsafe { return raw(); }")
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
                 "textDocument": {"uri": uri, "version": 2}, "contentChanges": [{"text": valid}]}})
@@ -48,11 +56,69 @@ def main():
             session.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {
                 "textDocument": {"uri": uri}, "position": lsp_position(valid, valid.rindex("raw()") + 1)}})
             hover = session.receive_until(lambda message: message.get("id") == 2)["result"]
-            assert "[[unsafe]]" in hover["contents"]["value"], hover
+            assert "unsafe" in hover["contents"]["value"], hover
+            assert "[[unsafe]]" not in hover["contents"]["value"], hover
+            session.send({"jsonrpc": "2.0", "id": 8, "method": "textDocument/semanticTokens/full", "params": {
+                "textDocument": {"uri": uri}}})
+            tokens = semantic_tokens_by_position(
+                session.receive_until(lambda message: message.get("id") == 8)["result"]["data"])
+            for offset in (valid.index("unsafe"), valid.rindex("unsafe")):
+                position = lsp_position(valid, offset)
+                token = tokens[(position["line"], position["character"])]
+                assert token["length"] == 6 and token_types[token["type"]] == "keyword", token
             session.send({"jsonrpc": "2.0", "id": 3, "method": "textDocument/codeAction", "params": {
                 "textDocument": {"uri": uri}, "range": error["range"], "context": {"diagnostics": [error]}}})
             actions = session.receive_until(lambda message: message.get("id") == 3)["result"]
             assert not actions, actions
+
+            def change(text, version):
+                session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+                    "textDocument": {"uri": uri, "version": version}, "contentChanges": [{"text": text}]}})
+                return diagnostics(version)
+
+            def action_for(diagnostic, request_id):
+                session.send({"jsonrpc": "2.0", "id": request_id, "method": "textDocument/codeAction", "params": {
+                    "textDocument": {"uri": uri}, "range": diagnostic["range"],
+                    "context": {"diagnostics": [diagnostic], "only": ["quickfix"]}}})
+                return session.receive_until(lambda message: message.get("id") == request_id)["result"]
+
+            obsolete = valid.replace("unsafe int32_t", "[[unsafe]] int32_t")
+            migration = next(d for d in change(obsolete, 3) if d["code"] == "GTI-P0001")
+            actions = action_for(migration, 4)
+            assert len(actions) == 1, actions
+            edit = actions[0]["edit"]["documentChanges"][0]
+            assert edit["textDocument"] == {"uri": uri, "version": 3}, edit
+            offset = obsolete.index("[[unsafe]]")
+            assert edit["edits"] == [{"range": {
+                "start": lsp_position(obsolete, offset),
+                "end": lsp_position(obsolete, offset + 10)}, "newText": "unsafe"}], edit
+            assert change(valid, 4) == []
+            assert not action_for(migration, 5), "stale migration cannot change the new snapshot"
+
+            unused = "// 😀 UTF-16 control\nint main() { unsafe { return 0; } }\n"
+            warning = next(d for d in change(unused, 5) if d["code"] == "GTI-S2100")
+            offset = unused.index("unsafe")
+            assert warning["severity"] == 2 and warning["tags"] == [1], warning
+            assert warning["data"]["group"] == "unused-unsafe", warning
+            assert warning["range"] == {"start": lsp_position(unused, offset),
+                                        "end": lsp_position(unused, offset + 6)}, warning
+            actions = action_for(warning, 6)
+            assert len(actions) == 1 and actions[0]["isPreferred"], actions
+            edit = actions[0]["edit"]["documentChanges"][0]
+            assert edit["textDocument"] == {"uri": uri, "version": 5}, edit
+            assert edit["edits"] == [{"range": warning["range"], "newText": ""}], edit
+            assert change(unused.replace("unsafe", "", 1), 6) == []
+            assert not action_for(warning, 7), "stale unused-unsafe cannot edit the new snapshot"
+
+            adjacent = valid.replace("unsafe int32_t", "[[unsafe]]int32_t")
+            migration = next(d for d in change(adjacent, 7) if d["code"] == "GTI-P0001")
+            actions = action_for(migration, 9)
+            assert len(actions) == 1, actions
+            edit = actions[0]["edit"]["documentChanges"][0]
+            assert edit["textDocument"] == {"uri": uri, "version": 7}, edit
+            assert edit["edits"] == [{"range": migration["range"], "newText": "unsafe "}], edit
+            assert change(valid, 8) == []
+            assert not action_for(migration, 10), "stale unspaced migration cannot edit the new snapshot"
         finally:
             session.close()
 

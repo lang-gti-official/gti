@@ -634,10 +634,10 @@ requireCapture(defaultValueRow, "3", "number");
 requireCapture(defaultValueRow, "<", "punctuation.bracket");
 
 const unsafeFunctionRow = fixtureLines.findIndex((line) =>
-  line.includes("[[unsafe]] void retain_context_highlight"),
+  line.includes("unsafe void retain_context_highlight"),
 );
-requireCapture(unsafeFunctionRow, "unsafe", "attribute");
-requireCaptureCount(unsafeFunctionRow, "unsafe", "keyword", 0);
+requireCapture(unsafeFunctionRow, "unsafe", "keyword");
+requireCaptureCount(unsafeFunctionRow, "unsafe", "attribute", 0);
 requireCapture(unsafeFunctionRow, "retain_context_highlight", "function");
 
 const functionContractRow = fixtureLines.findIndex((line) =>

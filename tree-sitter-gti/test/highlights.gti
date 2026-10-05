@@ -299,7 +299,7 @@ uint64_t default_extent_highlight<uint64_t N = 3,
   return M;
 }
 
-[[unsafe]] void retain_context_highlight(void* context) {}
+unsafe void retain_context_highlight(void* context) {}
 [[noreturn, track_caller]] void terminal_highlight() { while (true) {} }
 
 concept snapshot_highlight<T> =

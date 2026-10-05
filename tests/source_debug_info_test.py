@@ -172,7 +172,7 @@ def main():
         assert report["debug_info"] is True
         assert "-g" in report["native"]["argv"]
         metadata = json.loads(run([gti, "metadata"], project).stdout)
-        assert metadata["schemaVersion"] == 13
+        assert metadata["schemaVersion"] == 14
         assert next(p for p in metadata["profiles"] if p["name"] == "dev")["debugInfo"] is True
         assert next(p for p in metadata["targets"][0]["outputs"] if p["profile"] == "dev")["debugInfo"] is True
         project_cpp = next((project / "build").rglob("app.gti.cpp"))

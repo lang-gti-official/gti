@@ -49,8 +49,9 @@ as an identifier everywhere else and does not introduce a raw deallocation
 expression. The `&&` token retains its logical-operator role except in the
 exact move constructor policy form defined by the grammar.
 
-`unsafe` is a keyword introducing an ordinary lexical block and is also the
-name of the namespace-scope GTI function attribute `[[unsafe]]`. `const` is a
+`unsafe` is a keyword introducing either an ordinary lexical block or a
+namespace-scope GTI function's caller-obligation modifier. `[[unsafe]]` is not
+an accepted attribute spelling. `const` is a
 keyword only for the implemented raw-pointer pointee qualifier; its presence
 does not introduce general C++ cv-qualified values or declarators.
 

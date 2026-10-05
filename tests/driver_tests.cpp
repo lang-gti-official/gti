@@ -385,6 +385,123 @@ int main() {
          "entering a backend");
 }
 
+void testPackageWarningPolicy() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path app = temporary.root() / "app";
+  const std::filesystem::path library = temporary.root() / "library";
+  const std::filesystem::path leaf = temporary.root() / "leaf";
+  const std::filesystem::path source = app / "main.gti";
+  const std::filesystem::path own = app / "build/gti/deps/not-a-package.gti";
+  const std::filesystem::path librarySource = library / "value.gti";
+  const std::filesystem::path leafSource = leaf / "value.gti";
+  std::filesystem::create_directories(own.parent_path());
+  std::filesystem::create_directories(library);
+  std::filesystem::create_directories(leaf);
+  expect(
+      writeFile(temporary.root() / "prelude.gti", "") &&
+          writeFile(source, "#include <library/value>\n"
+                            "#include \"build/gti/deps/not-a-package.gti\"\n"
+                            "int main() { mut int value = 0; "
+                            "return library::value() + own::value() + value; "
+                            "}\n") &&
+          writeFile(own, "namespace own { int value() { mut int value = 0; "
+                         "return value; } }\n") &&
+          writeFile(librarySource, "#include <leaf/value>\nnamespace library { "
+                                   "int value() { mut int value = 0; "
+                                   "return leaf::value() + value; } }\n") &&
+          writeFile(leafSource,
+                    "namespace leaf { int value() { mut int value = 0; "
+                    "return value; } }\n"),
+      "package-warning source fixtures should be writable");
+  const std::vector<lang::PackageSourceRoot> roots{
+      {.identity = "app@1.0.0",
+       .name = "app",
+       .packageRoot = app,
+       .sourceRoot = app,
+       .dependencies = {{"library", "library@1.0.0"}}},
+      {.identity = "library@1.0.0",
+       .name = "library",
+       .packageRoot = library,
+       .sourceRoot = library,
+       .dependencies = {{"leaf", "leaf@1.0.0"}}},
+      {.identity = "leaf@1.0.0",
+       .name = "leaf",
+       .packageRoot = leaf,
+       .sourceRoot = leaf,
+       .dependencies = {}}};
+  const lang::driver::PackageWarningPolicy hidden(
+      false, "app@1.0.0", {"library@1.0.0", "leaf@1.0.0", "app@1.0.0"});
+  const auto request = [&](lang::driver::PackageWarningPolicy policy = {},
+                           lang::WarningPolicy warnings = {}) {
+    return lang::driver::CompilationRequest(
+        source, lang::standardLibraryLayout(temporary.root()),
+        lang::TargetInfo::host(), lang::OptimizationLevel::O0,
+        lang::CppStandard::Cpp23, roots, {}, {}, std::move(warnings), false,
+        std::move(policy));
+  };
+  const lang::driver::CheckResult visible =
+      lang::driver::checkCompilation(request());
+  expect(visible.succeeded() && visible.diagnostics.size() == 4 &&
+             std::all_of(visible.diagnostics.begin(), visible.diagnostics.end(),
+                         [](const lang::Diagnostic &diagnostic) {
+                           return diagnostic.code == "GTI-S2096";
+                         }),
+         "dependency and selected-package warnings should remain enabled "
+         "by default");
+  const lang::driver::CheckResult suppressed =
+      lang::driver::checkCompilation(request(hidden));
+  expect(
+      suppressed.succeeded() && suppressed.diagnostics.size() == 2 &&
+          std::all_of(
+              suppressed.diagnostics.begin(), suppressed.diagnostics.end(),
+              [&](const lang::Diagnostic &diagnostic) {
+                return diagnostic.primary.source ==
+                           std::filesystem::canonical(source).string() ||
+                       diagnostic.primary.source ==
+                           std::filesystem::canonical(own).string();
+              }),
+      "graph-owned direct/transitive dependency warnings should be hidden "
+      "without classifying a consumer's build/gti/deps spelling as a package");
+  const lang::driver::CheckResult grouped = lang::driver::checkCompilation(
+      request(hidden, lang::WarningPolicy({"unused-mut"})));
+  expect(grouped.succeeded() && grouped.diagnostics.empty(),
+         "package suppression should compose with existing warning groups");
+
+  const lang::driver::CompilationInputs inputs =
+      lang::driver::loadCompilationInputs(request(hidden));
+  lang::Diagnostic diagnostic = lang::makeDiagnostic(
+      "GTI-S2096", lang::DiagnosticPhase::Semantics,
+      {std::filesystem::canonical(librarySource).string(), 0, 1, 1}, "warning");
+  diagnostic.severity = lang::DiagnosticSeverity::Warning;
+  expect(hidden.suppresses(diagnostic, inputs.sourceGraph),
+         "dependency warning ownership should come from the primary source");
+  diagnostic.severity = lang::DiagnosticSeverity::Error;
+  expect(!hidden.suppresses(diagnostic, inputs.sourceGraph),
+         "dependency errors must never be suppressed");
+  diagnostic.severity = lang::DiagnosticSeverity::Warning;
+  diagnostic.related.push_back(
+      {{std::filesystem::canonical(librarySource).string(), 0, 1, 1},
+       "dependency declaration"});
+  diagnostic.primary.source = std::filesystem::canonical(source).string();
+  expect(!hidden.suppresses(diagnostic, inputs.sourceGraph),
+         "a dependency-related note cannot hide a consumer-primary diagnostic");
+  diagnostic.primary.source =
+      std::filesystem::canonical(temporary.root() / "prelude.gti").string();
+  expect(!hidden.suppresses(diagnostic, inputs.sourceGraph),
+         "stdlib/prelude warnings are outside dependency-package suppression");
+  diagnostic.primary.source = (app / "build/gti/deps/unloaded.gti").string();
+  expect(!hidden.suppresses(diagnostic, inputs.sourceGraph),
+         "unloaded/unowned paths must remain visible despite directory names");
+
+  expect(writeFile(librarySource,
+                   "namespace library { int value() { return missing; } }\n"),
+         "the dependency-error fixture should be writable");
+  const lang::driver::CheckResult error =
+      lang::driver::checkCompilation(request(hidden));
+  expect(!error.succeeded() && lang::hasErrorDiagnostics(error.diagnostics),
+         "real dependency errors must retain the frontend failure gate");
+}
+
 void testBackendExceptionBoundary() {
   TemporaryDirectory temporary;
   const std::filesystem::path prelude = temporary.root() / "prelude.gti";
@@ -1267,18 +1384,23 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
       nativeCompiler = wrapper.string();
     }
   }
-  const auto build = [&](lang::OptimizationLevel optimization,
-                         lang::driver::NativeInputs nativeInputs = {},
-                         bool keepCpp = false,
-                         lang::CppStandard standard = lang::CppStandard::Cpp23,
-                         lang::TargetInfo target = lang::TargetInfo::host()) {
-    return lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
-        lang::driver::CompilationRequest(source, toolchain.standardLibrary,
-                                         std::move(target), optimization,
-                                         standard),
-        toolchain, generated, output, nativeCompiler, std::move(nativeInputs),
-        keepCpp, true, false, managed, std::nullopt, cache));
-  };
+  const auto build =
+      [&](lang::OptimizationLevel optimization,
+          lang::driver::NativeInputs nativeInputs = {}, bool keepCpp = false,
+          lang::CppStandard standard = lang::CppStandard::Cpp23,
+          lang::TargetInfo target = lang::TargetInfo::host(),
+          lang::driver::PackageWarningPolicy packageWarnings = {},
+          lang::WarningPolicy warnings = {}) {
+        return lang::driver::buildExecutable(
+            lang::driver::ExecutableBuildRequest(
+                lang::driver::CompilationRequest(
+                    source, toolchain.standardLibrary, std::move(target),
+                    optimization, standard, {}, {}, {}, std::move(warnings),
+                    false, std::move(packageWarnings)),
+                toolchain, generated, output, nativeCompiler,
+                std::move(nativeInputs), keepCpp, true, false, managed,
+                std::nullopt, cache));
+      };
 
   const lang::driver::ExecutableBuildResult first =
       build(lang::OptimizationLevel::O0);
@@ -1337,6 +1459,25 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
              std::filesystem::is_regular_file(output),
          "an unchanged build should verify and restore the cached executable "
          "without invoking any native compilation");
+
+  const lang::driver::ExecutableBuildResult warningPolicyChange = build(
+      lang::OptimizationLevel::O0, {}, false, lang::CppStandard::Cpp23,
+      lang::TargetInfo::host(),
+      lang::driver::PackageWarningPolicy(false, "app@1.0.0", {"dep@1.0.0"}));
+  expect(warningPolicyChange.succeeded() &&
+             warningPolicyChange.cache.status ==
+                 lang::driver::BuildCacheStatus::Miss &&
+             warningPolicyChange.cache.key != firstKey,
+         "changing dependency-warning policy must perform frontend analysis "
+         "instead of reusing a cached diagnostic presentation");
+  const lang::driver::ExecutableBuildResult groupPolicyChange =
+      build(lang::OptimizationLevel::O0, {}, false, lang::CppStandard::Cpp23,
+            lang::TargetInfo::host(), {}, lang::WarningPolicy({"unused-mut"}));
+  expect(groupPolicyChange.succeeded() &&
+             groupPolicyChange.cache.status ==
+                 lang::driver::BuildCacheStatus::Miss &&
+             groupPolicyChange.cache.key != firstKey,
+         "warning-group policy must invalidate the same cached presentation");
 
   expect(writeFile(leaf, "int leaf_value() { return 1; }\n"),
          "the transitive cache invalidation fixture should be writable");
@@ -2914,6 +3055,7 @@ int main(int argc, char *argv[]) {
 
   testAnalysisConfigurationResolution();
   testCompilationRequestAndTargetPropagation();
+  testPackageWarningPolicy();
   testBackendExceptionBoundary();
   testProcessInvocation(std::filesystem::absolute(argv[0]));
   testNativeCommandConstruction();

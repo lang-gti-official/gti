@@ -505,7 +505,7 @@ int main() {
   expect(exactAmbiguity, "function-item ambiguity preserves its source span, "
                          "both candidates and no speculative fix-it");
   for (const std::string declaration :
-       {"[[unsafe]] void work() {}", "void work<T>(T value) {}",
+       {"unsafe void work() {}", "void work<T>(T value) {}",
         "extern \"C\" { void work(); }"}) {
     const auto invalid =
         analyze("ineligible-stored-item.gti",

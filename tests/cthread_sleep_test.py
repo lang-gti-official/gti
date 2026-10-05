@@ -49,7 +49,7 @@ def main():
             for fixture in ("cthread_sleep", "cthread_sleep_oracle", "cthread_sleep_concurrent"):
                 binary = output / f"{fixture}-{mode}"
                 command = [compiler, fixtures / f"{fixture}.gti", "--std", std,
-                           f"-{opt}", "--keep-cpp", "-o", binary]
+                           f"-{opt}", "--progress=never", "--keep-cpp", "-o", binary]
                 if fixture.endswith("concurrent"):
                     command += ["--execution-profile", "concurrent"]
                 extra = [*sanitizers]

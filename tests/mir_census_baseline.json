@@ -46,7 +46,7 @@
     "36-c-abi-sockets.gti": 25,
     "37-tcp-socket-owner.gti": 38,
     "38-vector-emplace.gti": 74,
-    "39-raw-pointers.gti": 23,
+    "39-raw-pointers.gti": 24,
     "40-loan-flow-edges.gti": 345,
     "41-owner-dependencies.gti": 43,
     "42-exclusive-reborrows.gti": 39,
@@ -106,5 +106,5 @@
     "98-shared-ownership.gti": 359,
     "99-borrowed-expected.gti": 351
   },
-  "total": 13856
+  "total": 13857
 }

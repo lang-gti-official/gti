@@ -110,6 +110,9 @@ leaving expression-level bitwise `&` spacing unchanged.
 
 The GTI base style attaches pointer and reference markers to the type:
 `T* pointer` and `T& reference`. Declaration recognition covers standalone
+`unsafe` function modifiers, preserving contract attributes followed by the
+canonical `unsafe static constexpr` prefix without treating `unsafe` as an
+attribute or reordering invalid declarations. It also covers standalone
 function generic parameters, nominal parameter types supplied by another
 source unit, and initialized raw-pointer locals without treating expression
 operators such as `left * right` or `left & right` as declarators.

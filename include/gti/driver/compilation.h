@@ -55,6 +55,29 @@ struct OptimizationOutputRequest {
   }
 };
 
+// Consumer-owned diagnostic presentation policy. Package identities come from
+// the resolved workspace, never from directory names or a dependency's profile.
+// Unowned, selected-package, standard-library and native diagnostics remain
+// visible. The compiler still analyzes every package under unchanged semantics.
+class PackageWarningPolicy final {
+public:
+  PackageWarningPolicy() = default;
+  PackageWarningPolicy(bool dependencyWarnings,
+                       std::string selectedPackageIdentity,
+                       std::vector<std::string> dependencyPackageIdentities);
+
+  [[nodiscard]] bool dependencyWarnings() const;
+  [[nodiscard]] const std::string &selectedPackage() const;
+  [[nodiscard]] const std::vector<std::string> &dependencyPackages() const;
+  [[nodiscard]] bool suppresses(const Diagnostic &diagnostic,
+                                const SourceGraph &sources) const;
+
+private:
+  bool emitDependencyWarnings = true;
+  std::string selectedIdentity;
+  std::vector<std::string> dependencyIdentities;
+};
+
 class CompilationRequest final {
 public:
   CompilationRequest(std::filesystem::path entry,
@@ -63,7 +86,8 @@ public:
                      std::vector<PackageSourceRoot> packageSourceRoots = {},
                      ConfigurationFlags configurationFlags = {},
                      OptimizationOutputRequest optimizationOutputs = {},
-                     WarningPolicy warningPolicy = {}, bool debugInfo = false);
+                     WarningPolicy warningPolicy = {}, bool debugInfo = false,
+                     PackageWarningPolicy packageWarnings = {});
 
   [[nodiscard]] const std::filesystem::path &entry() const;
   [[nodiscard]] const StandardLibraryLayout &standardLibrary() const;
@@ -75,6 +99,7 @@ public:
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
   [[nodiscard]] const OptimizationOutputRequest &optimizationOutputs() const;
   [[nodiscard]] const WarningPolicy &warnings() const;
+  [[nodiscard]] const PackageWarningPolicy &packageWarnings() const;
   [[nodiscard]] bool requiresEntryPoint() const;
   [[nodiscard]] CompilationRequest forExecutable() const;
 
@@ -88,6 +113,7 @@ private:
   ConfigurationFlags configuredFlags;
   OptimizationOutputRequest requestedOptimizationOutputs;
   WarningPolicy warningPolicy;
+  PackageWarningPolicy packageWarningPolicy;
   bool entryPointRequired = false;
   bool sourceDebugInfo = false;
 };

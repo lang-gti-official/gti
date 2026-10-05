@@ -83,7 +83,7 @@ layout or ABI.
 ```gti
 int32_t thrd_sleep(timespec duration);
 int32_t thrd_sleep(timespec duration, mut timespec& remaining);
-[[unsafe]] int32_t thrd_sleep(const timespec* duration, timespec* remaining);
+unsafe int32_t thrd_sleep(const timespec* duration, timespec* remaining);
 ```
 
 Valid durations have nonnegative seconds and nanoseconds in `[0, 1000000000)`.
@@ -137,10 +137,10 @@ without registering that thread for GTI callback entry.
 `thrd_start_t` (`(void*) -> int32_t`), and these ordinary GTI wrappers:
 
 ```gti
-[[unsafe]] int32_t thrd_create(thrd_t* output, thrd_start_t entry, void* context);
-[[unsafe]] int32_t thrd_create(mut thrd_t& output, thrd_start_t entry, void* context);
-[[unsafe]] int32_t thrd_join(thrd_t handle, int32_t* result);
-[[unsafe]] int32_t thrd_join(thrd_t handle, mut int32_t& result);
+unsafe int32_t thrd_create(thrd_t* output, thrd_start_t entry, void* context);
+unsafe int32_t thrd_create(mut thrd_t& output, thrd_start_t entry, void* context);
+unsafe int32_t thrd_join(thrd_t handle, int32_t* result);
+unsafe int32_t thrd_join(thrd_t handle, mut int32_t& result);
 ```
 
 Calls require lexical `unsafe`, the concurrent execution profile, and target

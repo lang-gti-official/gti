@@ -3194,6 +3194,19 @@ def main():
             unknown_warning.stderr
         )
 
+        unsafe_warning_source = root / "unused-unsafe.gti"
+        unsafe_warning_source.write_text(
+            "int main() { unsafe { return 0; } }\n", encoding="utf-8"
+        )
+        unsafe_warned = run([gti, str(unsafe_warning_source), "--emit-mir",
+                             "-o", str(root / "unused-unsafe.mir")])
+        assert "warning[GTI-S2100]" in unsafe_warned.stderr
+        assert unsafe_warned.stdout.splitlines()[-1] == "Diagnostics: 0 errors, 1 warning"
+        unsafe_suppressed = run([gti, str(unsafe_warning_source), "--emit-mir",
+                                 "-Wno-unused-unsafe", "-o", str(root / "unused-unsafe-suppressed.mir")])
+        assert "GTI-S2100" not in unsafe_suppressed.stderr
+        assert unsafe_suppressed.stdout.splitlines()[-1] == "Diagnostics: 0 errors, 0 warnings"
+
         profile_global = root / "profile-global.gti"
         profile_global.write_text(
             "mut int state = 0;\nint main() { return state; }\n",

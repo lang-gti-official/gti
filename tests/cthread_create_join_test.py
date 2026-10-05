@@ -54,7 +54,7 @@ def main():
                 binary = root / f"{mode}-{index}"
                 command = [str(compiler), str(fixtures / f"{case}.gti"),
                            "--execution-profile", "concurrent", *flags, *options,
-                           "--keep-cpp", "-o", str(binary)]
+                           "--progress=never", "--keep-cpp", "-o", str(binary)]
                 extra = [*native]
                 if helper:
                     extra.append(str(fixtures / "cthread_context.cpp"))
