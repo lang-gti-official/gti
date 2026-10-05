@@ -4475,9 +4475,15 @@ int main() {
                                 std::string::npos;
                        });
   };
-  expect(rejects([](auto &, auto &loan) { ++loan.designatedFields.front(); },
-                 "active sibling loan"),
-         "a different field cannot inherit the abstract referent exemption");
+  auto forgedField = frontend.mir;
+  auto *forgedFunction = const_cast<lang::MirFunctionInstance *>(
+      forgedField.findFunctionInstance(instance->id));
+  ++forgedFunction->body.loans[entry->id - 1].designatedFields.front();
+  // Body-local flow legitimately permits a disjoint owning field. The
+  // independent program verifier owns the class layout and must reject a
+  // forged designated field before that disjointness can grant authority.
+  expect(!lang::verifyMirProgram(forgedField).valid(),
+         "a forged field cannot inherit abstract referent authority");
   expect(rejects([](auto &,
                     auto &loan) { loan.access = lang::AccessMode::ReadOnly; },
                  "read-only stored dependency"),

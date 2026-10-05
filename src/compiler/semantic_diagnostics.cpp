@@ -119,9 +119,17 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
                leaf.memberName + "()'.";
       break;
     case MemberRequirementFailureKind::Shape:
-      reason = "Member '" + leaf.memberName +
-               "' is not a read-only, nongeneric instance method taking no "
-               "arguments.";
+      if (leaf.leafApplication && leaf.leafApplication->memberRequirement &&
+          leaf.leafApplication->memberRequirement->parameters().empty() &&
+          !leaf.leafApplication->memberRequirement->receiver()
+               .referenceMutability)
+        reason = "Member '" + leaf.memberName +
+                 "' is not a read-only, nongeneric instance method taking no "
+                 "arguments.";
+      else
+        reason = "Member '" + leaf.memberName +
+                 "' does not match the required nongeneric instance signature "
+                 "and receiver access.";
       break;
     case MemberRequirementFailureKind::Ambiguous:
       reason = "More than one member matches the required '" + leaf.memberName +
@@ -296,9 +304,22 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
                   memberQuery->member().lexeme + "()'."
             : "Generic arguments do not satisfy concept '" + constraint + "'.");
     if (memberQuery != nullptr) {
+      std::string signature = memberQuery->member().lexeme + "(";
+      for (std::size_t index = 0; index < memberQuery->parameters().size();
+           ++index) {
+        if (index != 0)
+          signature += ", ";
+        const TypeRef &parameter = memberQuery->parameters()[index];
+        if (parameter.referenceMutability)
+          signature += "mut ";
+        signature += semantic_spelling::typeRefSpelling(parameter);
+      }
+      signature += ")";
+      if (memberQuery->receiver().referenceMutability)
+        signature += " mut";
       diagnostic.related.push_back(
           {tokenSpan(memberQuery->member()),
-           "Required here as '" + memberQuery->member().lexeme + "() -> " +
+           "Required here as '" + signature + " -> " +
                semantic_spelling::typeRefSpelling(memberQuery->result()) +
                "' on '" +
                semantic_spelling::typeRefSpelling(memberQuery->receiver()) +
@@ -310,9 +331,16 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     }
     switch (failure.structural) {
     case StructuralConstraintKind::ReadMember:
-      diagnostic.hints.emplace_back(
-          "Provide a public, safe, read-only '" + failure.memberName +
-          "()' member with the exact required owned result type.");
+      if (memberQuery && memberQuery->parameters().empty() &&
+          !memberQuery->receiver().referenceMutability)
+        diagnostic.hints.emplace_back(
+            "Provide a public, safe, read-only '" + failure.memberName +
+            "()' member with the exact required owned result type.");
+      else
+        diagnostic.hints.emplace_back(
+            "Provide a public, safe '" + failure.memberName +
+            "' member with the required receiver access, exact parameter types "
+            "and exact owned result type.");
       break;
     case StructuralConstraintKind::InputIterator:
       diagnostic.hints.emplace_back(

@@ -1,5 +1,37 @@
 # Ranges and iterators
 
+## Mutable contiguous views
+
+`<std/span>` provides `std::mutable_span<T>`, an exclusive, move-only view of
+initialized elements. `vector<T>::as_mutable_span() mut` and
+`string::as_mutable_span() mut` create checked views of their current size, not
+their spare capacity. This slice uses the existing prefix-storage owner
+representation; construction from fixed arrays, arbitrary pointers and native
+memory is not supplied.
+
+The familiar operations are `size`, `empty`, checked `at`/`operator[]`,
+`front`, `back`, `first(count)`, `last(count)` and `subspan(offset, count)`.
+Empty end subspans are valid; element access, front/back on empty views, and
+invalid subranges raise defined bounds failure. Subviews retain the original
+storage and their parent loan; they do not allocate or copy elements.
+
+A mutable receiver returns mutable element references and exclusive subviews.
+Read-only access returns read-only elements. `as_span()` creates a checked
+shared view without transferring ownership. While a shared child or any copy
+of it remains live, the exclusive parent cannot be used for mutation or moved.
+When children end, parent access resumes. Owner mutation/reallocation,
+movement and destruction cannot invalidate a live view.
+
+`begin_mut()` supports mutable range-for; `begin()`/`end()` support read-only
+iteration. A retained iterator protects both the physical carrier and its
+stored owner dependency. No public type name grants borrowing permission;
+ordinary user-defined single-owner carriers follow the same rules.
+
+See [composable I/O](io.md#composable-buffered-io) for `std::byte_buffer` and
+byte-slice transports.
+
+## Range protocol
+
 Status: current through the bounded L-RANGE-03 single-owner view release,
 M-OWN-04 named Expected-payload range loans, and the L-RANGE-04
 iterator/sentinel plus complete-range algorithm cluster
@@ -422,8 +454,9 @@ widening, a mutable child detached from its exclusive parent, an escaping
 element loan, an inconsistent array strategy, a mismatched owner/drop, or a
 broken condition/body/increment/cleanup cycle before backend admission.
 
-Multiple-origin or nested stored views, pointer decay, and mutable spans or
-text views remain later lifetime layers. Mutable iteration currently uses
+Mutable spans and their shared/subspan projections use the retained-loan rules
+described above. Pointer decay and independently splittable disjoint mutable
+views remain outside that surface. Mutable iteration currently uses
 conservative whole-owner invalidation exclusion rather than a public
 container-specific invalidation trait. Confined generic `void` operations,
 Exact `bool` predicates, exact context-supplied non-reference value results

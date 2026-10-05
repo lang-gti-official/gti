@@ -2,6 +2,17 @@
 
 Status: current architecture.
 
+Passive class error returns use representation-only SSA storage: ordinary
+construction or checked copy/move extraction executes at its MIR instruction,
+before surrounding scope cleanup. An exact sole `Unexpected` consumer may
+publish after a verified normal cleanup spine, including fallible destructor
+Invokes. Only wrapper construction is deferred; payload construction, failure
+identity and all Drops stay in MIR order. Payloads must have no active cleanup,
+borrowed state or address escape, and copy extraction additionally requires
+generated copy construction. A failed cleanup therefore discards no hidden
+owning result. Shared constructor/extraction admission follows the same
+cleanup-tail proof; the runtime does not invent unwinding behavior.
+
 GTI ships a native C++ source backend. All production backends consume one
 compiler-owned, backend-neutral `LoweredProgram`; they do not receive the AST,
 `SemanticModel`, `HirProgram`, source MIR, optimizer side tables, or generated

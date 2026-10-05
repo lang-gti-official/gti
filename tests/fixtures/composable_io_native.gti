@@ -1,0 +1,69 @@
+#include <std/io>
+#include <std/cstdio>
+#include <std/string>
+#include <std/vector>
+
+int native_test(std::string_view path) {
+  mut auto opened = std::fopen(path, std::file_mode::read_write_truncate);
+  if (!opened) { return 2; }
+  mut auto file = std::move(opened).value();
+  std::byte_buffer source = {uint8_t(97), uint8_t(0), uint8_t(122), uint8_t(10)};
+  auto input = source.as_span();
+  {
+    mut std::io::buffered_writer<std::FILE> writer{*file, std::size_t(3)};
+    auto written = std::io::write_all(writer, input);
+    if (!written || written.value() != 4) { return 3; }
+    auto flushed = writer.flush();
+    if (!flushed) { return 4; }
+  }
+  auto rewound = file->seek(int64_t(0), std::seek_origin::begin);
+  if (!rewound) { return 5; }
+  mut std::byte_buffer bytes{std::size_t(6)};
+  {
+    mut std::io::buffered_reader<std::FILE> reader{*file, std::size_t(3)};
+    mut auto output = bytes.as_mutable_span();
+    auto read = std::io::read_exact(reader, output);
+    if (read || read.error().code != std::io_errc::end_of_file ||
+        read.error().transferred != 4) { return 6; }
+  }
+  if (bytes[std::size_t(0)] != uint8_t(97) || bytes[std::size_t(1)] != uint8_t(0) ||
+      bytes[std::size_t(2)] != uint8_t(122) || bytes[std::size_t(3)] != uint8_t(10)) { return 7; }
+  auto closed = file->close();
+  if (!closed) { return 8; }
+  auto bad_write = file->write_some(input);
+  auto bad_flush = file->flush();
+  if (bad_write || bad_write.error() != std::io_errc::invalid_stream ||
+      bad_flush || bad_flush.error() != std::io_errc::invalid_stream) { return 9; }
+  {
+    auto empty_input = input.first(std::size_t(0));
+    auto empty_write = file->write_some(empty_input);
+    mut auto output = bytes.as_mutable_span();
+    mut auto empty_output = output.first(std::size_t(0));
+    auto empty_read = file->read_some(empty_output);
+    if (!empty_write || empty_write.value() != 0 ||
+        !empty_read || empty_read.value() != 0) { return 13; }
+    auto bad_read = file->read_some(output);
+    if (bad_read || bad_read.error() != std::io_errc::invalid_stream) { return 14; }
+  }
+
+  mut std::io::stdin_reader standard_input{};
+  mut std::io::stdout_writer standard_output{};
+  mut auto scratch = bytes.as_mutable_span();
+  auto copied = std::io::copy(standard_input, standard_output, scratch);
+  if (!copied || copied.value() != 4) { return 10; }
+  auto flushed = standard_output.flush();
+  if (!flushed) { return 11; }
+  std::byte_buffer message = {uint8_t(111), uint8_t(107)};
+  auto view = message.as_span();
+  mut std::io::stderr_writer standard_error{};
+  auto reported = std::io::write_all(standard_error, view);
+  auto error_flushed = standard_error.flush();
+  if (!reported || !error_flushed) { return 12; }
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 1) { return native_test("composable-io.bin"); }
+  if (argc == 2) { return native_test(argv[std::size_t(1)].view()); }
+  return 1;
+}

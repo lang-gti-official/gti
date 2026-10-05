@@ -10,6 +10,9 @@ You do not need to read the entire sequence to find an API pattern:
 
 | I want to… | Start here |
 | --- | --- |
+| Reuse one parser with memory, files and buffered input | [107: composable I/O](107-composable-io.gti) |
+| Modify a checked contiguous subrange without copying | [108: mutable slices](108-mutable-slices.gti) |
+| Format my own application types | [106: custom formatters](106-custom-formatters.gti) |
 | Parse, inspect, build, and serialize JSON | [91: JSON documents](91-json-documents.gti) |
 | Map JSON to my own classes and report field errors | [92: JSON codecs](92-json-codecs.gti) |
 | Build URLs, GET JSON, or POST a JSON body | [93: HTTP/JSON client](93-http-json-client.gti), [local demo below](#http-and-json-without-an-external-service) |
@@ -137,6 +140,10 @@ is a teaching helper, not a production server.
 | `102-constexpr-frame-budget.gti` | compile-time duration budgets, passive asset metadata, and pre-epoch timestamp decomposition |
 | `103-resource-exchange.gti` | restoring exchange and swap of unrelated move-only resources without copying |
 | `104-move-only-ordering.gti` | sorting and reversing move-only jobs, checked indexed swap, and swapping owning arrays |
+| `105-member-signature-contracts.gti` | exact source-defined mutable receiver and parameter contracts without executing their queries |
+| `106-custom-formatters.gti` | application-owned formatter specializations, presentation delegation and recoverable dynamic errors |
+| `107-composable-io.gti` | generic line reading, memory input, buffered output and explicit flushing |
+| `108-mutable-slices.gti` | exclusive subviews, shared projections and parent reactivation |
 
 ## Build and run
 

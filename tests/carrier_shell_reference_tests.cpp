@@ -134,6 +134,631 @@ void checkLocalReferences() {
   }
 }
 
+void checkOwningAccessorAdapters() {
+  const std::string program = declarations + R"gti(
+#include <std/memory>
+class Adapter {
+  mut Counter& target;
+public:
+  Adapter(mut Counter& source) : target(source) {}
+  void advance() mut { this.target.value += 1; }
+  int read() { return this.target.value; }
+};
+int main() {
+  mut auto owner = std::make_unique<Counter>();
+  {
+    mut Adapter adapter{*owner};
+    adapter.advance();
+    if (adapter.read() != 5) { return 1; }
+  }
+  return owner->value - 5;
+}
+)gti";
+  const auto frontend = lang::Frontend().analyze(
+      "owning-accessor-adapter.gti", program, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "stored adapter retains owning accessor result");
+  if (!frontend.canGenerateCode())
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  if (frontend.canGenerateCode()) {
+    try {
+      expect(!gti_test::emitCpp(frontend).contents.empty(),
+             "owning accessor adapter reaches the verified MIR backend");
+    } catch (const std::logic_error &error) {
+      expect(false,
+             std::string("owning accessor adapter backend: ") + error.what());
+    }
+    bool checkedParent = false;
+    for (const auto &function : frontend.mir.functionInstances()) {
+      for (const auto &loan : function.body.loans) {
+        const auto *parent = function.body.findLoan(loan.parent);
+        if (loan.kind != lang::MirLoanKind::Stored || parent == nullptr ||
+            parent->kind != lang::MirLoanKind::CallResult ||
+            loan.carriers.empty())
+          continue;
+        auto missingParent = frontend.mir;
+        auto *instance = const_cast<lang::MirFunctionInstance *>(
+            missingParent.findFunctionInstance(function.id));
+        instance->body.loans[loan.id - 1].parent = 0;
+        expect(!lang::verifyMirProgram(missingParent).valid(),
+               "stored owning accessor adapter cannot lose its active parent");
+        checkedParent = true;
+      }
+    }
+    expect(checkedParent, "owning accessor adapter preserves its result chain");
+  }
+  for (const std::string mutation : {"owner.reset();", "owner->value = 99;",
+                                     "auto moved = std::move(owner);"}) {
+    std::string invalid = program;
+    invalid.insert(invalid.find("    adapter.advance();"),
+                   "    " + mutation + "\n");
+    const auto rejected = lang::Frontend().analyze(
+        "invalid-owning-accessor.gti", invalid, {standardLibraryPrelude()}, {},
+        {standardLibraryRoot()});
+    expect(!rejected.semanticValid,
+           "retained accessor adapter prevents owner invalidation: " +
+               mutation);
+  }
+}
+
+void checkNestedAdapterDependencies() {
+  const std::string program = declarations + R"gti(
+class First {
+  mut Exclusive& target;
+public:
+  First(mut Exclusive& source) : target(source) {}
+  void advance() mut { this.target.advance(); }
+  int read() { return this.target.read(); }
+};
+class Second {
+  mut First& target;
+public:
+  Second(mut First& source) : target(source) {}
+  void advance() mut { this.target.advance(); }
+  int read() { return this.target.read(); }
+};
+int main() {
+  mut Counter owner{};
+  mut Exclusive view{owner};
+  mut First first{view};
+  mut Second second{first};
+  second.advance();
+  return second.read() - 5;
+}
+)gti";
+  const auto frontend = lang::Frontend().analyze(
+      "nested-adapter-dependencies.gti", program, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "nested adapters preserve every stored dependency");
+  if (!frontend.canGenerateCode())
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  bool checkedChain = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &loan : function.body.loans) {
+      const auto *dependency = function.body.findLoan(loan.storedDependency);
+      if (dependency == nullptr || dependency->storedDependency == 0)
+        continue;
+      checkedChain = true;
+      expect(
+          lang::mirLoanProtectedSources(function.body, loan.id).size() >= 3,
+          "optimization sees every protected source in nested adapter chain");
+      auto cyclic = function.body;
+      cyclic.loans[dependency->id - 1].storedDependency = loan.id;
+      expect(lang::mirLoanProtectedSources(cyclic, loan.id).empty() &&
+                 !lang::verifyMirBody(cyclic, function.id).valid(),
+             "dependency cycles fail closed in both verifier and optimization "
+             "query");
+      auto missingDependency = frontend.mir;
+      auto *instance = const_cast<lang::MirFunctionInstance *>(
+          missingDependency.findFunctionInstance(function.id));
+      instance->body.loans[loan.id - 1].storedDependency = 0;
+      expect(!lang::verifyMirProgram(missingDependency).valid(),
+             "nested adapter cannot drop its intermediate dependency");
+    }
+  }
+  expect(checkedChain, "nested adapters exercise a transitive stored chain");
+  for (const std::string mutation :
+       {"owner.value = 99;", "view.advance();", "first.advance();",
+        "auto moved = std::move(first);"}) {
+    std::string invalid = program;
+    invalid.insert(invalid.find("  second.advance();"), "  " + mutation + "\n");
+    const auto rejected = lang::Frontend().analyze(
+        "invalid-nested-adapter.gti", invalid, {standardLibraryPrelude()}, {},
+        {standardLibraryRoot()});
+    expect(!rejected.semanticValid,
+           "nested adapter preserves ancestor lifetime: " + mutation);
+  }
+}
+
+void checkIoConceptDiagnostics() {
+  const std::string declarations = R"gti(
+#include <std/io>
+class WrongResult {
+public:
+  int read_some(mut std::mutable_span<uint8_t>& output) mut { return 0; }
+};
+class ReadonlyOutput {
+public:
+  expected<std::size_t, std::io_errc> read_some(std::span<uint8_t>& output) mut {
+    return std::size_t(0);
+  }
+};
+class MissingFlush {
+public:
+  expected<std::size_t, std::io_errc> write_some(std::span<uint8_t>& input) mut {
+    return input.size();
+  }
+};
+)gti";
+  const std::vector<std::string> calls{
+      "mut WrongResult source{}; mut std::byte_buffer bytes{std::size_t(1)}; "
+      "mut auto output = bytes.as_mutable_span(); auto result = "
+      "std::io::read_exact(source, output);",
+      "mut ReadonlyOutput source{}; mut std::byte_buffer "
+      "bytes{std::size_t(1)}; "
+      "mut auto output = bytes.as_mutable_span(); auto result = "
+      "std::io::read_exact(source, output);",
+      "mut MissingFlush sink{}; std::byte_buffer bytes{std::size_t(1)}; "
+      "auto input = bytes.as_span(); auto result = std::io::write_all(sink, "
+      "input);"};
+  for (const auto &call : calls) {
+    const auto frontend = lang::Frontend().analyze(
+        "invalid-io-concept.gti",
+        declarations + "\nint main() { " + call + " return 0; }\n",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!frontend.semanticValid &&
+               std::any_of(frontend.diagnostics.begin(),
+                           frontend.diagnostics.end(),
+                           [](const auto &diagnostic) {
+                             return diagnostic.code.starts_with("GTI-S");
+                           }) &&
+               std::none_of(frontend.diagnostics.begin(),
+                            frontend.diagnostics.end(),
+                            [](const auto &diagnostic) {
+                              return diagnostic.code == "GTI-B0001";
+                            }),
+           "invalid I/O protocol is diagnosed before MIR: " + call);
+    if (frontend.semanticValid ||
+        std::none_of(frontend.diagnostics.begin(), frontend.diagnostics.end(),
+                     [](const auto &diagnostic) {
+                       return diagnostic.code.starts_with("GTI-S");
+                     }))
+      for (const auto &diagnostic : frontend.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+}
+
+void checkOwningElementSlice() {
+  const auto canonical = lang::Frontend().analyze(
+      standardLibraryRoot().parent_path() /
+          "tests/fixtures/mutable_span_owned.gti",
+      std::nullopt, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(canonical.canGenerateCode(),
+         "mutable owning-element slice fixture verifies");
+  if (!canonical.canGenerateCode()) {
+    for (const auto &diagnostic : canonical.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  const std::string program = R"gti(
+#include <std/vector>
+#include <std/string>
+struct Record {
+  mut std::string name;
+  Record(std::string text) : name(std::move(text)) {}
+};
+int main() {
+  mut std::vector<Record> records{};
+  records.push_back(Record(std::string("a")));
+  records.push_back(Record(std::string("b")));
+  {
+    mut auto slice = records.as_mutable_span();
+    mut Record& first = slice.front();
+    first.name.append("!");
+  }
+  if (records[std::size_t(0)].name != "a!" || records[std::size_t(1)].name != "b") {
+    return 1;
+  }
+  return 0;
+}
+)gti";
+  const auto frontend = lang::Frontend().analyze(
+      "owning-element-slice.gti", program, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "mutable slice permits owning element member mutation");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  for (const std::string mutation :
+       {"records.clear();", "auto moved = std::move(records);",
+        "mut auto alias = records.as_mutable_span();"}) {
+    std::string invalid = program;
+    invalid.insert(invalid.find("    first.name.append"),
+                   "    " + mutation + "\n");
+    const auto rejected = lang::Frontend().analyze(
+        "invalid-owning-element-slice.gti", invalid, {standardLibraryPrelude()},
+        {}, {standardLibraryRoot()});
+    expect(!rejected.semanticValid,
+           "owning-element slice forbids owner invalidation: " + mutation);
+  }
+}
+
+void checkProjectedOwningMemberRetainedResults() {
+  const std::string declarations = R"gti(
+#include <std/string>
+class View {
+  int& value;
+public:
+  View(int& source) : value(source) {}
+  int read() { return this.value; }
+};
+struct Leaf {
+  mut std::string storage = std::string("owned");
+  mut int value = 4;
+  int& reference() { return this.value; }
+  View view() { return View(this.value); }
+};
+struct Record { mut Leaf leaf{}; };
+class Owner {
+  mut Record record{};
+public:
+  mut Record& get() mut { return this.record; }
+  void change() mut { this.record.leaf.value += 1; }
+};
+)gti";
+  for (const bool borrowedValue : {false, true}) {
+    const std::string binding =
+        borrowedValue ? "View retained = owner.get().leaf.view();"
+                      : "int& retained = owner.get().leaf.reference();";
+    const std::string observation =
+        borrowedValue ? "retained.read()" : "retained";
+    const std::string program =
+        declarations + "\nint main() { mut Owner owner{}; { " + binding +
+        " if (" + observation +
+        " != 4) { return 1; } } owner.change(); return 0; }\n";
+    const auto frontend = lang::Frontend().analyze(
+        "projected-owning-member-retained.gti", program,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(frontend.canGenerateCode(),
+           "owning projected receiver preserves a retained " +
+               std::string(borrowedValue ? "borrowed value" : "reference"));
+    if (!frontend.canGenerateCode()) {
+      for (const auto &diagnostic : frontend.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      continue;
+    }
+    bool checkedEarlyEnd = false;
+    for (const auto &function : frontend.mir.functionInstances()) {
+      if (function.entryKind == lang::ProgramEntryKind::None)
+        continue;
+      for (const auto &loan : function.body.loans) {
+        const auto *parent = function.body.findLoan(loan.parent);
+        if (parent == nullptr ||
+            parent->kind != lang::MirLoanKind::CallResult ||
+            loan.carriers.empty())
+          continue;
+        for (const auto &block : function.body.blocks) {
+          const auto endpoint =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [&](const auto &instruction) {
+                             return instruction.kind ==
+                                        lang::MirInstructionKind::EndBorrow &&
+                                    instruction.loan == loan.id;
+                           });
+          if (endpoint == block.instructions.end())
+            continue;
+          auto earlyEnd = function.body;
+          auto &changed = earlyEnd.blocks[block.id - 1]
+                              .instructions[static_cast<std::size_t>(
+                                  endpoint - block.instructions.begin())];
+          changed.loan = parent->id;
+          expect(!lang::verifyMirBody(earlyEnd, function.id).valid(),
+                 "owning member receiver cannot end while its retained child "
+                 "is live");
+          checkedEarlyEnd = true;
+          break;
+        }
+      }
+    }
+    expect(checkedEarlyEnd,
+           "projected retained result exercises its accessor parent");
+    for (const std::string mutation :
+         {"owner.change();", "auto moved = std::move(owner);"}) {
+      std::string invalid = program;
+      invalid.insert(invalid.find(" if ("), " " + mutation);
+      const auto rejected = lang::Frontend().analyze(
+          "invalid-projected-owning-member.gti", invalid,
+          {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+      expect(!rejected.semanticValid,
+             "retained projected member blocks owner invalidation: " +
+                 mutation);
+    }
+  }
+}
+
+void checkSharedChildOfExclusiveCarrier() {
+  const std::string program = R"gti(
+class ReadView {
+  int& value;
+public:
+  ReadView(int& source) : value(source) {}
+  int read() { return this.value; }
+};
+class WriteView {
+  mut int& value;
+public:
+  WriteView(mut int& source) : value(source) {}
+  ReadView inspect() { return ReadView(this.value); }
+  void set(int n) mut { mut int& slot = this.value; slot = n; }
+};
+int main() {
+  mut int owner = 4;
+  {
+    mut WriteView writer{owner};
+    {
+      ReadView reader = writer.inspect();
+      ReadView copy = reader;
+      if (copy.read() != 4 || reader.read() != 4) { return 1; }
+    }
+    writer.set(7);
+  }
+  return owner == 7 ? 0 : 2;
+}
+)gti";
+  const auto frontend = lang::Frontend().analyze("shared-child.gti", program,
+                                                 {standardLibraryPrelude()}, {},
+                                                 {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "shared child retains exclusive carrier dependency");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.message << '\n';
+    }
+    std::cerr << lang::MirPrinter().print(frontend.mir);
+  }
+  for (const std::string mutation : {"writer.set(99);", "owner = 99;",
+                                     "WriteView stolen = std::move(writer);"}) {
+    std::string invalid = program;
+    invalid.insert(invalid.find("      if (copy.read()"), mutation + "\n");
+    const auto rejected = lang::Frontend().analyze(
+        "shared-child-conflict.gti", invalid, {standardLibraryPrelude()}, {},
+        {standardLibraryRoot()});
+    expect(!rejected.semanticValid && std::none_of(rejected.diagnostics.begin(),
+                                                   rejected.diagnostics.end(),
+                                                   [](const auto &diagnostic) {
+                                                     return diagnostic.code ==
+                                                            "GTI-B0001";
+                                                   }),
+           "shared child aliases block parent/owner invalidation: " + mutation);
+  }
+  bool hasChild = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &loan : function.body.loans) {
+      if (loan.kind != lang::MirLoanKind::Stored || loan.parent == 0 ||
+          loan.access != lang::AccessMode::ReadOnly || loan.carriers.size() < 2)
+        continue;
+      const auto *parent = function.body.findLoan(loan.parent);
+      if (parent == nullptr || parent->access != lang::AccessMode::Mutable)
+        continue;
+      hasChild = true;
+      auto malformed = function.body;
+      malformed.loans[loan.id - 1].parent = loan.id;
+      expect(!lang::verifyMirBody(malformed, function.id).valid(),
+             "MIR rejects a cyclic parent for the aliased shared child");
+    }
+  }
+  expect(hasChild, "MIR retains shared aliases under their exclusive parent");
+}
+
+void checkNestedCarrierAccess() {
+  const std::string program = R"gti(
+class CellView {
+  mut int& item;
+public:
+  CellView(mut int& source) : item(source) {}
+  mut int& operator[](int index) mut { return this.item; }
+  int read() { return this.item; }
+};
+class Device {
+  mut CellView view;
+  mut int offset = 0;
+  mut int local = 0;
+public:
+  Device(CellView source) : view(std::move(source)) {}
+  void write(int value) mut {
+    mut CellView scratch{this.local};
+    scratch[0] = value;
+    this.view[this.offset] = value;
+  }
+  int read() { return this.view.read(); }
+};
+class Adapter {
+  mut Device& target;
+public:
+  Adapter(mut Device& source) : target(source) {}
+  void write(int value) mut { this.target.write(value); }
+  int read() { return this.target.read(); }
+};
+int main() {
+  mut int value = 1;
+  {
+    mut Device device{CellView(value)};
+    {
+      mut Adapter adapter{device};
+      adapter.write(7);
+      if (adapter.read() != 7) { return 1; }
+    }
+    device.write(8);
+  }
+  return value == 8 ? 0 : 2;
+}
+)gti";
+  const auto frontend = lang::Frontend().analyze(
+      "nested-carrier-adapter.gti", program, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "nested carrier reference adapter verifies");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return;
+  }
+  for (const std::string mutation : {"device.write(99);", "value = 99;",
+                                     "Device moved = std::move(device);"}) {
+    auto invalid = program;
+    invalid.insert(invalid.find("      adapter.write(7);"), mutation + "\n");
+    const auto rejected = lang::Frontend().analyze(
+        "nested-carrier-conflict.gti", invalid, {standardLibraryPrelude()}, {},
+        {standardLibraryRoot()});
+    expect(!rejected.semanticValid,
+           "adapter retains shell and owner: " + mutation);
+  }
+  bool checkedPath = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &loan : function.body.loans) {
+      if (!loan.entry || loan.designatedFields.size() < 2)
+        continue;
+      auto malformed = frontend.mir;
+      auto *instance = const_cast<lang::MirFunctionInstance *>(
+          malformed.findFunctionInstance(function.id));
+      instance->body.loans[loan.id - 1].designatedFields.pop_back();
+      expect(
+          !lang::verifyMirProgram(malformed).valid(),
+          "nested carrier authority requires the exact reference field path");
+      checkedPath = true;
+    }
+  }
+  expect(checkedPath, "nested carrier test covers abstract reference paths");
+}
+
+void checkReadOnlyConstructorDependencies() {
+  for (const std::string carrier : {"Shared", "Exclusive"}) {
+    const std::string program = "#include <std/panic>\n" + declarations +
+                                "\nusing Carrier = " + carrier + R"gti(;
+class Marker {
+public:
+  Marker(bool fail) { if (fail) { std::panic("initializer failure"); } }
+  ~Marker() {}
+};
+class Adapter {
+  Carrier& target;
+  Marker marker;
+public:
+  Adapter(Carrier& source, bool fail_initialization, bool fail_body)
+      : target(source), marker(Marker(fail_initialization)) {
+    if (fail_body) { std::panic("body failure"); }
+  }
+  int read() { return this.target.read(); }
+};
+int main() {
+  mut Counter owner{};
+  mut Carrier view{owner};
+  Adapter adapter{view, false, false};
+  return adapter.read();
+}
+)gti";
+    const auto frontend = lang::Frontend().analyze(
+        "readonly-carrier-constructor.gti", program, {standardLibraryPrelude()},
+        {}, {standardLibraryRoot()});
+    expect(frontend.canGenerateCode(),
+           "read-only constructor shell retains external dependency: " +
+               carrier);
+    if (!frontend.canGenerateCode()) {
+      for (const auto &diagnostic : frontend.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      continue;
+    }
+    if (carrier == "Exclusive") {
+      std::string projected = program;
+      const std::string local = "  Adapter adapter{view, false, false};";
+      projected.replace(projected.find(local), local.size(),
+                        "  mut Holder holder{std::move(view)};\n"
+                        "  Adapter adapter{holder.stored, false, false};");
+      const auto field = lang::Frontend().analyze(
+          "projected-carrier-adapter.gti", projected,
+          {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+      expect(field.canGenerateCode(),
+             "constructor shell preserves exact field projection type");
+      if (!field.canGenerateCode())
+        for (const auto &diagnostic : field.diagnostics)
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    bool checkedPublication = false;
+    std::size_t checkedFailureEdges = 0;
+    for (const auto &constructor : frontend.mir.constructorInstances()) {
+      for (const auto &loan : constructor.body.loans) {
+        if (loan.kind != lang::MirLoanKind::Stored || !loan.escapes ||
+            loan.storedField == 0 || loan.storedDependency == 0 ||
+            loan.access != lang::AccessMode::ReadOnly)
+          continue;
+        checkedPublication = true;
+        auto missingDependency = frontend.mir;
+        auto *changed = const_cast<lang::MirConstructorInstance *>(
+            missingDependency.findConstructorInstance(constructor.id));
+        changed->body.loans[loan.id - 1].storedDependency = 0;
+        expect(!lang::verifyMirProgram(missingDependency).valid(),
+               "published constructor shell cannot lose its owner dependency");
+        for (const auto &block : constructor.body.blocks) {
+          if (block.terminator.kind !=
+              lang::MirTerminatorKind::PropagateFailure)
+            continue;
+          const auto shellEnd =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [&](const auto &instruction) {
+                             return instruction.kind ==
+                                        lang::MirInstructionKind::EndBorrow &&
+                                    instruction.loan == loan.id;
+                           });
+          if (shellEnd == block.instructions.end())
+            continue;
+          const auto ownerEnd =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [&](const auto &instruction) {
+                             return instruction.kind ==
+                                        lang::MirInstructionKind::EndBorrow &&
+                                    instruction.loan == loan.storedDependency;
+                           });
+          expect(ownerEnd != block.instructions.end() && shellEnd < ownerEnd,
+                 "failed construction retires the shell before its external "
+                 "owner");
+          for (const auto ended : {loan.id, loan.storedDependency}) {
+            auto malformed = constructor.body;
+            auto &failure = malformed.blocks[block.id - 1];
+            std::erase_if(failure.instructions, [&](const auto &instruction) {
+              return instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                     instruction.loan == ended;
+            });
+            expect(
+                !lang::verifyMirBody(malformed, constructor.id).valid(),
+                "constructor failure must retire both published dependencies");
+          }
+          ++checkedFailureEdges;
+        }
+      }
+    }
+    expect(checkedPublication, "read-only adapter publishes a dual dependency");
+    expect(
+        checkedFailureEdges >= 2,
+        "initializer and body failure exercise constructor dependency cleanup");
+    for (const std::string mutation : {"view.advance();", "owner.value = 99;",
+                                       "Carrier moved = std::move(view);"}) {
+      auto invalid = program;
+      invalid.insert(invalid.find("  return adapter.read();"), mutation + "\n");
+      const auto rejected = lang::Frontend().analyze(
+          "readonly-carrier-constructor-conflict.gti", invalid,
+          {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+      expect(!rejected.semanticValid,
+             "read-only adapter preserves shell and external owner (" +
+                 carrier + "): " + mutation);
+    }
+  }
+}
+
 void checkReferenceCopies() {
   for (const std::string &function :
        {"int copied(Shared& source) { Shared local = source; return "
@@ -426,7 +1051,59 @@ void checkProtectedEscapeAnalysis() {
 } // namespace
 
 int main() {
+  checkProjectedOwningMemberRetainedResults();
+  checkOwningElementSlice();
+  checkOwningAccessorAdapters();
+  checkNestedAdapterDependencies();
+  checkIoConceptDiagnostics();
   checkLocalReferences();
+  checkSharedChildOfExclusiveCarrier();
+  checkNestedCarrierAccess();
+  checkReadOnlyConstructorDependencies();
+  const auto span = lang::Frontend().analyze(
+      standardLibraryRoot().parent_path() / "tests/fixtures/mutable_span.gti",
+      std::nullopt, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(span.canGenerateCode(),
+         "mutable span subview and shared reborrow verify");
+  if (!span.canGenerateCode()) {
+    std::cerr << "source=" << span.sourceValid << " syntax=" << span.syntaxValid
+              << " semantics=" << span.semanticValid << " hir=" << span.hirValid
+              << " mir=" << span.mirValid << '\n';
+    for (const auto &diagnostic : span.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    for (const auto &error :
+         lang::verifyHirProgramPlans(span.semantics, span.hir).errors)
+      std::cerr << error << '\n';
+  }
+  bool checkedStoredDependency = false;
+  for (const auto &function : span.mir.functionInstances()) {
+    for (const auto &loan : function.body.loans) {
+      if (loan.kind != lang::MirLoanKind::Stored || loan.parent == 0 ||
+          loan.storedDependency == 0)
+        continue;
+      auto missingDependency = function.body;
+      missingDependency.loans[loan.id - 1].storedDependency = 0;
+      expect(
+          !lang::verifyMirBody(missingDependency, function.id).valid(),
+          "derived stored iterator must preserve its parent's external owner");
+      auto missingParent = function.body;
+      missingParent.loans[loan.id - 1].parent = 0;
+      expect(!lang::verifyMirBody(missingParent, function.id).valid(),
+             "derived stored iterator must preserve the borrowed receiver "
+             "lifetime");
+      checkedStoredDependency = true;
+    }
+  }
+  expect(checkedStoredDependency,
+         "mutable-view iteration exercises dual dependency");
+  const auto io = lang::Frontend().analyze(
+      standardLibraryRoot().parent_path() / "tests/fixtures/composable_io.gti",
+      std::nullopt, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(io.canGenerateCode(), "I/O composes stored and reference borrowing");
+  if (!io.canGenerateCode()) {
+    for (const auto &diagnostic : io.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+  }
   checkReferenceCopies();
   checkLocalReferentBindings();
   checkInvalidations();

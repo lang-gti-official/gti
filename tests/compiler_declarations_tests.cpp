@@ -4541,7 +4541,7 @@ T invalid<T>(T& x) requires reads<T> { return write(x); }
       "concept bad<T> = requires(T&& x) { { x.clone() } -> T; };",
       {standardLibraryPrelude()});
   expect(!consumingQuery.canGenerateCode() &&
-             hasDiagnostic(consumingQuery.diagnostics, "read-only reference"),
+             hasDiagnostic(consumingQuery.diagnostics, "must be a reference"),
          "member queries must not silently treat consuming references as "
          "read-only references");
   const auto directFailure =
@@ -4574,6 +4574,144 @@ int main() {
   expect(!impossibleClone.canGenerateCode() &&
              hasDiagnosticCode(impossibleClone.diagnostics, "GTI-S2029"),
          "cloning must not make exclusive owners implicitly copyable");
+}
+
+void testExactMemberSignatureConcepts() {
+  const auto analyze = [](const std::string &source) {
+    return lang::Frontend().analyze("member-signatures.gti", source,
+                                    {standardLibraryPrelude()}, {},
+                                    {standardLibraryRoot()});
+  };
+  const std::string contract = R"(
+concept accepts<C, V> = requires(mut C& receiver, V& input, mut V& output) {
+  { receiver.apply(input, output) } -> int;
+};
+int invoke<C>(mut C& receiver, int& input, mut int& output)
+    requires accepts<C, int> { return receiver.apply(input, output); }
+)";
+  const std::string good = R"(
+struct Processor {
+  int apply(int& input, mut int& output) mut { output = input; return 1; }
+};
+int main() { mut Processor p{}; int input = 7; mut int output = 0;
+  return invoke(p, input, output) - 1; }
+)";
+  const auto valid = analyze(contract + good);
+  expect(valid.canGenerateCode(),
+         "exact mutable receiver and parameter contracts must lower");
+  if (valid.canGenerateCode())
+    expect(!gti_test::emitCppText(valid).empty(),
+           "concrete structural calls must reach verified MIR emission");
+  const std::string formatted = lang::Formatter().format(contract + good);
+  expect(lang::Formatter().format(formatted) == formatted &&
+             analyze(formatted).canGenerateCode(),
+         "typed member requirements must format idempotently without changing "
+         "meaning");
+  const std::vector<std::string> rejected{
+      "int apply(int& input, mut int& output) { return 1; }",
+      "int apply(int& input, int& output) mut { return 1; }",
+      "int apply(int input, mut int& output) mut { return 1; }",
+      "bool apply(int& input, mut int& output) mut { return true; }",
+      "int apply(int& input) mut { return 1; }",
+      "static int apply(int& input, mut int& output) { return 1; }",
+      "private: int apply(int& input, mut int& output) mut { return 1; }",
+  };
+  for (const auto &method : rejected) {
+    const auto invalid =
+        analyze(contract + "struct Processor { " + method +
+                " };"
+                "int main() { mut Processor p{}; int input = 7; mut int output "
+                "= 0; return invoke(p, input, output); }");
+    expect(!invalid.canGenerateCode() &&
+               hasDiagnosticCode(invalid.diagnostics, "GTI-S2029"),
+           "signature requirements must reject receiver, access, arity, "
+           "result, static and private mismatches");
+    expect(hasRelatedDiagnostic(invalid.diagnostics,
+                                "apply(V&, mut V&) mut -> int"),
+           "requirement diagnostics must show exact parameters and receiver "
+           "access instead of a misleading nullary signature");
+  }
+  const auto illegalMutation = analyze(contract + R"(
+int bad<C>(C& receiver, int& input, mut int& output)
+    requires accepts<C, int> { return receiver.apply(input, output); }
+)");
+  expect(!illegalMutation.canGenerateCode(),
+         "a mut contract must not grant mutation through a read-only receiver");
+  for (const std::string body :
+       {"requires(T& r, int& a) { { r.f() } -> int; }",
+        "requires(T& r, int& a) { { r.f(r) } -> int; }",
+        "requires(T& r, int& a, int& a) { { r.f(a, a) } -> int; }",
+        "requires(T& r, mut int a) { { r.f(a) } -> int; }"}) {
+    const auto malformed = analyze("concept invalid<T> = " + body + ";");
+    expect(!malformed.canGenerateCode() &&
+               hasDiagnosticCode(malformed.diagnostics, "GTI-P0001"),
+           "signature query must not admit expressions, duplicate bindings or "
+           "unused arguments");
+  }
+  const auto unrelated = analyze(R"(
+struct Box<T> { T value; };
+struct Adapter<T> { Box<T> adapt(T& value) { Box<T> b{.value = value}; return b; } };
+concept adapted<T> = requires(Adapter<T>& a, T& v) { { a.adapt(v) } -> Box<T>; };
+concept indirect<T> = adapted<T>;
+Box<T> get<T>(T& value) requires indirect<T> { Adapter<T> a{}; return a.adapt(value); }
+int main() { int x = 7; auto result = get(x); return result.value - 7; }
+)");
+  expect(unrelated.canGenerateCode(),
+         "dependent receiver/result compounds must substitute through nested "
+         "concepts");
+
+  const auto nestedAliases = analyze(R"(
+namespace app {
+using count = int;
+struct Result<T> { T value; };
+namespace nested {
+struct Reader {
+  Result<count> read() mut { Result<count> r = {.value = 3}; return r; }
+};
+concept reader<R> = requires(mut R& stream) {
+  { stream.read() } -> Result<count>;
+};
+Result<count> call<R>(mut R& stream) requires reader<R> { return stream.read(); }
+}
+}
+int main() { mut app::nested::Reader r{}; auto result = app::nested::call(r); return 0; }
+)");
+  expect(nestedAliases.canGenerateCode(),
+         "compound signature types must resolve enclosing namespace aliases");
+  const auto overloaded = analyze(R"(
+struct Overloaded {
+  int get(int& value) { return value; }
+  bool get(bool& value) { return value; }
+};
+concept reads_both<R> =
+  requires(R& receiver, int& value) { { receiver.get(value) } -> int; } &&
+  requires(R& receiver, bool& value) { { receiver.get(value) } -> bool; };
+int read<R>(R& reader, int& value, bool& condition) requires reads_both<R> {
+  if (reader.get(condition)) { return reader.get(value); }
+  return 0;
+}
+int main() { Overloaded r{}; int value = 7; bool condition = true;
+  return read(r, value, condition) - 7; }
+)");
+  expect(overloaded.canGenerateCode(),
+         "symbolic member calls must select the exact required overload, not "
+         "only a member name or result");
+
+  const std::string formatPrefix =
+      "#include <std/format>\n#include <std/string>\nstruct Item {};\n";
+  for (const auto &call :
+       {"std::format(\"{}\", Item())", "std::try_format(\"{}\", Item())",
+        "std::try_format(\"{} {}\", 1, Item())",
+        "std::format(\"{0}\", 1, Item())"}) {
+    const auto invalid = analyze(formatPrefix + "int main() { [[discard]] " +
+                                 call + "; return 0; }");
+    expect(!invalid.canGenerateCode() &&
+               hasDiagnosticCode(invalid.diagnostics, "GTI-S2029"),
+           "unsupported format arguments, including unused later pack "
+           "elements, must fail statically");
+    expect(hasDiagnostic(invalid.diagnostics, "formattable"),
+           "format constraints must name the public contract");
+  }
 }
 
 void testSourceDefinedConcepts() {
@@ -4697,8 +4835,7 @@ int main() { return 0; }
              hasDiagnostic(invalid.diagnostics, "Unknown concept 'missing'") &&
              hasDiagnostic(invalid.diagnostics,
                            "Concept definition cycle involving") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "must apply to the declaration's type parameter") &&
+             hasDiagnostic(invalid.diagnostics, "must name a visible type") &&
              hasDiagnostic(invalid.diagnostics,
                            "Duplicate declaration of 'duplicate'") &&
              hasDiagnostic(invalid.diagnostics,
@@ -6848,12 +6985,9 @@ public:
 };
 int main() { return 0; }
 )");
-  expect(!dependentRequirement.canGenerateCode() &&
-             hasDiagnosticCode(dependentRequirement.diagnostics, "GTI-S2049") &&
-             hasDiagnostic(dependentRequirement.diagnostics,
-                           "dependent compound types are not supported"),
-         "the bounded requirement grammar should reject dependent compound "
-         "types instead of widening generic deduction");
+  expect(dependentRequirement.canGenerateCode(),
+         "dependent compound requirements should preserve their exact type "
+         "identity without participating in generic deduction");
 
   const std::string formatted = lang::Formatter().format(
       "class Box{int value;public:Box<std::integral T>(T input)requires "
@@ -10978,6 +11112,7 @@ constexpr NamedTest kTests[] = {
     {"testConcurrencyTypeCapabilities", testConcurrencyTypeCapabilities},
     {"testSourceDefinedConcepts", testSourceDefinedConcepts},
     {"testMemberRequirementConcepts", testMemberRequirementConcepts},
+    {"testExactMemberSignatureConcepts", testExactMemberSignatureConcepts},
     {"testConstraintFailureProvenance", testConstraintFailureProvenance},
     {"testRequiresDisjunction", testRequiresDisjunction},
     {"testStructuralRequiresAndAccumulate",

@@ -95,7 +95,6 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   registerTypeAliases(program.declarations(), {});
   registerEnums(program.declarations(), {});
   registerConcepts(program.declarations(), {});
-  resolveConcepts();
   genericDefaultConstants.clear();
   registerClasses(program.declarations(), {});
   resolveTypeAliases();
@@ -103,6 +102,9 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
     resolveClassArgumentPatterns(id);
   }
   registerClassSpecializations(program.declarations(), {});
+  // Compound concept arguments require the canonical class/specialization
+  // inventory. Primitive constraints used during registration resolve lazily.
+  resolveConcepts();
   recordClassTypeIdentities();
   resolveEnumPayloads();
   resolveClassInheritance();
@@ -796,13 +798,14 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                                constructorInfo != nullptr &&
                                    constructorInfo->kind ==
                                        ConstructorKind::Move,
-                               defaultLibraryStorageBorrow);
+                               defaultLibraryStorageBorrow, false, true);
     const bool trustedGuardSpecialMember =
         isDefaultLibraryMutexGuardCarrier(owner) &&
         constructorInfo != nullptr &&
         (constructorInfo->kind == ConstructorKind::Copy ||
          constructorInfo->kind == ConstructorKind::Move);
-    if (nestsBorrowedState(parameterType) && !trustedGuardSpecialMember) {
+    if (nestsBorrowedState(parameterType) && !trustedGuardSpecialMember &&
+        !isBorrowedCarrierReference(parameterType)) {
       report(parameter.name,
              "Constructor parameters cannot nest borrowed state in the "
              "current lifetime model.",
@@ -4155,16 +4158,48 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     if (objectType && containsOpenTypeParameter(*objectType)) {
       if (const auto result = symbolicReadMemberReturnType(
               *objectType, member->name().lexeme)) {
-        if (hasExplicitGenericArguments || !argumentTypes.empty()) {
+        std::optional<ExpandedStructuralRequirement> selected;
+        bool ambiguous = false;
+        for (const auto &requirement : activeStructuralRequirements()) {
+          if (requirement.kind != StructuralConstraintKind::ReadMember ||
+              requirement.memberName != member->name().lexeme ||
+              requirement.arguments.size() != argumentTypes.size() + 2 ||
+              requirement.arguments[0] != *objectType ||
+              (requirement.mutableReceiver &&
+               !isMutableObject(member->object())))
+            continue;
+          bool matches = true;
+          for (std::size_t index = 0; index < argumentTypes.size(); ++index)
+            matches &= callArgumentMatches(requirement.arguments[index + 2],
+                                           argumentTypes[index],
+                                           expr.arguments()[index]);
+          if (!matches)
+            continue;
+          if (selected && selected->mutableReceiver &&
+              !requirement.mutableReceiver)
+            continue;
+          if (selected && !selected->mutableReceiver &&
+              requirement.mutableReceiver)
+            selected.reset();
+          if (selected && selected->arguments != requirement.arguments)
+            ambiguous = true;
+          selected = requirement;
+        }
+        if (hasExplicitGenericArguments || !selected || ambiguous) {
           report(expr.paren(),
-                 "Required member takes no arguments or generic arguments.",
+                 "Call does not match the required member signature or "
+                 "receiver access.",
                  "GTI-S2029");
+          currentType = SemanticType::Unknown;
+          return;
         }
         semanticModel.record(
-            expr,
-            ResolvedCallInfo{.returnType = *result,
-                             .receiverMode = CallReceiverMode::ReadOnlyPlace});
-        currentType = *result;
+            expr, ResolvedCallInfo{.returnType = selected->arguments[1],
+                                   .receiverMode =
+                                       selected->mutableReceiver
+                                           ? CallReceiverMode::MutablePlace
+                                           : CallReceiverMode::ReadOnlyPlace});
+        currentType = selected->arguments[1];
         return;
       }
     }
@@ -6314,6 +6349,29 @@ auto SemanticVisitor::Impl::recordMemberRequirementReceiver(
        .roles = OccurrenceRole::Reference,
        .name = query.receiverUse().lexeme,
        .type = type});
+  for (std::size_t index = 0; index < query.parameters().size(); ++index) {
+    const auto parameterType = typeOf(query.parameters()[index]);
+    const auto &binding = query.bindings()[index];
+    const auto parameterSymbol = recordToolingSymbol(
+        binding, SymbolKind::Parameter,
+        qualifiedName(currentNamespace, binding.lexeme), parameterType);
+    semanticModel.recordOccurrence(
+        {.sourceUnit = sourceUnitFor(binding),
+         .span = tokenSpan(binding),
+         .kind = SemanticOccurrenceKind::Symbol,
+         .symbol = parameterSymbol,
+         .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
+         .name = binding.lexeme,
+         .type = parameterType});
+    const auto &use = query.arguments()[index];
+    semanticModel.recordOccurrence({.sourceUnit = sourceUnitFor(use),
+                                    .span = tokenSpan(use),
+                                    .kind = SemanticOccurrenceKind::Symbol,
+                                    .symbol = parameterSymbol,
+                                    .roles = OccurrenceRole::Reference,
+                                    .name = use.lexeme,
+                                    .type = parameterType});
+  }
 }
 
 auto SemanticVisitor::Impl::visitMemberRequirementExpr(
@@ -6326,12 +6384,20 @@ auto SemanticVisitor::Impl::visitMemberRequirementExpr(
   recordTypeUse(expr.result());
   const auto receiver = typeOf(expr.receiver());
   const auto result = typeOf(expr.result());
+  std::vector<SemanticType> parameters;
+  for (const auto &parameter : expr.parameters()) {
+    validateType(parameter);
+    recordTypeUse(parameter);
+    parameters.push_back(typeOf(parameter));
+  }
   recordMemberRequirementReceiver(expr, receiver);
   if (diagnostics.size() != before || receiver == SemanticType::Unknown ||
       result == SemanticType::Unknown)
     return;
   if (containsOpenTypeParameter(receiver) ||
-      containsOpenTypeParameter(result)) {
+      containsOpenTypeParameter(result) ||
+      std::any_of(parameters.begin(), parameters.end(),
+                  containsOpenTypeParameter)) {
     if (analyzingDependentConstantCondition)
       constantConditionGenericDependency = true;
     return;
@@ -6339,8 +6405,9 @@ auto SemanticVisitor::Impl::visitMemberRequirementExpr(
   const bool satisfied =
       receiver.kind == SemanticType::Reference &&
       receiver.arguments.size() == 1 &&
-      readMemberRequirementSatisfied(receiver.arguments.front(),
-                                     expr.member().lexeme, result);
+      readMemberRequirementSatisfied(
+          receiver.arguments.front(), expr.member().lexeme, result, nullptr,
+          parameters, receiver.referenceAccess == AccessMode::Mutable);
   semanticModel.recordConstant(expr, ConstantValue{satisfied});
 }
 
@@ -6504,7 +6571,6 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
       !candidate.staticMember &&
       candidate.record().intrinsic == IntrinsicKind::None &&
       candidate.returnType == SemanticType::Void &&
-      candidate.requirements.empty() &&
       candidate.parameterTypes.size() == argumentTypes.size();
   const SemanticType *elementParameter =
       exactGenericShape && !candidate.parameterTypes.empty()

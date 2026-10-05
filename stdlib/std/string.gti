@@ -449,6 +449,11 @@ namespace std {
       return span<char>(this.data, size_t(0), this.count);
     }
 
+    /// Exclusively borrows characters without changing the string's length.
+    mutable_span<char> as_mutable_span() mut {
+      return mutable_span<char>(this.data, size_t(0), this.count);
+    }
+
     char& at(int index) {
       gti_internal::index_bounds_check(uint64_t(index), this.count);
       return gti_internal::prefix_storage_read(this.data, uint64_t(index));

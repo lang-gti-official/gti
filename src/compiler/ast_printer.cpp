@@ -127,8 +127,14 @@ void AstPrinter::visitLiteralExpr(const LiteralExpr &expr) {
 
 void AstPrinter::visitMemberRequirementExpr(const MemberRequirement &expr) {
   result = "(requires " + typeToString(expr.receiver()) + " " +
-           expr.binding().lexeme + " (" + expr.receiverUse().lexeme + "." +
-           expr.member().lexeme + ") " + typeToString(expr.result()) + ")";
+           expr.binding().lexeme;
+  for (std::size_t index = 0; index < expr.parameters().size(); ++index)
+    result += " " + typeToString(expr.parameters()[index]) + " " +
+              expr.bindings()[index].lexeme;
+  result += " (" + expr.receiverUse().lexeme + "." + expr.member().lexeme;
+  for (const auto &argument : expr.arguments())
+    result += " " + argument.lexeme;
+  result += ") " + typeToString(expr.result()) + ")";
 }
 
 void AstPrinter::visitLogicalExpr(const Logical &expr) {

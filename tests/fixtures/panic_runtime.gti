@@ -1,4 +1,5 @@
 #include <std/panic>
+#include <std/format>
 #include <std/functional>
 #include <std/string>
 #include <std/thread>
@@ -18,6 +19,13 @@ struct Guard {
 
 struct Uuid {
   int value;
+};
+class std::formatter<Uuid> {
+public:
+  expected<void, std::format_errc> format(Uuid& value,
+      mut std::string& output, std::format_spec& spec) {
+    return unexpected(std::format_errc::unsupported_argument);
+  }
 };
 
 int argument(int value) {
@@ -41,7 +49,7 @@ void untracked_boundary() {
 }
 
 [[noreturn, track_caller]]
-void generic_failure<T>(T value) {
+void generic_failure<T>(T value) requires std::formattable<T> {
   std::panic("generic {}", value);
 }
 

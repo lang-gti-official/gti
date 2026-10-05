@@ -1,5 +1,6 @@
 #include <std/string>
 #include <std/memory>
+#include <std/span>
 
 namespace gti_internal {
 [[no_transfer, no_share]] class file_handle {
@@ -33,6 +34,9 @@ int64_t gti_rt_write_stdout_bytes_v1(gti_internal::text_view value);
 int64_t gti_rt_write_stderr_bytes_v1(gti_internal::text_view value);
 int32_t gti_rt_flush_stdout_v1();
 int32_t gti_rt_flush_stderr_v1();
+int64_t gti_rt_write_file_some_v1(int64_t descriptor, const uint8_t* input, uint64_t length);
+int64_t gti_rt_write_stdout_some_v1(const uint8_t* input, uint64_t length);
+int64_t gti_rt_write_stderr_some_v1(const uint8_t* input, uint64_t length);
 int64_t gti_rt_read_stdin_bytes_v1(uint8_t* output, uint64_t capacity);
 int64_t gti_rt_open_file_v1(gti_internal::text_view path, uint32_t mode);
 int64_t gti_rt_read_file_v1(int64_t descriptor, uint8_t* output,
@@ -227,6 +231,44 @@ public:
       result.push_back(char(buffer[index]));
     }
     return std::move(result);
+  }
+
+  /// Reads into initialized caller-owned bytes; zero means EOF for a nonempty buffer.
+  expected<size_t, io_errc> read_some(mut mutable_span<uint8_t>& output) mut {
+    if (output.empty()) { return size_t(0); }
+    if (!this.handle.is_valid()) { return unexpected(io_errc::invalid_stream); }
+    size_t capacity = output.size();
+    mut int64_t count = -1;
+    unsafe {
+      count = gti_internal::runtime::gti_rt_read_file_v1(
+          this.handle.get(), &output[size_t(0)], uint64_t(capacity));
+    }
+    if (count < 0 || uint64_t(count) > capacity) {
+      return unexpected(io_errc::read_failed);
+    }
+    return size_t(count);
+  }
+
+  /// Writes at most one prefix; callers may retry the unconsumed suffix.
+  expected<size_t, io_errc> write_some(span<uint8_t>& input) mut {
+    if (input.empty()) { return size_t(0); }
+    if (!this.handle.is_valid()) { return unexpected(io_errc::invalid_stream); }
+    size_t length = input.size();
+    mut int64_t count = -1;
+    unsafe {
+      count = gti_internal::runtime::gti_rt_write_file_some_v1(
+          this.handle.get(), &input[size_t(0)], uint64_t(length));
+    }
+    if (count < 0 || uint64_t(count) > length) {
+      return unexpected(io_errc::write_failed);
+    }
+    return size_t(count);
+  }
+
+  /// File writes have no library buffer; this does not promise disk durability.
+  expected<void, io_errc> flush() mut {
+    if (!this.handle.is_valid()) { return unexpected(io_errc::invalid_stream); }
+    return;
   }
 
   /// Writes one complete counted byte sequence.

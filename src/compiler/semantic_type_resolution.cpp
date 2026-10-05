@@ -5795,16 +5795,6 @@ auto SemanticVisitor::Impl::resolveRequirements(
         valid = false;
         continue;
       }
-      if (!plainParameter && containsOpenTypeParameter(type)) {
-        report(argument.name.last(),
-               "Requires-clause arguments may be a visible generic type "
-               "parameter or a closed exact type; dependent compound "
-               "types are not supported.",
-               "GTI-S2049");
-        requirement.arguments.emplace_back(SemanticType::Unknown);
-        valid = false;
-        continue;
-      }
       requirement.arguments.emplace_back(type);
       recordTypeUse(argument);
     }
