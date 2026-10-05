@@ -4835,8 +4835,7 @@ int main() { return 0; }
              hasDiagnostic(invalid.diagnostics, "Unknown concept 'missing'") &&
              hasDiagnostic(invalid.diagnostics,
                            "Concept definition cycle involving") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "must name a visible type") &&
+             hasDiagnostic(invalid.diagnostics, "must name a visible type") &&
              hasDiagnostic(invalid.diagnostics,
                            "Duplicate declaration of 'duplicate'") &&
              hasDiagnostic(invalid.diagnostics,

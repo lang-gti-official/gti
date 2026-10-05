@@ -48,6 +48,15 @@ int32_t gti_rt_read_file_byte(int64_t descriptor);
 int64_t gti_rt_read_file_v1(int64_t descriptor, uint8_t *output,
                             uint64_t capacity);
 int64_t gti_rt_write_file_v1(int64_t descriptor, gti_c_string_view value);
+// One descriptor transfer, with EINTR retried. For a valid descriptor number,
+// zero length returns zero without probing the handle; otherwise success is
+// the exact prefix transferred and failure is -1.
+int64_t gti_rt_write_file_some_v1(int64_t descriptor, const uint8_t *input,
+                                  uint64_t length);
+// One serialized stdio submission. Empty input returns zero; otherwise success
+// is the accepted prefix and failure is -1. Flush reports later errors.
+int64_t gti_rt_write_stdout_some_v1(const uint8_t *input, uint64_t length);
+int64_t gti_rt_write_stderr_some_v1(const uint8_t *input, uint64_t length);
 int64_t gti_rt_seek_file_v1(int64_t descriptor, int64_t offset,
                             gti_file_seek_origin_v1 origin);
 int32_t gti_rt_close_file(int64_t descriptor);

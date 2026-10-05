@@ -689,6 +689,14 @@ entry; it is not inferred from an emitted C++ reference field. See
 [`41-owner-dependencies.gti`](../../examples/41-owner-dependencies.gti) for a
 runnable shared factory/generic relay and an exclusive write view.
 
+A single-path shared carrier may retain a read-only child of an exclusive
+carrier or mutable reference. This downgrades access for that child, not for
+the parent: the exclusive parent remains suspended until every shared copy of
+the child has ended. Moving the parent or changing the original owner while
+any such copy remains live is rejected. A mutable range traversing a borrowed
+carrier additionally retains its receiver's physical lifetime and underlying
+stored dependency; neither can end while the iterator remains live.
+
 Nesting uses the same rule, rather than an exception for a particular library
 type. For example, `std::pair<Iterator<int>, bool>` may carry one iterator and
 an insertion flag, and another nominal wrapper may contain that pair. The
@@ -720,6 +728,11 @@ and the dependencies it borrows alive. Moving or replacing the service while
 the reference remains live is rejected even if all external owners survive.
 The same rule applies to unrelated user-defined wrappers and concrete generic
 or lambda reference parameters; it does not recognize library names.
+Constructors storing such a reference retain both dependencies too. Adapters
+may be nested: borrowing an adapter retains every intermediate object's
+lifetime as well as its external owners. Shared access at any layer cannot be
+upgraded by a mutable outer adapter. Constructor failure releases these loans
+only after rolling back already-initialized fields.
 
 Reference access and stored-field access are independent. A mutable reference
 to a shared view can mutate its own eligible fields, but cannot turn a stored

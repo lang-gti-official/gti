@@ -1,0 +1,27 @@
+#include <std/span>
+#include <std/vector>
+
+void increment(mut std::mutable_span<int>& elements) {
+  for (mut int& element : elements) { element += 1; }
+}
+
+int main() {
+  mut std::vector<int> values = {10, 20, 30, 40};
+  {
+    mut auto whole = values.as_mutable_span();
+    {
+      mut auto middle = whole.subspan(std::size_t(1), std::size_t(2));
+      increment(middle);
+      // Mutating whole or resizing values here would invalidate middle and
+      // is rejected by the compiler.
+    }
+    {
+      auto read_only = whole.as_span();
+      std::println(read_only[std::size_t(1)]); // 21
+      // whole cannot be mutated while read_only remains live.
+    }
+    whole[std::size_t(0)] = 11;
+  }
+  std::println(values[std::size_t(0)]); // 11
+  return 0;
+}

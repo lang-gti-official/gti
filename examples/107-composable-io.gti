@@ -1,0 +1,35 @@
+#include <std/io>
+#include <std/cstdio>
+#include <std/string>
+
+// This parser accepts any checked reader, including files and custom transports.
+expected<std::size_t, std::io::error> count_lines<R>(mut R& input)
+    requires std::io::reader<R> {
+  mut std::size_t count = 0;
+  mut std::string line{};
+  while (true) {
+    auto result = std::io::getline(input, line);
+    if (!result) {
+      if (result.error().code == std::io_errc::end_of_file) { return count; }
+      return unexpected(result.error());
+    }
+    count++;
+  }
+}
+
+int main() {
+  std::byte_buffer bytes = {uint8_t(97), uint8_t(10), uint8_t(98)};
+  auto view = bytes.as_span();
+  mut std::io::memory_reader source{view};
+  mut std::io::buffered_reader<std::io::memory_reader> input{source, std::size_t(2)};
+  auto lines = count_lines(input);
+  if (!lines) { return 1; }
+  std::println(lines.value()); // 2, including the final unterminated line.
+
+  mut std::io::stdout_writer terminal{};
+  mut std::io::buffered_writer<std::io::stdout_writer> output{terminal};
+  auto written = std::io::write_all(output, view);
+  if (!written) { return 2; }
+  auto flushed = output.flush(); // Destruction alone does not flush.
+  return flushed ? 0 : 3;
+}

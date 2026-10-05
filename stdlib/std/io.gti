@@ -1,0 +1,288 @@
+#include <std/cstdio>
+#include <std/span>
+#include <std/vector>
+#include <std/string>
+
+namespace std {
+/// Reusable, initialized binary storage. Capacity beyond size is never exposed.
+using byte_buffer = vector<uint8_t>;
+
+namespace io {
+concept reader<R> = requires(mut R& stream, mut mutable_span<uint8_t>& output) {
+  { stream.read_some(output) } -> expected<std::size_t, std::io_errc>;
+};
+
+concept writer<W> = requires(mut W& stream, span<uint8_t>& input) {
+  { stream.write_some(input) } -> expected<std::size_t, std::io_errc>;
+} && requires(mut W& stream) {
+  { stream.flush() } -> expected<void, std::io_errc>;
+};
+
+/// Failure of a multi-transfer operation, including its committed prefix.
+struct error {
+  io_errc code;
+  size_t transferred;
+  error(io_errc reason, size_t count) : code(reason), transferred(count) {}
+};
+
+/// Fill the destination or report EOF/error and the exact prefix already read.
+expected<size_t, error> read_exact<R>(mut R& source, mut mutable_span<uint8_t>& output)
+    requires reader<R> {
+  size_t length = output.size();
+  mut size_t done = 0;
+  while (done < length) {
+    mut auto suffix = output.subspan(done, length - done);
+    auto read = source.read_some(suffix);
+    if (!read) { return unexpected(error(read.error(), done)); }
+    size_t count = read.value();
+    if (count > length - done) { return unexpected(error(io_errc::read_failed, done)); }
+    if (count == 0) { return unexpected(error(io_errc::end_of_file, done)); }
+    done += count;
+  }
+  return done;
+}
+
+/// Submit every byte, retaining exact progress if a later write fails.
+expected<size_t, error> write_all<W>(mut W& destination, span<uint8_t>& input)
+    requires writer<W> {
+  size_t length = input.size();
+  mut size_t done = 0;
+  while (done < length) {
+    auto suffix = input.subspan(done, length - done);
+    auto written = destination.write_some(suffix);
+    if (!written) { return unexpected(error(written.error(), done)); }
+    size_t count = written.value();
+    if (count == 0 || count > length - done) {
+      return unexpected(error(io_errc::write_failed, done));
+    }
+    done += count;
+  }
+  return done;
+}
+
+/// Read from an immutable memory region without allocating or copying ownership.
+class memory_reader {
+  span<uint8_t> bytes;
+  mut size_t position = 0;
+public:
+  memory_reader(span<uint8_t> source) : bytes(source) {}
+  size_t tell() { return this.position; }
+  expected<size_t, io_errc> read_some(mut mutable_span<uint8_t>& output) mut {
+    mut size_t count = this.bytes.size() - this.position;
+    if (count > output.size()) { count = output.size(); }
+    for (mut size_t i = 0; i < count; i++) {
+      output[i] = this.bytes[this.position + i];
+    }
+    this.position += count;
+    return count;
+  }
+};
+
+/// Read/write cursor over fixed-size writable memory; writes never grow it.
+class memory_stream {
+  mut mutable_span<uint8_t> bytes;
+  mut size_t position = 0;
+public:
+  memory_stream(mutable_span<uint8_t> storage) : bytes(std::move(storage)) {}
+  size_t tell() { return this.position; }
+  expected<void, io_errc> seek(size_t position) mut {
+    if (position > this.bytes.size()) { return unexpected(io_errc::seek_failed); }
+    this.position = position;
+    return;
+  }
+  expected<size_t, io_errc> read_some(mut mutable_span<uint8_t>& output) mut {
+    mut size_t count = this.bytes.size() - this.position;
+    if (count > output.size()) { count = output.size(); }
+    for (mut size_t i = 0; i < count; i++) {
+      output[i] = this.bytes[this.position + i];
+    }
+    this.position += count;
+    return count;
+  }
+  expected<size_t, io_errc> write_some(span<uint8_t>& input) mut {
+    mut size_t count = this.bytes.size() - this.position;
+    if (count > input.size()) { count = input.size(); }
+    if (count == 0 && !input.empty()) { return unexpected(io_errc::write_failed); }
+    for (mut size_t i = 0; i < count; i++) {
+      this.bytes[this.position + i] = input[i];
+    }
+    this.position += count;
+    return count;
+  }
+  expected<void, io_errc> flush() mut { return; }
+};
+
+/// A non-owning adapter for process standard input.
+class stdin_reader {
+public:
+  expected<size_t, io_errc> read_some(mut mutable_span<uint8_t>& output) mut {
+    if (output.empty()) { return size_t(0); }
+    size_t capacity = output.size();
+    mut int64_t count = -1;
+    unsafe {
+      count = gti_internal::runtime::gti_rt_read_stdin_bytes_v1(
+          &output[size_t(0)], uint64_t(capacity));
+    }
+    if (count < 0 || uint64_t(count) > capacity) { return unexpected(io_errc::read_failed); }
+    return size_t(count);
+  }
+};
+
+class stdout_writer {
+public:
+  expected<size_t, io_errc> write_some(span<uint8_t>& input) mut {
+    if (input.empty()) { return size_t(0); }
+    size_t length = input.size();
+    mut int64_t count = -1;
+    unsafe {
+      count = gti_internal::runtime::gti_rt_write_stdout_some_v1(
+          &input[size_t(0)], uint64_t(length));
+    }
+    if (count < 0 || uint64_t(count) > length) { return unexpected(io_errc::write_failed); }
+    return size_t(count);
+  }
+  expected<void, io_errc> flush() mut { return try_flush_stdout(); }
+};
+
+class stderr_writer {
+public:
+  expected<size_t, io_errc> write_some(span<uint8_t>& input) mut {
+    if (input.empty()) { return size_t(0); }
+    size_t length = input.size();
+    mut int64_t count = -1;
+    unsafe {
+      count = gti_internal::runtime::gti_rt_write_stderr_some_v1(
+          &input[size_t(0)], uint64_t(length));
+    }
+    if (count < 0 || uint64_t(count) > length) { return unexpected(io_errc::write_failed); }
+    return size_t(count);
+  }
+  expected<void, io_errc> flush() mut { return try_flush_stderr(); }
+};
+
+/// Borrows a reader exclusively and amortizes small reads over one owned buffer.
+class buffered_reader<R> {
+  mut R& source;
+  mut byte_buffer storage;
+  mut size_t start = 0;
+  mut size_t finish = 0;
+public:
+  buffered_reader(mut R& source, size_t capacity = size_t(4096))
+      requires reader<R> : source(source), storage(byte_buffer(capacity)) {}
+  size_t available() { return this.finish - this.start; }
+  expected<size_t, io_errc> read_some(mut mutable_span<uint8_t>& output) mut
+      requires reader<R> {
+    if (output.empty()) { return size_t(0); }
+    if (this.storage.empty()) { return unexpected(io_errc::invalid_stream); }
+    if (this.start == this.finish) {
+      size_t capacity = this.storage.size();
+      mut auto buffer = this.storage.as_mutable_span();
+      auto result = this.source.read_some(buffer);
+      if (!result) { return unexpected(result.error()); }
+      if (result.value() > capacity) { return unexpected(io_errc::read_failed); }
+      this.start = 0;
+      this.finish = result.value();
+    }
+    mut size_t count = this.finish - this.start;
+    if (count > output.size()) { count = output.size(); }
+    for (mut size_t i = 0; i < count; i++) {
+      output[i] = this.storage[this.start + i];
+    }
+    this.start += count;
+    return count;
+  }
+};
+
+/// Explicitly flushed output buffering. Destruction discards pending bytes;
+/// call flush() and handle its result before releasing the adapter.
+class buffered_writer<W> {
+  mut W& destination;
+  mut byte_buffer storage;
+  mut size_t start = 0;
+  mut size_t finish = 0;
+public:
+  buffered_writer(mut W& destination, size_t capacity = size_t(4096))
+      requires writer<W> : destination(destination), storage(byte_buffer(capacity)) {}
+  size_t pending() { return this.finish - this.start; }
+  expected<void, io_errc> flush() mut requires writer<W> {
+    while (this.start < this.finish) {
+      auto buffer = this.storage.as_span();
+      auto suffix = buffer.subspan(this.start, this.finish - this.start);
+      auto result = this.destination.write_some(suffix);
+      if (!result) { return unexpected(result.error()); }
+      size_t count = result.value();
+      if (count == 0 || count > this.finish - this.start) {
+        return unexpected(io_errc::write_failed);
+      }
+      this.start += count;
+    }
+    this.start = 0;
+    this.finish = 0;
+    return this.destination.flush();
+  }
+  expected<size_t, io_errc> write_some(span<uint8_t>& input) mut requires writer<W> {
+    if (input.empty()) { return size_t(0); }
+    if (this.storage.empty()) { return unexpected(io_errc::invalid_stream); }
+    if (this.finish == this.storage.size()) {
+      auto flushed = this.flush();
+      if (!flushed) { return unexpected(flushed.error()); }
+    }
+    mut size_t count = this.storage.size() - this.finish;
+    if (count > input.size()) { count = input.size(); }
+    for (mut size_t i = 0; i < count; i++) {
+      this.storage[this.finish + i] = input[i];
+    }
+    this.finish += count;
+    return count;
+  }
+};
+
+/// Read a byte-delimited line, clearing the destination first. The delimiter
+/// is consumed but not stored; a final unterminated line succeeds.
+expected<size_t, error> getline<R>(mut R& source, mut string& text, uint8_t delimiter = uint8_t(10))
+    requires reader<R> {
+  text.clear();
+  mut byte_buffer storage{size_t(1)};
+  mut auto byte = storage.as_mutable_span();
+  mut size_t done = 0;
+  while (true) {
+    auto read = source.read_some(byte);
+    if (!read) { return unexpected(error(read.error(), done)); }
+    size_t count = read.value();
+    if (count == 0) {
+      if (done == 0) { return unexpected(error(io_errc::end_of_file, done)); }
+      return done;
+    }
+    if (count != 1) { return unexpected(error(io_errc::read_failed, done)); }
+    uint8_t value = byte[size_t(0)];
+    if (value == delimiter) { return done; }
+    text.push_back(char(value));
+    done++;
+  }
+}
+
+/// Copy until EOF using caller-supplied scratch storage. Errors count bytes
+/// written, not bytes read ahead; neither stream is rewound on failure.
+expected<size_t, error> copy<R, W>(mut R& source, mut W& destination,
+                                  mut mutable_span<uint8_t>& scratch)
+    requires reader<R> && writer<W> {
+  if (scratch.empty()) { return unexpected(error(io_errc::read_failed, size_t(0))); }
+  size_t capacity = scratch.size();
+  mut size_t done = 0;
+  while (true) {
+    auto read = source.read_some(scratch);
+    if (!read) { return unexpected(error(read.error(), done)); }
+    size_t count = read.value();
+    if (count == 0) { return done; }
+    if (count > capacity) { return unexpected(error(io_errc::read_failed, done)); }
+    auto view = scratch.as_span();
+    auto prefix = view.first(count);
+    auto written = write_all<W>(destination, prefix);
+    if (!written) {
+      return unexpected(error(written.error().code, done + written.error().transferred));
+    }
+    done += written.value();
+  }
+}
+}
+}
