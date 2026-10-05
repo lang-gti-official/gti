@@ -121,6 +121,10 @@ struct CompilationResult {
   std::optional<std::string> preOptimizationMir;
   std::optional<std::string> postOptimizationMir;
   std::optional<OptimizationReport> optimizationReport;
+  // Developer evidence, separate from the backend-neutral user diagnostic.
+  // The CLI preserves this text in a log; library callers may inspect it
+  // without depending on the selected backend's spelling in a diagnostic.
+  std::optional<std::string> backendFailureDetails;
 
   [[nodiscard]] bool succeeded() const {
     return status == CompilationStatus::Success && artifact.has_value();

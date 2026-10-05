@@ -1382,7 +1382,7 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
                                    .size = generated->size()};
   if (generatedDigest != metadata->generated) {
     return {.status = CacheLookupStatus::Corrupt,
-            .detail = "generated C++ digest does not match metadata"};
+            .detail = "backend representation digest does not match metadata"};
   }
   const std::optional<FileDigest> executableDigest =
       digestFile(executablePath, detail);
@@ -1408,7 +1408,7 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
           .generated = std::move(*generated),
           .executableDigest = *executableDigest,
           .executablePermissions = executablePermissions,
-          .detail = "verified generated C++ and executable digests"};
+          .detail = "verified backend representation and executable digests"};
 }
 
 bool writeBinaryFile(const std::filesystem::path &path,
@@ -2461,7 +2461,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
       result.status = ExecutableBuildStatus::ArtifactPathConflict;
       result.driverDiagnostic =
           "gti: --build-report must not overwrite the executable, generated "
-          "C++, or compiler executable";
+          "backend representation, or compiler executable";
       return result;
     }
   }
@@ -2552,7 +2552,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
   }
   if (const std::optional<std::string> diagnostic =
           loadedSourceCollisionDiagnostic(request.generatedSource(),
-                                          "generated C++ output",
+                                          "backend representation output",
                                           compilationInputs.sources)) {
     result.status = ExecutableBuildStatus::ArtifactPathConflict;
     result.driverDiagnostic = diagnostic;
@@ -2696,7 +2696,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
                                        lookup.generated, writeError)) {
               result.artifactWriteStatus = ArtifactWriteStatus::WriteFailure;
               result.driverDiagnostic = "gti: failed to restore cached "
-                                        "generated C++: " +
+                                        "backend representation: " +
                                         writeError;
               result.status = ExecutableBuildStatus::GeneratedArtifactFailure;
               return result;
@@ -2707,9 +2707,9 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
             std::filesystem::remove(request.generatedSource(), removeError);
             if (removeError) {
               result.artifactWriteStatus = ArtifactWriteStatus::WriteFailure;
-              result.driverDiagnostic =
-                  "gti: failed to remove generated C++ after cache hit: " +
-                  removeError.message();
+              result.driverDiagnostic = "gti: failed to remove backend "
+                                        "representation after cache hit: " +
+                                        removeError.message();
               result.status = ExecutableBuildStatus::GeneratedArtifactFailure;
               return result;
             }
@@ -2744,6 +2744,10 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
   result.compilation = compileToCpp(request.compilation(),
                                     std::move(compilationInputs), progress);
   if (!result.compilation.succeeded()) {
+    if (result.compilation.backendFailureDetails) {
+      result.backendDiagnosticLog =
+          writeDiagnosticLog(*result.compilation.backendFailureDetails);
+    }
     result.status = ExecutableBuildStatus::CompilationFailure;
     return result;
   }
@@ -2757,9 +2761,9 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
                              result.compilation.artifact->contents,
                              generatedWriteError)) {
     result.artifactWriteStatus = ArtifactWriteStatus::WriteFailure;
-    result.driverDiagnostic = "gti: failed to publish generated C++ '" +
-                              request.generatedSource().string() +
-                              "': " + generatedWriteError;
+    result.driverDiagnostic =
+        "gti: failed to publish backend representation '" +
+        request.generatedSource().string() + "': " + generatedWriteError;
     result.status = ExecutableBuildStatus::GeneratedArtifactFailure;
     return result;
   }
@@ -2983,6 +2987,18 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
     generatedArtifact.keep();
     result.generatedSourceRetained = true;
     result.status = ExecutableBuildStatus::NativeCompilerFailure;
+    std::ostringstream evidence;
+    evidence << "GTI backend build failure\nBackend representation: C++\n"
+             << "Stage: native compilation and linking\nRepresentation: "
+             << request.generatedSource().string()
+             << "\nCommand: " << renderCommand(result.nativeCommand)
+             << "\nExit code: " << result.nativeProcess->exitCode << '\n';
+    if (result.nativeProcess->driverDiagnostic) {
+      evidence << "Driver diagnostic: "
+               << *result.nativeProcess->driverDiagnostic << '\n';
+    }
+    evidence << "Tool output:\n" << result.nativeProcess->output;
+    result.backendDiagnosticLog = writeDiagnosticLog(evidence.str());
     return result;
   }
 

@@ -420,10 +420,15 @@ void testBackendExceptionBoundary() {
              standardDiagnostic->primary.source == canonicalSource.string() &&
              standardDiagnostic->primary.start == 0 &&
              standardDiagnostic->primary.end == 0 &&
-             standardDiagnostic->message.find("throwing-test") !=
+             standardDiagnostic->message.find("backend failed") !=
                  std::string::npos &&
-             standardDiagnostic->message.find("deliberate backend failure") !=
+             standardDiagnostic->message.find("throwing-test") ==
                  std::string::npos &&
+             standardFailure.backendFailureDetails &&
+             standardFailure.backendFailureDetails->find("throwing-test") !=
+                 std::string::npos &&
+             standardFailure.backendFailureDetails->find(
+                 "deliberate backend failure") != std::string::npos &&
              !standardDiagnostic->hints.empty() &&
              standardFailure.sources.find(canonicalSource.string()) != nullptr,
          "a standard backend exception should retain the source snapshot and "
@@ -442,8 +447,9 @@ void testBackendExceptionBoundary() {
                  lang::driver::CompilationStatus::BackendFailure &&
              !unknownFailure.artifact &&
              unknownDiagnostic != unknownFailure.diagnostics.end() &&
-             unknownDiagnostic->message.find("non-standard exception") !=
-                 std::string::npos &&
+             unknownFailure.backendFailureDetails &&
+             unknownFailure.backendFailureDetails->find(
+                 "non-standard exception") != std::string::npos &&
              unknownFailure.sources.find(canonicalSource.string()) != nullptr,
          "a non-standard backend exception should use the same structured "
          "driver failure boundary");
@@ -460,10 +466,11 @@ void testBackendExceptionBoundary() {
              unnamedFailure.status ==
                  lang::driver::CompilationStatus::BackendFailure &&
              unnamedDiagnostic != unnamedFailure.diagnostics.end() &&
-             unnamedDiagnostic->message.find("backend 'unknown'") !=
+             unnamedFailure.backendFailureDetails &&
+             unnamedFailure.backendFailureDetails->find("Backend: unknown") !=
                  std::string::npos &&
-             unnamedDiagnostic->message.find("deliberate backend failure") !=
-                 std::string::npos,
+             unnamedFailure.backendFailureDetails->find(
+                 "deliberate backend failure") != std::string::npos,
          "an exception from backend name metadata should not defeat the "
          "generation exception boundary");
 
@@ -483,7 +490,7 @@ void testBackendExceptionBoundary() {
              unsupportedDiagnostic->phase == lang::DiagnosticPhase::Backend &&
              unsupportedDiagnostic->primary.source ==
                  canonicalSource.string() &&
-             unsupportedDiagnostic->message.find("unsupported-test") !=
+             unsupportedDiagnostic->message.find("unsupported-test") ==
                  std::string::npos &&
              unsupportedDiagnostic->message.find(
                  "missing bounded test capability") != std::string::npos &&
@@ -1013,6 +1020,60 @@ void testOrderedExecutableBuildCommand() {
          "executable builds should place compiled C objects before the runtime "
          "and authoritative ordered project operands without duplicating split "
          "metadata categories");
+  expect(result.backendDiagnosticLog &&
+             result.backendDiagnosticLog->succeeded() &&
+             readFile(result.backendDiagnosticLog->path).find("Command:") !=
+                 std::string::npos &&
+             readFile(result.backendDiagnosticLog->path)
+                     .find("missing-native-compiler") != std::string::npos &&
+             result.generatedSourceRetained,
+         "a native invocation failure should preserve its exact command, "
+         "driver failure and representation as developer evidence");
+  if (result.backendDiagnosticLog && result.backendDiagnosticLog->succeeded()) {
+    std::filesystem::remove(result.backendDiagnosticLog->path);
+    std::filesystem::remove(result.backendDiagnosticLog->path.parent_path());
+  }
+}
+
+void testDiagnosticLogs() {
+  constexpr std::string_view evidence("raw\0evidence", 12);
+  const auto first = lang::driver::writeDiagnosticLog(evidence);
+  const auto second = lang::driver::writeDiagnosticLog("other evidence");
+  expect(
+      first.succeeded() && second.succeeded() && first.path != second.path &&
+          readFile(first.path) == evidence &&
+          readFile(second.path) == "other evidence",
+      "diagnostic logs should preserve exact bytes in distinct retained paths");
+#if !defined(_WIN32)
+  if (first.succeeded()) {
+    const auto otherPermissions =
+        std::filesystem::perms::group_all | std::filesystem::perms::others_all;
+    expect(
+        (std::filesystem::status(first.path).permissions() &
+         otherPermissions) == std::filesystem::perms::none &&
+            (std::filesystem::status(first.path.parent_path()).permissions() &
+             otherPermissions) == std::filesystem::perms::none,
+        "backend evidence directories and logs should be owner-only");
+  }
+  TemporaryDirectory temporary;
+  const auto blocker = temporary.root() / "not-a-directory";
+  expect(writeFile(blocker, "preserve this file"),
+         "the log-failure fixture should be writable");
+  {
+    ScopedEnvironment badTemporaryRoot("TMPDIR", blocker.string());
+    const auto failed = lang::driver::writeDiagnosticLog("unsaved evidence");
+    expect(!failed.succeeded() && failed.path.empty() && failed.error &&
+               readFile(blocker) == "preserve this file",
+           "log preservation failure must report failure without an invented "
+           "saved path or overwriting unrelated files");
+  }
+#endif
+  for (const auto *log : {&first, &second}) {
+    if (log->succeeded()) {
+      std::filesystem::remove(log->path);
+      std::filesystem::remove(log->path.parent_path());
+    }
+  }
 }
 
 void testManagedOutputSafety() {
@@ -2921,6 +2982,7 @@ int main(int argc, char *argv[]) {
   testNativeCCompilerFailure();
   testNativeCppCompilerFailure();
   testOrderedExecutableBuildCommand();
+  testDiagnosticLogs();
   testManagedOutputSafety();
   testWholeProgramBuildCache(std::filesystem::absolute(argv[0]));
   testNativeDependencyDiscoveryPrimitives();

@@ -2,6 +2,33 @@
 
 ## Live build progress
 
+The backend-neutral presentation regression covers default emission/native
+rows, kept-artifact summaries, unchanged legacy input spellings, and private
+saved native diagnostics instead of raw default-terminal replay. The live TTY
+probe verifies the same failure contract after its heartbeat. `driver_pipeline`
+checks generic backend exception messages, separately retained exact backend
+details, private binary-safe unique log writes, log-write failures without
+overwriting unrelated files, and native command/failure evidence. Existing CLI
+and project workflows cover preserved prior artifacts and actionable
+handwritten-native-source errors. No language or emitted-artifact rule changes.
+Developer failure capture and feature-interaction campaigns explicitly request
+verbose compiler evidence, retaining the real cause in their existing raw logs
+and signatures. Capture recognizes both legacy and neutral native-failure
+headings; model tests distinguish backend faults sharing the same user summary.
+Generated-program execution never receives the compiler verbosity option.
+The source-defined build-script regression retains a frontend warning alongside
+its later backend build error and saved-evidence hints, rather than allowing the
+warning-only snapshot to conceal the actual failure.
+
+The 0.372.1 backend-output change passes sixteen selected compiler, driver,
+CLI/colour/progress, project/cache, debug-info, release-policy, QA and LSP gates
+with a Release/Ninja compiler on macOS arm64 (AppleClang 21, LLVM 22.1.8).
+The final failure-capture/model/progress rerun also passes. All eleven clean
+installed-library consumers and the isolated installed CLI progress regression
+pass, including the source-warning/native-failure case. All 416 first-party
+C/C++ files pass clang-format 22.1.8. This is focused local evidence, not a claim
+of full-suite or cross-platform execution; the active installation is unchanged.
+
 `driver_pipeline` checks exact begin/end phase order, loaded/parsed unit counts,
 semantic-failure short circuiting, balanced lifetimes, and byte-identical emitted
 artifacts with and without an observer. `cli_progress` covers default and plain

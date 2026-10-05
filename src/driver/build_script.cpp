@@ -525,10 +525,17 @@ std::optional<std::vector<std::string>> buildScriptCommand(
                           .outputRoot =
                               project.workspaceRoot() / "build" / "gti"}));
   if (!built.succeeded()) {
-    if (!built.compilation.diagnostics.empty()) {
+    if (!built.compilation.succeeded() &&
+        !built.compilation.diagnostics.empty()) {
       result.diagnosticSources = built.compilation.sources;
       result.diagnostics = built.compilation.diagnostics;
     } else {
+      // Source warnings must not conceal a later backend/native failure.
+      // Preserve them, then add the build failure's own error and evidence.
+      if (!built.compilation.diagnostics.empty()) {
+        result.diagnosticSources = built.compilation.sources;
+        result.diagnostics = built.compilation.diagnostics;
+      }
       Diagnostic diagnostic =
           scriptDiagnostic(script, "GTI-B2003",
                            "Failed to compile GTI build script for '" +
@@ -536,10 +543,30 @@ std::optional<std::vector<std::string>> buildScriptCommand(
       if (built.driverDiagnostic) {
         diagnostic.hints.push_back(*built.driverDiagnostic);
       }
-      if (built.nativeProcess && !built.nativeProcess->output.empty()) {
+      if (built.nativeProcess && !built.nativeProcess->output.empty() &&
+          (options.verbose || !built.backendDiagnosticLog ||
+           !built.backendDiagnosticLog->succeeded())) {
         diagnostic.hints.push_back(built.nativeProcess->output);
       }
       result.diagnostics.push_back(std::move(diagnostic));
+    }
+    Diagnostic &diagnostic = result.diagnostics.back();
+    if (built.generatedSourceRetained) {
+      diagnostic.hints.push_back("Backend 'c++' representation saved at " +
+                                 built.generatedSource.string());
+    }
+    if (built.backendDiagnosticLog) {
+      diagnostic.hints.push_back(
+          built.backendDiagnosticLog->succeeded()
+              ? "Backend diagnostics saved at " +
+                    built.backendDiagnosticLog->path.string()
+              : "Failed to save backend diagnostics: " +
+                    built.backendDiagnosticLog->error.message());
+    }
+    if (built.compilation.backendFailureDetails &&
+        (options.verbose || !built.backendDiagnosticLog ||
+         !built.backendDiagnosticLog->succeeded())) {
+      diagnostic.hints.push_back(*built.compilation.backendFailureDetails);
     }
     return std::nullopt;
   }

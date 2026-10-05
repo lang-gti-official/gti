@@ -94,13 +94,24 @@ def compiler_failure(observed: Observation) -> dict[str, Any] | None:
     if any(marker.casefold() in text.casefold() for marker in INTERNAL_FAILURE_MARKERS):
         # IDs and literal values can change while shrinking the same compiler
         # invariant. Preserve the diagnostic reason, not incidental numbers.
-        reason = normalize_reason(code[2]) if code else "internal failure"
+        detail = re.search(r"^Detail:[ \t]*(.+)$", text, re.MULTILINE)
+        cause = code[2] if code else "internal failure"
+        if code and code[1] == "GTI-B0001" and detail:
+            cause = detail[1]
+        reason = normalize_reason(cause)
         return {"kind": "internal", "stage": observed.stage,
                 "code": code[1] if code else None, "reason": reason}
     if observed.status != 0:
+        reason = normalize_reason(code[2]) if code else text.strip()[:300]
+        if not code and "gti: backend diagnostics:\n" in text:
+            output = text.split("gti: backend diagnostics:\n", 1)[1]
+            output = output.split("gti: backend failed while compiling and linking", 1)[0]
+            error = re.search(r"\berror:[ \t]*([^\n]+)", output)
+            # Do not let progress/argv paths replace the native tool's cause.
+            reason = normalize_reason(error[1] if error else output.strip()[:300])
         return {"kind": "rejected-valid" if code else "build-failed",
                 "stage": observed.stage, "code": code[1] if code else None,
-                "reason": normalize_reason(code[2]) if code else text.strip()[:300]}
+                "reason": reason}
     return None
 
 
@@ -129,7 +140,9 @@ def probe(case: InteractionCase, gti: str, cxx: str, root: Path, *,
     executable = root / ("program.exe" if sys.platform == "win32" else "program")
     optimization, standard = configuration
     command = compile_command(gti, cxx, source, executable, optimization, standard)
-    command.append("--keep-cpp")
+    # Developer evidence must retain the real backend reason/tool output,
+    # rather than classifying every neutral backend summary as the same bug.
+    command.extend(["--keep-cpp", "--verbose"])
     records: list[Observation] = []
     built = execute(command, "build", timeout, root, records)
     signature = compiler_failure(built)
@@ -164,7 +177,7 @@ def validate_negative_controls(gti: str, timeout: int, root: Path) -> int:
     for name, (source, code) in negative_controls().items():
         path = root / f"{name}.gti"
         path.write_text(source, encoding="utf-8")
-        observed = execute([gti, str(path), "--emit-mir", "-o", str(root / f"{name}.mir")],
+        observed = execute([gti, str(path), "--emit-mir", "--verbose", "-o", str(root / f"{name}.mir")],
                            "negative", timeout, root, records)
         failure = compiler_failure(observed)
         if (failure is None or failure.get("kind") != "rejected-valid"

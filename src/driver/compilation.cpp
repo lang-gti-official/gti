@@ -101,13 +101,17 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
         SourceSpan{entry == nullptr ? request.entry().string()
                                     : entry->path.string(),
                    0, 0, 1},
-        "Internal compiler error: backend '" + backendName +
-            "' failed while generating an artifact: " + std::move(detail));
+        "Internal compiler error: backend failed while generating a "
+        "representation.");
     diagnostic.hints.emplace_back(
         "Report this as a GTI compiler bug and include this diagnostic, the "
         "GTI version, selected target, optimization level, and a reduced "
-        "source input when possible.");
+        "source input when possible, together with the saved backend "
+        "diagnostics.");
     result.status = CompilationStatus::BackendFailure;
+    result.backendFailureDetails = "Backend: " + backendName +
+                                   "\nStage: representation generation\n" +
+                                   "Detail: " + detail + "\n";
     result.sources = std::move(frontend.sources);
     result.diagnostics = std::move(frontend.diagnostics);
     result.diagnostics.emplace_back(std::move(diagnostic));
@@ -121,8 +125,8 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
                        SourceSpan{entry == nullptr ? request.entry().string()
                                                    : entry->path.string(),
                                   0, 0, 1},
-                       "Backend '" + backendName +
-                           "' does not yet support this valid GTI program: " +
+                       "The selected backend does not yet support this valid "
+                       "GTI program: " +
                            std::move(detail));
     result.status = CompilationStatus::BackendFailure;
     result.sources = std::move(frontend.sources);

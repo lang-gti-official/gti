@@ -3092,11 +3092,19 @@ def main():
             ],
             9,
         )
-        assert "gti: native C++ compiler diagnostics:" in native_failure.stderr
-        assert "native compiler rejection" in native_failure.stderr
+        assert "backend failed while compiling and linking" in native_failure.stderr
+        assert "native compiler rejection" not in native_failure.stderr
+        diagnostics_prefix = "gti: backend diagnostics saved at "
+        diagnostics_line = next(line for line in native_failure.stderr.splitlines()
+                                if line.startswith(diagnostics_prefix))
+        diagnostics_log = pathlib.Path(diagnostics_line.removeprefix(diagnostics_prefix))
+        assert "native compiler rejection" in diagnostics_log.read_text()
+        assert "Command:" in diagnostics_log.read_text()
+        diagnostics_log.unlink()
+        diagnostics_log.parent.rmdir()
         assert failed_output.read_text(encoding="utf-8") == "previous artifact\n"
         assert not list(root.glob(".native-failure.gti-stage-*"))
-        retained_prefix = "gti: generated C++ retained at "
+        retained_prefix = "gti: backend 'c++' representation saved at "
         retained_line = next(
             line
             for line in native_failure.stderr.splitlines()
