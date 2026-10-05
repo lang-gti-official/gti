@@ -2210,7 +2210,7 @@ void testDependencyLockModel() {
                result.diagnostics.front().code == "GTI-B1702",
            std::string(why));
   };
-  rejects("lock-version = 2\n", "an unsupported lock version is rejected");
+  rejects("lock-version = 3\n", "an unsupported lock version is rejected");
   rejects("lock-version = 1\nmystery = true\n",
           "unknown lock fields are rejected");
   rejects("lock-version = 1\n[[package]]\nname = \"a\"\nversion = \"1\"\n"

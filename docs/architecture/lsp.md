@@ -488,7 +488,10 @@ the nearest workspace member/package, the default profile's analysis
 configuration, and the exact `PackageSourceRoot` closure used by `gti check`.
 Package angle includes therefore use only declared direct aliases, including
 already-materialized checksum-verified Git dependencies. Resolution runs no
-process, performs no fetch or build, and creates no project state. A missing
+process, performs no fetch or build, and creates no project state. Registry
+dependencies use the same verified cached closure, logical source identities
+and exact lock edges; no version-discovery or archive request is made by editor
+analysis. A missing
 manifest preserves standalone analysis; a malformed, unlocked, unmaterialized,
 or checksum-mismatched project publishes the driver's structured diagnostics
 and never invents a partial package graph.

@@ -3,7 +3,10 @@
 Status: Current implementation. Local and pinned-Git dependencies,
 deterministic workspaces, lockfiles, explicit dependency acquisition, and
 consumer-approved native package build scripts are implemented. Finer-grained
-GTI compilation and a package registry remain plans.
+GTI compilation remains a plan. Source-package registries, SemVer resolution,
+explicit add/fetch and deterministic publication are implemented behind a
+backend-independent protocol; Gitea Generic Packages is the official bootstrap
+backend.
 
 GTI has one language compilation pipeline and two user entry modes:
 
@@ -1163,6 +1166,150 @@ overwrite any loaded source. When capture is not requested, ordinary driver
 callers retain no optimizer dump/report strings and compilation output is
 unchanged.
 
+### Source Package Registries
+
+`gti add libc` queries the logical `official` registry, resolves a complete
+metadata graph and acquires verified source archives before editing the project.
+It selects the latest complete compatible direct version even when that package
+was already transitively locked, then inserts a caret requirement such as
+`libc = "^0.1.0"` in `gti.toml`, preserves
+unrelated bytes/comments, and publishes the exact closure to the workspace's
+`gti.lock`. `gti add libc@=0.1.0` requests an exact requirement. An already
+matching declaration is a no-op; another source/requirement requires an explicit
+manifest edit. Hyphens in registry names become underscores in default include
+aliases. The table form allows separate identity and alias:
+
+```toml
+[dependencies]
+libc = "^0.1.0"
+cli = { package = "gti-cli", version = "^0.1", registry = "official" }
+```
+
+The generic SemVer implementation is shared by registry inputs, metadata and
+resolution. Requirements support caret (including bare versions), tilde,
+`=major.minor.patch`, and `*`; missing minor/patch parts are zero-filled in
+ranges. Caret respects the first nonzero component, so `^0.2.1` excludes
+`0.3.0` and `^0.0.3` excludes `0.0.4`. Prereleases require explicit opt-in at
+the same major/minor/patch. Build metadata has no precedence. Version core
+components are bounded to unsigned 64-bit values; unsupported requirement
+operators fail rather than acquiring different semantics in a backend.
+
+`gti fetch` never edits dependency declarations. It first attempts the complete
+compatible locked solution, without version-list requests, then backtracks
+through descending candidates only if the declarations make that solution
+unusable. Sources are downloaded only after metadata resolution succeeds.
+`gti fetch --locked` may populate missing exact sources but refuses any lock
+change. `--offline` requires cached metadata/archives and may unpack them locally.
+Normal registry builds,
+checks, metadata and LSP facts require a compatible lock and already cached
+complete extracted sources; they neither perform registry HTTP requests nor
+create cache files/directories. Existing Git acquisition
+policy is unchanged. Registry versions are unified per logical registry/package;
+the existing unique canonical package-name and acyclic workspace rules remain
+authoritative. Published registry packages currently require registry-only
+dependencies; root projects may mix registry, path and pinned-Git sources.
+
+The default logical mapping is owned by one configuration layer:
+`official -> gitea-generic -> https://git.internal.howetotech.dev -> gti-lang`.
+Override it in `$XDG_CONFIG_HOME/gti/registries.toml` (falling back to
+`$HOME/.config/gti/registries.toml`) or a file selected by `GTI_REGISTRY_CONFIG`:
+
+```toml
+[registries.official]
+backend = "gitea-generic"
+url = "https://git.internal.howetotech.dev"
+owner = "gti-lang"
+token-env = "GTI_REGISTRY_TOKEN"
+```
+
+Credentials belong only in the named environment variable, not the project,
+lock, archive or metadata. Anonymous public reads are supported when permitted
+by the server; a server that requires sign-in also needs a package-read token
+for `add`/`fetch`. The current official server requires authenticated discovery.
+Set `GTI_REGISTRY_TOKEN` outside the project for its default mapping.
+Publication requires a package-write token. HTTPS uses the existing dynamically loaded
+libcurl host transport with certificate verification; redirects are never
+followed and response bodies are not included in failures. Plain HTTP is
+admitted only on explicit localhost/127.0.0.1 ports for local development tests.
+Unsupported registry names/backends/configuration fail closed.
+Non-default registry definitions require explicit backend, URL and owner;
+their default credential variable is `GTI_REGISTRY_<UPPERCASE_NAME>_TOKEN`
+(hyphens become underscores), never the official registry's token. An explicit
+`token-env` may override that user-owned credential scope.
+
+Gitea adaptation alone owns its REST paths, response schema and pagination.
+`Registry`/`RegistryProvider` expose version enumeration, metadata, archive bytes
+and publication; the resolver has no Gitea URL construction. Each version has
+`source.gtipkg` and a normalized `package.toml` (`registry-version = 1`, canonical
+manifest name/version, public registry name, dependencies and archive SHA-256).
+`package.toml` is uploaded last and acts as the completeness marker. A version
+without it is not a GTI publication. Existing/partial versions are never resumed
+or overwritten; publication preflights files, then the no-overwrite archive PUT
+claims the version before final metadata is uploaded. Concurrent losers stop
+before publishing metadata. Administrator deletion/replacement is outside this
+immutability contract and cannot be made safe by client-side checksums alone.
+See [Gitea's Generic Package API](https://docs.gitea.com/usage/packages/generic/).
+
+`gti publish` inventories Git-tracked regular files without running repository
+code. The archive contains current working-tree bytes, not machine-local build
+outputs, with executable bits from the Git index. Symlinks, submodules, merge
+conflicts, credential-bearing `.env` paths, managed build/toolchain directories,
+lockfiles, traversal and portable path collisions are rejected. Its manifest
+is validated after relocation before any upload. `--name libc` separates the
+public registry name from a canonical manifest name such as `gti-libc`.
+`--dry-run` reports file count, size and checksum without reading credentials,
+uploading, executing native hooks, compiling or retaining a cache entry.
+
+The GTI-owned `.gtipkg` v1 container is deterministic and deliberately bounded,
+not tar/zip or a general archive extractor: ASCII magic `GTIPKG1\n`, little-endian
+32-bit file count, then records with 32-bit path-byte count, 64-bit content-byte
+count, one executable byte (`0`/`1`), UTF-8 path bytes restricted to portable ASCII
+in this slice, and exact content bytes. Records are sorted by path. The reader
+rejects trailing bytes and invalid/truncated records. Limits are 10,000 regular
+files, 4,096 path bytes, 64 MiB per file, 256 MiB per archive, 256 resolved
+packages, 1,024 metadata queries, 32 MiB of metadata and 8,192 solver attempts.
+No compression, timestamps, ownership,
+symlink/device entry or extraction command is interpreted. This narrow format
+avoids a platform archive-tool dependency; another codec requires a versioned
+GTI protocol change, not a Gitea-dependent parser.
+
+Registry closures use lock-version 2; pure Git closures retain byte-compatible
+v1 serialization and both are readable. Registry entries carry logical registry,
+public and canonical package names, exact version, archive and metadata SHA-256,
+and exact logical dependency edges. Physical Gitea URLs are not package identity.
+Archive manifests must match metadata identity and dependency declarations.
+
+The user cache is outside the source tree: `$GTI_PACKAGE_CACHE`, otherwise
+`$XDG_CACHE_HOME/gti/packages`, `$HOME/.cache/gti/packages`, or
+`$LOCALAPPDATA/gti/packages`. Managed keys hash logical registry/package, version
+and archive digest. Metadata, archive bytes and every extracted file are checked
+before source loading, including extra files and executable modes on POSIX.
+Cache descendants cannot be symlink redirects. Immutable cache files publish
+atomically with a no-replace hard link; cache filesystems must support hard links.
+Complete source directories publish by rename, and concurrent fetches verify
+the winning directory. Changed cached/server content is an integrity error,
+left untouched for investigation—not silently replaced or relocked. Removing
+only a known affected cache entry and fetching again does not authorize registry
+mutation: the old lock checksum still applies.
+
+Native inputs and consumer-approved build programs use the ordinary package
+graph and existing approval policy; acquisition executes neither. Direct
+`gti source.gti` behavior and frontend/language semantics are unchanged.
+Manifest editing uses a source overlay to resolve proposed declarations without
+writing them. Both output files are staged before atomic per-file renames; a
+failed lock publication restores the original manifest where possible. A crash
+between renames can leave a detectable stale lock, not a half-written file.
+No cross-file crash-atomic transaction or hostile-local-writer sandbox is claimed.
+Name ownership relies on Gitea's `gti-lang` publishing permissions; signatures,
+yanking, search, mirrors, multiple versions of one canonical package and general
+feature/target solving remain outside this bootstrap.
+
+Driver diagnostics `GTI-B1710`–`GTI-B1723` distinguish invalid requirements,
+missing packages, transport/authentication, malformed metadata, missing archives,
+resolution conflicts, integrity, unsafe archives, duplicate publication,
+configuration, resource limits, storage and conflicting manifest edits.
+Existing `GTI-B1701`/`GTI-B1703` retain stale/missing-lock and offline meanings.
+
 ### Read-Only Project Facts
 
 `gti/driver/project_facts.h` publishes the resolved project as a read-only
@@ -1478,9 +1625,11 @@ development escape hatch for running possibly stale output.
 
 The cache is whole-program and workspace-local. It does not yet cache individual
 parsed units, HIR/MIR bodies, native objects, or remote/shared artifacts.
-Git dependencies support pinned full revisions only; registry ranges, branch
-or tag selectors, replacement/override authority, arbitrary native build
-scripts, and a package registry are not implemented. Cross compilation
+Git dependencies support pinned full revisions only; mutable branch/tag
+selectors and replacement/override authority are not implemented. Registry
+bootstrap limits are recorded above; package signing, yanking, search and
+multiple canonical versions remain deferred. Native dependency build programs
+require explicit consumer approval, not arbitrary implicit execution. Cross compilation
 selects a target, a native compiler pair, a sysroot, and a native triple, but
 the GTI runtime archive and runtime headers are still discovered once for the
 host toolchain, so a cross link needs a target-built runtime supplied through

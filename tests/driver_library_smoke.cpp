@@ -5,6 +5,7 @@
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/project.h"
 #include "gti/driver/project_facts.h"
+#include "gti/driver/registry.h"
 
 #include <string>
 #include <type_traits>
@@ -22,6 +23,21 @@ public:
 };
 
 int main() {
+  // Registry algorithms/types are usable from installed LLVM-free headers.
+  auto registry = lang::driver::configuredRegistries();
+  const auto requirement =
+      lang::driver::PackageVersionRequirement::parse("^0.2.1");
+  const auto version = lang::driver::parsePackageVersion("0.2.9");
+  const auto archive = lang::driver::encodePackageArchive(
+      {{"gti.toml", "manifest-version = 1\n"},
+       {"src/unit.gti", "int value() { return 42; }\n"}});
+  if (!registry || !requirement || !version ||
+      !requirement->accepts(*version) ||
+      lang::driver::decodePackageArchive(archive).size() != 2 ||
+      !lang::driver::validPackageChecksum(
+          lang::driver::packageChecksum(archive))) {
+    return 9;
+  }
   // An installed consumer can observe work without LLVM or CLI types in its
   // public headers, and callbacks are not retained after the invocation.
   ProgressClient progress;

@@ -497,6 +497,13 @@ add_library(
   "src/driver/build_report.cpp"
   "src/driver/compilation.cpp"
   "src/driver/dependencies.cpp"
+  "src/driver/package_archive.cpp"
+  "src/driver/registry_metadata.cpp"
+  "src/driver/registry_gitea.cpp"
+  "src/driver/registry_cache.cpp"
+  "src/driver/registry_resolver.cpp"
+  "src/driver/registry_commands.cpp"
+  "src/driver/semver.cpp"
   "src/driver/manifest.cpp"
   "src/driver/native_toolchain.cpp"
   "src/driver/process.cpp"
@@ -516,8 +523,10 @@ target_include_directories(
 target_include_directories(
   "gti_driver" SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/tomlplusplus"
 )
+target_include_directories("gti_driver" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_include_directories("gti_driver" PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/runtime/include")
 target_compile_features("gti_driver" PUBLIC cxx_std_20)
-target_link_libraries("gti_driver" PUBLIC gti_compiler PRIVATE gti_cpp_backend gti_bindgen)
+target_link_libraries("gti_driver" PUBLIC gti_compiler PRIVATE gti_cpp_backend gti_bindgen gti_runtime)
 add_dependencies("gti_driver" "gti_runtime" "gti_build_identity_refresh")
 target_compile_definitions(
   "gti_driver"

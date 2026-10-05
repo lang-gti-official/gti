@@ -10,7 +10,8 @@
 
 namespace lang::driver {
 
-inline constexpr int currentDependencyLockVersion = 1;
+// Registry closures use v2; pure Git closures retain byte-compatible v1 text.
+inline constexpr int currentDependencyLockVersion = 2;
 
 // One pinned git source: an exact URL plus a full lowercase 40-hex commit.
 // Branches, tags, and ranges are deliberately not representable.
@@ -36,10 +37,23 @@ struct LockedGitPackage {
   std::vector<std::string> dependencies;
 };
 
+struct LockedRegistryPackage {
+  std::string name;
+  std::string version;
+  std::string registry;
+  std::string package;
+  std::string checksum;
+  std::string metadataChecksum;
+  std::vector<std::string> dependencies;
+};
+
 struct DependencyLock {
   std::vector<LockedGitPackage> packages;
+  std::vector<LockedRegistryPackage> registryPackages;
 
   [[nodiscard]] const LockedGitPackage *find(const GitSourceKey &key) const;
+  [[nodiscard]] const LockedRegistryPackage *
+  findRegistry(std::string_view registry, std::string_view package) const;
 };
 
 enum class DependencyLockLoadStatus {
