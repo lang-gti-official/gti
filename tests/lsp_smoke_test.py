@@ -11265,6 +11265,10 @@ def test_mutable_stored_dependency_tooling(executable, root):
     )
     invalid_source = nested_source.replace(
         "  MutView view;\n", "  MutView view;\n  MutView second;\n")
+    repaired_source = invalid_source.replace(
+        "Nested(MutView source) : view(std::move(source)) {}",
+        "Nested(MutView source, MutView other) "
+        ": view(std::move(source)), second(std::move(other)) {}")
     path = root / "mutable-stored-dependency.gti"
     path.write_text(valid_source, encoding="utf-8")
     uri = path.resolve().as_uri()
@@ -11322,15 +11326,17 @@ def test_mutable_stored_dependency_tooling(executable, root):
             for item in invalid["diagnostics"]
             if item.get("code") == "GTI-S2045"
             and item.get("message") == (
-                "A composed borrowed value requires read-only dependencies; "
-                "multiple or mixed exclusive dependencies are not supported."
+                "Every constructor of a composed borrowed value must bind "
+                "each borrowed field directly from an exact reference or "
+                "carrier parameter."
             )
         )
         assert nested["data"]["phase"] == "semantics", nested
-        nested_line = invalid_source.splitlines().index("class Nested {")
+        nested_line = invalid_source.splitlines().index(
+            "  Nested(MutView source) : view(std::move(source)) {}")
         assert nested["range"] == {
-            "start": {"line": nested_line, "character": 6},
-            "end": {"line": nested_line, "character": 12},
+            "start": {"line": nested_line, "character": 2},
+            "end": {"line": nested_line, "character": 8},
         }, nested
 
         session.send(
@@ -11339,7 +11345,7 @@ def test_mutable_stored_dependency_tooling(executable, root):
                 "method": "textDocument/didChange",
                 "params": {
                     "textDocument": {"uri": uri, "version": 4},
-                    "contentChanges": [{"text": valid_source}],
+                    "contentChanges": [{"text": repaired_source}],
                 },
             }
         )

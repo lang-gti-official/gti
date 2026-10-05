@@ -463,6 +463,7 @@ private:
          .returnBorrowParameter = declaration.returnBorrowParameter,
          .returnBorrowAccess = declaration.returnBorrowAccess,
          .returnBorrowParameters = declaration.returnBorrowParameters,
+         .returnBorrowFields = declaration.returnBorrowFields,
          .returnBorrowPlace = declaration.returnBorrowPlace,
          .ownedPointeeProjection = declaration.ownedPointeeProjection,
          .instantiationSite = std::move(site),
@@ -1413,6 +1414,8 @@ private:
           concrete->returnBorrowParameter;
       output.program.functions[index].returnBorrowParameters =
           concrete->returnBorrowParameters;
+      output.program.functions[index].returnBorrowFields =
+          concrete->returnBorrowFields;
       output.program.functions[index].returnBorrowAccess =
           concrete->returnBorrowAccess;
       output.program.functions[index].returnBorrowPlace =
@@ -3297,6 +3300,8 @@ private:
     value.borrowOrigin = resolved.borrowOrigin;
     value.borrowArgument = resolved.borrowArgument;
     value.borrowAccess = resolved.borrowAccess;
+    value.borrowArguments = resolved.borrowArguments;
+    value.borrowFields = resolved.borrowFields;
     value.callableBoundary = resolved.boundary;
     if (resolved.receiverMode == CallReceiverMode::Consuming)
       value.callableInvocation = resolved.capability;
@@ -3364,6 +3369,8 @@ private:
         .borrowOrigin = value.borrowOrigin,
         .borrowArgument = value.borrowArgument,
         .borrowAccess = value.borrowAccess,
+        .borrowArguments = value.borrowArguments,
+        .borrowFields = value.borrowFields,
         .borrowPlace = value.borrowPlace,
         .dispatch = value.dispatch,
         .dispatchOwner = value.dispatchOwner,
@@ -3510,6 +3517,7 @@ private:
         .borrowArgument = construction.borrowArgument,
         .borrowAccess = construction.borrowAccess,
         .borrowArguments = construction.borrowArguments,
+        .borrowFields = construction.borrowFields,
         .constructorKind = construction.kind,
     };
 
@@ -4763,12 +4771,15 @@ private:
         value.place = value.ownership->place;
       }
     }
-    if (value.kind == HirValueKind::Variable && value.place &&
-        value.place->receiver && value.symbol != 0) {
+    if ((value.kind == HirValueKind::Variable ||
+         value.kind == HirValueKind::Assignment) &&
+        value.place && value.place->receiver && value.symbol != 0) {
       // Preserve the resolved meaning of an unqualified instance field in
       // HIR. It is the same receiver projection as `this.field`, even though
       // the source omitted the explicit receiver.
-      kind = HirValueKind::MemberAccess;
+      kind = value.kind == HirValueKind::Assignment
+                 ? HirValueKind::MemberSet
+                 : HirValueKind::MemberAccess;
       value.kind = kind;
       value.operands.insert(value.operands.begin(),
                             lowerImplicitReceiver(body));
@@ -4802,6 +4813,7 @@ private:
         value.borrowOrigin = resolved->borrowOrigin;
         value.borrowArgument = resolved->borrowArgument;
         value.borrowArguments = resolved->borrowArguments;
+        value.borrowFields = resolved->borrowFields;
         value.borrowAccess = resolved->borrowAccess;
         value.borrowPlace = resolved->borrowPlace;
         if (value.borrowOrigin == BorrowOriginKind::Global &&
@@ -5044,6 +5056,7 @@ private:
       value.borrowOrigin = construction->borrowOrigin;
       value.borrowArgument = construction->borrowArgument;
       value.borrowArguments = construction->borrowArguments;
+      value.borrowFields = construction->borrowFields;
       value.borrowAccess = construction->borrowAccess;
       value.constructorKind = construction->kind;
       std::optional<SourceSpan> site;
@@ -5083,7 +5096,9 @@ private:
         }
       }
     }
-    if (kind == HirValueKind::MemberAccess && value.symbol != 0) {
+    if ((kind == HirValueKind::MemberAccess ||
+         kind == HirValueKind::MemberSet) &&
+        value.symbol != 0) {
       const SymbolRecord *member = model.database().findSymbol(value.symbol);
       value.storedReferenceAccess =
           member != nullptr && member->type.kind == SemanticType::Reference;
@@ -5101,6 +5116,8 @@ private:
       value.borrowOrigin = resolved->borrowOrigin;
       value.borrowArgument = resolved->borrowArgument;
       value.borrowAccess = resolved->borrowAccess;
+      value.borrowArguments = resolved->borrowArguments;
+      value.borrowFields = resolved->borrowFields;
       if ((resolved->kind == OverloadedOperator::Call ||
            isAssignmentOperator(resolved->kind)) &&
           !value.operands.empty()) {

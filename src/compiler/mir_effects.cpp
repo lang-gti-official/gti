@@ -424,6 +424,7 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .writesUnknownMemory = true,
                     .mayTrap = true,
                     .movesValue = true}, // RestoringIndexedSwap
+    harmless(),                          // EnumUnderlyingValue
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -654,6 +655,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "restoring-exchange",
     "restoring-swap",
     "restoring-indexed-swap",
+    "enum-underlying-value",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({

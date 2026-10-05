@@ -175,11 +175,7 @@ analyzeScalarPromotion(const MirProgram &program, MirBodyAddress address,
     if (eligible &&
         (std::any_of(body.loans.begin(), body.loans.end(),
                      [&](const MirLoan &loan) {
-                       return loan.source == place.id ||
-                              std::find(loan.additionalSources.begin(),
-                                        loan.additionalSources.end(),
-                                        place.id) !=
-                                  loan.additionalSources.end();
+                       return loan.protectsSource(place.id);
                      }) ||
          std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
                      [&](const MirDropObligation &drop) {

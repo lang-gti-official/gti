@@ -156,6 +156,10 @@ MirLowerer::lowerProgram(const HirProgram &source,
   result.program.failureMetadata_ = failureMetadata;
   for (const HirEnum &enumeration : source.enumDeclarations()) {
     if (!enumeration.payload) {
+      result.program.integralEnums_.push_back(
+          {.declaration = enumeration.declaration,
+           .sourceUnit = enumeration.sourceUnit,
+           .underlyingType = enumeration.underlyingType});
       continue;
     }
     MirPayloadEnum lowered{
@@ -318,6 +322,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
          .returnBorrowParameter = instance.returnBorrowParameter,
          .returnBorrowAccess = instance.returnBorrowAccess,
          .returnBorrowParameters = instance.returnBorrowParameters,
+         .returnBorrowFields = instance.returnBorrowFields,
          .returnBorrowPlace = instance.returnBorrowPlace,
          .ownedPointeeProjection = instance.ownedPointeeProjection,
          .linkage = instance.linkage,

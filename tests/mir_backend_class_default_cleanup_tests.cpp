@@ -604,10 +604,17 @@ void testMutations(const std::filesystem::path &fixture) {
     }
     (void)lang::rebuildMirValueUses(early->body);
   }
-  expect(movedCleanupBeforeReturnLoad &&
-             !lang::verifyMirProgram(earlyCleanup).valid(),
-         "generic MIR verification should reject cleanup moved before the "
-         "value it protects is loaded for return");
+  // Moving these drops before a global load can remain structurally valid
+  // MIR, but changes the returned value. Source/optimized coherence owns
+  // this ordering guarantee; a failure-summary mismatch is only incidental.
+  expect(lang::verifyMirOptimizationCoherence(frontend.mir, frontend.mir, {})
+             .valid(),
+         "unchanged cleanup must retain source MIR coherence");
+  expect(movedCleanupBeforeReturnLoad && !lang::verifyMirOptimizationCoherence(
+                                              frontend.mir, earlyCleanup, {})
+                                              .valid(),
+         "MIR coherence must reject cleanup moved before the value it "
+         "protects is loaded for return");
   expect(emissionRejected(frontend, earlyCleanup, compatibility),
          "the backend must reject cleanup timing drift that would change "
          "the returned global value");

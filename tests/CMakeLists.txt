@@ -231,6 +231,9 @@ set(GTI_COMPILER_TEST_SUITES
 add_executable(gti_constructor_formatting_tests constructor_formatting_tests.cpp)
 target_link_libraries(gti_constructor_formatting_tests PRIVATE gti_compiler)
 add_test(NAME constructor_formatting COMMAND gti_constructor_formatting_tests)
+add_executable(gti_integral_enum_tests integral_enum_tests.cpp)
+target_link_libraries(gti_integral_enum_tests PRIVATE gti_cpp_backend)
+add_test(NAME integral_enum COMMAND gti_integral_enum_tests)
 add_library(
   gti_compiler_test_pch OBJECT
   "${PROJECT_SOURCE_DIR}/tests/compiler_test_pch.cpp"
@@ -1731,6 +1734,11 @@ if(Python3_Interpreter_FOUND)
         "${PROJECT_SOURCE_DIR}/tests/extensible_formatting_runtime_test.py"
         "$<TARGET_FILE:gti>")
     set_tests_properties(extensible_formatting_runtime PROPERTIES TIMEOUT 240)
+    add_test(NAME integral_enum_formatting_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/integral_enum_formatting_runtime_test.py"
+        "$<TARGET_FILE:gti>")
+    set_tests_properties(integral_enum_formatting_runtime PROPERTIES TIMEOUT 300)
     add_test(NAME composable_io_runtime
       COMMAND "${Python3_EXECUTABLE}"
         "${PROJECT_SOURCE_DIR}/tests/composable_io_runtime_test.py"
@@ -1739,6 +1747,10 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME extensible_formatting_lsp
       COMMAND "${Python3_EXECUTABLE}"
         "${PROJECT_SOURCE_DIR}/tests/extensible_formatting_lsp_test.py"
+        "$<TARGET_FILE:gti_lsp>")
+    add_test(NAME integral_enum_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/integral_enum_lsp_test.py"
         "$<TARGET_FILE:gti_lsp>")
     add_test(
       NAME issues_117_120_regressions

@@ -3738,7 +3738,7 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v72\n") &&
+  expect(dump.starts_with("mir-body-v74\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&
@@ -4671,7 +4671,7 @@ void testCarrierShellDependencyMirFlow() {
              std::vector<lang::MirPlaceId>{2, 1},
          "protected sources should preserve shell then inherited owner");
   auto repeated = baseline;
-  repeated.loans[0].additionalSources = {1};
+  repeated.loans[0].additionalDependencies = {{.source = 1}};
   expect(lang::mirLoanProtectedSources(repeated, 2) ==
              std::vector<lang::MirPlaceId>{2, 1},
          "the complete protected-place query should deterministically dedup");
@@ -4999,7 +4999,7 @@ void testCarrierShellDependencyMirFlow() {
          "an abstract dependency must end on returns that do not publish it");
   auto escapedEntry = receiverEntry;
   escapedEntry.loans[0].escapes = true;
-  expect(hasError(escapedEntry, "non-escaping Stored entry"),
+  expect(hasError(escapedEntry, "non-escaping Stored"),
          "abstract entry dependencies must not become globally escaping");
 
   auto publishedEntry = referenceEntry;

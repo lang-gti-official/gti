@@ -1304,7 +1304,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v72\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v74\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -3497,7 +3497,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v85 ") &&
+  expect(mirDump.starts_with("mir-v87 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -5982,10 +5982,10 @@ public:
 };
 
 class TwoReferences {
-  int& left;
+  mut int& left;
   mut int& right;
 public:
-  TwoReferences(int& first, mut int& second) : left(first), right(second) {}
+  TwoReferences(mut int& source) : left(source), right(source) {}
 };
 
 class MissingBinding {
@@ -6038,7 +6038,7 @@ int main() {
   expect(
       !invalid.canGenerateCode() &&
           hasDiagnostic(invalid.diagnostics,
-                        "requires read-only dependencies") &&
+                        "cannot duplicate an exclusive dependency") &&
           hasDiagnostic(invalid.diagnostics,
                         "Every constructor of a stored-reference class") &&
           hasDiagnostic(invalid.diagnostics, "cannot declare a destructor") &&
@@ -16808,7 +16808,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v85 ") &&
+             mirDump.starts_with("mir-v87 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -18388,6 +18388,16 @@ Resource global_resource{};
   Resource first{};
   Resource second{};
   return ReadPair(first, second).read();
+)"),
+                                  std::string(R"(
+  Resource first{};
+  Resource second{};
+  return ReadPair(first, second).touch();
+)"),
+                                  std::string(R"(
+  Resource first{};
+  Resource second{};
+  return CleanupReadPair(first, second).read();
 )")}) {
     const auto frontend =
         lang::Frontend().analyze("ephemeral-carrier-valid.gti",
@@ -18398,7 +18408,7 @@ Resource global_resource{};
                   << diagnostic.code << ": " << diagnostic.message << '\n';
     }
     expect(frontend.canGenerateCode(),
-           "single-owner borrowed temporaries support immediate readonly and "
+           "borrowed temporaries support immediate readonly and "
            "mutable method calls, preserving owner reuse between expressions");
   }
 
@@ -18430,16 +18440,6 @@ Resource global_resource{};
        true},
       {"return Client().auth().create_access_token(1);",
        "a temporary owner is not stable carrier storage", true},
-      {"Resource left{}; Resource right{}; return ReadPair(left, "
-       "right).touch();",
-       "a mutable temporary receiver with multiple independent owners is "
-       "outside the single-dependency slice",
-       true},
-      {"Resource left{}; Resource right{}; return CleanupReadPair(left, "
-       "right).read();",
-       "a cleanup-owning temporary receiver cannot use the passive "
-       "read-only multi-owner path",
-       true},
       {"mut VirtualClient api{}; return api.auth().create_access_token(1);",
        "a virtual producer is not an ordinary directly resolved producer",
        true},

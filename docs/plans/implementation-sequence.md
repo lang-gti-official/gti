@@ -25,6 +25,83 @@ files under `docs/plans/`. The documents under
 [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
+## Completed: Conflict-Based Stored-Borrow Aggregates
+
+**Status: implemented and locally validated for 0.373.0 after PR #35 reconciliation.** The outcome
+is an application-owned services/context object retaining any number of shared
+and exclusive references, without introducing source lifetime annotations or
+public-type recognition. Existing `T&` and `mut T&` syntax is unchanged.
+
+- Preserve each stored reference's complete field path, originating place,
+  access mode, and reborrow ancestry through semantic analysis, HIR and MIR.
+  Additional-dependency records carry each path's permission rather than
+  assuming that every dependency after the first is shared.
+- Replace count-based admission with pairwise overlap/access checks. Independent
+  owners and proven disjoint field places may coexist; overlapping shared and
+  exclusive access, or two exclusive accesses, must be rejected.
+- Infer constructor bindings and structurally unambiguous return projections.
+  Moves transfer the complete dependency set; copies must not duplicate any
+  exclusive dependency. Carrier storage and external referents remain distinct.
+- Preserve every owner while a carrier or reachable derived borrow needs it.
+  Projection and last-use handling must not discard unrelated live dependencies
+  or retain a fabricated common owner. Ambiguous or unsupported provenance
+  remains a source diagnostic, never a backend assumption.
+- Prove unrelated user-defined mixed/four-plus-path and nested/generic carriers,
+  disjoint and overlapping places, moves/copy rejection, constructor failure,
+  derived borrows, return provenance and branch/loop endpoints. Include negative
+  MIR mutations for missing paths, permission upgrades and premature release,
+  optimized runtime/failure parity, shared LSP diagnostics, a runnable example,
+  and canonical ownership/IR documentation before publication.
+
+This extends executable ownership behavior and is not complete merely when the
+old declaration rejection is removed. Existing structural restrictions unrelated
+to reference cardinality require individual review; they are not permission to
+substitute a fixed two-reference feature for the requested dependency-set model.
+
+Implemented capability: constructor-bound mixed paths,
+repeated shared origins, disjoint owner fields, nested generic moves, and direct
+field reborrows have positive/negative semantic and independent MIR coverage.
+Concrete dependency records now keep field identity and access together;
+reference-field assignment preserves its executable dereference through HIR/MIR.
+Direct child references select the corresponding external owner and permission,
+including shared aliases and simultaneous disjoint exclusive children. They do
+not borrow whichever owner happened to be the carrier's first field.
+Field-mapped factories, reference accessors and whole-value relays now publish
+result-field/input-field/access contracts. Concrete generic relay calls infer
+the same contract as their instantiated bodies. Independent MIR verification
+checks caller metadata against the callee's actual returned origins, including
+reordered and repeated inputs; an unused parameter is not a fabricated owner.
+Physical carrier storage, abstract entry referents and compact single-path
+view origins remain distinct. A noncopyable relay retires the moved source
+loan on successful publication while preserving failure cleanup.
+The optimized compiler pipeline, carrier-shell-reference, optimizer-foundation,
+borrowing-composition pipeline/runtime and nested-borrow runtime suites pass.
+`stored_borrow_aggregates.gti` passes C++20/C++23 O0/O1/O3, no-elide and sanitizer
+runs. The completed acceptance evidence is recorded below.
+
+Ordinary operators and immediate temporary receivers now preserve the same
+field maps. A temporary's complete external dependency set outlives its owned
+field cleanup; there is no separate passive multi-owner receiver exception.
+Generic accessors, branch/loop endpoints, LSP hover/definition/diagnostics and
+example 109 have focused coverage. Nested constructor publication uses each
+field's own permission; backend receiver projections follow exact MIR field and
+reference steps, including references inside nested aggregates. The old homogeneous
+single-origin summary remains a compact representation only where it does not
+lose a field choice; it is not authority for mixed factory return mappings.
+
+The user also authorized integral-enum formatting in parallel. The reviewed
+handoff `c98f97c8` on `codex/enum-formatting` (example 110) is integrated.
+It adds general identity-bound enum representation constraints/extraction and
+ordinary source-defined formatter policy. Its focused runtime and LSP checks
+pass alongside the aggregate checks. Combined MIR and lowered-program census
+inventories pass all four corpus gates over 107 examples. All 422 registered
+tests have passing evidence, including focused reruns of six initial failures.
+The combined surface version is 0.373.0. All eleven isolated installed-library
+consumers, both new examples, installed LSP checks and Tree-sitter gates pass.
+See the canonical
+[verification record](../architecture/verification.md#stored-borrow-aggregates-and-integral-enum-formatting)
+for the exact host, test corrections and remaining platform limits.
+
 ## Completed: Composable I/O, Mutable Buffers, And Extensible Formatting
 
 **Status: implemented and locally validated for 0.371.0.** The outcome is one parser/copy routine

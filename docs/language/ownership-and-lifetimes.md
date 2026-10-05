@@ -338,20 +338,20 @@ later argument or the consuming call fails. Binding that result beyond the
 full expression or returning it remains rejected; no temporary lifetime is
 extended. Mutable borrowed results remain outside this capability.
 
-A fresh class or struct containing one statically proven stored owner
-dependency may also supply one immediate ordinary read-only or mutable method
+A fresh class or struct containing a statically proven set of stored owner
+dependencies may also supply one immediate ordinary read-only or mutable method
 receiver, for example `api.auth().create_access_token(...)`. Its producer must
 be a directly resolved ordinary GTI constructor or function with an exact
-borrow summary. The owner must have stable storage that survives the complete
+borrow summary. Every owner must have stable storage that survives the complete
 expression; the receiver method must return `void`, a non-pointer scalar, or a
 fully owned value. References, string views, C strings, raw pointers and native
 function values are excluded as results. This is a structural rule for
 user-defined services and views, not a special case for any library type.
 
-The compiler retains two distinct borrows: the carrier's stored dependency on
-its external owner, and the immediate receiver borrow of the carrier's own
+The compiler retains two distinct kinds of borrows: the carrier's stored
+dependencies on its external owners, and the immediate receiver borrow of its own
 storage. The receiver borrow ends after invocation. The carrier is destroyed
-at the full-expression boundary, then its stored owner dependency ends. The
+at the full-expression boundary, then its stored owner dependencies end. The
 same ordering applies to argument failure, method failure, and propagated
 errors. Consequently, a later argument or operand cannot read an exclusively
 borrowed owner merely because the immediate service method already returned.
@@ -361,19 +361,15 @@ own fields; it does not upgrade that shared dependency to exclusive access.
 This permission does not allow retaining a reference or address to the
 temporary, exporting a borrowed result from its method, moving its owner while
 active, or passing the carrier as a temporary reference argument. Temporary
-owners, multiple owner dependencies, and unresolved/native/virtual producers
+owners and unresolved/native/virtual producers
 remain excluded. A named carrier continues to use the ordinary stored-borrow
 rules below. A factory called on a complete object protects that complete
 receiver under its existing borrow summary; this feature does not infer a
 narrower private-field origin from the factory body.
 
-The earlier read-only value-receiver rule remains available for copyable,
-passively dropped carriers with several exact shared owner dependencies and
-non-borrowing results, such as `reversed_view(first, second).sum()`. It uses
-the existing value-receiver schedule and retains every shared dependency;
-it does not acquire mutable access to the carrier or introduce an owning
-cleanup obligation. This distinct case does not widen the new materialized
-receiver permission to mutable or cleanup-owning multi-owner services.
+Shared, mixed, mutable and cleanup-owning carriers use this same materialized
+receiver rule. A read-only call does not upgrade any shared dependency; owned
+fields are destroyed before the carrier's external loans end.
 
 A direct ordinary constructor or by-value GTI call may also produce a fresh,
 self-contained class or struct value for one exact read-only `T&` argument of
@@ -633,13 +629,15 @@ non-escaping local reference may borrow the public `std::unique_ptr<T>` class
 itself, but conservatively prevents transfer or mutation of that owner for the
 rest of the function.
 
-One deliberately confined stored-reference form is available for owner-tied
-values such as iterators, views, and guard-shaped capabilities. A class or
-struct may contain direct `T&` fields or nominal fields whose types recursively
-contain shared references. Each independent owner remains part of the carrier's
-checked dependency set; two fields may also refer to the same owner. Exclusive
-carriers remain limited to exactly one `mut T&` reference-bearing field path;
-mixing shared and exclusive paths is not supported. A direct reference must
+Stored-reference carriers support owner-tied values such as iterators, views,
+and application service contexts. A class or struct may contain any number of
+direct `T&` and `mut T&` fields, or nominal fields recursively containing such
+references. Each reference-bearing field path retains its originating place
+and permission. There is no shared/exclusive cardinality limit: independent
+owners and proven disjoint fields may coexist. Overlapping shared dependencies
+are permitted; an overlap involving an exclusive dependency is rejected.
+Repeated shared origins retain distinct field identities rather than being
+collapsed into one fabricated field. A direct reference must
 bind from one exact reference parameter with the same access mode. A nested
 carrier field must initialize directly from one exact carrier parameter,
 using an explicit move for an exclusive dependency. Neither form supports
@@ -649,10 +647,10 @@ dependency.
 A read-only carrier permits copy construction when its ordinary fields are
 copy-constructible, and move construction when they are movable. A copy
 constructs a new carrier shell, copies its ordinary fields independently, and
-adds an alias to the same shared owner dependency. A mutable carrier is
-move-constructible but not copy-constructible: its one exclusive dependency is
-transferred, never duplicated. An instance method may return a carrier whose
-dependency is derived from `this`; a free function or static method may return
+adds aliases to the same shared owner dependencies. A carrier with any exclusive
+path is move-constructible but not copy-constructible: its complete dependency
+set is transferred, never duplicated. An instance method may return a carrier
+whose dependency is derived from `this`; a free function or static method may return
 one when compatible reference or carrier parameters supply its checked origin
 set. Multi-origin returns must preserve all summarized parameter dependencies;
 they cannot substitute local storage or select a different dependency set on
@@ -676,7 +674,7 @@ public:
 };
 ```
 
-That one dependency survives ordinary calls, concrete generic substitution,
+That dependency set survives ordinary calls, concrete generic substitution,
 explicit moves, checked returns, and lexical destruction. A helper may
 therefore construct a cursor or view from one owner, pass the carrier through
 a concrete move relay, and return it to the caller without losing the owner
@@ -744,16 +742,26 @@ returned by value under the existing return-origin rules. Returning a reference
 to a local copy or by-value parameter remains invalid; `GTI-S2017` or the
 existing by-value-carrier `GTI-S2085` diagnoses the escaping storage.
 
-This does not add mixed-permission carriers or general lifetime parameters.
+No source lifetime parameters are introduced. Constructor parameter bindings
+and unambiguous direct return expressions establish field-wise origin maps.
+A factory may reorder its parameters or bind several shared fields to one
+parameter; unused parameters do not become result dependencies. Ordinary
+accessors and operators preserve the selected stored field's permission and
+origin rather than using the carrier's first dependency. Caller metadata is
+checked against the callee's actual returned origins before backend entry.
+See [`109-borrowed-aggregates.gti`](../../examples/109-borrowed-aggregates.gti)
+for an application context borrowing four different service types and moving
+through a generic relay.
+
 Local copies made inside a borrowed receiver/reference body currently require
 the same complete carrier type as that entry; a differently typed nested field
 copy still needs per-copy dependency-path representation. Direct supported
 field access and reference-returning accessors do not require that copy.
 
-Multiple exclusive paths, mixed shared/exclusive paths, inherited borrowed
-state, arrays of borrowed carriers, user-defined destructors, global/static or
-captured borrowed storage, dependency-changing returns, and assignment that would replace a carrier's
-dependency remain rejected. Mutable dependencies are limited to an exact
+Inherited borrowed state, arrays of borrowed carriers, user-defined destructors,
+global/static or captured borrowed storage, dependency-changing returns, and
+assignment that would replace a carrier's dependency remain rejected. Mutable
+dependencies are limited to an exact
 stable local, parameter, receiver, or existing-loan origin. They do not admit
 raw or opaque origins, dynamic-index identity, arbitrary lifetime parameters,
 or an independently escaping child reference.
@@ -785,9 +793,9 @@ parameter. They allow an ordinary source-defined iterator to traverse checked
 storage without exposing an address or making the compiler recognize a
 container name. The writable carrier is noncopyable: duplicating its shell
 would duplicate an exclusive capability. Ordinary source may now define the
-same one-origin mutable carrier over public stable storage, but cannot name the
-private checked-storage or unique-owner capabilities. Multiple origins remain
-rejected in both source roles.
+general mixed-origin carrier over public stable storage, but cannot name the
+private checked-storage or unique-owner capabilities. The private capabilities
+retain their separately checked storage and lifecycle contracts.
 
 Restricted member `operator*`, `operator->`, and `operator[]` declarations may
 return these receiver-tied references. A wrapper can provide paired read-only

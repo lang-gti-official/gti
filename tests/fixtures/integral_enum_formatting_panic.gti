@@ -1,0 +1,6 @@
+#include <std/format>
+enum class Status { failed = 9 };
+int main() {
+  std::println("{:s}", Status::failed);
+  return 0;
+}

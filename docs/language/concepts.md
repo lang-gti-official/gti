@@ -5,6 +5,15 @@ that generic type arguments must provide. They are a frontend validity
 mechanism. They do not emit C++ concepts, rank overloads, or introduce a
 separate compile-time metaprogramming language.
 
+The prelude's `std::integral_enum<T>` admits scoped enums with a fixed-width
+integer representation and excludes payload enums. `std::enum_underlying<T,U>`
+additionally requires `U` to be the exact declared representation, including
+signedness and width. They do not grant numeric operators or implicit integer
+conversion. The separate `std::to_underlying<U,T>(value)` function extracts that
+exact integer at runtime. Concept applications are constraint syntax, not
+boolean expressions; ordinary bounded member queries can inspect a constrained
+member in a constant condition.
+
 ## Concept declarations
 
 A namespace-scoped source concept declares one or more type parameters and

@@ -21,7 +21,8 @@ def main():
         shutil.copytree(fixture, root)
         for profile in ("dev", "release"):
             result = subprocess.run(
-                [str(compiler), "run", "app", "--profile", profile, "--", "one", "two"],
+                [str(compiler), "run", "app", "--profile", profile,
+                 "--progress=never", "--", "one", "two"],
                 cwd=root / "consumer", capture_output=True, text=True, timeout=120)
             assert result.returncode == 0, (profile, result.stdout, result.stderr)
             assert result.stdout == expected[1], (profile, result.stdout)

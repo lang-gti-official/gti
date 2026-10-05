@@ -57,6 +57,14 @@ writes and scalar dynamic-code-unit writes cross the host boundary. Public
 `std::formatter<T>` specializations use the same source-defined formatting
 grammar and checked member-signature protocol; compile-time unsupported-type
 diagnostics arise from ordinary constraints, not recognition of public names.
+The primary formatter's integral-enum default is ordinary source policy over
+two trusted classification constraints and one private value-extraction
+intrinsic. Semantics proves enum identity and exact underlying integer type;
+HIR preserves the selected operation and MIR retains integral-enum declaration
+metadata to verify extraction. The production backend emits that verified MIR
+operation as a representation cast. No public formatter, concept, enum, or
+format-pattern spelling grants compiler behavior. Explicit source
+specializations retain their existing canonical selection and contract checks.
 
 `<std/io>` composes source-defined partial reader/writer contracts, memory
 transports, exact transfer/line/copy helpers and owned buffering. Mutable spans
