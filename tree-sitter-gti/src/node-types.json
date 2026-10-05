@@ -3284,6 +3284,16 @@
     "type": "member_requirement_expression",
     "named": true,
     "fields": {
+      "argument": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
       "binding": {
         "multiple": false,
         "required": true,
@@ -3300,6 +3310,26 @@
         "types": [
           {
             "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "parameter": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "parameter_type": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "type",
             "named": true
           }
         ]

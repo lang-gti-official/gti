@@ -15,7 +15,7 @@
     "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
     "stdlib/std/filesystem.gti": "1018e88ac78adb603b80f0e83427a431c7c6225e00f39b0924721edcc4820687",
-    "stdlib/std/format.gti": "260feb05085a38e6097831d034afd96084c6ff601bbe9a21ffa2bbb3d54c9228",
+    "stdlib/std/format.gti": "eb46f3cb7235f74fbf3ae236aebf94b92cc87edec548b758c39a25c1e3697b45",
     "stdlib/std/forward_list.gti": "2152aab44209cfa14a3b1709f6250c3ef85db78e1e665d5bc8299f3cb353a4bf",
     "stdlib/std/functional.gti": "2fa13a7b511a42cb3cd87d6ca1a6550e77c77109320b5457f5292bb3e5333540",
     "stdlib/std/http.gti": "f0064d96b5f74a391dd41e009be1fe76bea7e358067b5ebaad37b74cfceeff44",
@@ -28,7 +28,7 @@
     "stdlib/std/numeric.gti": "2fe329a8585d1eee0a1be02f42b9cb6d388c80e898a3f58d34e9de12989388fb",
     "stdlib/std/optional.gti": "0e4556056be7121c4abd6ed1a416c259b7a210f9e46cbbec12620c084405fae9",
     "stdlib/std/paired_span.gti": "3657f5994dd7880c8de9796e1c6c08bba5f507b492406eb685d529c1c6b0e3ae",
-    "stdlib/std/panic.gti": "37db8f4dc0a6cefb0f6959030cdd601a151a84dcb684e861cec34af4a20da5ae",
+    "stdlib/std/panic.gti": "1dec2c0948ee11aa1d75e0e14628fca5c0c3abb382f88eac6658bf6d796cebf0",
     "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
     "stdlib/std/queue.gti": "e7181505d8e12e151310ac46075b33cdc8095b4f727457c11603de1887e4c2ff",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
@@ -546,6 +546,13 @@
         "stdout": "value=7 host=gitea.example ok=1 enabled=true\ndone\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "format-customization",
+      "mode": "run",
+      "source": "tests/fixtures/extensible_formatting.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "ID=002a Record(7)\n", "stderr": ""}
     },
     {
       "id": "format-panic-adoption",
@@ -1560,10 +1567,10 @@
       "id": "format.executable",
       "source": "stdlib/std/format.gti",
       "status": "executable",
-      "operations": ["std::format", "std::format_to", "std::print(pattern,Args...)", "std::println(pattern,Args...)", "std::try_format", "std::try_format_to", "std::try_print", "std::try_println"],
-      "case_ids": ["format", "format-panic-adoption"],
-      "required_instantiations": ["zero arguments", "all fixed-width integer types", "mixed bool,char,int32_t,float,double,string_view,string pack", "counted string view with embedded zero", "indexed and typed format specifications", "unsupported nominal argument"],
-      "evidence": ["tests/fixtures/stdlib_surface_format.gti", "stdlib/std/format.gti"]
+      "operations": ["std::format", "std::format_to", "std::print(pattern,Args...)", "std::println(pattern,Args...)", "std::try_format", "std::try_format_to", "std::try_print", "std::try_println", "std::formatter<T>", "std::formattable<T>", "std::format_spec"],
+      "case_ids": ["format", "format-customization", "format-panic-adoption"],
+      "required_instantiations": ["zero arguments", "all fixed-width integer types", "mixed bool,char,int32_t,float,double,string_view,string pack", "counted string view with embedded zero", "indexed and typed format specifications", "custom formatter delegation and composition", "recoverable value-dependent formatter rejection"],
+      "evidence": ["tests/fixtures/stdlib_surface_format.gti", "tests/fixtures/extensible_formatting.gti", "stdlib/std/format.gti"]
     },
     {
       "id": "forward-list.empty",

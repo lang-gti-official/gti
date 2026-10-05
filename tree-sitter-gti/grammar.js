@@ -1350,10 +1350,12 @@ module.exports = grammar({
 
     member_requirement_expression: ($) =>
       seq(
-        "requires", "(", field("receiver_type", $.type),
-        field("binding", $.identifier), ")", "{", "{",
+        "requires", "(", optional("mut"), field("receiver_type", $.type),
+        field("binding", $.identifier),
+        repeat(seq(",", optional("mut"), field("parameter_type", $.type), field("parameter", $.identifier))),
+        ")", "{", "{",
         field("receiver", $.identifier), ".", field("member", $.identifier),
-        "(", ")", "}", "->", field("result_type", $.type), ";", "}",
+        "(", optional(commaSep1(field("argument", $.identifier))), ")", "}", "->", field("result_type", $.type), ";", "}",
       ),
 
     layout_query_expression: ($) =>

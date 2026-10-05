@@ -1,0 +1,35 @@
+// Exact source-defined method contracts describe the receiver and argument
+// access, not the implementation. A query never calls the method.
+concept accumulator<C> =
+    requires(mut C& receiver, int& amount, mut int& previous) {
+      { receiver.add(amount, previous) } -> int;
+    };
+
+struct Counter {
+  mut int total = 0;
+  int add(int& amount, mut int& previous) mut {
+    previous = this.total;
+    this.total += amount;
+    return this.total;
+  }
+};
+
+int advance<C>(mut C& counter, int& amount, mut int& previous)
+    requires accumulator<C> {
+  return counter.add(amount, previous);
+}
+
+int main() {
+  // The same signature does not permit invoking a mutable method on a
+  // read-only receiver. This is a static query, not a runtime failure.
+  static_assert(!(requires(Counter& receiver, int& amount, mut int& previous) {
+    { receiver.add(amount, previous) } -> int;
+  }));
+  mut Counter counter{};
+  int amount = 7;
+  mut int previous = -1;
+  int next = advance(counter, amount, previous);
+  std::println(previous);
+  std::println(next);
+  return previous == 0 && next == 7 ? 0 : 1;
+}

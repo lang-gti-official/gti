@@ -35,10 +35,9 @@ message truncation and containment.
 
 Formatting and stdout convenience APIs adopt this facility as described below.
 General concept-failure diagnostics can explain declared constraints, but
-literal-format validation and a public formattable protocol are not introduced
-by panic. Unsupported format arguments still produce a runtime format error;
-that limitation is not a claim that an unsupported static type is inherently
-dynamic.
+literal-format validation is not introduced by panic. Unsupported static
+argument types are rejected by the source-defined `std::formattable` protocol
+described below; dynamic presentation and value errors remain recoverable.
 
 ```gti
 #include <std/cstdio>
@@ -330,7 +329,7 @@ namespace std {
 }
 ```
 
-The admitted arguments are `bool`, `char`, every fixed-width integer,
+The built-in admitted arguments are `bool`, `char`, every fixed-width integer,
 binary32 `float`, binary64 `double`, `std::string_view`, and `std::string`.
 Booleans render as `true` or `false`; characters append their one code unit;
 integers default to canonical base-10 text; and floating values default to the
@@ -362,11 +361,11 @@ and applies sign-aware zero padding.
 
 A lone opening or closing brace, mixed indexing, or an incompatible specifier
 produces `invalid_format`; an out-of-range index or automatic field-count
-mismatch produces `argument_count_mismatch`. A type outside the admitted set
-produces `unsupported_argument`. Pattern grammar and field count are validated
-first, so those errors take precedence. Named fields, dynamic width or
-precision, locale-specific formatting, and user formatter customization are
-not yet part of this bounded surface.
+mismatch produces `argument_count_mismatch`. Pattern grammar and field count
+are validated first, so those errors take precedence over dynamic formatter
+errors. A type without a valid formatter is a compile-time constraint error,
+including a later pack argument not selected by the pattern. Named fields,
+dynamic width or precision, and locale-specific formatting remain unsupported.
 
 The overload family separates the zero-argument case from the nonempty
 `First, Args...` case and permits heterogeneous admitted arguments in one
@@ -399,7 +398,7 @@ output overloads now also panic on failed submission; they no longer discard
 the runtime status. Cleanup and secondary panic follow the same defined-failure
 contract as explicit `std::panic`.
 
-These operations are ordinary GTI library code. A source-defined exact adapter
+These operations are ordinary GTI library code. A source-defined exact formatter
 for each admitted type feeds the bounded, source-order pack fold; the compiler
 does not recognize a formatting function, public string type, or pattern.
 Formatted output uses the existing counted stdout runtime boundary. Existing
@@ -423,7 +422,56 @@ uses the plain name and no longer calls `.value()`. `try_print` errors are now
 HTTP/network requests, entropy and managed-thread startup remain expected-first;
 panic adoption is not a blanket rename of environmental operations.
 
-Buffered streams, encoding conversion, named/dynamic fields, and formatter
-customization remain future library layers. A future buffer/stream object
+Buffered streams, encoding conversion, and named/dynamic fields remain future
+library layers. A future buffer/stream object
 should build on this byte surface without turning the runtime ABI into the
 public GTI ABI.
+
+## User-defined formatters
+
+Applications extend formatting with ordinary exact class specialization:
+
+```gti
+struct AssetId { uint64_t value; };
+class std::formatter<AssetId> {
+public:
+  expected<void, std::format_errc> format(AssetId& value,
+      mut std::string& output, std::format_spec& spec) {
+    std::formatter<uint64_t> numeric{};
+    return numeric.format(value.value, output, spec);
+  }
+};
+```
+
+The specialization must be default-initializable and provide exactly this
+public, safe, read-only, nongeneric method signature. `std::formattable<T>` is a
+source-defined conjunction of default initialization and the exact method
+requirement, not a compiler-known capability. Normal primary-or-argument package
+ownership controls specialization coherence. The empty primary has no fallback
+conversion and does not satisfy the contract. A user may constrain a forwarding
+generic with `requires std::formattable<T>`.
+
+`format_spec` exposes the parsed common presentation fields: `fill`, `alignment`,
+`sign`, `alternate`, `zero_pad`, `width`, `has_precision`, `precision`, and `type`.
+Zero alignment/type means unspecified; the default fill is a space and sign is
+`'-'`. A formatter should implement or reject every non-default field it accepts.
+It can delegate to a built-in formatter or compose ordinary `try_format_to`
+calls. This first public protocol shares the existing common specification
+grammar; it does not add C++ iterator/context types or arbitrary per-type parse
+grammars. Neither compiler nor LSP parses format strings.
+
+The formatter appends to a temporary result and may report any `format_errc`.
+`invalid_format` normally means a rejected presentation; `unsupported_argument`
+remains available for a value-dependent rejection by an otherwise supported
+type. `try_format`, `try_format_to`, `try_print`, `try_println`, the convenience
+twins, and formatted panic all use this one protocol. Failed formatting never
+publishes a partially appended destination or submits partial formatted stdout.
+Directly calling a formatter is lower-level: its caller owns the destination
+and any partial append behavior. A formatter is constructed per selected field,
+so repeated indexed fields repeat its method call in pattern order.
+
+Unsupported static types receive ordinary contract diagnostics in CLI and LSP;
+no fix can invent the application's formatting policy. Generic forwarding
+wrappers should declare the same required contracts. Literal syntax, count, and
+specifier validation remain runtime checks until a general call-site constant
+validation facility exists. See `examples/106-custom-formatters.gti`.

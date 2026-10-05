@@ -193,11 +193,15 @@ constraint-primary     = concept-application
                        | member-requirement
                        | "(" constraint-expression ")" ;
 
-member-requirement     = "requires" "(" type IDENTIFIER ")"
-                         "{" "{" IDENTIFIER "." IDENTIFIER "(" ")" "}"
+member-requirement     = "requires" "(" [ "mut" ] type IDENTIFIER
+                         { "," [ "mut" ] type IDENTIFIER } ")"
+                         "{" "{" IDENTIFIER "." IDENTIFIER "("
+                         [ IDENTIFIER { "," IDENTIFIER } ] ")" "}"
                          "->" type ";" "}" ;
-(* The receiver type is a read-only reference. The two receiver identifiers
-   must match. The result is an exact owned type, not a C++ result concept.
+(* The receiver type is a reference with explicit read-only/mutable access.
+   The receiver identifiers match; each additional binding appears once in
+   declaration order. Parameter reference access and all signature types match
+   exactly. The result is an owned type, not a C++ result concept.
    Member requirements are also boolean primary expressions. *)
 
 compiler-concept-declaration

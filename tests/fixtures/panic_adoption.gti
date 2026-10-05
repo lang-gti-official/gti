@@ -21,6 +21,13 @@ struct Guard {
 };
 
 struct Unknown {};
+class std::formatter<Unknown> {
+public:
+  expected<void, std::format_errc> format(Unknown& value,
+      mut std::string& output, std::format_spec& spec) {
+    return unexpected(std::format_errc::unsupported_argument);
+  }
+};
 
 struct OutputCleanup {
   ~OutputCleanup() {

@@ -35,17 +35,6 @@ enum class print_errc {
   write_failed,
 };
 
-namespace detail {
-enum class format_argument_status {
-  appended,
-  invalid_specifier,
-  unsupported,
-};
-
-void count_format_argument<T>(mut size_t& count, T& value) {
-  count++;
-}
-
 /// Parsed replacement-field presentation. A zero type means the default
 /// presentation for the selected argument type.
 struct format_spec {
@@ -64,6 +53,41 @@ struct format_spec {
         zero_pad(false), width(0), has_precision(false), precision(0),
         type('\0') {}
 };
+
+/// Specialize this class for an application-owned type. A specialization
+/// supplies a public safe read-only format method with the formattable contract.
+class formatter<T> {};
+
+concept formattable<T> =
+    std::default_initializable<formatter<T>> &&
+    requires(formatter<T>& writer, T& value, mut string& output, format_spec& spec) {
+      { writer.format(value, output, spec) } -> expected<void, format_errc>;
+    };
+
+namespace detail {
+enum class format_argument_status {
+  appended,
+  invalid_specifier,
+  argument_count_mismatch,
+  unsupported,
+};
+
+expected<void, format_errc> format_result(format_argument_status status) {
+  if (status == format_argument_status::invalid_specifier) {
+    return unexpected(format_errc::invalid_format);
+  }
+  if (status == format_argument_status::unsupported) {
+    return unexpected(format_errc::unsupported_argument);
+  }
+  if (status == format_argument_status::argument_count_mismatch) {
+    return unexpected(format_errc::argument_count_mismatch);
+  }
+  return;
+}
+
+void count_format_argument<T>(mut size_t& count, T& value) {
+  count++;
+}
 
 struct format_field {
   mut size_t argument_index;
@@ -560,30 +584,32 @@ format_argument_status append_float64(mut string& output, double& value,
   return format_argument_status::appended;
 }
 
-/// Closed built-in argument adapter used by the heterogeneous pack walker.
-/// The primary reports an unsupported argument without publishing the partly
-/// formatted string. Exact standard-library specializations below own the
-/// admitted representations; the compiler does not recognize this class.
-class format_argument_writer<T> {
-public:
-  format_argument_status append(mut string& output, T& value,
-                                format_spec& spec) {
-    return format_argument_status::unsupported;
-  }
-};
-
 void append_selected_format_argument<T>(mut string& output,
                                         size_t requested,
                                         mut size_t& candidate,
                                         mut format_argument_status& status,
-                                        format_spec& spec, T& value) {
+                                        format_spec& spec, T& value)
+    requires formattable<T> {
   if (status != format_argument_status::appended) {
     candidate++;
     return;
   }
   if (candidate == requested) {
-    format_argument_writer<T> writer{};
-    status = writer.append(output, value, spec);
+    formatter<T> writer{};
+    auto formatted = writer.format(value, output, spec);
+    if (!formatted) {
+      switch (formatted.error()) {
+      case format_errc::unsupported_argument:
+        status = format_argument_status::unsupported;
+        break;
+      case format_errc::argument_count_mismatch:
+        status = format_argument_status::argument_count_mismatch;
+        break;
+      case format_errc::invalid_format:
+        status = format_argument_status::invalid_specifier;
+        break;
+      }
+    }
   }
   candidate++;
 }
@@ -603,76 +629,121 @@ void append_format_literal(mut string& output, string_view pattern,
 }
 }
 
-class std::detail::format_argument_writer<int8_t> {
+class std::formatter<int8_t> {
 public:
+  expected<void, std::format_errc> format(int8_t& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
   std::detail::format_argument_status append(mut std::string& output,
                                               int8_t& value,
-                                              std::detail::format_spec& spec) {
+                                              std::format_spec& spec) {
     return std::detail::append_integral(output, value, spec);
   }
 };
-class std::detail::format_argument_writer<uint8_t> {
+class std::formatter<uint8_t> {
 public:
+  expected<void, std::format_errc> format(uint8_t& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
   std::detail::format_argument_status append(mut std::string& output,
                                               uint8_t& value,
-                                              std::detail::format_spec& spec) {
+                                              std::format_spec& spec) {
     return std::detail::append_integral(output, value, spec);
   }
 };
-class std::detail::format_argument_writer<int16_t> {
+class std::formatter<int16_t> {
 public:
+  expected<void, std::format_errc> format(int16_t& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
   std::detail::format_argument_status append(mut std::string& output,
                                               int16_t& value,
-                                              std::detail::format_spec& spec) {
+                                              std::format_spec& spec) {
     return std::detail::append_integral(output, value, spec);
   }
 };
-class std::detail::format_argument_writer<uint16_t> {
+class std::formatter<uint16_t> {
 public:
+  expected<void, std::format_errc> format(uint16_t& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
   std::detail::format_argument_status append(mut std::string& output,
                                               uint16_t& value,
-                                              std::detail::format_spec& spec) {
+                                              std::format_spec& spec) {
     return std::detail::append_integral(output, value, spec);
   }
 };
-class std::detail::format_argument_writer<int32_t> {
+class std::formatter<int32_t> {
 public:
+  expected<void, std::format_errc> format(int32_t& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
   std::detail::format_argument_status append(mut std::string& output,
                                               int32_t& value,
-                                              std::detail::format_spec& spec) {
+                                              std::format_spec& spec) {
     return std::detail::append_integral(output, value, spec);
   }
 };
-class std::detail::format_argument_writer<uint32_t> {
+class std::formatter<uint32_t> {
 public:
+  expected<void, std::format_errc> format(uint32_t& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
   std::detail::format_argument_status append(mut std::string& output,
                                               uint32_t& value,
-                                              std::detail::format_spec& spec) {
+                                              std::format_spec& spec) {
     return std::detail::append_integral(output, value, spec);
   }
 };
-class std::detail::format_argument_writer<int64_t> {
+class std::formatter<int64_t> {
 public:
+  expected<void, std::format_errc> format(int64_t& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
   std::detail::format_argument_status append(mut std::string& output,
                                               int64_t& value,
-                                              std::detail::format_spec& spec) {
+                                              std::format_spec& spec) {
     return std::detail::append_integral(output, value, spec);
   }
 };
-class std::detail::format_argument_writer<uint64_t> {
+class std::formatter<uint64_t> {
 public:
+  expected<void, std::format_errc> format(uint64_t& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
   std::detail::format_argument_status append(mut std::string& output,
                                               uint64_t& value,
-                                              std::detail::format_spec& spec) {
+                                              std::format_spec& spec) {
     return std::detail::append_integral(output, value, spec);
   }
 };
 
-class std::detail::format_argument_writer<bool> {
+class std::formatter<bool> {
 public:
+  expected<void, std::format_errc> format(bool& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
   std::detail::format_argument_status append(mut std::string& output,
                                               bool& value,
-                                              std::detail::format_spec& spec) {
+                                              std::format_spec& spec) {
     if (spec.type == '\0' || spec.type == 's') {
       if (spec.sign != '-' || spec.alternate || spec.zero_pad) {
         return std::detail::format_argument_status::invalid_specifier;
@@ -685,11 +756,16 @@ public:
   }
 };
 
-class std::detail::format_argument_writer<char> {
+class std::formatter<char> {
 public:
+  expected<void, std::format_errc> format(char& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
   std::detail::format_argument_status append(mut std::string& output,
                                               char& value,
-                                              std::detail::format_spec& spec) {
+                                              std::format_spec& spec) {
     if (spec.type != '\0' && spec.type != 'c') {
       mut uint8_t numeric = uint8_t(value);
       return std::detail::append_integral(output, numeric, spec);
@@ -705,29 +781,44 @@ public:
   }
 };
 
-class std::detail::format_argument_writer<float> {
+class std::formatter<float> {
 public:
+  expected<void, std::format_errc> format(float& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
   std::detail::format_argument_status append(mut std::string& output,
                                               float& value,
-                                              std::detail::format_spec& spec) {
+                                              std::format_spec& spec) {
     return std::detail::append_float32(output, value, spec);
   }
 };
 
-class std::detail::format_argument_writer<double> {
+class std::formatter<double> {
 public:
+  expected<void, std::format_errc> format(double& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
   std::detail::format_argument_status append(mut std::string& output,
                                               double& value,
-                                              std::detail::format_spec& spec) {
+                                              std::format_spec& spec) {
     return std::detail::append_float64(output, value, spec);
   }
 };
 
-class std::detail::format_argument_writer<std::string_view> {
+class std::formatter<std::string_view> {
 public:
+  expected<void, std::format_errc> format(std::string_view& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
   std::detail::format_argument_status append(mut std::string& output,
                                               std::string_view& value,
-                                              std::detail::format_spec& spec) {
+                                              std::format_spec& spec) {
     if ((spec.type != '\0' && spec.type != 's') || spec.sign != '-' ||
         spec.alternate || spec.zero_pad) {
       return std::detail::format_argument_status::invalid_specifier;
@@ -737,11 +828,16 @@ public:
   }
 };
 
-class std::detail::format_argument_writer<std::string> {
+class std::formatter<std::string> {
 public:
+  expected<void, std::format_errc> format(std::string& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
   std::detail::format_argument_status append(mut std::string& output,
                                               std::string& value,
-                                              std::detail::format_spec& spec) {
+                                              std::format_spec& spec) {
     if ((spec.type != '\0' && spec.type != 's') || spec.sign != '-' ||
         spec.alternate || spec.zero_pad) {
       return std::detail::format_argument_status::invalid_specifier;
@@ -768,7 +864,7 @@ expected<string, format_errc> try_format(string_view pattern) {
 }
 
 expected<string, format_errc>
-try_format<First, Args...>(string_view pattern, First first, Args... args) {
+try_format<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
   mut size_t argument_count = 1;
   (detail::count_format_argument(argument_count, args), ...);
   expected<void, format_errc> validation =
@@ -795,7 +891,7 @@ try_format<First, Args...>(string_view pattern, First first, Args... args) {
     }
     mut size_t candidate = 0;
     size_t requested = field.argument_index;
-    detail::format_spec selected_spec = field.spec;
+    format_spec selected_spec = field.spec;
     mut detail::format_argument_status status =
         detail::format_argument_status::appended;
     detail::append_selected_format_argument(output, requested,
@@ -806,6 +902,9 @@ try_format<First, Args...>(string_view pattern, First first, Args... args) {
                                              args), ...);
     if (status == detail::format_argument_status::unsupported) {
       return unexpected(format_errc::unsupported_argument);
+    }
+    if (status == detail::format_argument_status::argument_count_mismatch) {
+      return unexpected(format_errc::argument_count_mismatch);
     }
     if (status == detail::format_argument_status::invalid_specifier) {
       return unexpected(format_errc::invalid_format);
@@ -829,7 +928,7 @@ expected<void, format_errc> try_format_to(mut string& output,
 /// Appends one fully formatted result. Failure leaves `output` unchanged.
 expected<void, format_errc>
 try_format_to<First, Args...>(mut string& output, string_view pattern, First first,
-                          Args... args) {
+                          Args... args) requires formattable<First> {
   mut expected<string, format_errc> formatted =
       try_format(pattern, std::move(first), args...);
   if (!formatted) {
@@ -901,7 +1000,7 @@ string format(string_view pattern) {
 }
 
 [[track_caller]]
-string format<First, Args...>(string_view pattern, First first, Args... args) {
+string format<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
   mut auto result = try_format(pattern, std::move(first), args...);
   if (!result) {
     detail::panic_format_error(result.error());
@@ -919,7 +1018,7 @@ void format_to(mut string& output, string_view pattern) {
 
 [[track_caller]]
 void format_to<First, Args...>(mut string& output, string_view pattern,
-                              First first, Args... args) {
+                              First first, Args... args) requires formattable<First> {
   auto result = try_format_to(output, pattern, std::move(first), args...);
   if (!result) {
     detail::panic_format_error(result.error());
@@ -932,7 +1031,7 @@ expected<void, print_errc> try_print(string_view text) {
 }
 
 expected<void, print_errc>
-try_print<First, Args...>(string_view pattern, First first, Args... args) {
+try_print<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
   mut auto formatted = try_format(pattern, std::move(first), args...);
   if (!formatted) {
     return unexpected(detail::print_format_error(formatted.error()));
@@ -947,7 +1046,7 @@ expected<void, print_errc> try_println(string_view text) {
 }
 
 expected<void, print_errc>
-try_println<First, Args...>(string_view pattern, First first, Args... args) {
+try_println<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
   mut auto formatted = try_format(pattern, std::move(first), args...);
   if (!formatted) {
     return unexpected(detail::print_format_error(formatted.error()));
@@ -957,7 +1056,7 @@ try_println<First, Args...>(string_view pattern, First first, Args... args) {
 }
 
 [[track_caller]]
-void print<First, Args...>(string_view pattern, First first, Args... args) {
+void print<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
   auto result = try_print(pattern, std::move(first), args...);
   if (!result) {
     detail::panic_print_error(result.error());
@@ -965,7 +1064,7 @@ void print<First, Args...>(string_view pattern, First first, Args... args) {
 }
 
 [[track_caller]]
-void println<First, Args...>(string_view pattern, First first, Args... args) {
+void println<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
   auto result = try_println(pattern, std::move(first), args...);
   if (!result) {
     detail::panic_print_error(result.error());

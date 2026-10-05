@@ -534,10 +534,26 @@ void SignaturePrinter::appendConceptApplication(
   if (application.memberRequirement) {
     const auto &query = *application.memberRequirement;
     result += "requires (" +
+              (query.receiver().referenceMutability ? std::string("mut ")
+                                                    : std::string()) +
               semantic_spelling::typeRefSpelling(query.receiver()) + " " +
-              query.binding().lexeme + ") { { " + query.binding().lexeme + "." +
-              query.member().lexeme + "() } -> " +
-              semantic_spelling::typeRefSpelling(query.result()) + "; }";
+              query.binding().lexeme;
+    for (std::size_t index = 0; index < query.parameters().size(); ++index)
+      result +=
+          ", " +
+          (query.parameters()[index].referenceMutability ? std::string("mut ")
+                                                         : std::string()) +
+          semantic_spelling::typeRefSpelling(query.parameters()[index]) + " " +
+          query.bindings()[index].lexeme;
+    result +=
+        ") { { " + query.binding().lexeme + "." + query.member().lexeme + "(";
+    for (std::size_t index = 0; index < query.arguments().size(); ++index) {
+      if (index != 0)
+        result += ", ";
+      result += query.arguments()[index].lexeme;
+    }
+    result +=
+        ") } -> " + semantic_spelling::typeRefSpelling(query.result()) + "; }";
     return;
   }
   result += path(application.name);

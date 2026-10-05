@@ -1,0 +1,52 @@
+// An unrelated source library exercises the same signature facts as formatting
+// and I/O, without a public standard-library type in the contract.
+struct Box<T> { T value; };
+struct Counter {
+  mut int total = 0;
+  int add(int& amount, mut int& previous) mut {
+    previous = this.total;
+    this.total += amount;
+    return this.total;
+  }
+};
+struct Policy<T> {
+  Box<T> wrap(T& value) {
+    Box<T> result = {.value = value};
+    return result;
+  }
+};
+
+concept accumulator<C, V> = requires(mut C& target, V& amount, mut V& old) {
+  { target.add(amount, old) } -> V;
+};
+concept wraps<T> = requires(Policy<T>& policy, T& value) {
+  { policy.wrap(value) } -> Box<T>;
+};
+concept flipped<V, C> = accumulator<C, V>;
+concept compose<T> = wraps<T> && std::copyable<T>;
+
+int advance<C>(mut C& target, int& amount, mut int& previous)
+    requires flipped<int, C> {
+  return target.add(amount, previous);
+}
+Box<T> wrap<T>(T& value) requires compose<T> {
+  Policy<T> policy{};
+  return policy.wrap(value);
+}
+int main() {
+  static_assert(requires(mut Counter& c, int& n, mut int& old) {
+    { c.add(n, old) } -> int;
+  });
+  static_assert(!(requires(Counter& c, int& n, mut int& old) {
+    { c.add(n, old) } -> int;
+  }));
+  static_assert(!(requires(mut Counter& c, int& n, int& old) {
+    { c.add(n, old) } -> int;
+  }));
+  mut Counter counter{};
+  int amount = 4;
+  mut int previous = -1;
+  if (advance(counter, amount, previous) != 4 || previous != 0) { return 1; }
+  auto boxed = wrap(amount);
+  return boxed.value - 4;
+}

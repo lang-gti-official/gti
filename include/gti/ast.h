@@ -1339,10 +1339,15 @@ private:
 class MemberRequirement final : public ExprOfKind<ExprKind::MemberRequirement> {
 public:
   MemberRequirement(Token keyword, TypeRef receiver, Token binding,
-                    Token receiverUse, Token member, TypeRef result)
+                    Token receiverUse, Token member, TypeRef result,
+                    std::vector<TypeRef> parameters = {},
+                    std::vector<Token> bindings = {},
+                    std::vector<Token> arguments = {})
       : keyword_(std::move(keyword)), receiver_(std::move(receiver)),
         binding_(std::move(binding)), receiverUse_(std::move(receiverUse)),
-        member_(std::move(member)), result_(std::move(result)) {}
+        member_(std::move(member)), result_(std::move(result)),
+        parameters_(std::move(parameters)), bindings_(std::move(bindings)),
+        arguments_(std::move(arguments)) {}
 
   void accept(ExprVisitor &visitor) const override {
     visitor.visitMemberRequirementExpr(*this);
@@ -1353,6 +1358,9 @@ public:
   const Token &receiverUse() const { return receiverUse_; }
   const Token &member() const { return member_; }
   const TypeRef &result() const { return result_; }
+  const std::vector<TypeRef> &parameters() const { return parameters_; }
+  const std::vector<Token> &bindings() const { return bindings_; }
+  const std::vector<Token> &arguments() const { return arguments_; }
 
 private:
   Token keyword_;
@@ -1361,6 +1369,9 @@ private:
   Token receiverUse_;
   Token member_;
   TypeRef result_;
+  std::vector<TypeRef> parameters_;
+  std::vector<Token> bindings_;
+  std::vector<Token> arguments_;
 };
 
 class LiteralExpr final : public ExprOfKind<ExprKind::LiteralExpr> {
