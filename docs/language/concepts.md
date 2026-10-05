@@ -76,7 +76,8 @@ constraint-expression = constraint-and (('||' | 'or') constraint-and)*
 requires-clause       = 'requires' constraint-expression
 ```
 
-Every argument must be a visible non-pack type parameter or closed exact type,
+Every argument must be a visible non-pack type parameter, closed exact type,
+or dependent compound type,
 and every application must have the declared arity. Unexpanded packs,
 values, arbitrary expressions, general nested requires-expressions, boolean
 predicates, and negation are not accepted in this clause.

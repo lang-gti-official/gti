@@ -274,11 +274,15 @@ string views, and explicitly transferred owning strings, plus escaped
 `{{`/`}}`. Fields support fill/alignment, sign, alternate form, zero-padding,
 width, precision, integer `b`/`B`/`o`/`d`/`x`/`X`/`c`, floating
 `f`/`F`/`e`/`E`/`g`/`G`, and string `s` presentation. It builds an owning
-`std::string`; malformed patterns/specifiers, count mismatches, and unsupported
-argument types are returned through `std::format_errc` before output. Named
+`std::string`; malformed patterns/specifiers, count mismatches, and dynamic
+formatter rejections are returned through `std::format_errc` by `try_format`
+before output; `format` uses the same implementation and panics on failure.
+Exact source-defined `std::formatter<T>` specializations extend the protocol.
+The source-defined `std::formattable<T>` concept rejects unsupported static
+argument types, including every later heterogeneous pack element. Named
 strings use `.view()` for non-consuming formatting because current value packs
 have no reference-pack declarator. Named and dynamic fields, locale-aware
-formatting, and formatter customization remain later standard-library layers;
+formatting remain later standard-library layers;
 none of this makes the compiler recognize the public `std::string` name.
 Front/back, mutable `at`, resize, shrink-to-fit, pop-back, and constant-time
 storage `swap` are implemented. Swap also exchanges size and capacity without

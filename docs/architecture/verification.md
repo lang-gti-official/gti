@@ -472,8 +472,16 @@ user's active installation remain deliberately unchanged.
 
 These gates supplement the existing full optimized CTest, corpus,
 optimization-report/replay, staged-consumer, and editor/package completion
-checks below. They do not claim a formatter protocol or literal-format
-validation facility: those require separate general language capabilities.
+checks below. The subsequent public formatter slice adds
+`extensible_formatting_runtime` and `extensible_formatting_lsp`: unrelated
+source-defined identifier/record formatters, exact mutable receiver/parameter
+signature concepts, generic symbolic calls, owned argument cleanup, repeated
+indexed fields, error-category preservation, transactional destination output,
+and exact UTF-16 argument attribution with dirty-overlay repair. The runtime
+matrix covers C++20/C++23 at O0/O1/O3, disabled copy elision, and ASan/UBSan.
+Examples 105 and 106 are included in both corpus inventories and the native
+O0/C++20–O3/C++23 oracle. Literal-format validation remains a separate general
+language capability, not a claim of these gates.
 
 The final all-target Release/Ninja build uses AppleClang 21 and LLVM 22.1.8 on
 macOS arm64, with 12 compile jobs and eight CTest workers. All 385 registered

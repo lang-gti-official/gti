@@ -1567,7 +1567,7 @@
       "id": "format.executable",
       "source": "stdlib/std/format.gti",
       "status": "executable",
-      "operations": ["std::format", "std::format_to", "std::print(pattern,Args...)", "std::println(pattern,Args...)", "std::try_format", "std::try_format_to", "std::try_print", "std::try_println", "std::formatter<T>", "std::formattable<T>", "std::format_spec"],
+      "operations": ["std::format", "std::format_spec", "std::format_to", "std::formattable<T>", "std::formatter<T>", "std::print(pattern,Args...)", "std::println(pattern,Args...)", "std::try_format", "std::try_format_to", "std::try_print", "std::try_println"],
       "case_ids": ["format", "format-customization", "format-panic-adoption"],
       "required_instantiations": ["zero arguments", "all fixed-width integer types", "mixed bool,char,int32_t,float,double,string_view,string pack", "counted string view with embedded zero", "indexed and typed format specifications", "custom formatter delegation and composition", "recoverable value-dependent formatter rejection"],
       "evidence": ["tests/fixtures/stdlib_surface_format.gti", "tests/fixtures/extensible_formatting.gti", "stdlib/std/format.gti"]

@@ -14,6 +14,8 @@
     "102-constexpr-frame-budget.gti": 181,
     "103-resource-exchange.gti": 346,
     "104-move-only-ordering.gti": 380,
+    "105-member-signature-contracts.gti": 30,
+    "106-custom-formatters.gti": 466,
     "11-overloads.gti": 29,
     "12-fixed-arrays.gti": 28,
     "13-ownership.gti": 44,
@@ -61,7 +63,7 @@
     "55-owned-callable-transport.gti": 40,
     "56-sum-types.gti": 27,
     "57-contextual-array-arguments.gti": 38,
-    "58-formatted-output.gti": 437,
+    "58-formatted-output.gti": 452,
     "59-default-parameters.gti": 30,
     "60-configuration-and-comments.gti": 25,
     "61-global-borrow-returns.gti": 27,
@@ -102,5 +104,5 @@
     "98-shared-ownership.gti": 355,
     "99-borrowed-expected.gti": 347
   },
-  "total": 12703
+  "total": 13214
 }
