@@ -281,6 +281,11 @@ int main() {
                cpp.find("NativeDatabase** out_database") != std::string::npos,
            "native header and C++ representation should preserve the exact "
            "opaque-handle out-parameter ABI");
+    expect(cpp.find("native_pointer_value(") != std::string::npos &&
+               cpp.find("raw_pointer_slot_copy(") != std::string::npos &&
+               cpp.find("&__gti_native_out_") != std::string::npos,
+           "opaque out arguments stage native pointer storage rather than "
+           "reinterpreting internal address carriers");
   } else {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';

@@ -42,7 +42,7 @@ def validate_representation(generated: str, mode: str) -> bool:
     required = (
         "alignas(T) std::byte storage_[sizeof(T)]",
         "bool engaged_ = false",
-        "std::construct_at",
+        "construct_representation_at(slot(),",
         "std::destroy_at",
         "optional_storage(optional_storage &&other)",
     )

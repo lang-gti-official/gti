@@ -11,6 +11,16 @@ alone is not the complete backend API.
 
 ## Representation
 
+Raw address conversion uses `Compute/Convert` with one evaluated pointer value.
+The independent `rawPointerConversion` query is shared by body verification and
+production backend admission: only typed/void or same-pointee conversion is
+permitted, pointee constness cannot drop, and no loan, raw-memory access,
+ownership transition or failure metadata can be attached. Semantic pointer
+conversion intrinsics lower away before MIR. Existing numeric `Convert`
+contracts are not relaxed. The backend converts between integer-backed address
+carriers without reconstructing a native pointer; conversion of an expired
+address stays inert and does not establish permission to access it.
+
 ### Borrowed expected extraction
 
 Prefix propagation and `expect` on `expected<T&, E>` lower to a state branch
@@ -53,7 +63,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v87`, `mir-body-v74`).
+instruction, body, and caller-assignment facts (`mir-v88`, `mir-body-v75`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -226,7 +236,7 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v87`/`mir-body-v74`.
+The deterministic serialization is currently `mir-v88`/`mir-body-v75`.
 Field-aware borrowed-return and construction contracts serialize each result
 field path, selected receiver or parameter, source field path, and permission.
 Calls preserve the semantic contract; program verification also checks the
@@ -559,13 +569,14 @@ owning constructor followed immediately by publication of its initialized
 value obligation, retaining the same field rollback for later failures. Neither
 case invents a cleanup obligation for a cleanup-free result.
 
-Prefix append retains an exact selected source constructor for final-slot
+Prefix append and sparse storage retain an exact selected source constructor for final-slot
 construction, including its reference/value parameter roles after concrete pack
-expansion. All arguments are staged before `PrefixAppendPreflight`, which reads
-the staged storage and owns only the capacity failure. Prepared owning arguments
+expansion. All arguments are staged before `StorageConstructPreflight`, which reads
+the staged storage (and exact sparse index) and owns only the capacity or
+bounds/duplicate-slot failures. Prepared owning arguments
 remain active on that failure edge. The unique success continuation begins with
-the paired append, transfers prepared parameters once into the constructor, and
-extends the live prefix only after construction succeeds. This applies even
+the paired construction, transfers prepared parameters once into the constructor, and
+publishes the slot as live only after construction succeeds. This applies even
 when the constructor itself is proved failure-free.
 
 The preflight/append pair must name the same storage input, source call identity

@@ -44,7 +44,7 @@ void testPreparedPrefixConstructor() {
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
       for (const auto &append : block.instructions) {
-        if (append.prefixPreflight != 0 && append.parameterTypes.size() == 2 &&
+        if (append.storagePreflight != 0 && append.parameterTypes.size() == 2 &&
             append.parameterTypes[1].kind == lang::SemanticType::RawPointer) {
           const auto *value = function.body.findValue(append.operands[1].value);
           const auto *stage =
@@ -70,14 +70,14 @@ void testPreparedPrefixConstructor() {
             nullPointers += sourceType == lang::SemanticType::NullPtr;
           }
         }
-        if (append.prefixPreflight == 0 || append.parameterTypes.size() != 6 ||
+        if (append.storagePreflight == 0 || append.parameterTypes.size() != 6 ||
             append.parameterTypes[1].kind != lang::SemanticType::Class)
           continue;
         ++tested;
         const auto &body = function.body;
-        const auto *check = instruction(body, append.prefixPreflight);
-        expect(check && lang::mirPrefixAppendForPreflight(body, check->id) ==
-                            &append,
+        const auto *check = instruction(body, append.storagePreflight);
+        expect(check && lang::mirStorageConstructForPreflight(
+                            body, check->id) == &append,
                "append retains exact non-consuming capacity pair");
         expect(check && lang::effects(*check).readsPlace &&
                    !lang::effects(*check).writesPlace &&
@@ -123,13 +123,13 @@ void testPreparedPrefixConstructor() {
           auto forged = frontend.mir;
           auto *changedBody = lang::findMirBody(forged, address);
           auto *call = instruction(*changedBody, append.id);
-          auto *preflight = instruction(*changedBody, append.prefixPreflight);
+          auto *preflight = instruction(*changedBody, append.storagePreflight);
           mutate(*changedBody, *call, *preflight);
           expect(lang::rebuildMirValueUses(*changedBody),
                  "mutation keeps exact use index");
           expect(!lang::verifyMirProgram(forged).valid(), message);
         };
-        reject([](auto &, auto &call, auto &) { call.prefixPreflight = 0; },
+        reject([](auto &, auto &call, auto &) { call.storagePreflight = 0; },
                "cannot erase preflight pairing");
         reject([](auto &, auto &, auto &check) { ++check.callSite; },
                "capacity check must belong to the exact call");
@@ -270,11 +270,117 @@ void testGeneratedPrefixTransport() {
   expect(checked == 2,
          "direct and pack-generated transport both exercise the rule");
 }
+void testSparseFinalAddressConstructor() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/storage_final_address.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto stdlib = path.parent_path().parent_path().parent_path() / "stdlib";
+  const auto frontend = lang::Frontend().analyze(
+      path, source, {stdlib / "prelude.gti"}, {}, {stdlib});
+  if (!frontend.canGenerateCode())
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "sparse final-address construction verifies");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto map =
+      lang::CppMirBodyEmissionMap(buildRows(frontend, frontend.mir));
+  unsigned checked = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &call : block.instructions) {
+        if (call.intrinsic != lang::IntrinsicKind::StorageConstruct ||
+            call.storagePreflight == 0)
+          continue;
+        ++checked;
+        const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                           .owner = function.id};
+        const auto *check = instruction(function.body, call.storagePreflight);
+        expect(check && check->operands.size() == 2 &&
+                   check->operands[1] == call.operands[1] &&
+                   lang::mirStorageConstructForPreflight(function.body,
+                                                         check->id) == &call,
+               "sparse preflight protects the exact allocation and index");
+        const auto emitted = lang::CppMirBodyEmitter(frontend.mir, map)
+                                 .emitFailureBodyText(address, "sparse", 1);
+        expect(emitted.emitted() &&
+                   emitted.text.find("mir_storage_preflight_v1(") !=
+                       std::string::npos &&
+                   emitted.text.find("mir_storage_construct_with_v1(") !=
+                       std::string::npos,
+               "sparse construction uses MIR preflight and source failure "
+               "propagation");
+        const auto reject = [&](const auto &mutate, std::string_view message) {
+          auto forged = frontend.mir;
+          auto *body = lang::findMirBody(forged, address);
+          auto *changed = instruction(*body, call.id);
+          auto *preflight = instruction(*body, call.storagePreflight);
+          mutate(*changed, *preflight);
+          expect(lang::rebuildMirValueUses(*body),
+                 "sparse mutation rebuilds use index");
+          expect(!lang::verifyMirProgram(forged).valid(), message);
+          expect(!lang::CppMirBodyEmitter(forged, map)
+                      .supportsFailureBodyText(address),
+                 "sparse backend admission independently rejects the forged "
+                 "contract");
+        };
+        reject([](auto &call, auto &) { call.storagePreflight = 0; },
+               "sparse constructor cannot erase its preflight");
+        reject([](auto &call,
+                  auto &check) { check.operands[1] = call.operands.back(); },
+               "sparse constructor cannot check another slot index");
+        reject([](auto &call, auto &) { call.constructorTarget.reset(); },
+               "sparse constructor cannot erase its source target");
+        reject([](auto &call, auto &) { call.lifecycle.clear(); },
+               "sparse constructor must transfer prepared owners exactly once");
+        reject(
+            [](auto &call, auto &) {
+              call.definedFailure.propagation =
+                  lang::FailurePropagationKind::None;
+            },
+            "sparse constructor must preserve source failure propagation");
+      }
+    }
+  }
+  expect(checked != 0, "fixture exercises sparse final-address construction");
+  for (const std::string &source : {std::string(R"(
+#include <std/memory>
+int main() {
+  std::allocator allocator{};
+  mut auto slots = allocator.try_storage<int>(std::size_t(1)).expect("allocation");
+  mut int& value = slots.emplace(std::size_t(0), 7);
+  slots.destroy(std::size_t(0));
+  return value;
+})"),
+                                    std::string(R"(
+#include <std/memory>
+int& escape() {
+  std::allocator allocator{};
+  mut auto slots = allocator.try_storage<int>(std::size_t(1)).expect("allocation");
+  return slots.emplace(std::size_t(0), 7);
+}
+int main() { return 0; }
+)")}) {
+    const auto invalid =
+        lang::Frontend().analyze("invalid-storage-borrow.gti", source,
+                                 {stdlib / "prelude.gti"}, {}, {stdlib});
+    expect(
+        !invalid.canGenerateCode() &&
+            std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                        [](const auto &d) { return d.code == "GTI-S2017"; }) &&
+            std::none_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                         [](const auto &d) { return d.code == "GTI-B0001"; }),
+        "emplaced references cannot escape or survive owner mutation");
+  }
+}
 } // namespace
 
 int main() {
   testPreparedPrefixConstructor();
   testPrefixPointerInputRejection();
   testGeneratedPrefixTransport();
+  testSparseFinalAddressConstructor();
   return failures == 0 ? 0 : 1;
 }

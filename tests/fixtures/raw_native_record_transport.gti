@@ -1,0 +1,152 @@
+#include <std/utility>
+#include <std/string>
+#include <std/functional>
+
+[[c_abi]] struct NativeAddress {
+  mut const int* pointer;
+  mut int code;
+};
+
+extern "C" { NativeAddress native_empty(); }
+NativeAddress empty_address() { unsafe { return native_empty(); } }
+
+NativeAddress relay(mut NativeAddress value) {
+  value.code = 18;
+  return value;
+}
+NativeAddress twice(NativeAddress value) { return relay(value); }
+NativeAddress through_lambda(NativeAddress value) {
+  auto echo = [](NativeAddress argument) -> NativeAddress { return argument; };
+  return echo(value);
+}
+
+class RecordSource {
+public:
+  virtual NativeAddress read(NativeAddress value) = 0;
+};
+class RecordRelay : public RecordSource {
+public:
+  NativeAddress read(NativeAddress value) override {
+    int check = 36 / value.code;
+    return value;
+  }
+};
+NativeAddress virtual_relay(RecordSource& source, NativeAddress value) {
+  return source.read(value);
+}
+T retained_relay<T, F>(T value, F callback) {
+  callback();
+  return value;
+}
+struct RetainedEcho<T, F> {
+  F callback;
+  RetainedEcho(F operation) : callback(std::move(operation)) {}
+  T operator()(T value) { this.callback(); return value; }
+  T relay<U>(T value, U extra) { return value; }
+};
+T retained_object_relay<T, F>(T value, F callback) {
+  RetainedEcho<T, F> echo{std::move(callback)};
+  T first = echo.relay(value, 7);
+  T second = echo.relay(first, true);
+  return echo(second);
+}
+interface GenericChannel<T> { T pass(T value); };
+class GenericModel<T, F> : public GenericChannel<T> {
+  F callback;
+public:
+  GenericModel(F operation) : callback(std::move(operation)) {}
+  T pass(T value) override { this.callback(); return value; }
+};
+class IntegerChannel : public GenericChannel<int> {
+public:
+  int pass(int value) override { return value; }
+};
+T generic_virtual_relay<T, F>(T value, F callback) {
+  GenericModel<T, F> model{std::move(callback)};
+  GenericChannel<T>& base = model;
+  return base.pass(std::move(value));
+}
+mut int owner_drops = 0;
+class TrackedOwner {
+public:
+  std::string text;
+  TrackedOwner(std::string name) : text(std::move(name)) {}
+  ~TrackedOwner() { ++owner_drops; }
+};
+
+int main() {
+  mut NativeAddress original = empty_address();
+  {
+    int local = 9;
+    original.pointer = &local;
+    original.code = 17;
+  }
+  // No pointee access occurs here: all copies retain inert address bits.
+  NativeAddress copied = original;
+  NativeAddress returned = twice(copied);
+  mut NativeAddress assigned = empty_address();
+  assigned = returned;
+  assigned = assigned;
+  if (assigned.pointer == nullptr || assigned.pointer != original.pointer)
+    return 1;
+  if (original.code != 17) return 2;
+  mut NativeAddress other = original;
+  std::swap(assigned, other);
+  if (assigned.code != 17 || other.code != 18) return 3;
+  NativeAddress previous = std::exchange(assigned, other);
+  if (previous.code != 17 || previous.pointer != original.pointer) return 4;
+  auto echo = [](NativeAddress value) -> NativeAddress { return value; };
+  NativeAddress from_lambda = echo(assigned);
+  if (from_lambda.pointer != original.pointer) return 5;
+  RecordRelay source{};
+  NativeAddress from_virtual = virtual_relay(source, assigned);
+  if (from_virtual.pointer != original.pointer) return 6;
+  NativeAddress from_generic = retained_relay(assigned, []() -> void {});
+  if (from_generic.pointer != original.pointer) return 7;
+  NativeAddress from_generic_object =
+      retained_object_relay(assigned, []() -> void {});
+  if (from_generic_object.pointer != original.pointer) return 8;
+  if (retained_object_relay(23, []() -> void {}) != 23) return 9;
+  if (through_lambda(assigned).pointer != original.pointer) return 10;
+  NativeAddress generic_virtual = generic_virtual_relay(assigned, []() -> void {});
+  if (generic_virtual.pointer != original.pointer) return 11;
+  if (generic_virtual_relay(29, []() -> void {}) != 29) return 12;
+  IntegerChannel integer{};
+  GenericChannel<int>& integer_base = integer;
+  if (integer_base.pass(31) != 31) return 13;
+  {
+    TrackedOwner owned{std::string("alive")};
+    TrackedOwner output = generic_virtual_relay(std::move(owned), []() -> void {});
+    if (output.text != "alive" || owner_drops != 0) return 14;
+  }
+  if (owner_drops != 1) return 15;
+  // Erasure does not preserve a proof that the callback only copies pointers.
+  // Exercise its native-record ABI with live input, independently of the
+  // expired-address transport controls above.
+  int live_value = 41;
+  mut NativeAddress live = empty_address();
+  live.pointer = &live_value;
+  live.code = 18;
+  std::function<NativeAddress(NativeAddress)> callback{
+      [](NativeAddress value) -> NativeAddress { return value; }};
+  NativeAddress from_callback = callback(live);
+  if (from_callback.pointer != live.pointer) return 16;
+  std::function<int(NativeAddress)> code{
+      [](NativeAddress value) -> int { return value.code; }};
+  if (code(live) != 18) return 17;
+  std::function<int(NativeAddress&, int&)> inspect{
+      [](NativeAddress& value, int& offset) -> int {
+        return value.code + offset;
+      }};
+  int offset = 3;
+  if (inspect(live, offset) != 21) return 18;
+  std::function<void(mut NativeAddress&, mut int&)> update{
+      [](mut NativeAddress& value, mut int& count) -> void {
+        value.code = 18;
+        count += 1;
+      }};
+  mut int count = 0;
+  update(live, count);
+  if (count != 1) return 19;
+  return assigned.code - 18;
+}

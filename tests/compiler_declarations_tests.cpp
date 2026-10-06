@@ -1520,30 +1520,31 @@ int main() {
                  std::string::npos,
          "generated default construction should remain explicit at the call "
          "site");
-  expect(lifecycleGenerated.find("Origin() = default;") != std::string::npos &&
-             lifecycleGenerated.find("Counter(const Counter &) = default;") !=
-                 std::string::npos &&
-             lifecycleGenerated.find("Counter(Counter &&) = default;") !=
-                 std::string::npos &&
-             lifecycleGenerated.find(
-                 "Counter &operator=(const Counter &) = default;") !=
-                 std::string::npos &&
-             lifecycleGenerated.find(
-                 "Counter &operator=(Counter &&) = default;") !=
-                 std::string::npos &&
-             lifecycleGenerated.find("~Counter() noexcept = default;") !=
-                 std::string::npos &&
-             lifecycleGenerated.find(
-                 "LifecycleValue(const LifecycleValue &) = default;") !=
-                 std::string::npos &&
-             lifecycleGenerated.find(
-                 "LifecycleValue(LifecycleValue &&) = default;") !=
-                 std::string::npos &&
-             lifecycleGenerated.find(
-                 "MoveOnlyPolicy(const MoveOnlyPolicy &) = delete;") !=
-                 std::string::npos,
-         "the backend should explicitly emit compiler-generated special "
-         "members");
+  expect(
+      lifecycleGenerated.find("Origin() = default;") != std::string::npos &&
+          lifecycleGenerated.find("Counter(const Counter &other) = default;") !=
+              std::string::npos &&
+          lifecycleGenerated.find("Counter(Counter &&) = default;") !=
+              std::string::npos &&
+          lifecycleGenerated.find(
+              "Counter &operator=(const Counter &other) = default;") !=
+              std::string::npos &&
+          lifecycleGenerated.find(
+              "Counter &operator=(Counter &&) = default;") !=
+              std::string::npos &&
+          lifecycleGenerated.find("~Counter() noexcept = default;") !=
+              std::string::npos &&
+          lifecycleGenerated.find(
+              "LifecycleValue(const LifecycleValue &other) = default;") !=
+              std::string::npos &&
+          lifecycleGenerated.find(
+              "LifecycleValue(LifecycleValue &&) = default;") !=
+              std::string::npos &&
+          lifecycleGenerated.find(
+              "MoveOnlyPolicy(const MoveOnlyPolicy &other) = delete;") !=
+              std::string::npos,
+      "the backend should explicitly emit compiler-generated special "
+      "members");
 
   const std::string invalidSource = R"(
 class MissingInitialization {
@@ -2063,7 +2064,8 @@ int main() {
               std::string::npos &&
           generated.find("read__gti_mir_failure(std::int32_t "
                          "*__gti_mir_out_result") != std::string::npos &&
-          generated.find("_Box::read() const") != std::string::npos &&
+          generated.find("_Box::read(std::add_pointer_t<std::int32_t> "
+                         "__gti_mir_out_result) const") != std::string::npos &&
           firstNameIdDefinition != std::string::npos &&
           generated.find(nameIdDefinition,
                          firstNameIdDefinition + nameIdDefinition.size()) ==
@@ -3552,7 +3554,8 @@ int main() {
   const std::string capabilityCpp = gti_test::emitCppText(capabilities);
   expect(capabilityCpp.find("operator<(") != std::string::npos &&
              capabilityCpp.find("operator>=(") != std::string::npos &&
-             capabilityCpp.find("std::construct_at(__gti_mir_out_result);") !=
+             capabilityCpp.find(
+                 "construct_representation_at(__gti_mir_out_result);") !=
                  std::string::npos &&
              capabilityCpp.find("constructor-instance " +
                                 std::to_string(defaultRankConstructor)) !=
@@ -6811,6 +6814,10 @@ int main() {
          "temporaries into constructor parameters explicit");
 
   const std::string generated = gti_test::emitCppText(valid);
+  // Private backend support may use C++ representation constraints. The
+  // source constructor contract itself must remain resolved by GTI.
+  const std::size_t emittedProgram =
+      generated.find("namespace __gti_program {");
   expect(
       generated.find("explicit Capture(std::int32_t __gti_mir_arg_0);") !=
               std::string::npos &&
@@ -6821,7 +6828,8 @@ int main() {
           generated.find("Capture(T value)") == std::string::npos &&
           generated.find("string(Iterator first, Sentinel last)") ==
               std::string::npos &&
-          generated.find("requires std::") == std::string::npos,
+          emittedProgram != std::string::npos &&
+          generated.find("requires std::", emittedProgram) == std::string::npos,
       "the backend should emit each selected constructor as an ordinary "
       "concrete overload without delegating GTI inference or constraints to "
       "C++");

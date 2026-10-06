@@ -137,7 +137,10 @@ the syntax-level type-definition capture while semantic tokens retain the exact
 class-versus-namespace meaning.
 
 Function-declaration and selected-call signatures retain `[[noreturn]]`,
-`[[track_caller]]`, and `unsafe` from the resolved `FunctionInfo`. Contract
+`[[track_caller]]`, explicit `[[borrowed_from(owner)]]` / `[[borrowed_from(this)]]`,
+and `unsafe` from the resolved `FunctionInfo`. The borrow-origin parameter name
+comes from the resolved formal parameter index, not from reparsing the attribute;
+inferred borrow origins do not invent explicit annotations. Contract
 attributes precede the `unsafe` modifier and then `static`/`constexpr`, when
 present. Signature printers preserve that canonical order.
 The LSP publishes `GTI-S2055` and its

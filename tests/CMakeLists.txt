@@ -435,6 +435,24 @@ add_test(NAME mir_hosted_startup COMMAND gti_mir_hosted_startup_tests)
 add_executable("gti_raw_pointer_tests" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_tests.cpp")
 target_link_libraries("gti_raw_pointer_tests" PRIVATE gti_cpp_backend)
 add_test(NAME raw_pointer_pipeline COMMAND gti_raw_pointer_tests)
+add_executable(gti_raw_borrow_tests "${PROJECT_SOURCE_DIR}/tests/raw_borrow_tests.cpp")
+target_link_libraries(gti_raw_borrow_tests PRIVATE gti_cpp_backend)
+add_test(NAME raw_borrow_contract COMMAND gti_raw_borrow_tests)
+add_executable(gti_raw_access_tests "${PROJECT_SOURCE_DIR}/tests/raw_access_tests.cpp")
+target_link_libraries(gti_raw_access_tests PRIVATE gti_compiler)
+add_test(NAME raw_access_contract COMMAND gti_raw_access_tests)
+add_executable(gti_raw_pointer_conversion_tests "${PROJECT_SOURCE_DIR}/tests/raw_pointer_conversion_tests.cpp")
+target_link_libraries(gti_raw_pointer_conversion_tests PRIVATE gti_cpp_backend)
+add_test(NAME raw_pointer_conversion_contract COMMAND gti_raw_pointer_conversion_tests)
+add_executable(gti_borrow_origin_syntax_tests "${PROJECT_SOURCE_DIR}/tests/borrow_origin_syntax_tests.cpp")
+target_link_libraries(gti_borrow_origin_syntax_tests PRIVATE gti_compiler)
+add_test(NAME borrow_origin_syntax COMMAND gti_borrow_origin_syntax_tests)
+if(TARGET gti_lsp)
+  add_test(NAME raw_pointer_conversion_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_conversion_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  add_test(NAME raw_pointer_provenance_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_provenance_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+endif()
 
 add_executable("gti_layout_query_tests" "${PROJECT_SOURCE_DIR}/tests/layout_query_tests.cpp")
 target_link_libraries("gti_layout_query_tests" PRIVATE gti_cpp_backend)
@@ -2144,6 +2162,26 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(pack_prefix_constructor_failure_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME storage_final_address_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/storage_final_address_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(storage_final_address_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME raw_owner_witness_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_owner_witness_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(raw_owner_witness_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME raw_pointer_conversion_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_conversion_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(raw_pointer_conversion_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME raw_record_containers_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_record_containers_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(raw_record_containers_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME raw_native_record_transport_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_native_record_transport_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(raw_native_record_transport_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME constructor_field_publication_runtime
     COMMAND "${Python3_EXECUTABLE}"

@@ -1,0 +1,59 @@
+#include <std/memory>
+#include <std/string>
+
+class Value {
+  std::string label;
+  int number;
+public:
+  Value(int number) : label(std::string("payload")), number(number) {}
+  Value(Value& other) = delete;
+  Value(Value&& other) = default;
+  int read() { return this.number; }
+};
+
+// Application policy over public facilities: the typed allocation carries
+// layout, initialization and release authority. No compiler-private names.
+class Box {
+  mut std::storage<Value> slots;
+public:
+  Box(std::storage<Value> backing, int number) : slots(std::move(backing)) {
+    [[discard]] this.slots.emplace(std::size_t(0), number);
+  }
+  Box(Box& other) = delete;
+  Box(Box&& other) = default;
+  const Value* address() { return &this.slots.get(std::size_t(0)); }
+  void release() mut { this.slots.release(); }
+};
+
+// The raw pointer alone retains nothing. The checked owner field ensures the
+// Box remains live and unmodified while a Reading is still used. The small
+// unsafe boundary asserts that Box's allocation covers the pointed-to Value.
+class Reading {
+  Box& owner;
+  const Value* pointer = nullptr;
+public:
+  Reading(Box& owner) : owner(owner), pointer(owner.address()) {}
+  int read() {
+    unsafe { return std::assume_ref(this.pointer, this.owner).read(); }
+  }
+};
+
+int main() {
+  std::allocator allocator{};
+  mut auto allocated = allocator.try_storage<Value>(std::size_t(1));
+  if (!allocated) { return 1; }
+  Box original{std::move(allocated).value(), 42};
+  Reading first{original};
+  if (first.read() != 42) { return 2; }
+
+  // first's last use is above. Moving the owner transfers the allocation;
+  // it does not move the Value constructed at its final address.
+  mut Box moved = std::move(original);
+  Reading second{moved};
+  if (second.read() != 42) { return 3; }
+
+  // This would be rejected before second's last use, as would returning
+  // second from this scope. Raw addresses do not bypass the checked loan.
+  moved.release();
+  return 0;
+}

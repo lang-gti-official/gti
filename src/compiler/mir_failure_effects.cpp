@@ -657,7 +657,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
             source != nullptr && source->kind == MirOperandKind::Address
                 ? body.findPlace(source->place)
                 : nullptr;
-        return instruction.unsafeOperation == UnsafeOperationKind::AddressOf &&
+        return instruction.unsafeOperation == UnsafeOperationKind::None &&
                source != nullptr && place != nullptr &&
                source->type == place->type &&
                rawPointerType(instruction.info.type) &&
@@ -1138,7 +1138,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         case MirInstructionKind::AllocateObject:
         case MirInstructionKind::InitializeBase:
         case MirInstructionKind::CleanupBeforeAssign:
-        case MirInstructionKind::PrefixAppendPreflight:
+        case MirInstructionKind::StorageConstructPreflight:
         case MirInstructionKind::Count:
           valid = false;
           break;
@@ -1742,7 +1742,7 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
       case MirInstructionKind::AllocateObject:
       case MirInstructionKind::InitializeBase:
       case MirInstructionKind::CleanupBeforeAssign:
-      case MirInstructionKind::PrefixAppendPreflight:
+      case MirInstructionKind::StorageConstructPreflight:
       case MirInstructionKind::Count:
         return false;
       }

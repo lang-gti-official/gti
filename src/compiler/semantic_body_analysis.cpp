@@ -66,6 +66,10 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   currentProgramEffectOwner = {};
   programEffects.clear();
   requestSession.cThreadCallUses.clear();
+  requestSession.rawBorrowCallUses.clear();
+  requestSession.rawResultQueries.reset();
+  requestSession.collectingRawResult.reset();
+  requestSession.rawAccessObservation = 0;
   requestSession.hasCThreadRequirements = false;
   programStoragePlaceUseDepth = 0;
   preferReadOnlySubscriptReceiverDepth = 0;
@@ -161,6 +165,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   validateConfinedCallableUses();
   semanticModel.finalizeCallableArguments();
   finalizeCThreadRequirements();
+  finalizeRawBorrowContracts();
   finalizeProgramInitialization(program);
   semanticModel.finalizeOccurrences();
   finalizeAdvisoryDiagnostics();
@@ -320,34 +325,37 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
       argument = substituteType(argument, substitution);
     }
   }
-  if (const std::optional<FunctionReturnBorrowSummary> dynamicText =
-          dynamicTextReturnBorrowSummary(concreteFunction)) {
-    concreteFunction.returnBorrowOrigin = dynamicText->origin;
-    concreteFunction.returnBorrowParameter = dynamicText->parameter;
-    concreteFunction.returnBorrowAccess = dynamicText->access;
-    concreteFunction.returnBorrowPlace = dynamicText->place;
-  } else if (concreteFunction.returnBorrowOrigin == BorrowOriginKind::None) {
-    const FunctionReturnBorrowSummary borrow = functionReturnBorrowSummary(
-        concreteFunction.returnType, concreteFunction.parameterTypes,
-        concreteFunction.ownerClass, concreteFunction.staticMember,
-        concreteFunction.intrinsic, exactMovedReturnParameter(*function));
-    concreteFunction.returnBorrowOrigin = borrow.origin;
-    concreteFunction.returnBorrowParameter = borrow.parameter;
-    concreteFunction.returnBorrowAccess = borrow.access;
-    concreteFunction.returnBorrowParameters = borrow.parameters;
-    concreteFunction.returnBorrowPlace = borrow.place;
-  }
-  if (const auto fields = storedFieldReturnBorrowSummary(concreteFunction)) {
-    concreteFunction.returnBorrowOrigin = fields->origin;
-    concreteFunction.returnBorrowParameter = fields->parameter;
-    concreteFunction.returnBorrowAccess = fields->access;
-    concreteFunction.returnBorrowParameters = fields->parameters;
-    concreteFunction.returnBorrowFields = fields->fields;
-    concreteFunction.returnBorrowPlace = fields->place;
+  if (!concreteFunction.explicitReturnBorrowOrigin) {
+    if (const std::optional<FunctionReturnBorrowSummary> dynamicText =
+            dynamicTextReturnBorrowSummary(concreteFunction)) {
+      concreteFunction.returnBorrowOrigin = dynamicText->origin;
+      concreteFunction.returnBorrowParameter = dynamicText->parameter;
+      concreteFunction.returnBorrowAccess = dynamicText->access;
+      concreteFunction.returnBorrowPlace = dynamicText->place;
+    } else if (concreteFunction.returnBorrowOrigin == BorrowOriginKind::None) {
+      const FunctionReturnBorrowSummary borrow = functionReturnBorrowSummary(
+          concreteFunction.returnType, concreteFunction.parameterTypes,
+          concreteFunction.ownerClass, concreteFunction.staticMember,
+          concreteFunction.intrinsic, exactMovedReturnParameter(*function));
+      concreteFunction.returnBorrowOrigin = borrow.origin;
+      concreteFunction.returnBorrowParameter = borrow.parameter;
+      concreteFunction.returnBorrowAccess = borrow.access;
+      concreteFunction.returnBorrowParameters = borrow.parameters;
+      concreteFunction.returnBorrowPlace = borrow.place;
+    }
+    if (const auto fields = storedFieldReturnBorrowSummary(concreteFunction)) {
+      concreteFunction.returnBorrowOrigin = fields->origin;
+      concreteFunction.returnBorrowParameter = fields->parameter;
+      concreteFunction.returnBorrowAccess = fields->access;
+      concreteFunction.returnBorrowParameters = fields->parameters;
+      concreteFunction.returnBorrowFields = fields->fields;
+      concreteFunction.returnBorrowPlace = fields->place;
+    }
   }
   semanticModel.record(*function->declaration, std::move(concreteFunction));
   function->declaration->accept(*this);
   validateDefaultArgumentCycles();
+  finalizeRawBorrowContracts();
   semanticModel.finalizeCallableArguments();
   finishInstanceContext(*function);
   return scope.finish();
@@ -492,6 +500,21 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
   for (const ClassFieldTypeInfo &field : classType->fields) {
     if (field.declaration != nullptr) {
       field.declaration->accept(*this);
+      if (requestSession.collectingRawResult &&
+          requestSession.collectingRawResult->defaultOwner == classId &&
+          field.declaration->initializer()) {
+        auto fields = rawPointerFields(field.declaration->initializer().get());
+        const auto *member =
+            findMember(openClassType(classId), field.declaration->name());
+        if (member) {
+          for (auto &entry : fields)
+            entry.projections.insert(
+                entry.projections.begin(),
+                {.kind = PlaceProjectionKind::Field,
+                 .field = toolingSymbolFor(member->symbol)});
+          collectRawResultFields(fields, {}, {}, true);
+        }
+      }
     }
   }
   for (const ClassFieldTypeInfo &field : classType->staticFields) {
@@ -900,6 +923,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   LoanFlowState enclosingLoanFlow = std::move(loanFlow);
   std::vector<ValueControlFlowContext> enclosingValueControlFlow =
       std::move(valueControlFlow);
+  auto enclosingRawPointerLoops = std::move(valueFlow.rawPointerLoops);
   currentReturnType = SemanticType::Void;
   currentReceiverMutability = ReceiverMutability::Mutable;
   loanFlow = {};
@@ -909,6 +933,12 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   currentProgramEffectOwner = {.kind = ProgramEffectOwnerKind::Constructor,
                                .id = constructorInfo->id};
   beginScope();
+  const bool collectingRawFields =
+      requestSession.collectingRawResult &&
+      requestSession.collectingRawResult->constructor == constructorInfo->id;
+  auto enclosingRawProgramStorage = saveRawProgramStorage();
+  if (collectingRawFields)
+    declareReceiverState();
 
   for (const Parameter &parameter : stmt.parameters()) {
     if (!parameter.name.lexeme.empty()) {
@@ -922,6 +952,31 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
               parameter.mutability == Mutability::Mutable,
               SemanticBindingKind::Parameter, nullptr, &parameter);
       recordParameterEntryLoan(parameter);
+    }
+  }
+
+  if (collectingRawFields) {
+    for (const auto &field : owner.fields) {
+      const auto &declaration = *field.declaration;
+      if (!declaration.initializer() ||
+          std::any_of(stmt.initializers().begin(), stmt.initializers().end(),
+                      [&](const auto &initializer) {
+                        return initializer.target.name.last().lexeme ==
+                               declaration.name().lexeme;
+                      }))
+        continue;
+      const auto member = owner.members.find(declaration.name().lexeme);
+      if (member == owner.members.end())
+        continue;
+      const auto fieldType =
+          substituteSymbol(member->second.symbol, openClassType(owner.id)).type;
+      analyzeInitializer(declaration.initializer(), fieldType);
+      assignRawPointerFields(
+          {.root = receiverStateSymbol(),
+           .projections = {{.kind = PlaceProjectionKind::Field,
+                            .field = toolingSymbolFor(member->second.symbol)}},
+           .receiver = true},
+          declaration.initializer().get());
     }
   }
 
@@ -1109,6 +1164,13 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     }
     if (field != nullptr && fieldSymbol != 0 &&
         initializer.arguments.size() == 1) {
+      if (collectingRawFields)
+        assignRawPointerFields(
+            {.root = receiverStateSymbol(),
+             .projections = {{.kind = PlaceProjectionKind::Field,
+                              .field = fieldSymbol}},
+             .receiver = true},
+            initializer.arguments.front().get());
       std::optional<std::size_t> ownedParameter;
       if (const ExprPtr *moved =
               explicitMoveSource(initializer.arguments.front())) {
@@ -1185,8 +1247,11 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   }
 
   analyze(stmt.body()->statements());
+  if (collectingRawFields)
+    recordRawConstructorResult(stmt);
   finalizeLoanFlow();
   endScope();
+  restoreRawProgramStorage(std::move(enclosingRawProgramStorage));
   if (stmt.isConstexpr() && constexprDeclarationValid &&
       !hasErrorDiagnostics(
           std::span(diagnostics).subspan(constructorDiagnosticStart))) {
@@ -1197,6 +1262,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   currentReceiverMutability = enclosingReceiverMutability;
   loanFlow = std::move(enclosingLoanFlow);
   valueControlFlow = std::move(enclosingValueControlFlow);
+  valueFlow.rawPointerLoops = std::move(enclosingRawPointerLoops);
   currentReturnType = enclosingReturnType;
   currentProgramEffectOwner = enclosingEffectOwner;
   endRequirementScope();
@@ -1245,6 +1311,7 @@ auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
   std::vector<ValueControlFlowContext> enclosingValueControlFlow =
       std::move(valueControlFlow);
   currentReturnType = SemanticType::Void;
+  auto enclosingRawPointerLoops = std::move(valueFlow.rawPointerLoops);
   currentReceiverMutability = ReceiverMutability::Mutable;
   loanFlow = {};
   valueControlFlow.clear();
@@ -1252,6 +1319,7 @@ auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
   ++destructorDepth;
   currentProgramEffectOwner = {.kind = ProgramEffectOwnerKind::Destructor,
                                .id = owner.id};
+  auto enclosingRawProgramStorage = saveRawProgramStorage();
   beginScope();
 
   analyze(stmt.body()->statements());
@@ -1262,9 +1330,11 @@ auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
   endScope();
   --destructorDepth;
   --functionDepth;
+  restoreRawProgramStorage(std::move(enclosingRawProgramStorage));
   currentReceiverMutability = enclosingReceiverMutability;
   loanFlow = std::move(enclosingLoanFlow);
   valueControlFlow = std::move(enclosingValueControlFlow);
+  valueFlow.rawPointerLoops = std::move(enclosingRawPointerLoops);
   currentReturnType = enclosingReturnType;
   currentProgramEffectOwner = enclosingEffectOwner;
 }
@@ -1272,6 +1342,7 @@ auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
 auto SemanticVisitor::Impl::visitDoWhileStmt(const DoWhileStmt &stmt) -> void {
   noteUnsupportedNestedLoanControlFlow();
   beginLoanFlowLoop(stmt);
+  beginRawPointerLoop();
   const ScopeStack beforeLoop = scopes;
   ++loopDepth;
   beginValueControlFlow(ValueControlFlowKind::Loop, stmt);
@@ -1325,6 +1396,8 @@ auto SemanticVisitor::Impl::visitDoWhileStmt(const DoWhileStmt &stmt) -> void {
   scopes = loanScopes;
   applyMoveStates(moveScopes);
   --loopDepth;
+  endRawPointerLoop(afterCondition,
+                    !conditionInputs.empty() && condition != false);
   endLoanFlowLoop();
 }
 
@@ -1372,6 +1445,7 @@ auto SemanticVisitor::Impl::visitForStmt(const ForStmt &stmt) -> void {
   beginLoanFlowLoop(stmt);
   beginScope();
   analyze(stmt.initializer());
+  beginRawPointerLoop();
   const ScopeStack beforeCondition = scopes;
   if (stmt.condition()) {
     semanticModel.recordFullExpression(stmt, stmt.condition());
@@ -1437,6 +1511,8 @@ auto SemanticVisitor::Impl::visitForStmt(const ForStmt &stmt) -> void {
                                     : mergedValueStates(beforeLoop, exitStates);
   scopes = loanScopes;
   applyMoveStates(moveScopes);
+  endRawPointerLoop(afterIteration,
+                    !incrementInputs.empty() && condition != false);
   endScope();
   endLoanFlowLoop();
 }
@@ -1656,7 +1732,31 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                                          where, {std::move(message)}));
   };
   std::unordered_set<std::string> functionAttributeNames;
-  for (const Token &attribute : stmt.functionAttributes()) {
+  for (const auto &contract : stmt.functionAttributes()) {
+    const Token &attribute = contract.name;
+    if (attribute.lexeme == "borrowed_from") {
+      if (!functionAttributeNames.insert(attribute.lexeme).second) {
+        reportContract(attribute,
+                       "Duplicate function attribute 'borrowed_from'.");
+      } else if (stmt.hasCLinkage() || stmt.runtimeBinding()) {
+        reportContract(
+            attribute,
+            "A borrowed_from contract requires a GTI function or method.");
+      } else if (functionInfo == nullptr ||
+                 functionInfo->returnType.kind != SemanticType::Reference) {
+        reportContract(attribute, "A borrowed_from contract requires a checked "
+                                  "reference return type.");
+      } else if (!contract.argument) {
+        reportContract(attribute, "A borrowed_from contract requires one "
+                                  "reference parameter name or 'this'.");
+      } else if (functionInfo->returnBorrowOrigin == BorrowOriginKind::None) {
+        reportContract(
+            *contract.argument,
+            "The selected borrow origin must name a reference parameter with "
+            "sufficient access, or a non-static receiver.");
+      }
+      continue;
+    }
     if (attribute.lexeme != "noreturn" && attribute.lexeme != "track_caller") {
       reportContract(attribute, "Unknown GTI function attribute '" +
                                     attribute.lexeme + "'.");
@@ -1764,7 +1864,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
            "GTI-S2045");
   } else if (isBorrowReturningType(declaredReturnType) &&
              !intrinsicDeclaration && !hasReturnBorrowSummary &&
-             functionInfo != nullptr) {
+             functionInfo != nullptr &&
+             !stmt.hasFunctionAttribute("borrowed_from")) {
     reportMissingFunctionReturnBorrowSummary(stmt, *functionInfo);
   }
   if (stmt.returnMutability() == Mutability::Mutable) {
@@ -1924,8 +2025,10 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   std::vector<ValueControlFlowContext> enclosingValueControlFlow =
       std::move(valueControlFlow);
   const bool enclosingStaticMemberFunction = currentStaticMemberFunction;
+  auto enclosingRawPointerLoops = std::move(valueFlow.rawPointerLoops);
   const FunctionDecl *enclosingFunctionDeclaration = currentFunctionDeclaration;
   const ProgramEffectOwner enclosingEffectOwner = currentProgramEffectOwner;
+  auto enclosingRawProgramStorage = saveRawProgramStorage();
   if (currentClass && functionDepth == 0) {
     currentReceiverMutability = stmt.receiverMutability();
     currentStaticMemberFunction = stmt.isStatic();
@@ -1963,6 +2066,22 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   }
 
   // A function body owns the parameter scope, so do not add another scope.
+  if (functionInfo && functionInfo->explicitReturnBorrowOrigin &&
+      functionInfo->returnBorrowOrigin == BorrowOriginKind::Argument) {
+    const auto *attribute = stmt.findFunctionAttribute("borrowed_from");
+    const auto index = functionInfo->returnBorrowParameter;
+    if (attribute && attribute->argument && index < stmt.parameters().size()) {
+      const auto *binding = semanticModel.findBinding(stmt.parameters()[index]);
+      if (binding)
+        semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
+                                        .span = tokenSpan(*attribute->argument),
+                                        .kind = SemanticOccurrenceKind::Symbol,
+                                        .symbol = binding->symbol,
+                                        .roles = OccurrenceRole::Reference,
+                                        .name = attribute->argument->lexeme,
+                                        .type = binding->type});
+    }
+  }
   analyze(stmt.body()->statements());
   const FlowSummary functionFlow = summarizeFlow(stmt.body()->statements());
   const bool canFallThrough = functionFlow.canFallThrough;
@@ -2004,10 +2123,12 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   currentReceiverMutability = enclosingReceiverMutability;
   loanFlow = std::move(enclosingLoanFlow);
   valueControlFlow = std::move(enclosingValueControlFlow);
+  valueFlow.rawPointerLoops = std::move(enclosingRawPointerLoops);
   currentStaticMemberFunction = enclosingStaticMemberFunction;
   currentReturnType = enclosingReturnType;
   currentFunctionDeclaration = enclosingFunctionDeclaration;
   currentProgramEffectOwner = enclosingEffectOwner;
+  restoreRawProgramStorage(std::move(enclosingRawProgramStorage));
   endRequirementScope();
   endTypeParameterScope();
 }
@@ -2273,12 +2394,14 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     }
     forceProgramStorageBoundaryAccess(stmt.value());
     validateReferenceReturn(currentReturnType, valueType, stmt.value());
+    recordRawResult(stmt.value());
     requireInitializedReceiver(stmt.keyword());
     return;
   }
 
   const SemanticType valueType =
       analyzeInitializer(stmt.value(), currentReturnType);
+  recordRawResult(stmt.value());
   if (typeTraits(currentReturnType).containsBorrowedState) {
     validateStoredBorrowReturn(currentReturnType, valueType, stmt.value());
   }
@@ -2516,6 +2639,17 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
         payload.binding.symbol = symbol;
         declare(*payload.name, payload.binding.type, mutableReferent,
                 SemanticBindingKind::LocalVariable);
+        if (!rawPointerFieldPaths(payload.binding.type).empty())
+          if (auto *carrier = resolveMutable(*payload.name)) {
+            const auto fields = rawPointerFields(stmt.expression().get());
+            if (payload.binding.type.kind == SemanticType::RawPointer) {
+              for (const auto &field : fields)
+                mergeRawPointerOrigins(carrier->rawPointerOrigins,
+                                       field.origins);
+            } else {
+              carrier->rawPointerFields = fields;
+            }
+          }
         if (payload.binding.type.kind == SemanticType::Reference) {
           const AccessMode access = payload.binding.type.referenceAccess;
           const ExpressionInfo *subject =
@@ -3184,6 +3318,12 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     semanticModel.record(stmt, std::move(updated));
   }
 
+  const auto rawOrigins = declaredType.kind == SemanticType::RawPointer
+                              ? rawPointerOrigins(stmt.initializer())
+                              : std::vector<RawPointerOrigin>{};
+  const auto rawFields = declaredType.kind != SemanticType::RawPointer
+                             ? rawPointerFields(stmt.initializer().get())
+                             : std::vector<ProjectedRawPointerOrigins>{};
   if (!predeclaredVariables.contains(&stmt)) {
     if (functionDepth == 0 && !currentClass) {
       declareNamespaceSymbol(currentNamespace, stmt.name(), declaredType,
@@ -3199,6 +3339,10 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     }
   }
 
+  if (auto *target = resolveMutable(stmt.name())) {
+    target->rawPointerOrigins = rawOrigins;
+    target->rawPointerFields = rawFields;
+  }
   if (stmt.initializer() && declaredType.kind == SemanticType::Reference &&
       exprAs<DirectInitializer>(stmt.initializer().get()) == nullptr) {
     validateReferenceBinding(declaredType, initializerType, stmt.initializer());
@@ -3231,6 +3375,7 @@ auto SemanticVisitor::Impl::visitWhileStmt(const WhileStmt &stmt) -> void {
   semanticModel.recordFullExpression(stmt, stmt.condition());
   noteUnsupportedNestedLoanControlFlow();
   beginLoanFlowLoop(stmt);
+  beginRawPointerLoop();
   const ScopeStack beforeCondition = scopes;
   const SemanticType conditionType =
       analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
@@ -3284,6 +3429,7 @@ auto SemanticVisitor::Impl::visitWhileStmt(const WhileStmt &stmt) -> void {
                                     : mergedValueStates(beforeLoop, exitStates);
   scopes = loanScopes;
   applyMoveStates(moveScopes);
+  endRawPointerLoop(afterIteration, !backedgeStates.empty());
   endLoanFlowLoop();
 }
 
@@ -3547,6 +3693,10 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
   }
   if (simpleAssignment && symbol.assignable && valueAssignable &&
       !directSelfMove && !directSelfPlace && targetStateValid) {
+    if (targetType.kind == SemanticType::Class ||
+        targetType.kind == SemanticType::Array)
+      invalidateRawPointerOrigins(targetPlace);
+    assignRawPointerFields(targetPlace, expr.value().get());
     if (!qualified) {
       if (Symbol *target = resolveMutable(expr.name())) {
         if (tracksValueState(*target)) {
@@ -3985,6 +4135,10 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       currentType = SemanticType::Unknown;
       return;
     }
+    if (const auto *variable = exprAs<Variable>(expr.callee().get()))
+      recordTypeUse(TypeRef(NamePath(variable->name())));
+    else if (const auto *qualified = exprAs<QualifiedName>(expr.callee().get()))
+      recordTypeUse(TypeRef(qualified->name()));
     if (alias->type.kind == SemanticType::TypeParameter) {
       analyzeTypeParameterCall(expr, alias->type);
       return;
@@ -3998,7 +4152,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                  "' does not take generic arguments.",
              "GTI-S2030");
     }
-    if (isNumeric(alias->type)) {
+    if (isNumeric(alias->type) ||
+        alias->type.kind == SemanticType::RawPointer) {
       analyzeAliasConversion(expr, alias->type, alias->qualifiedName);
       return;
     }
@@ -4013,7 +4168,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     } else {
       report(expressionToken(expr.callee()),
              "Type alias '" + alias->qualifiedName +
-                 "' does not name a constructible class or numeric type.",
+                 "' does not name a constructible class, numeric or raw "
+                 "pointer type.",
              "GTI-S2030");
       currentType = SemanticType::Unknown;
     }
@@ -4805,7 +4961,20 @@ auto SemanticVisitor::Impl::analyzeTypeParameterCall(
     return;
   }
 
+  if (targetType.kind == SemanticType::RawPointer) {
+    analyzeAliasConversion(expr, targetType, typeSpelling(targetType));
+    if (!valid)
+      currentType = SemanticType::Unknown;
+    return;
+  }
   const SemanticType valueType = analyze(expr.arguments().front());
+  if (valid && targetType.kind == SemanticType::TypeParameter &&
+      valueType.kind == SemanticType::RawPointer) {
+    // Pointer-shaped input permits dependent explicit address policy. The
+    // concrete instance must resolve and validate the destination before HIR.
+    currentType = targetType;
+    return;
+  }
   const bool characterCodeConversion =
       isCharacterCodeConversion(valueType, targetType);
   if (!isNumeric(targetType) && !characterCodeConversion) {
@@ -4844,13 +5013,59 @@ auto SemanticVisitor::Impl::analyzeAliasConversion(
       analyze(argument);
     }
     report(expr.paren(),
-           "A numeric conversion requires exactly one value argument.",
+           "An explicit conversion requires exactly one value argument.",
            "GTI-S2014");
     currentType = SemanticType::Unknown;
     return;
   }
 
   const SemanticType valueType = analyze(expr.arguments().front());
+  if (targetType.kind == SemanticType::RawPointer) {
+    const bool shaped =
+        valueType.kind == SemanticType::RawPointer &&
+        valueType.arguments.size() == 1 && targetType.arguments.size() == 1 &&
+        valueType.arguments.front().kind != SemanticType::RawPointer &&
+        targetType.arguments.front().kind != SemanticType::RawPointer;
+    const bool compatible =
+        shaped &&
+        (valueType.pointerAccess == AccessMode::Mutable ||
+         targetType.pointerAccess == AccessMode::ReadOnly) &&
+        (valueType.arguments.front() == targetType.arguments.front() ||
+         valueType.arguments.front() == SemanticType::Void ||
+         targetType.arguments.front() == SemanticType::Void);
+    if (!compatible) {
+      report(expressionToken(expr.callee()),
+             "Explicit raw pointer conversion requires typed/void pointers "
+             "or the same pointee type, and cannot remove pointee constness.",
+             "GTI-S2014");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (targetType.arguments.front() != SemanticType::Void) {
+      for (const auto &origin : rawPointerOrigins(expr.arguments().front())) {
+        if (origin.pointeeType != SemanticType::Unknown &&
+            origin.pointeeType != targetType.arguments.front()) {
+          report(expressionToken(expr.callee()),
+                 "Explicit raw pointer conversion contradicts the known "
+                 "pointee type '" +
+                     typeSpelling(origin.pointeeType) + "'.",
+                 "GTI-S2014");
+          diagnostics.back().related.push_back(
+              {origin.addressSite,
+               "Pointee type retained at this conversion."});
+          currentType = SemanticType::Unknown;
+          return;
+        }
+      }
+    }
+    currentType = targetType;
+    semanticModel.record(
+        expr,
+        ResolvedCallInfo{.returnType = targetType,
+                         .parameterTypes = {valueType},
+                         .intrinsic = IntrinsicKind::RawPointerConversion});
+    return;
+  }
   const bool characterCodeConversion =
       isCharacterCodeConversion(valueType, targetType);
   if (valueType != SemanticType::Unknown && !isNumeric(valueType) &&
@@ -4891,6 +5106,7 @@ auto SemanticVisitor::Impl::visitConditionalExpr(const ConditionalExpr &expr)
   const ScopeStack beforeBranches = scopes;
   const SemanticType contextualType =
       contextualInitializerType.value_or(SemanticType::Unknown);
+  ++loanFlow.rawConditionalExpressionDepth;
   const SemanticType thenType =
       contextualType == SemanticType::Unknown
           ? analyze(expr.thenExpression())
@@ -4906,6 +5122,7 @@ auto SemanticVisitor::Impl::visitConditionalExpr(const ConditionalExpr &expr)
           ? analyze(expr.elseExpression())
           : analyzeExpectedCallableResult(expr.elseExpression(),
                                           elseExpectation);
+  --loanFlow.rawConditionalExpressionDepth;
   const ScopeStack elseScopes = scopes;
 
   scopes = beforeBranches;
@@ -5249,6 +5466,8 @@ auto SemanticVisitor::Impl::visitDereferenceSetExpr(const DereferenceSet &expr)
     if (valueTarget != SemanticType::Unknown && mutableTarget) {
       requireUnsafe(expr, UnsafeOperationKind::RawDereference,
                     expr.dereference(), "Raw pointer dereference");
+      validateRawPointerAccess(expr.object(), expr.dereference(),
+                               AccessMode::Mutable);
     }
   } else if (ownerType.kind == SemanticType::Class ||
              (ownerType.kind == SemanticType::TypeParameter &&
@@ -5335,6 +5554,11 @@ auto SemanticVisitor::Impl::visitDereferenceSetExpr(const DereferenceSet &expr)
   if (!simpleAssignment && !overloadedMutation) {
     validateCompoundAssignment(expr.oper(), valueTarget, valueType,
                                expr.value().get());
+  }
+  if (ownerType.kind == SemanticType::RawPointer && simpleAssignment &&
+      mutableTarget &&
+      isOwnershipAssignment(valueTarget, valueType, expr.value())) {
+    assignRawPointerFields(targetPlace, expr.value().get());
   }
   currentType = valueTarget;
 }
@@ -5511,6 +5735,8 @@ auto SemanticVisitor::Impl::visitIndexExpr(const Index &expr) -> void {
     if (validIndex && validPointee) {
       requireUnsafe(expr, UnsafeOperationKind::RawIndex, expr.bracket(),
                     "Raw pointer indexing");
+      validateRawPointerAccess(expr.object(), expr.bracket(),
+                               AccessMode::ReadOnly);
     }
     return;
   }
@@ -5594,6 +5820,8 @@ auto SemanticVisitor::Impl::visitIndexSetExpr(const IndexSet &expr) -> void {
         objectType.pointerAccess == AccessMode::Mutable) {
       requireUnsafe(expr, UnsafeOperationKind::RawIndex, expr.bracket(),
                     "Raw pointer indexing");
+      validateRawPointerAccess(expr.object(), expr.bracket(),
+                               AccessMode::Mutable);
     }
   } else if (objectType.kind == SemanticType::Class ||
              (objectType.kind == SemanticType::TypeParameter &&
@@ -5742,6 +5970,10 @@ auto SemanticVisitor::Impl::visitIndexSetExpr(const IndexSet &expr) -> void {
   if (simpleAssignment && trackedFixedArrayElement && mutableElement &&
       valueAssignable && targetStateValid && !directSelfMove &&
       !uncertainMoveAlias) {
+    if (elementType.kind == SemanticType::Class ||
+        elementType.kind == SemanticType::Array)
+      invalidateRawPointerOrigins(targetPlace);
+    assignRawPointerFields(targetPlace, expr.value().get());
     const ValueState reinitializeStateBefore =
         projectedValueState(*targetPlace.root, targetPlace.projections);
     reinitializePlace(targetPlace);
@@ -5750,6 +5982,10 @@ auto SemanticVisitor::Impl::visitIndexSetExpr(const IndexSet &expr) -> void {
                .place = placeKey(targetPlace),
                .before = reinitializeStateBefore,
                .after = ValueState::Available});
+  }
+  if (objectType.kind == SemanticType::RawPointer && simpleAssignment &&
+      mutableElement && valueAssignable) {
+    assignRawPointerFields(targetPlace, expr.value().get());
   }
   currentType = elementType;
 }
@@ -5987,6 +6223,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   // Lambda body analysis is isolated, so transfer the enclosing stack
   // after capture initializers have executed left-to-right in that stack.
   ScopeStack enclosingScopes = std::move(scopes);
+  auto enclosingRawProgramStorage = saveRawProgramStorage();
 
   std::unordered_map<std::string, Token> unavailableLocals;
   for (auto scope = enclosingScopes.rbegin(); scope != enclosingScopes.rend();
@@ -6008,6 +6245,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   std::vector<ValueControlFlowContext> enclosingValueControlFlow =
       std::move(valueControlFlow);
   const std::size_t enclosingLoopDepth = loopDepth;
+  auto enclosingRawPointerLoops = std::move(valueFlow.rawPointerLoops);
   const std::size_t enclosingSwitchDepth = switchDepth;
   const std::size_t enclosingConstructorDepth = constructorDepth;
   const std::size_t enclosingDestructorDepth = destructorDepth;
@@ -6043,6 +6281,10 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                                .id = id};
   lambdaUncapturedLocals.push_back(std::move(unavailableLocals));
 
+  const auto enclosingRawAccessObservation =
+      requestSession.rawAccessObservation;
+  requestSession.rawAccessObservation = 0;
+
   for (const Parameter &parameter : expr.parameters()) {
     if (!parameter.name.lexeme.empty()) {
       recordProgramCleanupEffects(typeOf(parameter), tokenSpan(parameter.name));
@@ -6065,6 +6307,9 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   finalizeLoanFlow();
 
   lambdaUncapturedLocals.pop_back();
+  const bool rawAccessFree = requestSession.rawAccessObservation == 0 &&
+                             !loanFlow.deferredConstexprSelection;
+  requestSession.rawAccessObservation = enclosingRawAccessObservation;
   --lambdaDepth;
   --functionDepth;
   destructorDepth = enclosingDestructorDepth;
@@ -6079,10 +6324,12 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   analyzingCallCallee = enclosingAnalyzingCallCallee;
   loanFlow = std::move(enclosingLoanFlow);
   valueControlFlow = std::move(enclosingValueControlFlow);
+  valueFlow.rawPointerLoops = std::move(enclosingRawPointerLoops);
   currentReceiverMutability = enclosingReceiverMutability;
   currentReturnType = enclosingReturnType;
   currentProgramEffectOwner = enclosingEffectOwner;
   scopes = std::move(enclosingScopes);
+  restoreRawProgramStorage(std::move(enclosingRawProgramStorage));
 
   std::vector<SemanticType> captureTypes;
   captureTypes.reserve(captures.size());
@@ -6120,12 +6367,17 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
       id, returnType, parameterTypes, captureTypes, classTypeArguments,
       functionTypeArguments, classValueArguments, functionValueArguments);
   semanticModel.record(
-      expr, LambdaInfo{.id = id,
-                       .declaration = &expr,
-                       .returnType = returnType,
-                       .parameterTypes = std::move(parameterTypes),
-                       .captures = std::move(captures),
-                       .traits = lambdaTraitsForCaptures(captureTypes)});
+      expr,
+      LambdaInfo{.id = id,
+                 .declaration = &expr,
+                 .returnType = returnType,
+                 .parameterTypes = std::move(parameterTypes),
+                 .captures = std::move(captures),
+                 .traits = lambdaTraitsForCaptures(captureTypes),
+                 .rawAccessFreeType =
+                     rawAccessFree && !containsOpenTypeParameter(currentType)
+                         ? currentType
+                         : SemanticType::Unknown});
 }
 
 auto SemanticVisitor::Impl::layoutScalarKind(const SemanticType &type)
@@ -6470,8 +6722,10 @@ auto SemanticVisitor::Impl::visitLogicalExpr(const Logical &expr) -> void {
   const ScopeStack afterLeft = scopes;
   const LoanFlowState loanFlowAfterLeft = loanFlow;
   const std::size_t rightOwnershipStart = semanticModel.ownershipEventCount();
+  ++loanFlow.rawConditionalExpressionDepth;
   const SemanticType rightType =
       analyzeExpectedCallableResult(expr.right(), SemanticType::Bool);
+  --loanFlow.rawConditionalExpressionDepth;
   const ScopeStack afterRight = scopes;
   requireBool(expr.left(), leftType, expr.oper(),
               "Logical operands must be bool.");
@@ -7101,6 +7355,10 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
       resolvedMember.assignable && mutableReceiver && targetStateValid &&
       !directSelfMove &&
       isOwnershipAssignment(targetType, valueType, expr.value())) {
+    if (targetType.kind == SemanticType::Class ||
+        targetType.kind == SemanticType::Array)
+      invalidateRawPointerOrigins(targetPlace);
+    assignRawPointerFields(targetPlace, expr.value().get());
     if (targetPlace.root != nullptr) {
       semanticModel.recordOwnershipEvent(
           expr, {.kind = OwnershipEventKind::Reinitialize,
@@ -7315,8 +7573,8 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
       currentType = SemanticType::Unknown;
       return;
     }
-    requireUnsafe(expr, UnsafeOperationKind::AddressOf, expr.oper(),
-                  "Taking a raw address");
+    // Forming an inert address does not assert pointee validity. Operand
+    // evaluation above retains its own access, bounds and unsafe checks.
     currentType = std::move(addressType);
     return;
   }
@@ -7380,6 +7638,8 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
       } else {
         requireUnsafe(expr, UnsafeOperationKind::RawDereference, expr.oper(),
                       "Raw pointer dereference");
+        validateRawPointerAccess(expr.right(), expr.oper(),
+                                 AccessMode::ReadOnly);
         currentType = rightType.arguments.front();
       }
     } else if (rightType.kind == SemanticType::Class ||
@@ -10379,6 +10639,12 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
          .access = access,
          .mutableBinding = declaration.isMutable()});
   }
+  const auto rawOrigins = inferredType.kind == SemanticType::RawPointer
+                              ? rawPointerOrigins(declaration.initializer())
+                              : std::vector<RawPointerOrigin>{};
+  const auto rawFields = inferredType.kind != SemanticType::RawPointer
+                             ? rawPointerFields(declaration.initializer().get())
+                             : std::vector<ProjectedRawPointerOrigins>{};
   if (!predeclaredVariables.contains(&declaration)) {
     if (local) {
       declare(
@@ -10390,6 +10656,10 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
                              declaration.isMutable(), false, 0, &declaration,
                              constant);
     }
+  }
+  if (auto *target = resolveMutable(declaration.name())) {
+    target->rawPointerOrigins = rawOrigins;
+    target->rawPointerFields = rawFields;
   }
   const bool retainedReference = (type.reference || rangeOwnerReference) &&
                                  !isDirectOwnerType(initializerType);

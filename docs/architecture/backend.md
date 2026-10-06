@@ -143,6 +143,90 @@ and forwarded pointer results use the same channel. Failure publishes no result
 and follows the caller's verified cleanup edge. This does not extend the native
 ABI or permit converting between distinct opaque handle types.
 
+### Raw Address Representation
+
+Ordinary GTI raw-pointer values use an artifact-private typed `raw_address<T>`
+containing `uintptr_t`, not a native `T*` data member. Address formation captures
+the native address while the addressed storage is live. Native pointer fields
+are captured by reference-based byte copy, including pointee qualification,
+without first evaluating a possibly expired pointer value. Copying, aggregate
+transport, pointee qualification, explicit erasure/restoration and equality
+operate on the stored integer without reconstructing a pointer. This is what
+allows an expired address to remain an inert value; semantic provenance still
+rejects its subsequent access. A runtime test passing on one C++ compiler is
+not the justification for that property.
+
+Verified raw access/arithmetic and native-call boundaries recover a native
+pointer. The carrier does not add source integer conversions, lifetime checks,
+ownership, or aliasing permission. The supported representation requires a
+flat 64-bit little-endian object-pointer ABI with all-zero null representation
+on the supported hosted arm64/x86_64 targets. Architecture, size and alignment
+guards reject other native compilation profiles; capability-pointer targets
+are explicitly rejected. Equal pointer/integer size alone is not the authority
+for treating arbitrary C++ pointer representations as integer addresses.
+
+Native declarations, callbacks and C-compatible fields retain native pointer
+types. Contextual opaque-handle output parameters use native pointer slots,
+with reference-based byte transfer into and out of those slots. Repeated
+arguments for the same verified MIR place share a slot, preserving native
+alias identity. Its address cannot be retained by the foreign call. Staging
+does not read an expired native pointer value; a foreign implementation that
+accesses its old pointee still has its normal unsafe caller obligations.
+
+Pointer-bearing passive C-compatible records use byte-preserving construction
+and assignment internally. Verified source calls snapshot value arguments
+before passing them by internal reference; result publication uses a typed
+output channel. These are representation choices, not new source borrows or
+failure edges. External C signatures remain unchanged and retain their unsafe
+caller obligations. Retained generic signatures use their exact MIR instances
+to select the corresponding transport; they must not revert a concrete native
+record to an ordinary C++ by-value copy merely because its projected spelling
+is a type parameter.
+
+For a retained nonvirtual class member, a class-bound type parameter (or fixed
+array of it) selects the internal reference transport through the same private
+byte-transport trait as its field representation. This does not interfere with
+function-template argument deduction. Class-owned packs apply the same choice
+per element; checked-reference elements retain their exact access-qualified
+reference type and do not instantiate the object-pointer trait on a reference.
+Ordinary versus native-record result
+families have constrained signatures; each emitted body still comes from an
+exact MIR instance group whose projected bodies agree. The status-returning
+failure channel remains separate from this result representation.
+
+A retained class-bound virtual result uses one coherent result-channel
+convention across its resolved virtual-slot family. The representation query
+follows lowered virtual-root identities, including nongeneric overrides of a
+generic base. A defaulted internal output parameter is present throughout the
+family: native-record results return `void` and publish bytes to that parameter;
+ordinary scalar and owning results retain their original return and cleanup
+convention. The C++ return spelling is conditional only while the owner type is
+symbolic. Virtual methods therefore need no constrained overloads or native
+by-value fallback. Verified concrete MIR still selects every emitted body;
+the extra parameter is backend calling-convention glue, not a source argument
+or new failure edge.
+
+Generated field, capture and container representations preserve the same
+property without changing MIR's active-alternative or cleanup schedule. The
+native-record container matrix covers Expected and payload-enum alternatives,
+native arrays, owning alternatives, captures and generic relays at C++20/C++23
+O0/O1/O3, disabled elision and ASan/UBSan. The broad completion and installed
+evidence is recorded in [verification](verification.md#low-level-memory-phase-1).
+Unsupported representation families
+must fail closed, never silently fall back to memberwise expired-pointer
+copying. The ordinary address carrier alone does not discharge those composite
+transport requirements.
+
+The address representation guarantee is distinct from permission to invoke an
+unknown callee with a known-expired pointer. Such a callee may access the
+pointee. Semantics admits inert transport through proved direct/lambda targets
+and bounded virtual families; an owning erased interface whose generic target
+set is not known remains conservative, even if one particular source initializer
+looks inert. Its native-record ABI is tested with live payloads, alongside an
+expired-payload rejection test. Supporting arbitrary erased targets would need
+semantic target/effect tracking through ownership, replacement and cloning,
+not a backend or public-library-name exception.
+
 ## Lowered Program Construction
 
 `LoweredProgramBuilder` is the only frontend-aware construction boundary. The

@@ -37,7 +37,9 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "Result",
       "Right",
       "Source",
+      "SourceType",
       "T",
+      "U",
       "Target",
       "Unsigned",
       "UnsignedCount",
@@ -75,6 +77,44 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "bitwise_xor_assign",
       "block",
       "bits",
+      "raw_address",
+      "raw_address_traits",
+      "is_raw_address_v",
+      "address_bits_",
+      "native_address",
+      "native_pointer_value",
+      "raw_pointer_slot_copy",
+      "copy_to_native_slot",
+      "copy_from_native_slot",
+      "native",
+      "raw_address_of",
+      "construct_representation_at",
+      "representation_cell",
+      "byte_expected",
+      "byte_unexpected",
+      "byte_transport",
+      "byte_field",
+      "__gti_byte_transport_tag",
+      "make_byte_unexpected",
+      "native_expected_result",
+      "unexpected_result",
+      "stored_value",
+      "bytes_",
+      "error_",
+      "true_type",
+      "false_type",
+      "is_constructible_v",
+      "is_move_constructible_v",
+      "is_nothrow_move_constructible_v",
+      "is_default_constructible_v",
+      "is_copy_assignable_v",
+      "is_move_assignable_v",
+      "is_nothrow_move_assignable_v",
+      "is_trivially_copy_assignable_v",
+      "is_trivially_move_assignable_v",
+      "assign_representation",
+      "mir_restoring_exchange_into_v1",
+      "from_storage_address",
       "bytes",
       "callable",
       "call_argument",
@@ -418,6 +458,221 @@ struct gti_failure_record_v2;
 
 namespace gti_internal::backend {
 
+// GTI raw values carry address bits, not C++ pointer values. Copy, storage,
+// qualification/erasure and equality therefore remain inert after the pointee
+// ends its lifetime. Native pointers are reconstructed only for MIR-admitted
+// unsafe access/arithmetic or an explicit foreign boundary.
+// GTI's supported hosted targets have integral object-pointer representations.
+static_assert(sizeof(std::uintptr_t) == 8 &&
+              sizeof(std::uintptr_t) == sizeof(void *) &&
+              alignof(std::uintptr_t) == alignof(void *),
+              "GTI raw addresses require an integral object-pointer ABI");
+static_assert(std::endian::native == std::endian::little,
+              "GTI raw addresses require the supported little-endian ABI");
+#if !defined(__aarch64__) && !defined(_M_ARM64) && \
+    !defined(__x86_64__) && !defined(_M_X64)
+#error "GTI raw addresses require the supported arm64 or x86_64 native ABI"
+#endif
+#if defined(__CHERI_PURE_CAPABILITY__)
+#error "GTI integer raw-address representation does not support capability pointers"
+#endif
+template <typename T>
+class raw_address {
+  template <typename> friend class raw_address;
+  std::uintptr_t address_bits_ = 0;
+public:
+  constexpr raw_address() noexcept = default;
+  constexpr raw_address(std::nullptr_t) noexcept {}
+  template <typename Source>
+    requires ((!std::is_const_v<Source> || std::is_const_v<T>) &&
+              (std::is_same_v<std::remove_const_t<Source>, std::remove_const_t<T>> ||
+               std::is_void_v<T>))
+  raw_address(Source *const &value) noexcept {
+    // Read the native slot's representation, not its pointer value. Capturing
+    // an expired C-compatible field remains inert, including qualification.
+    // GTI's admitted native ABIs use flat 64-bit object addresses and all-zero
+    // null pointers; this is not a promise for arbitrary C++ pointer models.
+    static_assert(sizeof(Source *) == sizeof(address_bits_));
+    std::memcpy(&address_bits_, &value, sizeof(address_bits_));
+  }
+
+  template <typename Source>
+    requires (std::is_same_v<std::remove_const_t<Source>, std::remove_const_t<T>> &&
+              (!std::is_const_v<Source> || std::is_const_v<T>))
+  constexpr raw_address(raw_address<Source> value) noexcept
+      : address_bits_(value.address_bits_) {}
+
+  template <typename Source>
+    requires ((!std::is_const_v<Source> || std::is_const_v<T>) &&
+              !std::is_same_v<std::remove_const_t<Source>, std::remove_const_t<T>> &&
+              (std::is_void_v<Source> || std::is_void_v<T>))
+  explicit constexpr raw_address(raw_address<Source> value) noexcept
+      : address_bits_(value.address_bits_) {}
+
+  T *native_address() const noexcept {
+    return address_bits_ == 0 ? nullptr : reinterpret_cast<T *>(address_bits_);
+  }
+  operator T *() const noexcept { return this->native_address(); }
+
+  // Native pointer storage may contain an expired address. Transferring its
+  // representation through references does not evaluate that pointer value.
+  // The supported integral-pointer ABI equates these bits with address_bits_.
+  void copy_to_native_slot(T *&destination) const noexcept {
+    static_assert(sizeof(destination) == sizeof(address_bits_));
+    std::memcpy(&destination, &address_bits_, sizeof(destination));
+  }
+  void copy_from_native_slot(T *const &source) noexcept {
+    static_assert(sizeof(source) == sizeof(address_bits_));
+    std::memcpy(&address_bits_, &source, sizeof(source));
+  }
+
+  // Contextual native out-arguments identify a GTI handle slot. Its address
+  // must be staged by the native-call adapter, never dereferenced as T**.
+  static raw_address from_storage_address(const void *storage) noexcept {
+    raw_address result;
+    result.address_bits_ = reinterpret_cast<std::uintptr_t>(storage);
+    return result;
+  }
+
+  template <typename Source>
+  constexpr bool operator==(raw_address<Source> other) const noexcept {
+    return address_bits_ == other.address_bits_;
+  }
+  constexpr bool operator==(std::nullptr_t) const noexcept { return address_bits_ == 0; }
+
+  // These operators occur only at independently verified unsafe MIR sites.
+  std::add_lvalue_reference_t<T> operator*() const requires (!std::is_void_v<T>) {
+    return *this->native_address();
+  }
+  T *operator->() const requires (!std::is_void_v<T>) { return this->native_address(); }
+  template <typename Index> requires (std::is_integral_v<Index> && !std::is_void_v<T>)
+  std::add_lvalue_reference_t<T> operator[](Index index) const {
+    return this->native_address()[index];
+  }
+  template <typename Index> requires (std::is_integral_v<Index> && !std::is_void_v<T>)
+  raw_address operator+(Index index) const { return this->native_address() + index; }
+  template <typename Index> requires (std::is_integral_v<Index> && !std::is_void_v<T>)
+  friend raw_address operator+(Index index, raw_address value) { return value + index; }
+  template <typename Index> requires (std::is_integral_v<Index> && !std::is_void_v<T>)
+  raw_address operator-(Index index) const { return this->native_address() - index; }
+  std::ptrdiff_t operator-(raw_address other) const requires (!std::is_void_v<T>) {
+    return this->native_address() - other.native_address();
+  }
+  template <typename Index> requires (std::is_integral_v<Index> && !std::is_void_v<T>)
+  raw_address &operator+=(Index index) { return *this = *this + index; }
+  template <typename Index> requires (std::is_integral_v<Index> && !std::is_void_v<T>)
+  raw_address &operator-=(Index index) { return *this = *this - index; }
+  raw_address &operator++() requires (!std::is_void_v<T>) { return *this += 1; }
+  raw_address operator++(int) requires (!std::is_void_v<T>) {
+    auto previous = *this; ++*this; return previous;
+  }
+  raw_address &operator--() requires (!std::is_void_v<T>) { return *this -= 1; }
+  raw_address operator--(int) requires (!std::is_void_v<T>) {
+    auto previous = *this; --*this; return previous;
+  }
+};
+static_assert(std::is_trivially_copyable_v<raw_address<int>> &&
+              std::is_trivially_destructible_v<raw_address<int>> &&
+              sizeof(raw_address<void>) == sizeof(void *) &&
+              alignof(raw_address<void>) == alignof(void *));
+
+// Backend representation trait only: MIR already selected a semantic scalar.
+// The address carrier is a C++ class, not a native pointer.
+template <typename T> struct raw_address_traits {
+  static constexpr bool value = false;
+};
+template <typename T> struct raw_address_traits<raw_address<T>> {
+  static constexpr bool value = true;
+};
+template <typename T>
+inline constexpr bool is_raw_address_v = raw_address_traits<std::remove_cv_t<T>>::value;
+
+template <typename T>
+T *native_pointer_value(raw_address<T> value) noexcept { return value.native_address(); }
+template <typename T>
+T *native_pointer_value(T *value) noexcept { return value; }
+
+template <typename T, typename U>
+  requires std::is_convertible_v<U *, T *>
+void raw_pointer_slot_copy(T *&destination, const raw_address<U> &source) noexcept {
+  raw_address<T>(source).copy_to_native_slot(destination);
+}
+template <typename T, typename U>
+  requires std::is_convertible_v<U *, T *>
+void raw_pointer_slot_copy(raw_address<T> &destination, U *const &source) noexcept {
+  destination = raw_address<T>(source);
+}
+template <typename T, typename U>
+  requires (std::is_convertible_v<U *, T *> &&
+            (std::is_void_v<T> ||
+             std::is_same_v<std::remove_cv_t<T>, std::remove_cv_t<U>>))
+void raw_pointer_slot_copy(T *&destination, U *const &source) noexcept {
+  static_assert(sizeof(destination) == sizeof(source));
+  if (static_cast<const void *>(&destination) !=
+      static_cast<const void *>(&source))
+    std::memcpy(&destination, &source, sizeof(destination));
+}
+template <typename T, typename U>
+  requires std::is_convertible_v<U *, T *>
+void raw_pointer_slot_copy(raw_address<T> &destination,
+                           const raw_address<U> &source) noexcept {
+  destination = raw_address<T>(source);
+}
+template <typename T>
+void raw_pointer_slot_copy(T *&destination, std::nullptr_t) noexcept {
+  destination = nullptr;
+}
+template <typename T>
+void raw_pointer_slot_copy(raw_address<T> &destination, std::nullptr_t) noexcept {
+  destination = nullptr;
+}
+
+template <typename T>
+raw_address<T> raw_address_of(T *value) noexcept { return value; }
+template <typename T>
+raw_address<T *> raw_address_of(raw_address<T> *slot) noexcept {
+  return raw_address<T *>::from_storage_address(slot);
+}
+
+// The MIR caller has selected construction into distinct final storage.
+// Byte-copy an exact trivial copy/move without evaluating scalar subobjects:
+// a native C-compatible record may contain inert, expired pointer addresses.
+// All other constructor selections retain ordinary native construction. This
+// helper neither grants source copyability nor transfers cleanup obligations.
+template <typename T, typename... Args>
+T *construct_representation_at(T *destination, Args &&...args) {
+  if constexpr (sizeof...(Args) == 1 && std::is_trivially_copyable_v<T> &&
+                std::is_trivially_constructible_v<T, Args...> &&
+                (std::is_same_v<T, std::remove_cvref_t<Args>> && ...)) {
+    (static_cast<void>(std::memcpy(static_cast<void *>(destination),
+                                  static_cast<const void *>(std::addressof(args)),
+                                  sizeof(T))), ...);
+    return std::launder(destination);
+  } else {
+    return std::construct_at(destination, std::forward<Args>(args)...);
+  }
+}
+
+// Assignment targets an existing representation, unlike construction above.
+// Exact trivial assignment needs no pointer lvalue-to-rvalue conversions and
+// self-assignment must not pass overlapping regions to memcpy.
+template <typename T, typename Source>
+void assign_representation(T &destination, Source &&source) {
+  using SourceType = std::remove_cvref_t<Source>;
+  if constexpr ((std::is_pointer_v<T> || is_raw_address_v<T>) &&
+                (std::is_pointer_v<SourceType> || is_raw_address_v<SourceType> ||
+                 std::is_same_v<SourceType, std::nullptr_t>)) {
+    raw_pointer_slot_copy(destination, source);
+  } else if constexpr (std::is_same_v<T, SourceType> &&
+                       std::is_trivially_copyable_v<T> &&
+                       std::is_trivially_assignable_v<T &, Source>) {
+    if (std::addressof(destination) != std::addressof(source))
+      std::memcpy(std::addressof(destination), std::addressof(source), sizeof(T));
+  } else {
+    destination = std::forward<Source>(source);
+  }
+}
+
 // Called only for MIR-proven, failure-free structural relocation. Destruction
 // here ends inactive representation shells, not GTI cleanup obligations.
 template <typename T>
@@ -428,8 +683,26 @@ T mir_restoring_exchange_v1(T &destination, T &&replacement) {
   return previous;
 }
 
+// The caller supplies distinct final output storage for native records whose
+// implicit C++ value return would evaluate expired pointer subobjects.
+template <typename T>
+void mir_restoring_exchange_into_v1(T &destination, T &&replacement, T *result) {
+  construct_representation_at(result, std::move(destination));
+  std::destroy_at(std::addressof(destination));
+  construct_representation_at(std::addressof(destination), std::move(replacement));
+}
+
 template <typename T>
 void mir_restoring_swap_v1(T &left, T &right) {
+  if (std::addressof(left) == std::addressof(right)) return;
+  if constexpr (std::is_trivially_copyable_v<T> &&
+                std::is_trivially_move_constructible_v<T>) {
+    alignas(T) unsigned char previous[sizeof(T)];
+    std::memcpy(previous, std::addressof(left), sizeof(T));
+    std::memcpy(std::addressof(left), std::addressof(right), sizeof(T));
+    std::memcpy(std::addressof(right), previous, sizeof(T));
+    return;
+  }
   T previous(std::move(left));
   std::destroy_at(std::addressof(left));
   std::construct_at(std::addressof(left), std::move(right));
@@ -464,37 +737,202 @@ template <std::uint64_t Constructor>
 struct mir_failure_constructor_tag_v1;
 template <std::uint64_t Function>
 struct function_item final {};
+
+template <typename T> std::false_type __gti_byte_transport_tag(T *);
+template <typename T>
+struct byte_transport : decltype(__gti_byte_transport_tag(static_cast<T *>(nullptr))) {};
+template <typename T, std::size_t Size>
+struct byte_transport<std::array<T, Size>> : byte_transport<T> {};
+
+// A container alternative owns exactly one ordinary representation lifetime.
+// Exact trivial copies preserve bytes; nontrivial values retain their selected
+// native special members, including GTI's generated active-drop transfer.
+template <typename T>
+class representation_cell {
+  alignas(T) unsigned char bytes_[sizeof(T)];
+  T *slot() noexcept { return reinterpret_cast<T *>(bytes_); }
+public:
+  representation_cell() requires std::is_default_constructible_v<T> {
+    construct_representation_at(slot());
+  }
+  template <typename U> requires
+      (!std::is_same_v<std::remove_cvref_t<U>, representation_cell> &&
+       std::is_constructible_v<T, U>)
+  representation_cell(U &&value) {
+    construct_representation_at(slot(), std::forward<U>(value));
+  }
+  representation_cell(const representation_cell &other)
+      requires std::is_copy_constructible_v<T> {
+    construct_representation_at(slot(), other.get());
+  }
+  representation_cell(const representation_cell &)
+      requires (!std::is_copy_constructible_v<T>) = delete;
+  representation_cell(representation_cell &&other)
+      noexcept(std::is_nothrow_move_constructible_v<T>)
+      requires std::is_move_constructible_v<T> {
+    construct_representation_at(slot(), std::move(other.get()));
+  }
+  representation_cell &operator=(const representation_cell &other)
+      requires std::is_copy_assignable_v<T> {
+    if (this != &other) {
+      if constexpr (std::is_trivially_copyable_v<T> &&
+                    std::is_trivially_copy_assignable_v<T>)
+        std::memcpy(slot(), std::addressof(other.get()), sizeof(T));
+      else
+        get() = other.get();
+    }
+    return *this;
+  }
+  representation_cell &operator=(representation_cell &&other)
+      noexcept(std::is_nothrow_move_assignable_v<T>)
+      requires std::is_move_assignable_v<T> {
+    if (this != &other) {
+      if constexpr (std::is_trivially_copyable_v<T> &&
+                    std::is_trivially_move_assignable_v<T>)
+        std::memcpy(slot(), std::addressof(other.get()), sizeof(T));
+      else
+        get() = std::move(other.get());
+    }
+    return *this;
+  }
+  ~representation_cell() { std::destroy_at(std::addressof(get())); }
+  T &get() & noexcept { return *std::launder(slot()); }
+  const T &get() const & noexcept {
+    return *std::launder(reinterpret_cast<const T *>(bytes_));
+  }
+  T &&get() && noexcept { return std::move(get()); }
+  const T &&get() const && noexcept { return std::move(get()); }
+  friend bool operator==(const representation_cell &left,
+                         const representation_cell &right) {
+    return left.get() == right.get();
+  }
+};
+template <typename T>
+using byte_field = std::conditional_t<byte_transport<T>::value,
+                                       representation_cell<T>, T>;
 )";
   if (usesExpected) {
+    output << R"(
+template <typename Value, typename Error> class byte_expected;
+template <typename Error> class byte_unexpected;
+template <typename Error> auto make_byte_unexpected(Error &&error);
+)";
     output << (features.standard == CppStandard::Cpp23 ? R"(
 template <typename Value, typename Error>
-using expected_result = std::expected<Value, Error>;
+using native_expected_result = std::expected<Value, Error>;
+template <typename Error>
+using unexpected_result = std::conditional_t<byte_transport<Error>::value,
+    byte_unexpected<Error>, std::unexpected<Error>>;
 
 template <typename Error>
-inline constexpr auto make_unexpected_result(Error error) {
-  return std::unexpected<Error>(error);
+inline constexpr auto make_unexpected_result(Error &&error) {
+  if constexpr (byte_transport<std::remove_cvref_t<Error>>::value)
+    return make_byte_unexpected(std::forward<Error>(error));
+  else
+    return std::unexpected<std::remove_cvref_t<Error>>(std::forward<Error>(error));
 }
 )"
                                                        : R"(
 template <typename Value, typename Error>
-using expected_result = ::nonstd::expected<Value, Error>;
+using native_expected_result = ::nonstd::expected<Value, Error>;
+template <typename Error>
+using unexpected_result = std::conditional_t<byte_transport<Error>::value,
+    byte_unexpected<Error>, ::nonstd::unexpected_type<Error>>;
 
 template <typename Error>
-inline constexpr auto make_unexpected_result(Error error) {
-  return ::nonstd::make_unexpected(error);
+inline constexpr auto make_unexpected_result(Error &&error) {
+  if constexpr (byte_transport<std::remove_cvref_t<Error>>::value)
+    return make_byte_unexpected(std::forward<Error>(error));
+  else
+    return ::nonstd::make_unexpected(std::forward<Error>(error));
 }
 )");
+    output << R"(
+template <typename Value, typename Error>
+using expected_result = std::conditional_t<
+    byte_transport<Value>::value || byte_transport<Error>::value,
+    byte_expected<Value, Error>, native_expected_result<Value, Error>>;
+)";
   }
   if (usesExpected) {
     output << R"(
+
+template <typename Error>
+class byte_unexpected {
+  representation_cell<Error> error_;
+public:
+  template <typename U> requires std::is_same_v<std::remove_cvref_t<U>, Error>
+  explicit byte_unexpected(U &&error) : error_(std::forward<U>(error)) {}
+  Error &error() & noexcept { return error_.get(); }
+  const Error &error() const & noexcept { return error_.get(); }
+  Error &&error() && noexcept { return std::move(error_.get()); }
+  const Error &&error() const && noexcept { return std::move(error_.get()); }
+};
+template <typename Error>
+auto make_byte_unexpected(Error &&error) {
+  return byte_unexpected<std::remove_cvref_t<Error>>(std::forward<Error>(error));
+}
+
+template <typename Value, typename Error>
+class byte_expected {
+  using stored_value = std::conditional_t<std::is_void_v<Value>,
+                                         std::monostate, Value>;
+  std::variant<std::monostate, representation_cell<stored_value>,
+               representation_cell<Error>> state_;
+public:
+  byte_expected() requires std::is_default_constructible_v<stored_value>
+      : state_(std::in_place_index<1>) {}
+  template <typename U> requires
+      (!std::is_void_v<Value> && std::is_same_v<std::remove_cvref_t<U>, Value>)
+  byte_expected(U &&value) : state_(std::in_place_index<1>, std::forward<U>(value)) {}
+  template <typename U> requires
+      (!std::is_same_v<std::remove_cvref_t<U>, byte_expected> &&
+       !std::is_same_v<std::remove_cvref_t<U>, Value> &&
+       requires (U &&value) { std::forward<U>(value).error(); })
+  byte_expected(U &&error)
+      : state_(std::in_place_index<2>, std::forward<U>(error).error()) {}
+)";
+    output << "  template <typename U> byte_expected("
+           << (features.standard == CppStandard::Cpp23 ? "std::unexpect_t"
+                                                       : "::nonstd::unexpect_t")
+           << ", U &&error) : state_(std::in_place_index<2>, "
+              "std::forward<U>(error)) {}\n";
+    output << R"(
+  bool has_value() const noexcept { return state_.index() == 1; }
+  explicit operator bool() const noexcept { return has_value(); }
+  stored_value &operator*() & { return std::get<1>(state_).get(); }
+  const stored_value &operator*() const & { return std::get<1>(state_).get(); }
+  stored_value &&operator*() && { return std::move(std::get<1>(state_).get()); }
+  const stored_value &&operator*() const && { return std::move(std::get<1>(state_).get()); }
+  stored_value &value() & { return **this; }
+  const stored_value &value() const & { return **this; }
+  stored_value &&value() && { return *std::move(*this); }
+  const stored_value &&value() const && { return *std::move(*this); }
+  Error &error() & { return std::get<2>(state_).get(); }
+  const Error &error() const & { return std::get<2>(state_).get(); }
+  Error &&error() && { return std::move(std::get<2>(state_).get()); }
+  const Error &&error() const && { return std::move(std::get<2>(state_).get()); }
+  const stored_value &value_or(const stored_value &fallback) const & {
+    return has_value() ? **this : fallback;
+  }
+  void swap(byte_expected &other) { state_.swap(other.state_); }
+};
+
+template <typename Value, typename Error>
+struct mir_empty_state_factory_v1<byte_expected<Value, Error>> {
+  static byte_expected<Value, Error> make() noexcept {
+    return byte_expected<Value, Error>(
+        make_byte_unexpected(mir_empty_state_factory_v1<Error>::make()));
+  }
+};
 
 // The compiler proves the error alternative has an observation-free private
 // empty state before using this factory for unpublished fields. In particular,
 // this never runs the success alternative's source default constructor.
 template <typename Value, typename Error>
-struct mir_empty_state_factory_v1<expected_result<Value, Error>> {
-  [[nodiscard]] static expected_result<Value, Error> make() noexcept {
-    return expected_result<Value, Error>(
+struct mir_empty_state_factory_v1<native_expected_result<Value, Error>> {
+  [[nodiscard]] static native_expected_result<Value, Error> make() noexcept {
+    return native_expected_result<Value, Error>(
 )";
     output << (features.standard == CppStandard::Cpp23
                    ? "        std::unexpect, "
@@ -518,7 +956,9 @@ public:
   template <typename Unexpected,
             std::enable_if_t<!std::is_same_v<
                                  std::remove_cvref_t<Unexpected>,
-                                 borrowed_expected>,
+                                 borrowed_expected> &&
+                                 !std::is_same_v<std::remove_cvref_t<Unexpected>,
+                                                 std::remove_cvref_t<Value>>,
                              int> = 0>
   borrowed_expected(Unexpected &&unexpected)
       : state_(expected_result<const Value *, Error>{
@@ -759,7 +1199,7 @@ public:
     if (engaged_) {
       storage_error("verified MIR lifetime slot was constructed twice");
     }
-    std::construct_at(slot(), std::forward<Args>(args)...);
+    construct_representation_at(slot(), std::forward<Args>(args)...);
     engaged_ = true;
   }
 
@@ -773,13 +1213,22 @@ public:
     engaged_ = true;
   }
 
-  // A verified TransferOut hands an already prepared argument to its native
-  // by-value parameter. Retire the disarmed representation immediately; the
-  // parameter now owns the semantic cleanup, even if construction fails.
-  [[nodiscard]] T take() {
-    T value(std::move(get()));
-    destroy();
-    return value;
+  // A verified TransferOut hands an already prepared argument to its consumer.
+  // Native pointer-bearing records use an internal reference/output ABI: leave
+  // their trivial source shell alive until storage reuse so the consumer can
+  // byte-copy it without a C++ by-value return evaluating pointer subobjects.
+  [[nodiscard]] decltype(auto) take() {
+    if constexpr (byte_transport<T>::value) {
+      static_assert(std::is_trivially_copyable_v<T> &&
+                    std::is_trivially_destructible_v<T>);
+      T &value = get();
+      engaged_ = false;
+      return std::move(value);
+    } else {
+      T value(std::move(get()));
+      destroy();
+      return value;
+    }
   }
 
   [[nodiscard]] T *construction_address() {
@@ -1048,10 +1497,22 @@ public:
   [[nodiscard]] bool try_construct(std::uint64_t index, Args &&...args) {
     const std::size_t offset = static_cast<std::size_t>(index);
     try {
-      std::construct_at(slot(offset), std::forward<Args>(args)...);
+      construct_representation_at(slot(offset), std::forward<Args>(args)...);
     } catch (const std::bad_alloc &) {
       return false;
     }
+    initialized_[offset] = 1;
+    return true;
+  }
+
+  // Verified MIR preflight has checked the slot before handing over parameters.
+  // A failed source constructor has already cleaned its initialized members;
+  // do not publish a live T or run complete-object destruction in that case.
+  template <typename Constructor>
+  [[nodiscard]] bool construct_with_constructor(std::uint64_t index,
+                                               Constructor construct) {
+    const auto offset = static_cast<std::size_t>(index);
+    if (!construct(slot(offset))) return false;
     initialized_[offset] = 1;
     return true;
   }
@@ -1063,7 +1524,7 @@ public:
       storage_error("constructed an initialized storage slot");
     }
     try {
-      std::construct_at(slot(offset), std::forward<Args>(args)...);
+      construct_representation_at(slot(offset), std::forward<Args>(args)...);
     } catch (const std::bad_alloc &) {
       allocation_error();
     }
@@ -1136,7 +1597,7 @@ public:
     }
     for (std::size_t index = 0; index < elements; ++index) {
       try {
-        std::construct_at(destination.slot(index),
+        construct_representation_at(destination.slot(index),
                           std::move(*std::launder(slot(index))));
       } catch (const std::bad_alloc &) {
         allocation_error();
@@ -1164,7 +1625,7 @@ public:
     for (std::size_t destination = end; destination > begin; --destination) {
       const std::size_t source = destination - 1;
       try {
-        std::construct_at(slot(destination),
+        construct_representation_at(slot(destination),
                           std::move(*std::launder(slot(source))));
       } catch (const std::bad_alloc &) {
         allocation_error();
@@ -1193,7 +1654,7 @@ public:
          ++destination) {
       const std::size_t source = destination + 1;
       try {
-        std::construct_at(slot(destination),
+        construct_representation_at(slot(destination),
                           std::move(*std::launder(slot(source))));
       } catch (const std::bad_alloc &) {
         allocation_error();
@@ -1439,7 +1900,7 @@ public:
 
   optional_storage(optional_storage &&other) {
     if (other.engaged_) {
-      std::construct_at(slot(), std::move(*std::launder(other.slot())));
+      construct_representation_at(slot(), std::move(*std::launder(other.slot())));
       engaged_ = true;
       other.reset();
     }
@@ -1459,7 +1920,7 @@ public:
       storage_error("constructed an engaged optional storage slot");
     }
     try {
-      std::construct_at(slot(), std::forward<Args>(args)...);
+      construct_representation_at(slot(), std::forward<Args>(args)...);
     } catch (const std::bad_alloc &) {
       allocation_error();
     }
@@ -1472,7 +1933,7 @@ public:
       return false;
     }
     try {
-      std::construct_at(slot(), std::forward<Args>(args)...);
+      construct_representation_at(slot(), std::forward<Args>(args)...);
     } catch (const std::bad_alloc &) {
       return false;
     }
@@ -1639,7 +2100,7 @@ public:
       *slot(length_) = T(std::forward<Args>(args)...);
     } else {
       try {
-        std::construct_at(slot(length_), std::forward<Args>(args)...);
+        construct_representation_at(slot(length_), std::forward<Args>(args)...);
       } catch (const std::bad_alloc &) {
         allocation_error();
       }
@@ -1725,7 +2186,7 @@ public:
       for (std::size_t position = length_;
            position > static_cast<std::size_t>(index); --position) {
         try {
-          std::construct_at(slot(position),
+          construct_representation_at(slot(position),
                             std::move(*std::launder(slot(position - 1))));
         } catch (const std::bad_alloc &) {
           allocation_error();
@@ -1733,7 +2194,7 @@ public:
         std::destroy_at(std::launder(slot(position - 1)));
       }
       try {
-        std::construct_at(slot(static_cast<std::size_t>(index)),
+        construct_representation_at(slot(static_cast<std::size_t>(index)),
                           std::forward<Args>(args)...);
       } catch (const std::bad_alloc &) {
         allocation_error();
@@ -1757,7 +2218,7 @@ public:
       for (std::size_t position = static_cast<std::size_t>(index) + 1;
            position < length_; ++position) {
         try {
-          std::construct_at(slot(position - 1),
+          construct_representation_at(slot(position - 1),
                             std::move(*std::launder(slot(position))));
         } catch (const std::bad_alloc &) {
           allocation_error();
@@ -1807,7 +2268,7 @@ public:
     // Verified MIR proves these generated moves cannot fail. Moved-from
     // guards/handles are disarmed before their representation lifetime ends.
     for (std::size_t position = removed + 1; position < previous_length; ++position) {
-      std::construct_at(slot(position - 1), std::move(*std::launder(slot(position))));
+      construct_representation_at(slot(position - 1), std::move(*std::launder(slot(position))));
       std::destroy_at(std::launder(slot(position)));
     }
     length_ = previous_length - 1;
@@ -1843,7 +2304,7 @@ public:
     } else {
       for (std::size_t index = 0; index < length_; ++index) {
         try {
-          std::construct_at(destination.slot(index),
+          construct_representation_at(destination.slot(index),
                             std::move(*std::launder(slot(index))));
         } catch (const std::bad_alloc &) {
           allocation_error();

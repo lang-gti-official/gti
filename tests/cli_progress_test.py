@@ -2,6 +2,7 @@
 """Live build telemetry is accurate, observational, and stderr-only."""
 
 import errno
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -35,9 +36,14 @@ def main():
             assert result.returncode == expected, (arguments, result.stdout, result.stderr)
             return result
 
+        help_output = run(["--help"])
+        assert "[-- <native compiler arguments>]" in help_output.stdout
+        assert "--emit-cpp" in help_output.stdout and "--keep-cpp" in help_output.stdout
+        assert "c++ compiler arguments" not in help_output.stdout
+
         built = run(["build", "--no-cache"])
         stages = ["Loading", "Parsing", "Checking", "Lowering  HIR", "Lowering  MIR",
-                  "Optimizing", "Emitting  C++ backend", "bridge.cpp",
+                  "Optimizing", "Emitting  backend representation", "bridge.cpp",
                   "Native  compiling and linking", "Publishing", "Finished"]
         # Native-source detail is an exact path, not necessarily relative.
         positions = [built.stderr.index(stage) for stage in stages]
@@ -46,6 +52,9 @@ def main():
         assert "\x1b" not in built.stderr and "\r" not in built.stderr
         assert "Finished" not in built.stdout and "Built progress" in built.stdout
         assert "Publishing  executable and build cache" not in built.stderr
+        assert "C++" not in built.stdout + built.stderr
+        assert "compiling and linking (" not in built.stderr
+        assert "Kept backend representation" in built.stdout
         executable = next(path for path in (root / "build").rglob("progress*")
                           if path.is_file() and path.name in ["progress", "progress.exe"])
         generated = next((root / "build").rglob("progress.gti.cpp"))
@@ -88,7 +97,7 @@ def main():
         direct = run(["main.gti", "--emit-cpp", "-o", "direct.cpp"])
         assert direct.stderr == ""
         direct = run(["main.gti", "--emit-mir", "-o", "direct.mir", "--progress=plain"])
-        assert "Emitting  mir backend" in direct.stderr and "Finished" in direct.stderr
+        assert "Emitting  MIR" in direct.stderr and "Finished" in direct.stderr
         operand = run(["main.gti", "--emit-cpp", "-o", "--progress=never"])
         assert operand.stderr == "" and (root / "--progress=never").is_file()
         if os.name != "nt":
@@ -178,11 +187,62 @@ def live_native_probe(gti, root, env):
         text = b"".join(chunks).decode(errors="replace")
         assert observed and process.returncode == 23, (process.returncode, text)
         assert "\x1b[2K" in text and "\x1b[1;" not in text
-        assert "native probe failure" in text and "Failed" in text and "Finished" not in text
+        assert "native probe failure" not in text
+        assert "backend failed while compiling and linking" in text
+        assert "backend diagnostics saved at " in text
+        assert "Failed" in text and "Finished" not in text
+        saved = text.split("gti: backend diagnostics saved at ", 1)[1].splitlines()[0]
+        log = Path(saved.strip())
+        assert "native probe failure" in log.read_text()
+        log.unlink()
+        log.parent.rmdir()
         assert b"\x1b" not in stdout
         for row in text.replace("\r\n", "\n").split("\r"):
             if row.startswith("\x1b[2K") and "\n" not in row:
                 assert len(row.removeprefix("\x1b[2K")) < 60, row
+
+        # Developer capture still classifies a real native-stage rejection and
+        # retains its full evidence, despite the concise default terminal output.
+        capture = Path(__file__).resolve().parents[1] / "scripts/debug/capture_compiler_failure.py"
+        bundle = root / "backend-capture"
+        captured = subprocess.run(
+            [sys.executable, str(capture), "capture", "--gti", gti,
+             "--source", str(root / "main.gti"), "--out", str(bundle)],
+            cwd=root, env=probe_env | {"GTI_CXX": str(shim)},
+            capture_output=True, text=True, timeout=60)
+        assert captured.returncode == 0, (captured.stdout, captured.stderr)
+        record = json.loads((bundle / "manifest.json").read_text())
+        assert record["signature"]["kind"] == "native-toolchain", record
+        assert record["signature"]["stage"] == "native-build", record
+        assert "native probe failure" in (bundle / "logs/native-build.stderr").read_text()
+
+        # A source-defined dependency build script uses the same saved-evidence
+        # contract. A source warning cannot replace its subsequent build error.
+        dependency = root / "scripted-source"
+        (dependency / "src").mkdir(parents=True)
+        (dependency / "src/scripted.gti").write_text("namespace scripted {}\n")
+        (dependency / "build.gti").write_text(
+            "int main() { mut int unchanged = 0; return unchanged; }\n")
+        (dependency / "gti.toml").write_text(
+            'manifest-version = 1\n[package]\nname = "scripted"\nversion = "0.1.0"\n'
+            '[package.build-script]\nsource = "build.gti"\ninputs = []\n')
+        application = root / "scripted-app"
+        application.mkdir()
+        (application / "main.gti").write_text("int main() { return 0; }\n")
+        (application / "gti.toml").write_text(
+            'manifest-version = 1\n[package]\nname = "script-app"\nversion = "0.1.0"\n'
+            '[dependencies]\nscripted = { path = "../scripted-source" }\n'
+            '[build]\nallow-build-scripts = ["scripted@0.1.0"]\n'
+            '[targets.app]\nkind = "executable"\nroot = "main.gti"\n')
+        rejected = subprocess.run(
+            [gti, "build", "--cxx", str(shim), "--progress=never"],
+            cwd=application, env=probe_env, capture_output=True, text=True, timeout=60)
+        assert rejected.returncode == 65, (rejected.stdout, rejected.stderr)
+        assert "warning[GTI-S2096]" in rejected.stderr
+        assert "error[GTI-B2003]" in rejected.stderr
+        assert "native probe failure" not in rejected.stderr
+        assert "Backend 'c++' representation saved at " in rejected.stderr
+        assert "Backend diagnostics saved at " in rejected.stderr
     finally:
         release.touch()
         if process.poll() is None:

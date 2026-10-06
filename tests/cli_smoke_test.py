@@ -3034,7 +3034,14 @@ def main():
         assert "static_cast<std::int32_t>(42)" in emitted_source
         assert "#include <expected>" in emitted_source
         assert "std::expected<std::int32_t, std::int32_t>" in emitted_source
-        assert "#if" not in emitted_source
+        # Source target branches must be resolved before program emission.
+        # The backend support preamble independently guards its native ABI;
+        # those host preprocessor checks are not unlowered GTI conditionals.
+        _, program_namespace, emitted_program = emitted_source.partition(
+            "namespace __gti_program {"
+        )
+        assert program_namespace, "expected the lowered program namespace"
+        assert "#if" not in emitted_program
         assert "target.vendor" not in emitted_source
 
         emitted_cpp20 = root / "main-cpp20.cpp"
@@ -3092,11 +3099,19 @@ def main():
             ],
             9,
         )
-        assert "gti: native C++ compiler diagnostics:" in native_failure.stderr
-        assert "native compiler rejection" in native_failure.stderr
+        assert "backend failed while compiling and linking" in native_failure.stderr
+        assert "native compiler rejection" not in native_failure.stderr
+        diagnostics_prefix = "gti: backend diagnostics saved at "
+        diagnostics_line = next(line for line in native_failure.stderr.splitlines()
+                                if line.startswith(diagnostics_prefix))
+        diagnostics_log = pathlib.Path(diagnostics_line.removeprefix(diagnostics_prefix))
+        assert "native compiler rejection" in diagnostics_log.read_text()
+        assert "Command:" in diagnostics_log.read_text()
+        diagnostics_log.unlink()
+        diagnostics_log.parent.rmdir()
         assert failed_output.read_text(encoding="utf-8") == "previous artifact\n"
         assert not list(root.glob(".native-failure.gti-stage-*"))
-        retained_prefix = "gti: generated C++ retained at "
+        retained_prefix = "gti: backend 'c++' representation saved at "
         retained_line = next(
             line
             for line in native_failure.stderr.splitlines()

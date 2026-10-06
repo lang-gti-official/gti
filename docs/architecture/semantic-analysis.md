@@ -2,6 +2,183 @@
 
 Status: Current implementation.
 
+## Known raw address origins
+
+Local raw pointer flow retains address origins as existing `PlaceKey` values,
+with the address source span and originating checked-loan identity when one
+exists. These facts travel with semantic scope/value-flow snapshots; joins
+union possible origins instead of replacing a known source with unknown
+validity. They do not create or extend loans. Unsafe dereference, indexing,
+member writes and selected mutable receiver calls consult source availability
+and the same checked-loan conflict/last-use machinery as ordinary accesses.
+The backend does not reconstruct this rule from native pointer syntax.
+
+Explicit pointer type calls resolve to `RawPointerConversion` by the target
+type, not a library spelling. Erasure adds a type-only provenance record with
+no origin place; it grants no lifetime or access fact. Copies, joins and source
+result queries retain it alongside the complete storage-origin records.
+Conversion/result checking rejects a known contradictory restored pointee.
+Lifetime invalidation and witness containment do not treat the place-less type
+record as an allocation. Concrete HIR resolves dependent target type calls;
+MIR lowers the inert operation to a tightly checked pointer `Convert`.
+
+Symbols retain a projection-keyed raw-field map alongside direct pointer
+origins. Field paths use the same resolved `SymbolId` and array projections as
+ordinary place checking; designated construction and generated aggregate
+copy/move preserve that map. Assignment replaces the affected map subtree,
+while uncertain call writes weakly merge possible input origins. Scope exit
+and owner replacement mark retained origin facts expired/invalidated, so a
+later binding incarnation cannot silently revive an earlier address.
+The traversal includes inherited fields and raw-bearing `expected`,
+`unexpected`, and payload-enum alternatives. Tagged alternatives currently
+share a conservative origin union rather than variant-sensitive projections;
+enum pattern bindings and expected observers preserve that union. An observer
+of a stored pointer does not substitute the live carrier shell as its origin.
+Raw-bearing expected mapper outputs remain unresolved until their selected
+mapper effects have an exact query substitution; inert transport is permitted.
+
+Loop entry seeds temporary symbolic pointer-input origins. Copies and field
+flow carry these symbols to actual memory-use sites; reachable backedges
+substitute them transitively until the finite origin set closes. A reseat
+before use removes the input symbol. Merely carrying an expired address across
+the backedge is not itself rejected. Nested callable bodies isolate this
+transfer state. Deferred bridge uses retain shared backedge-origin/diagnostic
+records, allowing call-contract finalization to demand a fully resolved loop
+use without replaying source execution or dropping known lifetime facts.
+Namespace raw storage also receives loop-input symbols. Source write effects
+through loop-carried aliases defer their destination substitution and weakly
+close projected writes over backedge symbol facts before checking deferred uses.
+
+Source calls query normalized raw-result origins before caller memory uses and
+alias writes. A request-local cache keys the selected function or constructor
+and concrete owner/function type and value arguments. An isolated ordinary
+semantic instance worker analyzes the body; it does not reenter or reset the
+active caller and is not a second execution engine. Results retain separate
+raw-field projections. Formal, receiver and global raw inputs substitute the
+caller's current origin facts (including omitted default arguments), while
+addresses produced from callee-local/by-value storage are expired and actual
+global addresses keep their place identity. Global pointer inputs are symbolic
+in cached summaries, not snapshots of the first caller's value. Source and
+generated-default constructors collect field origins; generated copy/move
+construction preserves existing maps. Imported facts retain lifetime-ending
+flags and participate in the ordinary checked-loan/write machinery.
+
+The same workers collect raw memory-access preconditions: normalized input
+origins, read/write permission, and whether the operation checks loans or only
+address lifetime (pointer arithmetic). Import substitutes actual caller facts
+before mutation invalidation and checks the caller's existing loan flow, with
+diagnostics anchored at the invocation. Requirements propagate through source
+helpers and constructors; loop uses retain their original loan-flow context.
+Operator resolution supplies a nonowning normalized invocation view while its
+exact receiver expression or synthetic receiver place and argument slots are
+available. Ordinary, contextual, and projection operators use the same access,
+result, write, and invalidation helpers. Projection results retain the selected
+member's relative field paths rather than replacing it with the whole referent.
+
+An exact concrete lambda type may carry an access-free fact obtained from its
+ordinary body analysis. Inert copying/comparison does not create a raw access;
+unknown source, foreign, or non-proven primitive execution prevents that proof.
+Source summaries separately record access completeness, so an unresolved nested
+call with no currently known origins cannot certify an empty precise summary.
+Identity-bound address-conversion/transport and checked-carrier observation
+primitives are classified by their semantic operation, not their public name.
+Restoring swap/exchange/indexed swap is access-free only for a concrete semantic
+relocatable type whose existing structural active-cleanup query is false;
+possible source cleanup prevents this proof. Lexical wrapper cleanup alone
+does not imply user execution when all of its owned components are passive.
+Checked-reference returns collect projected raw fields too, so operator-arrow
+and ordinary reference helpers cannot certify an empty raw-field result merely
+because the returned carrier is borrowed.
+
+Dynamic access-free proofs use existing resolved virtual-root/member facts:
+either a canonical unprojected owning receiver identifies one concrete class,
+or every effective target in a sealed nongeneric declaration family must have
+a complete, empty ordinary access summary. Open generic families, unknown or
+foreign/bodyless targets, recursion, and query limits block the proof. This
+waives only access fallback, never unresolved dynamic result/write facts.
+Erased callable allocations do not retain a concrete subtype in these checked
+places; their open target families therefore remain conservative. Unmatched
+carried raw-field paths (for example derived fields behind a base reference)
+are checked conservatively, not dropped. No callable effect type system or
+second source-execution/call-graph engine is introduced.
+
+The same ordinary assignment visitors collect normalized raw-write effects for
+source functions and selected constructors. Destinations are global/static
+storage, mapped checked-reference formals, raw-pointer aliases, or method
+receivers; values retain the same projected origin records as returned values.
+Call-site import runs after conservative mutation invalidation, so a proved
+fresh setter can establish a new origin. Exact destinations in a structurally
+linear ordinary function body permit replacement; constructor write effects,
+conditional control flow, ambiguous aliases, and dynamic indices weakly union
+facts. Constructor writes remain weak until initializer dominance is proved;
+their returned receiver-field origins are still collected precisely.
+Namespace flow is not part of lexical scope snapshots, so writes in caller
+branches, short-circuit/conditional expressions, and loops also remain weak.
+This can conservatively retain overwritten facts within those regions; an exact
+unconditional reset after the region can still replace them.
+This bounded linearity check classifies
+control structure, not source execution. Failed or recursive write queries
+retain unresolved facts on possible raw-bearing destinations. Function,
+constructor, destructor and lambda declaration analysis saves and restores
+namespace raw-flow state: checking a body is never execution of its writes.
+
+Lambda/deferred calls currently have no exact write substitution; they weakly
+mark raw globals and mutable raw-bearing actuals unresolved. Lambda captures
+retain their raw fields using capture-binding projections in the ordinary
+value-flow map, so later reseating the source binding cannot change the captured
+alias. Unsupported callable effects follow carried mutable raw origins to
+known raw-bearing destinations, without marking unrelated locals.
+Source-destructor effects similarly follow stored mutable aliases and retain
+unresolved raw-global writes when source cleanup can run, including value
+temporaries and scope exits. These conservative boundaries preserve existing
+expired/conflicting facts and permit inert transport; they are not precise
+destructor/captured-alias write summaries.
+
+The query is bounded to 32 active bodies and 2,048 cached instances. Query
+workers and staged constexpr workers preserve both request-local query
+accounting and the existing constexpr work/depth budget. Their mutual calls
+cannot restart either limit; mutable body-analysis state remains isolated.
+This changes neither constant eligibility nor the staged execution engine.
+Recursive,
+dynamically dispatched, failed/budget-limited queries, lambda/deferred-callable raw
+results, and raw-bearing source results with expanded parameter packs preserve
+an unresolved-source marker. Constructor-relative self addresses and raw fields
+behind unresolved stored checked references do likewise; concrete retained
+loans are resolved first, without recursively treating borrowed fields as owned
+storage. Memory use/borrow assertions reject these markers; inert transport and
+comparison remain permitted. Abstract source dispatch signatures remain
+unresolved even without a body; readonly receivers still carry mutable raw
+aliases whose possible write destinations must remain unresolved. Native,
+statically selected bodyless, and runtime-bound outputs instead retain the
+explicit unsafe unknown-address boundary. Unknown outputs never
+erase other known or unresolved facts.
+
+Complete, valid aggregate-result queries own their projected output maps;
+foreign or unresolved results additionally retain conservative raw input and
+reference/receiver-derived origins. Temporary member/index projections use the
+ordinary field/index paths. Unsupported raw-bearing expressions keep available
+origins plus an unresolved marker, never an empty precision claim. Complete
+write summaries also supersede the older input-union fallback: a proved
+no-write method must not manufacture a receiver-shell origin in a null field.
+Unknown mutable receiver/reference effects still preserve possible writes by
+weak union. Scalar pointer results and unresolved effects remain conservative;
+these summaries are not a complete interprocedural alias proof.
+
+Explicit `borrowed_from` attributes resolve to existing declaration-relative
+return-origin/access facts. Inference cannot replace an explicit contract,
+including an invalid one. Normal return checking proves it. A direct raw
+dereference returned in lexical unsafe additionally records
+`RawReferenceAssertionInfo`: a resolved witness place and checked reference
+type. HIR synthesizes that witness input and lowers the assertion to the same
+typed raw-borrow MIR operation; no private source declaration or public-name
+recognition is needed. The backend validates and consumes the MIR loan.
+Known raw-input obligations propagate through source wrappers and receiver/
+aggregate-field transport. Reference fields use stored-loan dependencies to
+resolve their external referents. Polymorphic raw-assertion bodies fail closed
+until their dispatch-family obligations are represented. Source-produced output
+facts use the bounded queries above; this does not imply complete campaign or
+release acceptance.
+
 ## Exact structural member signatures
 
 Source member requirements carry a typed receiver, exact parameter types/access,

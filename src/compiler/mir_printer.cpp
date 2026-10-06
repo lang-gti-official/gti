@@ -263,7 +263,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v87 valid=" << program.valid() << '\n';
+    output << "mir-v88 valid=" << program.valid() << '\n';
     for (const MirNativeCallbackAdapter &adapter :
          program.nativeCallbackAdapters()) {
       output << "native-callback @" << adapter.id
@@ -722,7 +722,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v74\n";
+    output << "mir-body-v75\n";
     body(value, 0);
     return output.str();
   }
@@ -1535,7 +1535,7 @@ private:
     output << " constructor=";
     optional(value.constructorTarget);
     output << " object-allocation=" << value.objectAllocation
-           << " prefix-preflight=" << value.prefixPreflight;
+           << " storage-preflight=" << value.storagePreflight;
     output << " body-target=";
     if (value.bodyTarget) {
       output << number(value.bodyTarget->kind) << ':'

@@ -5042,9 +5042,9 @@ int32_t main() {
           ++count;
         return count;
       };
-      const auto publication =
-          text.text.find("std::construct_at(__gti_mir_out_result, std::move(" +
-                         slot + ".get()))");
+      const auto publication = text.text.find(
+          "construct_representation_at(__gti_mir_out_result, std::move(" +
+          slot + ".get()))");
       const auto retirement = text.text.find(slot + ".destroy();");
       expect(text.emitted() && occurrences(slot + ".construct(") == 2 &&
                  publication != std::string::npos &&
@@ -5868,19 +5868,20 @@ int32_t main() {
          "both scalar allocation forms need checked production emission");
   const std::size_t upcastCall = text.text.find("unique_owner_upcast<");
   const std::size_t movedArgument = text.text.find(">(std::move(", upcastCall);
-  expect(text.text.find("unique_owner_upcast<") != std::string::npos &&
-             movedArgument != std::string::npos &&
-             text.text.find("__gti_mir_v_" +
-                            std::to_string(*discardedNullAssignment->result) +
-                            " =") == std::string::npos &&
-             text.text.find("std::move(__gti_mir_v_" +
-                            std::to_string(*returnMove->result)) ==
-                 std::string::npos &&
-             text.text.find(
-                 "std::construct_at(__gti_mir_out_result, std::move(") !=
-                 std::string::npos,
-         "the upcast should consume its owner, omit the discarded assignment "
-         "readback, and publish the fused move from its source place");
+  expect(
+      text.text.find("unique_owner_upcast<") != std::string::npos &&
+          movedArgument != std::string::npos &&
+          text.text.find("__gti_mir_v_" +
+                         std::to_string(*discardedNullAssignment->result) +
+                         " =") == std::string::npos &&
+          text.text.find("std::move(__gti_mir_v_" +
+                         std::to_string(*returnMove->result)) ==
+              std::string::npos &&
+          text.text.find(
+              "construct_representation_at(__gti_mir_out_result, std::move(") !=
+              std::string::npos,
+      "the upcast should consume its owner, omit the discarded assignment "
+      "readback, and publish the fused move from its source place");
 
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
@@ -8524,8 +8525,8 @@ int32_t main() { return plain_t().value - 7; }
   };
   const bool exactPublication =
       constructor->mayRaiseDefinedFailure
-          ? count("std::construct_at(" + slot + ".construction_address()") ==
-                    1 &&
+          ? count("construct_representation_at(" + slot +
+                  ".construction_address()") == 1 &&
                 count(slot + ".mark_constructed()") == 1
           : count(slot + ".construct()") == 1 &&
                 count(slot + ".mark_constructed()") == 0;

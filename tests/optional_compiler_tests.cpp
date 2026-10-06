@@ -133,7 +133,7 @@ int main() {
                  std::string::npos &&
              optionalRepresentation.find("bool engaged_ = false") !=
                  std::string::npos &&
-             optionalRepresentation.find("std::construct_at") !=
+             optionalRepresentation.find("construct_representation_at") !=
                  std::string::npos &&
              optionalRepresentation.find("std::destroy_at") !=
                  std::string::npos &&

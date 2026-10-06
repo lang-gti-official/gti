@@ -151,7 +151,15 @@ void checkCompatible(std::string_view destructor) {
       expect(
           text.find("Owner<void>") == std::string::npos,
           "unnameable closure must never become a void owner specialization");
-      expect(text.find("Owner<Callable>::Owner(Callable") != std::string::npos,
+      const std::string constructor =
+          "Owner<Callable>::Owner(std::conditional_t<"
+          "(!std::is_reference_v<Callable> && "
+          "::gti_internal::backend::byte_transport<"
+          "std::remove_cvref_t<Callable>>::value), const Callable &, Callable>";
+      const auto firstConstructor = text.find(constructor);
+      expect(firstConstructor != std::string::npos &&
+                 text.find(constructor, firstConstructor + 1) ==
+                     std::string::npos,
              "closure and nominal field publication comments do not split "
              "constructor representation");
       for (const auto &item : lowered.generatedItems()) {
