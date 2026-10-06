@@ -31,7 +31,11 @@ public:
     this.metadata = &*this.state;
   }
   Arena(Arena& other) = delete;
-  Arena(Arena&& other) = delete;
+  // GTI's generated move transfers active cleanup, unlike a C++ fieldwise
+  // move whose source destructor would still release the backing allocation.
+  // Both pointed-to allocations stay at fixed addresses; checked bindings
+  // prevent moving this resource while any safe lease still retains it.
+  Arena(Arena&& other) = default;
 
   unsafe expected<std::raw_allocation, std::alloc_errc>
   allocate(std::layout request) {

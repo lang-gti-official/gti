@@ -3767,6 +3767,13 @@ do not expose C++ object layout as GTI semantics.
   carrier's physical storage, not substitute its external resource dependency.
   Unrelated-class semantic regressions cover reset/move conflicts; matching
   MIR publication and forged-origin checks remain required before delivery.
+  A separate raw-region owner regression passes O0/O1/O3 under C++20/C++23,
+  disabled elision and ASan/UBSan: generated movement preserves the region
+  address and transfers exactly one release obligation. The arena shell now
+  uses this existing generated-move contract; its separately allocated backing
+  region and metadata do not move. This is not evidence for safe owner loans.
+  The independent arena-placement fixture is registered but still fails backend
+  admission, so placement/growth acceptance remains outstanding.
 - **Approved resource model:** a move-only allocation lease
   retains a shared checked borrow of its resource through final cleanup. Each
   allocation owns an independent region; object references borrow its typed
