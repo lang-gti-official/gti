@@ -1,10 +1,13 @@
 #include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
+#include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <set>
 #include <string>
 #include <string_view>
 
@@ -27,6 +30,24 @@ auto analyze(std::string source) -> lang::FrontendResult {
 void diagnostics(const lang::FrontendResult &result) {
   for (const auto &diagnostic : result.diagnostics)
     std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  if (std::getenv("GTI_TEST_DUMP_MIR") != nullptr) {
+    std::set<std::pair<lang::MirBodyKind, std::size_t>> printed;
+    for (const auto &error : lang::verifyMirProgram(result.mir).errors) {
+      std::cerr << "MIR body " << static_cast<int>(error.bodyKind) << ':'
+                << error.owner << " instruction " << error.instruction << ": "
+                << error.message << '\n';
+      if (!printed.emplace(error.bodyKind, error.owner).second)
+        continue;
+      if (error.bodyKind == lang::MirBodyKind::Function) {
+        if (const auto *function = result.mir.findFunctionInstance(error.owner))
+          std::cerr << lang::MirPrinter().print(function->body);
+      } else if (error.bodyKind == lang::MirBodyKind::Constructor) {
+        if (const auto *constructor =
+                result.mir.findConstructorInstance(error.owner))
+          std::cerr << lang::MirPrinter().print(constructor->body);
+      }
+    }
+  }
 }
 void positive(const std::string &source, std::string_view message) {
   const auto result = analyze(source);
@@ -34,9 +55,15 @@ void positive(const std::string &source, std::string_view message) {
     diagnostics(result);
   expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
          message);
-  if (result.canGenerateCode())
-    expect(!gti_test::emitCppText(result).empty(),
-           "resource client emits through verified MIR");
+  if (result.canGenerateCode()) {
+    try {
+      expect(!gti_test::emitCppText(result).empty(),
+             "resource client emits through verified MIR");
+    } catch (const std::exception &error) {
+      std::cerr << error.what() << '\n';
+      expect(false, "resource client emits through verified MIR");
+    }
+  }
 }
 void negative(const std::string &source, std::string_view code,
               std::string_view message) {
@@ -225,7 +252,7 @@ int use(std::resource_ref<std::process_resource> first,
 }
 int main() { return 0; }
 )",
-           "GTI-S2045",
+           "GTI-S2003",
            "assignment cannot silently replace the retained resource binding");
   negative(R"(
 std::resource_ref<std::process_resource> escape() {

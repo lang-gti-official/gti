@@ -71,7 +71,8 @@ if __name__ == "__main__":
         "failure_during_cleanup; primary [GTI-R0002] at "
         f"{constructed.name}:{constructed_line}; secondary [GTI-R0002]\n")
     run_runtime_matrix(
-        names=("cleanup_bound_guards", "cleanup_bound_guards_example",
+        names=("cleanup_bound_owned_field", "cleanup_bound_nested_view",
+               "cleanup_bound_guards", "cleanup_bound_guards_example",
                "allocator_bookkeeping", "cleanup_bound_nested_guards",
                "cleanup_bound_inert_shell", "cleanup_bound_nested_failures",
                "nested_cleanup_bound_guard", "cleanup_bound_return_failure",

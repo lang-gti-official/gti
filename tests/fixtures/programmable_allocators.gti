@@ -87,7 +87,8 @@ int growth_and_release(std::resource_ref<engine::Arena> resource) {
   mut int sum = 0;
   for (auto& value : values) { sum += value; }
   if (sum != 1998) { return 21; }
-  values.get_mut(std::size_t(5)) = 99;
+  mut int& selected = values.get_mut(std::size_t(5));
+  selected = 99;
   if (values.get(std::size_t(5)) != 99 || values.front() != 0 || values.back() != 108) { return 22; }
   values.pop_back();
   values.clear();

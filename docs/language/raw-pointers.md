@@ -422,6 +422,40 @@ meet these obligations for every input accepted by their safe public API. A
 safe abstraction must not require its caller to know about an undocumented raw
 pointer precondition.
 
+### Explicit resource binding
+
+The in-progress custom-resource slice in `<std/resource>` makes the trust
+boundary explicit with `unsafe std::bind_resource(resource)`. The result is a
+reusable checked shared borrow, not ownership of the provider. The unsafe
+obligation applies to every later allocation through that binding or any copy:
+successful nonempty regions must be writable, sufficiently large and aligned,
+disjoint from all outstanding allocations, and free of preexisting object
+lifetimes that adoption would overwrite. The provider must keep each region
+and its descriptor valid until matching release, and release exactly that
+region without accessing already-destroyed elements. Independent raw aliases,
+resets or concurrent use must preserve these promises too.
+
+The structural `memory_resource` concept checks callable signatures and unsafe
+effects. It does not prove allocator correctness. A `raw_allocation` is passive
+address/extent/alignment/identity metadata: copying it creates neither a loan
+nor another right to release the region. Direct provider calls remain unsafe.
+
+The compiler checks the ordinary provider borrow and cleanup/transfer schedule.
+The private typed-storage adoption operation additionally checks its empty
+destination, count arithmetic, reported extent, non-null address for nonempty
+storage and numeric alignment. These checks cannot prove actual allocation
+extent, address provenance, non-overlap, writability or synchronization. A
+malformed provider is already outside the binding contract even when one
+contradiction is detected dynamically; an error return is not a general
+containment guarantee for arbitrary unsafe code.
+
+The source lease is declared before typed storage so reverse field cleanup
+destroys live elements before returning the region. This is ordinary checked
+lifecycle composition, not recognition of a public standard-library name.
+End-to-end resource-owner/container integration is still being completed; see
+[custom resources](standard-library.md#custom-resource-protocol-in-progress)
+for its current boundary and the example arena's bookkeeping/thread limits.
+
 ## Functions With A Caller Obligation
 
 Use `unsafe` when a GTI function or named non-polymorphic method requires the

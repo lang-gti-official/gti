@@ -670,6 +670,11 @@ add_test(NAME declaration_field_failure
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/declaration_field_failure_test.py" $<TARGET_FILE:gti>)
 add_test(NAME cpp_mir_body_emitter_lifecycle
          COMMAND gti_cpp_mir_body_emitter_lifecycle_tests)
+add_test(NAME constructor_passive_field_rollback_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/constructor_passive_field_rollback_runtime_test.py"
+          $<TARGET_FILE:gti>)
+set_tests_properties(constructor_passive_field_rollback_runtime PROPERTIES TIMEOUT 600)
 add_executable(gti_expected_payload_pair_emitter_tests expected_payload_pair_emitter_tests.cpp)
 target_link_libraries(gti_expected_payload_pair_emitter_tests PRIVATE gti_cpp_backend)
 add_test(NAME expected_payload_pair_emitter COMMAND gti_expected_payload_pair_emitter_tests)

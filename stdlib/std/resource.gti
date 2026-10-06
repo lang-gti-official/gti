@@ -15,6 +15,8 @@ void gti_rt_memory_release_v1(void* address, uint64_t alignment);
 
 namespace std {
 /// Passive provider descriptor. Ownership belongs to a lease, not this value.
+/// Copying it copies metadata only: it neither retains a region nor authorizes
+/// a second release. The provider defines id; the process resource uses zero.
 struct raw_allocation {
   void* address = nullptr;
   size_t bytes;
@@ -24,7 +26,8 @@ struct raw_allocation {
       : address(address), bytes(bytes), alignment(alignment), id(id) {}
 };
 
-/// A resource supplies disjoint, writable regions until matching release.
+/// Signature/effect contract only; satisfying this concept is not a proof that
+/// returned addresses supply disjoint, writable regions until matching release.
 concept memory_resource<R> = requires(R& resource, layout request) {
   unsafe { resource.allocate(request) } -> expected<raw_allocation, alloc_errc>;
 } && requires(R& resource, raw_allocation allocation) {
@@ -32,6 +35,7 @@ concept memory_resource<R> = requires(R& resource, layout request) {
 };
 
 /// Reusable checked shared borrow of an explicitly trusted resource.
+/// It retains the provider's lifetime, not ownership or synchronization rights.
 class resource_ref<memory_resource R> {
   R& resource;
 public:
@@ -40,15 +44,22 @@ public:
   R& get() { return this.resource; }
 };
 
-/// The caller proves the provider contract for every use through this binding:
-/// successful nonempty allocations are writable, aligned, large enough and
-/// mutually disjoint; descriptors remain valid until their matching release;
-/// release retires exactly that region and does not access destroyed elements.
+/// The caller proves the provider contract for every future use through this
+/// binding and its copies, including overlapping live leases. Successful
+/// nonempty allocations are writable, sufficiently aligned, large enough,
+/// disjoint from all outstanding regions, and contain no preexisting objects
+/// whose lifetime adoption would overwrite. Their addresses and descriptors
+/// remain valid until matching release; release retires exactly that region
+/// and does not access destroyed elements. Raw aliases, independent reset and
+/// concurrent calls must not violate these promises. Shared borrowing checks
+/// the provider shell's lifetime; it cannot validate raw memory or add locks.
 unsafe resource_ref<R> bind_resource<R>(R& resource) requires memory_resource<R> {
   return resource_ref<R>(gti_internal::resource_binding::trusted, resource);
 }
 
 /// Portable process allocation with no global resource selection.
+/// Direct calls remain unsafe: release requires an outstanding descriptor from
+/// this allocation family, with its original address and alignment.
 class process_resource {
 public:
   process_resource() {}
@@ -86,7 +97,7 @@ public:
   resource_lease(resource_lease<R>& other) = delete;
   resource_lease(resource_lease<R>&& other) = default;
   std::resource_ref<R> binding() {
-    return std::resource_ref<R>(resource_binding::trusted, this.resource.get());
+      return this.resource;
   }
   uint64_t alignment() { return this.allocation.alignment; }
   std::raw_allocation take() mut {
@@ -112,6 +123,9 @@ public:
 namespace std {
 /// Typed owner over a region chosen by a checked, explicitly bound resource.
 /// The lease precedes storage: reverse field cleanup destroys elements first.
+/// Adopted storage owns element lifetimes and its liveness bitmap, but never
+/// frees the provider region; the lease alone returns the original descriptor.
+/// Region shape checks do not prove provenance, disjointness or provider honesty.
 class resource_storage<T, memory_resource R> {
   mut gti_internal::resource_lease<R> lease;
   mut gti_internal::storage<T> data;

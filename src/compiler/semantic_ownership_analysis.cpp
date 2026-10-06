@@ -2245,8 +2245,15 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
         auto sources = storedBorrowDependencies(*origin);
         auto selected = std::find_if(
             sources.begin(), sources.end(), [&](const auto &dependency) {
-              return dependency.designatedFields == mapping.sourceFields;
+              return !dependency.designatedFields.empty() &&
+                     mapping.sourceFields.size() >=
+                         dependency.designatedFields.size() &&
+                     std::equal(dependency.designatedFields.begin(),
+                                dependency.designatedFields.end(),
+                                mapping.sourceFields.begin());
             });
+        std::size_t matchedFields =
+            selected == sources.end() ? 0 : selected->designatedFields.size();
         if (selected == sources.end() && sources.size() == 1 &&
             sources.front().designatedFields.empty()) {
           selected = sources.begin();
@@ -2254,20 +2261,24 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
           const auto paths = type == nullptr
                                  ? std::vector<StoredReferencePath>{}
                                  : storedReferencePaths(*type);
-          const bool compactCarrier =
-              paths.size() == 1 &&
-              storedFieldSymbols(*type, paths.front().fields) ==
-                  mapping.sourceFields;
-          if (!compactCarrier)
-            for (const auto field : mapping.sourceFields)
-              selected->place.projections.push_back(
-                  {.kind = PlaceProjectionKind::Field, .field = field});
+          if (paths.size() == 1) {
+            const auto fields = storedFieldSymbols(*type, paths.front().fields);
+            if (mapping.sourceFields.size() >= fields.size() &&
+                std::equal(fields.begin(), fields.end(),
+                           mapping.sourceFields.begin()))
+              matchedFields = fields.size();
+          }
         }
         if (selected == sources.end() ||
             (mapping.access == AccessMode::Mutable &&
              selected->access != AccessMode::Mutable))
           return {};
         auto dependency = *selected;
+        for (std::size_t index = matchedFields;
+             index < mapping.sourceFields.size(); ++index)
+          dependency.place.projections.push_back(
+              {.kind = PlaceProjectionKind::Field,
+               .field = mapping.sourceFields[index]});
         dependency.designatedFields = mapping.resultFields;
         dependency.access = mapping.access;
         dependencies.push_back(std::move(dependency));
@@ -2536,6 +2547,60 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
   if (!expression) {
     return std::nullopt;
   }
+  const auto mappedDependency = [&](const SemanticLoanInfo &loan,
+                                    const ExprPtr &origin,
+                                    const std::vector<SymbolId> &sourceFields)
+      -> std::optional<SemanticLoanDependency> {
+    std::vector<PlaceProjection> projections;
+    if (const auto *place = semanticModel.findPlace(*origin);
+        !loan.entry && place != nullptr &&
+        std::find(loan.carriers.begin(), loan.carriers.end(), place->root) !=
+            loan.carriers.end() &&
+        std::all_of(place->projections.begin(), place->projections.end(),
+                    [](const auto &projection) {
+                      return projection.kind == PlaceProjectionKind::Field;
+                    }))
+      projections = place->projections;
+    for (const auto field : sourceFields)
+      projections.push_back(
+          {.kind = PlaceProjectionKind::Field, .field = field});
+    if (auto selected = projectedStoredDependency(loan, projections))
+      return selected;
+    if (loan.kind != SemanticLoanKind::StoredValue ||
+        !loan.designatedFields.empty() || !loan.additionalDependencies.empty())
+      return std::nullopt;
+    // The compact single-origin form omits a designated field, but the
+    // concrete receiver type still identifies its sole stored-reference path.
+    // Preserve any suffix beneath that reference as a distinct child place;
+    // aliasing the whole-owner loan would lose a projected call's identity.
+    const auto *recordedType = semanticModel.findType(*origin);
+    if (recordedType == nullptr)
+      return std::nullopt;
+    auto type = *recordedType;
+    if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+      type = SemanticType(type.arguments.front());
+    const auto paths = storedReferencePaths(type);
+    if (paths.size() != 1)
+      return std::nullopt;
+    std::vector<SymbolId> fields;
+    for (const auto *field : paths.front().fields) {
+      const auto symbol = symbolForDeclaration(field->name());
+      if (symbol == 0)
+        return std::nullopt;
+      fields.push_back(symbol);
+    }
+    if (sourceFields.size() < fields.size() ||
+        !std::equal(fields.begin(), fields.end(), sourceFields.begin()))
+      return std::nullopt;
+    SemanticLoanDependency dependency{.place = loan.place,
+                                      .access = loan.access,
+                                      .protectsStorage = loan.protectsStorage};
+    for (std::size_t index = fields.size(); index < sourceFields.size();
+         ++index)
+      dependency.place.projections.push_back(
+          {.kind = PlaceProjectionKind::Field, .field = sourceFields[index]});
+    return dependency;
+  };
   const auto selectedDependency =
       [&](std::optional<RetainedLoanSource> source) {
         const auto *loan =
@@ -2616,12 +2681,20 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
     auto source = origin == nullptr ? std::optional<RetainedLoanSource>{}
                                     : retainedLoanSource(*origin);
     const auto *loan = source ? semanticModel.findLoan(source->loan) : nullptr;
+    if (loan != nullptr && loan->storedDependency != 0) {
+      // A mapped result follows a stored external reference. An alias's
+      // separate shell loan protects the alias object, not this referent.
+      if (const auto *dependency =
+              semanticModel.findLoan(loan->storedDependency)) {
+        source->loan = dependency->id;
+        source->dependency.reset();
+        loan = dependency;
+      }
+    }
     if (loan != nullptr && resolved->borrowFields.size() == 1 &&
         resolved->returnType.kind == SemanticType::Reference) {
-      std::vector<PlaceProjection> fields;
-      for (const auto field : resolved->borrowFields.front().sourceFields)
-        fields.push_back({.kind = PlaceProjectionKind::Field, .field = field});
-      source->dependency = projectedStoredDependency(*loan, fields);
+      source->dependency = mappedDependency(
+          *loan, *origin, resolved->borrowFields.front().sourceFields);
     }
     return source;
   }
@@ -2705,12 +2778,17 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
       auto source = retainedLoanSource(*origin);
       const auto *loan =
           source ? semanticModel.findLoan(source->loan) : nullptr;
+      if (loan != nullptr && loan->storedDependency != 0) {
+        if (const auto *dependency =
+                semanticModel.findLoan(loan->storedDependency)) {
+          source->loan = dependency->id;
+          source->dependency.reset();
+          loan = dependency;
+        }
+      }
       if (loan != nullptr) {
-        std::vector<PlaceProjection> fields;
-        for (const auto field : mapping.sourceFields)
-          fields.push_back(
-              {.kind = PlaceProjectionKind::Field, .field = field});
-        source->dependency = projectedStoredDependency(*loan, fields);
+        source->dependency =
+            mappedDependency(*loan, *origin, mapping.sourceFields);
         return source;
       }
     }
@@ -3183,6 +3261,28 @@ auto SemanticVisitor::Impl::transientLoanPlace(const ExprPtr &expression)
 
 auto SemanticVisitor::Impl::retainedLoanPlace(const ExprPtr &expression)
     -> SemanticLoanPlace {
+  // Exact field contracts compose across accessor calls. Reuse the same
+  // dependency substitution as carrier-valued calls, including the suffix
+  // beneath a stored external reference; the receiver shell is not the
+  // returned reference's owner merely because a call hides its field syntax.
+  if (expression) {
+    const auto *call = exprAs<Call>(expression.get());
+    const auto *resolved =
+        call == nullptr ? nullptr : semanticModel.findCall(*call);
+    const auto *operation = semanticModel.findOperator(*expression);
+    const bool mappedReference =
+        (resolved != nullptr &&
+         resolved->returnType.kind == SemanticType::Reference &&
+         resolved->borrowFields.size() == 1) ||
+        (operation != nullptr &&
+         operation->returnType.kind == SemanticType::Reference &&
+         operation->borrowFields.size() == 1);
+    if (mappedReference) {
+      const auto dependencies = storedBorrowDependencies(expression);
+      if (dependencies.size() == 1)
+        return dependencies.front().place;
+    }
+  }
   SemanticLoanPlace direct = loanPlace(expression);
   std::optional<TransientBorrowProduction> production =
       transientBorrowProduction(expression);
@@ -4393,15 +4493,34 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       return;
     }
     const auto *operation = semanticModel.findOperator(*expression);
+    const auto borrowedReceiver = [&](const ExprPtr *receiver) {
+      const auto *receiverInfo = receiver == nullptr
+                                     ? nullptr
+                                     : semanticModel.findExpression(**receiver);
+      return receiverInfo != nullptr &&
+             receiverInfo->traits.containsBorrowedState;
+    };
+    const auto *member =
+        call == nullptr ? nullptr : exprAs<Get>(call->callee().get());
+    const bool borrowedCallReceiver =
+        member != nullptr
+            ? borrowedReceiver(&member->object())
+            : currentClass && typeTraits(SemanticType::classType(*currentClass))
+                                  .containsBorrowedState;
+    // Ordinary accessors without a stored-field mapping borrow their
+    // receiver's physical storage. Intrinsics already define their own
+    // provenance: extracting a fallible borrowed success, for example,
+    // retains its external referent rather than the expected object's shell.
     const bool receiverStorageResult =
-        (resolved != nullptr &&
+        (resolved != nullptr && resolved->intrinsic == IntrinsicKind::None &&
          resolved->returnType.kind == SemanticType::Reference &&
          resolved->borrowOrigin == BorrowOriginKind::Receiver &&
-         resolved->borrowFields.empty()) ||
+         resolved->borrowFields.empty() && borrowedCallReceiver) ||
         (operation != nullptr &&
          operation->returnType.kind == SemanticType::Reference &&
          operation->borrowOrigin == BorrowOriginKind::Receiver &&
-         operation->borrowFields.empty());
+         operation->borrowFields.empty() &&
+         borrowedReceiver(operatorBorrowSource(expression, *operation)));
     if (carrier->type.kind == SemanticType::Reference &&
         carrier->type.arguments.size() == 1 &&
         (typeTraits(carrier->type.arguments.front()).containsBorrowedState ||
@@ -4462,11 +4581,18 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
                             return dependency.access == AccessMode::Mutable;
                           })) {
             semanticModel.removeLoanCarrier(source->loan, sourceSymbol);
-            if (sourceCarrier->variableDeclaration != nullptr) {
+            // The active flow/carrier set above forgets the consumed shell.
+            // Keep a cleanup-bound declaration's original loan identity in
+            // the immutable model: MIR lowers that initialization before the
+            // later move, and earlier shell references still depend on it.
+            // This does not restore availability of the moved-from binding.
+            if (!sourceLoan->lifecycleBound &&
+                sourceCarrier->variableDeclaration != nullptr) {
               semanticModel.recordBindingLoan(
                   *sourceCarrier->variableDeclaration, 0);
             }
-            if (sourceCarrier->parameterDeclaration != nullptr) {
+            if (!sourceLoan->lifecycleBound &&
+                sourceCarrier->parameterDeclaration != nullptr) {
               semanticModel.recordBindingLoan(
                   *sourceCarrier->parameterDeclaration, 0);
             }

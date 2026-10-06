@@ -11148,21 +11148,23 @@ int main() {
   if (valid.canGenerateCode())
     expect(!gti_test::emitCppText(valid).empty(),
            "concrete structural class contract emits from verified MIR");
-  const auto formatted = lang::Formatter().format(declarations +
+  const auto formatted = lang::Formatter().format(
+      declarations +
       "int main() { Counter counter{}; Monitor<Counter> value{counter}; "
       "return value.read() - 7; }");
   expect(analyze(formatted).canGenerateCode(),
          "existing generic annotation syntax formats without losing facts");
 
-  for (const auto &suffix : {
-           "struct Missing {}; int main() { Unused<Missing> value{}; return 0; }",
-           "struct Wrong { int read(){return 1;} int close(){return 0;} }; "
-           "int main() { Unused<Wrong> value{}; return 0; }",
-           "class Hidden { int read(){return 1;} void close(){} }; "
-           "int main() { Unused<Hidden> value{}; return 0; }",
-           "struct Missing {}; int main() { Packed<Counter, Missing> value{}; return 0; }",
-           "struct Missing {}; class InvalidDefault<closable T=Missing> {}; "
-           "int main() { InvalidDefault<> value{}; return 0; }"}) {
+  for (const auto &suffix :
+       {"struct Missing {}; int main() { Unused<Missing> value{}; return 0; }",
+        "struct Wrong { int read(){return 1;} int close(){return 0;} }; "
+        "int main() { Unused<Wrong> value{}; return 0; }",
+        "class Hidden { int read(){return 1;} void close(){} }; "
+        "int main() { Unused<Hidden> value{}; return 0; }",
+        "struct Missing {}; int main() { Packed<Counter, Missing> value{}; "
+        "return 0; }",
+        "struct Missing {}; class InvalidDefault<closable T=Missing> {}; "
+        "int main() { InvalidDefault<> value{}; return 0; }"}) {
     const auto rejected = analyze(declarations + suffix);
     expect(!rejected.canGenerateCode() &&
                hasDiagnosticCode(rejected.diagnostics, "GTI-S2029") &&
@@ -11176,18 +11178,18 @@ int main() {
                        }),
            "class constraint failure retains the required member declaration");
   }
-  for (const auto &source : {
-           declarations + "class Bad<readable T> { T& source; public: "
-                          "Bad(T& value):source(value){} "
-                          "~Bad(){ unsafe { this.source.close(); } } }; "
-                          "int main(){return 0;}",
-           declarations + "class Bad<closable T> { T& source; public: "
-                          "Bad(T& value):source(value){} "
-                          "~Bad(){ this.source.close(); } }; "
-                          "int main(){return 0;}",
-           std::string("concept pair<T,U> = std::copyable<T> && "
-                       "std::copyable<U>; class Bad<pair T> { int value=0; }; "
-                       "int main(){return 0;}")}) {
+  for (const auto &source :
+       {declarations + "class Bad<readable T> { T& source; public: "
+                       "Bad(T& value):source(value){} "
+                       "~Bad(){ unsafe { this.source.close(); } } }; "
+                       "int main(){return 0;}",
+        declarations + "class Bad<closable T> { T& source; public: "
+                       "Bad(T& value):source(value){} "
+                       "~Bad(){ this.source.close(); } }; "
+                       "int main(){return 0;}",
+        std::string("concept pair<T,U> = std::copyable<T> && "
+                    "std::copyable<U>; class Bad<pair T> { int value=0; }; "
+                    "int main(){return 0;}")}) {
     const auto rejected = analyze(source);
     expect(!rejected.canGenerateCode() &&
                !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),

@@ -1262,6 +1262,13 @@ Ordinary native constructor overloads that publish fields from the same MIR
 body use the same proved private empty state as their failure-form overloads.
 They must not implicitly call a source default constructor before MIR field
 publication; that constructor may be deleted or have observable behavior.
+A cleanup-free class field may have lexical lifetime without an active cleanup
+obligation. Such a field can accompany a guarded owner only when its concrete
+class has generated, observation-free destruction, no active cleanup state,
+and either the same recursively proved private empty representation or the
+exact native bound-field publication described below. The exact
+reverse field-drop schedule remains mandatory; no user destructor or active
+child may be hidden behind the passive field marker.
 A completed cleanup-bound field containing native references cannot be reset
 to an unbound empty object. For the bounded exact owned-parameter field route,
 rollback instead runs its verified cleanup recipe in place: the source
@@ -1391,11 +1398,29 @@ An exact by-value parameter copy may also publish one field through the native
 member-initializer list when the copied class has generated copy/destruction,
 only passive scalar or enum state, no state-bearing base, and no active cleanup.
 This MIR shape carries one reachable parameter `Load`, one matching initializer
-metadata row, and one full-expression boundary but no field `Initialize`; the
-copied parameter's native scope destruction represents its trivial MIR drop.
-The scalar copy route continues to require its explicit `Load`/`Initialize`
-pair. Custom lifecycle, extra uses, forged ownership, ambiguous fields, and
-mixed initializer schedules fail closed.
+metadata row, an exact field `Initialize`, and one full-expression boundary;
+the copied parameter's native scope destruction represents its trivial MIR
+drop. The scalar copy route, including passive raw-pointer value copies,
+requires the same explicit `Load`/`Initialize` pair. Copying a raw pointer
+introduces no dereference, loan, or ownership authority. Custom lifecycle,
+extra uses, forged ownership, ambiguous fields, and mixed initializer schedules
+fail closed.
+
+A shared-reference carrier with generated, observation-free destruction may
+retain its bound native shell during constructor rollback. This is not an
+empty-state capability: its references must already be bound by the exact
+first-field parameter-copy prefix (Load, Initialize, dependency publication,
+source-loan retirement, full-expression boundary), or an independently proven
+native constructed-field publication. The shell proof recursively excludes
+exclusive references, active cleanup, user destructors, capability classes,
+unions and bases. Later constructor work and failure cleanup remain in MIR;
+neither reference binding nor user cleanup is reconstructed by the backend.
+
+A nullable raw-pointer field default uses ordinary typed initialization: the
+source SSA value stays `nullptr_t`, and the exact destination retains its
+pointer type. The native initializer proof admits only that null literal with
+its explicit field publication; unrelated pointer types or integer addresses
+are not implicit initialization conversions.
 
 An explicit class-typed field initializer whose value is one ordinary
 `Construct` of the field's own type may publish through the same native
@@ -1437,12 +1462,15 @@ interfaces. The proof requires an empty initialization list and passive base
 and field surfaces; a conservative failure summary alone does not invalidate
 the otherwise empty schedule.
 
-A single first field may instead be a cleanup-bound borrowed child constructed
-from exact read-only reference formals. This bounded prefix requires one field,
-no bases, a selected non-failing child constructor with an existing ordinary
-native overload, and nothing before construction except its exact reference
-argument stages. Read ownership metadata must name that same parameter place
-and leave it available. The success edge activates the child value's exact
+A first field may instead be a cleanup-bound borrowed child constructed from
+exact read-only reference or passive generated-copy formals. This bounded
+prefix requires no bases and nothing before construction except those exact
+argument stages. Every later field must have a separately proved private empty
+representation and remains initialized by its original body schedule. Read
+ownership metadata must name the same formal and leave it available. A passive
+class copy additionally preserves its exact prepared-parameter activation and
+transfer into the child; custom copies or active argument cleanup are excluded.
+The success edge activates the child value's exact
 drop; the adjacent field `Initialize` reparents it into the field's rollback
 obligation, followed by the exact stored-dependency publication and source-loan
 retirement. Only those argument/construction/publication instructions disappear
@@ -1450,10 +1478,16 @@ into native member initialization. Later body work, including failure, remains
 in MIR order. Rollback consumes the same proved field drop and drains the
 retained reference-bearing shell without default construction or a second
 destructor call. Normal cleanup, original failure propagation and secondary
-cleanup failure use the existing verified schedule. Fallible child construction,
-multiple fields, by-value carrier arguments and mutable-reference inputs do not
-use this prefix proof; it is not the complete allocator/container composition
-capability.
+cleanup failure use the existing verified schedule. A selected non-failing child
+can use its ordinary native overload. A fallible child instead uses its exact
+status-tag constructor and the parent's existing failure-record out parameter.
+On entering the parent body, its status is captured before the parent's result
+is reset; the original MIR Invoke branches on that status. Child failure cannot
+be turned into a known-success edge, publish the parent, or arm the child's
+field rollback obligation. The child's unpublished shell must independently
+support observation-free retirement. Multiple fallible native prefixes,
+mutable-reference inputs and nonempty unclaimed siblings remain excluded;
+this bounded route alone is not complete allocator/container validation.
 
 The sealed native `OptionalStorage` capability has one narrower empty-prefix
 case: a cleanup-free storage field may use the native initializer list when its
@@ -1479,11 +1513,35 @@ cannot hide placement required by an unclaimed later value. A claimed
 construction's conservative Invoke follows its proven success edge, not an
 unset body-local status flag. Its original failure and cleanup metadata remains
 intact for verification.
-A cleanup-free nonassignable class field can also publish at an adjacent, exact
+A cleanup-free class field can also publish at an adjacent, exact
 `Construct`/`Initialize` pair in the body, using placement construction rather
 than assignment. This requires a proved non-failing target and carries no
-invented cleanup obligations. Active fields retain their success-edge
+invented cleanup obligations. The route also applies to assignable fields when
+the complete prologue cannot use native initializers, such as a passive field
+before a fallible owning-field call. Active fields retain their success-edge
 activation, rollback reparenting, and normal transfer-out identities.
+
+An adjacent class `Move`/discarded `Assign` can also consume a cleanup-free
+temporary directly into one mutable binding or exact receiver field. The
+shared move-assignment fusion query retains the fixed-array staging case and
+adds this representation-only case only for a concrete, non-borrowing class
+with generated move construction, assignment and destruction. Its source must
+have the existing exact uninitialized publication-slot proof and no semantic
+drop obligation; the destination must retain its resolved type and mutable
+field identity. The writer neither default-constructs an SSA class nor invents
+cleanup authority. This permits an `expected` record extraction to reach a
+field without requiring the record to have a default constructor.
+The same resolved mutable-field predicate supports an adjacent parameter
+`Load`/discarded `Assign` copy when the record has generated copy construction,
+assignment and destruction with only passive scalar/enum/pointer fields. Its
+source must carry an exact available, reachable Read event; borrowed state,
+replacement cleanup and custom special members are not admitted by this route.
+An exact non-failing `Construct` followed by its discarded field assignment
+uses that same field predicate and the existing fresh-assignment proof. Its
+constructor arguments retain their MIR evaluation order, and the original
+conservative Invoke may bridge only to the unique immediate assignment. The
+generated passive value has no independent drop obligation; arbitrary fallible
+construction or owning replacement does not use this fusion.
 
 Constructor-body replacement of a completed owning field accepts both an
 unqualified instance-field symbol and `this.field`. Both resolve through the
