@@ -19,6 +19,7 @@ import uuid
 
 CANONICAL = "https://git.internal.howetotech.dev/gti-lang/gti.git"
 API = "https://git.internal.howetotech.dev/api/v1/repos/gti-lang/gti"
+REPOSITORY = "gti-lang/gti"
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
 
 
@@ -148,35 +149,48 @@ class Workflow:
         if not state.get("pr"):
             raise WorkflowError("Task has no PR; checkpoint the first meaningful change")
         pr = self.api.request("GET", f"/pulls/{state['pr']}")
-        if pr["head"]["ref"] != state["branch"] or pr["base"]["ref"] != "main":
+        if not self.matches(pr, state["branch"]):
             raise WorkflowError("PR branch identity changed; do not merge or clean up")
         return pr
+
+    @staticmethod
+    def matches(pr, branch):
+        return (pr.get("head", {}).get("ref") == branch and
+                pr.get("base", {}).get("ref") == "main" and
+                all((pr.get(side, {}).get("repo") or {}).get("full_name") == REPOSITORY
+                    for side in ("head", "base")))
+
+    def find_pr(self, branch):
+        found = []
+        page = 1
+        while True:
+            prs = self.api.request("GET", f"/pulls?state=all&limit=50&page={page}")
+            found.extend(p for p in prs if self.matches(p, branch))
+            if len(prs) < 50:
+                break
+            page += 1
+        if len(found) > 1:
+            raise WorkflowError("More than one PR uses this task branch")
+        return found[0] if found else None
 
     def ensure_pr(self, state):
         if state.get("pr"):
             return self.pull(state)
         # Recover an interrupted create, and include closed PRs to avoid reuse.
-        page = 1
-        while True:
-            prs = self.api.request("GET", f"/pulls?state=all&limit=50&page={page}")
-            found = [p for p in prs if p["head"]["ref"] == state["branch"] and p["base"]["ref"] == "main"]
-            if found:
-                if len(found) != 1:
-                    raise WorkflowError("More than one PR uses this task branch")
-                pr = found[0]
-                break
-            if len(prs) < 50:
-                pr = self.api.request("POST", "/pulls", {
-                    "base": "main", "head": state["branch"],
-                    "title": "WIP: " + state["title"],
-                    "body": f"Workflow task `{state['task']}`. Implementation and validation are in progress."})
-                break
-            page += 1
+        pr = self.find_pr(state["branch"])
+        created = pr is None
+        if created:
+            pr = self.api.request("POST", "/pulls", {
+                "base": "main", "head": state["branch"],
+                "title": "WIP: " + state["title"],
+                "body": f"Workflow task `{state['task']}`. Implementation and validation are in progress."})
+        if not self.matches(pr, state["branch"]):
+            raise WorkflowError("Created PR has unexpected repository/branch identity")
         state.update(pr=pr["number"], pr_url=pr["html_url"])
         self.save(state)
         if pr["state"] != "open" or pr.get("merged"):
             raise WorkflowError("This task's PR is closed; do not reuse its branch")
-        if not pr.get("draft"):
+        if created and not pr.get("draft"):
             raise WorkflowError("Gitea did not recognize WIP: as a draft; mark the PR draft before continuing")
         return pr
 
@@ -213,7 +227,23 @@ class Workflow:
                 raise WorkflowError("An existing worktree requires --adopt")
             self.tree(state)
             clean(root)
-            if not self.ancestor(base, git(root, "rev-parse", "HEAD")):
+            recovered = self.find_pr(branch)
+            if recovered:
+                state.update(pr=recovered["number"], pr_url=recovered["html_url"])
+                head = git(root, "rev-parse", "HEAD")
+                if recovered.get("merged"):
+                    if head != recovered["head"]["sha"]:
+                        raise WorkflowError("Merged branch has new commits; preserve them as a new task")
+                    state.update(merged_head=head, merge_commit=recovered["merge_commit_sha"])
+                    self.save(state, "merged")
+                    return self.sync(task)
+                if recovered["state"] == "closed":
+                    self.save(state, "abandoned")
+                    return state
+                if not self.ancestor(recovered["head"]["sha"], head):
+                    raise WorkflowError("Local branch diverges from its published PR; preserve and reconcile it before adoption")
+                state["base"] = git(root, "merge-base", head, base)
+            elif not self.ancestor(base, git(root, "rev-parse", "HEAD")):
                 raise WorkflowError("Adopted branch must include current origin/main; reconcile it first")
         else:
             if git(self.primary, "show-ref", "--verify", "refs/heads/" + branch, check=False).returncode == 0:
@@ -236,9 +266,9 @@ class Workflow:
                 raise WorkflowError("Index already contains staged work; review and commit it explicitly")
             for item in paths:
                 target = (root / item).resolve()
-                if target == root or root not in target.parents or item in {".", "*"}:
+                if target == root or root not in target.parents or target.is_dir() or item in {".", "*"}:
                     raise WorkflowError("Stage explicit in-worktree paths, never the repository root")
-            git(root, "add", "--", *paths)
+            git(root, "--literal-pathspecs", "add", "--", *paths)
             git(root, "diff", "--cached", "--check")
             git(root, "commit", "-m", message)
         clean(root)
@@ -254,6 +284,8 @@ class Workflow:
 
     def reconcile(self, task):
         state = self.load(task)
+        if state["phase"] in {"merged", "synced", "completed", "abandoned"} or (state.get("pr") and self.pull(state)["state"] != "open"):
+            raise WorkflowError("Task is integrated or closed; do not mutate its branch")
         root = self.tree(state)
         clean(root)
         base = self.fetch()
@@ -269,6 +301,8 @@ class Workflow:
 
     def verify(self, task, checks):
         state = self.load(task)
+        if state["phase"] in {"merged", "synced", "completed", "abandoned"} or (state.get("pr") and self.pull(state)["state"] != "open"):
+            raise WorkflowError("Task is integrated or closed; do not validate it as new work")
         root = self.tree(state)
         clean(root)
         base = self.fetch()
@@ -356,8 +390,25 @@ class Workflow:
             git(self.primary, "update-ref", backup, old)
             self.save(state, "sync-blocked")
             raise WorkflowError(f"Local main has unique commits preserved at {backup}; reconcile them through a separate PR")
+        # Git can overwrite ignored untracked files when a new tracked path
+        # arrives. Detect file/directory/symlink collisions before fast-forward.
+        incoming = git(self.primary, "diff", "--name-only", "--diff-filter=ACMRT", "-z", old, base)
+        for relative in filter(None, incoming.split("\0")):
+            target = self.primary / relative
+            for candidate in (target, *target.parents):
+                if candidate == self.primary:
+                    break
+                if not candidate.exists() and not candidate.is_symlink():
+                    continue
+                if candidate != target and candidate.is_dir() and not candidate.is_symlink():
+                    continue
+                name = str(candidate.relative_to(self.primary))
+                tracked = git(self.primary, "--literal-pathspecs", "ls-files", "--error-unmatch", "--", name, check=False)
+                if tracked.returncode:
+                    self.save(state, "sync-blocked")
+                    raise WorkflowError(f"Untracked/ignored path {name} would be overwritten; preserve it before retrying sync")
         # Git preserves unrelated dirty files and refuses overlapping edits.
-        result = git(self.primary, "merge", "--ff-only", "origin/main", check=False)
+        result = git(self.primary, "merge", "--ff-only", "--no-overwrite-ignore", "origin/main", check=False)
         if result.returncode:
             self.save(state, "sync-blocked")
             raise WorkflowError("PR merged, but local edits block main sync; back up overlapping files and reconcile them before retrying sync")
@@ -406,12 +457,28 @@ class Workflow:
     def abandon(self, task, reason):
         if not reason.strip():
             raise WorkflowError("Record why work is abandoned or superseded")
+        state = self.load(task)
+        if state["phase"] == "abandoned":
+            return state
+        if state.get("pr"):
+            pr = self.pull(state)
+            if pr.get("merged"):
+                raise WorkflowError("Merged work cannot be abandoned")
+            if pr["state"] == "closed":
+                root = self.tree(state)
+                clean(root)
+                if git(root, "rev-parse", "HEAD") != pr["head"]["sha"]:
+                    raise WorkflowError("Closed PR has unpublished local work; preserve it in a new task")
+                state["reason"] = reason
+                self.save(state, "abandoned")
+                return state
         state = self.checkpoint(task)
         self.ensure_pr(state)
         pr = self.pull(state)
+        state["reason"] = reason
+        self.save(state, "abandoning")
         self.api.request("PATCH", f"/pulls/{state['pr']}", {
             "state": "closed", "body": pr.get("body", "") + "\n\nPreserved, unmerged: " + reason})
-        state["reason"] = reason
         self.save(state, "abandoned")
         return state
 
