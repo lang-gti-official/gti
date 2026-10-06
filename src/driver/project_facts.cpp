@@ -177,6 +177,7 @@ ProjectFacts projectFactsFromWorkspace(const ProjectWorkspace &workspace) {
                             .optimization = profile.optimization,
                             .cppStandard = profile.cppStandard,
                             .executionProfile = profile.executionProfile,
+                            .rawPointerAudit = profile.rawPointerAudit,
                             .warningPolicy = profile.warningPolicy,
                             .dependencyWarnings = profile.dependencyWarnings});
   }

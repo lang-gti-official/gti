@@ -100,7 +100,8 @@ root = "src/main.gti"
          "disabled-warnings = [\"unused-mut\"]\n"
          "keep-cpp = true\n"
          "debug-info = true\n"
-         "dependency-warnings = false\n";
+         "dependency-warnings = false\n"
+         "raw-pointer-audit = \"warn\"\n";
 }
 
 void testDiscoveryParsingAndResolution() {
@@ -182,6 +183,12 @@ void testDiscoveryParsingAndResolution() {
                !development->keepCpp && !development->debugInfo &&
                development->dependencyWarnings,
            "the built-in dev profile should have stable defaults");
+    expect(
+        development &&
+            development->rawPointerAudit == lang::RawPointerAuditMode::Off &&
+            release &&
+            release->rawPointerAudit == lang::RawPointerAuditMode::Warn,
+        "raw pointer auditing defaults off and retains exact profile policy");
     expect(release != nullptr &&
                release->optimization == lang::OptimizationLevel::O2 &&
                release->cppStandard == lang::CppStandard::Cpp20 &&
@@ -198,6 +205,7 @@ void testDiscoveryParsingAndResolution() {
   overrides.optimization = lang::OptimizationLevel::O3;
   overrides.cppStandard = lang::CppStandard::Cpp23;
   overrides.executionProfile = lang::ExecutionProfile::SingleThreaded;
+  overrides.rawPointerAudit = lang::RawPointerAuditMode::Strict;
   overrides.keepCpp = false;
   overrides.debugInfo = false;
   overrides.warningPolicy = lang::WarningPolicy({"unreachable-code"});
@@ -210,6 +218,8 @@ void testDiscoveryParsingAndResolution() {
          "one target should be inferred from a nested project directory");
   if (resolution.plan) {
     const lang::driver::ProjectBuildPlan &plan = *resolution.plan;
+    expect(plan.rawPointerAudit() == lang::RawPointerAuditMode::Strict,
+           "explicit audit override wins over the profile");
     const std::filesystem::path expectedDirectory =
         std::filesystem::canonical(temporary.root()) /
         "build/gti/release/testarch-testvendor-testos";
@@ -324,6 +334,21 @@ void testManifestDiagnostics() {
          "vocabulary");
 
   std::string invalidWarning = validManifest();
+  for (const std::string &spelling : {"true", "3", "[]", "\"unknown\""}) {
+    std::string invalidAudit = validManifest();
+    const auto valueOffset = invalidAudit.find("\"warn\"");
+    invalidAudit.replace(valueOffset, 6, spelling);
+    expect(writeFile(manifest, invalidAudit),
+           "invalid audit fixture should be writable");
+    const auto badAudit = lang::driver::loadProjectManifest(manifest);
+    const auto *diagnostic =
+        findDiagnostic(badAudit.diagnostics,
+                       spelling == "\"unknown\"" ? "GTI-B1005" : "GTI-B1004");
+    expect(!badAudit.succeeded() && diagnostic &&
+               diagnostic->primary.start == valueOffset &&
+               diagnostic->primary.end == valueOffset + spelling.size(),
+           "invalid audit policy reports the exact manifest value");
+  }
   invalidWarning.replace(invalidWarning.find("unused-mut"),
                          std::string_view("unused-mut").size(),
                          "unused-mutable-binding");
@@ -1560,6 +1585,7 @@ root = "src/main.gti"
 
 [profiles.release]
 execution-profile = "concurrent"
+raw-pointer-audit = "strict"
 dependency-warnings = false
 disabled-warnings = ["unused-mut"]
 )";
@@ -1647,6 +1673,8 @@ dependency-warnings = false
   const lang::driver::ProjectFactsProfile *releaseProfile =
       facts.findProfile("release");
   expect(releaseProfile != nullptr &&
+             releaseProfile->rawPointerAudit ==
+                 lang::RawPointerAuditMode::Strict &&
              releaseProfile->executionProfile ==
                  lang::ExecutionProfile::Concurrent &&
              !releaseProfile->dependencyWarnings &&

@@ -859,11 +859,20 @@ def load_build_provenance(
     require_exact_keys(
         report,
         {"schema", "producer", "project", "sources", "native", "artifact"}
-        | ({"debug_info"} if "debug_info" in report else set()),
+        | ({"debug_info"} if "debug_info" in report else set())
+        | ({"raw_pointer_audit"} if "raw_pointer_audit" in report else set()),
         "GTI build report",
     )
     if report["schema"] != 2 or isinstance(report["schema"], bool):
         raise BenchmarkError("GTI build report requires schema 2")
+    # The driver's additive audit policy defaults to off for older schema-2
+    # reports. Preserve the selected policy in decoded benchmark provenance.
+    raw_pointer_audit = report.get("raw_pointer_audit", "off")
+    if not isinstance(raw_pointer_audit, str) or raw_pointer_audit not in {
+        "off", "warn", "strict"
+    }:
+        raise BenchmarkError("GTI build report raw_pointer_audit must be off, warn, or strict")
+    report["raw_pointer_audit"] = raw_pointer_audit
     # Schema-2 reports predating source debugging omit this additive field.
     # This harness never requests GTI source mappings, so accepting a true
     # policy would silently measure a different generated-source workflow.

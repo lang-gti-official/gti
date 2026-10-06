@@ -1,5 +1,57 @@
 # Compiler Verification
 
+## Optional raw audit and combined reconciliation
+
+The 2026-10-06 candidate separates mandatory language checking from optional
+raw provenance/access/effect diagnostics. It also reconciles PR #36's backend
+output/failure evidence, PR #37's source package registry, and declaration-level
+`[[discardable]]`. Validation uses Release/Ninja, AppleClang 21 and system LLVM
+22.1.8 on macOS arm64; it is not Linux/Windows or bundled-LLVM archive evidence.
+
+`raw_query_budget_contract` checks declaration order for ordinary, generic and
+constructor chains, recursive incompleteness and more than 2,048 independent
+demands. `raw_borrow_contract` compares complete MIR and C++ between Off and Warn
+at O0/O3 with C++20/C++23, including later-declared nested constructor fields.
+It retains mandatory unsafe/type/checked-loan/escape negatives with audit Off
+and verifies zero optional source-query work. `raw_audit_certainty` distinguishes
+exact expiry from path choices, unknown alternatives, source summaries and
+uncertain raw-owner field projections in all three modes.
+
+The focused combined gates pass, including both feature-specific frontend/LSP
+suites and the reviewed standard-library manifest. Direct/project/LSP policy
+coverage checks overrides, child builds, strict promotion, warning suppression,
+UTF-16 spans, unsaved edits and watched-manifest invalidation. Strict and Warn
+share inference; optional conflicts cannot change checked loan endpoints.
+The native conversion/storage/record suites retain the existing optimized,
+standard-version, no-elide and applicable sanitizer matrices; invalid unsafe
+audit fixtures are emitted or diagnosed, never executed.
+
+The final combined stage passes all eleven isolated installed-library consumers.
+Installed CLI, LSP, raw-audit policy and registry workflow checks also pass with
+`GTI_STDLIB_PATH` cleared; the policy harness's explicit `--installed` mode does
+not inject source-tree resources. The active user toolchain is not changed.
+Tree-sitter passes 71 corpus cases, highlight/locals/rainbow queries and all 175
+shipped sources. Clang-format 22.1.8 checks all 437 first-party C/C++ files.
+Examples 115 and 116 separately demonstrate declaration-level optional results
+and programmer-owned unsafe obligations with mandatory checked references.
+The corpus census adds their reviewed inventories without changing existing
+examples' counts.
+
+All 440 registered production CTest gates are accounted for as passing on the
+combined candidate. Two completed gates were retained from the initial
+four-worker run; the remaining 438 were restarted with twelve workers and
+435 passed. The three remaining gates then passed together serially:
+`generic_payload_enum_runtime`, `benchmark_harness` and
+`runtime_performance_workloads`. The generic payload matrix exceeded its
+300-second timeout under parallel load, then passed unchanged in 254.82 seconds.
+The two benchmark gates exposed a strict report-decoder omission: the additive
+`raw_pointer_audit` field now accepts only `off`, `warn` or `strict`, with legacy
+reports defaulting to `off` and unknown fields still rejected. No compiler
+source changed between the production run and these successful reruns, and no
+test assertion or timeout was weakened. Both full MIR/backend corpus gates and
+both census baselines passed in the production run. The final serial rerun
+took 311.64 seconds; the 438-gate run took 1,194.72 seconds.
+
 ## Declaration-level discardable results
 
 The `discardable_result` frontend gate covers optional results on free,

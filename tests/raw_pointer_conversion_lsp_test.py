@@ -21,7 +21,7 @@ unsafe { return *restored - 42; } }
         path = pathlib.Path(directory) / "main.gti"
         path.write_text(valid)
         uri = path.as_uri()
-        session = LspSession(sys.argv[1])
+        session = LspSession(sys.argv[1], ["--raw-pointer-audit=strict"])
         def published(version):
             reply = session.receive_until(lambda message:
                 message.get("method") == "textDocument/publishDiagnostics"
@@ -41,7 +41,7 @@ unsafe { return *restored - 42; } }
             assert not published(1)
             change(2, invalid)
             errors = published(2)
-            diagnostic = next((d for d in errors if d.get("code") == "GTI-S2014"
+            diagnostic = next((d for d in errors if d.get("code") == "GTI-S2101"
                                and "known pointee type" in d["message"]), None)
             assert diagnostic, errors
             assert diagnostic["range"]["start"] == lsp_position(invalid, invalid.index("Pointer(address)")), diagnostic

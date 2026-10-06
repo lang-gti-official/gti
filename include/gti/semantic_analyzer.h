@@ -42,11 +42,12 @@ public:
 
 class SemanticVisitor final : public SemanticInstanceProvider {
 public:
-  explicit SemanticVisitor(TargetInfo target = TargetInfo::host(),
-                           const SourceGraph *sourceGraph = nullptr,
-                           bool toolingOccurrences = true,
-                           FrontendWorkMetrics *workMetrics = nullptr,
-                           const SourceManager *sources = nullptr);
+  explicit SemanticVisitor(
+      TargetInfo target = TargetInfo::host(),
+      const SourceGraph *sourceGraph = nullptr, bool toolingOccurrences = true,
+      FrontendWorkMetrics *workMetrics = nullptr,
+      const SourceManager *sources = nullptr,
+      RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off);
   ~SemanticVisitor();
 
   SemanticVisitor(const SemanticVisitor &) = delete;

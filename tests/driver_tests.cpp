@@ -1451,13 +1451,15 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
           lang::CppStandard standard = lang::CppStandard::Cpp23,
           lang::TargetInfo target = lang::TargetInfo::host(),
           lang::driver::PackageWarningPolicy packageWarnings = {},
-          lang::WarningPolicy warnings = {}) {
+          lang::WarningPolicy warnings = {},
+          lang::RawPointerAuditMode rawPointerAudit =
+              lang::RawPointerAuditMode::Off) {
         return lang::driver::buildExecutable(
             lang::driver::ExecutableBuildRequest(
                 lang::driver::CompilationRequest(
                     source, toolchain.standardLibrary, std::move(target),
                     optimization, standard, {}, {}, {}, std::move(warnings),
-                    false, std::move(packageWarnings)),
+                    false, std::move(packageWarnings), rawPointerAudit),
                 toolchain, generated, output, nativeCompiler,
                 std::move(nativeInputs), keepCpp, true, false, managed,
                 std::nullopt, cache));
@@ -1520,6 +1522,27 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
              std::filesystem::is_regular_file(output),
          "an unchanged build should verify and restore the cached executable "
          "without invoking any native compilation");
+
+  std::string warnAuditKey;
+  for (const auto mode :
+       {lang::RawPointerAuditMode::Warn, lang::RawPointerAuditMode::Strict}) {
+    const auto audited =
+        build(lang::OptimizationLevel::O0, {}, false, lang::CppStandard::Cpp23,
+              lang::TargetInfo::host(), {}, {}, mode);
+    expect(audited.succeeded() &&
+               audited.cache.status == lang::driver::BuildCacheStatus::Miss &&
+               audited.cache.key != firstKey &&
+               audited.cache.key != warnAuditKey,
+           "each audit policy requires its own frontend/cache identity");
+    warnAuditKey = audited.cache.key;
+    const auto auditHit =
+        build(lang::OptimizationLevel::O0, {}, false, lang::CppStandard::Cpp23,
+              lang::TargetInfo::host(), {}, {}, mode);
+    expect(auditHit.succeeded() &&
+               auditHit.cache.status == lang::driver::BuildCacheStatus::Hit &&
+               auditHit.cache.key == audited.cache.key,
+           "unchanged audit policy may reuse its verified artifact");
+  }
 
   const lang::driver::ExecutableBuildResult warningPolicyChange = build(
       lang::OptimizationLevel::O0, {}, false, lang::CppStandard::Cpp23,
@@ -2681,6 +2704,7 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
 void testBuildReportRecordRoundTrip() {
   lang::driver::BuildProvenance recorded;
   recorded.debugInfo = true;
+  recorded.rawPointerAudit = lang::RawPointerAuditMode::Strict;
   recorded.producerExecutable = {.canonicalPath = "/opt/gti/bin/gti",
                                  .bytes = 128,
                                  .sha256 = std::string(64, 'a')};
@@ -2791,6 +2815,21 @@ void testBuildReportRecordRoundTrip() {
   expect(lang::driver::serializeBuildProvenanceJson(*parsed) == serialized,
          "re-serializing a parsed record should reproduce the sidecar");
   expect(parsed->debugInfo, "build reports should preserve debug policy");
+  expect(parsed->rawPointerAudit == lang::RawPointerAuditMode::Strict,
+         "build reports preserve raw pointer audit policy");
+  auto changedAudit = *parsed;
+  changedAudit.rawPointerAudit = lang::RawPointerAuditMode::Off;
+  expect(!lang::driver::compareBuildProvenance(recorded, changedAudit).empty(),
+         "verification detects audit policy changes");
+  std::string oldReport = serialized;
+  const auto auditStart = oldReport.find("  \"raw_pointer_audit\":");
+  oldReport.erase(auditStart,
+                  oldReport.find('\n', auditStart) - auditStart + 1);
+  const auto oldParsed =
+      lang::driver::parseBuildProvenanceJson(oldReport, parseError);
+  expect(oldParsed &&
+             oldParsed->rawPointerAudit == lang::RawPointerAuditMode::Off,
+         "reports without the additive audit field default off");
   auto changedDebug = *parsed;
   changedDebug.debugInfo = false;
   expect(!lang::driver::compareBuildProvenance(recorded, changedDebug).empty(),

@@ -346,6 +346,8 @@ void writeProjectMetadata(std::ostream &stream,
     writeJsonString(stream, cppStandardName(profile.cppStandard));
     stream << ", \"executionProfile\": ";
     writeJsonString(stream, executionProfileName(profile.executionProfile));
+    stream << ", \"rawPointerAudit\": ";
+    writeJsonString(stream, rawPointerAuditModeName(profile.rawPointerAudit));
     stream << ", \"disabledWarnings\": ";
     writeJsonStrings(stream, profile.warningPolicy.disabledGroups());
     stream << ", \"dependencyWarnings\": "
@@ -392,6 +394,10 @@ void writeProjectMetadata(std::ostream &stream,
       }
       stream << ", \"debugInfo\": "
              << (plan != nullptr && plan->debugInfo() ? "true" : "false");
+      stream << ", \"rawPointerAudit\": ";
+      writeJsonString(stream, rawPointerAuditModeName(
+                                  plan != nullptr ? plan->rawPointerAudit()
+                                                  : RawPointerAuditMode::Off));
       stream << ", \"dependencyWarnings\": "
              << (plan == nullptr || plan->packageWarnings().dependencyWarnings()
                      ? "true"

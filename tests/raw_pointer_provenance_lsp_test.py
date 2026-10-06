@@ -26,7 +26,7 @@ def main():
         path = pathlib.Path(root) / "main.gti"
         path.write_text(valid)
         uri = path.as_uri()
-        session = LspSession(sys.argv[1])
+        session = LspSession(sys.argv[1], ["--raw-pointer-audit=strict"])
 
         def published(version):
             result = session.receive_until(lambda message:
@@ -57,7 +57,7 @@ def main():
             assert not published(1)
             change(2, invalid)
             errors = published(2)
-            error = next((item for item in errors if item.get("code") == "GTI-S2056"), None)
+            error = next((item for item in errors if item.get("code") == "GTI-S2101"), None)
             assert error and "scope has ended" in error["message"], errors
             assert error["range"]["start"] == lsp_position(invalid, invalid.index("*pointer")), error
             related = error.get("relatedInformation", [])
@@ -184,7 +184,7 @@ int main() {
 """
             change(13, helper_source)
             errors = published(13)
-            error = next((item for item in errors if item.get("code") == "GTI-S2056"), None)
+            error = next((item for item in errors if item.get("code") == "GTI-S2102"), None)
             assert error, errors
             invocation = helper_source.rindex("read_address(pointer)")
             first = lsp_position(helper_source, invocation)

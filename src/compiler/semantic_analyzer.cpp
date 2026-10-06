@@ -6,9 +6,11 @@ SemanticVisitor::SemanticVisitor(TargetInfo target,
                                  const SourceGraph *sourceGraph,
                                  bool toolingOccurrences,
                                  FrontendWorkMetrics *workMetrics,
-                                 const SourceManager *sources)
+                                 const SourceManager *sources,
+                                 RawPointerAuditMode rawPointerAudit)
     : impl(std::make_unique<Impl>(std::move(target), sourceGraph,
-                                  toolingOccurrences, workMetrics, sources)) {}
+                                  toolingOccurrences, workMetrics, sources,
+                                  rawPointerAudit)) {}
 
 SemanticVisitor::~SemanticVisitor() = default;
 SemanticVisitor::SemanticVisitor(SemanticVisitor &&) noexcept = default;

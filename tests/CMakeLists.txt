@@ -441,6 +441,13 @@ add_test(NAME raw_borrow_contract COMMAND gti_raw_borrow_tests)
 add_executable(gti_raw_access_tests "${PROJECT_SOURCE_DIR}/tests/raw_access_tests.cpp")
 target_link_libraries(gti_raw_access_tests PRIVATE gti_compiler)
 add_test(NAME raw_access_contract COMMAND gti_raw_access_tests)
+add_executable(gti_raw_audit_certainty_tests "${PROJECT_SOURCE_DIR}/tests/raw_audit_certainty_tests.cpp")
+target_link_libraries(gti_raw_audit_certainty_tests PRIVATE gti_compiler)
+add_test(NAME raw_audit_certainty COMMAND gti_raw_audit_certainty_tests)
+add_executable(gti_raw_query_budget_tests "${PROJECT_SOURCE_DIR}/tests/raw_query_budget_tests.cpp")
+target_link_libraries(gti_raw_query_budget_tests PRIVATE gti_compiler)
+add_test(NAME raw_query_budget_contract COMMAND gti_raw_query_budget_tests)
+set_tests_properties(raw_query_budget_contract PROPERTIES TIMEOUT 240)
 add_executable(gti_raw_pointer_conversion_tests "${PROJECT_SOURCE_DIR}/tests/raw_pointer_conversion_tests.cpp")
 target_link_libraries(gti_raw_pointer_conversion_tests PRIVATE gti_cpp_backend)
 add_test(NAME raw_pointer_conversion_contract COMMAND gti_raw_pointer_conversion_tests)
@@ -452,6 +459,9 @@ add_executable(gti_discardable_result_tests "${PROJECT_SOURCE_DIR}/tests/discard
 target_link_libraries(gti_discardable_result_tests PRIVATE gti_compiler)
 add_test(NAME discardable_result COMMAND gti_discardable_result_tests)
 if(TARGET gti_lsp)
+  add_test(NAME raw_pointer_audit_policy
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_audit_policy_test.py" $<TARGET_FILE:gti> $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(raw_pointer_audit_policy PROPERTIES TIMEOUT 240)
   add_test(NAME raw_pointer_conversion_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_conversion_lsp_test.py" $<TARGET_FILE:gti_lsp>)
   add_test(NAME raw_pointer_provenance_lsp

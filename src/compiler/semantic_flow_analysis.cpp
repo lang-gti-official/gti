@@ -6541,6 +6541,13 @@ auto SemanticVisitor::Impl::mergeValueStates(const ScopeStack &base,
         target->second.rawPointerFields = leftSymbol->second.rawPointerFields;
         mergeRawPointerFields(target->second.rawPointerFields,
                               rightSymbol->second.rawPointerFields);
+        // Unknown alternatives carry no local origins. Taint the surviving
+        // facts even when the union is a singleton (or both paths agree).
+        for (auto &origin : target->second.rawPointerOrigins)
+          origin.possible = true;
+        for (auto &field : target->second.rawPointerFields)
+          for (auto &origin : field.origins)
+            origin.possible = true;
         target->second.storageLoans = leftSymbol->second.storageLoans;
         for (const SemanticLoanId loan : rightSymbol->second.storageLoans) {
           appendUniqueLoan(target->second.storageLoans, loan);
@@ -6781,6 +6788,7 @@ auto SemanticVisitor::Impl::mergeRawPointerOrigins(
     else {
       existing->invalidated |= origin.invalidated;
       existing->expired |= origin.expired;
+      existing->possible |= origin.possible;
       for (const auto &place : origin.lifetimeInvalidations)
         if (std::find(existing->lifetimeInvalidations.begin(),
                       existing->lifetimeInvalidations.end(),
@@ -6807,6 +6815,8 @@ auto SemanticVisitor::Impl::mergeRawPointerFields(
 
 auto SemanticVisitor::Impl::rawPointerFields(const Expr *expression)
     -> std::vector<ProjectedRawPointerOrigins> {
+  if (!rawAuditEnabled())
+    return {};
   if (!expression)
     return {};
   if (const auto found = valueFlow.rawOperatorResults.find(expression);
@@ -6849,6 +6859,9 @@ auto SemanticVisitor::Impl::rawPointerFields(const Expr *expression)
                         {{.addressSite = tokenSpan(call->paren()),
                           .sourceResultQuery =
                               std::numeric_limits<std::size_t>::max()}}}});
+      for (auto &field : fields)
+        for (auto &origin : field.origins)
+          origin.possible = true;
       return fields;
     }
   }
@@ -6867,8 +6880,13 @@ auto SemanticVisitor::Impl::rawPointerFields(const Expr *expression)
       return rawPointerFieldsAt(placeKey(place));
     std::vector<ProjectedRawPointerOrigins> result;
     for (const auto &origin : rawPointerOrigins(rawObject))
-      if (!origin.parameterPointee && origin.loopInput == 0)
-        mergeRawPointerFields(result, rawPointerFieldsAt(origin.place));
+      if (!origin.parameterPointee && origin.loopInput == 0) {
+        auto fields = rawPointerFieldsAt(origin.place);
+        for (auto &field : fields)
+          for (auto &forwarded : field.origins)
+            forwarded.possible |= origin.possible;
+        mergeRawPointerFields(result, fields);
+      }
     return result;
   }
   if (semanticModel.typeOf(*expression).kind == SemanticType::RawPointer)
@@ -6890,6 +6908,9 @@ auto SemanticVisitor::Impl::rawPointerFields(const Expr *expression)
     auto fields = rawPointerFields(conditional->thenExpression().get());
     mergeRawPointerFields(
         fields, rawPointerFields(conditional->elseExpression().get()));
+    for (auto &field : fields)
+      for (auto &origin : field.origins)
+        origin.possible = true;
     return fields;
   }
   const auto place = semanticPlace(expression);
@@ -7022,6 +7043,8 @@ auto SemanticVisitor::Impl::rawPointerFields(const Expr *expression)
         .sourceResultQuery = requestSession.collectingRawResult
                                  ? requestSession.collectingRawResult->identity
                                  : std::numeric_limits<std::size_t>::max()}});
+  for (auto &origin : available)
+    origin.possible = true;
   for (auto path : rawPointerFieldPaths(semanticModel.typeOf(*expression)))
     unresolved.push_back({std::move(path), available});
   return unresolved;
@@ -7029,6 +7052,8 @@ auto SemanticVisitor::Impl::rawPointerFields(const Expr *expression)
 
 auto SemanticVisitor::Impl::rawPointerFieldsAt(const PlaceKey &place)
     -> std::vector<ProjectedRawPointerOrigins> {
+  if (!rawAuditEnabled())
+    return {};
   std::vector<ProjectedRawPointerOrigins> result;
   Symbol *root = rawPointerRoot(place);
   if (!root)
@@ -7079,6 +7104,7 @@ auto SemanticVisitor::Impl::rawPointerFieldsAt(const PlaceKey &place)
       prefix.resize(storage.projections.size());
       const auto relation =
           placeRelation(placeKey(storage), projectedPlaceKey(storage, prefix));
+      weak |= relation.relation == PlaceRelation::MayAlias;
       if (relation.relation == PlaceRelation::Equal ||
           relation.relation == PlaceRelation::MayAlias)
         mergeRawPointerFields(
@@ -7095,11 +7121,17 @@ auto SemanticVisitor::Impl::rawPointerFieldsAt(const PlaceKey &place)
                               requestSession.collectingRawResult
                                   ? requestSession.collectingRawResult->identity
                                   : std::numeric_limits<std::size_t>::max()}}});
+  if (weak)
+    for (auto &field : result)
+      for (auto &origin : field.origins)
+        origin.possible = true;
   return result;
 }
 
 auto SemanticVisitor::Impl::rawPointerFieldPaths(const SemanticType &type)
     -> std::vector<std::vector<PlaceProjection>> {
+  if (!rawAuditEnabled())
+    return {};
   std::vector<SemanticType> active;
   const auto visit =
       [&](const auto &self, const SemanticType &current,
@@ -7203,6 +7235,8 @@ auto SemanticVisitor::Impl::rawPointerFieldPaths(const SemanticType &type)
 auto SemanticVisitor::Impl::rawPointerTypesAt(
     const SemanticType &type, const std::vector<PlaceProjection> &projections)
     -> std::vector<SemanticType> {
+  if (!rawAuditEnabled())
+    return {};
   std::vector<std::pair<SemanticType, std::size_t>> visited;
   std::vector<SemanticType> result;
   const auto visit = [&](const auto &self, SemanticType current,
@@ -7293,6 +7327,8 @@ auto SemanticVisitor::Impl::rawPointerRoot(const PlaceKey &place) -> Symbol * {
 }
 
 auto SemanticVisitor::Impl::recordRawResult(const ExprPtr &expression) -> void {
+  if (!rawAuditEnabled())
+    return;
   const auto query = requestSession.collectingRawResult;
   const auto *function = currentFunctionInfo();
   if (!query || !function || function->id != query->function ||
@@ -7392,6 +7428,8 @@ auto SemanticVisitor::Impl::rawResultQuery(const Call &call,
 auto SemanticVisitor::Impl::rawResultQuery(const ResolvedCallInfo &resolved,
                                            SemanticType owner)
     -> std::shared_ptr<RawResultQuery> {
+  if (!rawAuditEnabled())
+    return nullptr;
   const auto *function = semanticModel.findFunction(resolved.function);
   if (!function || !function->declaration ||
       function->linkage != LanguageLinkage::Gti ||
@@ -7432,12 +7470,17 @@ auto SemanticVisitor::Impl::rawResultQuery(const ResolvedCallInfo &resolved,
   const auto ownerValues = owner.kind == SemanticType::Class
                                ? owner.valueArguments
                                : std::vector<CompileTimeValue>{};
-  for (const auto &entry : state->entries)
-    if (entry->function == resolved.function &&
+  const bool topLevel = state->depth == 0;
+  const auto &candidates = topLevel ? state->cachedRoots : state->familyEntries;
+  for (const auto &entry : candidates)
+    if ((!topLevel || entry->topLevel) &&
+        entry->function == resolved.function &&
         entry->ownerTypes == ownerTypes && entry->ownerValues == ownerValues &&
         entry->types == resolved.typeArguments &&
         entry->values == resolved.valueArguments)
       return entry;
+  if (topLevel)
+    state->familyEntries.clear();
   auto entry = std::make_shared<RawResultQuery>();
   entry->function = resolved.function;
   entry->linearWrites =
@@ -7446,12 +7489,13 @@ auto SemanticVisitor::Impl::rawResultQuery(const ResolvedCallInfo &resolved,
   entry->ownerValues = ownerValues;
   entry->types = resolved.typeArguments;
   entry->values = resolved.valueArguments;
-  entry->identity = state->entries.size() + 1;
-  if (state->entries.size() >= 2048 || state->depth >= 32) {
+  entry->identity = state->nextIdentity++;
+  entry->topLevel = topLevel;
+  if (state->familyEntries.size() >= 2048 || state->depth >= 32) {
     entry->complete = true;
     return entry;
   }
-  state->entries.push_back(entry);
+  state->familyEntries.push_back(entry);
   runRawResultQuery(entry);
   // The current projected-input contract has one slot per ordinary formal.
   // An expanded pack needs a per-element substitution before it can claim a
@@ -7467,6 +7511,8 @@ auto SemanticVisitor::Impl::rawResultQuery(const ResolvedCallInfo &resolved,
 auto SemanticVisitor::Impl::rawConstructorResultQuery(
     const ResolvedConstructionInfo &resolved)
     -> std::shared_ptr<RawResultQuery> {
+  if (!rawAuditEnabled())
+    return nullptr;
   if ((!resolved.generatedDefault &&
        (!resolved.declaration || !resolved.declaration->body() ||
         resolved.kind != ConstructorKind::Ordinary)) ||
@@ -7477,8 +7523,11 @@ auto SemanticVisitor::Impl::rawConstructorResultQuery(
   if (!requestSession.rawResultQueries)
     requestSession.rawResultQueries = std::make_shared<RawResultQueryState>();
   auto state = requestSession.rawResultQueries;
-  for (const auto &entry : state->entries)
-    if (entry->constructor == resolved.constructor && entry->function == 0 &&
+  const bool topLevel = state->depth == 0;
+  const auto &candidates = topLevel ? state->cachedRoots : state->familyEntries;
+  for (const auto &entry : candidates)
+    if ((!topLevel || entry->topLevel) &&
+        entry->constructor == resolved.constructor && entry->function == 0 &&
         entry->defaultOwner == (resolved.generatedDefault
                                     ? resolved.constructedType.classId
                                     : 0) &&
@@ -7487,6 +7536,8 @@ auto SemanticVisitor::Impl::rawConstructorResultQuery(
         entry->types == resolved.typeArguments &&
         entry->values == resolved.valueArguments)
       return entry;
+  if (topLevel)
+    state->familyEntries.clear();
   auto entry = std::make_shared<RawResultQuery>();
   entry->constructor = resolved.constructor;
   // Constructor writes remain weak: a body-only linearity test cannot prove
@@ -7497,12 +7548,13 @@ auto SemanticVisitor::Impl::rawConstructorResultQuery(
   entry->ownerValues = resolved.constructedType.valueArguments;
   entry->types = resolved.typeArguments;
   entry->values = resolved.valueArguments;
-  entry->identity = state->entries.size() + 1;
-  if (state->entries.size() >= 2048 || state->depth >= 32) {
+  entry->identity = state->nextIdentity++;
+  entry->topLevel = topLevel;
+  if (state->familyEntries.size() >= 2048 || state->depth >= 32) {
     entry->complete = true;
     return entry;
   }
-  state->entries.push_back(entry);
+  state->familyEntries.push_back(entry);
   runRawResultQuery(entry);
   if (resolved.declaration &&
       std::any_of(
@@ -7517,11 +7569,13 @@ auto SemanticVisitor::Impl::runRawResultQuery(
     const std::shared_ptr<RawResultQuery> &entry) -> void {
   const auto state = requestSession.rawResultQueries;
   ++state->depth;
+  if (workMetrics)
+    ++workMetrics->semanticRawAuditQueries;
   // As in constexpr staging, concrete analysis must never reset an active
   // caller's scope/loan state. Reuse the ordinary analyzer in an isolated
   // snapshot; only the normalized result facts leave this worker.
-  auto worker =
-      std::make_unique<Impl>(target, sourceGraph, false, nullptr, sources);
+  auto worker = std::make_unique<Impl>(target, sourceGraph, false, workMetrics,
+                                       sources, RawPointerAuditMode::Warn);
   worker->catalog = catalog.snapshotForInstanceAnalysis();
   worker->semanticModel = semanticModel;
   worker->valueFlow = valueFlow;
@@ -7589,12 +7643,62 @@ auto SemanticVisitor::Impl::runRawResultQuery(
       }
   entry->complete = true;
   --state->depth;
+  if (entry->failure) {
+    // Normalized unresolved origins retain their query identity after the
+    // private family is discarded. Intern only the diagnostic used by note
+    // lookup, not a nested summary or one record per repeated root demand.
+    auto found = std::find_if(
+        state->entries.begin(), state->entries.end(),
+        [&](const auto &evidence) {
+          return evidence->failure->code == entry->failure->code &&
+                 evidence->failure->message == entry->failure->message &&
+                 evidence->failure->primary == entry->failure->primary;
+        });
+    std::size_t noteIdentity;
+    if (found != state->entries.end()) {
+      noteIdentity = (*found)->identity;
+    } else {
+      auto evidence = std::make_shared<RawResultQuery>();
+      evidence->identity = state->nextIdentity++;
+      evidence->failure = entry->failure;
+      noteIdentity = evidence->identity;
+      state->entries.push_back(std::move(evidence));
+    }
+    const auto priorIdentity = entry->identity;
+    const auto normalizeOrigin = [&](RawResultOrigin &source) {
+      if (source.origin.sourceResultQuery == priorIdentity)
+        source.origin.sourceResultQuery = noteIdentity;
+    };
+    const auto normalizeFields = [&](auto &fields) {
+      for (auto &field : fields)
+        for (auto &source : field.origins)
+          normalizeOrigin(source);
+    };
+    for (const auto &member : state->familyEntries) {
+      normalizeFields(member->fields);
+      for (auto &write : member->writes) {
+        normalizeOrigin(write.destination);
+        normalizeFields(write.fields);
+      }
+      for (auto &access : member->accesses)
+        normalizeFields(access.fields);
+    }
+    // A separate, completed evidence identity cannot alias an active/successful
+    // query. Subsequent import of this failed query uses that same note key.
+    entry->identity = noteIdentity;
+  }
+  if (entry->topLevel && state->cachedRoots.size() < 2048)
+    state->cachedRoots.push_back(entry);
+  if (entry->topLevel)
+    state->familyEntries.clear();
 }
 
 auto SemanticVisitor::Impl::rawProducedFields(
     const Expr &expression, const std::vector<RawResultField> *suppliedFields,
     const RawInvocation *invocation)
     -> std::vector<ProjectedRawPointerOrigins> {
+  if (!rawAuditEnabled())
+    return {};
   const auto *call = exprAs<Call>(&expression);
   const auto *direct = exprAs<DirectInitializer>(&expression);
   const auto *resolved = invocation ? &invocation->resolved
@@ -7730,6 +7834,10 @@ auto SemanticVisitor::Impl::rawProducedFields(
         }
       }
     }
+    // Result/access summaries collect possible returns and executions, not
+    // an exhaustive path proof. Retain facts without claiming definite use.
+    for (auto &origin : origins)
+      origin.possible = true;
     mergeRawPointerFields(result, {{field.projections, std::move(origins)}});
   }
   return result;
@@ -7738,6 +7846,8 @@ auto SemanticVisitor::Impl::rawProducedFields(
 auto SemanticVisitor::Impl::rawCallPointerOrigins(const Expr &expression,
                                                   bool includeProduced)
     -> std::vector<RawPointerOrigin> {
+  if (!rawAuditEnabled())
+    return {};
   if (const auto *call = exprAs<Call>(&expression)) {
     const auto intrinsic = resolvedIntrinsicKind(*call);
     if (intrinsic == IntrinsicKind::ExpectedValue ||
@@ -7802,11 +7912,15 @@ auto SemanticVisitor::Impl::rawCallPointerOrigins(const Expr &expression,
   if (includeProduced)
     for (const auto &field : rawProducedFields(expression))
       mergeRawPointerOrigins(result, field.origins);
+  for (auto &origin : result)
+    origin.possible = true;
   return result;
 }
 
 auto SemanticVisitor::Impl::saveRawProgramStorage()
     -> std::vector<RawProgramStorageState> {
+  if (!rawAuditEnabled())
+    return {};
   std::vector<RawProgramStorageState> result;
   const auto save = [&](auto &bindings, RawProgramStorageState::Namespace space,
                         SourceUnitId unit = 0) {
@@ -7827,6 +7941,8 @@ auto SemanticVisitor::Impl::saveRawProgramStorage()
 
 auto SemanticVisitor::Impl::restoreRawProgramStorage(
     std::vector<RawProgramStorageState> state) -> void {
+  if (!rawAuditEnabled())
+    return;
   for (auto &saved : state) {
     auto *bindings = &valueFlow.namespaceSymbols;
     if (saved.space != RawProgramStorageState::Namespace::Global) {
@@ -7902,6 +8018,8 @@ auto SemanticVisitor::Impl::recordRawWrite(
     const SemanticPlace &place,
     const std::vector<ProjectedRawPointerOrigins> &fields, bool strong)
     -> void {
+  if (!rawAuditEnabled())
+    return;
   const auto query = requestSession.collectingRawResult;
   const auto *function = currentFunctionInfo();
   if (!query || lambdaDepth || destructorDepth || !place.root)
@@ -7994,6 +8112,8 @@ auto SemanticVisitor::Impl::recordRawWrite(
 auto SemanticVisitor::Impl::applyRawCallWrites(const Expr &expression,
                                                const RawInvocation *invocation)
     -> void {
+  if (!rawAuditEnabled())
+    return;
   const auto *call = exprAs<Call>(&expression);
   const auto *direct = exprAs<DirectInitializer>(&expression);
   const auto *resolved = invocation ? &invocation->resolved
@@ -8214,6 +8334,8 @@ auto SemanticVisitor::Impl::applyUnknownRawWrite(const SemanticPlace &place,
                                                  const SemanticType &type,
                                                  const SourceSpan &span,
                                                  std::size_t query) -> void {
+  if (!rawAuditEnabled())
+    return;
   std::vector<ProjectedRawPointerOrigins> fields;
   for (auto path : rawPointerFieldPaths(type))
     fields.push_back(
@@ -8228,6 +8350,8 @@ auto SemanticVisitor::Impl::applyUnknownRawWrite(const SemanticPlace &place,
 auto SemanticVisitor::Impl::applyRawCleanupWrites(
     const SemanticType &type, const SourceSpan &span,
     const std::vector<ProjectedRawPointerOrigins> &fields) -> void {
+  if (!rawAuditEnabled())
+    return;
   // Cleanup is structurally known, but destructor write transport has no
   // normalized query yet. Preserve uncertainty only when source cleanup can
   // execute, never by executing a destructor body during declaration checking.
@@ -8285,6 +8409,8 @@ auto SemanticVisitor::Impl::applyRawCleanupWrites(
 auto SemanticVisitor::Impl::applyRawAliasWrites(
     std::vector<ProjectedRawPointerOrigins> fields, const SemanticType &type,
     const SourceSpan &span) -> void {
+  if (!rawAuditEnabled())
+    return;
   // Only aliases actually carried by this value contribute possible write
   // destinations. Copy the small map before updating any aliased carrier.
   for (const auto &field : fields) {
@@ -8328,6 +8454,8 @@ auto SemanticVisitor::Impl::applyRawAliasWrites(
 }
 
 auto SemanticVisitor::Impl::preserveRawCallWrites(const Call &call) -> void {
+  if (!rawAuditEnabled())
+    return;
   const auto *resolved = semanticModel.findCall(call);
   if (!resolved || resolved->intrinsic != IntrinsicKind::None)
     return;
@@ -8376,6 +8504,8 @@ auto SemanticVisitor::Impl::preserveRawCallWrites(const Call &call) -> void {
 
 auto SemanticVisitor::Impl::invalidateRawCallOrigins(
     const Call *call, const RawInvocation *invocation) -> void {
+  if (!rawAuditEnabled())
+    return;
   const auto *resolved =
       invocation ? &invocation->resolved : semanticModel.findCall(*call);
   if (!resolved)
@@ -8507,6 +8637,8 @@ auto SemanticVisitor::Impl::invalidateRawCallOrigins(
 auto SemanticVisitor::Impl::rawPointerStoragePlaces(const SemanticPlace &place,
                                                     bool &weak)
     -> std::vector<SemanticPlace> {
+  if (!rawAuditEnabled())
+    return {};
   if (!place.root)
     return {};
   const auto typeAt = [&](const SemanticPlace &selected) {
@@ -8556,6 +8688,7 @@ auto SemanticVisitor::Impl::rawPointerStoragePlaces(const SemanticPlace &place,
       }
       weak |= origins.size() != 1;
       for (const auto &origin : origins) {
+        weak |= origin.possible;
         if (origin.parameterPointee || origin.loopInput != 0 ||
             origin.expired || origin.invalidated) {
           weak = true;
@@ -8600,6 +8733,8 @@ auto SemanticVisitor::Impl::applyRawPointerFields(
     const SemanticPlace &place,
     const std::vector<ProjectedRawPointerOrigins> &incoming, bool strong)
     -> void {
+  if (!rawAuditEnabled())
+    return;
   bool weak = !strong;
   const auto destinations = rawPointerStoragePlaces(place, weak);
   if (destinations.empty())
@@ -8625,6 +8760,9 @@ auto SemanticVisitor::Impl::applyRawPointerFields(
         if (field.projections.empty())
           mergeRawPointerOrigins(destination.root->rawPointerOrigins,
                                  field.origins);
+      if (destinationWeak)
+        for (auto &origin : destination.root->rawPointerOrigins)
+          origin.possible = true;
       continue;
     }
     // Only an exact destination replaces its old subtree. A write that may
@@ -8642,6 +8780,10 @@ auto SemanticVisitor::Impl::applyRawPointerFields(
                                destination.projections.begin(),
                                destination.projections.end());
     mergeRawPointerFields(destination.root->rawPointerFields, fields);
+    if (destinationWeak)
+      for (auto &field : destination.root->rawPointerFields)
+        for (auto &origin : field.origins)
+          origin.possible = true;
   }
 }
 
@@ -8667,6 +8809,8 @@ auto SemanticVisitor::Impl::applyRawPointerLifetimeInvalidations(
 
 auto SemanticVisitor::Impl::invalidateRawPointerOrigins(
     const SemanticPlace &place) -> void {
+  if (!rawAuditEnabled())
+    return;
   // Raw origins use the checked-loan analysis-local domain. The snapshot
   // qualified storage identity belongs to ownership state, not this relation;
   // mixing the two makes unrelated local roots conservatively alias.
@@ -8699,6 +8843,8 @@ auto SemanticVisitor::Impl::rawPointerOrigins(const ExprPtr &expression)
 
 auto SemanticVisitor::Impl::rawPointerOrigins(const Expr *expression)
     -> std::vector<RawPointerOrigin> {
+  if (!rawAuditEnabled())
+    return {};
   if (!expression)
     return {};
   if (const auto found = valueFlow.rawOperatorResults.find(expression);
@@ -8764,6 +8910,8 @@ auto SemanticVisitor::Impl::rawPointerOrigins(const Expr *expression)
         for (const auto &place : places)
           origins.push_back({placeKey(place), tokenSpan(unary->oper()),
                              accessLoan(unary->right())});
+        for (auto &origin : origins)
+          origin.possible = weak;
         return origins;
       }
       auto origins = rawPointerOrigins(member->object());
@@ -8805,6 +8953,8 @@ auto SemanticVisitor::Impl::rawPointerOrigins(const Expr *expression)
     auto origins = rawPointerOrigins(conditional->thenExpression());
     mergeRawPointerOrigins(origins,
                            rawPointerOrigins(conditional->elseExpression()));
+    for (auto &origin : origins)
+      origin.possible = true;
     return origins;
   }
   if (const auto *call = exprAs<Call>(expression);
@@ -8842,8 +8992,11 @@ auto SemanticVisitor::Impl::rawPointerOrigins(const Expr *expression)
       selected.projections.push_back(
           {.kind = PlaceProjectionKind::Field,
            .field = toolingSymbolFor(field->symbol)});
-      for (const auto &candidate : rawPointerFieldsAt(selected))
+      for (auto candidate : rawPointerFieldsAt(selected)) {
+        for (auto &forwarded : candidate.origins)
+          forwarded.possible |= owner.possible;
         mergeRawPointerOrigins(result, candidate.origins);
+      }
     }
     return result;
   }
@@ -8863,19 +9016,21 @@ auto SemanticVisitor::Impl::rawPointerOrigins(const Expr *expression)
 auto SemanticVisitor::Impl::rawPointerLifetimeDiagnostic(
     const RawPointerOrigin &origin, const Token &site)
     -> std::optional<Diagnostic> {
+  if (!rawAuditEnabled())
+    return std::nullopt;
   if (origin.parameterPointee || origin.loopInput != 0)
     return std::nullopt;
   if (origin.sourceResultQuery != 0) {
     auto diagnostic =
-        makeDiagnostic("GTI-S2056", DiagnosticPhase::Semantics, site,
-                       "Raw pointer access requires a completed source-result "
-                       "provenance query.");
+        makeDiagnostic(DiagnosticId::RawAuditIncomplete, site,
+                       {"Raw pointer audit has no completed source-result "
+                        "provenance query for this access."});
     diagnostic.related.push_back(
         {origin.addressSite, "Source result remains unresolved here."});
     diagnostic.hints.emplace_back(
         "Recursive, indirect, unresolved borrowed-storage, or analysis-limited "
-        "source results cannot be "
-        "asserted valid; copying or comparing the address remains permitted.");
+        "source results exceed this optional analysis. This is not proof of an "
+        "invalid pointer; the unsafe caller remains responsible for validity.");
     if (requestSession.rawResultQueries)
       for (const auto &query : requestSession.rawResultQueries->entries)
         if (query->identity == origin.sourceResultQuery && query->failure)
@@ -8912,21 +9067,27 @@ auto SemanticVisitor::Impl::rawPointerLifetimeDiagnostic(
                                   .receiver = origin.place.receiver}));
   if ((local && !root) || unavailable || origin.invalidated || origin.expired) {
     auto diagnostic = makeDiagnostic(
-        "GTI-S2056", DiagnosticPhase::Semantics, site,
-        origin.expired
-            ? "Raw pointer access refers to storage whose scope has ended."
-        : unavailable
-            ? "Raw pointer access refers to an owner that was moved on a "
-              "possible path."
-        : origin.invalidated
-            ? "Raw pointer access refers to an object whose "
-              "lifetime was replaced."
-            : "Raw pointer access refers to storage whose scope has ended.");
+        unavailable || origin.invalidated || origin.possible
+            ? DiagnosticId::RawAuditPotential
+            : DiagnosticId::RawAuditViolation,
+        site,
+        {origin.possible && (origin.expired || (local && !root))
+             ? "Raw pointer access may refer to storage whose scope has ended."
+         : origin.expired
+             ? "Raw pointer access refers to storage whose scope has ended."
+         : unavailable
+             ? "Raw pointer access refers to an owner that was moved on a "
+               "possible path."
+         : origin.invalidated
+             ? "Raw pointer access may refer to an object whose "
+               "lifetime was replaced by an intervening operation."
+             : "Raw pointer access refers to storage whose scope has ended."});
     diagnostic.related.push_back(
         {origin.addressSite, "Raw address obtained here."});
     diagnostic.hints.emplace_back(
-        "Keep the source object live through this operation; unsafe does not "
-        "erase known lifetime facts.");
+        "Keep the source object live through this operation. Unsafe validity "
+        "is a programmer obligation; this optional audit is not a complete "
+        "proof.");
     return diagnostic;
   }
   return std::nullopt;
@@ -8936,12 +9097,16 @@ auto SemanticVisitor::Impl::validateRawPointerAccess(const ExprPtr &pointer,
                                                      const Token &site,
                                                      AccessMode access)
     -> void {
+  if (!rawAuditEnabled())
+    return;
   validateRawPointerOrigins(rawPointerOrigins(pointer), site, access);
 }
 
 auto SemanticVisitor::Impl::recordRawAccess(
     const std::vector<RawPointerOrigin> &origins, const Token &site,
     AccessMode access, bool checksLoans) -> void {
+  if (!rawAuditEnabled())
+    return;
   const auto query = requestSession.collectingRawResult;
   if (!query || lambdaDepth || destructorDepth)
     return;
@@ -8997,6 +9162,8 @@ auto SemanticVisitor::Impl::recordRawAccess(
 
 auto SemanticVisitor::Impl::rawDispatchAccessFree(
     const ResolvedCallInfo &resolved, const SemanticPlace &receiver) -> bool {
+  if (!rawAuditEnabled())
+    return false;
   if (resolved.dispatch == CallDispatch::Static)
     return false;
   const auto *selected = semanticModel.findFunction(resolved.function);
@@ -9074,6 +9241,8 @@ auto SemanticVisitor::Impl::rawDispatchAccessFree(
 
 auto SemanticVisitor::Impl::validateRawCallAccesses(
     const Expr &expression, const RawInvocation *invocation) -> void {
+  if (!rawAuditEnabled())
+    return;
   const auto *call = exprAs<Call>(&expression);
   const auto *resolved = invocation ? &invocation->resolved
                          : call     ? semanticModel.findCall(*call)
@@ -9233,6 +9402,8 @@ auto SemanticVisitor::Impl::validateRawCallAccesses(
 auto SemanticVisitor::Impl::applyRawOperatorInvocation(
     const Expr &expression, const RawInvocation &invocation, bool contextual,
     bool projection) -> void {
+  if (!rawAuditEnabled())
+    return;
   validateRawCallAccesses(expression, &invocation);
   invalidateRawCallOrigins(nullptr, &invocation);
   // Capture the selected result before applying caller writes. Its normalized
@@ -9259,6 +9430,9 @@ auto SemanticVisitor::Impl::applyRawOperatorInvocation(
       retain(rawPointerFieldsAt(loanPlace(*invocation.receiverPlace)));
     for (auto path : rawPointerFieldPaths(invocation.resolved.returnType))
       mergeRawPointerFields(fields, {{std::move(path), inputs}});
+    for (auto &field : fields)
+      for (auto &origin : field.origins)
+        origin.possible = true;
   }
   applyRawCallWrites(expression, &invocation);
   if (projection) {
@@ -9292,6 +9466,8 @@ auto SemanticVisitor::Impl::applyRawOperatorInvocation(
 auto SemanticVisitor::Impl::validateRawPointerOrigins(
     const std::vector<RawPointerOrigin> &origins, const Token &site,
     AccessMode access, bool checksLoans) -> void {
+  if (!rawAuditEnabled())
+    return;
   ++requestSession.rawAccessObservation;
   recordRawAccess(origins, site, access, checksLoans);
   std::shared_ptr<LoanFlowState> context;
@@ -9299,7 +9475,6 @@ auto SemanticVisitor::Impl::validateRawPointerOrigins(
       std::any_of(origins.begin(), origins.end(),
                   [](const auto &origin) { return origin.loopInput != 0; })) {
     context = std::make_shared<LoanFlowState>(loanFlow);
-    ++loanFlow.nextSequence;
   }
   for (auto &loop : valueFlow.rawPointerLoops)
     loop.accesses.push_back(
@@ -9315,14 +9490,13 @@ auto SemanticVisitor::Impl::validateRawPointerOrigins(
       continue;
     }
     if (checksLoans)
-      reportLoanPlaceConflict(site, origin.place, access,
-                              "Cannot access raw storage while an overlapping "
-                              "checked borrow may still be live.",
-                              origin.throughLoan);
+      reportRawLoanConflict(site, origin.place, access, origin.throughLoan);
   }
 }
 
 auto SemanticVisitor::Impl::beginRawPointerLoop() -> void {
+  if (!rawAuditEnabled())
+    return;
   const auto identity = valueFlow.nextRawPointerLoop++;
   valueFlow.rawPointerLoops.push_back({.identity = identity});
   const auto seed = [&](Symbol &symbol) {
@@ -9358,6 +9532,8 @@ auto SemanticVisitor::Impl::deferredRawPointerLoopUse(const ExprPtr &pointer,
 auto SemanticVisitor::Impl::deferredRawPointerLoopUse(
     const std::vector<RawPointerOrigin> &origins, const Token &site)
     -> std::shared_ptr<RawPointerLoopUse> {
+  if (!rawAuditEnabled())
+    return {};
   auto use = std::make_shared<RawPointerLoopUse>();
   use->pendingLoops = valueFlow.rawPointerLoops.size();
   for (auto &loop : valueFlow.rawPointerLoops)
@@ -9367,6 +9543,8 @@ auto SemanticVisitor::Impl::deferredRawPointerLoopUse(
 
 auto SemanticVisitor::Impl::endRawPointerLoop(const ScopeStack &backedge,
                                               bool reachable) -> void {
+  if (!rawAuditEnabled())
+    return;
   if (valueFlow.rawPointerLoops.empty())
     return;
   auto loop = std::move(valueFlow.rawPointerLoops.back());
@@ -9404,6 +9582,7 @@ auto SemanticVisitor::Impl::endRawPointerLoop(const ScopeStack &backedge,
       mergeRawPointerOrigins(visited, {origin});
       const auto forward = [&](const RawPointerOrigin &candidate) {
         auto next = candidate;
+        next.possible = true;
         applyRawPointerLifetimeInvalidations(next,
                                              origin.lifetimeInvalidations);
         self(self, next);
@@ -9522,10 +9701,10 @@ auto SemanticVisitor::Impl::endRawPointerLoop(const ScopeStack &backedge,
           if (origin.pointeeType != SemanticType::Unknown &&
               !containsOpenTypeParameter(origin.pointeeType) &&
               origin.pointeeType != use.expectedPointee) {
-            report(use.site,
-                   "Raw pointer conversion contradicts a known pointee type "
-                   "from a later loop iteration.",
-                   "GTI-S2014");
+            diagnostics.push_back(makeDiagnostic(
+                DiagnosticId::RawAuditPotential, use.site,
+                {"Raw pointer conversion may contradict a known pointee type "
+                 "from a later loop iteration."}));
             diagnostics.back().related.push_back(
                 {origin.addressSite,
                  "Pointee type retained at this conversion."});
@@ -9551,21 +9730,19 @@ auto SemanticVisitor::Impl::endRawPointerLoop(const ScopeStack &backedge,
           // not the (potentially already cleaned-up) loop-exit loan state.
           auto enclosing = std::move(loanFlow);
           loanFlow = *use.loanContext;
-          const auto first = loanFlow.conflicts.size();
-          reportLoanPlaceConflict(
-              use.site, origin.place, *use.memoryAccess,
-              "Cannot access raw storage while an overlapping checked borrow "
-              "may still be live.",
-              origin.throughLoan);
+          const auto first = loanFlow.rawAuditConflicts.size();
+          reportRawLoanConflict(use.site, origin.place, *use.memoryAccess,
+                                origin.throughLoan);
           std::vector<PendingBorrowConflict> conflicts;
-          for (std::size_t index = first; index < loanFlow.conflicts.size();
-               ++index) {
-            loanFlow.conflicts[index].sequence = use.loanContext->nextSequence;
-            conflicts.push_back(std::move(loanFlow.conflicts[index]));
+          for (std::size_t index = first;
+               index < loanFlow.rawAuditConflicts.size(); ++index) {
+            loanFlow.rawAuditConflicts[index].sequence =
+                use.loanContext->nextSequence;
+            conflicts.push_back(std::move(loanFlow.rawAuditConflicts[index]));
           }
           loanFlow = std::move(enclosing);
           for (auto &conflict : conflicts)
-            loanFlow.conflicts.push_back(std::move(conflict));
+            loanFlow.rawAuditConflicts.push_back(std::move(conflict));
         }
       }
     }

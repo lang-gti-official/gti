@@ -5065,16 +5065,20 @@ auto SemanticVisitor::Impl::analyzeAliasConversion(
       for (const auto &origin : rawPointerOrigins(expr.arguments().front())) {
         if (origin.pointeeType != SemanticType::Unknown &&
             origin.pointeeType != targetType.arguments.front()) {
-          report(expressionToken(expr.callee()),
-                 "Explicit raw pointer conversion contradicts the known "
-                 "pointee type '" +
-                     typeSpelling(origin.pointeeType) + "'.",
-                 "GTI-S2014");
+          diagnostics.push_back(makeDiagnostic(
+              origin.possible ? DiagnosticId::RawAuditPotential
+                              : DiagnosticId::RawAuditViolation,
+              expressionToken(expr.callee()),
+              {std::string(origin.possible
+                               ? "Explicit raw pointer conversion may "
+                                 "contradict a possible pointee type '"
+                               : "Explicit raw pointer conversion "
+                                 "contradicts the known pointee type '") +
+               typeSpelling(origin.pointeeType) + "'."}));
           diagnostics.back().related.push_back(
               {origin.addressSite,
                "Pointee type retained at this conversion."});
-          currentType = SemanticType::Unknown;
-          return;
+          break;
         }
       }
     }
