@@ -284,6 +284,13 @@ and `gti publish --name libc` publishes a Git-tracked package inventory. The
 [registry documentation](docs/architecture/build-and-driver.md#source-package-registries)
 describes configuration, publication, cache integrity and the bootstrap limits.
 
+On macOS, use `gti registry login` once to save a package token in Keychain;
+`gti add`/`fetch`/`publish` then use it automatically. `gti registry status`
+shows the source without showing the secret, and `gti registry logout` removes
+the saved credential. Configured `token-env` variables override saved login
+for CI; an explicitly empty value disables it. Other hosts currently use
+environment tokens, without a plaintext fallback.
+
 The language server reads this same resolved package graph without fetching or
 building. Once `gti fetch` has materialized a locked Git or registry dependency, package
 diagnostics, hover, definition, semantic tokens, and member completion use it;

@@ -25,13 +25,18 @@ public:
 int main() {
   // Registry algorithms/types are usable from installed LLVM-free headers.
   auto registry = lang::driver::configuredRegistries();
+  auto credentials = lang::driver::systemRegistryCredentialStore();
+  // No protected-store query or platform types/languages are needed here.
+  auto authenticatedRegistry = lang::driver::configuredRegistries(credentials);
+  lang::driver::validateRegistryCredential({.secret = "synthetic-sdk-token"});
   const auto requirement =
       lang::driver::PackageVersionRequirement::parse("^0.2.1");
   const auto version = lang::driver::parsePackageVersion("0.2.9");
   const auto archive = lang::driver::encodePackageArchive(
       {{"gti.toml", "manifest-version = 1\n"},
        {"src/unit.gti", "int value() { return 42; }\n"}});
-  if (!registry || !requirement || !version ||
+  if (!registry || !authenticatedRegistry || !credentials ||
+      credentials->name().empty() || !requirement || !version ||
       !requirement->accepts(*version) ||
       lang::driver::decodePackageArchive(archive).size() != 2 ||
       !lang::driver::validPackageChecksum(

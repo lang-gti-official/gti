@@ -40,6 +40,25 @@ specified in the existing build/driver architecture document.
 
 ## Consequences
 
+### Secure login amendment
+
+The user-facing workflow adds one-time `gti registry login`, `status` and
+`logout`. The initial protected store is macOS Keychain, never a project/cache
+file. Environment overrides remain the first choice for CI and can explicitly
+disable stored login with an empty value. Gitea verifies the supplied token
+through its authenticated package-read API, without requiring user-profile
+permission or mutating remote state; failed validation preserves old login.
+
+Keep credential kind/storage independent of registry transport and source
+archive codecs. A GTI-owned optional authentication contract lets other
+backends validate credentials; an injected protected-store interface lets other
+hosts provide secure persistence. Versioned credential records and exact
+logical-name/endpoint/owner scope prevent silent cross-server reuse. Unsupported
+hosts retain environment authentication; they never degrade to plaintext.
+Ordinary compiler/editor paths stay offline and never consult the store.
+
+### Package model
+
 - Gitea types/URLs never enter source semantics or package solving.
 - Registry and canonical manifest names may differ; include aliases are local.
 - Root projects may mix local/Git/registry sources; published registry packages

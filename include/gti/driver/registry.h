@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/driver/dependencies.h"
+#include "gti/driver/registry_credentials.h"
 #include "gti/driver/semver.h"
 
 #include <filesystem>
@@ -48,6 +49,12 @@ public:
 class Registry {
 public:
   virtual ~Registry() = default;
+  // Optional backend authentication capability, independent of source formats.
+  [[nodiscard]] virtual std::optional<RegistryAuthenticationInfo>
+  authentication() const {
+    return std::nullopt;
+  }
+  virtual void validateCredential(const RegistryCredential &credential);
   [[nodiscard]] virtual std::vector<std::string>
   listVersions(std::string_view package) = 0;
   // nullopt means a version is incomplete/not a published GTI package.
@@ -66,7 +73,13 @@ public:
   [[nodiscard]] virtual Registry &get(std::string_view identity) = 0;
 };
 
-[[nodiscard]] std::unique_ptr<RegistryProvider> configuredRegistries();
+[[nodiscard]] std::unique_ptr<RegistryProvider>
+configuredRegistries(std::shared_ptr<RegistryCredentialStore> credentials = {});
+// Validate the explicitly supplied credential before replacing stored state.
+// Does not inherit an environment override or an already stored credential.
+void loginRegistry(Registry &registry, RegistryCredentialStore &store,
+                   const RegistryCredential &credential);
+void logoutRegistry(Registry &registry, RegistryCredentialStore &store);
 [[nodiscard]] RegistryPackageMetadata
 parseRegistryMetadata(std::string_view text, const RegistryPackageKey &key,
                       std::string_view version);

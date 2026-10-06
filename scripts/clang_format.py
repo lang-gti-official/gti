@@ -22,7 +22,7 @@ SOURCE_ROOTS = (
     "tests",
     "examples/gti-vs-cpp",
 )
-SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp"}
+SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".mm", ".h", ".hh", ".hpp"}
 
 
 def parse_arguments() -> argparse.Namespace:

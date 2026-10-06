@@ -500,6 +500,7 @@ add_library(
   "src/driver/package_archive.cpp"
   "src/driver/registry_metadata.cpp"
   "src/driver/registry_gitea.cpp"
+  "src/driver/registry_credentials.cpp"
   "src/driver/registry_cache.cpp"
   "src/driver/registry_resolver.cpp"
   "src/driver/registry_commands.cpp"
@@ -527,6 +528,17 @@ target_include_directories("gti_driver" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_include_directories("gti_driver" PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/runtime/include")
 target_compile_features("gti_driver" PUBLIC cxx_std_20)
 target_link_libraries("gti_driver" PUBLIC gti_compiler PRIVATE gti_cpp_backend gti_bindgen gti_runtime)
+if(APPLE)
+  enable_language(OBJCXX)
+  set_target_properties(gti_driver PROPERTIES OBJCXX_STANDARD 20
+    OBJCXX_STANDARD_REQUIRED ON OBJCXX_EXTENSIONS OFF)
+  target_sources(gti_driver PRIVATE "src/driver/registry_credentials_macos.mm")
+  set_source_files_properties("src/driver/registry_credentials_macos.mm"
+    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+  # System framework names remain relocatable in the installed static SDK.
+  target_link_libraries(gti_driver PRIVATE
+    "-framework Security" "-framework Foundation" "-framework LocalAuthentication")
+endif()
 add_dependencies("gti_driver" "gti_runtime" "gti_build_identity_refresh")
 target_compile_definitions(
   "gti_driver"
@@ -580,7 +592,7 @@ set_target_properties(
     SUFFIX ".so"
 )
 
-add_executable("gti" "src/cli/main.cpp" "src/cli/project_presentation.cpp"
+add_executable("gti" "src/cli/main.cpp" "src/cli/registry_input.cpp" "src/cli/project_presentation.cpp"
                      "src/cli/terminal_style.cpp" "src/cli/build_progress.cpp")
 target_link_libraries("gti" PRIVATE gti_driver gti_bindgen Threads::Threads)
 target_include_directories("gti" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})

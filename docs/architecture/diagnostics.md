@@ -200,6 +200,17 @@ diagnostics or letting a backend message choose either identity.
 
 ## Production Rules
 
+Registry authentication keeps driver-owned structured codes: `GTI-B1713` for
+server authentication/package-permission rejection, `GTI-B1724` for unavailable,
+denied or unsupported protected credential storage, and `GTI-B1725` for invalid
+token/input/authentication capability. Registry-command errors have no source
+token and use an empty primary span; acquisition errors retain the dependency
+manifest span. Messages never render tokens, Keychain item data or server
+response bodies. A failed login does not replace stored state. Permission
+hints explain scoped login or the configured environment override; no fix-it
+stores credentials or changes package permissions. See
+[registry authentication](build-and-driver.md#source-package-registries).
+
 `GTI-S2097` reports an invalid built-in expected mapper contract, naming the
 selected combinator and its exact required signature. It points at the mapper
 expression and retains candidate declarations when function-item selection
