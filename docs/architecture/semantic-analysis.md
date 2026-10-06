@@ -1152,6 +1152,16 @@ checked-dereference referent privately. This is semantic proof, not text-based
 operator guessing. The AST application is retained for source-facing
 diagnostics and tooling occurrences.
 
+Unary structural annotations on class generic parameters reuse those same
+applications. The parameter's resolved `conceptId` remains the concrete
+class-argument admission contract; each symbolic type-parameter scope also
+publishes its application in the ordinary requirement-scope stack. Constructors,
+methods, field initializers and destructors therefore see the same guaranteed
+member facts and unsafe-call obligations as a trailing clause. The paired type
+scope owns the application's endpoint, including isolated instance analysis.
+Concrete parameters do not receive assumed applications: type resolution checks
+their actual member signatures before HIR can select an instance.
+
 Call or construction viability substitutes concrete type arguments into the same records and
 checks both unary and structural facts. Concrete generic reanalysis then
 resolves the real operator declarations in the instantiated body, so HIR sees

@@ -10982,7 +10982,10 @@ public:
 int main() {
   std::storage<int32_t> forged = std::storage<int32_t>();
   std::allocator allocator = std::allocator();
-  auto unsupported = allocator.try_storage<fixed_value>(std::size_t(1));
+  auto pinned = allocator.try_storage<fixed_value>(std::size_t(1));
+  if (!pinned) { return 2; }
+  mut auto fixed = std::move(pinned).value();
+  fixed.construct(std::size_t(0), fixed_value());
   mut auto allocated = allocator.try_storage<int32_t>(std::size_t(1));
   if (!allocated) { return 1; }
   mut std::storage<int32_t> values = std::move(allocated).value();
@@ -11007,8 +11010,8 @@ int main() {
                         "live") &&
           hasDiagnostic(invalidPublicStorage.diagnostics,
                         "Cannot initialize 'copied'"),
-      "public storage should require movable elements and prevent owner "
-      "forgery, variadic emplacement, copies, and mutation while a "
+      "completed-value insertion should require movability; storage prevents "
+      "owner forgery, extra construct arguments, copies, and mutation while a "
       "receiver-tied element borrow remains live");
 }
 
@@ -18364,6 +18367,17 @@ public:
   CleanupReadPair(Resource& left, Resource& right) : first(left), second(right) {}
   int read() { return this.first.read() + this.second.read(); }
 };
+class CleanupInspector {
+  CarrierGuard guard{};
+  Resource& resource;
+public:
+  CleanupInspector(Resource& source) : resource(source) {}
+  int read(int divisor) { return this.resource.read() / divisor; }
+};
+int conditional_cleanup(Resource& resource, bool take) {
+  return take ? CleanupInspector(resource).read(1)
+              : CleanupInspector(resource).read(2);
+}
 class VirtualClient {
   mut Resource resource{};
 public:
@@ -18408,6 +18422,10 @@ Resource global_resource{};
   Resource first{};
   Resource second{};
   return CleanupReadPair(first, second).read();
+)"),
+                                  std::string(R"(
+  Resource resource{};
+  return conditional_cleanup(resource, true);
 )")}) {
     const auto frontend =
         lang::Frontend().analyze("ephemeral-carrier-valid.gti",
@@ -18420,7 +18438,92 @@ Resource global_resource{};
     expect(frontend.canGenerateCode(),
            "borrowed temporaries support immediate readonly and "
            "mutable method calls, preserving owner reuse between expressions");
+    if (frontend.canGenerateCode() &&
+        body.find("CleanupReadPair(first, second)") != std::string::npos) {
+      bool checkedCarrier = false;
+      bool checkedEarlyEnd = false;
+      for (const auto &function : frontend.mir.functionInstances()) {
+        const auto *hir = frontend.hir.findFunctionInstance(function.id);
+        if (hir == nullptr || hir->source == nullptr ||
+            hir->source->name().lexeme != "main")
+          continue;
+        for (const auto &shell : function.body.loans) {
+          if (shell.kind != lang::MirLoanKind::CallArgument ||
+              shell.storedDependency == 0)
+            continue;
+          const auto *place = function.body.findPlace(shell.source);
+          const auto carrier = place == nullptr
+                                   ? lang::MirTemporaryCarrierDependency{}
+                                   : lang::findMirTemporaryCarrierDependency(
+                                         function.body, *place);
+          expect(carrier && carrier.loan->lifecycleBound &&
+                     !shell.lifecycleBound &&
+                     carrier.loan->additionalDependencies.size() == 1,
+                 "cleanup-bearing temporary keeps both owners in its owning "
+                 "Stored loan and a distinct non-owning receiver shell");
+          if (!carrier)
+            continue;
+          checkedCarrier = true;
+          for (const auto id : {shell.id, carrier.loan->id}) {
+            auto malformed = frontend.mir;
+            auto *changed = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            changed->body.loans[id - 1].lifecycleBound =
+                !changed->body.loans[id - 1].lifecycleBound;
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "temporary receiver cannot gain cleanup authority or "
+                   "erase its producer's cleanup obligation");
+          }
+          for (const auto &block : function.body.blocks) {
+            const auto drop = std::find_if(
+                block.instructions.begin(), block.instructions.end(),
+                [&](const auto &instruction) {
+                  return instruction.kind == lang::MirInstructionKind::Drop &&
+                         instruction.destination == carrier.drop->place;
+                });
+            const auto end = std::find_if(
+                block.instructions.begin(), block.instructions.end(),
+                [&](const auto &instruction) {
+                  return instruction.kind ==
+                             lang::MirInstructionKind::EndBorrow &&
+                         instruction.loan == carrier.loan->id;
+                });
+            if (drop == block.instructions.end() ||
+                end == block.instructions.end() || drop >= end)
+              continue;
+            auto malformed = frontend.mir;
+            auto *changed = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            auto &instructions =
+                changed->body.blocks[block.id - 1].instructions;
+            const auto dropIndex = drop - block.instructions.begin();
+            const auto endIndex = end - block.instructions.begin();
+            std::rotate(instructions.begin() + dropIndex,
+                        instructions.begin() + endIndex,
+                        instructions.begin() + endIndex + 1);
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "cleanup-bearing temporary cannot release its owners "
+                   "before the exact full-expression value drop");
+            checkedEarlyEnd = true;
+          }
+        }
+      }
+      expect(checkedCarrier && checkedEarlyEnd,
+             "cleanup-bearing temporary exercises marker and early-end proofs");
+    }
   }
+
+  const auto temporaryMutex =
+      analyzeTrustedPreludeFixture("ephemeral-mutex-escape.gti", R"(
+#include <std/mutex>
+int main() {
+  std::mutex<int> owner{1};
+  int& escaped = owner.lock().get();
+  return escaped;
+}
+)");
+  expect(!temporaryMutex.canGenerateCode(),
+         "temporary mutex guard cannot export its protected reference");
 
   struct InvalidCase {
     std::string_view body;

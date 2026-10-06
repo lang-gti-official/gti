@@ -1112,15 +1112,9 @@ auto SemanticVisitor::Impl::resolveClassArguments(
             type.kind == SemanticType::TypePack
                 ? SemanticType::typeParameter(type.genericParameterId)
                 : type;
-        if (const auto failed = firstUnsatisfiedConstraint(
-                constrained, parameter.constraints)) {
-          reportConstraintFailure(
-              argument.name.last(),
-              ConstraintFailure{.parameter = parameter.name,
-                                .argument = constrained,
-                                .constraints = parameter.constraints,
-                                .failed = *failed,
-                                .constraintName = parameter.constraintName});
+        if (const auto failure =
+                firstConstraintFailure({parameter}, {constrained})) {
+          reportConstraintFailure(argument.name.last(), *failure);
         }
       }
       result.types.insert(result.types.end(), expanded.begin(), expanded.end());
@@ -1199,15 +1193,8 @@ auto SemanticVisitor::Impl::resolveClassArguments(
       validateReferencePlacement(argument, true, "generic type argument", false,
                                  false, true);
     }
-    if (const std::optional<GenericConstraintKind> failed =
-            firstUnsatisfiedConstraint(type, parameter.constraints)) {
-      reportConstraintFailure(
-          argument.name.last(),
-          ConstraintFailure{.parameter = parameter.name,
-                            .argument = type,
-                            .constraints = parameter.constraints,
-                            .failed = *failed,
-                            .constraintName = parameter.constraintName});
+    if (const auto failure = firstConstraintFailure({parameter}, {type})) {
+      reportConstraintFailure(argument.name.last(), *failure);
       result.valid = false;
     }
     substitution.types.emplace(parameter.id, type);
@@ -3557,15 +3544,12 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
       validateReferencePlacement(argument, true, "generic type argument", false,
                                  false, true);
     }
-    if (const std::optional<GenericConstraintKind> failed =
-            firstUnsatisfiedConstraint(argumentType, parameter.constraints)) {
-      reportConstraintFailure(
-          argument.name.last(),
-          ConstraintFailure{.parameter = parameter.name,
-                            .argument = argumentType,
-                            .constraints = parameter.constraints,
-                            .failed = *failed,
-                            .constraintName = parameter.constraintName});
+    if (!(resolvingGenericTypeDefault &&
+          containsOpenTypeParameter(argumentType))) {
+      if (const auto failure =
+              firstConstraintFailure({parameter}, {argumentType})) {
+        reportConstraintFailure(argument.name.last(), *failure);
+      }
     }
   }
   for (std::size_t index = count; index < type.arguments.size(); ++index) {
@@ -5219,7 +5203,8 @@ auto SemanticVisitor::Impl::applyGenericDefaults(
 
 auto SemanticVisitor::Impl::makeGenericParameters(
     const std::vector<GenericParameter> &parameters,
-    const Token &declarationName, const std::vector<std::string> &fromScope)
+    const Token &declarationName, const std::vector<std::string> &fromScope,
+    bool allowStructural)
     -> std::vector<GenericParameterInfo> {
   std::vector<GenericParameterInfo> result;
   result.reserve(parameters.size());
@@ -5304,7 +5289,8 @@ auto SemanticVisitor::Impl::makeGenericParameters(
                    "concepts.",
                    "GTI-S2029");
             constraints = constraintBit(GenericConstraintKind::Invalid);
-          } else if (conceptInfo.hasStructuralRequirements) {
+          } else if (conceptInfo.hasStructuralRequirements &&
+                     !allowStructural) {
             report(parameter.constraint->last(),
                    "Structural concepts must be written in a trailing "
                    "requires clause.",
@@ -5442,7 +5428,10 @@ auto SemanticVisitor::Impl::makeGenericParameters(
                  "and earlier generic parameters.",
                  "GTI-S2023");
         } else if (type != SemanticType::Unknown) {
-          if (const std::optional<GenericConstraintKind> failed =
+          // Structural member signatures are not complete while generic
+          // parameters are registered. Their exact concept application is
+          // checked by applyGenericDefaults when this default is selected.
+          if (const auto failed =
                   firstUnsatisfiedConstraint(type, found->constraints)) {
             reportConstraintFailure(
                 parameter.defaultType->name.last(),
@@ -5515,6 +5504,7 @@ auto SemanticVisitor::Impl::beginTypeParameterScope(
   auto &scope = typeParameterScopes.emplace_back();
   auto &values = valueParameterScopes.emplace_back();
   auto &packs = typePackScopes.emplace_back();
+  auto &requirements = requirementScopes.emplace_back();
   for (const GenericParameterInfo &parameter : parameters) {
     if (parameter.value) {
       const auto concrete = instanceValueSubstitution.find(parameter.id);
@@ -5529,6 +5519,17 @@ auto SemanticVisitor::Impl::beginTypeParameterScope(
                   concrete == instanceTypeSubstitution.end()
                       ? SemanticType::typeParameter(parameter.id)
                       : concrete->second);
+    // An inline class annotation carries the same concept application as a
+    // trailing requires clause. Make its guaranteed operations available to
+    // all class bodies, including constructors and destructors, without
+    // manufacturing proof for concrete arguments before their admission check.
+    if (concrete == instanceTypeSubstitution.end() &&
+        parameter.conceptId != 0 &&
+        !invalidConstraintSet(parameter.constraints)) {
+      requirements.push_back(
+          {.conceptId = parameter.conceptId,
+           .arguments = {SemanticType::typeParameter(parameter.id)}});
+    }
     if (parameter.pack) {
       packs.insert(parameter.id);
     }
@@ -5539,6 +5540,7 @@ auto SemanticVisitor::Impl::endTypeParameterScope() -> void {
   typeParameterScopes.pop_back();
   valueParameterScopes.pop_back();
   typePackScopes.pop_back();
+  requirementScopes.pop_back();
 }
 
 auto SemanticVisitor::Impl::beginRequirementScope(const FunctionInfo *function)

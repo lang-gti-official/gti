@@ -117,6 +117,8 @@ auto SemanticVisitor::Impl::storageIntrinsicName(IntrinsicKind intrinsic)
     return "allocate_storage";
   case IntrinsicKind::StorageTryAllocate:
     return "storage_try_allocate";
+  case IntrinsicKind::StorageTryAdopt:
+    return "storage_try_adopt";
   case IntrinsicKind::StorageCapacity:
     return "storage_capacity";
   case IntrinsicKind::StorageInitialized:

@@ -61,6 +61,12 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "add_assign",
       "allocate",
       "allocate_storage",
+      "address",
+      "alignment",
+      "extent",
+      "initialized",
+      "try_adopt",
+      "storage_try_adopt",
       "allocation",
       "allocation_",
       "allocation_bytes",
@@ -1459,6 +1465,36 @@ public:
     return *this;
   }
 
+  // Called only for a verified unsafe adoption operation. The region remains
+  // owned by its source-level lease; allocation_ deliberately stays null.
+  [[nodiscard]] static std::int32_t
+  try_adopt(void *address, std::uint64_t requested, std::uint64_t extent,
+            std::uint64_t alignment, storage *result) noexcept {
+    if (!result || result->data_ || result->allocation_ || result->capacity_ ||
+        result->initialized_) return 4;
+    if (alignment == 0 || (alignment & (alignment - 1)) != 0 ||
+        alignment < alignof(T)) return 1;
+    const auto maximum = (std::numeric_limits<std::size_t>::max)();
+    if (alignment > maximum || requested > maximum / sizeof(T) ||
+        extent > maximum) return 2;
+    const auto capacity = static_cast<std::size_t>(requested);
+    const auto bytes = capacity * sizeof(T);
+    if (extent < bytes) return 4;
+    if (capacity == 0) return 0;
+    if (!address) return 4;
+    void *aligned = address;
+    auto available = static_cast<std::size_t>(extent);
+    if (!std::align(static_cast<std::size_t>(alignment), bytes, aligned, available) ||
+        aligned != address) return 1;
+    std::unique_ptr<unsigned char[]> initialized(
+        new (std::nothrow) unsigned char[capacity]{});
+    if (!initialized) return 3;
+    result->data_ = address;
+    result->capacity_ = capacity;
+    result->initialized_ = std::move(initialized);
+    return 0;
+  }
+
   ~storage() {
     if (!mir_cleanup_emergency_abandonment()) release();
   }
@@ -1775,14 +1811,14 @@ private:
   }
 
   void release() noexcept {
-    if (allocation_ != nullptr) {
+    if (data_ != nullptr) {
       for (std::size_t index = capacity_; index > 0; --index) {
         if (initialized_[index - 1] != 0) {
           std::destroy_at(std::launder(slot(index - 1)));
         }
       }
-      ::operator delete(allocation_);
     }
+    ::operator delete(allocation_);
     initialized_.reset();
     allocation_ = nullptr;
     data_ = nullptr;
@@ -1815,6 +1851,16 @@ inline std::int32_t
 storage_try_allocate(storage<T> &destination, std::uint64_t capacity,
                      std::uint64_t minimum_alignment) noexcept {
   return storage<T>::try_allocate(capacity, minimum_alignment, &destination);
+}
+
+template <typename T>
+inline std::int32_t storage_try_adopt(storage<T> &destination,
+                                     raw_address<void> address,
+                                     std::uint64_t capacity,
+                                     std::uint64_t extent,
+                                     std::uint64_t alignment) noexcept {
+  return storage<T>::try_adopt(native_pointer_value(address), capacity, extent,
+                               alignment, &destination);
 }
 
 template <typename T>

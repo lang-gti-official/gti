@@ -18,15 +18,25 @@ public:
   ~Guard() { observed += this.resource.read(); }
 };
 
+// A constructor may explicitly build its retained child from the same exact
+// reference parameter. The completed child keeps its cleanup dependency when
+// published into the outer field, including constructor rollback paths.
+class GuardOwner {
+  Guard retained;
+public:
+  GuardOwner(Resource& resource) : retained(Guard(resource)) {}
+};
+
 int main() {
   mut Resource resource{};
   {
     Guard first{resource};
     Guard second{resource};
     auto moved = std::move(first);
-    // resource.reset() is rejected here: both guards still need the resource
+    GuardOwner nested{resource};
+    // resource.reset() is rejected here: all guards still need the resource
     // during cleanup. Moving first transfers its cleanup responsibility.
   }
   resource.reset();
-  return observed == 14 ? 0 : 1;
+  return observed == 21 ? 0 : 1;
 }

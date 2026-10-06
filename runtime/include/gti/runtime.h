@@ -7,6 +7,7 @@
 #include "gti/filesystem.h"
 #include "gti/http.h"
 #include "gti/math.h"
+#include "gti/memory.h"
 #include "gti/random.h"
 #include "gti/runtime_failure.h"
 

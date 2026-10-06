@@ -2575,7 +2575,8 @@ private:
   std::vector<GenericParameterInfo>
   makeGenericParameters(const std::vector<GenericParameter> &parameters,
                         const Token &declarationName,
-                        const std::vector<std::string> &fromScope);
+                        const std::vector<std::string> &fromScope,
+                        bool allowStructural = false);
 
   [[nodiscard]] std::shared_ptr<const GenericValueExpression>
   normalizeGenericValueDefault(const ArrayExtentExpr &expression,

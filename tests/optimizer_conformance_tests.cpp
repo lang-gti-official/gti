@@ -55,7 +55,7 @@ void testCensus() {
   census(FailurePropagationKind::Destructor);
   census(SynchronizationOperationKind::ConditionNotify);
   census(AtomicMemoryOrder::SequentiallyConsistent);
-  census(UnsafeOperationKind::DeclaredUnsafeCall);
+  census(UnsafeOperationKind::StorageAdoption);
   census(MirAnalysisKind::SparseConstants);
   census(MirTransformKind::DevirtualizeCall);
   census(MirTransformProofKind::ExactReceiver);

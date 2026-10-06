@@ -3726,7 +3726,18 @@ do not expose C++ object layout as GTI semantics.
   capability boundary remains explicit and distinct from ordinary cleanup
   retention. None of this is yet allocator acceptance: selected-region
   adoption, the public resource/lease API, real arena placement, fixed-address
-  immovable ownership and allocator-aware containers remain to implement.
+  immovable ownership and allocator-aware containers remained to implement at
+  that checkpoint.
+- **Storage prerequisite (in progress):** private external-region adoption
+  now carries explicit unsafe permission, an exact mutable destination and a
+  writable address/extent/alignment contract through MIR verification and
+  backend admission. Its fallible slot-bitmap allocation does not take over
+  region release authority. Public sparse storage now permits immovable
+  elements through final-address emplacement; completed-value insertion and
+  relocation retain their capability constraints. Example 120 and native
+  cleanup fixtures pass the eight-mode C++20/C++23, no-elide and sanitizer
+  matrix. These primitives do not yet constitute a public resource API or
+  allocator/container acceptance.
 - **Starting evidence (2026-10-06):** inspected main `db6622a3`, including the
   optional-audit revision. `storage<std::movable T>` and its factories still
   restrict immovable elements; the private sparse storage representation obtains
@@ -3743,6 +3754,19 @@ do not expose C++ object layout as GTI semantics.
   `std::movable` requirement (`GTI-S2029`). The frontend and library sources for
   these rules are unchanged between the validated 0.376.0 candidate and the
   inspected head. These are prerequisite evidence, not Phase 2 acceptance tests.
+- **Current client checkpoint (in progress):** source-defined `resource_ref`,
+  `resource_storage` and `resource_vector` clients, a real monotonic arena,
+  a counting/failure adapter and an unrelated fixed-address container are
+  drafted. The process-memory runtime and external adoption contract have
+  focused passing evidence. The new arena/container runtime matrix is not
+  passing yet and is not acceptance evidence. Explicit nested constructors now
+  compose formal-to-field dependency paths, with generic three-level and
+  reordered two-origin tests. Backend nested-publication admission remains
+  under validation. Client integration exposed a separate lifetime bug:
+  an accessor returning an owned field of a borrowed carrier must protect that
+  carrier's physical storage, not substitute its external resource dependency.
+  Unrelated-class semantic regressions cover reset/move conflicts; matching
+  MIR publication and forged-origin checks remain required before delivery.
 - **Approved resource model:** a move-only allocation lease
   retains a shared checked borrow of its resource through final cleanup. Each
   allocation owns an independent region; object references borrow its typed
@@ -3758,6 +3782,13 @@ do not expose C++ object layout as GTI semantics.
   than inheriting a view's ordinary last-use endpoint. This rule must be tested
   with an unrelated non-allocation resource guard and audited against the
   existing mutex-guard special case before implementation.
+- **Approved binding boundary:** application code acknowledges a custom
+  resource's unsafe provider contract once, with an explicit unsafe binding
+  operation. The resulting checked handle can supply safe typed owners and
+  containers without repeating unsafe at each allocation. Concept satisfaction
+  only checks the operation signatures; it does not prove alignment, valid
+  extents, disjoint live regions, truthful identity or matching release.
+  Binding never authorizes safe reset/reuse beneath a live owner or reference.
 - **Bookkeeping mechanism:** keep mutable metadata in separately allocated,
   non-const storage, reached through private writable raw pointers rather than
   by casting away access on a shared resource reference. A shared borrow of the

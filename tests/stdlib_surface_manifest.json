@@ -962,6 +962,13 @@
       "expected": {"exit_code": 0, "stdout": "30\n20\n10\n90\n30\n20\n13\n", "stderr": ""}
     },
     {
+      "id": "storage-immovable",
+      "mode": "run",
+      "source": "examples/120-immovable-storage.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "storage-owning-view",
       "mode": "run",
       "source": "examples/114-owning-storage-view.gti",
@@ -2039,7 +2046,7 @@
         "std::try_make_pool<T>",
         "std::typed_address<T>"
       ],
-      "case_ids": ["allocator-storage", "storage-discardable-result", "storage-final-address", "storage-owning-view", "storage-release", "arena-pool", "raw-owner-witness", "raw-pointer-conversion", "structural-relocation", "owned-error-pipelines"],
+      "case_ids": ["allocator-storage", "storage-discardable-result", "storage-final-address", "storage-immovable", "storage-owning-view", "storage-release", "arena-pool", "raw-owner-witness", "raw-pointer-conversion", "structural-relocation", "owned-error-pipelines"],
       "required_instantiations": [
         "std::alignment(64)",
         "std::arena<int32_t>",

@@ -740,7 +740,8 @@ an initialization proof, or a new constant expression. The existing bounded
   `try_storage<T>(count)` and
   `try_storage<T>(count, std::alignment minimum)`;
 - `std::storage<T>` is a move-only owner of `capacity()` independently
-  initialized typed slots for `std::movable T` without borrowed state;
+  initialized typed slots for element types without borrowed state, including
+  immovable objects constructed directly with `emplace`;
 - `std::alignment` carries an explicit minimum byte alignment; and
 - `std::alloc_errc` distinguishes `invalid_alignment`, `size_overflow`, and
   `resource_exhausted`.
@@ -756,7 +757,7 @@ byte sizes. Custom-resource requests can separately use `std::layout_of<T>()`;
 neither operation exposes a stable C ABI.
 
 Each public storage slot is checked. `construct(index, value)` consumes one
-completed `T` and requires an uninitialized in-bounds slot; `get` and `get_mut`
+completed movable `T` and requires an uninitialized in-bounds slot; `get` and `get_mut`
 require a live slot and return references tied to the storage receiver;
 `destroy` requires a live slot; `initialized` reports checked slot state; and
 `clear` destroys all live slots in reverse index order. Owner destruction

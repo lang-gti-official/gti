@@ -25203,9 +25203,22 @@ storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan) {
       const MirPlace *field = initialize.destination
                                   ? body.findPlace(*initialize.destination)
                                   : nullptr;
-      if (entry == nullptr || !entry->entry || entry->escapes ||
+      // The native field already contains the completed child object. Its
+      // verified Construct-result dependency publication, like the existing
+      // moved-formal publication, is proof-only and needs no pointer shell.
+      const auto *constructed = definitionFor(body,
+          MirOperand{.kind = MirOperandKind::Value, .value = operand.value,
+                     .type = operand.type});
+      const bool constructedField = entry && !entry->entry && constructed &&
+          constructed->kind == MirInstructionKind::Construct &&
+          constructed->constructorTarget && constructed->loan == entry->id &&
+          constructed->result == operand.value &&
+          constructed->info.type == operand.type &&
+          constructed->hirValue == entry->producedBy;
+      if (entry == nullptr || (!entry->entry && !constructedField) || entry->escapes ||
           entry->kind != MirLoanKind::Stored ||
-          entry->designatedFields.empty() || entry->source != loan.source ||
+          (!constructedField && entry->designatedFields.empty()) || entry->source != loan.source ||
+          entry->additionalDependencies != loan.additionalDependencies ||
           entry->access != loan.access || operand.value == 0 ||
           operand.place != 0 ||
           transfer.info.type.kind != SemanticType::Class ||
@@ -34695,6 +34708,22 @@ private:
       emitStoragePlaceValue(facts, *storage);
       for (std::size_t index = 1; index < instruction.operands.size();
            ++index) {
+        output << ", ";
+        emitCallArgument(instruction.operands[index], false, false);
+      }
+      output << ");\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
+        instruction.intrinsic == IntrinsicKind::StorageTryAdopt) {
+      const auto *storage =
+          mir_detail::storageAdoptionDestination(facts.body, instruction);
+      if (!storage)
+        throw std::logic_error("verified MIR storage adoption lost its contract");
+      output << "__gti_mir_v_" << *instruction.result
+             << " = ::gti_internal::backend::storage_try_adopt(";
+      emitStoragePlaceValue(facts, *storage);
+      for (std::size_t index = 1; index < instruction.operands.size(); ++index) {
         output << ", ";
         emitCallArgument(instruction.operands[index], false, false);
       }
@@ -46024,6 +46053,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !typeRow(storage->type.arguments.front())) {
             return false;
           }
+          continue;
+        }
+        if (instruction.intrinsic == IntrinsicKind::StorageTryAdopt) {
+          const auto *storage =
+              mir_detail::storageAdoptionDestination(body, instruction);
+          if (!storage || !typeRow(storage->type) ||
+              !typeRow(storage->type.arguments.front()))
+            return false;
           continue;
         }
         if (instruction.intrinsic == IntrinsicKind::StorageTryAllocate) {

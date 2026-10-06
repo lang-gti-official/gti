@@ -5,6 +5,65 @@
 
 namespace lang::mir_detail {
 
+const MirPlace *storageAdoptionDestination(const MirBody &body,
+                                           const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.intrinsic != IntrinsicKind::StorageTryAdopt ||
+      !instruction.result || instruction.info.type != SemanticType::Int32 ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly ||
+      instruction.info.traits != semanticTraits(SemanticType::Int32) ||
+      instruction.info.updateArithmeticType != SemanticType::Unknown ||
+      instruction.unsafeOperation != UnsafeOperationKind::StorageAdoption ||
+      instruction.operands.size() != 5 ||
+      instruction.parameterTypes.size() != 5)
+    return nullptr;
+  // Adoption only establishes slot bookkeeping for an unsafe external region.
+  // It cannot also claim an owner/loan transfer, failure, cleanup, or other
+  // invocation capability. Default comparison fails closed for new metadata.
+  const MirInstruction exact{.id = instruction.id,
+                             .kind = MirInstructionKind::Call,
+                             .hirValue = instruction.hirValue,
+                             .hirStatement = instruction.hirStatement,
+                             .callSite = instruction.callSite,
+                             .unsafeOperation =
+                                 UnsafeOperationKind::StorageAdoption,
+                             .result = instruction.result,
+                             .operands = instruction.operands,
+                             .parameterTypes = instruction.parameterTypes,
+                             .intrinsic = IntrinsicKind::StorageTryAdopt,
+                             .info = instruction.info};
+  if (instruction != exact)
+    return nullptr;
+  const auto &storage = instruction.parameterTypes.front();
+  if (storage.kind != SemanticType::Storage || storage.arguments.size() != 1 ||
+      instruction.parameterTypes[1] !=
+          SemanticType::rawPointerTo(SemanticType::Void))
+    return nullptr;
+  for (std::size_t index = 0; index < 5; ++index) {
+    if (instruction.operands[index].kind != MirOperandKind::Value ||
+        instruction.operands[index].type != instruction.parameterTypes[index] ||
+        (index >= 2 &&
+         instruction.parameterTypes[index] != SemanticType::UInt64))
+      return nullptr;
+  }
+  const auto *stage = definitionFor(body, instruction.operands.front().value);
+  // Private storage uses a place-valued Load/Copy as its capability staging,
+  // not an owning copy. Ordinary call staging may instead use BorrowWrite.
+  // The source place's mutable access remains mandatory in both shapes.
+  if (!stage || stage->info.type != storage || stage->operands.size() != 1 ||
+      ((stage->kind != MirInstructionKind::Load ||
+        stage->info.category != ValueCategory::Place ||
+        stage->operands.front().kind != MirOperandKind::Copy) &&
+       (stage->kind != MirInstructionKind::CallInput ||
+        stage->operands.front().kind != MirOperandKind::BorrowWrite)))
+    return nullptr;
+  const auto *place = body.findPlace(stage->operands.front().place);
+  return place && place->type == storage && place->access == AccessMode::Mutable
+             ? place
+             : nullptr;
+}
+
 bool objectLayoutQuery(const MirProgram &program,
                        const MirInstruction &instruction) {
   if ((instruction.intrinsic != IntrinsicKind::ObjectSize &&

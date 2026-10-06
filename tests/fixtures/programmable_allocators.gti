@@ -1,0 +1,125 @@
+#include <std/resource>
+#include <std/resource_vector>
+#include <std/memory>
+#include <std/string>
+#include <std/numeric>
+#include "../../examples/allocator-support/arena.gti"
+
+struct Counts {
+  mut uint64_t attempts = 0;
+  mut uint64_t allocations = 0;
+  mut uint64_t releases = 0;
+};
+
+[[no_transfer, no_share]] class CountingResource<std::memory_resource R> {
+  R& source;
+  uint64_t budget;
+  mut std::unique_ptr<Counts> counts;
+  mut Counts* state = nullptr;
+public:
+  CountingResource(R& source, uint64_t budget)
+      : source(source), budget(budget), counts(std::make_unique<Counts>()) {
+    this.state = &*this.counts;
+  }
+  unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) {
+    unsafe {
+      this.state->attempts++;
+      if (this.state->allocations == this.budget) {
+        return unexpected(std::alloc_errc::resource_exhausted);
+      }
+      auto allocated = this.source.allocate(request);
+      if (allocated) { this.state->allocations++; }
+      return std::move(allocated);
+    }
+  }
+  unsafe void release(std::raw_allocation allocation) {
+    unsafe {
+      this.state->releases++;
+      this.source.release(allocation);
+    }
+  }
+  uint64_t attempts() { unsafe { return this.state->attempts; } }
+  uint64_t allocations() { unsafe { return this.state->allocations; } }
+  uint64_t releases() { unsafe { return this.state->releases; } }
+};
+
+mut int alive = 0;
+mut int destroyed = 0;
+class Item {
+  std::string label;
+  int id;
+public:
+  Item(int id) : label(std::string("owning")), id(id) { alive++; }
+  int value() { return this.id; }
+  ~Item() { alive--; destroyed += this.id; }
+};
+
+int failed_growth(std::resource_ref<CountingResource<engine::Arena>> resource) {
+  mut std::resource_vector<Item, CountingResource<engine::Arena>> items{resource};
+  if (!items.try_reserve(std::size_t(1))) { return 1; }
+  if (!items.try_emplace_back(7)) { return 2; }
+  auto growth = items.try_reserve(std::size_t(8));
+  if (growth || growth.error() != std::alloc_errc::resource_exhausted) { return 3; }
+  if (items.size() != std::size_t(1) || items.capacity() != std::size_t(1) ||
+      items.get(std::size_t(0)).value() != 7 || alive != 1 || destroyed != 0) { return 4; }
+  if (resource.get().allocations() != uint64_t(1) ||
+      resource.get().attempts() != uint64_t(2) ||
+      resource.get().releases() != uint64_t(0)) { return 5; }
+  return 0;
+}
+
+int invalid_requests(std::resource_ref<CountingResource<engine::Arena>> resource) {
+  mut std::resource_storage<int, CountingResource<engine::Arena>> slots{resource};
+  auto zero = slots.try_allocate(std::size_t(0));
+  if (!zero || slots.capacity() != std::size_t(0)) { return 10; }
+  auto invalid = slots.try_allocate(std::size_t(1), std::alignment(std::size_t(3)));
+  if (invalid || invalid.error() != std::alloc_errc::invalid_alignment) { return 11; }
+  auto overflow = slots.try_allocate(std::MAX_UINT64);
+  if (overflow || overflow.error() != std::alloc_errc::size_overflow) { return 12; }
+  if (resource.get().attempts() != uint64_t(2)) { return 13; }
+  return 0;
+}
+
+int growth_and_release(std::resource_ref<engine::Arena> resource) {
+  mut std::resource_vector<int, engine::Arena> values{resource};
+  for (mut int index = 0; index < 37; index++) { values.push_back(index * 3); }
+  if (values.size() != std::size_t(37) || values.capacity() < values.size()) { return 20; }
+  mut int sum = 0;
+  for (auto& value : values) { sum += value; }
+  if (sum != 1998) { return 21; }
+  values.get_mut(std::size_t(5)) = 99;
+  if (values.get(std::size_t(5)) != 99 || values.front() != 0 || values.back() != 108) { return 22; }
+  values.pop_back();
+  values.clear();
+  if (!values.empty() || values.capacity() == std::size_t(0)) { return 23; }
+  values.release();
+  if (values.capacity() != std::size_t(0)) { return 24; }
+  values.emplace_back(123);
+  auto moved = std::move(values);
+  return moved.front() == 123 ? 0 : 25;
+}
+
+int main() {
+  mut engine::Arena arena{std::size_t(32768), std::size_t(4096)};
+  {
+    CountingResource<engine::Arena> counted{arena, uint64_t(1)};
+    unsafe {
+      auto resource = std::bind_resource(counted);
+      int status = failed_growth(resource);
+      if (status != 0) { return status; }
+      int invalid = invalid_requests(resource);
+      if (invalid != 0) { return invalid; }
+    }
+    if (alive != 0 || destroyed != 7 || counted.releases() != uint64_t(1)) { return 30; }
+  }
+  arena.reset();
+  unsafe {
+    auto resource = std::bind_resource(arena);
+    int status = growth_and_release(resource);
+    if (status != 0) { return status; }
+  }
+  if (arena.live_allocations() != std::size_t(0) ||
+      arena.allocation_count() != arena.release_count()) { return 31; }
+  arena.reset();
+  return arena.used_bytes() == std::size_t(0) ? 0 : 32;
+}

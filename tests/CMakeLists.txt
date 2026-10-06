@@ -31,6 +31,15 @@ add_executable(gti_mir_full_expression_tests mir_full_expression_tests.cpp)
 target_link_libraries(gti_mir_full_expression_tests PRIVATE gti_compiler)
 add_test(NAME mir_full_expression COMMAND gti_mir_full_expression_tests)
 add_executable(gti_ephemeral_carrier_mir_tests ephemeral_carrier_mir_tests.cpp)
+add_executable(gti_resource_memory_runtime_tests resource_memory_runtime_tests.cpp)
+target_link_libraries(gti_resource_memory_runtime_tests PRIVATE gti_runtime)
+add_test(NAME resource_memory_runtime COMMAND gti_resource_memory_runtime_tests)
+add_executable(gti_storage_adoption_tests storage_adoption_tests.cpp)
+target_link_libraries(gti_storage_adoption_tests PRIVATE gti_compiler gti_cpp_backend)
+add_test(NAME storage_adoption_contract COMMAND gti_storage_adoption_tests)
+add_executable(gti_resource_protocol_tests resource_protocol_tests.cpp)
+target_link_libraries(gti_resource_protocol_tests PRIVATE gti_compiler gti_cpp_backend)
+add_test(NAME resource_protocol_contract COMMAND gti_resource_protocol_tests)
 target_link_libraries(gti_ephemeral_carrier_mir_tests PRIVATE gti_compiler)
 add_test(NAME ephemeral_carrier_mir COMMAND gti_ephemeral_carrier_mir_tests)
 
@@ -256,6 +265,12 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME cleanup_bound_borrow_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/cleanup_bound_borrow_runtime_test.py" $<TARGET_FILE:gti>)
   set_tests_properties(cleanup_bound_borrow_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME immovable_storage_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/immovable_storage_runtime_test.py" $<TARGET_FILE:gti>)
+  set_tests_properties(immovable_storage_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME programmable_allocators_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/programmable_allocators_runtime_test.py" $<TARGET_FILE:gti>)
+  set_tests_properties(programmable_allocators_runtime PROPERTIES TIMEOUT 300)
 endif()
 add_executable(gti_shared_ownership_tests shared_ownership_tests.cpp)
 target_link_libraries(gti_shared_ownership_tests PRIVATE gti_compiler)
@@ -2949,6 +2964,10 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME runtime_object_layout_lsp
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/runtime_object_layout_lsp_test.py"
+                     "$<TARGET_FILE:gti_lsp>")
+    add_test(NAME structural_class_lsp
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${PROJECT_SOURCE_DIR}/tests/structural_class_lsp_test.py"
                      "$<TARGET_FILE:gti_lsp>")
     add_test(NAME cthread_lsp
              COMMAND "${Python3_EXECUTABLE}"

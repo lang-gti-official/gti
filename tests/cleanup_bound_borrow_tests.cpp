@@ -85,6 +85,38 @@ void negative(const std::string &name, const std::string &source,
 } // namespace
 
 int main() {
+  const std::string mixedOwner = R"gti(
+class Mixed {
+  Resource& resource;
+  mut int local;
+public:
+  Mixed(Resource& resource) : resource(resource), local(7) {}
+  int& get() { return this.local; }
+  Resource& external() { return this.resource; }
+  void reset() mut { this.local = 9; }
+  ~Mixed() {}
+};
+)gti";
+  negative("owned field accessor protects physical carrier storage",
+           mixedOwner + R"gti(
+int main() { Resource resource{}; mut Mixed mixed{resource};
+  int& element = mixed.get(); mixed.reset(); return element; }
+)gti");
+  negative("owned field accessor prevents carrier movement", mixedOwner + R"gti(
+int main() { Resource resource{}; mut Mixed mixed{resource};
+  int& element = mixed.get(); auto moved = std::move(mixed); return element; }
+)gti");
+  positive("owned field accessor allows mutation after its loan ends",
+           mixedOwner + R"gti(
+int main() { Resource resource{}; mut Mixed mixed{resource};
+  int& element = mixed.get(); int value = element;
+  mixed.reset(); return value - 7; }
+)gti");
+  positive("stored reference accessor retains the external owner",
+           mixedOwner + R"gti(
+int main() { Resource resource{}; mut Mixed mixed{resource};
+  Resource& external = mixed.external(); mixed.reset(); return external.value - 7; }
+)gti");
   positive("shared independent guards and whole movement", R"gti(
 int main() {
   mut Resource owner{};
@@ -103,6 +135,94 @@ int main() { mut Resource owner{}; consume(Guard(owner)); owner.reset(); return 
 int main() { mut Resource owner{}; { Box<Guard> box{Guard(owner)}; }
   owner.reset(); return observed - 7; }
 )gti");
+  positive("explicit nested constructor composes a cleanup dependency", R"gti(
+class Inner<R> {
+  R& resource;
+public:
+  Inner(R& resource) : resource(resource) {}
+  ~Inner() {}
+};
+class Outer<R> {
+  Inner<R> inner;
+public:
+  Outer(R& resource) : inner(Inner<R>(resource)) {}
+};
+class OuterAgain<R> {
+  Outer<R> outer;
+public:
+  OuterAgain(R& resource) : outer(Outer<R>(resource)) {}
+};
+int main() { mut Resource owner{}; { OuterAgain<Resource> box{owner};
+  auto moved = std::move(box); } owner.reset(); return 0; }
+)gti");
+  const std::string composed = R"gti(
+class PairGuard {
+  Resource& left; Resource& right;
+public:
+  PairGuard(Resource& a, Resource& b) : left(a), right(b) {}
+  ~PairGuard() { observed += this.left.value + this.right.value; }
+};
+class Reversed {
+  PairGuard pair;
+public:
+  Reversed(Resource& a, Resource& b) : pair(PairGuard(b, a)) {}
+};
+)gti";
+  positive("composition preserves both reordered origins", composed + R"gti(
+int main() { mut Resource a{}; mut Resource b{};
+  { Reversed pair{a,b}; } a.reset(); b.reset(); return observed - 14; }
+)gti");
+  for (const auto &owner : {std::string("a"), std::string("b")})
+    negative("composition retains reordered owner " + owner, composed + R"gti(
+int main() { mut Resource a{}; mut Resource b{}; Reversed pair{a,b};
+)gti" + owner + ".reset(); return 0; }");
+  negative("composed local resource cannot escape", R"gti(
+class Outer {
+  Guard guard;
+public:
+  Outer(Resource& resource) : guard(Guard(resource)) {}
+};
+Outer bad() { Resource local{}; return Outer(local); }
+int main() { auto escaped = bad(); return 0; }
+)gti",
+           "GTI-S2045");
+  negative("nested construction cannot retain a by-value owned parameter",
+           R"gti(
+class Outer {
+  Guard guard;
+public:
+  Outer(Resource resource) : guard(Guard(resource)) {}
+};
+int main() { Resource owner{}; Outer bad{owner}; return 0; }
+)gti",
+           "GTI-S2045");
+  negative("arbitrary factory calls do not fabricate constructor summaries",
+           R"gti(
+Guard acquire(Resource& resource) { return Guard(resource); }
+class Outer {
+  Guard guard;
+public:
+  Outer(Resource& resource) : guard(acquire(resource)) {}
+};
+int main() { Resource owner{}; Outer bad{owner}; return 0; }
+)gti",
+           "GTI-S2045");
+  negative("nested construction cannot duplicate one exclusive dependency",
+           R"gti(
+class Exclusive {
+  mut Resource& resource;
+public:
+  Exclusive(mut Resource& resource) : resource(resource) {}
+};
+class Twice {
+  Exclusive first; Exclusive second;
+public:
+  Twice(mut Resource& resource)
+      : first(Exclusive(resource)), second(Exclusive(resource)) {}
+};
+int main() { mut Resource owner{}; Twice bad{owner}; return 0; }
+)gti",
+           "GTI-S2045");
   positive("independent dependency set", R"gti(
 class Both {
   Resource& first; Resource& second;
