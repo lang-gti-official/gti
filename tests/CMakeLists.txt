@@ -447,6 +447,10 @@ add_test(NAME raw_pointer_conversion_contract COMMAND gti_raw_pointer_conversion
 add_executable(gti_borrow_origin_syntax_tests "${PROJECT_SOURCE_DIR}/tests/borrow_origin_syntax_tests.cpp")
 target_link_libraries(gti_borrow_origin_syntax_tests PRIVATE gti_compiler)
 add_test(NAME borrow_origin_syntax COMMAND gti_borrow_origin_syntax_tests)
+
+add_executable(gti_discardable_result_tests "${PROJECT_SOURCE_DIR}/tests/discardable_result_tests.cpp")
+target_link_libraries(gti_discardable_result_tests PRIVATE gti_compiler)
+add_test(NAME discardable_result COMMAND gti_discardable_result_tests)
 if(TARGET gti_lsp)
   add_test(NAME raw_pointer_conversion_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_conversion_lsp_test.py" $<TARGET_FILE:gti_lsp>)
@@ -2881,6 +2885,10 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/block_comment_lsp_test.py"
               "$<TARGET_FILE:gti_lsp>"
     )
+    add_test(NAME discardable_result_lsp
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${PROJECT_SOURCE_DIR}/tests/discardable_result_lsp_test.py"
+                     "$<TARGET_FILE:gti_lsp>")
     add_test(NAME unsafe_function_lsp
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/unsafe_function_lsp_test.py"

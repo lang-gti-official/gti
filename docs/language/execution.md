@@ -375,6 +375,41 @@ destroyed at its semicolon:
 [[discard]] make_owner();
 ```
 
+### Optional API results
+
+Non-void function-call results must be used or explicitly discarded with
+`[[discard]]`, unless the selected declaration has `[[discardable]]`:
+
+```gti
+[[discardable]] int record(int value) { return value; }
+int main() { record(7); return 0; }
+```
+
+This declaration-level contract marks an optional result, not a pure function
+or a non-failing operation. It is available on non-void functions and methods,
+including generic, static, virtual, operator and extern-C declarations. It
+may be combined with other applicable function attributes; native attributes
+such as `[[link_name(...)]]` use separate attribute groups. Duplicates, arguments
+to the attribute, void returns and non-function declarations are rejected.
+Each overload has its own policy. Virtual calls use the statically selected
+declaration, not the eventual override's annotation. An indirect callable with
+no selected annotated function retains the default non-discardable policy;
+this attribute is not part of a function-pointer or erased-callable type.
+
+`[[discard]]` remains valid on annotated non-void calls. Ignoring a result does
+not skip the call, suppress failure, extend a borrow or disable borrow checks.
+Unused owning results are destroyed at the same full-expression boundary as
+explicitly discarded results. An unused reference does not destroy its referent.
+The compiler trusts the API author's discard policy; the annotation does not
+prove that ignoring an error/status/guard result is appropriate. Error-bearing
+APIs should normally keep the default. `storage<T>::emplace` uses the opt-out
+because insertion is useful independently of its returned element reference.
+
+See `examples/115-discardable-results.gti` for an unrelated user-defined method
+and the storage API, with both consumed and ignored results.
+
+### Program initialization and call ordering
+
 For source units where `main.gti` includes `a.gti` and then `b.gti`, and
 `a.gti` includes `shared.gti`, the program-wide unit order is `shared.gti`,
 `a.gti`, `b.gti`, `main.gti` after the configured prelude roots. Reversing the

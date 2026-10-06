@@ -572,6 +572,7 @@ struct FunctionInfo {
   bool requiresUnsafe = false;
   bool neverReturns = false;
   bool tracksCaller = false;
+  bool discardableResult = false;
   CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
   // Derived from resolved calls, after all source bodies have been analyzed.
   bool requiresCThreadRuntime = false;

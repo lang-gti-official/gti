@@ -31,7 +31,8 @@ int main() {
   mut auto moved = std::move(slots);
   if (!moved.get(std::size_t(1)).at_original_address()) { return 3; }
   moved.destroy(std::size_t(1));
-  [[discard]] moved.emplace(std::size_t(1), 7);
+  // emplace's optional reference result is declared [[discardable]].
+  moved.emplace(std::size_t(1), 7);
   if (moved.get(std::size_t(1)).read() != 7) { return 4; }
   // Unlike clear(), release() also frees the allocation and leaves capacity 0.
   // Any remaining live elements are destroyed first, in reverse slot order.

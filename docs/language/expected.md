@@ -156,9 +156,11 @@ does not require copying it. Both `expected<int, Error>` and
 active alternative is destroyed. If its destructor fails during another
 failure's cleanup, the ordinary secondary-cleanup-failure rule applies.
 
-Expected-returning calls are non-discardable like every other non-`void`
-function call. Use `[[discard]]` only when ignoring the entire result is
-intentional.
+Expected-returning calls are non-discardable by default like other non-`void`
+function calls. Use `[[discard]]` only when ignoring the entire result is
+intentional. The general declaration-level `[[discardable]]` opt-out can apply
+to any non-void return type, but error-bearing APIs should normally retain the
+default; the attribute does not inspect or handle the error alternative.
 
 Prefix `?` explicitly propagates an error from one expected value into the
 enclosing expected-returning function or lambda:

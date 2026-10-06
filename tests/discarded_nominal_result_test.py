@@ -12,7 +12,10 @@ if __name__ == "__main__":
                 if "12 / divisor" in text)
     failure = (f"{fixture.name}:{line}: runtime error[GTI-R0002]: "
                "division_by_zero in integer_division\n")
-    main(names=(fixture.stem,), cases={fixture.stem: [
+    example = pathlib.Path(__file__).resolve().parent.parent / "examples/115-discardable-results.gti"
+    main(names=(fixture.stem, "discardable_cleanup", "discardable_example"),
+         fixture_paths={"discardable_example": example},
+         cases={"discardable_cleanup": [((), (0, "7\n8\n", ""))], fixture.stem: [
         ((), (0, "12\n6\n4\n8\n9\n", "")),
         (("member-failure",), (70, "12\n9\n", failure)),
         (("free", "failure"), (70, "12\n6\n9\n", failure)),
