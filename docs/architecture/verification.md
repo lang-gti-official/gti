@@ -1160,6 +1160,17 @@ installation has been performed for this slice.
 
 Status: Current test and audit structure.
 
+## Agent task lifecycle
+
+`agent_workflow` uses disposable real Git repositories and a fake Gitea API to
+exercise branch publication, draft creation/retry, successful PR integration,
+upstream reconciliation, exact head/base validation, server merge races and
+required-check refusal. It checks preservation of dirty/divergent local main,
+cleanup refusal for new commits/ignored/source files, conditional branch
+deletion, abandonment, locks and preservation of existing protection settings.
+It performs no production network request or GTI compilation. Live lifecycle
+delivery verifies the actual instance's draft, protection and merge APIs.
+
 ## CLI terminal colour
 
 `runtime_failure_subprocess` independently checks ordinary v1 failures, v2
