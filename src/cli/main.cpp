@@ -207,6 +207,8 @@ struct RegistryAuthenticationOptions {
   std::string action;
   std::string registry = "official";
   bool tokenStdin = false;
+  bool token = false;
+  bool publish = false;
 };
 
 struct ScaffoldOptions {
@@ -258,7 +260,8 @@ void printUsage(std::ostream &stream) {
          "       gti add <package[@requirement]> [--registry <name>]\n"
          "       gti fetch [--offline] [--locked]\n"
          "       gti publish [--registry <name>] [--name <name>] [--dry-run]\n"
-         "       gti registry login [name] [--token-stdin]\n"
+         "       gti registry login [name] [--publish | --token | "
+         "--token-stdin]\n"
          "       gti registry logout [name]\n"
          "       gti registry status [name]\n"
          "       gti clean\n"
@@ -1352,6 +1355,12 @@ parseRegistryAuthenticationArguments(int argc, char *argv[],
     if (argument == "--token-stdin" && options.action == "login" &&
         !options.tokenStdin) {
       options.tokenStdin = true;
+    } else if (argument == "--token" && options.action == "login" &&
+               !options.token) {
+      options.token = true;
+    } else if (argument == "--publish" && options.action == "login" &&
+               !options.publish) {
+      options.publish = true;
     } else if (!argument.starts_with('-') && !nameSelected &&
                lang::driver::validRegistryName(argument)) {
       options.registry = argument;
@@ -1362,6 +1371,12 @@ parseRegistryAuthenticationArguments(int argc, char *argv[],
                    "through hidden input or --token-stdin\n";
       return ArgumentResult::ExitFailure;
     }
+  }
+  if ((options.token && options.tokenStdin) ||
+      (options.publish && (options.token || options.tokenStdin))) {
+    std::cerr << "gti: choose password login (optionally --publish), --token, "
+                 "or --token-stdin\n";
+    return ArgumentResult::ExitFailure;
   }
   return ArgumentResult::Run;
 }
@@ -1699,9 +1714,26 @@ int runRegistryAuthentication(const RegistryAuthenticationOptions &options) {
         std::cerr << "Logging in to " << info->target.endpoint << " ("
                   << info->target.realm << ")\n";
       }
-      loginRegistry(
-          registry, *store,
-          {.secret = lang::cli::readRegistryToken(options.tokenStdin)});
+      if (options.token || options.tokenStdin) {
+        loginRegistry(
+            registry, *store,
+            {.secret = lang::cli::readRegistryToken(options.tokenStdin)});
+      } else {
+        if (!info->passwordLogin) {
+          throw RegistryError("GTI-B1725",
+                              "This registry does not support "
+                              "username/password login; use --token instead.");
+        }
+        RegistryPasswordLogin login;
+        login.username = lang::cli::readRegistryUsername();
+        login.password =
+            lang::cli::readRegistrySecret("Password (input hidden): ");
+        login.oneTimeCode = lang::cli::readRegistrySecret(
+            "2FA code (input hidden; leave empty if disabled): ", true);
+        login.permission = options.publish ? RegistryLoginPermission::Publish
+                                           : RegistryLoginPermission::Read;
+        loginRegistryWithPassword(registry, *store, login);
+      }
       std::cout << "Saved " << options.registry << " credential in "
                 << store->name() << ".\n";
     } else if (options.action == "logout") {

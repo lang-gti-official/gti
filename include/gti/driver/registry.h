@@ -55,6 +55,10 @@ public:
     return std::nullopt;
   }
   virtual void validateCredential(const RegistryCredential &credential);
+  [[nodiscard]] virtual RegistryIssuedCredential
+  issueCredential(const RegistryPasswordLogin &login);
+  virtual void discardIssuedCredential(const RegistryPasswordLogin &login,
+                                       const RegistryIssuedCredential &issued);
   [[nodiscard]] virtual std::vector<std::string>
   listVersions(std::string_view package) = 0;
   // nullopt means a version is incomplete/not a published GTI package.
@@ -79,6 +83,9 @@ configuredRegistries(std::shared_ptr<RegistryCredentialStore> credentials = {});
 // Does not inherit an environment override or an already stored credential.
 void loginRegistry(Registry &registry, RegistryCredentialStore &store,
                    const RegistryCredential &credential);
+void loginRegistryWithPassword(Registry &registry,
+                               RegistryCredentialStore &store,
+                               const RegistryPasswordLogin &login);
 void logoutRegistry(Registry &registry, RegistryCredentialStore &store);
 [[nodiscard]] RegistryPackageMetadata
 parseRegistryMetadata(std::string_view text, const RegistryPackageKey &key,

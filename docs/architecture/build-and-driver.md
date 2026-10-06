@@ -1292,19 +1292,41 @@ token-env = "GTI_REGISTRY_TOKEN"
 ```
 
 On macOS, authenticate once using `gti registry login` (default `official`) or
-`gti registry login <name>`. Paste a Gitea personal access token into the hidden
-terminal prompt. GTI verifies package-read access to the configured owner before
-saving the token in macOS Keychain. Subsequent explicit `add`, `fetch` and
-`publish` commands look it up automatically. No password is requested and no
-token is placed in command-line arguments. Login verifies read permission;
-publication still requires package-write permission and can fail independently.
-Create the token in Gitea's user settings; this slice does not implement OAuth,
-browser/device login, automatic token issuance or refresh.
+`gti registry login <name>`. Normal login prompts for your Gitea username,
+hidden password, and an optional hidden six-digit authenticator code (leave it
+empty when 2FA is disabled). GTI explicitly creates one named token through
+Gitea's token API using Basic authentication, requests only `read:package`,
+verifies package-read access to the configured owner, and saves only the token
+in macOS Keychain. Passwords and authenticator codes are ephemeral inputs:
+never stored in Keychain, config, manifests, caches or reports, and never
+accepted in command-line arguments. Subsequent `add` and `fetch` commands use
+the saved token automatically. `gti registry login --publish` requests
+`write:package` instead; it implies read but does not grant any repository,
+user-profile or administrative scope. Gitea's package scope covers the account's
+package access, not one owner; the local credential lookup is owner-scoped.
+
+Use `login --token` for hidden entry of an existing personal access token,
+including accounts whose SSO/WebAuthn/server policy disallows password-based
+API authentication. Token validation and replacement retain the same behavior.
+OAuth/browser/device login and refresh are not implemented. Gitea's password
+and TOTP authentication policy remains server-owned; the optional 2FA prompt
+avoids inferring a challenge from version-specific error messages.
+
+Token names contain a scope fingerprint and a unique 128-bit attempt nonce.
+GTI never lists or deletes preexisting account tokens. A failed validation/save
+or malformed/uncertain issuance triggers best-effort revocation of only the
+attempt's generated token name; confirmed creation is not retried automatically.
+If cleanup cannot be confirmed, `GTI-B1727` directs manual removal in the account's
+access-token settings. An interruption or lost response can still leave that
+named token remotely; a server that consumes TOTP codes may reject cleanup using
+the already used code. A failed saved-credential replacement preserves the
+previous local login. Repeated successful password logins create new server
+tokens; GTI does not silently revoke previous logins on other devices.
 
 `gti registry status [name]` reports the selected credential source without
 showing the token or contacting the server. `gti registry logout [name]` removes
 only that scoped Keychain record, idempotently; it does not revoke the server's
-token. `login --token-stdin` explicitly accepts a single token from a pipeline,
+token. `login --token-stdin` retains its meaning: one preexisting token from a pipeline,
 with an optional final LF/CRLF. Avoid commands that expose the token in shell
 history or process arguments; use a secret manager's output instead.
 Nonterminal login without that option fails rather than reading a secret with
@@ -1319,7 +1341,12 @@ overrides alone and reports that they remain set.
 
 `RegistryCredentialStore` is a backend-neutral protected-storage interface;
 `Registry::authentication()` and `validateCredential()` are optional transport
-capabilities, independent of metadata/archive formats. Credentials are typed
+capabilities. Optional `issueCredential()`/`discardIssuedCredential()` let a
+backend implement password-to-token exchange and rollback through GTI-owned
+ephemeral input and opaque attempt identity, independent of metadata/archive
+formats. The shared driver owns validation-before-save and rollback; the CLI
+owns prompts and permission intent; Gitea alone owns Basic/OTP headers, token
+paths/JSON and scope spellings. Credentials are typed
 access tokens in a versioned private record, scoped by the logical registry,
 normalized configured endpoint (trailing slashes removed) and owner/realm. The
 Keychain service is `dev.gti.registry.credentials.v1`; its account is the full
