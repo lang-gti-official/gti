@@ -1912,7 +1912,7 @@ private:
         lowerStatements(snapshot.source->body()->statements(), *model,
                         owner.typeArguments, owner.valueArguments, body);
     finalizeLifetimes(body, *model, true);
-    lowerLoans(*model, body);
+    lowerLoans(*model, body, snapshot.source);
     output.program.destructors[index].body = std::move(body);
     currentReceiverType = enclosingReceiverType;
     currentReceiverAccess = enclosingReceiverAccess;
@@ -2020,7 +2020,7 @@ private:
   }
 
   void lowerLoans(const SemanticModel &model, HirBody &body,
-                  const FunctionDecl *function = nullptr) {
+                  const Stmt *declaration = nullptr) {
     ensurePlaceDomain(body);
     body.loans.clear();
     std::unordered_map<SymbolId, HirBindingId> bindings;
@@ -2032,7 +2032,7 @@ private:
     std::unordered_set<SemanticLoanId> included;
     std::vector<SemanticLoanId> pending;
     for (const SemanticLoanInfo &loan : model.loans()) {
-      if ((function != nullptr && loan.entryFunction == function) ||
+      if ((declaration != nullptr && loan.entryDeclaration == declaration) ||
           std::any_of(
               loan.carriers.begin(), loan.carriers.end(),
               [&](SymbolId carrier) { return bindings.contains(carrier); }))

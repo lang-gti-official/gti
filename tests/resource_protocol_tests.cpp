@@ -221,6 +221,33 @@ int main() { return 0; }
              "GTI-S2017",
              "a live element borrow prevents invalidation: " + operation);
   }
+  for (const auto &operation :
+       {std::string("values.release();"), std::string("values.clear();"),
+        std::string("values.pop_back();"),
+        std::string("values.try_reserve(std::size_t(8)).value();"),
+        std::string("auto moved = std::move(values);")}) {
+    for (const bool iterator : {false, true}) {
+      negative(
+          R"(
+#include <std/resource_vector>
+int use(std::resource_ref<std::process_resource> resource) {
+  mut std::resource_vector<int,std::process_resource> values{resource};
+  values.emplace_back(42);
+)" +
+              std::string(
+                  iterator ? "  auto cursor = values.begin();\n"
+                           : "  int& element = values.get(std::size_t(0));\n") +
+              operation +
+              (iterator ? "\n  return *cursor;\n" : "\n  return element;\n") +
+              R"(
+}
+int main() { return 0; }
+)",
+          "GTI-S2017",
+          "a live vector " + std::string(iterator ? "iterator" : "element") +
+              " prevents owner invalidation: " + operation);
+    }
+  }
   negative(R"(
 struct Resource {
   unsafe expected<std::raw_allocation,std::alloc_errc> allocate(std::layout request) {

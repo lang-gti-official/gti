@@ -16,6 +16,9 @@ if __name__ == "__main__":
                 "division_by_zero in integer_division\n")
     run_runtime_matrix(
         names=("constructor_passive_field_rollback",
+               "constructor_provenance_only_fields",
+               "borrowed_physical_adapter",
+               "expected_passive_move_return",
                "constructor_bound_passive_field_rollback",
                "constructor_status_field_rollback",
                "constructor_status_copied_field_rollback"),

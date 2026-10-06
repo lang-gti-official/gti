@@ -1869,9 +1869,8 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
 verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
                                std::size_t owner);
 
-[[nodiscard]] bool
-isCarrierReferenceConstruction(const MirProgram &program,
-                               const MirInstruction &instruction);
+[[nodiscard]] bool isCarrierReferenceResult(const MirProgram &program,
+                                            const MirInstruction &instruction);
 
 [[nodiscard]] MirVerificationResult
 verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
@@ -2028,13 +2027,30 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
       }
     }
     if (loan != nullptr) {
-      if (fields && loan->storedDependency != 0) {
+      const auto *selected = source ? body.findPlace(*source) : nullptr;
+      const bool rangeStorage =
+          selected != nullptr && selected->root == MirPlaceRootKind::Binding &&
+          selected->projections.empty() &&
+          (loan->kind == MirLoanKind::Local ||
+           loan->kind == MirLoanKind::CallResult) &&
+          loan->designatedFields.empty() &&
+          loan->additionalDependencies.empty() &&
+          std::any_of(body.rangeIterations.begin(), body.rangeIterations.end(),
+                      [&](const MirRangeIteration &range) {
+                        const auto *iterator = body.findPlace(range.iterator);
+                        return iterator != nullptr &&
+                               iterator->root == MirPlaceRootKind::Binding &&
+                               iterator->binding == selected->binding;
+                      });
+      // Synthesized iterators keep the range's physical storage loan. The
+      // separately retained resource is not the owner of the element address.
+      if (fields && loan->kind != MirLoanKind::Stored &&
+          loan->storedDependency != 0 && !rangeStorage) {
         loan = body.findLoan(loan->storedDependency);
         if (loan == nullptr)
           return {};
       }
       auto result = concreteDependencies(*loan, fields);
-      const auto *selected = source ? body.findPlace(*source) : nullptr;
       if (selected != nullptr && selected->type == operand.type &&
           !selected->projections.empty() &&
           !(result.size() == 1 && result.front().designatedFields.empty()) &&
@@ -2951,7 +2967,7 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
           !findStoredCarrierReferences(program, instruction.receiver->type)
                .empty();
       const bool shellResult =
-          isCarrierReferenceConstruction(program, instruction) ||
+          isCarrierReferenceResult(program, instruction) ||
           (instruction.info.category == ValueCategory::Place &&
            ((instruction.info.type.kind == SemanticType::Class &&
              instruction.info.traits.containsBorrowedState) ||
@@ -3300,12 +3316,46 @@ findStoredCarrierReference(const MirProgram &program,
              : std::optional<MirStoredCarrierReference>(references.front());
 }
 
-[[nodiscard]] bool
-isCarrierReferenceConstruction(const MirProgram &program,
-                               const MirInstruction &instruction) {
-  if (instruction.kind != MirInstructionKind::Construct ||
-      instruction.borrowOrigin != BorrowOriginKind::Argument ||
-      instruction.borrowArgument >= instruction.parameterTypes.size())
+[[nodiscard]] bool isCarrierReferenceResult(const MirProgram &program,
+                                            const MirInstruction &instruction) {
+  if ((instruction.kind != MirInstructionKind::Construct &&
+       (instruction.kind != MirInstructionKind::Call ||
+        instruction.intrinsic != IntrinsicKind::None ||
+        !instruction.functionTarget)) ||
+      !instruction.borrowArguments.empty() ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.type.kind != SemanticType::Class)
+    return false;
+  const auto paths =
+      findStoredCarrierReferences(program, instruction.info.type);
+  if (paths.size() != 1)
+    return false;
+  if (instruction.borrowOrigin == BorrowOriginKind::Receiver) {
+    const auto *target =
+        instruction.functionTarget
+            ? program.findFunctionInstance(*instruction.functionTarget)
+            : nullptr;
+    // An ordinary compact receiver result can reference an inline owned
+    // field rather than the entire receiver type. Its verified callee return
+    // contract establishes that path; keeping the whole physical receiver
+    // alive at the call site is the conservative public contract.
+    return instruction.kind == MirInstructionKind::Call &&
+           instruction.receiver && instruction.borrowFields.empty() &&
+           target != nullptr && target->returnType == instruction.info.type &&
+           target->returnBorrowOrigin == BorrowOriginKind::Receiver &&
+           target->returnBorrowFields.empty() &&
+           target->returnBorrowParameters.empty() &&
+           findStoredCarrierReference(program, instruction.receiver->type)
+               .has_value();
+  }
+  if (instruction.borrowOrigin != BorrowOriginKind::Argument ||
+      instruction.borrowArgument >= instruction.parameterTypes.size() ||
+      instruction.borrowFields.size() > 1 ||
+      (!instruction.borrowFields.empty() &&
+       (!instruction.borrowFields.front().sourceFields.empty() ||
+        instruction.borrowFields.front().origin != BorrowOriginKind::Argument ||
+        instruction.borrowFields.front().parameter !=
+            instruction.borrowArgument)))
     return false;
   const auto &parameter =
       instruction.parameterTypes[instruction.borrowArgument];
@@ -3313,10 +3363,7 @@ isCarrierReferenceConstruction(const MirProgram &program,
       parameter.arguments.size() != 1 ||
       !findStoredCarrierReference(program, parameter.arguments.front()))
     return false;
-  const auto paths =
-      findStoredCarrierReferences(program, instruction.info.type);
-  return paths.size() == 1 &&
-         paths.front().reference.arguments == parameter.arguments;
+  return paths.front().reference.arguments == parameter.arguments;
 }
 
 // Zero denotes an exact caller-owned receiver/reference source. A nonzero
@@ -3574,11 +3621,17 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
       for (const auto &block : body.blocks) {
         for (const auto &instruction : block.instructions) {
           if (instruction.loan != loan.id ||
-              !isCarrierReferenceConstruction(program, instruction))
+              !isCarrierReferenceResult(program, instruction))
             continue;
-          const auto &parameter =
-              instruction.parameterTypes[instruction.borrowArgument];
-          constructedShell = parameter.arguments.front() == sourceType;
+          const auto &input =
+              instruction.borrowOrigin == BorrowOriginKind::Receiver
+                  ? instruction.receiver->type
+                  : instruction.parameterTypes[instruction.borrowArgument];
+          const auto &referent = input.kind == SemanticType::Reference &&
+                                         input.arguments.size() == 1
+                                     ? input.arguments.front()
+                                     : input;
+          constructedShell = referent == sourceType;
         }
       }
     }
@@ -3677,10 +3730,15 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
     const auto *constructor = body.kind == MirBodyKind::Constructor
                                   ? program.findConstructorInstance(owner)
                                   : nullptr;
+    const auto *destructor = body.kind == MirBodyKind::Destructor
+                                 ? program.findDestructorInstance(owner)
+                                 : nullptr;
+    const std::vector<HirBindingId> noParameters;
     const auto *parameterBindings =
         function != nullptr      ? &function->parameterBindings
         : lambda != nullptr      ? &lambda->parameterBindings
         : constructor != nullptr ? &constructor->parameterBindings
+        : destructor != nullptr  ? &noParameters
                                  : nullptr;
     const auto *parameterTypes = function != nullptr ? &function->parameterTypes
                                  : lambda != nullptr ? &lambda->parameterTypes
@@ -3690,12 +3748,16 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
     if (abstractEntry || loan.carriers.empty()) {
       const auto *receiver = function != nullptr && function->owner
                                  ? program.findClassInstance(*function->owner)
+                             : destructor != nullptr
+                                 ? program.findClassInstance(destructor->owner)
                                  : nullptr;
       const bool receiverEntry =
           source->root == MirPlaceRootKind::This && receiver != nullptr &&
-          !function->staticMember && carrierType == receiver->type &&
+          (destructor != nullptr || !function->staticMember) &&
+          carrierType == receiver->type &&
           source->access ==
-              (receiverAllowsMutation(function->receiverMutability)
+              (destructor != nullptr ||
+                       receiverAllowsMutation(function->receiverMutability)
                    ? AccessMode::Mutable
                    : AccessMode::ReadOnly);
       bool parameterEntry = false;
@@ -8880,6 +8942,19 @@ verifyLifecycleBoundLoanContracts(const MirProgram &program,
     const auto *constructor = body.kind == MirBodyKind::Constructor
                                   ? program.findConstructorInstance(owner)
                                   : nullptr;
+    if (loan.lifecycleBound && loan.storedField != 0 &&
+        constructor != nullptr &&
+        std::any_of(constructor->initializers.begin(),
+                    constructor->initializers.end(),
+                    [&](const auto &initializer) {
+                      return initializer.field == loan.storedField &&
+                             initializer.storesReference;
+                    }))
+      return verificationFailure(body, owner,
+                                 "stored reference field cannot acquire its "
+                                 "referent's cleanup obligation",
+                                 producer ? producer->block->id : 0,
+                                 producer ? producer->instruction->id : 0);
     const auto *lambda =
         body.kind == MirBodyKind::Lambda ? program.findLambda(owner) : nullptr;
     const auto *parameters = function      ? &function->parameterBindings

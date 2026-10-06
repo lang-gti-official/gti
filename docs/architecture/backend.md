@@ -727,6 +727,12 @@ the Expected envelope. No default constructor or result-drop obligation is
 invented. These representation choices preserve the verified Invoke and
 cleanup schedule.
 
+An exact moved-Expected return likewise publishes directly into the caller's
+result storage. This applies when its class payload is cleanup-free but lacks
+a default constructor: the unused SSA identity must not declare a second,
+default-constructed Expected. The same unique Move/Return and cleanup-tail
+proof owns that erasure; neither the result type alone nor a public name does.
+
 A checked `value()` or `error()` on a borrowed Expected may copy a cleanup-free,
 generated-copy class alternative directly into its sole binding's lifetime
 slot. The receiver remains borrowed and unchanged. This representation requires
@@ -1489,6 +1495,26 @@ support observation-free retirement. Multiple fallible native prefixes,
 mutable-reference inputs and nonempty unclaimed siblings remain excluded;
 this bounded route alone is not complete allocator/container validation.
 
+The same exact first-field schedule also admits a passive shared-reference
+child with generated, observation-free destruction. This separate branch
+requires no child value drop, success activation, field rollback obligation or
+reparenting; it still checks the selected constructor, original Invoke failure
+identity, adjacent field/dependency publication and both source-loan endpoints.
+A cleanup-bearing or exclusive-reference child cannot use that passive branch.
+The bound native shell is not an empty-state witness, and later field/body work
+is not hoisted. This supports ordinary nested view construction and copied
+field returns without inventing a second cleanup schedule.
+
+Reference fields may also bind an exact shared reference formal whose referent
+itself carries a borrow. The native binding remains that formal, while the
+verified entry Parameter loan and separate Stored dependency retain physical
+shell versus external-owner identity. The backend requires the matching source,
+parameter type and field Borrow; it never substitutes the external referent.
+A returned constructed adapter preserves the same physical source and external
+dependency in its exact Construct/Stored/Return handoff. Its class value carries
+the reference, so publication creates no independent pointer alias. These
+representation proofs do not change escape or endpoint verification.
+
 The sealed native `OptionalStorage` capability has one narrower empty-prefix
 case: a cleanup-free storage field may use the native initializer list when its
 exact empty construction, field publication, and full-expression boundary are
@@ -1569,6 +1595,13 @@ failure status and that ordinary body is itself published by this route, so
 the plain C++ overload exists at the call site. Zero-argument concrete default
 construction may omit the argument call-plan identity because there are no
 inputs to stage; the selected constructor and exact field type still match.
+A targetless explicit generated-default `Construct` can instead publish in
+the constructor body directly into the final field. Its default initializer
+body must be passive and its private pre-publication shell independently
+inert; the adjacent Initialize must reparent the exact active value obligation
+into the selected field's rollback obligation. This uses construction-only
+representation authority, not move assignment, and retains normal field
+retirement and later failure cleanup unchanged.
 A declaration-ordered explicit prefix may leave a trailing generated empty
 owner at its declaration default. That exception requires a targetless,
 argument-free default construction, a passive generated field-initializer
@@ -1925,6 +1958,14 @@ A resolved nominal `operator()` uses the same exact class-result placement
 proof as another function-target call, both for argument preparation and local
 binding initialization. Callable receiver capability remains independently
 verified; no public wrapper name participates in this classification.
+Receiver field paths that exist only as Stored or CallResult provenance are
+not eagerly evaluated into native lvalue aliases. Exact field/type rows remain
+part of admission, and CallResult provenance requires one admitted executable
+call to materialize its pointer. Instruction operands and destinations, return
+or edge arguments, drop obligations, range carriers, other loan families and
+array bases prevent this erasure. Thus a public accessor can preserve a private
+nested origin without generating a source-level private field access in its
+caller; actual field reads and writes keep their normal representation.
 For concrete, non-template owners and members, generated callable ADL adapters
 are friend declarations inside the class, with inline forwarding definitions
 after all type layouts. Their by-value parameters and results are then complete

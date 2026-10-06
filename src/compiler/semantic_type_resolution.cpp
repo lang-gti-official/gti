@@ -3825,7 +3825,8 @@ auto SemanticVisitor::Impl::validateReferenceBinding(
     const bool carrierShell =
         sourceLoan != nullptr &&
         sourceLoan->kind == SemanticLoanKind::StoredValue &&
-        typeTraits(referent).containsBorrowedState;
+        (typeTraits(referent).containsBorrowedState ||
+         receiverStorageBorrow(initializer));
     const AccessMode sourceAccess =
         source && source->dependency ? source->dependency->access
         : sourceLoan != nullptr      ? sourceLoan->access

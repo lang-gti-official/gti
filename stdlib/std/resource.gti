@@ -50,9 +50,10 @@ public:
 /// disjoint from all outstanding regions, and contain no preexisting objects
 /// whose lifetime adoption would overwrite. Their addresses and descriptors
 /// remain valid until matching release; release retires exactly that region
-/// and does not access destroyed elements. Raw aliases, independent reset and
-/// concurrent calls must not violate these promises. Shared borrowing checks
-/// the provider shell's lifetime; it cannot validate raw memory or add locks.
+/// and does not access destroyed elements. Raw aliases, independent reset,
+/// reentrant calls and concurrent calls must not violate these promises.
+/// Shared borrowing checks the provider shell's lifetime; it cannot validate
+/// raw memory or add locks.
 unsafe resource_ref<R> bind_resource<R>(R& resource) requires memory_resource<R> {
   return resource_ref<R>(gti_internal::resource_binding::trusted, resource);
 }

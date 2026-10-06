@@ -474,6 +474,26 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testPassiveBorrowedConstructedFieldPrefix",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPhysicalCarrierReferencePublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveExpectedMoveReturnHasNoSsaShell",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testGeneratedDefaultOwningFieldPublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testProvenanceOnlyReceiverFields",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testNestedConstructorRepresentationPrecedence",
       "suite": "lifecycle"
     },

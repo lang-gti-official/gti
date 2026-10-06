@@ -1305,11 +1305,20 @@ including single-path carriers; a type merely containing borrowed state is
 not permission to replace its shell origin with its resource dependency.
 An exact field-origin path can extend beneath a stored external reference.
 An unambiguous nonvirtual accessor relay composes that path, and independent
-body analysis checks its actual return. Returning through a reference alias
+body analysis checks its actual return. Composition respects the callee's
+checked contract: an accessor into receiver-owned storage exposes the receiver
+as owner, not an implementation-private field or allocation path. The same
+physical-storage classification governs mutable reference initialization;
+a read-only external dependency does not make a separately owned field
+read-only. Returning through a reference alias
 uses the selected stored dependency, not the alias's separate physical-shell
 loan. A projected referent retains its exact suffix instead of becoming an
 alias of the whole external owner. Dynamic, ambiguous and recursive declaration
 provenance remain conservative.
+Synthesized range dereference retains the selected physical range-storage loan
+before composing field mappings. Its transitive resource dependency remains
+separate; borrowing an element cannot be substituted with borrowing the resource
+that supplied the container's allocation.
 Moving a cleanup-bound carrier updates flow availability and transfers the
 active loan, but retains the declaration's historical loan identity so earlier
 reference uses still lower against the original shell and dependency.

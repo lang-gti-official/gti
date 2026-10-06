@@ -441,7 +441,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
              source, failureMetadata, instance.body, MirBodyKind::Destructor,
              SemanticType::Void, {}, definedFailureEffects, valid, false,
              nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-             compilerTrustedSourceUnit(source, instance.sourceUnit))});
+             compilerTrustedSourceUnit(source, instance.sourceUnit), nullptr,
+             &instance)});
   }
 
   result.program.lambdas.reserve(source.lambdaInstances().size());

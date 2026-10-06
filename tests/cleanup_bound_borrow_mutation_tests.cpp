@@ -86,6 +86,10 @@ void rejected(lang::MirProgram program, const std::string &name,
     expect(lang::rebuildMirValueUses(
                const_cast<lang::MirConstructorInstance &>(constructor).body),
            name + " rebuilds constructor value uses");
+  for (const auto &destructor : program.destructorInstances())
+    expect(lang::rebuildMirValueUses(
+               const_cast<lang::MirDestructorInstance &>(destructor).body),
+           name + " rebuilds destructor value uses");
   const auto result = lang::verifyMirProgram(program);
   expect(!result.valid(), name + " is rejected");
   if (!message.empty())
@@ -106,6 +110,10 @@ struct BodyKey {
 };
 
 lang::MirBody &body(lang::MirProgram &program, BodyKey key) {
+  if (key.kind == lang::MirBodyKind::Destructor)
+    return const_cast<lang::MirDestructorInstance *>(
+               program.findDestructorInstance(key.owner))
+        ->body;
   if (key.kind == lang::MirBodyKind::Constructor)
     return const_cast<lang::MirConstructorInstance *>(
                program.findConstructorInstance(key.owner))
@@ -1233,6 +1241,340 @@ int main() {
   expect(checked, "cleanup child has an independent local passive parent");
 }
 
+void checkRangeOverCleanupOwner() {
+  const auto control = analyze("range over cleanup owner", R"gti(
+class Cell {
+  Resource& resource;
+  int value = 7;
+public:
+  Cell(Resource& resource) : resource(resource) {}
+  int& get() { return this.value; }
+  ~Cell() { observed += this.resource.value; }
+};
+struct Finish {
+  int position;
+  Finish(int position) : position(position) {}
+};
+struct Cursor {
+  Cell& cell;
+  mut int position;
+  Cursor(Cell& cell, int position) : cell(cell), position(position) {}
+  int& operator*() { return this.cell.get(); }
+  void operator++() mut { this.position++; }
+  bool operator!=(Finish& end) { return this.position != end.position; }
+};
+class Collection {
+  Cell cell;
+public:
+  Collection(Resource& resource) : cell(Cell(resource)) {}
+  Cursor begin() { return Cursor(this.cell, 0); }
+  Finish end() { return Finish(1); }
+};
+struct ResourceView {
+  Resource& source;
+  ResourceView(Resource& source) : source(source) {}
+  Resource& get() { return this.source; }
+};
+int traverse(ResourceView resource) {
+  Collection collection{resource.get()};
+  mut int result = 0;
+  for (auto& value : collection) { result += value; }
+  return result - 7;
+}
+int main() {
+  Resource resource{};
+  return traverse(ResourceView(resource));
+}
+)gti");
+  if (!control)
+    return;
+  bool checkedReferenceField = false;
+  for (const auto &constructor : control->constructorInstances()) {
+    for (const auto &loan : constructor.body.loans) {
+      if (loan.kind != lang::MirLoanKind::Stored || !loan.escapes ||
+          loan.storedField == 0 || loan.storedDependency == 0)
+        continue;
+      checkedReferenceField = true;
+      expect(!loan.lifecycleBound,
+             "a stored reference does not own the referenced Cell's cleanup");
+      auto forgedOwner = *control;
+      body(forgedOwner, {lang::MirBodyKind::Constructor, constructor.id})
+          .loans[loan.id - 1]
+          .lifecycleBound = true;
+      rejected(forgedOwner, "reference publication cannot steal cleanup",
+               "stored reference field cannot acquire");
+    }
+  }
+  bool checkedAdapter = false;
+  bool checkedRange = false;
+  for (const auto &function : control->functionInstances()) {
+    const BodyKey key{lang::MirBodyKind::Function, function.id};
+    for (const auto &loan : function.body.loans) {
+      if (loan.kind == lang::MirLoanKind::Stored && !loan.entry &&
+          !loan.escapes && loan.storedDependency != 0 && loan.parent == 0) {
+        checkedAdapter = true;
+        auto missingDependency = *control;
+        body(missingDependency, key).loans[loan.id - 1].storedDependency = 0;
+        rejected(missingDependency,
+                 "returned adapter must retain nested owner's dependency",
+                 "carrier shell loan does not preserve");
+      }
+      if (loan.kind == lang::MirLoanKind::Return && loan.escapes &&
+          loan.storedDependency != 0) {
+        auto missingReturnDependency = *control;
+        body(missingReturnDependency, key).loans[loan.id - 1].storedDependency =
+            0;
+        rejected(missingReturnDependency,
+                 "returned adapter cannot discard its storage dependency");
+      }
+      const auto *parent = function.body.findLoan(loan.parent);
+      const auto *resource =
+          parent == nullptr ? nullptr
+                            : function.body.findLoan(parent->storedDependency);
+      if (loan.kind == lang::MirLoanKind::CallResult && parent != nullptr &&
+          parent->kind == lang::MirLoanKind::Local && resource != nullptr &&
+          loan.source != resource->source) {
+        checkedRange = true;
+        auto wrongOwner = *control;
+        auto &changed = body(wrongOwner, key).loans[loan.id - 1];
+        changed.source = resource->source;
+        changed.parent = resource->id;
+        rejected(
+            wrongOwner,
+            "range element cannot replace its storage owner with resource");
+      }
+    }
+  }
+  expect(checkedReferenceField, "range cursor stores a checked Cell reference");
+  expect(checkedAdapter, "begin publishes an adapter over a nested owner");
+  expect(checkedRange, "range element retains physical container storage");
+}
+
+void checkExternalReceiverAdapterReturn() {
+  const auto control = analyze("external receiver adapter return", R"gti(
+class Cursor<T> {
+  T& value;
+public:
+  Cursor(T& value) : value(value) {}
+  T& operator*() { return this.value; }
+};
+class SingleRange<T> {
+  T value;
+public:
+  SingleRange(T value) : value(value) {}
+  Cursor<T> begin() { return Cursor<T>(this.value); }
+};
+class WrappedRange<T> {
+  SingleRange<T>& internal;
+public:
+  WrappedRange(SingleRange<T>& internal) : internal(internal) {}
+  Cursor<T> begin() { return this.internal.begin(); }
+};
+int main() {
+  SingleRange<int> range{7};
+  WrappedRange<int> wrapper{range};
+  auto cursor = wrapper.begin();
+  return *cursor - 7;
+}
+)gti");
+  if (!control)
+    return;
+  bool checked = false;
+  for (const auto &function : control->functionInstances()) {
+    if (function.returnType.kind != lang::SemanticType::Class ||
+        function.returnBorrowFields.size() != 1)
+      continue;
+    const auto &mapping = function.returnBorrowFields.front();
+    if (mapping.origin != lang::BorrowOriginKind::Receiver ||
+        mapping.sourceFields.size() != 1 || mapping.resultFields.size() != 1 ||
+        mapping.sourceFields == mapping.resultFields)
+      continue;
+    const BodyKey key{lang::MirBodyKind::Function, function.id};
+    const auto shell =
+        std::find_if(function.body.places.begin(), function.body.places.end(),
+                     [](const auto &place) {
+                       return place.root == lang::MirPlaceRootKind::This &&
+                              place.projections.empty();
+                     });
+    expect(shell != function.body.places.end(),
+           "external adapter control has a distinct wrapper receiver shell");
+    for (const auto &block : function.body.blocks) {
+      if (block.terminator.kind != lang::MirTerminatorKind::Return ||
+          !block.terminator.returnLoan)
+        continue;
+      const auto returned = *block.terminator.returnLoan;
+      const auto *loan = function.body.findLoan(returned);
+      expect(loan != nullptr && loan->designatedFields == mapping.resultFields,
+             "external adapter publication labels the returned field, not "
+             "source field");
+      if (loan == nullptr)
+        continue;
+      checked = true;
+      auto missing = *control;
+      body(missing, key).loans[returned - 1].designatedFields.clear();
+      rejected(missing,
+               "external adapter return cannot erase result field identity");
+
+      auto wrongField = *control;
+      body(wrongField, key).loans[returned - 1].designatedFields =
+          mapping.sourceFields;
+      rejected(wrongField, "external adapter return cannot replace result "
+                           "field with source field");
+
+      if (shell != function.body.places.end()) {
+        expect(loan->source != shell->id,
+               "external adapter source is not the wrapper shell");
+        auto wrongOwner = *control;
+        body(wrongOwner, key).loans[returned - 1].source = shell->id;
+        rejected(wrongOwner, "external adapter return cannot replace external "
+                             "range with wrapper shell");
+
+        auto forgedMap = wrongOwner;
+        auto &changed = *const_cast<lang::MirFunctionInstance *>(
+            forgedMap.findFunctionInstance(function.id));
+        changed.returnBorrowFields.front().sourceFields.clear();
+        for (const auto &caller : forgedMap.functionInstances())
+          for (auto &callerBlock :
+               const_cast<lang::MirFunctionInstance &>(caller).body.blocks)
+            for (auto &call : callerBlock.instructions)
+              if (call.functionTarget == function.id)
+                call.borrowFields = changed.returnBorrowFields;
+        rejected(forgedMap, "external adapter return source is independently "
+                            "checked against its producer");
+      }
+    }
+  }
+  expect(
+      checked,
+      "external receiver adapter publishes its exact resolved field mapping");
+}
+
+void checkFactoryCarrierAndDestructor() {
+  const auto control = analyze("factory carrier and destructor receiver", R"gti(
+class Cell<T> {
+  Resource& resource;
+  T tag;
+  int value = 7;
+public:
+  Cell(Resource& resource, T tag) : resource(resource), tag(tag) {}
+  int read() { return this.value; }
+  ~Cell() { observed += this.resource.value; }
+};
+class Reference<T> {
+  T& owner;
+public:
+  Reference(T& owner) : owner(owner) {}
+  T& get() { return this.owner; }
+};
+Reference<T> bind<T>(T& owner) { return Reference<T>(owner); }
+class Collection {
+  Cell<int> cell;
+public:
+  Collection(Cell<int> cell) : cell(std::move(cell)) {}
+  Reference<Cell<int>> view() { return Reference<Cell<int>>(this.cell); }
+};
+Reference<Cell<int>> relay(Reference<Cell<int>> source) { return source; }
+class Observer<T> {
+  Cell<T>& owner;
+public:
+  Observer(Cell<T>& owner) : owner(owner) {}
+  Cell<T>& get() { return this.owner; }
+  ~Observer() { observed += this.get().read(); }
+};
+int main() {
+  Resource resource{};
+  Cell<int> owner{resource, 1};
+  auto reference = bind(owner);
+  Collection collection{Cell<int>(resource, 1)};
+  auto view = collection.view();
+  auto copied = relay(view);
+  observed += copied.get().read();
+  Observer<int> observer{owner};
+  return reference.get().read() - 7;
+}
+)gti");
+  if (!control)
+    return;
+  bool checkedFactory = false;
+  bool checkedReceiver = false;
+  for (const auto &function : control->functionInstances()) {
+    const BodyKey key{lang::MirBodyKind::Function, function.id};
+    for (const auto &block : function.body.blocks)
+      for (const auto &call : block.instructions) {
+        const auto *target =
+            call.functionTarget
+                ? control->findFunctionInstance(*call.functionTarget)
+                : nullptr;
+        if (call.kind != lang::MirInstructionKind::Call || !call.loan ||
+            target == nullptr ||
+            target->returnType.kind != lang::SemanticType::Class ||
+            !((call.borrowOrigin == lang::BorrowOriginKind::Argument &&
+               call.parameterTypes.size() == 1 &&
+               call.parameterTypes.front().kind ==
+                   lang::SemanticType::Reference) ||
+              (call.borrowOrigin == lang::BorrowOriginKind::Receiver &&
+               call.borrowFields.empty() && call.parameterTypes.empty())))
+          continue;
+        const auto *loan = function.body.findLoan(*call.loan);
+        const auto *dependency =
+            loan ? function.body.findLoan(loan->storedDependency) : nullptr;
+        expect(loan && dependency && loan->source != dependency->source,
+               "factory distinguishes physical shell from external owner");
+        if (!loan || !dependency)
+          continue;
+        checkedFactory = true;
+        checkedReceiver |=
+            call.borrowOrigin == lang::BorrowOriginKind::Receiver;
+        auto missing = *control;
+        body(missing, key).loans[loan->id - 1].storedDependency = 0;
+        rejected(missing, "factory wrapper cannot discard external dependency");
+        auto flattened = *control;
+        body(flattened, key).loans[loan->id - 1].source = dependency->source;
+        rejected(
+            flattened,
+            "factory wrapper cannot substitute external resource for shell");
+        const auto end = loanEnd(function.body, dependency->id);
+        expect(end.has_value(),
+               "factory owner dependency has a checked endpoint");
+        if (end) {
+          auto early = *control;
+          expect(moveBefore(body(early, key), *end, call.id),
+                 "factory dependency endpoint mutation applies");
+          rejected(early, "factory cannot borrow an already released owner");
+        }
+      }
+  }
+  expect(checkedFactory, "source factory produces a checked carrier shell");
+  expect(checkedReceiver, "receiver factory produces a checked carrier shell");
+  bool checkedDestructor = false;
+  for (const auto &destructor : control->destructorInstances()) {
+    const BodyKey key{lang::MirBodyKind::Destructor, destructor.id};
+    for (const auto &loan : destructor.body.loans) {
+      const auto *dependency = destructor.body.findLoan(loan.storedDependency);
+      if (loan.kind != lang::MirLoanKind::CallResult || dependency == nullptr)
+        continue;
+      checkedDestructor = true;
+      expect(dependency->entry && !dependency->lifecycleBound &&
+                 dependency->kind == lang::MirLoanKind::Stored &&
+                 !dependency->designatedFields.empty(),
+             "destructor receives exact non-owning caller authority");
+      auto missing = *control;
+      body(missing, key).loans[loan.id - 1].storedDependency = 0;
+      rejected(missing, "destructor accessor cannot erase caller dependency");
+      auto forged = *control;
+      body(forged, key).loans[dependency->id - 1].lifecycleBound = true;
+      rejected(forged,
+               "destructor entry cannot acquire another cleanup obligation");
+      auto erasedPath = *control;
+      body(erasedPath, key).loans[dependency->id - 1].designatedFields.clear();
+      rejected(erasedPath,
+               "destructor entry cannot erase exact reference field");
+    }
+  }
+  expect(checkedDestructor,
+         "generic destructor uses a carrier-reference accessor");
+}
+
 } // namespace
 
 int main() {
@@ -1247,6 +1589,9 @@ int main() {
   checkNestedViewCopy();
   checkMappedAliasParent();
   checkPassiveCleanupParent();
+  checkRangeOverCleanupOwner();
+  checkExternalReceiverAdapterReturn();
+  checkFactoryCarrierAndDestructor();
   if (failures == 0)
     std::cout << mutations << " cleanup-bound proof mutations rejected\n";
   return failures == 0 ? 0 : 1;

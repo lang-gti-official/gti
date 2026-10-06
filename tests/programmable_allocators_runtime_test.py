@@ -14,7 +14,7 @@ if __name__ == "__main__":
     failure = (f"{fixture.name}:{line}: runtime error[GTI-R0002]: "
                "division_by_zero in integer_division\n")
     run_runtime_matrix(
-        names=("raw_resource_movement", "arena_placement", "allocator_example", "programmable_allocators", "resource_constructor_rollback"),
+        names=("raw_resource_movement", "arena_placement", "allocator_example", "programmable_allocators", "resource_constructor_rollback", "resource_region_contracts"),
         cases={"raw_resource_movement": [((), (0, "", ""))],
                "arena_placement": [((), (0, "", ""))],
                "allocator_example": [((), (0, "", ""))],

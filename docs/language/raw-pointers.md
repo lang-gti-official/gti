@@ -433,7 +433,7 @@ disjoint from all outstanding allocations, and free of preexisting object
 lifetimes that adoption would overwrite. The provider must keep each region
 and its descriptor valid until matching release, and release exactly that
 region without accessing already-destroyed elements. Independent raw aliases,
-resets or concurrent use must preserve these promises too.
+resets, reentrant calls or concurrent use must preserve these promises too.
 
 The structural `memory_resource` concept checks callable signatures and unsafe
 effects. It does not prove allocator correctness. A `raw_allocation` is passive
