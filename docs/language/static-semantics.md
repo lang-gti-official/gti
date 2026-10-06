@@ -129,8 +129,9 @@ lexically enclosing `unsafe` block. A nested lambda starts a fresh safety
 context. Unsafe context does not suppress type, access, initialization,
 ownership, or control-flow checking.
 
-A namespace-scope GTI free function may carry `unsafe` to require lexical
-unsafe permission at every call. Concrete generic instances retain this
+A GTI free function or ordinary non-polymorphic instance/static method may
+carry `unsafe` to require lexical unsafe permission at every call. Exact member
+requirements preserve this effect explicitly. Concrete generic instances retain this
 requirement. It grants no permission inside the declaration's body and cannot
 be erased through a native callback or safe function-item conversion. Hosted
 `main` cannot carry it. See [the caller contract](raw-pointers.md#functions-with-a-caller-obligation)

@@ -1,0 +1,32 @@
+#include <std/string>
+#include <std/vector>
+
+class Resource {
+public:
+  int value = 40;
+  ~Resource() { std::println(this.value); }
+};
+class Guard {
+  Resource& resource;
+  int id;
+public:
+  Guard(Resource& resource, int id) : resource(resource), id(id) {}
+  ~Guard() { std::println(this.resource.value + this.id); }
+};
+class Box<T> {
+  T item;
+public:
+  Box(T item, int divisor) : item(std::move(item)) {
+    int checked = 1 / divisor;
+  }
+};
+void consume(Guard first, Guard second, int divisor) {
+  int checked = 2 / divisor;
+}
+int main(int argc, std::vector<std::string> argv) {
+  Resource resource{};
+  consume(Guard(resource, 1), Guard(resource, 2),
+          argc == 2 ? 3 / (argc - 2) : argc == 3 ? 0 : 1);
+  Box<Guard> box{Guard(resource, 3), argc == 4 ? 0 : 1};
+  return 0;
+}

@@ -1563,6 +1563,9 @@ struct RowsBuilder {
     for (const MirBlock &block : body.blocks) {
       for (const MirInstruction &instruction : block.instructions) {
         addType(instruction.info.type);
+        if (instruction.objectLayoutType) {
+          addType(*instruction.objectLayoutType);
+        }
         for (const SemanticType &type : instruction.parameterTypes) {
           addType(type);
         }

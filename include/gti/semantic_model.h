@@ -357,6 +357,8 @@ enum class IntrinsicKind {
   RawBorrow,
   RawBorrowMut,
   RawPointerConversion,
+  ObjectSize,
+  ObjectAlignment,
   Count,
 };
 
@@ -705,6 +707,8 @@ struct ClassTypeInfo {
   std::vector<ClassFieldTypeInfo> staticFields;
   std::optional<StoredReferenceInfo> storedReference;
   bool lifecycleBoundBorrowCarrier = false;
+  // Separate trusted lock authority from general dependency retention.
+  bool mutexGuardBorrowCarrier = false;
   ClassKind kind = ClassKind::Class;
   std::vector<ClassBaseTypeInfo> bases;
   bool abstract = false;

@@ -6,6 +6,11 @@ class unique_owner<T> {};
 class shared_owner<T> {};
 class storage<T> {};
 
+@compiler_constraint("object_layout") concept object_layout_capability<T>;
+
+uint64_t object_size<T>();
+uint64_t object_alignment<T>();
+
 gti_internal::shared_owner<T> shared_owner_empty<T>();
 gti_internal::shared_owner<T> shared_owner_from_unique<T>(gti_internal::unique_owner<T> owner);
 gti_internal::shared_owner<T> shared_owner_clone<T>(gti_internal::shared_owner<T>& owner);
@@ -51,6 +56,24 @@ enum class empty_storage_adoption {
 }
 
 namespace std {
+/// Complete object types supported by the runtime representation query.
+concept layout_queryable<T> = gti_internal::object_layout_capability<T>;
+
+/// Runtime layout of the compiler-selected GTI object representation.
+/// This is neither a stable foreign ABI nor a compile-time layout promise.
+struct layout {
+  size_t bytes;
+  size_t alignment;
+  layout(size_t bytes, size_t alignment) : bytes(bytes), alignment(alignment) {}
+};
+
+/// Queries a complete object type without constructing or moving an object.
+layout layout_of<T>() requires std::layout_queryable<T> {
+  layout result{gti_internal::object_size<T>(),
+                gti_internal::object_alignment<T>()};
+  return result;
+}
+
 namespace detail {
 Target convert_address<Target, T>(T* address) {
   return Target(address);

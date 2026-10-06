@@ -263,7 +263,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v88 valid=" << program.valid() << '\n';
+    output << "mir-v90 valid=" << program.valid() << '\n';
     for (const MirNativeCallbackAdapter &adapter :
          program.nativeCallbackAdapters()) {
       output << "native-callback @" << adapter.id
@@ -377,6 +377,8 @@ public:
              << " compiler-capability=" << number(instance.compilerCapability)
              << " lifecycle-bound-borrow-carrier="
              << instance.lifecycleBoundBorrowCarrier
+             << " mutex-guard-borrow-carrier="
+             << instance.mutexGuardBorrowCarrier
              << " abstract=" << instance.abstract
              << " polymorphic=" << instance.polymorphic
              << " c-abi=" << instance.cAbiRecord
@@ -722,7 +724,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v75\n";
+    output << "mir-body-v76\n";
     body(value, 0);
     return output.str();
   }
@@ -1378,7 +1380,12 @@ private:
       separator(index);
       type(value.parameterTypes[index]);
     }
-    output << "] closure-captures=[";
+    output << "] object-layout-type=";
+    if (value.objectLayoutType)
+      type(*value.objectLayoutType);
+    else
+      output << '-';
+    output << " closure-captures=[";
     for (std::size_t index = 0; index < value.closureCaptureTypes.size();
          ++index) {
       separator(index);

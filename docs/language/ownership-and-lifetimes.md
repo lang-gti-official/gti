@@ -758,7 +758,7 @@ the same complete carrier type as that entry; a differently typed nested field
 copy still needs per-copy dependency-path representation. Direct supported
 field access and reference-returning accessors do not require that copy.
 
-Inherited borrowed state, arrays of borrowed carriers, user-defined destructors,
+Inherited borrowed state, arrays of borrowed carriers,
 global/static or captured borrowed storage, dependency-changing returns, and
 assignment that would replace a carrier's dependency remain rejected. Mutable
 dependencies are limited to an exact
@@ -766,9 +766,24 @@ stable local, parameter, receiver, or existing-loan origin. They do not admit
 raw or opaque origins, dynamic-index identity, arbitrary lifetime parameters,
 or an independently escaping child reference.
 
-The compiler-trusted mutex guard retains its existing direct, destructor-bound
-dependency rule. Wrapping it in another carrier is not included: its lock
-obligation cannot be shortened to an ordinary carrier's last-use endpoint.
+An ordinary borrowed class may declare a destructor. A borrowed class with
+active cleanup (including cleanup inherited from owned fields) retains its
+dependencies until cleanup finishes, not just its last explicit read. Moving
+it transfers the cleanup obligation and the same dependency protection. It may
+be passed by value or moved into another direct field under the existing
+constructor origin contract. Failed construction rolls back initialized fields
+before releasing their dependencies. These rules do not grant mutable access
+through a shared reference, permit reseating reference fields, or make a
+resource thread-safe. Intermediate borrowed carrier shells and their external
+owners must also outlive that cleanup. Existing bounded structured last-use
+rules still apply; a narrower scope can make the complete dependency endpoint
+explicit. See [cleanup-bound guards](../../examples/118-cleanup-bound-guards.gti).
+
+The compiler-trusted mutex guard retains its separate direct exclusive-access
+capability. Wrapping it in another carrier remains outside the supported
+field-origin contract: its effective exclusive permission is stronger than its
+declared shared resource field. General cleanup retention does not manufacture
+or downgrade that synchronization authority.
 
 Retaining one of these values creates a semantic owner loan, so the owner
 cannot be moved, replaced, or used through a mutable method while that loan
@@ -780,7 +795,8 @@ alias. An exclusive carrier has only one transferable shell. HIR carries
 proven straight-line, nested-merge, and conditional branch-entry endpoints,
 along with bounded switch-exit and same-path immediate-break endpoints. MIR
 records every carrier on one loan and emits an explicit borrow ending only
-after the frontend-selected aggregate endpoint. These are GTI lifetime rules;
+after the frontend-selected aggregate endpoint, or after cleanup for a
+cleanup-bound carrier. These are GTI lifetime rules;
 the emitted C++ reference field is only a backend representation.
 
 A trusted prelude or imported standard-library unit may use the same contract

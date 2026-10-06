@@ -21,10 +21,24 @@ unsafe int32_t divide(int32_t numerator, int32_t divisor) {
 }
 }
 
+concept readable<T> = requires(T& source) {
+  unsafe { source.read() } -> int32_t;
+};
+struct Reader {
+  const int32_t* pointer = nullptr;
+  unsafe int32_t read() { unsafe { return *this.pointer; } }
+  unsafe static int32_t identity(int32_t value) { return value; }
+};
+unsafe int32_t read_generic<T>(T& source) requires readable<T> {
+  unsafe { return source.read(); }
+}
+
 int main(int argc, std::vector<std::string> argv) {
   Trace outer = Trace();
   int32_t value = 42;
+  Reader reader{.pointer = &value};
   unsafe {
+    if (Reader::identity(read_generic(reader)) != 42) { return 3; }
     if (raw::relay(raw::read(&value)) != 42) { return 1; }
     int32_t divisor = argc > 1 ? 0 : 2;
     return raw::divide(value, divisor) == 21 ? 0 : 2;

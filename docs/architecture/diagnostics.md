@@ -350,6 +350,22 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   scoped enums and valid passive unions, but not payload enums. Suppress this
   diagnostic when ordinary type resolution has already made the operand
   unknown.
+- `GTI-S2063` also owns a malformed private runtime object-layout query. Its
+  complete-object boundary includes ordinary owning and immovable classes but
+  excludes references, incomplete/opaque/abstract classes and direct runtime
+  carrier families outside the admitted slice. Point at the written query
+  type, preserve concrete generic-instantiation context, and explain the
+  structural boundary without suggesting a move, cast, or unsafe block.
+  Ordinary public calls reject unsupported types through the declaration-bound
+  `layout_queryable` concept and shared `GTI-S2029` requirement diagnostics,
+  anchored at the call site with the exact concrete requirement related, not
+  a private library body.
+- `GTI-S2017` rejects a child borrow escaping a local or by-value parameter's
+  cleanup-bound carrier, including through a passive intermediary. Name the
+  general lifetime/cleanup obligation, relate the owning carrier
+  declaration and suggest retaining that lifetime or returning an owned value.
+  A general cleanup-bound marker is not evidence of a mutex: reserve lock and
+  unlock wording for independently proven trusted mutex receivers.
 - `GTI-S2004` owns an integer literal operand whose signed mathematical value
   does not fit the concrete contextual operand type. Point at the numeric
   token, retain a negative sign in the message, and emit only the range

@@ -144,6 +144,10 @@ MirOptimizationCoverage optimizationCoverage(MirOperation operation) {
 
 MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   switch (intrinsic) {
+  case IntrinsicKind::ObjectSize:
+  case IntrinsicKind::ObjectAlignment:
+    return supported("pure target-dependent representation query; scalar "
+                     "interpretation overdefined");
   case IntrinsicKind::RawBorrow:
   case IntrinsicKind::RawBorrowMut:
     return barrier("unsafe raw address to owner-witness checked loan");

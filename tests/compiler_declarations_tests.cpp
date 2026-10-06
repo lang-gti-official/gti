@@ -4477,16 +4477,15 @@ int main() {
            "missing, mismatched, mutable, consuming, static and inaccessible "
            "members must fail the declared concept");
   }
-  const auto unsafeMember =
-      lang::Frontend().analyze("member-requirement-unsafe.gti",
-                               "struct Item { unsafe Item snapshot() { "
-                               "Item result{}; return result; "
-                               "} };",
-                               {standardLibraryPrelude()});
-  expect(!unsafeMember.canGenerateCode() &&
-             hasDiagnosticCode(unsafeMember.diagnostics, "GTI-P0001"),
-         "member requirements must not enable currently unsupported unsafe "
-         "method declarations");
+  const auto unsafeMember = lang::Frontend().analyze(
+      "member-requirement-unsafe.gti",
+      "struct Item { unsafe Item snapshot() { "
+      "Item result{}; return result; "
+      "} }; int main() { static_assert(!(requires(Item& x) "
+      "{ { x.snapshot() } -> Item; })); return 0; }",
+      {standardLibraryPrelude()});
+  expect(unsafeMember.canGenerateCode(),
+         "safe member requirements must reject unsafe method declarations");
   const auto bounded =
       lang::Frontend().analyze("member-requirement-boundaries.gti", R"(
 concept snapshots<T> = requires(T& x) { { x.snapshot() } -> T; };

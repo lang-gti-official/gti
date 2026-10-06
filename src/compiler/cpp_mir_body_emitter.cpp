@@ -2908,11 +2908,15 @@ ownedParameterFieldInitializer(const MirProgram &program, const MirBody &body,
   };
   if (referencePrefix())
     return matched;
-  return std::all_of(constructor->initializers.begin(),
-                     constructor->initializers.end(),
-                     [](const MirConstructorInitializer &initializer) {
-                       return initializer.ownedParameter.has_value();
-                     })
+  // Multiple owned initializers receive a complete ordered-prefix proof in
+  // cppMirOwnedParameterFieldBindings. A singleton has no such later proof:
+  // its prefix must already be one of the exact effect-free forms above.
+  return constructor->initializers.size() > 1 &&
+                 std::all_of(constructor->initializers.begin(),
+                             constructor->initializers.end(),
+                             [](const MirConstructorInitializer &initializer) {
+                               return initializer.ownedParameter.has_value();
+                             })
              ? matched
              : nullptr;
 }
@@ -3135,10 +3139,34 @@ ownedParameterFieldSourceDrop(const MirProgram &program, const MirBody &body,
   const std::optional<std::vector<CppMirOwnedParameterFieldBinding>> bindings =
       cppMirOwnedParameterFieldBindings(program, *constructor);
   return bindings &&
-         std::count_if(bindings->begin(), bindings->end(),
-                       [&](const CppMirOwnedParameterFieldBinding &binding) {
-                         return binding.dropInstruction == instruction.id;
-                       }) == 1;
+         std::count_if(
+             bindings->begin(), bindings->end(),
+             [&](const CppMirOwnedParameterFieldBinding &binding) {
+               if (binding.dropInstruction == instruction.id)
+                 return true;
+               const auto &event = instruction.lifecycle.front();
+               // Native field initialization has already consumed
+               // this formal before any fallible body instruction.
+               // Its failure endpoint therefore destroys only the
+               // moved-from shell, just like its normal endpoint.
+               return binding.parameterDrop != 0 &&
+                      binding.sourcePlace == *instruction.destination &&
+                      event.kind == MirLifecycleEventKind::Drop &&
+                      event.source == binding.parameterDrop &&
+                      event.target == 0 && !event.conditional &&
+                      event.failureCleanup &&
+                      std::any_of(
+                          body.blocks.begin(), body.blocks.end(),
+                          [&](const MirBlock &block) {
+                            return block.activeFailure != 0 &&
+                                   std::any_of(
+                                       block.instructions.begin(),
+                                       block.instructions.end(),
+                                       [&](const MirInstruction &candidate) {
+                                         return &candidate == &instruction;
+                                       });
+                          });
+             }) == 1;
 }
 
 // Expected extraction produces an lvalue into the payload; it does not create
@@ -11592,6 +11620,67 @@ passiveDefaultBaseSurface(const MirProgram &program,
       });
 }
 
+// A completed reference-bearing field has no empty native representation:
+// its C++ references must remain bound. MIR can nevertheless drain its exact
+// cleanup recipe in place. The guarded source destructor is disarmed and all
+// owning children become inert; later native shell destruction does no GTI
+// work. This is deliberately NOT an empty/default-construction witness.
+[[nodiscard]] bool failureConstructorRetainedCleanupType(
+    const MirProgram &program, const SemanticType &type,
+    std::unordered_set<HirClassInstanceId> &visiting) {
+  const MirClassInstance *owner = nullptr;
+  for (const auto &candidate : program.classInstances()) {
+    if (candidate.type == type) {
+      if (owner != nullptr)
+        return false;
+      owner = &candidate;
+    }
+  }
+  if (owner == nullptr || owner->declaration == 0 ||
+      !owner->lifecycleBoundBorrowCarrier || !owner->requiresActiveCleanup ||
+      owner->abstract || owner->polymorphic || owner->cAbiRecord ||
+      owner->unionLayout || !owner->bases.empty() ||
+      !owner->structuralBases.empty() || !mirUniqueCleanupType(program, type) ||
+      !visiting.insert(owner->id).second)
+    return false;
+  const auto *destructor =
+      owner->destructor ? program.findDestructorInstance(*owner->destructor)
+                        : nullptr;
+  const bool destructorReady =
+      owner->destructor
+          ? destructor != nullptr && owner->requiresActiveDropState &&
+                nativeDestructorCompositionCovered(program, *owner, *destructor)
+          : !owner->requiresActiveDropState &&
+                owner->destructorStatus == SpecialMemberStatus::Generated;
+  const bool fieldsReady = std::all_of(
+      owner->declaredFields.begin(), owner->declaredFields.end(),
+      [&](const MirClassFieldInfo &field) {
+        if (field.field == 0 || field.symbol == 0)
+          return false;
+        if (field.dropKind == DropKind::Trivial)
+          return !field.requiresActiveCleanup &&
+                 (field.type.kind == SemanticType::Reference ||
+                  passiveConstructorAggregateType(field.type) ||
+                  failureConstructorEmptyDefaultFieldType(
+                      program, field.type, EmptyFieldUse::Construction));
+        return field.dropKind == DropKind::Lexical &&
+               field.requiresActiveCleanup &&
+               (failureConstructorEmptyDefaultFieldType(
+                    program, field.type, EmptyFieldUse::Construction) ||
+                failureConstructorRetainedCleanupType(program, field.type,
+                                                      visiting));
+      });
+  visiting.erase(owner->id);
+  return destructorReady && fieldsReady;
+}
+
+[[nodiscard]] bool
+failureConstructorRetainedCleanupType(const MirProgram &program,
+                                      const SemanticType &type) {
+  std::unordered_set<HirClassInstanceId> visiting;
+  return failureConstructorRetainedCleanupType(program, type, visiting);
+}
+
 [[nodiscard]] bool
 failureConstructorDisarmsDeclaredDestructor(const MirProgram &program,
                                             const MirClassInstance &owner) {
@@ -11619,14 +11708,16 @@ failureConstructorDisarmsDeclaredDestructor(const MirProgram &program,
         }
         if (field.dropKind == DropKind::Trivial) {
           return !field.requiresActiveCleanup &&
-                 (passiveConstructorAggregateType(field.type) ||
+                 (field.type.kind == SemanticType::Reference ||
+                  passiveConstructorAggregateType(field.type) ||
                   failureConstructorEmptyDefaultFieldType(
                       program, field.type, EmptyFieldUse::Construction));
         }
         return field.dropKind == DropKind::Lexical &&
                field.requiresActiveCleanup &&
-               failureConstructorEmptyDefaultFieldType(
-                   program, field.type, EmptyFieldUse::Construction);
+               (failureConstructorEmptyDefaultFieldType(
+                    program, field.type, EmptyFieldUse::Construction) ||
+                failureConstructorRetainedCleanupType(program, field.type));
       });
 }
 
@@ -11773,7 +11864,16 @@ failureConstructorBoundaryEligible(const MirProgram &program,
     if (field.dropKind == DropKind::Trivial) {
       continue;
     }
-    if (!failureConstructorEmptyDefaultFieldType(program, field.type,
+    const bool retainedNativeField =
+        ownedParameters &&
+        std::any_of(ownedParameters->begin(), ownedParameters->end(),
+                    [&](const CppMirOwnedParameterFieldBinding &binding) {
+                      return binding.field == field.symbol &&
+                             binding.fieldDrop != 0;
+                    }) &&
+        failureConstructorRetainedCleanupType(program, field.type);
+    if (!retainedNativeField &&
+        !failureConstructorEmptyDefaultFieldType(program, field.type,
                                                  EmptyFieldUse::Construction)) {
       return false;
     }
@@ -21876,6 +21976,12 @@ passiveCAbiCallAssignmentResult(const MirProgram &program, const MirBody &body,
       // requires the verified unpublished-result rollback obligation.
       const MirInstruction *drop = nullptr;
       for (const MirInstruction &member : target->instructions) {
+        // Verified loan retirement has no native execution. Cleanup-bound
+        // returned carriers may end their moved-from/local dependencies
+        // between destructor invokes while their Return loan stays live.
+        if (member.kind == MirInstructionKind::EndBorrow) {
+          continue;
+        }
         if (member.kind == MirInstructionKind::Lifecycle &&
             member.lifecycle.empty()) {
           continue;
@@ -29870,6 +29976,11 @@ private:
       writeIndent();
       output << "// GTI MIR owned-field parameter drop of place "
              << *instruction.destination << "\n";
+      if (failureForm && failureDestructorTarget(program, facts.body,
+                                                 instruction) != nullptr) {
+        writeIndent();
+        output << "__gti_mir_drop_success_" << instruction.id << " = true;\n";
+      }
       return;
     }
     if (instruction.kind == MirInstructionKind::Drop &&
@@ -29887,12 +29998,31 @@ private:
         aggregateConstructorRollbackDrop(facts.body, instruction)) {
       // Deferring this drop until the caller destroys the unpublished native
       // object would move it past earlier-created constructor parameters.
-      // Consume the MIR schedule here, leaving only a proved empty native
-      // field for the caller's eventual representation destruction.
+      // Consume the MIR schedule here, leaving an inert native field for the
+      // caller's eventual representation destruction. A reference-bearing
+      // field must retain its already-constructed shell, not bind empty refs.
       const MirPlace *field = facts.body.findPlace(*instruction.destination);
+      const auto *constructor = program.findConstructorInstance(facts.id);
+      const auto ownedFields =
+          constructor != nullptr
+              ? cppMirOwnedParameterFieldBindings(program, *constructor)
+              : std::nullopt;
+      const auto *rollback =
+          facts.body.findDropObligation(instruction.lifecycle.front().source);
+      const bool retainedField =
+          field != nullptr && rollback != nullptr && ownedFields &&
+          field->projections.size() == 1 &&
+          std::any_of(ownedFields->begin(), ownedFields->end(),
+                      [&](const CppMirOwnedParameterFieldBinding &binding) {
+                        return binding.field ==
+                                   field->projections.front().field &&
+                               binding.fieldDrop == rollback->id;
+                      }) &&
+          failureConstructorRetainedCleanupType(program, field->type);
       if (field == nullptr ||
-          !failureConstructorEmptyDefaultFieldType(
-              program, field->type, EmptyFieldUse::Construction)) {
+          (!retainedField &&
+           !failureConstructorEmptyDefaultFieldType(
+               program, field->type, EmptyFieldUse::Construction))) {
         throw std::logic_error(
             "verified MIR field rollback lost its empty-state proof");
       }
@@ -29913,6 +30043,21 @@ private:
                << "; }(";
         emitPlaceExpression(facts, *field);
         output << "); // GTI MIR field rollback\n";
+        return;
+      }
+      if (retainedField) {
+        if (mirDropMayRaiseDefinedFailure(program, rollback->dropType))
+          throw std::logic_error(
+              "retained field rollback lost its defined-failure edge");
+        // Bind the actual field once without ending its native lifetime.
+        // The absence of destructor failure above proves a null record safe.
+        output << "[&](auto &__gti_cleanup_value) { (void)"
+               << cppMirCleanupValueExpression(program, rollback->dropType,
+                                               "__gti_cleanup_value", "nullptr",
+                                               "true")
+               << "; }(";
+        emitPlaceExpression(facts, *field);
+        output << "); // GTI MIR retained-shell field rollback\n";
         return;
       }
       output << "::gti_internal::backend::mir_rollback_field_v1(";
@@ -35067,6 +35212,17 @@ private:
              << typeSpelling(instruction.info.type) << ">(";
       emitOperand(instruction.operands.front());
       output << ");\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
+        (instruction.intrinsic == IntrinsicKind::ObjectSize ||
+         instruction.intrinsic == IntrinsicKind::ObjectAlignment)) {
+      output << "__gti_mir_v_" << *instruction.result << " = static_cast<"
+             << typeSpelling(instruction.info.type) << ">(";
+      output << (instruction.intrinsic == IntrinsicKind::ObjectSize
+                     ? "sizeof("
+                     : "alignof(");
+      output << typeSpelling(*instruction.objectLayoutType) << "));\n";
       return;
     }
     if (instruction.kind == MirInstructionKind::Call && instruction.receiver &&
@@ -41123,8 +41279,25 @@ cppMirOwnedParameterFieldBindings(const MirProgram &program,
                   event.kind == MirLifecycleEventKind::Drop &&
                   event.source == parameterDrop->id && event.target == 0 &&
                   !event.conditional && !event.failureCleanup;
+              // The same native initializer may be followed by a fallible
+              // body. Its verified rollback drops that initialized field,
+              // not the moved SSA temporary. The moved-from formal also has
+              // its ordinary failure endpoint. Lifecycle verification proves
+              // activation and exactly-once retirement on every edge.
+              const bool exactFailureDrop =
+                  instruction.kind == MirInstructionKind::Drop &&
+                  instruction.lifecycle.size() == 1 &&
+                  event.kind == MirLifecycleEventKind::Drop &&
+                  event.target == 0 && !event.conditional &&
+                  event.failureCleanup && block.activeFailure != 0 &&
+                  ((event.source == fieldDrop->id &&
+                    instruction.destination == fieldDrop->place &&
+                    instruction.info.type == fieldDrop->dropType.type) ||
+                   (event.source == parameterDrop->id &&
+                    instruction.destination == parameterDrop->place &&
+                    instruction.info.type == parameterDrop->dropType.type));
               if (!exactMove && !exactInitialize && !exactTransfer &&
-                  !exactDrop) {
+                  !exactDrop && !exactFailureDrop) {
                 return std::nullopt;
               }
             }
@@ -43520,7 +43693,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     const MirInstruction *consumer =
         findInstruction(body, uses.front().instruction);
     const auto dominance = computeMirDominance(body);
-    if (consumer == nullptr || consumer->kind != MirInstructionKind::Call ||
+    if (consumer == nullptr ||
+        (consumer->kind != MirInstructionKind::Call &&
+         !(consumer->kind == MirInstructionKind::Construct &&
+           consumer->constructorTarget &&
+           consumer->constructorKind == ConstructorKind::Ordinary)) ||
         consumer->callSite != stage->callSite || !dominance ||
         !dominance->dominates(value->definitionBlock, targetBlock)) {
       return false;
@@ -45447,7 +45624,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !cppMirCompoundCheckedHelperSpelling(instruction.operation)
                    .empty() &&
               destination != nullptr &&
-              ((destination->root == MirPlaceRootKind::This &&
+              (rawMemoryPlaceAccess(body, *destination).has_value() ||
+               (destination->root == MirPlaceRootKind::This &&
                 receiverAllowsMutation(receiverMutability) &&
                 !destination->projections.empty() &&
                 std::all_of(destination->projections.begin(),
@@ -47230,6 +47408,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (instruction.intrinsic == IntrinsicKind::EnumUnderlyingValue &&
               exactEnumExtraction(program_, body, instruction) &&
               valueOperand(instruction.operands.front()) &&
+              typeRow(instruction.info.type)) {
+            continue;
+          }
+          if (mir_detail::objectLayoutQuery(program_, instruction) &&
+              typeRow(*instruction.objectLayoutType) &&
               typeRow(instruction.info.type)) {
             continue;
           }

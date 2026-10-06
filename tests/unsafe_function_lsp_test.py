@@ -119,6 +119,34 @@ def main():
             assert edit["edits"] == [{"range": migration["range"], "newText": "unsafe "}], edit
             assert change(valid, 8) == []
             assert not action_for(migration, 10), "stale unspaced migration cannot edit the new snapshot"
+
+            members = (
+                "// 😀 UTF-16 control\n"
+                "concept readable<T> = requires(T& x) { unsafe { x.read() } -> int; };\n"
+                "struct Meter { unsafe int read() { return 7; } };\n"
+                "int main() { Meter meter{}; return meter.read(); }\n"
+            )
+            member_error = next(d for d in change(members, 9) if d["code"] == "GTI-S2055")
+            closing = members.rindex("read()") + 5
+            assert member_error["range"] == {"start": lsp_position(members, closing),
+                                              "end": lsp_position(members, closing + 1)}, member_error
+            keyword = members.index("unsafe int")
+            assert member_error["relatedInformation"][0]["location"] == {
+                "uri": uri, "range": {"start": lsp_position(members, keyword),
+                                         "end": lsp_position(members, keyword + 6)}}, member_error
+            fixed_members = members.replace("return meter.read();", "unsafe { return meter.read(); }")
+            assert change(fixed_members, 10) == []
+            for request_id, offset, expected in (
+                (11, fixed_members.rindex("read()") + 1, "unsafe int32_t Meter::read"),
+                (12, fixed_members.index("readable") + 1, "unsafe { x.read() } -> int"),
+            ):
+                session.send({"jsonrpc": "2.0", "id": request_id, "method": "textDocument/hover", "params": {
+                    "textDocument": {"uri": uri}, "position": lsp_position(fixed_members, offset)}})
+                result = session.receive_until(lambda message: message.get("id") == request_id)["result"]
+                assert expected in result["contents"]["value"], result
+            broken_members = fixed_members.replace("unsafe int read()", "unsafe int read(")
+            assert change(broken_members, 11)
+            assert change(fixed_members, 12) == []
         finally:
             session.close()
 

@@ -3934,26 +3934,72 @@ auto SemanticVisitor::Impl::rejectEscapingLocalChildLoan(
                              : resolve(source->carrier->name());
   const SemanticLoanInfo *loan =
       !source ? nullptr : semanticModel.findLoan(source->loan);
+  const auto *info = value ? semanticModel.findExpression(*value) : nullptr;
+  const Expr *returned = value.get();
+  while (const auto *group = exprAs<Grouping>(returned))
+    returned = group->expression().get();
+  const bool returnsCarrier = source && symbol != nullptr && loan != nullptr &&
+                              loan->lifecycleBound && info != nullptr &&
+                              info->type == symbol->type &&
+                              currentReturnType == symbol->type &&
+                              lifecycleBoundBorrowCarrierFor(info->type) &&
+                              (source->transfer || returned == source->carrier);
+  std::vector<SemanticLoanId> pending{loan == nullptr ? 0 : loan->id};
+  std::unordered_set<SemanticLoanId> visited;
+  while (!pending.empty()) {
+    const auto id = pending.back();
+    pending.pop_back();
+    if (id == 0 || !visited.insert(id).second)
+      continue;
+    const auto *retained = semanticModel.findLoan(id);
+    if (retained == nullptr)
+      continue;
+    // Publishing the complete value carries its own cleanup obligation (and
+    // remains subject to ordinary copy/move checks). It does not carry the
+    // obligations of separate local objects that the value merely references.
+    if (retained->lifecycleBound &&
+        !(returnsCarrier && retained->id == loan->id)) {
+      const Symbol *cleanupCarrier = nullptr;
+      for (const auto &scope : scopes)
+        for (const auto &[_, candidate] : scope)
+          if ((candidate.bindingKind == SemanticBindingKind::LocalVariable ||
+               candidate.bindingKind == SemanticBindingKind::Parameter) &&
+              candidate.type.kind != SemanticType::Reference &&
+              std::find(retained->carriers.begin(), retained->carriers.end(),
+                        toolingSymbolFor(candidate)) !=
+                  retained->carriers.end())
+            cleanupCarrier = &candidate;
+      if (cleanupCarrier != nullptr) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2017", DiagnosticPhase::Semantics, expressionToken(value),
+            "A borrow retained by a cleanup-bound carrier cannot escape "
+            "through " +
+                std::string(destination) + ".");
+        diagnostic.hints.emplace_back(
+            "Keep the borrow within the carrier's lifetime, or return an owned "
+            "value. The carrier's cleanup must complete before its scope "
+            "exits.");
+        diagnostic.related.push_back(
+            {tokenSpan(cleanupCarrier->declaration),
+             "The cleanup-bound carrier is declared here."});
+        diagnostics.emplace_back(std::move(diagnostic));
+        return true;
+      }
+    }
+    pending.push_back(retained->parent);
+    pending.push_back(retained->storedDependency);
+  }
+  if (returnsCarrier)
+    return false;
   if (symbol == nullptr ||
       symbol->bindingKind != SemanticBindingKind::LocalVariable ||
       loan == nullptr || (loan->parent == 0 && !loan->lifecycleBound)) {
     return false;
   }
-  if (loan->lifecycleBound) {
-    Diagnostic diagnostic = makeDiagnostic(
-        "GTI-S2017", DiagnosticPhase::Semantics, expressionToken(value),
-        "A borrow protected by a local mutex guard cannot escape through " +
-            std::string(destination) + ".");
-    diagnostic.hints.emplace_back(
-        "Copy or move the protected value while the guard is live; the guard "
-        "must unlock before its scope exits.");
-    diagnostics.emplace_back(std::move(diagnostic));
-  } else {
-    report(expressionToken(value),
-           "A local child reborrow cannot escape through " +
-               std::string(destination) + ".",
-           "GTI-S2017");
-  }
+  report(expressionToken(value),
+         "A local child reborrow cannot escape through " +
+             std::string(destination) + ".",
+         "GTI-S2017");
   return true;
 }
 

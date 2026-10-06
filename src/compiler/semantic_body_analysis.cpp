@@ -4394,6 +4394,9 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
             selected.reset();
           if (selected && selected->arguments != requirement.arguments)
             ambiguous = true;
+          if (selected && selected->arguments == requirement.arguments &&
+              !selected->requiresUnsafe && requirement.requiresUnsafe)
+            continue;
           selected = requirement;
         }
         if (hasExplicitGenericArguments || !selected || ambiguous) {
@@ -4403,6 +4406,10 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                  "GTI-S2029");
           currentType = SemanticType::Unknown;
           return;
+        }
+        if (selected->requiresUnsafe) {
+          requireUnsafe(expr, UnsafeOperationKind::DeclaredUnsafeCall,
+                        expr.paren(), "Calling an unsafe required member");
         }
         semanticModel.record(
             expr, ResolvedCallInfo{.returnType = selected->arguments[1],
@@ -6718,7 +6725,8 @@ auto SemanticVisitor::Impl::visitMemberRequirementExpr(
       receiver.arguments.size() == 1 &&
       readMemberRequirementSatisfied(
           receiver.arguments.front(), expr.member().lexeme, result, nullptr,
-          parameters, receiver.referenceAccess == AccessMode::Mutable);
+          parameters, receiver.referenceAccess == AccessMode::Mutable,
+          expr.unsafeKeyword().has_value());
   semanticModel.recordConstant(expr, ConstantValue{satisfied});
 }
 

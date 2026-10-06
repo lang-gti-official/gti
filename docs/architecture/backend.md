@@ -1262,6 +1262,20 @@ Ordinary native constructor overloads that publish fields from the same MIR
 body use the same proved private empty state as their failure-form overloads.
 They must not implicitly call a source default constructor before MIR field
 publication; that constructor may be deleted or have observable behavior.
+A completed cleanup-bound field containing native references cannot be reset
+to an unbound empty object. For the bounded exact owned-parameter field route,
+rollback instead runs its verified cleanup recipe in place: the source
+destructor guard is disarmed and owning children are drained to inert states,
+while reference bindings retain their native object shell. Enclosing native
+destruction later destroys that shell without repeating GTI cleanup. Admission
+requires a unique concrete non-polymorphic class with no bases, an exact cleanup
+recipe, guarded source-destructor composition when present, and recursively
+emptyable or retained-cleanup children. This is not a default-construction or
+empty-state witness. The exact Move/Initialize and value-to-field rollback
+identity must already have been proved; arbitrary initializer reordering is
+not admitted. The consumed source formal's later MIR drop can be represented
+as inert only under that same exact transfer proof. Destructor failure still
+uses MIR's original primary/secondary failure record and emergency endpoint.
 The recursive proof requires a concrete nonzero array extent and exact element
 type. A concrete polymorphic element may participate only through independently
 verified stateless interface bases with generated default construction and

@@ -352,7 +352,15 @@ lowerRequirements(const std::vector<AppliedConceptRequirement> &requirements) {
          .memberName =
              requirement.syntax && requirement.syntax->memberRequirement
                  ? requirement.syntax->memberRequirement->member().lexeme
-                 : std::string{}});
+                 : std::string{},
+         .mutableReceiver = requirement.syntax &&
+                            requirement.syntax->memberRequirement &&
+                            requirement.syntax->memberRequirement->receiver()
+                                .referenceMutability.has_value(),
+         .requiresUnsafe =
+             requirement.syntax && requirement.syntax->memberRequirement &&
+             requirement.syntax->memberRequirement->unsafeKeyword()
+                 .has_value()});
   }
   return result;
 }

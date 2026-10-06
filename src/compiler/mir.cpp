@@ -3087,6 +3087,7 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
         if (parent != 0) {
           const auto operandFromParent = [&](const MirOperand &operand) {
             const MirOperand *resolved = callInputSource(operand);
+            bool movedCarrier = resolved->kind == MirOperandKind::Move;
             if (resolved->kind == MirOperandKind::Value) {
               const MirValue *value = body.findValue(resolved->value);
               const MirInstruction *producer = nullptr;
@@ -3107,6 +3108,7 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
               if (producer != nullptr &&
                   producer->kind == MirInstructionKind::Move &&
                   producer->operands.size() == 1) {
+                movedCarrier = true;
                 resolved = callInputSource(producer->operands.front());
               }
             }
@@ -3126,7 +3128,42 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
             }
             const MirCanonicalPlace operandPlace =
                 canonicalPlace(body, resolved->place, bindingLoans, active);
-            return operandPlace.throughLoan == parent;
+            if (operandPlace.throughLoan == parent)
+              return true;
+            // An owned argument forwards the external ancestry of its
+            // consumed carrier, rather than borrowing that carrier shell.
+            // Call-input/lifecycle verification separately proves the exact
+            // by-value transfer; this check binds its active stored loan to
+            // the declared parent instead of accepting any overlapping owner.
+            const auto inheritedParent = [&](MirLoanId id) {
+              const auto *transferred = body.findLoan(id);
+              return transferred && transferred->kind == MirLoanKind::Stored &&
+                     transferred->parent == parent &&
+                     active[transferred->id - 1] != MirLoanFlowState::Inactive;
+            };
+            const auto binding =
+                place && place->root == MirPlaceRootKind::Binding &&
+                        place->projections.empty()
+                    ? bindingLoans.find(place->binding)
+                    : bindingLoans.end();
+            const bool exactAncestry =
+                inheritedParent(operandPlace.throughLoan) ||
+                (binding != bindingLoans.end() &&
+                 std::count_if(binding->second.begin(), binding->second.end(),
+                               [&](MirLoanId id) {
+                                 return active[id - 1] !=
+                                        MirLoanFlowState::Inactive;
+                               }) == 1 &&
+                 std::any_of(binding->second.begin(), binding->second.end(),
+                             inheritedParent));
+            return movedCarrier &&
+                   instruction.borrowOrigin == BorrowOriginKind::Argument &&
+                   instruction.borrowArgument <
+                       instruction.parameterTypes.size() &&
+                   instruction.parameterTypes[instruction.borrowArgument]
+                           .kind != SemanticType::Reference &&
+                   body.loans[loan - 1].kind == MirLoanKind::Stored &&
+                   exactAncestry;
           };
           bool selectedOriginFromParent = false;
           if (instruction.borrowOrigin == BorrowOriginKind::Receiver &&
@@ -3272,6 +3309,20 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
         block.terminator.kind == MirTerminatorKind::ContainFailure ||
         block.terminator.kind == MirTerminatorKind::Exit) {
       for (const MirLoan &loan : body.loans) {
+        // A successful constructor publishes every cleanup-bound field along
+        // with its dependency. An inactive loan is not harmless here: it
+        // would let the constructed guard outlive the resource its destructor
+        // still accesses. Failure exits instead retire it after rollback.
+        if (body.kind == MirBodyKind::Constructor &&
+            block.terminator.kind == MirTerminatorKind::Return &&
+            loan.lifecycleBound && loan.kind == MirLoanKind::Stored &&
+            loan.escapes && loan.storedField != 0 &&
+            active[loan.id - 1] != MirLoanFlowState::Active) {
+          return failure(body, owner,
+                         "cleanup-bound constructor field dependency is not "
+                         "active at successful publication",
+                         block.id);
+        }
         if (active[loan.id - 1] == MirLoanFlowState::Inactive) {
           continue;
         }
@@ -8559,8 +8610,14 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           parent.access == AccessMode::ReadOnly;
       const bool projectedStoredChild = parent.kind == MirLoanKind::Stored &&
                                         !parent.designatedFields.empty();
-      if (loan.entry || (parent.access != AccessMode::Mutable &&
-                         !sharedDerivedCall && !projectedStoredChild)) {
+      const bool sharedCleanupDependency =
+          loan.kind == MirLoanKind::Stored && loan.lifecycleBound &&
+          loan.access == AccessMode::ReadOnly &&
+          parent.kind == MirLoanKind::Parameter &&
+          parent.access == AccessMode::ReadOnly;
+      if (loan.entry ||
+          (parent.access != AccessMode::Mutable && !sharedDerivedCall &&
+           !projectedStoredChild && !sharedCleanupDependency)) {
         return failure(body, owner,
                        "child loan " + std::to_string(loan.id) +
                            " must be non-entry and either have a mutable "
@@ -10637,9 +10694,17 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         if (candidate.kind == MirInstructionKind::EndBorrow) {
           const MirLoan *loan = body.findLoan(candidate.loan.value_or(0));
           // Lifecycle dataflow independently proves this exact carrier's
-          // obligation inactive before its dependency can end.
+          // obligation inactive before its dependency can end. Ancestor loan
+          // ends may follow that retirement within the same drain; ordinary
+          // loan dataflow independently requires child-before-parent order.
           if (loan != nullptr &&
-              (loan->lifecycleBound || temporaryDependencyEnd(candidate))) {
+              (loan->lifecycleBound || temporaryDependencyEnd(candidate) ||
+               std::any_of(body.loans.begin(), body.loans.end(),
+                           [&](const MirLoan &carrier) {
+                             return carrier.lifecycleBound &&
+                                    mirLoanRetainsDependency(body, carrier.id,
+                                                             loan->id);
+                           }))) {
             --cursorIndex;
             continue;
           }

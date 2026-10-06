@@ -63,7 +63,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v88`, `mir-body-v75`).
+instruction, body, and caller-assignment facts (`mir-v90`, `mir-body-v76`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -236,7 +236,7 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v88`/`mir-body-v75`.
+The deterministic serialization is currently `mir-v90`/`mir-body-v76`.
 Field-aware borrowed-return and construction contracts serialize each result
 field path, selected receiver or parameter, source field path, and permission.
 Calls preserve the semantic contract; program verification also checks the
@@ -279,6 +279,32 @@ loan or the caller's cleanup ownership. In particular, borrowing a guard does
 not acquire its lock-release obligation. Local bindings of stored referents
 retain their concrete reference-field dereference; semantic overlap identities
 are not substituted for executable projection chains.
+Cleanup-bound nominal carriers are classified from concrete borrowed-state and
+active-cleanup facts, independently of the trusted mutex capability. Exact
+by-value entries own a binding drop; owning call/constructor publications own
+their result drop and subsequent typed transfers. Verification rejects missing
+lifecycle markers as well as invented ones. Ending such a loan requires the
+exact carrier drop, failed producer, consuming call, constructor-field
+publication or owned return transfer. Field publication must reparent the same
+SSA value into its exact construction-rollback obligation. Ordinary receiver
+and reference entries do not acquire this ownership.
+An owned return may publish a distinct dependency before intervening fallible
+local cleanup. Its result must belong to the original carrier's exact typed
+drop-transfer chain. If that cleanup fails, the exported dependency remains
+live through destruction of the unpublished pending result; it cannot end
+merely because the return was abandoned. Independent verification checks the
+exact pending-result drop and rejects an early endpoint.
+Concrete HIR class instances also specialize generated copy/move member
+availability from semantic traits. MIR rejects a generated member whose
+concrete trait forbids it, including generic owners of reference-bearing fields;
+the backend does not decide whether a GTI assignment is legal.
+Semantic last-use analysis includes cleanup uses and retains ancestor loans.
+MIR normal and failure drains interleave carrier destruction with
+child-before-parent dependency retirement; a failed producer retires its
+provisional result dependency without inventing a successfully constructed
+object. Cleanup boundary verification accepts those dependency-end markers
+without changing the exact reverse-order drop sequence. Loan and lifecycle
+dataflow independently reject premature retirement or forged transfers.
 An owning field provably disjoint from all stored-reference paths is not an
 access through that external dependency; an ordinary physical receiver loan
 still protects its shell. An adapter may consequently own its buffer while
@@ -1417,10 +1443,22 @@ argument count alongside all expanded inputs. The production C++ emitter
 therefore emits only verified MIR values and never emits a C++ default
 parameter expression.
 
-A valid HIR layout query lowers to an ordinary unsigned-64
-`MirOperation::Literal` containing the retained frontend value. MIR has no
-target-layout operation and therefore cannot reinterpret `sizeof` or
-`alignof`; the source HIR identity remains available as provenance.
+A valid HIR constant `sizeof`/`alignof` query lowers to an ordinary unsigned-64
+`MirOperation::Literal` containing the retained frontend value; its source HIR
+identity remains available as provenance. Runtime object representation queries
+are a separate contract: trusted declaration-bound `ObjectSize` and
+`ObjectAlignment` calls preserve one concrete `objectLayoutType` in HIR and MIR,
+with no runtime operands, parameter types, borrow origins or lifecycle events.
+Lowering retains otherwise-unused queried class instances. Program verification
+and backend admission share the exact complete-type/zero-input proof, rejecting
+query metadata on other instructions. These operations are pure, removable when
+unused, and target-dependent; scalar constant interpretation remains overdefined.
+The C++ representation snapshot retains the queried type, and emission uses that
+verified representation's native size/alignment. It does not reinterpret the
+constant-query rule, source AST, or public library names. The public descriptor
+and generic forwarding function remain ordinary source-defined GTI.
+The eligibility predicate is a trusted private structural-constraint identity;
+the ordinary public concept selects it through normal concept composition.
 
 Each HIR program-constant substitution lowers into an exact per-body
 `MirProgramConstantSubstitution` inventory row and a marked constant-producing

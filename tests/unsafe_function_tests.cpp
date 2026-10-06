@@ -105,7 +105,7 @@ int main() {
       unsafeFunctions == 3 && unsafeCalls == 3,
       "only exact unsafe overloads and concrete instances carry the contract");
   const auto dump = lang::MirPrinter().print(frontend.mir);
-  expect(dump.starts_with("mir-v88 ") &&
+  expect(dump.starts_with("mir-v90 ") &&
              dump.find("requires-unsafe=1") != std::string::npos,
          "the deterministic MIR snapshot includes the unsafe contract");
   const auto lowered =
@@ -252,7 +252,12 @@ void testDiagnosticsAndBoundaries() {
   for (const std::string declaration :
        {"unsafe int32_t value = 0;", "unsafe class Value {};",
         "extern \"C\" { unsafe void raw(); }",
-        "class Value { public: unsafe void raw() {} };",
+        "class Value { public: unsafe virtual void raw() {} };",
+        "class Value { public: unsafe void operator()() {} };",
+        "class Value { public: unsafe Value() {} };",
+        "class Value { public: unsafe ~Value() {} };",
+        "interface Value { unsafe void raw(); };",
+        "class Value { public: unsafe void raw() override {} };",
         "[[unsafe, unsafe]] void raw() {}", "unsafe unsafe void raw() {}"}) {
     expectRejected(declaration + "\nint main() { return 0; }", "GTI-P0001",
                    "invalid unsafe modifier placement is a parser diagnostic");
@@ -439,6 +444,159 @@ int main() {
                  }),
          "invalid modifier recovery retains the later declaration");
 }
+
+void testUnsafeMembersAndRequirements() {
+  const std::string source = R"(
+concept reads<T> = requires(T& x) { { x.read() } -> int; };
+concept unsafe_reads<T> = requires(T& x) { unsafe { x.read() } -> int; };
+concept either_reads<T> = reads<T> || unsafe_reads<T>;
+concept both_reads<T> = reads<T> && unsafe_reads<T>;
+concept changes<T> = requires(mut T& x, int value) {
+  unsafe { x.change(value) } -> int;
+};
+struct Meter {
+  mut int value = 3;
+  unsafe int read() { return this.value; }
+  unsafe int change(int value) mut { this.value = value; return this.value; }
+  bool change(bool value) mut { return value; }
+  unsafe static T relay<T>(T value) { return value; }
+};
+struct SafeMeter { int read() { return 7; } };
+struct Box<T> { unsafe T relay(T value) { return value; } };
+struct Ticket { Ticket() {} unsafe int consume() && { return 7; } };
+enum class Failure { unavailable };
+struct Layout { int count = 1; };
+struct Region { void* address = nullptr; };
+concept provider<R, E> =
+  requires(mut R& resource, Layout layout) {
+    { resource.allocate(layout) } -> expected<Region, E>;
+  } && requires(mut R& resource, Region region) {
+    unsafe { resource.release(region) } -> void;
+  };
+struct Depot {
+  expected<Region, Failure> allocate(Layout layout) mut {
+    if (layout.count < 0) { return unexpected(Failure::unavailable); }
+    Region region{};
+    return region;
+  }
+  unsafe void release(Region region) mut {}
+};
+expected<Region, E> reserve<R, E>(mut R& resource, Layout layout)
+  requires provider<R, E> { return resource.allocate(layout); }
+unsafe void relinquish<R, E>(mut R& resource, Region region)
+  requires provider<R, E> { unsafe { resource.release(region); } }
+unsafe int read_generic<T>(T& x) requires unsafe_reads<T> {
+  unsafe { return x.read(); }
+}
+unsafe int forward<T>(T& x) requires either_reads<T> {
+  unsafe { return read_generic(x); }
+}
+int proved_safe<T>(T& x) requires both_reads<T> { return x.read(); }
+unsafe int change_generic<T>(mut T& x, int value)
+  requires requires(mut T& receiver, int input) {
+    unsafe { receiver.change(input) } -> int;
+  } {
+  unsafe { return x.change(value); }
+}
+int main() {
+  static_assert(!(requires(Meter& x) { { x.read() } -> int; }));
+  static_assert(requires(Meter& x) { unsafe { x.read() } -> int; });
+  static_assert(requires(SafeMeter& x) { unsafe { x.read() } -> int; });
+  mut Meter meter{};
+  SafeMeter safe{};
+  Box<int> box{};
+  mut Depot depot{};
+  Layout layout{};
+  auto region = reserve<Depot, Failure>(depot, layout);
+  if (!region.has_value()) { return 4; }
+  if (!meter.change(true) || proved_safe(safe) != 7) { return 1; }
+  unsafe {
+    relinquish<Depot, Failure>(depot, region.value());
+    if (Ticket().consume() != 7) { return 5; }
+    if (change_generic(meter, 9) != 9 || forward(meter) != 9) { return 2; }
+    return Meter::relay(box.relay(forward(safe))) == 7 ? 0 : 3;
+  }
+}
+)";
+  const auto frontend = analyze(source);
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "ordinary, static, generic and structural unsafe methods compose");
+  if (frontend.canGenerateCode()) {
+    expect(!gti_test::emitCppText(frontend).empty(),
+           "unsafe member calls use existing verified MIR production bodies");
+    auto erased = frontend.mir;
+    bool changed = false;
+    for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
+             erased.functionInstances())) {
+      if (function.owner && function.requiresUnsafe) {
+        function.requiresUnsafe = false;
+        changed = true;
+        break;
+      }
+    }
+    expect(changed && !lang::verifyMirProgram(erased).valid(),
+           "MIR rejects erasure of an unsafe member target's contract");
+  }
+  const auto formatted = lang::Formatter().format(source);
+  expect(formatted == lang::Formatter().format(formatted) &&
+             analyze(formatted).canGenerateCode(),
+         "unsafe member requirements round-trip through formatting");
+  const auto hoverOffset = source.find("unsafe_reads<T> =") + 1;
+  const auto hover = lang::LanguageQueries().hover(
+      frontend, frontend.sourceGraph.entryUnit(), hoverOffset);
+  expect(hover && hover->signature.find("unsafe {") != std::string::npos,
+         "concept hover preserves its explicit unsafe member contract");
+
+  const std::string declaration =
+      "struct Item { unsafe int read() { return 1; } "
+      "unsafe static int number() { return 2; } };\n";
+  expectRejected(declaration +
+                     "int main() { Item item{}; return item.read(); }",
+                 "GTI-S2055", "instance calls require lexical unsafe");
+  expectRejected(declaration + "int main() { return Item::number(); }",
+                 "GTI-S2055", "static calls require lexical unsafe");
+  expectRejected(
+      "struct Item { unsafe int read(const int* p) { return *p; } };",
+      "GTI-S2055", "unsafe methods do not authorize their bodies");
+  expectRejected(declaration +
+                     "int main() { unsafe { auto f = []() "
+                     "-> int { return Item::number(); }; return f(); } }",
+                 "GTI-S2055", "nested lambdas retain their own safety context");
+  expectRejected(
+      declaration + "concept safe<T> = requires(T& x) { { x.read() } -> int; };"
+                    "int read<T>(T& x) requires safe<T> { return x.read(); }"
+                    "int main() { Item item{}; return read(item); }",
+      "GTI-S2029", "safe requirements reject unsafe implementations");
+  const std::string unsafeContract =
+      "concept readable<T> = requires(T& x) { unsafe { x.read() } -> int; };\n";
+  expectRejected(
+      unsafeContract +
+          "int read<T>(T& x) requires readable<T> { return x.read(); }",
+      "GTI-S2055", "uninstantiated generic bodies preserve obligations");
+  expectRejected(
+      unsafeContract +
+          "concept safe<T> = requires(T& x) { { x.read() } -> int; };"
+          "int safe_read<T>(T& x) requires safe<T> { return x.read(); }"
+          "int read<T>(T& x) requires readable<T> { "
+          "unsafe { return safe_read(x); } }",
+      "GTI-S2029", "unsafe contracts cannot forward into safe ones");
+  expectRejected(
+      unsafeContract +
+          "concept safe<T> = requires(T& x) { { x.read() } -> int; };"
+          "int read<T>(T& x) requires safe<T> || readable<T> { "
+          "return x.read(); }",
+      "GTI-S2055", "constraint alternatives cannot erase unsafe effects");
+  expectRejected(
+      declaration +
+          "int main() { unsafe { auto action = Item::number; } return 0; }",
+      "GTI-S2090", "static method values cannot erase unsafe effects");
+  expectRejected(declaration + "int main() { Item item{}; unsafe { auto action "
+                               "= item.read; } return 0; }",
+                 "GTI-S2000",
+                 "bound method values cannot erase unsafe effects");
+}
 } // namespace
 
 int main() {
@@ -447,5 +605,6 @@ int main() {
   testKeywordMigrationAndUnusedBlocks();
   testCallbackMutation();
   testAdditionalCallForms();
+  testUnsafeMembersAndRequirements();
   return failures == 0 ? 0 : 1;
 }

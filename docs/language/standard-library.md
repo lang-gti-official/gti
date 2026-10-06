@@ -710,7 +710,31 @@ The source is borrowed only during construction. Later mutations of either
 string do not affect the other, and the result may outlive its source. Indices
 count code units, not Unicode characters, and embedded zero bytes are copied.
 
-`<std/memory>` implements the first public typed allocation slice:
+`<std/memory>` exposes `std::layout_of<T>()`, returning an ordinary
+`std::layout` with `size_t bytes` and `size_t alignment` fields. These are the
+size and alignment of the compiler-selected runtime GTI object representation
+for the current target. The query does not create, copy, move, borrow or destroy
+an object, so owning and immovable user-defined classes are supported, including
+ordinary wrappers containing owning fields. Generic forwarding preserves the
+concrete queried type.
+
+The ordinary public concept `std::layout_queryable<T>` expresses eligibility.
+`layout_of<T>()` requires it, and a generic forwarding function uses the same
+constraint. Unsupported types are rejected at the call site, including in
+editor analysis, rather than only after the library body is instantiated.
+
+The current direct-query boundary admits primitive numeric/boolean/character
+types, raw pointers, integral enums, complete non-abstract classes, structs and
+passive unions, and positive concrete fixed arrays of admitted types. References,
+`void`, incomplete/opaque classes, interfaces, abstract classes, payload enums,
+direct `expected` types and compiler-private storage capabilities are excluded.
+Containing an owner field does not make an ordinary user class a private
+capability. This runtime descriptor is not a stable foreign ABI, an allocation,
+an initialization proof, or a new constant expression. The existing bounded
+`sizeof(T)` and `alignof(T)` constant-query rules are unchanged. See
+[runtime object layout](../../examples/119-runtime-object-layout.gti).
+
+`<std/memory>` also implements the first public typed allocation slice:
 
 - `std::allocator` is a stateless process allocator with
   `try_storage<T>(count)` and
@@ -726,10 +750,10 @@ Both allocator operations return
 host allocation. An explicit alignment must be a nonzero power of two, and the
 effective alignment is never weaker than `alignof(T)`. Allocation is
 failure-atomic and the resulting storage owner, rather than the allocator,
-carries release authority. This typed request is also the ordinary-object
-layout interface: allocation derives size and alignment from the concrete `T`,
-including owning classes, without exposing its representation as a stable C
-ABI or requiring application-supplied byte sizes.
+carries release authority. Typed allocation derives size and alignment from
+the concrete `T`, including owning classes, without requiring application-supplied
+byte sizes. Custom-resource requests can separately use `std::layout_of<T>()`;
+neither operation exposes a stable C ABI.
 
 Each public storage slot is checked. `construct(index, value)` consumes one
 completed `T` and requires an uninitialized in-bounds slot; `get` and `get_mut`

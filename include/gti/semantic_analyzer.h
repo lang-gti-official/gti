@@ -20,6 +20,16 @@ public:
   [[nodiscard]] virtual bool
   requiresActiveCleanupFor(const SemanticType &type) const = 0;
 
+  // A borrowed nominal value with executable cleanup must retain its external
+  // dependencies until that cleanup completes, not merely its last source use.
+  // Query concrete semantic facts so generic field substitutions participate.
+  [[nodiscard]] bool
+  lifecycleBoundBorrowCarrierFor(const SemanticType &type) const {
+    return type.kind == SemanticType::Class &&
+           traitsFor(type).containsBorrowedState &&
+           requiresActiveCleanupFor(type);
+  }
+
   [[nodiscard]] virtual SemanticInstanceAnalysis analyzeFunctionInstance(
       FunctionId functionId,
       const std::vector<SemanticType> &classTypeArguments,

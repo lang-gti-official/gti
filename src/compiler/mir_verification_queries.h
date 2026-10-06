@@ -7,6 +7,11 @@
 
 namespace lang::mir_detail {
 
+// Runtime representation queries have no runtime input and cannot acquire
+// ownership or borrow authority merely by naming a type.
+[[nodiscard]] bool objectLayoutQuery(const MirProgram &program,
+                                     const MirInstruction &instruction);
+
 // Inert, const-preserving typed/erased address conversion; never a borrow or
 // an assertion that the pointee is initialized, aligned, live or writable.
 [[nodiscard]] bool rawPointerConversion(const MirInstruction &instruction);
