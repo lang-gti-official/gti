@@ -29,6 +29,8 @@ int main() {
   // No protected-store query or platform types/languages are needed here.
   auto authenticatedRegistry = lang::driver::configuredRegistries(credentials);
   lang::driver::validateRegistryCredential({.secret = "synthetic-sdk-token"});
+  lang::driver::validateRegistryPasswordLogin(
+      {"sdk-user", "synthetic-password", ""});
   const auto requirement =
       lang::driver::PackageVersionRequirement::parse("^0.2.1");
   const auto version = lang::driver::parsePackageVersion("0.2.9");

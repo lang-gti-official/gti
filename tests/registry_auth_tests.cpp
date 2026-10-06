@@ -39,7 +39,7 @@ void environment(const char *name, const char *value) {
 struct MemoryStore : RegistryCredentialStore {
   std::map<RegistryCredentialTarget, RegistryCredential> data;
   int reads = 0, writes = 0, erases = 0;
-  bool usable = true, denied = false;
+  bool usable = true, denied = false, writeDenied = false;
   bool available() const override { return usable; }
   std::string name() const override { return "test memory store"; }
   std::optional<RegistryCredential>
@@ -54,6 +54,9 @@ struct MemoryStore : RegistryCredentialStore {
   void write(const RegistryCredentialTarget &target,
              const RegistryCredential &credential) override {
     ++writes;
+    if (writeDenied) {
+      throw RegistryError("GTI-B1724", "Fixture write denied.");
+    }
     data.insert_or_assign(target, credential);
   }
   void erase(const RegistryCredentialTarget &target) override {
@@ -66,6 +69,27 @@ struct OtherRegistry : Registry {
   RegistryAuthenticationInfo info{
       {"custom", "https://registry.example", "team"}, "GTI_AUTH_MODEL_TOKEN"};
   int validations = 0;
+  int issues = 0, discards = 0;
+  bool revokeDenied = false, malformedIssue = false;
+  RegistryIssuedCredential
+  issueCredential(const RegistryPasswordLogin &login) override {
+    ++issues;
+    if (login.password != "fixture-password") {
+      throw RegistryError("GTI-B1713", "Fixture password rejected.");
+    }
+    return {{.secret = malformedIssue ? "bad token" : "fixture-secret"},
+            "new-fixture-token"};
+  }
+  void
+  discardIssuedCredential(const RegistryPasswordLogin &,
+                          const RegistryIssuedCredential &issued) override {
+    expect(issued.revocationHandle == "new-fixture-token",
+           "revoke only current issuance");
+    ++discards;
+    if (revokeDenied) {
+      throw RegistryError("GTI-B1713", "Fixture cleanup rejected.");
+    }
+  }
   std::optional<RegistryAuthenticationInfo> authentication() const override {
     return info;
   }
@@ -178,6 +202,119 @@ void model() {
   logoutRegistry(backend, store);
   expect(store.data.empty(), "logout is exact and idempotent");
 }
+void passwordModel() {
+  OtherRegistry backend;
+  MemoryStore store;
+  RegistryPasswordLogin login{"fixture-user", "fixture-password", ""};
+  rejects([&] { loginRegistryWithPassword(backend, store, login); },
+          "GTI-B1725");
+  expect(backend.issues == 0, "capability refusal before issuance");
+  backend.info.passwordLogin = true;
+  store.usable = false;
+  rejects([&] { loginRegistryWithPassword(backend, store, login); },
+          "GTI-B1724");
+  expect(backend.issues == 0, "unavailable store refuses before issuance");
+  store.usable = true;
+  loginRegistryWithPassword(backend, store, login);
+  expect(store.data.at(backend.info.target).secret == "fixture-secret",
+         "store token only");
+  store.writeDenied = true;
+  rejects([&] { loginRegistryWithPassword(backend, store, login); },
+          "GTI-B1724");
+  expect(backend.discards == 1, "failed save revokes newly issued token");
+  expect(store.data.at(backend.info.target).secret == "fixture-secret",
+         "preserve previous login");
+  backend.revokeDenied = true;
+  rejects([&] { loginRegistryWithPassword(backend, store, login); },
+          "GTI-B1727");
+  backend.revokeDenied = false;
+  store.writeDenied = false;
+  backend.malformedIssue = true;
+  rejects([&] { loginRegistryWithPassword(backend, store, login); },
+          "GTI-B1725");
+  expect(backend.discards == 3, "invalid issued token is also revoked");
+  for (auto invalid :
+       {RegistryPasswordLogin{"", "fixture-password", ""},
+        RegistryPasswordLogin{"bad:user", "fixture-password", ""},
+        RegistryPasswordLogin{"fixture-user", "", ""},
+        RegistryPasswordLogin{"fixture-user", "secret\nheader", ""},
+        RegistryPasswordLogin{"fixture-user", std::string(4097, 'a'), ""},
+        RegistryPasswordLogin{"fixture-user", "fixture-password", "12\n456"}}) {
+    rejects([&] { validateRegistryPasswordLogin(invalid); }, "GTI-B1725");
+  }
+  validateRegistryPasswordLogin({"fixture-user", "päss: wörd", "123456"});
+}
+void passwordAdapter() {
+  auto store = std::make_shared<MemoryStore>();
+  auto registries = configuredRegistries(store);
+  auto &backend = registries->get("official");
+  const auto info = *backend.authentication();
+  RegistryPasswordLogin login{"fixtureuser", "fixture-password", ""};
+  expect(info.passwordLogin, "Gitea password login capability");
+  environment(info.tokenEnvironment.c_str(), "wrong-environment");
+  loginRegistryWithPassword(backend, *store, login);
+  const auto saved = store->data.at(info.target).secret;
+  expect(saved.starts_with("issued-"),
+         "Gitea token returned from issuance is saved");
+  environment(info.tokenEnvironment.c_str(), nullptr);
+  auto readProvider = configuredRegistries(store);
+  expect(readProvider->get("official").listVersions("sample").size() == 1,
+         "read token works");
+  rejects(
+      [&] {
+        readProvider->get("official")
+            .publish("read-only", "1.0.0", "archive", "metadata");
+      },
+      "GTI-B1713");
+  login.permission = RegistryLoginPermission::Publish;
+  login.password = "päss: wörd";
+  loginRegistryWithPassword(backend, *store, login);
+  auto writeProvider = configuredRegistries(store);
+  writeProvider->get("official")
+      .publish("password-publish", "1.0.0", "archive", "metadata");
+  const auto beforeFailures = store->data.at(info.target).secret;
+  login.password = "wrong-password";
+  rejects([&] { loginRegistryWithPassword(backend, *store, login); },
+          "GTI-B1713");
+  login.password = "fixture-password";
+  login.username = "otp-user";
+  rejects([&] { loginRegistryWithPassword(backend, *store, login); },
+          "GTI-B1713");
+  login.oneTimeCode = "123456";
+  loginRegistryWithPassword(backend, *store, login);
+  login.oneTimeCode = "12\n456";
+  rejects([&] { loginRegistryWithPassword(backend, *store, login); },
+          "GTI-B1725");
+  login.oneTimeCode = "";
+  login.username = "fixtureuser";
+  store->writeDenied = true;
+  rejects([&] { loginRegistryWithPassword(backend, *store, login); },
+          "GTI-B1724");
+  store->writeDenied = false;
+  for (auto [username, code] :
+       {std::pair{"malformed-user", "GTI-B1714"},
+        std::pair{"bad-scope-user", "GTI-B1714"},
+        std::pair{"forged-name-user", "GTI-B1714"},
+        std::pair{"no-owner-access", "GTI-B1713"},
+        std::pair{"dropped-response-user", "GTI-B1712"},
+        std::pair{"error-response-user", "GTI-B1712"},
+        std::pair{"redirect-user", "GTI-B1712"},
+        std::pair{"cleanup-failure-user", "GTI-B1727"}}) {
+    login.username = username;
+    rejects([&] { loginRegistryWithPassword(backend, *store, login); }, code);
+  }
+  expect(store->data.at(info.target).secret.starts_with("issued-"),
+         "failed issuance preserves login");
+  expect(beforeFailures != saved,
+         "read and publish logins mint different tokens");
+  rejects(
+      [&] {
+        backend.discardIssuedCredential(
+            login, {.revocationHandle = "unrelated-token"});
+      },
+      "GTI-B1725");
+  logoutRegistry(backend, *store);
+}
 void adapter() {
   auto store = std::make_shared<MemoryStore>();
   auto registries = configuredRegistries(store);
@@ -222,8 +359,10 @@ void adapter() {
 int main(int argc, char *[]) {
   if (argc == 1) {
     model();
+    passwordModel();
   } else {
     adapter();
+    passwordAdapter();
   }
   return failures ? 1 : 0;
 }

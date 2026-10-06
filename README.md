@@ -284,7 +284,10 @@ and `gti publish --name libc` publishes a Git-tracked package inventory. The
 [registry documentation](docs/architecture/build-and-driver.md#source-package-registries)
 describes configuration, publication, cache integrity and the bootstrap limits.
 
-On macOS, use `gti registry login` once to save a package token in Keychain;
+On macOS, `gti registry login` prompts for your Gitea username/password and an
+optional 2FA code, creates a package-read token and saves only that token in
+Keychain. Use `gti registry login --publish` for package-write access, or
+`--token`/`--token-stdin` to supply an existing token;
 `gti add`/`fetch`/`publish` then use it automatically. `gti registry status`
 shows the source without showing the secret, and `gti registry logout` removes
 the saved credential. Configured `token-env` variables override saved login

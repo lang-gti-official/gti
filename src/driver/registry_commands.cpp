@@ -53,7 +53,8 @@ void fail(RegistryCommandResult &result, const std::filesystem::path &path,
         "Use `gti registry login <registry>` on macOS or set the configured "
         "token-env variable to a token with the required "
         "package permissions (GTI_REGISTRY_TOKEN for the default official "
-        "registry); anonymous reads depend on server policy.");
+        "registry); use `login --publish` to create a publishing token. "
+        "Anonymous reads depend on server policy.");
   }
   result.diagnostics.push_back(std::move(diagnostic));
 }
