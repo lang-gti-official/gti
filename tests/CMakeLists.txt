@@ -231,12 +231,32 @@ if(TARGET gti_lsp)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_borrow_fields_lsp_test.py" $<TARGET_FILE:gti_lsp>)
   add_test(NAME borrowing_composition_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/borrowing_composition_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  add_test(NAME cleanup_bound_borrow_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/cleanup_bound_borrow_lsp_test.py" $<TARGET_FILE:gti_lsp>)
 endif()
 add_test(NAME source_modules_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_modules_runtime_test.py" $<TARGET_FILE:gti>)
 add_executable(gti_borrowing_composition_tests borrowing_composition_tests.cpp)
 target_link_libraries(gti_borrowing_composition_tests PRIVATE gti_cpp_backend)
 add_test(NAME borrowing_composition_pipeline COMMAND gti_borrowing_composition_tests)
+add_executable(gti_cleanup_bound_borrow_tests cleanup_bound_borrow_tests.cpp)
+target_link_libraries(gti_cleanup_bound_borrow_tests PRIVATE gti_compiler)
+add_test(NAME cleanup_bound_borrow COMMAND gti_cleanup_bound_borrow_tests)
+add_executable(gti_cleanup_bound_borrow_mutation_tests
+               cleanup_bound_borrow_mutation_tests.cpp)
+target_link_libraries(gti_cleanup_bound_borrow_mutation_tests PRIVATE gti_compiler)
+add_test(NAME cleanup_bound_borrow_mutations
+         COMMAND gti_cleanup_bound_borrow_mutation_tests)
+add_executable(gti_cleanup_bound_backend_mutation_tests
+               cleanup_bound_backend_mutation_tests.cpp)
+target_link_libraries(gti_cleanup_bound_backend_mutation_tests PRIVATE gti_cpp_backend)
+add_test(NAME cleanup_bound_backend_mutations
+         COMMAND gti_cleanup_bound_backend_mutation_tests)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME cleanup_bound_borrow_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/cleanup_bound_borrow_runtime_test.py" $<TARGET_FILE:gti>)
+  set_tests_properties(cleanup_bound_borrow_runtime PROPERTIES TIMEOUT 300)
+endif()
 add_executable(gti_shared_ownership_tests shared_ownership_tests.cpp)
 target_link_libraries(gti_shared_ownership_tests PRIVATE gti_compiler)
 add_test(NAME shared_ownership_pipeline COMMAND gti_shared_ownership_tests)
@@ -506,6 +526,10 @@ add_executable(gti_unsafe_function_tests
                "${PROJECT_SOURCE_DIR}/tests/unsafe_function_tests.cpp")
 target_link_libraries(gti_unsafe_function_tests PRIVATE gti_cpp_backend)
 add_test(NAME unsafe_function_contract COMMAND gti_unsafe_function_tests)
+
+add_executable(gti_runtime_object_layout_tests runtime_object_layout_tests.cpp)
+target_link_libraries(gti_runtime_object_layout_tests PRIVATE gti_cpp_backend)
+add_test(NAME runtime_object_layout_contract COMMAND gti_runtime_object_layout_tests)
 
 add_executable("gti_managed_thread_tests"
                "${PROJECT_SOURCE_DIR}/tests/managed_thread_tests.cpp")
@@ -1033,6 +1057,11 @@ if(Python3_Interpreter_FOUND)
                    "${PROJECT_SOURCE_DIR}/tests/unsafe_function_runtime_test.py"
                    "$<TARGET_FILE:gti>")
   set_tests_properties(unsafe_function_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME runtime_object_layout_runtime
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/runtime_object_layout_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(runtime_object_layout_runtime PROPERTIES TIMEOUT 300)
   add_test(
     NAME string_index_range_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -2916,6 +2945,10 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME unsafe_function_lsp
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/unsafe_function_lsp_test.py"
+                   "$<TARGET_FILE:gti_lsp>")
+    add_test(NAME runtime_object_layout_lsp
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${PROJECT_SOURCE_DIR}/tests/runtime_object_layout_lsp_test.py"
                      "$<TARGET_FILE:gti_lsp>")
     add_test(NAME cthread_lsp
              COMMAND "${Python3_EXECUTABLE}"

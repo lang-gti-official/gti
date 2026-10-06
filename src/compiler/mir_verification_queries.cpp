@@ -5,6 +5,78 @@
 
 namespace lang::mir_detail {
 
+bool objectLayoutQuery(const MirProgram &program,
+                       const MirInstruction &instruction) {
+  if ((instruction.intrinsic != IntrinsicKind::ObjectSize &&
+       instruction.intrinsic != IntrinsicKind::ObjectAlignment) ||
+      !instruction.objectLayoutType ||
+      instruction.kind != MirInstructionKind::Call || !instruction.result ||
+      instruction.info.type != SemanticType::UInt64 ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly ||
+      instruction.info.traits != semanticTraits(SemanticType::UInt64))
+    return false;
+  // All unlisted fields must remain neutral, including future ownership,
+  // failure and invocation metadata. Provenance IDs do not grant authority.
+  const MirInstruction exact{.id = instruction.id,
+                             .kind = MirInstructionKind::Call,
+                             .hirValue = instruction.hirValue,
+                             .hirStatement = instruction.hirStatement,
+                             .callSite = instruction.callSite,
+                             .result = instruction.result,
+                             .intrinsic = instruction.intrinsic,
+                             .objectLayoutType = instruction.objectLayoutType,
+                             .info = instruction.info};
+  if (instruction != exact)
+    return false;
+  const auto eligible = [&](const auto &self, const SemanticType &type,
+                            std::size_t depth) -> bool {
+    if (depth > 128 || type.arrayLengthParameterId != 0)
+      return false;
+    switch (type.kind) {
+    case SemanticType::Int8:
+    case SemanticType::Int16:
+    case SemanticType::Int32:
+    case SemanticType::Int64:
+    case SemanticType::UInt8:
+    case SemanticType::UInt16:
+    case SemanticType::UInt32:
+    case SemanticType::UInt64:
+    case SemanticType::Float:
+    case SemanticType::Double:
+    case SemanticType::Bool:
+    case SemanticType::Char:
+      return type == SemanticType(type.kind);
+    case SemanticType::RawPointer:
+      return type.arguments.size() == 1 &&
+             type.arguments.front().kind != SemanticType::RawPointer &&
+             type.arguments.front().kind != SemanticType::TypeParameter &&
+             type.arguments.front().kind != SemanticType::Unknown;
+    case SemanticType::Enum:
+      return program.findIntegralEnum(type.enumId) != nullptr;
+    case SemanticType::Array:
+      return type.arguments.size() == 1 && type.arrayLength > 0 &&
+             self(self, type.arguments.front(), depth + 1);
+    case SemanticType::Class: {
+      const MirClassInstance *owner = nullptr;
+      for (const MirClassInstance &candidate : program.classInstances()) {
+        if (candidate.type == type) {
+          if (owner != nullptr)
+            return false;
+          owner = &candidate;
+        }
+      }
+      return owner != nullptr && owner->kind != ClassKind::Interface &&
+             !owner->abstract && !owner->cOpaqueHandle &&
+             owner->compilerCapability == CompilerCapabilityTypeKind::None;
+    }
+    default:
+      return false;
+    }
+  };
+  return eligible(eligible, *instruction.objectLayoutType, 0);
+}
+
 bool rawPointerConversion(const MirInstruction &instruction) {
   if (instruction.kind != MirInstructionKind::Compute ||
       instruction.operation != MirOperation::Convert ||

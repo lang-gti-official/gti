@@ -237,8 +237,11 @@ class/specialization registration; primitive constraints needed during class
 registration resolve lazily. No formatter or stream spelling selects a rule.
 
 Generic body analysis uses only signatures guaranteed by its requirements,
-checking argument and receiver access. Concrete instance analysis selects the
-ordinary method and publishes the normal HIR/MIR call. Comma-pack fold targets
+checking argument and receiver access plus the retained unsafe-call obligation.
+Safe structural facts imply the weaker unsafe capability; the reverse does not
+hold. The existing conjunction/alternative fact calculation preserves that
+direction, including forwarded requirements. Concrete instance analysis selects
+the ordinary method and publishes the normal HIR/MIR call. Comma-pack fold targets
 may carry requirements: each concrete element passes ordinary instantiation and
 constraint checking before a resolved fold can enter HIR. Signature requirements
 do not create a second executable call path or bypass actual borrow checking.
@@ -1123,12 +1126,14 @@ applies. Source concept composition remaps both forms through each concept
 application; public concept names never become semantic enum cases.
 
 Source member requirements add one general `ReadMember` relationship carrying
-the member name and receiver/result type arguments. Both direct boolean queries
-and named concept leaves use the same semantic signature check. Composition
+the member name, receiver/result/parameter types, receiver access, and explicit
+unsafe-call permission. Both direct boolean queries and named concept leaves use
+the same semantic signature check. Composition
 remaps the arguments and preserves the name; disjunction must not merge facts
-for different methods. Symbolic bodies can call a guaranteed exact nullary
-read-only member, but concrete instance analysis must resolve the real method
-before HIR. Query results become ordinary boolean HIR/MIR literals, never
+for different methods or erase an unsafe obligation. Symbolic bodies can call a
+guaranteed exact member under its receiver and safety contract, but concrete
+instance analysis must resolve the real method before HIR. Query results become
+ordinary boolean HIR/MIR literals, never
 synthetic runtime calls. Neither the constant evaluator nor the backend decides
 whether a type supports cloning. `std::clone` and vector element duplication
 remain ordinary source-defined generic bodies and verified-MIR calls.

@@ -560,8 +560,10 @@ void SignaturePrinter::appendConceptApplication(
                                                          : std::string()) +
           semantic_spelling::typeRefSpelling(query.parameters()[index]) + " " +
           query.bindings()[index].lexeme;
-    result +=
-        ") { { " + query.binding().lexeme + "." + query.member().lexeme + "(";
+    result += ") { ";
+    if (query.unsafeKeyword())
+      result += "unsafe ";
+    result += "{ " + query.binding().lexeme + "." + query.member().lexeme + "(";
     for (std::size_t index = 0; index < query.arguments().size(); ++index) {
       if (index != 0)
         result += ", ";

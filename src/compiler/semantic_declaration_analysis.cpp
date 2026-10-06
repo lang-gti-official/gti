@@ -983,6 +983,9 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
     const bool trustedAtomicConstraint =
         isAtomicLibraryUnit(conceptInfo.sourceUnit) &&
         binding.name == "atomic_scalar";
+    const bool trustedMemoryConstraint =
+        isMemoryLibraryUnit(conceptInfo.sourceUnit) &&
+        binding.name == "object_layout";
     const bool trustedIteratorConstraint =
         isIteratorLibraryUnit(conceptInfo.sourceUnit) &&
         (binding.name == "input_iterator" || binding.name == "sentinel_for" ||
@@ -1007,7 +1010,8 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
          binding.name == "range_predicate" ||
          binding.name == "range_operation");
     if ((!isPreludeUnit(conceptInfo.sourceUnit) && !trustedAtomicConstraint &&
-         !trustedIteratorConstraint && !trustedFunctionalConstraint) ||
+         !trustedIteratorConstraint && !trustedFunctionalConstraint &&
+         !trustedMemoryConstraint) ||
         conceptInfo.namespaceScope !=
             std::vector<std::string>{"gti_internal"}) {
       report(binding.attribute,
@@ -1115,6 +1119,14 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         pattern.memberName = requirement.memberRequirement->member().lexeme;
         pattern.mutableReceiver = requirement.memberRequirement->receiver()
                                       .referenceMutability.has_value();
+        pattern.requiresUnsafe =
+            requirement.memberRequirement->unsafeKeyword().has_value();
+        if (!pattern.requiresUnsafe) {
+          auto weaker = pattern;
+          weaker.requiresUnsafe = true;
+          leafStructuralConstraints[requirementIndex].push_back(
+              std::move(weaker));
+        }
         leafStructuralConstraints[requirementIndex].push_back(
             std::move(pattern));
         leafHasStructural[requirementIndex] = true;
@@ -1210,6 +1222,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         mapped.kind = pattern.kind;
         mapped.memberName = pattern.memberName;
         mapped.mutableReceiver = pattern.mutableReceiver;
+        mapped.requiresUnsafe = pattern.requiresUnsafe;
         std::vector<SemanticType> mappedTypes;
         for (const auto &argument : argumentMap)
           mappedTypes.push_back(
@@ -4830,12 +4843,6 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
       const SemanticType ownerType = SemanticType::classType(owner.id);
       const auto path = storedReferencePath(ownerType);
       if (path) {
-        if (hasSourceDestructorBody(owner)) {
-          report(owner.destructor->declaration->tilde(),
-                 "A class carrying a stored reference cannot declare a "
-                 "destructor in the current lifetime model.",
-                 "GTI-S2045");
-        }
         if (owner.constructors.empty()) {
           report(path->fields.front()->name(),
                  "A nested stored-reference field requires a declared "
@@ -4861,13 +4868,6 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
       continue;
     }
     const StoredReferenceInfo &stored = *owner.storedReference;
-    if (hasSourceDestructorBody(owner) &&
-        !isDefaultLibraryMutexGuardCarrier(owner)) {
-      report(owner.destructor->declaration->tilde(),
-             "A class carrying a stored reference cannot declare a "
-             "destructor in the current lifetime model.",
-             "GTI-S2045");
-    }
     if (owner.constructors.empty()) {
       report(stored.field->name(),
              "A stored reference field requires a declared constructor "
@@ -6717,7 +6717,8 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
             .staticFields = std::move(staticFields),
             .storedReference = owner.storedReference,
             .lifecycleBoundBorrowCarrier =
-                isDefaultLibraryMutexGuardCarrier(owner),
+                lifecycleBoundBorrowCarrierFor(openClassType(owner.id)),
+            .mutexGuardBorrowCarrier = isDefaultLibraryMutexGuardCarrier(owner),
             .kind = owner.kind,
             .bases = owner.bases,
             .abstract = owner.abstract,

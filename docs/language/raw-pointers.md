@@ -424,8 +424,8 @@ pointer precondition.
 
 ## Functions With A Caller Obligation
 
-Use `unsafe` when a namespace-scope GTI function requires the caller to
-establish a precondition that its types and implementation cannot enforce:
+Use `unsafe` when a GTI function or named non-polymorphic method requires the
+caller to establish a precondition that its types and implementation cannot enforce:
 
 ```gti
 // Caller: pointer must address a live, initialized int32_t for this call.
@@ -444,13 +444,23 @@ blocks.
 The implementation must document the actual obligation; the compiler checks
 the caller's acknowledgement, not the truth of a lifetime or aliasing claim.
 
-This bounded surface admits namespace-scope GTI free functions, including
-`static`, `constexpr`, and generic declarations. It excludes methods,
+This surface admits namespace-scope GTI free functions and ordinary instance
+or static methods, including `constexpr` and generic declarations and methods
+of generic classes. Instance methods retain their ordinary read-only, mutable,
+or consuming receiver rules. It excludes virtual/interface/override methods,
 constructors, destructors, operators, runtime bindings, `extern "C"`
 declarations, and hosted `main`. Unsafe callable types are not implemented:
 an unsafe function cannot convert to a native callback or a safe function item,
 including an algorithm argument or managed-thread task, even inside `unsafe`.
 A safe wrapper is appropriate only when it establishes the precondition itself.
+
+An exact structural member requirement acknowledges this effect explicitly:
+`requires(T& value) { unsafe { value.inspect() } -> int; }`. The query is
+unevaluated; its keyword grants no permission to a generic body. Calls through
+that requirement still require a lexical unsafe block. A safe implementation
+can satisfy it, but an unsafe implementation cannot satisfy a requirement
+without the keyword. See [concepts](concepts.md#exact-member-signature-requirements)
+and runnable example 117.
 
 The canonical modifier order is `unsafe static constexpr` before the return
 type, omitting modifiers that do not apply. Function contract attributes such

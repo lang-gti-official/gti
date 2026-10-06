@@ -591,6 +591,7 @@ module.exports = grammar({
     method_declaration: ($) =>
       seq(
         repeat(field("attribute", $.function_contract_attribute)),
+        optional(field("unsafe", "unsafe")),
         optional(field("virtual", "virtual")),
         optional(field("storage", "static")),
         optional(field("constant", "constexpr")),
@@ -1354,7 +1355,7 @@ module.exports = grammar({
         "requires", "(", optional("mut"), field("receiver_type", $.type),
         field("binding", $.identifier),
         repeat(seq(",", optional("mut"), field("parameter_type", $.type), field("parameter", $.identifier))),
-        ")", "{", "{",
+        ")", "{", optional(field("unsafe", "unsafe")), "{",
         field("receiver", $.identifier), ".", field("member", $.identifier),
         "(", optional(commaSep1(field("argument", $.identifier))), ")", "}", "->", field("result_type", $.type), ";", "}",
       ),

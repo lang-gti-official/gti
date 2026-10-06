@@ -433,6 +433,14 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .startsLoan = true,
                     .dependsOnLoan = true}, // RawBorrowMut
     harmless(), // RawPointerConversion: inert address, no pointee access.
+    MirEffectTraits{.targetDependent = true,
+                    .speculatable = true,
+                    .removableWhenUnused = true,
+                    .reorderable = true}, // ObjectSize
+    MirEffectTraits{.targetDependent = true,
+                    .speculatable = true,
+                    .removableWhenUnused = true,
+                    .reorderable = true}, // ObjectAlignment
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -667,6 +675,8 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "raw-borrow",
     "raw-borrow-mut",
     "raw-pointer-conversion",
+    "object-size",
+    "object-alignment",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({
@@ -898,7 +908,10 @@ finishInstructionEffects(const MirInstruction &instruction,
       result.writesUnknownMemory || result.allocates || result.invokesRuntime ||
       result.mayTrap || result.startsLoan || result.endsLoan ||
       result.dependsOnLoan || result.movesValue || result.initializesValue ||
-      result.dropsValue || result.invokesUserCode || result.targetDependent ||
+      result.dropsValue || result.invokesUserCode ||
+      (result.targetDependent &&
+       instruction.intrinsic != IntrinsicKind::ObjectSize &&
+       instruction.intrinsic != IntrinsicKind::ObjectAlignment) ||
       result.maySynchronize;
   if (observable) {
     result.speculatable = false;

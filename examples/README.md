@@ -152,6 +152,9 @@ is a teaching helper, not a production server.
 | `114-owning-storage-view.gti` | application-defined allocation owner and raw-backed view, final-address construction, checked lifetime, movement and explicit release |
 | `115-discardable-results.gti` | optional API results, explicit call-site discard, checked reference last use and storage insertion |
 | `116-optional-raw-audit.gti` | programmer-owned unsafe validity versus mandatory checked loans, with optional conservative raw-pointer auditing |
+| `117-unsafe-member-contracts.gti` | unsafe instance/static methods and exact structural requirements preserving caller obligations through generic forwarding |
+| `118-cleanup-bound-guards.gti` | resource dependencies retained through guard destruction, simultaneous shared guards and transfer by movement |
+| `119-runtime-object-layout.gti` | runtime size/alignment descriptors for owning, immovable and nested ordinary types without constructing an object |
 
 ## Build and run
 

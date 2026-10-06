@@ -314,7 +314,7 @@ private:
     const ClassLifecycleInfo *lifecycle =
         baseModel->findClassLifecycle(*declaration->declaration);
     const bool lifecycleBoundBorrowCarrier =
-        declaration->lifecycleBoundBorrowCarrier;
+        instanceProvider->lifecycleBoundBorrowCarrierFor(resolvedType);
     // This staged family admits passive structural values, not arbitrary
     // class capabilities or executable lifecycle bodies. The ordinary class
     // catalog still owns exact substituted fields and initializer metadata.
@@ -335,6 +335,12 @@ private:
       instanceTraits.copyAssignable = false;
       instanceTraits.moveAssignable = false;
     }
+    const auto concreteSpecialMember = [](SpecialMemberStatus status,
+                                          bool available) {
+      return status == SpecialMemberStatus::Generated && !available
+                 ? SpecialMemberStatus::Deleted
+                 : status;
+    };
     output.program.classes.push_back(
         {.id = id,
          .sourceUnit = declaration->sourceUnit,
@@ -347,6 +353,7 @@ private:
          .traits = instanceTraits,
          .compilerCapability = declaration->compilerCapability,
          .lifecycleBoundBorrowCarrier = lifecycleBoundBorrowCarrier,
+         .mutexGuardBorrowCarrier = declaration->mutexGuardBorrowCarrier,
          .transferPolicy = declaration->transferPolicy,
          .sharePolicy = declaration->sharePolicy,
          .kind = declaration->kind,
@@ -359,14 +366,26 @@ private:
          .defaultConstructor = lifecycle == nullptr
                                    ? SpecialMemberStatus::Deleted
                                    : lifecycle->defaultConstructor,
-         .copyConstructor = lifecycle == nullptr ? SpecialMemberStatus::Deleted
-                                                 : lifecycle->copyConstructor,
-         .moveConstructor = lifecycle == nullptr ? SpecialMemberStatus::Deleted
-                                                 : lifecycle->moveConstructor,
-         .copyAssignment = lifecycle == nullptr ? SpecialMemberStatus::Deleted
-                                                : lifecycle->copyAssignment,
-         .moveAssignment = lifecycle == nullptr ? SpecialMemberStatus::Deleted
-                                                : lifecycle->moveAssignment,
+         .copyConstructor =
+             lifecycle == nullptr
+                 ? SpecialMemberStatus::Deleted
+                 : concreteSpecialMember(lifecycle->copyConstructor,
+                                         instanceTraits.copyable),
+         .moveConstructor =
+             lifecycle == nullptr
+                 ? SpecialMemberStatus::Deleted
+                 : concreteSpecialMember(lifecycle->moveConstructor,
+                                         instanceTraits.movable),
+         .copyAssignment =
+             lifecycle == nullptr
+                 ? SpecialMemberStatus::Deleted
+                 : concreteSpecialMember(lifecycle->copyAssignment,
+                                         instanceTraits.copyAssignable),
+         .moveAssignment =
+             lifecycle == nullptr
+                 ? SpecialMemberStatus::Deleted
+                 : concreteSpecialMember(lifecycle->moveAssignment,
+                                         instanceTraits.moveAssignable),
          .destructorStatus = lifecycle == nullptr ? SpecialMemberStatus::Deleted
                                                   : lifecycle->destructor,
          .requiresActiveDropState =
@@ -4826,6 +4845,12 @@ private:
     if (const auto *call = exprAs<Call>(raw)) {
       if (const ResolvedCallInfo *resolved = model.findCall(*call)) {
         value.intrinsic = resolved->intrinsic;
+        if ((value.intrinsic == IntrinsicKind::ObjectSize ||
+             value.intrinsic == IntrinsicKind::ObjectAlignment) &&
+            resolved->typeArguments.size() == 1) {
+          value.objectLayoutType = resolved->typeArguments.front();
+          (void)seedConcreteDeclarationType(*value.objectLayoutType);
+        }
         value.neverReturns = resolved->neverReturns;
         value.tracksCaller = resolved->tracksCaller;
         if (sourceLocationIntrinsic(value.intrinsic)) {

@@ -419,9 +419,11 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
     if (std::any_of(payload->requirements.begin(), payload->requirements.end(),
                     [](const LoweredConceptRequirement &requirement) {
                       return (requirement.memberName.empty()
-                                  ? requirement.conceptId == 0
+                                  ? requirement.conceptId == 0 ||
+                                        requirement.mutableReceiver ||
+                                        requirement.requiresUnsafe
                                   : requirement.conceptId != 0 ||
-                                        requirement.arguments.size() != 2) ||
+                                        requirement.arguments.size() < 2) ||
                              !std::all_of(requirement.arguments.begin(),
                                           requirement.arguments.end(),
                                           resolvedType);
@@ -472,9 +474,11 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
     if (std::any_of(payload->requirements.begin(), payload->requirements.end(),
                     [](const LoweredConceptRequirement &requirement) {
                       return (requirement.memberName.empty()
-                                  ? requirement.conceptId == 0
+                                  ? requirement.conceptId == 0 ||
+                                        requirement.mutableReceiver ||
+                                        requirement.requiresUnsafe
                                   : requirement.conceptId != 0 ||
-                                        requirement.arguments.size() != 2) ||
+                                        requirement.arguments.size() < 2) ||
                              !std::all_of(requirement.arguments.begin(),
                                           requirement.arguments.end(),
                                           resolvedType);

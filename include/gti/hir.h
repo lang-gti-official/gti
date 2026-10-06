@@ -214,6 +214,8 @@ struct HirValue {
   std::optional<ConstantValue> constant;
   bool programConstantSubstitution = false;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  // A runtime representation query names a type, never an object or loan.
+  std::optional<SemanticType> objectLayoutType;
   // Checked source control-flow contracts, retained independently of the
   // backend's private status-returning failure convention.
   bool neverReturns = false;
@@ -446,6 +448,7 @@ struct HirClassInstance {
   CompilerCapabilityTypeKind compilerCapability =
       CompilerCapabilityTypeKind::None;
   bool lifecycleBoundBorrowCarrier = false;
+  bool mutexGuardBorrowCarrier = false;
   ConcurrencyCapabilityPolicy transferPolicy =
       ConcurrencyCapabilityPolicy::Structural;
   ConcurrencyCapabilityPolicy sharePolicy =

@@ -3707,13 +3707,26 @@ do not expose C++ object layout as GTI semantics.
 
 - **State/role:** active Phase 2; prerequisite audit complete and statically
   borrowed lease direction approved on 2026-10-06 through the user's delegated
-  design review. The contract below is approved, not yet implemented language
-  behavior. Complete the whole allocator/container outcome;
+  design review. The resource protocol below is approved; prerequisites are
+  under implementation, not the complete allocator/container outcome.
+  Complete the whole allocator/container outcome;
   a counting adapter or another process-allocation wrapper is not completion.
 - **Outcome:** an engine-defined arena obtains one backing region, chooses
   differently sized/aligned subregions, and simultaneously supplies owning
   objects, a substantial growable container and an unrelated application-defined
   container. Ordinary default allocation remains straightforward.
+- **Prerequisite checkpoint (2026-10-06):** unsafe member declarations and
+  structural requirements preserve call-site permission; runtime object-layout
+  queries cover ordinary owning and immovable types; general cleanup-bound
+  borrowed guards retain their resources across moves, by-value calls, nested
+  field publication and constructor rollback. Examples 117–119 demonstrate
+  these capabilities. Focused verifier mutations and optimized native matrices
+  cover the guard/rollback path, including no-elide and ASan/UBSan modes;
+  broader reconciliation is still in progress. The original nested mutex
+  capability boundary remains explicit and distinct from ordinary cleanup
+  retention. None of this is yet allocator acceptance: selected-region
+  adoption, the public resource/lease API, real arena placement, fixed-address
+  immovable ownership and allocator-aware containers remain to implement.
 - **Starting evidence (2026-10-06):** inspected main `db6622a3`, including the
   optional-audit revision. `storage<std::movable T>` and its factories still
   restrict immovable elements; the private sparse storage representation obtains
@@ -3759,16 +3772,15 @@ do not expose C++ object layout as GTI semantics.
   If the actual general aliasing/representation rules cannot support this
   separation, propose a narrow general mutation capability before introducing
   broader semantics. No implicit shared ownership or refcount is authorized.
-- **Cleanup-path audit:** `createRetainedLoan` currently sets `lifecycleBound`
-  only for the trusted mutex-guard shape. Semantic declaration metadata carries
-  `lifecycleBoundBorrowCarrier` through HIR into MIR, but the program verifier
-  validates that marker specifically against mutex storage and a lock token.
-  Reusing the marker unchanged for allocator leases would violate its current
-  meaning. Separate general cleanup-bound dependency retention from mutex
-  authority (including the guard's effective exclusive access), preserve the
-  full dependency set through normal/failure drop, and validate that distinction
-  independently. This is an implementation prerequisite for the approved
-  model, not permission to broaden ordinary reference access. The canonical runtime architecture's
+- **Cleanup-path audit:** at the starting head, `createRetainedLoan` set
+  `lifecycleBound` only for the trusted mutex-guard shape. The program verifier
+  validated that marker specifically against mutex storage and a lock token.
+  The prerequisite checkpoint separates general cleanup-bound dependency
+  retention from mutex authority (including the guard's effective exclusive
+  access), preserving the dependency set through normal/failure drop and
+  independently verifying both contracts. This is a prerequisite for the
+  approved model, not permission to broaden ordinary reference access.
+  The canonical runtime architecture's
   pre-emplacement allocation description has been corrected to match the
   existing source-constructor/preflight MIR path; no executable behavior changed.
 - **Protocol and placement requirements:** compile-time generic resource

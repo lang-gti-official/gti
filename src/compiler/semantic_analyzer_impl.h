@@ -526,6 +526,7 @@ private:
     const ConceptApplication *application = nullptr;
     std::string memberName;
     bool mutableReceiver = false;
+    bool requiresUnsafe = false;
   };
 
   struct ContextualCallableResult {
@@ -1113,6 +1114,7 @@ private:
       std::vector<Argument> arguments;
       std::string memberName;
       bool mutableReceiver = false;
+      bool requiresUnsafe = false;
 
       friend bool operator==(const StructuralPattern &,
                              const StructuralPattern &) = default;
@@ -1482,6 +1484,8 @@ private:
   [[nodiscard]] bool isBorrowedCarrierReference(const SemanticType &type) const;
 
   [[nodiscard]] static bool isDirectOwnerType(const SemanticType &type);
+
+  [[nodiscard]] bool runtimeObjectLayoutType(const SemanticType &type) const;
 
   [[nodiscard]] IntrinsicKind
   trustedIntrinsicKind(SourceUnitId sourceUnit,
@@ -1944,7 +1948,7 @@ private:
       const SemanticType &result,
       SemanticMemberRequirementFailure *failure = nullptr,
       std::span<const SemanticType> parameters = {},
-      bool mutableReceiver = false) const;
+      bool mutableReceiver = false, bool requiresUnsafe = false) const;
   void recordMemberRequirementReceiver(const MemberRequirement &query,
                                        const SemanticType &type);
   struct ActiveMemberRequirement {
@@ -1953,6 +1957,7 @@ private:
     SemanticType result;
     std::vector<SemanticType> parameters;
     bool mutableReceiver = false;
+    bool requiresUnsafe = false;
   };
   mutable std::vector<ActiveMemberRequirement> activeMemberRequirements;
   [[nodiscard]] std::optional<SemanticType>

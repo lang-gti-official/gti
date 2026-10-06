@@ -751,11 +751,11 @@ private:
       }
       unsafeKeyword = previous();
     }
-    if (unsafeKeyword && (!allowFunction || currentClassName ||
-                          runtimeBinding || linkage != LanguageLinkage::Gti)) {
+    if (unsafeKeyword &&
+        (!allowFunction || runtimeBinding || linkage != LanguageLinkage::Gti)) {
       throw error(*unsafeKeyword,
-                  "An unsafe declaration requires a namespace-scope GTI "
-                  "function, not a member or native binding.");
+                  "An unsafe declaration requires a GTI function or method, "
+                  "not a native binding.");
     }
     if (unsafeKeyword && check(TokenKind::UNSAFE)) {
       throw error(peek(), "A function cannot repeat 'unsafe'.");
@@ -941,6 +941,14 @@ private:
     std::optional<Token> overrideKeyword;
     if (match({TokenKind::OVERRIDE})) {
       overrideKeyword = previous();
+    }
+
+    if (unsafeKeyword &&
+        (operatorName || virtualKeyword || overrideKeyword ||
+         currentClassKind == ClassKind::Interface || check(TokenKind::EQUAL))) {
+      throw error(*unsafeKeyword,
+                  "Unsafe methods must be non-polymorphic named methods; "
+                  "operators and virtual/interface methods are not supported.");
     }
 
     std::optional<PureSpecifier> pureSpecifier;
@@ -2771,6 +2779,9 @@ private:
     }
     consume(TokenKind::RIGHT_PAREN, "Expect ')' after requirement receiver.");
     consume(TokenKind::LEFT_BRACE, "Expect '{' before member requirement.");
+    std::optional<Token> unsafeKeyword;
+    if (match({TokenKind::UNSAFE}))
+      unsafeKeyword = previous();
     consume(TokenKind::LEFT_BRACE, "Expect '{' before required member call.");
     Token use =
         consume(TokenKind::IDENTIFIER, "Expect requirement receiver name.");
@@ -2805,7 +2816,8 @@ private:
     return std::make_unique<MemberRequirement>(
         std::move(keyword), std::move(receiver), std::move(binding),
         std::move(use), std::move(member), std::move(result),
-        std::move(parameters), std::move(bindings), std::move(arguments));
+        std::move(parameters), std::move(bindings), std::move(arguments),
+        std::move(unsafeKeyword));
   }
 
   ExprPtr primary() {

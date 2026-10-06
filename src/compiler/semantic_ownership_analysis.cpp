@@ -1093,8 +1093,12 @@ auto SemanticVisitor::Impl::storedReferencePaths(const SemanticType &type) const
     const ClassInfo *owner = classInfo(current);
     if (owner == nullptr || owner->kind == ClassKind::Union ||
         owner->cAbiRecord || owner->cOpaqueHandle ||
-        (hasSourceDestructorBody(*owner) &&
-         (!visiting.empty() || !isDefaultLibraryMutexGuardCarrier(*owner))) ||
+        // A synchronization guard carries capability-produced exclusive
+        // access in addition to its declared shared resource reference.
+        // Nested field maps currently preserve the latter, not the former.
+        // Keep this existing boundary rather than silently downgrade a lock
+        // obligation when general cleanup-bearing carriers are composed.
+        (!visiting.empty() && isDefaultLibraryMutexGuardCarrier(*owner)) ||
         std::find(visiting.begin(), visiting.end(), current) !=
             visiting.end()) {
       return {};
@@ -1737,6 +1741,12 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
   if (isMemoryLibraryUnit(sourceUnit)) {
     if (scope.front() != "gti_internal") {
       return IntrinsicKind::None;
+    }
+    if (name == "object_size") {
+      return IntrinsicKind::ObjectSize;
+    }
+    if (name == "object_alignment") {
+      return IntrinsicKind::ObjectAlignment;
     }
     if (name == "allocate_unique_owner") {
       return IntrinsicKind::AllocateUniqueOwner;
@@ -3909,9 +3919,7 @@ auto SemanticVisitor::Impl::createRetainedLoan(
     SemanticLoanId parent, bool entry, std::vector<SymbolId> designatedFields)
     -> SemanticLoanId {
   const SemanticLoanId id = nextSemanticLoanId++;
-  const ClassInfo *carrierOwner = classInfo(carrier.type);
-  const bool lifecycleBound = carrierOwner != nullptr &&
-                              isDefaultLibraryMutexGuardCarrier(*carrierOwner);
+  const bool lifecycleBound = lifecycleBoundBorrowCarrierFor(carrier.type);
   semanticModel.recordLoan({.id = id,
                             .kind = kind,
                             .origin = origin,
@@ -4404,6 +4412,31 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       return;
     }
     if (sourceLoan->access == AccessMode::ReadOnly) {
+      if (lifecycleBoundBorrowCarrierFor(carrier->type) ||
+          sourceLoan->lifecycleBound) {
+        // A new cleanup-bearing value owns a distinct release obligation even
+        // when its external referent already has a shared parameter loan.
+        // Conversely, a child view of such a value borrows its obligation;
+        // it must not become another carrier that can retire the same loan.
+        const auto sourceRecord = *sourceLoan;
+        const auto place =
+            source->dependency ? source->dependency->place : sourceRecord.place;
+        const auto id = createRetainedLoan(
+            *carrier, carrierSymbol,
+            retainedStoredBorrow ? SemanticLoanKind::StoredValue
+                                 : SemanticLoanKind::Reference,
+            expression.get(), place, place.root, place.receiver, carrierAccess,
+            source->dependency ? source->dependency->protectsStorage
+                               : sourceRecord.protectsStorage,
+            sourceRecord.id);
+        if (sourceRecord.storedDependency != 0) {
+          auto loan = *semanticModel.findLoan(id);
+          loan.storedDependency = sourceRecord.storedDependency;
+          semanticModel.recordLoan(std::move(loan));
+        }
+        semanticModel.recordBindingLoan(binding, id);
+        return;
+      }
       if (retainedStoredBorrow && isDirectStoredReferenceType(carrier->type) &&
           sourceLoan->entry &&
           sourceLoan->kind == SemanticLoanKind::StoredValue &&
@@ -5214,6 +5247,33 @@ auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
     // Unselected arms can add uses and conflicts. Publishing endpoints from
     // this incomplete primary would assert liveness that was never proved.
     return;
+  }
+  // Cleanup is a use of every retained dependency, including intermediate
+  // carrier shells. A live cleanup-bound carrier cannot let an ancestor's
+  // ordinary last-read endpoint retire that dependency underneath it. Carriers
+  // already destroyed by an inner scope recorded their cleanup use at that
+  // scope's exit and retain the existing structured endpoint restrictions.
+  for (const auto &[id, flow] : loanFlow.records) {
+    if (!flow.lifecycleBound || !flow.active)
+      continue;
+    const auto *loan = semanticModel.findLoan(id);
+    if (loan == nullptr)
+      continue;
+    std::vector<SemanticLoanId> pending{loan->parent, loan->storedDependency};
+    std::unordered_set<SemanticLoanId> visited;
+    while (!pending.empty()) {
+      const auto ancestor = pending.back();
+      pending.pop_back();
+      if (ancestor == 0 || !visited.insert(ancestor).second)
+        continue;
+      if (auto found = loanFlow.records.find(ancestor);
+          found != loanFlow.records.end())
+        found->second.confinedToRegion = false;
+      if (const auto *record = semanticModel.findLoan(ancestor)) {
+        pending.push_back(record->parent);
+        pending.push_back(record->storedDependency);
+      }
+    }
   }
   std::vector<SemanticLoanId> loanIds;
   loanIds.reserve(loanFlow.records.size());
@@ -6122,9 +6182,87 @@ auto SemanticVisitor::Impl::analyzeRestoringIntrinsicCall(
                                         .intrinsic = intrinsic});
 }
 
+auto SemanticVisitor::Impl::runtimeObjectLayoutType(
+    const SemanticType &type) const -> bool {
+  switch (type.kind) {
+  case SemanticType::Int8:
+  case SemanticType::Int16:
+  case SemanticType::Int32:
+  case SemanticType::Int64:
+  case SemanticType::UInt8:
+  case SemanticType::UInt16:
+  case SemanticType::UInt32:
+  case SemanticType::UInt64:
+  case SemanticType::Float:
+  case SemanticType::Double:
+  case SemanticType::Bool:
+  case SemanticType::Char:
+  case SemanticType::RawPointer:
+    return true;
+  case SemanticType::Enum:
+    return type.enumId != 0 && type.enumId <= enums.size() &&
+           !enums[type.enumId - 1].payload;
+  case SemanticType::Array:
+    return type.arguments.size() == 1 && type.arrayLength > 0 &&
+           type.arrayLengthParameterId == 0 &&
+           runtimeObjectLayoutType(type.arguments.front());
+  case SemanticType::Class: {
+    const ClassInfo *owner = classInfo(type);
+    return owner != nullptr && owner->declaration != nullptr &&
+           !owner->declaration->isForwardDeclaration() &&
+           owner->kind != ClassKind::Interface && !owner->abstract &&
+           !owner->cOpaqueHandle &&
+           owner->compilerCapability == CompilerCapabilityTypeKind::None;
+  }
+  default:
+    return false;
+  }
+}
+
 auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     const Call &expr, const CallableCandidate &declaration) -> void {
   const IntrinsicKind intrinsic = declaration.record().intrinsic;
+  if (intrinsic == IntrinsicKind::ObjectSize ||
+      intrinsic == IntrinsicKind::ObjectAlignment) {
+    const std::size_t diagnosticsBefore = diagnostics.size();
+    for (const ExprPtr &argument : expr.arguments())
+      (void)analyze(argument);
+    std::vector<SemanticType> types;
+    for (const TypeRef &argument : expr.typeArguments()) {
+      validateType(argument);
+      types.push_back(typeOf(argument));
+    }
+    if (diagnostics.size() != diagnosticsBefore ||
+        (types.size() == 1 && types.front() == SemanticType::Unknown)) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (types.size() != 1 || !expr.arguments().empty() ||
+        (!containsOpenTypeParameter(types.front()) &&
+         !runtimeObjectLayoutType(types.front()))) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2063", DiagnosticPhase::Semantics,
+          expr.typeArguments().size() == 1
+              ? layoutDiagnosticSpan(expr.typeArguments().front(),
+                                     LayoutEvaluationError::UnsupportedType)
+              : tokenSpan(expr.paren()),
+          "Runtime object layout requires one complete object type.");
+      diagnostic.hints.emplace_back(
+          "Use a scalar, raw pointer, integral enum, concrete positive array, "
+          "or complete non-abstract class, struct or passive union. This query "
+          "does not require copying or moving the type.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    currentType = SemanticType::UInt64;
+    semanticModel.record(expr,
+                         ResolvedCallInfo{.returnType = currentType,
+                                          .typeArguments = std::move(types),
+                                          .intrinsic = intrinsic});
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
   if (intrinsic == IntrinsicKind::EnumUnderlyingValue) {
     std::vector<SemanticType> arguments;
     for (const ExprPtr &argument : expr.arguments())

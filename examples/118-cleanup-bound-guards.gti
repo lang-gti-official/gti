@@ -1,0 +1,32 @@
+#include <std/utility>
+
+// A guard borrows a resource until its destructor completes, even after its
+// last ordinary use. Several read-only guards can retain the same resource.
+mut int observed = 0;
+
+class Resource {
+  mut int generation = 7;
+public:
+  int read() { return this.generation; }
+  void reset() mut { this.generation = 9; }
+};
+
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  ~Guard() { observed += this.resource.read(); }
+};
+
+int main() {
+  mut Resource resource{};
+  {
+    Guard first{resource};
+    Guard second{resource};
+    auto moved = std::move(first);
+    // resource.reset() is rejected here: both guards still need the resource
+    // during cleanup. Moving first transfers its cleanup responsibility.
+  }
+  resource.reset();
+  return observed == 14 ? 0 : 1;
+}

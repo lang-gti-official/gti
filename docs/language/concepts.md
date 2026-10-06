@@ -171,7 +171,7 @@ format grammar embedded in the compiler.
 
 ## Exact member signature requirements
 
-Library authors can describe a public, safe, nongeneric instance method with
+Library authors can describe a public, nongeneric instance method with
 an exact owned result type:
 
 ```gti
@@ -186,7 +186,7 @@ T save_snapshot<T>(T& value) requires snapshot_as<T, T> {
 The receiver name is local to the requirement. The requirement inspects a
 signature, not an expression body: it never calls the method, constructs a
 receiver, acquires a loan, or changes runtime ownership. Missing, inaccessible,
-unsafe, static, consuming, ambiguous or result-mismatched methods do
+static, consuming, ambiguous or result-mismatched methods do
 not satisfy it. A method's own requirements must be satisfied. Cyclic member
 requirements fail closed; nested member-requirement checking is bounded to 64
 active checks. The result cannot be a reference or contain tracked
@@ -218,6 +218,31 @@ permission to call through a read-only receiver. Combine separate queries using
 Receiver, parameter and result types may contain dependent compound types.
 Inline generic-parameter constraints still exclude structural concepts; use a
 trailing clause. Borrowed-result contracts remain unsupported.
+
+An ordinary requirement proves a safe call and rejects an unsafe member.
+Prefix the compound signature with `unsafe` to describe a member whose caller
+may have an additional obligation:
+
+```gti
+concept writes<T> = requires(mut T& target, int value) {
+  unsafe { target.write(value) } -> void;
+};
+unsafe void forward<T>(mut T& target, int value) requires writes<T> {
+  unsafe { target.write(value); }
+}
+```
+
+The requirement's keyword is a signature fact, not an executing block. It
+retains the unsafe-call obligation during symbolic generic analysis, including
+forwarding to another constrained function. A safe implementation also
+satisfies an unsafe requirement because it needs fewer caller guarantees;
+using only the unsafe requirement still requires lexical `unsafe` in the body.
+A safe requirement never accepts an unsafe implementation, even when queried
+inside an unsafe block. Conjunction retains an independently proved safe fact;
+disjunction retains only the weaker unsafe fact when either alternative has
+that obligation. The actual concrete overload is rechecked and its declaration
+effect is preserved through HIR/MIR. These rules use no library type or member
+name. Example 117 exercises an unrelated sensor abstraction.
 
 The same requirement is a boolean static query in expressions, including
 `if constexpr` and `static_assert`. Unlike C++'s compound requirement syntax,

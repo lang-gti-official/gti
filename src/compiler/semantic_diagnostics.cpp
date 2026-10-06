@@ -415,6 +415,12 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "The first type must be an integral enum and the second its exact "
           "declared underlying integer type.");
       break;
+    case StructuralConstraintKind::ObjectLayout:
+      diagnostic.hints.emplace_back(
+          "The type must be a scalar, raw pointer, integral enum, positive "
+          "concrete array, or complete non-abstract class, struct or passive "
+          "union. Copying and moving are not required.");
+      break;
     case StructuralConstraintKind::Adds:
       diagnostic.hints.emplace_back(
           "The domain type must provide a public read-only "

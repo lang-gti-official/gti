@@ -77,14 +77,6 @@ public:
 };
 int main() { int a = 1; int b = 2; Bad value{ReadView(a), b}; return 0; }
 """,
-        "generic-custom-destructor": """class Bad<T> {
-  T item;
-public:
-  Bad(T value) : item(std::move(value)) {}
-  ~Bad() {}
-};
-int main() { int value = 1; [[discard]] Bad<ReadView>(ReadView(value)); return 0; }
-""",
         "readonly-field-reborrow": """class Bad {
   mut int& item;
 public:
@@ -111,7 +103,6 @@ int main() { mut int value = 1; Bad bad{value}; bad.write(); return 0; }
         "exclusive-extraction-copy": "GTI-S2003",
         "reseat-field": "GTI-S2003",
         "wrong-constructor-source": "GTI-S2045",
-        "generic-custom-destructor": "GTI-S2045",
         "readonly-field-reborrow": "GTI-S2017",
         "readonly-implicit-field-reborrow": "GTI-S2017",
     }
