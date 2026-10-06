@@ -1,7 +1,9 @@
 #include "gti/driver/manifest.h"
 #include "gti/driver/registry.h"
 #include "gti/http.h"
+#include "registry_credentials_internal.h"
 
+#include <llvm/Support/Base64.h>
 #include <llvm/Support/JSON.h>
 #define TOML_EXCEPTIONS 0
 #include "toml.hpp"
@@ -11,6 +13,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <random>
 
 namespace lang::driver {
 namespace {
@@ -83,7 +86,83 @@ public:
   std::optional<RegistryAuthenticationInfo> authentication() const override {
     return RegistryAuthenticationInfo{
         .target = {registryIdentity, config.url, config.owner},
-        .tokenEnvironment = config.tokenEnvironment};
+        .tokenEnvironment = config.tokenEnvironment,
+        .passwordLogin = true};
+  }
+  RegistryIssuedCredential
+  issueCredential(const RegistryPasswordLogin &login) override {
+    validatePassword(login);
+    // Only generated names can be rollback targets; never enumerate old tokens.
+    const auto name = newTokenName();
+    const std::string scope =
+        login.permission == RegistryLoginPermission::Publish ? "write:package"
+                                                             : "read:package";
+    const auto body =
+        "{\"name\":\"" + name + "\",\"scopes\":[\"" + scope + "\"]}";
+    Reply reply;
+    try {
+      reply = passwordRequest(GTI_HTTP_POST_V1, userTokens(login), login, body);
+    } catch (...) {
+      // A dropped response can follow successful creation. Cleanup is scoped
+      // to this unique attempt and never followed by an automatic POST retry.
+      cleanupOrExplain(login, name);
+      throw;
+    }
+    if (reply.status == 401 || reply.status == 403) {
+      throw RegistryError(
+          "GTI-B1713", "Gitea username/password sign-in was rejected; "
+                       "check your password, authenticator code and "
+                       "server Basic authentication policy, or use --token.");
+    }
+    if (reply.status != 201 && (reply.status >= 500 || reply.status == 408 ||
+                                (reply.status >= 200 && reply.status < 300))) {
+      // A gateway/error or unexpected success can follow a committed POST.
+      cleanupOrExplain(login, name);
+    }
+    require(reply, 201);
+    try {
+      auto json = llvm::json::parse(reply.body);
+      if (!json) {
+        llvm::consumeError(json.takeError());
+        malformed(true);
+      }
+      const auto *object = json->getAsObject();
+      const auto token = object ? object->getString("sha1") : std::nullopt;
+      const auto echoedName = object ? object->getString("name") : std::nullopt;
+      const auto *scopes = object ? object->getArray("scopes") : nullptr;
+      if (!token || !echoedName || *echoedName != name || !scopes ||
+          scopes->size() != 1 || !(*scopes)[0].getAsString() ||
+          *(*scopes)[0].getAsString() != scope) {
+        malformed(true);
+      }
+      RegistryCredential credential{.secret = token->str()};
+      validateRegistryCredential(credential);
+      return {std::move(credential), name};
+    } catch (...) {
+      cleanupOrExplain(login, name);
+      throw;
+    }
+  }
+  void
+  discardIssuedCredential(const RegistryPasswordLogin &login,
+                          const RegistryIssuedCredential &issued) override {
+    const auto prefix = tokenNamePrefix();
+    if (!issued.revocationHandle.starts_with(prefix) ||
+        issued.revocationHandle.size() != prefix.size() + 32 ||
+        !std::all_of(issued.revocationHandle.begin() +
+                         static_cast<std::ptrdiff_t>(prefix.size()),
+                     issued.revocationHandle.end(), [](char c) {
+                       return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+                     })) {
+      throw RegistryError("GTI-B1725",
+                          "Invalid newly issued registry token identity.");
+    }
+    auto reply = passwordRequest(
+        GTI_HTTP_DELETE_V1,
+        userTokens(login) + "/" + escaped(issued.revocationHandle), login);
+    if (reply.status != 404) {
+      require(reply, 204);
+    }
   }
   void validateCredential(const RegistryCredential &credential) override {
     validateRegistryCredential(credential);
@@ -194,6 +273,65 @@ private:
   std::string registryIdentity;
   mutable bool storedLoaded = false;
   mutable std::optional<RegistryCredential> storedCredential;
+  static void validatePassword(const RegistryPasswordLogin &login) {
+    validateRegistryPasswordLogin(login);
+    if (!login.oneTimeCode.empty() &&
+        (login.oneTimeCode.size() != 6 ||
+         !std::all_of(login.oneTimeCode.begin(), login.oneTimeCode.end(),
+                      [](char c) { return c >= '0' && c <= '9'; }))) {
+      throw RegistryError("GTI-B1725",
+                          "Gitea sign-in needs a six-digit authenticator "
+                          "code, or an empty code when 2FA is disabled.");
+    }
+  }
+  std::string tokenNamePrefix() const {
+    return "gti-registry-" +
+           registryCredentialAccount(authentication()->target).substr(7, 12) +
+           "-";
+  }
+  std::string newTokenName() const {
+    constexpr char hex[] = "0123456789abcdef";
+    auto name = tokenNamePrefix();
+    try {
+      std::random_device random;
+      for (unsigned word = 0; word < 4; ++word) {
+        const auto value = static_cast<std::uint32_t>(random());
+        for (int shift = 28; shift >= 0; shift -= 4) {
+          name += hex[(value >> shift) & 15U];
+        }
+      }
+    } catch (...) {
+      throw RegistryError("GTI-B1725",
+                          "Cannot generate a unique registry login identity.");
+    }
+    return name;
+  }
+  static std::string userTokens(const RegistryPasswordLogin &login) {
+    return "/api/v1/users/" + escaped(login.username) + "/tokens";
+  }
+  Reply passwordRequest(gti_http_method_v1 method, std::string_view path,
+                        const RegistryPasswordLogin &login,
+                        std::string_view body = {}) const {
+    validatePassword(login);
+    return send(method, path, body, 1024U * 1024U,
+                "Basic " +
+                    llvm::encodeBase64(login.username + ":" + login.password),
+                "application/json", login.oneTimeCode);
+  }
+  void cleanupOrExplain(const RegistryPasswordLogin &login,
+                        std::string_view name) {
+    try {
+      discardIssuedCredential(login, {.revocationHandle = std::string(name)});
+    } catch (...) {
+      throw RegistryError(
+          "GTI-B1727",
+          "Login did not complete reliably and a newly "
+          "created token may remain. Remove '" +
+              std::string(name) +
+              "' in Gitea's access-token settings before retrying; "
+              "previous saved login is unchanged.");
+    }
+  }
   std::optional<RegistryCredential> credential() const {
     // Never read the OS store when an environment override is present, even
     // explicitly empty. Otherwise read once per provider/command lifetime.
@@ -208,9 +346,12 @@ private:
     }
     return storedCredential;
   }
-  [[noreturn]] static void malformed() {
-    throw RegistryError("GTI-B1714",
-                        "Registry returned malformed version-list metadata.");
+  [[noreturn]] static void malformed(bool login = false) {
+    throw RegistryError(
+        "GTI-B1714",
+        login ? "Registry returned invalid newly issued token metadata or "
+                "scopes; no credential was saved."
+              : "Registry returned malformed version-list metadata.");
   }
   std::string apiPackage(std::string_view package) const {
     return "/api/v1/packages/" + escaped(config.owner) + "/generic/" +
@@ -242,6 +383,14 @@ private:
         explicitCredential
             ? std::optional<RegistryCredential>(*explicitCredential)
             : credential();
+    return send(method, path, body, limit,
+                selected ? "token " + selected->secret : "",
+                "application/octet-stream");
+  }
+  Reply send(gti_http_method_v1 method, std::string_view path,
+             std::string_view body, std::uint64_t limit,
+             std::string_view authorization, std::string_view contentType,
+             std::string_view oneTimeCode = {}) const {
     std::int64_t client = 0, response = 0;
     if (gti_rt_http_client_create_v1(&client) != GTI_HTTP_OK_V1) {
       throw RegistryError("GTI-B1712",
@@ -255,9 +404,15 @@ private:
       headers += value;
       headers += '\0';
     };
-    header("Content-Type", "application/octet-stream");
-    if (selected) {
-      header("Authorization", "token " + selected->secret);
+    header("Content-Type", contentType);
+    unsigned headerCount = 1;
+    if (!authorization.empty()) {
+      header("Authorization", authorization);
+      ++headerCount;
+    }
+    if (!oneTimeCode.empty()) {
+      header("X-Gitea-OTP", oneTimeCode);
+      ++headerCount;
     }
     const auto url = config.url + std::string(path);
     std::int32_t native = 0;
@@ -265,7 +420,7 @@ private:
       return gti_c_string_view{value.data(), value.size()};
     };
     const auto status = gti_rt_http_client_send_v1(
-        client, method, view(url), view(headers), selected ? 2 : 1, view(body),
+        client, method, view(url), view(headers), headerCount, view(body),
         10000, 90000, limit, view({}), &response, &native);
     gti_rt_http_client_destroy_v1(client);
     if (status != GTI_HTTP_OK_V1) {
@@ -302,8 +457,8 @@ public:
     }
     auto found = configurations.find(name);
     if (found == configurations.end()) {
-      throw RegistryError("GTI-B1720",
-                          "Unknown logical registry '" + name + "'.");
+      throw RegistryError("GTI-B1720", "Unknown logical registry; define it in "
+                                       "the registry configuration.");
     }
     auto backend = std::make_unique<GiteaGenericRegistry>(name, found->second,
                                                           credentials);

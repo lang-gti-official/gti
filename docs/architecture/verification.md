@@ -297,6 +297,19 @@ discovery/download/publication, per-command store lookup, environment overrides,
 redaction, argument/input bounds and network-free status. Terminal tests restore
 echo after interrupt, termination and suspension cancellation.
 
+The password-login extension uses the same gates. The unrelated model backend
+proves capability rejection before issuance, token-only storage, failed-write
+rollback, previous-login preservation and explicit cleanup-failure reporting.
+The real Gitea adapter fixture checks Basic encoding (including Unicode/colon
+passwords), optional OTP, exact read/write package scopes, unique attempt names,
+forged/broad/malformed responses, denied owner access, dropped replies and
+non-followed redirects. Rollback deletes only the current attempt's name,
+never enumerates or deletes preexisting tokens. Password/OTP prompts restore
+echo after cancellation and never expose input or encoded Basic headers.
+Opt-in Keychain coverage also signs in through the default username/password
+CLI, acquires a package with its saved read token, rejects publishing with that
+token, then signs in with `--publish` plus TOTP and publishes successfully.
+
 Set `GTI_TEST_REGISTRY_KEYCHAIN=1` to additionally exercise the production macOS
 store with one synthetic credential scoped to a random loopback registry.
 Login/status/failed replacement, scope changes, automatic `gti add`/locked

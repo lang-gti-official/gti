@@ -23,6 +23,20 @@ struct RegistryCredential {
 struct RegistryAuthenticationInfo {
   RegistryCredentialTarget target;
   std::string tokenEnvironment;
+  bool passwordLogin = false;
+};
+enum class RegistryLoginPermission { Read, Publish };
+// Ephemeral input only: passwords/second factors are never stored credentials.
+struct RegistryPasswordLogin {
+  std::string username;
+  std::string password;
+  std::string oneTimeCode;
+  RegistryLoginPermission permission = RegistryLoginPermission::Read;
+};
+struct RegistryIssuedCredential {
+  RegistryCredential credential;
+  // Opaque, nonsecret identity of only the credential minted by this attempt.
+  std::string revocationHandle;
 };
 enum class RegistryCredentialSource { Anonymous, Environment, Stored };
 struct RegistryCredentialSelection {
@@ -32,6 +46,7 @@ struct RegistryCredentialSelection {
 
 // Implementations must use protected OS storage, never project or cache files.
 // read() on an unsupported host returns no stored credential; mutations fail.
+// write() must replace atomically and preserve previous state on failure.
 class RegistryCredentialStore {
 public:
   virtual ~RegistryCredentialStore() = default;
@@ -47,6 +62,7 @@ public:
 [[nodiscard]] std::shared_ptr<RegistryCredentialStore>
 systemRegistryCredentialStore();
 void validateRegistryCredential(const RegistryCredential &credential);
+void validateRegistryPasswordLogin(const RegistryPasswordLogin &login);
 // An explicitly empty variable disables stored credentials (anonymous mode).
 [[nodiscard]] RegistryCredentialSelection
 resolveRegistryCredential(const RegistryAuthenticationInfo &info,
