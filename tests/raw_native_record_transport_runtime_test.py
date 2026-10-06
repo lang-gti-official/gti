@@ -51,12 +51,21 @@ def main():
             cpp), "virtual callback packs must not copy native pointer records by value"
         assert not re.search(r"\.get\(\)\.pointer\s*(?:==|!=)", cpp), (
             "native pointer fields must be captured as address bits before comparison")
+        expired = source.with_name("raw_erased_callback_expired.gti")
+        # Unknown erased calls are an optional audit boundary, not a core
+        # typing error. Off must permit emission; never execute this probe,
+        # since an unknown target could access the expired pointer payload.
+        unchecked = run([compiler, expired, "--raw-pointer-audit=off",
+                         "--emit-cpp", "-o", work / "unchecked.cpp"])
+        assert "GTI-S2101" not in unchecked.stderr, unchecked.stderr
         rejected = subprocess.run(
-            [str(compiler), str(source.with_name("raw_erased_callback_expired.gti")),
+            [str(compiler), str(expired), "--raw-pointer-audit=strict",
              "--emit-cpp", "-o", str(work / "rejected.cpp")],
             capture_output=True, text=True, timeout=120)
-        assert rejected.returncode != 0, "unknown erased calls must not assume inert raw access"
-        assert "GTI-S2056" in rejected.stderr and "scope has ended" in rejected.stderr, (
+        assert rejected.returncode == 65, (
+            "strict auditing must reject unknown erased access to expired storage",
+            rejected.returncode, rejected.stdout, rejected.stderr)
+        assert "error[GTI-S2101]" in rejected.stderr and "scope has ended" in rejected.stderr, (
             rejected.stdout, rejected.stderr)
         for standard in ("c++20", "c++23"):
             for level in ("O0", "O2", "O3"):

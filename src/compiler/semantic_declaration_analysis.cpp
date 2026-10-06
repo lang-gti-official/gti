@@ -2907,6 +2907,7 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
           .requiresUnsafe = function->unsafeKeyword().has_value(),
           .neverReturns = function->hasFunctionAttribute("noreturn"),
           .tracksCaller = function->hasFunctionAttribute("track_caller"),
+          .discardableResult = function->hasFunctionAttribute("discardable"),
           .linkage = function->linkage(),
           .externalSymbol =
               function->hasCLinkage()
@@ -6386,6 +6387,7 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .requiresUnsafe = declaration.requiresUnsafe,
       .neverReturns = declaration.neverReturns,
       .tracksCaller = declaration.tracksCaller,
+      .discardableResult = declaration.discardableResult,
       .cThreadOperation = declaration.cThreadOperation,
       .requiresCThreadRuntime =
           requiresCThreadConcurrency(declaration.cThreadOperation),
@@ -6674,6 +6676,11 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
         continue;
       }
       const auto member = owner.members.find(field.declaration->name().lexeme);
+      // Field projections cross concrete-analysis snapshots. Establish their
+      // declaration identity before any body/query worker can allocate a
+      // snapshot-local symbol for a not-yet-visited class declaration.
+      if (member != owner.members.end())
+        toolingSymbolFor(member->second.symbol);
       fields.push_back({.declaration = field.declaration,
                         .type = member == owner.members.end()
                                     ? SemanticType::Unknown
@@ -6685,6 +6692,8 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
         continue;
       }
       const auto member = owner.members.find(field.declaration->name().lexeme);
+      if (member != owner.members.end())
+        toolingSymbolFor(member->second.symbol);
       staticFields.push_back({.declaration = field.declaration,
                               .type = member == owner.members.end()
                                           ? SemanticType::Unknown

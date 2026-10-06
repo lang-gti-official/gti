@@ -26,6 +26,34 @@ namespace lang {
 
 struct FrontendWorkMetrics;
 
+// Optional diagnostics about programmer-owned unsafe obligations. This policy
+// never changes typing, checked loans, MIR verification, or runtime semantics.
+enum class RawPointerAuditMode { Off, Warn, Strict };
+
+[[nodiscard]] constexpr std::optional<RawPointerAuditMode>
+parseRawPointerAuditMode(std::string_view name) {
+  if (name == "off")
+    return RawPointerAuditMode::Off;
+  if (name == "warn")
+    return RawPointerAuditMode::Warn;
+  if (name == "strict")
+    return RawPointerAuditMode::Strict;
+  return std::nullopt;
+}
+
+[[nodiscard]] constexpr std::string_view
+rawPointerAuditModeName(RawPointerAuditMode mode) {
+  switch (mode) {
+  case RawPointerAuditMode::Off:
+    return "off";
+  case RawPointerAuditMode::Warn:
+    return "warn";
+  case RawPointerAuditMode::Strict:
+    return "strict";
+  }
+  return "off";
+}
+
 using ClassId = std::size_t;
 using ConceptId = std::size_t;
 using ConstructorId = std::size_t;

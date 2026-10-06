@@ -160,8 +160,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   std::unique_ptr<Impl> worker;
   StagedInstanceProvider provider(*this, [&]() -> SemanticInstanceProvider & {
     if (!worker) {
-      worker =
-          std::make_unique<Impl>(target, sourceGraph, false, nullptr, sources);
+      worker = std::make_unique<Impl>(target, sourceGraph, false, workMetrics,
+                                      sources, rawPointerAudit);
       worker->catalog = catalog.snapshotForInstanceAnalysis();
       worker->semanticModel = stagingModel;
       worker->valueFlow = valueFlow;

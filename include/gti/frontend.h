@@ -34,6 +34,7 @@ enum class FrontendPhase {
 struct FrontendOptions {
   TargetInfo target = TargetInfo::host();
   ConfigurationFlags configurationFlags;
+  RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
   bool analyzeRecoveredProgram = false;
   std::optional<std::size_t> completionOffset;
   FrontendPhase stopAfter = FrontendPhase::Mir;

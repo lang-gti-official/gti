@@ -719,8 +719,8 @@ module.exports = grammar({
     function_contract_attribute: ($) =>
       seq(
         "[[",
-        choice("noreturn", "track_caller", $.borrow_origin_attribute),
-        repeat(seq(",", choice("noreturn", "track_caller", $.borrow_origin_attribute))),
+        choice("noreturn", "track_caller", "discardable", $.borrow_origin_attribute),
+        repeat(seq(",", choice("noreturn", "track_caller", "discardable", $.borrow_origin_attribute))),
         "]]",
       ),
 

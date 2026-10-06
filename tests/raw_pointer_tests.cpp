@@ -17,6 +17,12 @@ namespace {
 
 int failures = 0;
 
+lang::Frontend auditFrontend() {
+  lang::FrontendOptions options;
+  options.rawPointerAudit = lang::RawPointerAuditMode::Strict;
+  return lang::Frontend(options);
+}
+
 void expect(bool condition, const std::string &message) {
   if (!condition) {
     std::cerr << "FAIL: " << message << '\n';
@@ -823,8 +829,30 @@ int main() { return 0; }
          "C ABI raw pointers should retain the fixed-layout leaf allowlist");
 }
 
+void testOptionalRawAuditOff() {
+  lang::FrontendWorkMetrics metrics;
+  lang::FrontendOptions options;
+  options.workMetrics = &metrics;
+  const auto result = lang::Frontend(options).analyze("raw-audit-off.gti", R"(
+unsafe int read(const int* pointer) { unsafe { return *pointer; } }
+int main() {
+  mut const int* expired = nullptr;
+  { int dead = 7; expired = &dead; }
+  mut int live = 1;
+  int* address = &live;
+  int& loan = live;
+  unsafe { *address = read(expired); }
+  return loan;
+}
+)");
+  expect(result.canGenerateCode(),
+         "default Off does not enforce optional raw lifetime/access findings");
+  expect(metrics.semanticRawAuditQueries == 0,
+         "default Off does not execute raw source-query workers");
+}
+
 void testKnownRawPointerOrigins() {
-  const auto expired = lang::Frontend().analyze("raw-expired.gti", R"(
+  const auto expired = auditFrontend().analyze("raw-expired.gti", R"(
 int main() {
   mut const int* pointer = nullptr;
   unsafe {
@@ -835,13 +863,13 @@ int main() {
 }
 
 )");
-  expect(!expired.canGenerateCode() && hasCode(expired, "GTI-S2056") &&
+  expect(!expired.canGenerateCode() && hasCode(expired, "GTI-S2101") &&
              hasMessage(expired, "scope has ended") &&
              hasRelated(expired, "Raw address obtained here") &&
-             hasHint(expired, "unsafe does not erase"),
+             hasHint(expired, "Unsafe validity is a programmer obligation"),
          "copying a raw address must preserve known expired local provenance");
 
-  const auto joined = lang::Frontend().analyze("raw-joined.gti", R"(
+  const auto joined = auditFrontend().analyze("raw-joined.gti", R"(
 int read(bool choose) {
   int alive = 7;
   mut const int* pointer = nullptr;
@@ -856,7 +884,7 @@ int main() { return read(false); }
   expect(!joined.canGenerateCode() && hasMessage(joined, "scope has ended"),
          "flow joins must preserve each possible raw address origin");
 
-  const auto reseated = lang::Frontend().analyze("raw-reseated.gti", R"(
+  const auto reseated = auditFrontend().analyze("raw-reseated.gti", R"(
 int main() {
   int alive = 7;
   mut const int* pointer = nullptr;
@@ -871,7 +899,7 @@ int main() {
   expect(reseated.canGenerateCode(), "raw addresses do not retain loans and "
                                      "reseating replaces old provenance");
 
-  const auto conflicting = lang::Frontend().analyze("raw-conflict.gti", R"(
+  const auto conflicting = auditFrontend().analyze("raw-conflict.gti", R"(
 int main() {
   mut int value = 7;
   unsafe {
@@ -883,11 +911,11 @@ int main() {
 }
 )");
   expect(!conflicting.canGenerateCode() &&
-             hasMessage(conflicting, "overlapping checked borrow"),
+             hasMessage(conflicting, "live incompatible checked borrow"),
          "raw writes cannot bypass a known live checked borrow");
 
   const auto arrayConflict =
-      lang::Frontend().analyze("raw-array-conflict.gti", R"(
+      auditFrontend().analyze("raw-array-conflict.gti", R"(
 int main() {
   mut int values[2] = {1, 2};
   unsafe {
@@ -899,11 +927,11 @@ int main() {
 }
 )");
   expect(!arrayConflict.canGenerateCode() &&
-             hasMessage(arrayConflict, "overlapping checked borrow"),
+             hasMessage(arrayConflict, "live incompatible checked borrow"),
          "derived raw array addresses must not retain a false disjoint index");
 
   const auto methodConflict =
-      lang::Frontend().analyze("raw-method-conflict.gti", R"(
+      auditFrontend().analyze("raw-method-conflict.gti", R"(
 struct Value {
   mut int count = 0;
   void change() mut { this.count = 1; }
@@ -919,10 +947,10 @@ int main() {
 }
 )");
   expect(!methodConflict.canGenerateCode() &&
-             hasMessage(methodConflict, "overlapping checked borrow"),
+             hasMessage(methodConflict, "live incompatible checked borrow"),
          "selected mutable raw receiver calls must respect checked borrows");
 
-  const auto endedLoan = lang::Frontend().analyze("raw-ended-loan.gti", R"(
+  const auto endedLoan = auditFrontend().analyze("raw-ended-loan.gti", R"(
 int main() {
   mut int value = 7;
   unsafe {
@@ -937,7 +965,7 @@ int main() {
   expect(endedLoan.canGenerateCode(),
          "raw provenance must reuse nonlexical loan endpoints");
 
-  const auto moved = lang::Frontend().analyze(
+  const auto moved = auditFrontend().analyze(
       "raw-moved.gti", R"(
 struct Owner {
   int value = 1;
@@ -965,7 +993,7 @@ int main() {
 
 void testProjectedRawPointerOrigins() {
   const auto recursiveReference =
-      lang::Frontend().analyze("raw-recursive-reference-fields.gti", R"(
+      auditFrontend().analyze("raw-recursive-reference-fields.gti", R"(
 class Node {
 public:
   Node& next;
@@ -980,7 +1008,7 @@ int main() { return 0; }
          "raw-field collection must not recurse through stored checked "
          "references");
   const auto recursiveCarrier =
-      lang::Frontend().analyze("raw-recursive-reference-carrier.gti", R"(
+      auditFrontend().analyze("raw-recursive-reference-carrier.gti", R"(
 class Node {
 public:
   Node& next;
@@ -1163,7 +1191,7 @@ int main() { return read(1); }
 )"}};
   for (const auto &[name, program] : expiredPrograms) {
     const auto result =
-        lang::Frontend().analyze("raw-" + name + ".gti", prefix + program);
+        auditFrontend().analyze("raw-" + name + ".gti", prefix + program);
     expect(!result.canGenerateCode() && hasMessage(result, "scope has ended"),
            "raw projection transport must preserve an expired origin: " + name);
     if (!hasMessage(result, "scope has ended"))
@@ -1172,7 +1200,7 @@ int main() { return read(1); }
                   << diagnostic.message << '\n';
   }
   const auto disjoint =
-      lang::Frontend().analyze("raw-disjoint-reseat.gti", prefix + R"(
+      auditFrontend().analyze("raw-disjoint-reseat.gti", prefix + R"(
 int main() {
   int live = 9;
   mut Pair pair{};
@@ -1186,7 +1214,7 @@ int main() {
   expect(disjoint.canGenerateCode(),
          "reseating a raw field must replace only its own facts");
   const auto aliasReseated =
-      lang::Frontend().analyze("raw-alias-reseat.gti", prefix + R"(
+      auditFrontend().analyze("raw-alias-reseat.gti", prefix + R"(
 int main() {
   int live = 9;
   mut Pair pair{};
@@ -1201,7 +1229,7 @@ int main() {
   expect(aliasReseated.canGenerateCode(),
          "an exact raw alias write must replace only its known destination");
   const auto unknownDestination =
-      lang::Frontend().analyze("raw-unknown-destination.gti", prefix + R"(
+      auditFrontend().analyze("raw-unknown-destination.gti", prefix + R"(
 unsafe void set(Address* destination, const int* value) {
   unsafe { destination->pointer = value; }
 }
@@ -1209,7 +1237,7 @@ int main() { return 0; }
 )");
   expect(unknownDestination.canGenerateCode(),
          "unknown raw destinations retain the caller's unsafe proof boundary");
-  const auto conflict = lang::Frontend().analyze("raw-field-conflict.gti", R"(
+  const auto conflict = auditFrontend().analyze("raw-field-conflict.gti", R"(
 struct Address { mut int* pointer = nullptr; };
 int main() {
   mut int value = 7;
@@ -1221,10 +1249,10 @@ int main() {
   }
 })");
   expect(!conflict.canGenerateCode() &&
-             hasMessage(conflict, "overlapping checked borrow"),
+             hasMessage(conflict, "live incompatible checked borrow"),
          "raw pointer fields must preserve conflicts with checked loans");
   const auto aliasConflict =
-      lang::Frontend().analyze("raw-alias-field-conflict.gti", R"(
+      auditFrontend().analyze("raw-alias-field-conflict.gti", R"(
 struct Address { mut int* pointer = nullptr; };
 int main() {
   mut int value = 7;
@@ -1238,12 +1266,12 @@ int main() {
   }
 })");
   expect(!aliasConflict.canGenerateCode() &&
-             hasMessage(aliasConflict, "overlapping checked borrow"),
+             hasMessage(aliasConflict, "live incompatible checked borrow"),
          "writes through raw aliases must retain checked-loan conflicts");
 }
 
 void testRawPointerLoopOrigins() {
-  const auto stale = lang::Frontend().analyze("raw-loop-stale.gti", R"(
+  const auto stale = auditFrontend().analyze("raw-loop-stale.gti", R"(
 int read(int count) {
   int initial = 1;
   unsafe {
@@ -1262,7 +1290,7 @@ int main() { return read(2); }
   expect(!stale.canGenerateCode() && hasHint(stale, "later loop iteration"),
          "loop-carried raw origins must be checked at accesses on later "
          "iterations");
-  const auto repaired = lang::Frontend().analyze("raw-loop-repaired.gti", R"(
+  const auto repaired = auditFrontend().analyze("raw-loop-repaired.gti", R"(
 int read(int count) {
   int initial = 1;
   unsafe {
@@ -1283,8 +1311,7 @@ int main() { return read(2); }
   expect(
       repaired.canGenerateCode(),
       "reseating before each access and inert expired copies remain allowed");
-  const auto transitive =
-      lang::Frontend().analyze("raw-loop-transitive.gti", R"(
+  const auto transitive = auditFrontend().analyze("raw-loop-transitive.gti", R"(
 int read(int count) {
   int initial = 1;
   unsafe {
@@ -1350,7 +1377,7 @@ int main() {
 })"};
   for (const auto &program : programs) {
     const auto result =
-        lang::Frontend().analyze("raw-call-transport.gti", program);
+        auditFrontend().analyze("raw-call-transport.gti", program);
     expect(!result.canGenerateCode() && hasMessage(result, "scope has ended"),
            "unsummarized source calls must preserve possibly forwarded known "
            "origins");
@@ -1358,7 +1385,7 @@ int main() {
       for (const auto &diagnostic : result.diagnostics)
         std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   }
-  const auto replaced = lang::Frontend().analyze(
+  const auto replaced = auditFrontend().analyze(
       "raw-replaced.gti", R"(
 struct Owner { int value = 1; };
 int main() {
@@ -1485,7 +1512,7 @@ Address* destination() { return &address; }
 )"}};
   for (const auto &[name, source] : expired) {
     const auto result =
-        lang::Frontend().analyze("raw-produced-" + name + ".gti", source);
+        auditFrontend().analyze("raw-produced-" + name + ".gti", source);
     if (result.canGenerateCode() || !hasMessage(result, "scope has ended"))
       for (const auto &diagnostic : result.diagnostics)
         std::cerr << name << ": " << diagnostic.code << ": "
@@ -1558,7 +1585,7 @@ int main() { auto source = []() -> const int* { int gone = 1; return &gone; };
 )"}};
   for (const auto &[name, source] : valid) {
     const auto result =
-        lang::Frontend().analyze("raw-produced-" + name + ".gti", source);
+        auditFrontend().analyze("raw-produced-" + name + ".gti", source);
     if (!result.canGenerateCode())
       for (const auto &diagnostic : result.diagnostics)
         std::cerr << name << ": " << diagnostic.code << ": "
@@ -1567,7 +1594,7 @@ int main() { auto source = []() -> const int* { int gone = 1; return &gone; };
            "valid callee-produced raw transport: " + name);
   }
   const auto recursive =
-      lang::Frontend().analyze("raw-produced-recursive-use.gti", R"(
+      auditFrontend().analyze("raw-produced-recursive-use.gti", R"(
 int global = 7;
 int main() { auto pointer = recursive(false); unsafe { return *pointer; } }
 const int* recursive(bool again) { if (again) { return recursive(false); } return &global; }
@@ -1589,7 +1616,7 @@ const int* source(Carrier& input) { return input.value.pointer; }
 int main() { mut Address address{}; { int gone = 1; address.pointer = &gone; }
   Carrier carrier{address}; auto pointer = source(carrier); unsafe { return *pointer; } })"}) {
     const auto unresolved =
-        lang::Frontend().analyze("raw-produced-unresolved.gti", source);
+        auditFrontend().analyze("raw-produced-unresolved.gti", source);
     if (unresolved.canGenerateCode() ||
         !hasMessage(unresolved, "completed source-result"))
       for (const auto &diagnostic : unresolved.diagnostics)
@@ -1600,17 +1627,17 @@ int main() { mut Address address{}; { int gone = 1; address.pointer = &gone; }
            "become foreign pointers");
   }
   const auto conflict =
-      lang::Frontend().analyze("raw-produced-global-loan.gti", R"(
+      auditFrontend().analyze("raw-produced-global-loan.gti", R"(
 mut int global = 7;
 int main() { auto pointer = source(); int& checked = global;
   unsafe { *pointer = 9; } return checked; }
 int* source() { return &global; }
 )");
   expect(!conflict.canGenerateCode() &&
-             hasMessage(conflict, "overlapping checked borrow"),
+             hasMessage(conflict, "live incompatible checked borrow"),
          "callee-produced global origins must enter normal caller loan checks");
   const auto replaced =
-      lang::Frontend().analyze("raw-produced-replaced-input.gti", R"(
+      auditFrontend().analyze("raw-produced-replaced-input.gti", R"(
 struct Box { mut int value = 1; };
 int main() { mut Box box{}; auto pointer = source(box); unsafe { return *pointer; } }
 const int* source(mut Box& box) {
@@ -1631,7 +1658,7 @@ const int* source(mut Box& box) {
 void testRawArithmeticLifetime() {
   for (const auto &operation : {"auto advanced = pointer + 1;", "pointer++;",
                                 "++pointer;", "pointer += 1;"}) {
-    const auto result = lang::Frontend().analyze(
+    const auto result = auditFrontend().analyze(
         "raw-expired-arithmetic.gti",
         std::string("int main() { mut const int* pointer = nullptr; { int gone "
                     "= 3; pointer = &gone; } unsafe { ") +
@@ -1640,7 +1667,7 @@ void testRawArithmeticLifetime() {
            "raw arithmetic must not erase known allocation lifetime failure");
   }
   const auto liveBorrow =
-      lang::Frontend().analyze("raw-arithmetic-no-loan.gti", R"(
+      auditFrontend().analyze("raw-arithmetic-no-loan.gti", R"(
 int main() {
   mut int values[2] = {1, 2};
   int* pointer = &values[0];
@@ -1697,7 +1724,7 @@ void testRawMutationCallInvalidation() {
   for (const std::string setup :
        {"mut Owner local{}; pointer = &local.value; replace(local);",
         "pointer = &owner.value; replace(owner);"}) {
-    const auto global = lang::Frontend().analyze("raw-global-mutation.gti", R"(
+    const auto global = auditFrontend().analyze("raw-global-mutation.gti", R"(
 struct Owner { mut int value = 1; };
 mut Owner owner{};
 mut const int* pointer = nullptr;
@@ -1716,7 +1743,7 @@ int main() {
            "active global pointer carriers retain mutation invalidation");
   }
   const auto expiredGlobal =
-      lang::Frontend().analyze("raw-global-expiry.gti", R"(
+      auditFrontend().analyze("raw-global-expiry.gti", R"(
 mut const int* pointer = nullptr;
 int main() {
   { int local = 1; pointer = &local; }
@@ -1744,7 +1771,7 @@ int main() {
   unsafe { return *address; }
 })";
     const auto result =
-        lang::Frontend().analyze("raw-mutation-call.gti", source);
+        auditFrontend().analyze("raw-mutation-call.gti", source);
     if (result.canGenerateCode() ||
         !hasMessage(result, "lifetime was replaced"))
       for (const auto &diagnostic : result.diagnostics)
@@ -1754,7 +1781,7 @@ int main() {
             hasMessage(result, "lifetime was replaced"),
         "aggregate mutation calls conservatively invalidate old raw addresses");
   }
-  const auto loop = lang::Frontend().analyze("raw-mutation-backedge.gti", R"(
+  const auto loop = auditFrontend().analyze("raw-mutation-backedge.gti", R"(
 struct Owner { mut int value = 1; };
 void replace(mut Owner& owner) { owner = Owner(); }
 int main() {
@@ -1771,7 +1798,7 @@ int main() {
       !loop.canGenerateCode() && hasMessage(loop, "lifetime was replaced"),
       "loop substitution must apply mutation before use to backedge origins");
 
-  const auto valid = lang::Frontend().analyze("raw-mutation-reacquire.gti", R"(
+  const auto valid = auditFrontend().analyze("raw-mutation-reacquire.gti", R"(
 struct Owner { mut int value = 1; };
 void replace(mut Owner& owner) { owner = Owner(); }
 void increment(mut int& value) { value++; }
@@ -1794,8 +1821,7 @@ int main() {
       valid.canGenerateCode(),
       "scalar mutation, fresh reacquisition and inert stale copies stay valid");
 
-  const auto bridge =
-      lang::Frontend().analyze("raw-inert-source-bridge.gti", R"(
+  const auto bridge = auditFrontend().analyze("raw-inert-source-bridge.gti", R"(
 struct Owner { mut int value = 1; };
 int main() {
   mut Owner owner{};
@@ -1816,7 +1842,7 @@ unsafe mut int& borrow(int* address, mut Owner& owner) {
   expect(bridge.canGenerateCode(),
          "direct assertion is lifetime-inert independent of declaration order");
   const auto cleanupBridge =
-      lang::Frontend().analyze("raw-source-bridge-cleanup.gti", R"(
+      auditFrontend().analyze("raw-source-bridge-cleanup.gti", R"(
 struct Owner { mut int value = 1; };
 struct Cleanup { ~Cleanup() {} };
 [[borrowed_from(owner)]]
@@ -1857,7 +1883,7 @@ int main() {
 )" + mutation + R"(
   unsafe { return *address; }
 })";
-    const auto result = lang::Frontend().analyze(
+    const auto result = auditFrontend().analyze(
         root / "raw-storage-mutation.gti", source,
         {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
     if (result.canGenerateCode() ||
@@ -1879,6 +1905,7 @@ int main() {
   testUnsafeAndPointerDiagnostics();
   testRawPointerConstructorRanking();
   testPointerBearingCAbi();
+  testOptionalRawAuditOff();
   testKnownRawPointerOrigins();
   testProjectedRawPointerOrigins();
   testRawPointerLoopOrigins();

@@ -56,13 +56,43 @@ Raw pointers are nullable, trivially copyable and movable, and non-owning. A
 raw-pointer value does not keep its pointee alive, arrange destruction, or
 create a semantic loan. Copying a pointer copies only its address.
 
-The compiler also preserves known local address origins through pointer
-bindings, raw-pointer fields, aggregate copies/movement, designated
+## Compiler guarantees and unsafe obligations
+
+Ordinary compilation checks types, pointee constness, access permission,
+lexical `unsafe`, checked ownership, checked loans, and reference escape rules.
+An unsafe operation additionally asserts programmer-owned obligations:
+validity, alignment, initialization, aliasing and the promised owner/lifetime
+relationship. Inability to prove those obligations is not a language error.
+Unsafe does not make undefined behavior valid or turn a raw address into an
+owner. Mandatory HIR/MIR verification and defined-failure cleanup are unchanged.
+
+Optional `--raw-pointer-audit=warn` analysis checks available provenance and
+effects. It is **off by default**, and off bypasses origin traversal,
+interprocedural queries and audit-only loan observations rather than merely
+hiding their diagnostics. `strict` runs the same analysis and promotes its
+findings to errors for CI. It is an audit policy, not a different runtime mode
+or a soundness certificate; warning suppression cannot hide strict errors.
+Project profiles may set `raw-pointer-audit` to `"off"`, `"warn"` or `"strict"`.
+
+Findings distinguish observed contradictions (`GTI-S2101`), possible lifetime
+or alias violations (`GTI-S2102`), and incomplete analysis (`GTI-S2103`). A
+conservative mutable-call invalidation is a possible violation, not proof that
+the call destroyed the object. Recursion or a resource limit is incomplete
+analysis, not proof of invalid memory. No finding is a substitute for reviewing
+the unsafe contract; absence of findings is not proof of correctness.
+Path joins, weak writes, loops and call summaries retain uncertainty even when
+only one known origin remains. An unknown alternative is not evidence that
+the known alternative must be the actual address.
+
+## Optional raw-pointer audit
+
+When enabled, the compiler preserves known local address origins through
+pointer bindings, raw-pointer fields, aggregate copies/movement, designated
 construction, fixed-array elements, reseating, qualifications, arithmetic and
 branch joins.
 This metadata does **not** keep the object alive. Dereference, indexing and
-member access reject an origin whose scope has ended or whose owner is known
-to be moved on a possible path (`GTI-S2056`). Replacing or reinitializing a
+member access report an origin whose scope has ended or whose owner is known
+to be moved on a possible path. Replacing or reinitializing a
 consumed object does not revive addresses into its previous lifetime. Access
 also respects overlapping
 checked loans using their ordinary last-use endpoints. Array-element addresses
@@ -86,8 +116,8 @@ Source function and constructor results also retain origins produced inside
 the callee, independently of declaration order and for concrete generic
 instances. Returning `&local` does not keep the local alive: copying/comparing
 the returned pointer is inert, but later accessing it or asserting a checked
-borrow is rejected. Returning a global's address preserves its actual identity
-for witness and loan checks. Returned aggregate fields retain their own origin
+borrow produces a finding. Returning a global's address preserves its actual
+identity for witness and loan checks. Returned aggregate fields retain their own origin
 sets; cached getters of global raw pointers observe the current pointer facts,
 not the first call's value. Default arguments and constructor field
 initializers use the same rule.
@@ -120,11 +150,15 @@ calls, lambda/deferred-callable raw results, raw-bearing variadic source
 results, constructor-relative self addresses, unresolved stored-reference raw
 fields, and exhausted/failed analysis retain an unresolved-source fact rather
 than becoming foreign unknown addresses. An unsafe memory use or checked-borrow
-assertion rejects that fact (`GTI-S2056`); inert copies and comparisons remain
-valid. Concrete retained references resolve to their external storage first.
+assertion reports incomplete analysis (`GTI-S2103`); inert copies and comparisons
+remain valid. Concrete retained references resolve to their external storage first.
 Ordinary nonvariadic concrete generic calls are supported. The implementation
-limits are 32 active source queries and 2,048 cached concrete queries per
-semantic request.
+limits are 32 active bodies and 2,048 distinct queries per independent
+top-level demand. Nested outcomes are private to that demand; only completed
+top-level outcomes may be reused across demands. Up to 2,048 root outcomes are
+cached; cache capacity exhaustion disables reuse, not acceptance. Lightweight
+failure evidence is interned separately. Definition order cannot warm an
+otherwise over-budget chain into apparent completeness.
 Abstract source methods are unresolved dispatch, not foreign bodyless calls.
 Unknown receiver effects also follow stored mutable raw aliases through a
 readonly receiver; readonly access to the carrier does not make its pointees
@@ -132,7 +166,7 @@ immutable.
 
 Source helpers, constructors, and overloaded operators also preserve raw-access
 requirements. A known expired pointer, or a pointer conflicting with a live
-checked loan, cannot become usable merely by passing it to a helper that reads
+checked loan, remains visible to the audit when passed to a helper that reads
 or writes through it. Diagnostics point to the caller invocation. Source
 copy/equality-only helpers remain inert. Concrete lambdas may likewise prove
 that their bodies perform no raw access; unknown foreign calls do not establish
@@ -147,8 +181,9 @@ complete access-free source summary. Otherwise calls conservatively check
 their possible raw inputs. Open generic/erased callable target families are
 not assumed inert merely because one currently observed target compares an
 address. Passing a known expired address through such an unresolved invocation
-can therefore be rejected even if that particular implementation only copies
-it; copying or comparing the address directly remains permitted. This access
+can therefore produce a conservative finding even if that particular
+implementation only copies it; copying or comparing the address directly
+remains permitted. This access
 proof does not make dynamically returned raw addresses or write effects precise.
 
 Mutable calls also conservatively invalidate existing raw addresses into their
@@ -163,13 +198,14 @@ with a validated explicit borrow origin whose entire body is a direct unsafe
 parameters require no cleanup. No calls, writes, local objects or other body
 operations are admitted by that proof; parameter destructors also prevent it.
 Consequently
-an innocuous aggregate mutator can require reacquiring an address afterward;
+an innocuous aggregate mutator can produce a conservative audit finding;
 scalar mutation does not end its object's lifetime and is unaffected. Stale
-addresses may still be copied or compared, but not dereferenced, reborrowed or
-used in pointer arithmetic. Loop-backedge substitution retains these possible
-lifetime-ending events rather than reviving a later iteration's stale address.
+addresses may still be copied or compared without an audit finding. Access,
+reborrowing and arithmetic inspect their optional facts. Loop-backedge
+substitution retains these possible lifetime-ending events rather than reviving
+a later iteration's stale address.
 Consequently, a function that actually clears an address or returns unrelated
-storage may be conservatively rejected when an input has contradictory known
+storage may be conservatively flagged when an input has contradictory known
 facts. This is a bounded provenance analysis, not a complete interprocedural
 alias proof or a claim that every invalid unsafe program is diagnosed. Storing
 an address in an object's pointer field does not establish ownership of its
@@ -291,13 +327,15 @@ The initial raw-assertion syntax is direct dereference (optional grouping), not
 arbitrary local reference construction or general lifetime parameters.
 
 The contract is preserved through concrete generic analysis, HIR and MIR. A
-safe reference contract can be used on a virtual/interface declaration, but
-raw assertion preconditions are currently rejected in polymorphic bodies;
-they cannot disappear behind a dynamically selected implementation.
+safe reference contract can be used on a virtual/interface declaration.
+Optional raw assertion auditing is incomplete across polymorphic bodies;
+the declared checked reference contract is mandatory in every implementation.
 
-Known local origins must lie within the witness, and known expired or replaced
-origins cannot be asserted valid. Source-defined wrappers propagate these
-requirements through formal parameters, including pointer aliases; checking
+The unsafe programmer must establish that the address belongs to the witness
+and remains valid for the complete promised lifetime. Optional auditing reports
+contradictory or unresolved evidence; it does not grant that validity.
+Source-defined wrappers propagate audit observations through formal parameters,
+including pointer aliases; checking
 does not depend on the public helper's spelling or declaration order. Loop
 backedge origins are checked as well as the first iteration's origin.
 Raw inputs stored in aggregate fields and receivers conservatively retain
@@ -350,9 +388,9 @@ These are safe inert address operations, not accesses. They establish no
 initialization, alignment, lifetime, ownership or write permission and create
 no checked loan. Existing origin records survive erasure and restoration,
 including expired/replaced origins and known pointee-type contradictions.
-Known contradictory restoration is rejected rather than becoming an unsafe
-assertion. Actual dereference and checked owner-witness borrowing retain their
-own obligations. Pointer conversions do not extend constant evaluation or
+Known contradictory restoration is an optional audit finding; the conversion
+alone still grants no access permission. Actual dereference and checked
+owner-witness borrowing retain their own obligations. Pointer conversions do not extend constant evaluation or
 promise stable object layout. Example 113 demonstrates an unrelated user type.
 
 ## Programmer Proof Obligations

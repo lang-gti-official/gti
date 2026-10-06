@@ -1,75 +1,84 @@
 # Compiler Verification
 
-## Source package registry bootstrap
+## Optional raw audit and combined reconciliation
 
-### Protected registry authentication
+The 2026-10-06 candidate separates mandatory language checking from optional
+raw provenance/access/effect diagnostics. It also reconciles PR #36's backend
+output/failure evidence, PR #37's source package registry, and declaration-level
+`[[discardable]]`. Validation uses Release/Ninja, AppleClang 21 and system LLVM
+22.1.8 on macOS arm64; it is not Linux/Windows or bundled-LLVM archive evidence.
 
-`package_registry_auth_model` exercises an unrelated registry adapter with an
-in-memory protected store: validate-before-save, failed-login preservation,
-unsupported/denied storage, exact logical/endpoint/owner isolation,
-length-framed account hashing, environment precedence/empty opt-out, bounded
-control-free tokens, versioned record validation and idempotent logout.
-`package_registry_auth_cli` uses a local fake Gitea server to exercise the real
-adapter's explicit login validation, automatic stored authentication for
-discovery/download/publication, per-command store lookup, environment overrides,
-redaction, argument/input bounds and network-free status. Terminal tests restore
-echo after interrupt, termination and suspension cancellation.
+`raw_query_budget_contract` checks declaration order for ordinary, generic and
+constructor chains, recursive incompleteness and more than 2,048 independent
+demands. `raw_borrow_contract` compares complete MIR and C++ between Off and Warn
+at O0/O3 with C++20/C++23, including later-declared nested constructor fields.
+It retains mandatory unsafe/type/checked-loan/escape negatives with audit Off
+and verifies zero optional source-query work. `raw_audit_certainty` distinguishes
+exact expiry from path choices, unknown alternatives, source summaries and
+uncertain raw-owner field projections in all three modes.
 
-Set `GTI_TEST_REGISTRY_KEYCHAIN=1` to additionally exercise the production macOS
-store with one synthetic credential scoped to a random loopback registry.
-Login/status/failed replacement, scope changes, automatic `gti add`/locked
-fetch, secret-free project/cache files and idempotent logout use that exact
-record; cleanup removes only the fixture record. Default CI never accesses a
-real Keychain item or requires an unlocked desktop session. The installed C++
-driver smoke constructs/injects the store without Objective-C/LLVM types in its
-headers or a credential query.
+The focused combined gates pass, including both feature-specific frontend/LSP
+suites and the reviewed standard-library manifest. Direct/project/LSP policy
+coverage checks overrides, child builds, strict promotion, warning suppression,
+UTF-16 spans, unsaved edits and watched-manifest invalidation. Strict and Warn
+share inference; optional conflicts cannot change checked loan endpoints.
+The native conversion/storage/record suites retain the existing optimized,
+standard-version, no-elide and applicable sanitizer matrices; invalid unsafe
+audit fixtures are emitted or diagnosed, never executed.
 
-Local evidence uses the Release/Ninja compiler on macOS arm64 with AppleClang
-21 and system LLVM 22.1.8: all 14 selected registry, driver, project, CLI,
-color/progress, project-facts LSP and link-surface gates pass, including the
-opt-in synthetic Keychain workflow. No frontend language semantics change.
-Linux/Windows protected-store persistence is not implemented by this slice.
+The final combined stage passes all eleven isolated installed-library consumers.
+Installed CLI, LSP, raw-audit policy and registry workflow checks also pass with
+`GTI_STDLIB_PATH` cleared; the policy harness's explicit `--installed` mode does
+not inject source-tree resources. The active user toolchain is not changed.
+Tree-sitter passes 71 corpus cases, highlight/locals/rainbow queries and all 175
+shipped sources. Clang-format 22.1.8 checks all 437 first-party C/C++ files.
+Examples 115 and 116 separately demonstrate declaration-level optional results
+and programmer-owned unsafe obligations with mandatory checked references.
+The corpus census adds their reviewed inventories without changing existing
+examples' counts.
 
-### Bootstrap evidence
+All 440 registered production CTest gates are accounted for as passing on the
+combined candidate. Two completed gates were retained from the initial
+four-worker run; the remaining 438 were restarted with twelve workers and
+435 passed. The three remaining gates then passed together serially:
+`generic_payload_enum_runtime`, `benchmark_harness` and
+`runtime_performance_workloads`. The generic payload matrix exceeded its
+300-second timeout under parallel load, then passed unchanged in 254.82 seconds.
+The two benchmark gates exposed a strict report-decoder omission: the additive
+`raw_pointer_audit` field now accepts only `off`, `warn` or `strict`, with legacy
+reports defaulting to `off` and unknown fields still rejected. No compiler
+source changed between the production run and these successful reruns, and no
+test assertion or timeout was weakened. Both full MIR/backend corpus gates and
+both census baselines passed in the production run. The final serial rerun
+took 311.64 seconds; the 438-gate run took 1,194.72 seconds.
 
-`package_registry_model` uses an in-memory backend to exercise the shared
-SemVer model, strict metadata and manifest declarations, newest complete
-metadata-only solving, lock preference, missing/conflicting candidates,
-backtracking, cycles, canonical-name collisions and exact lock edges. Archive
-checks cover deterministic ordering, binary bytes, traversal/reserved paths,
-case/file-directory collisions, every truncated prefix and trailing bytes.
-Read-only project facts require existing verified sources and never unpack a
-cached archive. Corrupt cached sources are rejected rather than repaired.
+## Declaration-level discardable results
 
-`package_registry_cli` runs a loopback-only fake Gitea server with deterministic
-publication/authentication behavior. It covers dry runs, archive-before-marker
-uploads, duplicate/partial publication, anonymous and authenticated reads,
-credential isolation/redaction, disabled repository fsmonitor hooks,
-comment-preserving manifest edits, direct/transitive version upgrades,
-compatible exact lock reuse, cache deletion and concurrent acquisition,
-offline native builds, LSP hover/diagnostics and integrity failures. Conflicts
-are detected before source acquisition; failed additions leave project files
-unchanged. C++20/O0 and C++23/O3 exercise the production native build path.
+The `discardable_result` frontend gate covers optional results on free,
+generic, static, virtual and call-operator declarations, exact function items,
+extern-C/link-name composition, overload-specific policy and static virtual
+selection. It retains rejection for unannotated calls/lambdas, invalid
+attributes, escaping references and conflicting live loans. Compiler-owned
+hover and formatting preserve the annotation. `discardable_result_lsp` checks
+the default diagnostic's UTF-16 range, unsaved annotation edits, hover,
+incomplete-source recovery and explicit call-site discard.
 
-The 0.375.0 candidate uses Release/Ninja on macOS arm64, AppleClang 21 and system
-LLVM 22.1.8. The registry model/CLI gates and selected driver, project, CLI,
-color/progress, project-facts LSP and LLVM link-surface gates pass. An isolated
-installation passes all eleven external library consumers, including the
-LLVM-free registry driver API. The installed registry CLI/LSP workflow also
-passes with checkout resource overrides cleared. All 429 first-party C/C++
-files pass clang-format 22.1.8; Python syntax and `git diff --check` pass.
-This is focused build/package evidence, not a full compiler/corpus execution,
-Linux/Windows validation or a bundled-LLVM release archive check.
+`discarded_nominal_result_runtime` covers explicit and implicit discard,
+defined-failure propagation, owning-result destruction at the semicolon, and
+example 115 under C++20/C++23 O0/O1/O3, disabled elision and ASan/UBSan. No new
+MIR operation or backend path is introduced: both spellings use the existing
+full-expression call, loan, failure and cleanup machinery. Example 111 now
+also uses the optional `storage<T>::emplace` result. The example inventories
+add only example 115; existing body/declaration counts are unchanged.
 
-With explicit user approval, the live official registry receives `libc@0.1.0`
-from the clean package checkout. Its deterministic archive digest is
-`sha256:3af5f338e8c17bee32040feb544f4c929eda7b80113b19ddc1e7d346f60f443d`.
-A fresh isolated consumer adds it through authenticated registry discovery,
-then performs an uncached locked/offline build and runs `getuid`/`getpwuid`
-with Git unavailable and no registry token. The official server rejects
-unauthenticated discovery with HTTP 401; configured token guidance and a
-deterministic fake-server regression cover that policy. The user's active
-compiler installation and project repositories are unchanged.
+Local validation uses Release/Ninja, AppleClang 21 and system LLVM 22.1.8 on
+macOS arm64. Compiler pipeline, raw-borrow and unsafe-function contracts,
+full-expression MIR, CLI/project workflows, focused LSP gates and the stdlib
+surface manifest pass. Tree-sitter passes 71 corpus cases, highlight/locals/
+rainbow queries and parsing all 174 shipped sources. Formatting checks 423
+first-party C/C++ files. This is branch-level evidence, not a rerun of every
+registered test, cross-platform packaging or an installed-toolchain release.
+
 ## Low-level memory Phase 1
 
 Completion validation on 2026-10-06 uses the Release/Ninja compiler on macOS
@@ -272,6 +281,77 @@ insert/erase/relocation pass C++20/C++23 O0/O3 with disabled elision, plus
 ASan/UBSan. A nontrivial copy-constructor control proves that byte construction
 does not bypass selected nontrivial behavior. These are helper-level tests,
 not evidence that every source call/container transport route is closed.
+
+## Source package registry bootstrap
+
+### Protected registry authentication
+
+`package_registry_auth_model` exercises an unrelated registry adapter with an
+in-memory protected store: validate-before-save, failed-login preservation,
+unsupported/denied storage, exact logical/endpoint/owner isolation,
+length-framed account hashing, environment precedence/empty opt-out, bounded
+control-free tokens, versioned record validation and idempotent logout.
+`package_registry_auth_cli` uses a local fake Gitea server to exercise the real
+adapter's explicit login validation, automatic stored authentication for
+discovery/download/publication, per-command store lookup, environment overrides,
+redaction, argument/input bounds and network-free status. Terminal tests restore
+echo after interrupt, termination and suspension cancellation.
+
+Set `GTI_TEST_REGISTRY_KEYCHAIN=1` to additionally exercise the production macOS
+store with one synthetic credential scoped to a random loopback registry.
+Login/status/failed replacement, scope changes, automatic `gti add`/locked
+fetch, secret-free project/cache files and idempotent logout use that exact
+record; cleanup removes only the fixture record. Default CI never accesses a
+real Keychain item or requires an unlocked desktop session. The installed C++
+driver smoke constructs/injects the store without Objective-C/LLVM types in its
+headers or a credential query.
+
+Local evidence uses the Release/Ninja compiler on macOS arm64 with AppleClang
+21 and system LLVM 22.1.8: all 14 selected registry, driver, project, CLI,
+color/progress, project-facts LSP and link-surface gates pass, including the
+opt-in synthetic Keychain workflow. No frontend language semantics change.
+Linux/Windows protected-store persistence is not implemented by this slice.
+
+### Bootstrap evidence
+
+`package_registry_model` uses an in-memory backend to exercise the shared
+SemVer model, strict metadata and manifest declarations, newest complete
+metadata-only solving, lock preference, missing/conflicting candidates,
+backtracking, cycles, canonical-name collisions and exact lock edges. Archive
+checks cover deterministic ordering, binary bytes, traversal/reserved paths,
+case/file-directory collisions, every truncated prefix and trailing bytes.
+Read-only project facts require existing verified sources and never unpack a
+cached archive. Corrupt cached sources are rejected rather than repaired.
+
+`package_registry_cli` runs a loopback-only fake Gitea server with deterministic
+publication/authentication behavior. It covers dry runs, archive-before-marker
+uploads, duplicate/partial publication, anonymous and authenticated reads,
+credential isolation/redaction, disabled repository fsmonitor hooks,
+comment-preserving manifest edits, direct/transitive version upgrades,
+compatible exact lock reuse, cache deletion and concurrent acquisition,
+offline native builds, LSP hover/diagnostics and integrity failures. Conflicts
+are detected before source acquisition; failed additions leave project files
+unchanged. C++20/O0 and C++23/O3 exercise the production native build path.
+
+The 0.375.0 candidate uses Release/Ninja on macOS arm64, AppleClang 21 and system
+LLVM 22.1.8. The registry model/CLI gates and selected driver, project, CLI,
+color/progress, project-facts LSP and LLVM link-surface gates pass. An isolated
+installation passes all eleven external library consumers, including the
+LLVM-free registry driver API. The installed registry CLI/LSP workflow also
+passes with checkout resource overrides cleared. All 429 first-party C/C++
+files pass clang-format 22.1.8; Python syntax and `git diff --check` pass.
+This is focused build/package evidence, not a full compiler/corpus execution,
+Linux/Windows validation or a bundled-LLVM release archive check.
+
+With explicit user approval, the live official registry receives `libc@0.1.0`
+from the clean package checkout. Its deterministic archive digest is
+`sha256:3af5f338e8c17bee32040feb544f4c929eda7b80113b19ddc1e7d346f60f443d`.
+A fresh isolated consumer adds it through authenticated registry discovery,
+then performs an uncached locked/offline build and runs `getuid`/`getpwuid`
+with Git unavailable and no registry token. The official server rejects
+unauthenticated discovery with HTTP 401; configured token guidance and a
+deterministic fake-server regression cover that policy. The user's active
+compiler installation and project repositories are unchanged.
 
 ## Unsafe declaration keyword migration and dependency warnings
 

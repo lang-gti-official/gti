@@ -24,6 +24,22 @@
 namespace lang {
 namespace {
 
+bool promoteRawAuditDiagnostics(std::vector<Diagnostic> &diagnostics,
+                                RawPointerAuditMode mode) {
+  if (mode != RawPointerAuditMode::Strict)
+    return false;
+  bool promoted = false;
+  for (auto &diagnostic : diagnostics) {
+    if (diagnostic.severity == DiagnosticSeverity::Warning &&
+        (diagnostic.code == "GTI-S2101" || diagnostic.code == "GTI-S2102" ||
+         diagnostic.code == "GTI-S2103")) {
+      diagnostic.severity = DiagnosticSeverity::Error;
+      promoted = true;
+    }
+  }
+  return promoted;
+}
+
 // These are syntax requests, not a second declaration catalog. Semantic
 // publication validates export eligibility and uses exact declaration names.
 bool collectExportRequests(const StmtList &statements, SourceUnit &unit,
@@ -392,7 +408,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
 
   SemanticVisitor semantic(options.target, &result.sourceGraph,
                            options.toolingOccurrences, options.workMetrics,
-                           &result.sources);
+                           &result.sources, options.rawPointerAudit);
   if (options.workMetrics != nullptr) {
     for (const SourceUnitId unitId : result.sourceGraph.compilationOrder()) {
       if (const SourceUnit *unit = result.sourceGraph.findUnit(unitId)) {
@@ -414,6 +430,12 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
             .count());
   }
   append(result.diagnostics, semantic.errors());
+  // Complete the requested inference phases before applying CI policy, so
+  // Strict and Warn discover the same concrete bodies and audit findings.
+  const auto applyAuditPolicy = [&] {
+    if (promoteRawAuditDiagnostics(result.diagnostics, options.rawPointerAudit))
+      result.semanticValid = false;
+  };
   if (options.requireEntryPoint && result.sourceValid && result.syntaxValid &&
       result.semanticValid && !options.completionOffset) {
     const SourceUnit *entry =
@@ -428,6 +450,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   if (!result.semanticValid || options.completionOffset ||
       options.stopAfter == FrontendPhase::Semantics) {
     result.semantics = semantic.takeModel();
+    applyAuditPolicy();
     return result;
   }
 
@@ -451,6 +474,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   // move the model into the result instead of deep-copying it.
   result.semantics = semantic.takeModel();
   if (!result.hirValid || options.stopAfter == FrontendPhase::Hir) {
+    applyAuditPolicy();
     return result;
   }
 
@@ -474,6 +498,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         SourceSpan{entry == nullptr ? entryPath.string() : entry->path.string(),
                    0, 0, 1},
         std::move(message)));
+    applyAuditPolicy();
     return result;
   }
 
@@ -520,6 +545,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                    0, 0, 1},
         std::move(message)));
   }
+  applyAuditPolicy();
   return result;
 }
 

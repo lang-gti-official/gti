@@ -753,8 +753,8 @@ void applyProfileFields(ProjectProfile &profile, const toml::table &table,
                         std::vector<Diagnostic> &diagnostics) {
   validateFields(table,
                  {"optimization", "cpp-standard", "execution-profile",
-                  "disabled-warnings", "dependency-warnings", "keep-cpp",
-                  "debug-info", "native"},
+                  "raw-pointer-audit", "disabled-warnings",
+                  "dependency-warnings", "keep-cpp", "debug-info", "native"},
                  "profile", sourceName, source, diagnostics);
 
   if (const toml::node *optimization = table.get("optimization")) {
@@ -804,6 +804,21 @@ void applyProfileFields(ProjectProfile &profile, const toml::table &table,
           "GTI-B1005", sourceSpan(sourceName, source, *execution),
           "Profile execution profile must be 'single-threaded' or "
           "'concurrent'."));
+    }
+  }
+
+  if (const toml::node *audit = table.get("raw-pointer-audit")) {
+    const auto value = audit->value<std::string>();
+    if (!value) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1004", sourceSpan(sourceName, source, *audit),
+          "Profile field 'raw-pointer-audit' must be a string."));
+    } else if (const auto parsed = parseRawPointerAuditMode(*value)) {
+      profile.rawPointerAudit = *parsed;
+    } else {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1005", sourceSpan(sourceName, source, *audit),
+          "Profile raw pointer audit must be 'off', 'warn', or 'strict'."));
     }
   }
 

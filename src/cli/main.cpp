@@ -114,6 +114,7 @@ ColorArgument parseProgressArgument(int argc, char *argv[], int &index) {
 }
 
 struct Options {
+  std::optional<lang::RawPointerAuditMode> rawPointerAudit;
   std::filesystem::path input;
   std::filesystem::path output;
   std::optional<std::string> cxx;
@@ -160,6 +161,7 @@ enum class ProjectCommand {
 };
 
 struct ProjectOptions {
+  std::optional<lang::RawPointerAuditMode> rawPointerAudit;
   ProjectCommand command = ProjectCommand::Build;
   std::optional<std::string> package;
   std::optional<std::string> target;
@@ -291,6 +293,9 @@ void printUsage(std::ostream &stream) {
          "      --execution-profile <name>\n"
          "                       Select single-threaded (default) or "
          "concurrent semantics.\n"
+         "      --raw-pointer-audit=off|warn|strict\n"
+         "                       Audit unsafe pointer obligations (default: "
+         "off).\n"
          "  -O0, -O1, -O2, -O3  Select the optimization level (default: -O0).\n"
          "  -D <name>            Define a valueless configuration flag.\n"
          "  -Wno-<group>         Disable a warning group (for example, "
@@ -334,6 +339,9 @@ void printUsage(std::ostream &stream) {
          "      --execution-profile <name>\n"
          "                       Override single-threaded or concurrent "
          "semantics.\n"
+         "      --raw-pointer-audit=off|warn|strict\n"
+         "                       Override the profile's raw pointer audit "
+         "policy.\n"
          "  -O0, -O1, -O2, -O3  Override the profile optimization level.\n"
          "  -D <name>            Add a valueless project configuration flag.\n"
          "  -Wno-<group>         Disable an additional warning group.\n"
@@ -585,6 +593,28 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
         return ArgumentResult::ExitFailure;
       }
       options.executionProfileSelected = true;
+      continue;
+    }
+    if (argument == "--raw-pointer-audit" ||
+        argument.starts_with("--raw-pointer-audit=")) {
+      std::string_view value;
+      if (argument == "--raw-pointer-audit") {
+        if (++index >= argc) {
+          std::cerr
+              << "gti: --raw-pointer-audit requires off, warn, or strict\n";
+          return ArgumentResult::ExitFailure;
+        }
+        value = argv[index];
+      } else {
+        value = std::string_view(argument).substr(
+            std::string_view("--raw-pointer-audit=").size());
+      }
+      if (options.rawPointerAudit ||
+          !(options.rawPointerAudit = lang::parseRawPointerAuditMode(value))) {
+        std::cerr << "gti: --raw-pointer-audit must be off, warn, or strict "
+                     "and specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
       continue;
     }
     if (argument == "-D") {
@@ -1002,6 +1032,28 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       options.executionProfile = profile;
       continue;
     }
+    if (argument == "--raw-pointer-audit" ||
+        argument.starts_with("--raw-pointer-audit=")) {
+      std::string_view value;
+      if (argument == "--raw-pointer-audit") {
+        if (++index >= argc) {
+          std::cerr
+              << "gti: --raw-pointer-audit requires off, warn, or strict\n";
+          return ArgumentResult::ExitFailure;
+        }
+        value = argv[index];
+      } else {
+        value = std::string_view(argument).substr(
+            std::string_view("--raw-pointer-audit=").size());
+      }
+      if (options.rawPointerAudit ||
+          !(options.rawPointerAudit = lang::parseRawPointerAuditMode(value))) {
+        std::cerr << "gti: --raw-pointer-audit must be off, warn, or strict "
+                     "and specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      continue;
+    }
     if (argument == "-D") {
       if (++index >= argc) {
         std::cerr << "gti: missing configuration flag name after -D\n";
@@ -1157,8 +1209,9 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
   }
   if (options.noBuild &&
       (options.cxx || options.cc || options.standard || options.optimization ||
-       options.executionProfile || options.keepCpp || options.debugInfo ||
-       options.jobs || !options.configurationFlags.empty() ||
+       options.executionProfile || options.rawPointerAudit || options.keepCpp ||
+       options.debugInfo || options.jobs ||
+       !options.configurationFlags.empty() ||
        !options.disabledWarnings.empty() || !options.useCache)) {
     std::cerr << "gti: --no-build cannot be combined with compiler, build, "
                  "cache, or configuration overrides\n";
@@ -2111,7 +2164,8 @@ int runDirect(const Options &options, const char *driver) {
         options.input, toolchain.standardLibrary, target, options.optimization,
         options.standard, {}, configuration.configurationFlags(),
         optimizationOutputRequest(options),
-        lang::WarningPolicy(options.disabledWarnings), options.debugInfo);
+        lang::WarningPolicy(options.disabledWarnings), options.debugInfo, {},
+        options.rawPointerAudit.value_or(lang::RawPointerAuditMode::Off));
     const lang::driver::CompilationResult compilation =
         options.emitNativeHeader
             ? lang::driver::compileToNativeHeader(request, progress.observer())
@@ -2168,7 +2222,9 @@ int runDirect(const Options &options, const char *driver) {
                   configuration.configurationFlags(),
                   optimizationOutputRequest(options),
                   lang::WarningPolicy(options.disabledWarnings),
-                  options.debugInfo),
+                  options.debugInfo, {},
+                  options.rawPointerAudit.value_or(
+                      lang::RawPointerAuditMode::Off)),
               toolchain, generatedSource, options.output,
               lang::driver::discoverNativeCompiler(options.cxx),
               std::move(nativeInputs), options.keepCpp, false, options.verbose,
@@ -2482,7 +2538,8 @@ int buildProjectPlan(
                   plan.entry(), toolchain.standardLibrary, plan.target(),
                   plan.optimization(), plan.cppStandard(),
                   plan.packageSources(), plan.configurationFlags(), {},
-                  plan.warnings(), plan.debugInfo(), plan.packageWarnings()),
+                  plan.warnings(), plan.debugInfo(), plan.packageWarnings(),
+                  plan.rawPointerAudit()),
               toolchain, plan.generatedSource(), plan.output(), cppCompiler,
               nativeInputs, plan.keepCpp(), true, options.verbose,
               lang::driver::ManagedOutputPolicy{
@@ -2518,6 +2575,7 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
   overrides.executionProfile = options.executionProfile;
+  overrides.rawPointerAudit = options.rawPointerAudit;
   overrides.keepCpp = options.keepCpp;
   overrides.debugInfo = options.debugInfo;
   overrides.configurationFlags = options.configurationFlags;
@@ -2589,6 +2647,11 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
       command.emplace_back("--execution-profile");
       command.emplace_back(
           lang::executionProfileName(*options.executionProfile));
+    }
+    if (options.rawPointerAudit) {
+      command.emplace_back(
+          "--raw-pointer-audit=" +
+          std::string(lang::rawPointerAuditModeName(*options.rawPointerAudit)));
     }
     if (options.keepCpp) {
       command.emplace_back(*options.keepCpp ? "--keep-cpp" : "--no-keep-cpp");
@@ -2735,6 +2798,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
   overrides.executionProfile = options.executionProfile;
+  overrides.rawPointerAudit = options.rawPointerAudit;
   overrides.keepCpp = options.keepCpp;
   overrides.debugInfo = options.debugInfo;
   overrides.configurationFlags = options.configurationFlags;
@@ -2804,7 +2868,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
                 plan.entry(), toolchain.standardLibrary, plan.target(),
                 plan.optimization(), plan.cppStandard(), plan.packageSources(),
                 plan.configurationFlags(), {}, plan.warnings(), false,
-                plan.packageWarnings()),
+                plan.packageWarnings(), plan.rawPointerAudit()),
             progress.observer());
     progress.suspend();
     if (!compilation.succeeded()) {
@@ -2847,7 +2911,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
             plan.entry(), toolchain.standardLibrary, plan.target(),
             plan.optimization(), plan.cppStandard(), plan.packageSources(),
             plan.configurationFlags(), {}, plan.warnings(), false,
-            plan.packageWarnings())
+            plan.packageWarnings(), plan.rawPointerAudit())
             .forExecutable(),
         progress.observer());
     progress.suspend();
@@ -2948,6 +3012,8 @@ int runProjectVerify(const ProjectOptions &options, const char *driver) {
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
   overrides.executionProfile = options.executionProfile;
+  overrides.rawPointerAudit =
+      options.rawPointerAudit.value_or(recorded->rawPointerAudit);
   overrides.keepCpp = options.keepCpp;
   overrides.debugInfo = options.debugInfo.value_or(recorded->debugInfo);
   overrides.configurationFlags = options.configurationFlags;
@@ -3051,6 +3117,7 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
   overrides.executionProfile = options.executionProfile;
+  overrides.rawPointerAudit = options.rawPointerAudit;
   overrides.keepCpp = options.keepCpp;
   overrides.debugInfo = options.debugInfo;
   overrides.configurationFlags = options.configurationFlags;
