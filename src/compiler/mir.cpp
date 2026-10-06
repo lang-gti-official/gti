@@ -465,7 +465,7 @@ findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place) {
       !producer->info.traits.containsBorrowedState ||
       producer->info.category != ValueCategory::Value || loan == nullptr ||
       loan->kind != MirLoanKind::Stored || loan->entry || loan->escapes ||
-      loan->lifecycleBound || !loan->carriers.empty() ||
+      !loan->carriers.empty() ||
       loan->storedDependency != 0 || loan->producedBy != place.sourceValue ||
       loan->storedField != 0) {
     return {};
@@ -483,6 +483,10 @@ findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place) {
                   })) {
     return {};
   }
+  // Cleanup-bearing temporaries retain the same exact producer/value/drop
+  // identity as passive carriers. Their Stored dependency is lifecycle-bound;
+  // the separate CallArgument shell is not. Lifecycle and loan dataflow still
+  // require the owning value's cleanup before any retained dependency ends.
   const MirDropObligation *drop = nullptr;
   for (const auto &candidate : body.dropObligations) {
     if (candidate.kind != MirDropObligationKind::Value ||
@@ -9492,13 +9496,30 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                                     retained->kind == MirLoanKind::CallResult &&
                                     !retained->entry && !retained->escapes &&
                                     retained->producedBy != 0;
+            const auto *value = body.findValue(operand.value);
+            const auto *definition = value ? body.findBlock(value->definitionBlock) : nullptr;
+            const bool constructedField = body.kind == MirBodyKind::Constructor &&
+                published && published->kind == MirLoanKind::Stored &&
+                published->storedField != 0 && retained && !retained->entry &&
+                retained->kind == MirLoanKind::Stored && !retained->escapes &&
+                value && definition && operand.place == 0 &&
+                value->info.type == operand.type &&
+                std::any_of(definition->instructions.begin(), definition->instructions.end(),
+                    [&](const auto &producer) {
+                      return producer.id == value->definition &&
+                             producer.kind == MirInstructionKind::Construct &&
+                             producer.constructorTarget &&
+                             producer.result == operand.value &&
+                             producer.loan == retained->id &&
+                             producer.hirValue == retained->producedBy;
+                    });
             return instruction.kind != MirInstructionKind::Borrow ||
                    instruction.operands.size() != 1 || published == nullptr ||
                    (published->kind != MirLoanKind::Return &&
                     !(body.kind == MirBodyKind::Constructor &&
                       published->kind == MirLoanKind::Stored &&
-                      published->storedField != 0 && storedCarrier)) ||
-                   (!storedCarrier && !dynamicTextCarrier &&
+                      published->storedField != 0 && (storedCarrier || constructedField))) ||
+                   (!storedCarrier && !dynamicTextCarrier && !constructedField &&
                     (!callResult || operand.place != 0 || operand.value != 0));
           });
       if (instruction.id == 0 ||
@@ -9881,12 +9902,30 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               (source.type.kind == SemanticType::StringView ||
                source.type.kind == SemanticType::CString) &&
               instruction.info.type == source.type;
+          const auto *constructedValue = body.findValue(source.value);
+          const auto *constructedBlock = constructedValue
+              ? body.findBlock(constructedValue->definitionBlock) : nullptr;
+          const bool exactConstructedField = fieldPublication &&
+              !retained->entry && !retained->escapes && constructedValue &&
+              constructedValue->info.type == source.type && constructedBlock &&
+              std::any_of(constructedBlock->instructions.begin(),
+                          constructedBlock->instructions.end(),
+                          [&](const auto &producer) {
+                return producer.id == constructedValue->definition &&
+                       producer.kind == MirInstructionKind::Construct &&
+                       producer.constructorTarget &&
+                       producer.result == source.value &&
+                       producer.loan == retained->id &&
+                       producer.hirValue == retained->producedBy;
+              });
           const MirPlace *runtime = body.findPlace(source.place);
           const bool valueTransfer =
               source.place == 0 &&
-              (((exactStoredCarrierEntry || exactDynamicTextEntry) &&
+              (((exactStoredCarrierEntry || exactDynamicTextEntry ||
+                 exactConstructedField) &&
                 source.value != 0) ||
                (!exactStoredCarrierEntry && !exactDynamicTextEntry &&
+                !exactConstructedField &&
                 source.value == 0)) &&
               instruction.info.traits.containsBorrowedState;
           const bool referenceTransfer =

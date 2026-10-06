@@ -2205,7 +2205,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       std::vector<GenericParameterInfo> genericParameters =
           classDecl->genericArgumentPatterns().empty()
               ? makeGenericParameters(classDecl->genericParameters(),
-                                      classDecl->name(), scope)
+                                      classDecl->name(), scope, true)
               : makeClassPatternParameters(*classDecl, scope);
       for (std::size_t index = 0; index < genericParameters.size(); ++index) {
         if (genericParameters[index].pack &&
@@ -5363,9 +5363,9 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
       function.overrideMethod || function.declaration == nullptr ||
       function.declaration->body() == nullptr)
     return std::nullopt;
-  // The existing single-origin contract already identifies a sole stored
-  // field. Publish a field map where choosing among multiple fields would
-  // otherwise lose information; this is not a limit on carrier cardinality.
+  // Even a single stored reference needs an exact field origin: a carrier can
+  // also own unrelated storage, and returning that storage must protect its
+  // shell rather than being mistaken for the carrier's external dependency.
   if (function.returnType.kind != SemanticType::Reference &&
       storedReferencePaths(function.returnType).size() <= 1)
     return std::nullopt;
@@ -5447,8 +5447,7 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
             owner.arguments.size() == 1)
           owner = owner.arguments.front();
         const auto paths = storedReferencePaths(owner);
-        if (paths.size() <= 1 ||
-            std::none_of(paths.begin(), paths.end(), [&](const auto &path) {
+        if (std::none_of(paths.begin(), paths.end(), [&](const auto &path) {
               return storedFieldSymbols(owner, path.fields) ==
                      source->source.sourceFields;
             }))

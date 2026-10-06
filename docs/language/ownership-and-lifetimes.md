@@ -1538,9 +1538,13 @@ published until every private resource has succeeded.
 
 `std::storage<T>` is a move-only lexical owner of one typed allocation origin.
 It retains capacity, alignment, slot-live state, and release authority as one
-capability. It cannot be forged, copied, converted to an address, or manually
-released. Public `T` must satisfy `std::movable` and must not contain borrowed
-state. Each in-bounds slot is either uninitialized or holds exactly one live
+capability. It cannot be forged, copied or converted to an address. `release()`
+performs early owning cleanup without detaching an unmanaged allocation.
+Public `T` must not contain borrowed state. It need not be movable:
+final-address `emplace` supports immovable objects, and moving the allocation
+owner does not move its elements. `construct` requires a movable completed
+value, while `relocate_to` requires both movability and structural relocatability.
+Each in-bounds slot is either uninitialized or holds exactly one live
 `T`. `construct` consumes one completed `T` and begins a slot lifetime,
 `get`/`get_mut` return checked receiver-tied references, `destroy` ends one
 slot lifetime, and `clear` ends all live slot lifetimes in reverse index order.
@@ -1557,9 +1561,11 @@ Bounds, duplicate construction, uninitialized access, and uninitialized
 destruction are defined runtime failures rather than allocation errors. The
 public operation accepts an already constructed `T`; failure while constructing
 that argument therefore occurs before the slot operation and follows ordinary
-MIR cleanup without publishing a new slot lifetime. Arbitrary in-slot
-constructor argument forwarding remains deferred until it has an explicit MIR
-failure boundary. The complete rationale, provenance model, and
+MIR cleanup without publishing a new slot lifetime. `emplace` forwards its
+concrete argument pack into the final slot using the existing MIR constructor
+preflight and partial-construction failure boundary. Failure preserves its
+original identity and does not publish a live slot.
+The complete rationale, provenance model, and
 C++/Rust/Zig/Swift comparison are in
 [ADR 022](../decisions/022-safe-typed-allocation.md).
 

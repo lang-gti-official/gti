@@ -55,9 +55,31 @@ T lower<sortable T>(T left, T right) {
 }
 ```
 
-The named concept must have one type parameter and must reduce to unary
-capabilities. Relationships between two or more generic parameters use the
-trailing clause below.
+The named concept must have one type parameter. On function parameters it
+must reduce to unary capabilities; structural function contracts use the
+trailing clause below. Class and struct parameters also accept unary
+structural concepts:
+
+```gti
+concept readable<T> = requires(T& source) { { source.read() } -> int; };
+class Session<readable T> {
+  T& source;
+public:
+  Session(T& source) : source(source) {}
+  int read() { return this.source.read(); }
+  ~Session() { int final_sample = this.source.read(); }
+};
+```
+
+The contract's guaranteed operations apply throughout the class body,
+including field initializers, constructors, methods and destructors. Unsafe
+requirements still require a lexical `unsafe` block at each selected call.
+Every concrete class argument must satisfy the exact concept even when no
+member is called. A contract does not create a public member, change access,
+or permit a destructor to call operations absent from the contract. Ordinary
+constraint composition and disjunction retain only guaranteed common facts.
+Relationships between two or more generic parameters use the trailing clause
+below; this does not introduce class-level trailing `requires` syntax.
 
 ## Trailing `requires`
 
@@ -216,8 +238,9 @@ concrete instance is reanalyzed before HIR/MIR. A mutable contract never grants
 permission to call through a read-only receiver. Combine separate queries using
 `&&` and `||`; only facts common to all alternatives enter a generic body.
 Receiver, parameter and result types may contain dependent compound types.
-Inline generic-parameter constraints still exclude structural concepts; use a
-trailing clause. Borrowed-result contracts remain unsupported.
+Function inline generic-parameter constraints still exclude structural
+concepts; use a trailing clause. Class parameters accept unary structural
+annotations as described above. Borrowed-result contracts remain unsupported.
 
 An ordinary requirement proves a safe call and rejects an unsafe member.
 Prefix the compound signature with `unsafe` to describe a member whose caller

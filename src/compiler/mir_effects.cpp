@@ -441,6 +441,14 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .speculatable = true,
                     .removableWhenUnused = true,
                     .reorderable = true}, // ObjectAlignment
+    // Adoption retains an externally supplied region and allocates only slot
+    // metadata. Failure is a status, with no published destination change.
+    MirEffectTraits{.writesPlace = true,
+                    .readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .allocates = true,
+                    .invokesRuntime = true,
+                    .initializesValue = true}, // StorageTryAdopt
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -677,6 +685,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "raw-pointer-conversion",
     "object-size",
     "object-alignment",
+    "storage-try-adopt",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({

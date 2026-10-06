@@ -12,6 +12,12 @@ namespace lang::mir_detail {
 [[nodiscard]] bool objectLayoutQuery(const MirProgram &program,
                                      const MirInstruction &instruction);
 
+// External region adoption requires an explicit unsafe marker. It transfers
+// slot lifetime authority, never release authority for the external region.
+[[nodiscard]] const MirPlace *
+storageAdoptionDestination(const MirBody &body,
+                           const MirInstruction &instruction);
+
 // Inert, const-preserving typed/erased address conversion; never a borrow or
 // an assertion that the pointee is initialized, aligned, live or writable.
 [[nodiscard]] bool rawPointerConversion(const MirInstruction &instruction);

@@ -1895,6 +1895,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
                             DefinedFailureDetail::MemberAccess);
           break;
         case IntrinsicKind::StorageTryAllocate:
+        case IntrinsicKind::StorageTryAdopt:
         case IntrinsicKind::StorageCapacity:
         case IntrinsicKind::StorageInitialized:
         case IntrinsicKind::PrefixStorageLength:

@@ -1188,69 +1188,157 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
     const SemanticType &type, const ConstructorDecl *constructor,
     std::span<const SemanticType> parameterTypes) const
     -> std::vector<StoredReferenceBinding> {
-  const auto paths = storedReferencePaths(type);
-  const ClassInfo *owner = classInfo(type);
-  if (paths.empty() || owner == nullptr || constructor == nullptr) {
-    return {};
-  }
-  std::vector<StoredReferenceBinding> result;
-  for (const StoredReferencePath &path : paths) {
-    if (path.fields.empty()) {
+  // Summaries are needed before constructor bodies are analyzed. Compose only
+  // explicit nominal constructor calls whose complete argument list consists
+  // of exact enclosing parameters. Ordinary concrete call analysis still owns
+  // overload viability, access, movement and exact initialized-field typing.
+  // Factories, defaults, packs, arbitrary expressions and recursive summaries
+  // deliberately do not acquire a guessed dependency contract here.
+  std::vector<const ConstructorDecl *> visiting;
+  const auto summarize = [&](const auto &self, const SemanticType &type,
+                             const ConstructorDecl *constructor,
+                             std::span<const SemanticType> parameterTypes)
+      -> std::vector<StoredReferenceBinding> {
+    const auto paths = storedReferencePaths(type);
+    const ClassInfo *owner = classInfo(type);
+    if (paths.empty() || owner == nullptr || constructor == nullptr ||
+        visiting.size() >= 64 ||
+        std::find(visiting.begin(), visiting.end(), constructor) !=
+            visiting.end())
       return {};
-    }
-    const VariableDecl *field = path.fields.front();
-    const auto member = owner->members.find(field->name().lexeme);
-    if (member == owner->members.end()) {
-      return {};
-    }
-    const SemanticType fieldType =
-        substituteType(member->second.symbol.type, classSubstitution(type));
-    std::optional<std::size_t> selected;
-    for (const ConstructorInitializer &initializer :
-         constructor->initializers()) {
-      if (initializer.target.name.segments.size() != 1 ||
-          initializer.target.name.last().lexeme != field->name().lexeme ||
-          initializer.arguments.size() != 1) {
-        continue;
-      }
-      const ExprPtr *argument = &initializer.arguments.front();
-      while (const auto *group = exprAs<Grouping>(argument->get())) {
+    visiting.push_back(constructor);
+    struct Pop {
+      std::vector<const ConstructorDecl *> &stack;
+      ~Pop() { stack.pop_back(); }
+    } pop{visiting};
+    const auto parameterSource =
+        [&](const ExprPtr &expression,
+            const SemanticType &expected) -> std::optional<std::size_t> {
+      const ExprPtr *argument = &expression;
+      while (const auto *group = exprAs<Grouping>(argument->get()))
         argument = &group->expression();
-      }
       if (const Call *call = directCall(*argument)) {
         const auto intrinsic = intrinsicCandidate(call->callee());
         if (!intrinsic ||
             intrinsic->record().intrinsic != IntrinsicKind::Move ||
             call->arguments().size() != 1 ||
-            fieldType.kind == SemanticType::Reference) {
-          return {};
-        }
+            expected.kind == SemanticType::Reference)
+          return std::nullopt;
         argument = &call->arguments().front();
       }
       const Variable *source = movedVariable(*argument);
-      if (source == nullptr) {
-        return {};
-      }
+      if (source == nullptr)
+        return std::nullopt;
       const auto &parameters = constructor->parameters();
       for (std::size_t index = 0;
-           index < parameters.size() && index < parameterTypes.size();
-           ++index) {
+           index < parameters.size() && index < parameterTypes.size(); ++index)
         if (parameters[index].name.lexeme == source->name().lexeme &&
-            parameterTypes[index] == fieldType && !parameters[index].pack) {
-          selected = index;
-          break;
+            parameterTypes[index] == expected && !parameters[index].pack)
+          return index;
+      return std::nullopt;
+    };
+    std::vector<StoredReferenceBinding> result;
+    for (const StoredReferencePath &path : paths) {
+      if (path.fields.empty()) {
+        return {};
+      }
+      const VariableDecl *field = path.fields.front();
+      const auto member = owner->members.find(field->name().lexeme);
+      if (member == owner->members.end()) {
+        return {};
+      }
+      const SemanticType fieldType =
+          substituteType(member->second.symbol.type, classSubstitution(type));
+      std::optional<std::size_t> selected;
+      std::vector<const VariableDecl *> sourceFields(path.fields.begin() + 1,
+                                                     path.fields.end());
+      for (const ConstructorInitializer &initializer :
+           constructor->initializers()) {
+        if (initializer.target.name.segments.size() != 1 ||
+            initializer.target.name.last().lexeme != field->name().lexeme ||
+            initializer.arguments.size() != 1) {
+          continue;
+        }
+        const ExprPtr *argument = &initializer.arguments.front();
+        while (const auto *group = exprAs<Grouping>(argument->get())) {
+          argument = &group->expression();
+        }
+        selected = parameterSource(*argument, fieldType);
+        if (selected)
+          continue;
+        const Call *call = directCall(*argument);
+        const ClassInfo *nested = classInfo(fieldType);
+        if (call == nullptr || nested == nullptr ||
+            fieldType.kind != SemanticType::Class || path.fields.size() < 2)
+          return {};
+        std::optional<ClassId> target;
+        if (const auto *name = exprAs<Variable>(call->callee().get())) {
+          // Do not mistake a shadowing callable parameter/field for a type.
+          if (owner->members.contains(name->name().lexeme) ||
+              std::any_of(constructor->parameters().begin(),
+                          constructor->parameters().end(), [&](const auto &p) {
+                            return p.name.lexeme == name->name().lexeme;
+                          }))
+            return {};
+          target = resolveClassPathGlobally(NamePath(name->name()),
+                                            owner->namespaceScope);
+        } else if (const auto *name =
+                       exprAs<QualifiedName>(call->callee().get())) {
+          target =
+              resolveClassPathGlobally(name->name(), owner->namespaceScope);
+        }
+        // This is the constructor declaration's dependency summary, queried
+        // again from callers in other source units. Caller visibility must not
+        // hide a private implementation type used in that declaration. Its
+        // ordinary body analysis still validates visibility/access at the use.
+        if (!target || *target != nested->id)
+          return {};
+        bool matched = false;
+        for (const auto &candidate : nested->constructors) {
+          if (candidate.declaration == nullptr || candidate.parameterPack ||
+              !candidate.genericParameters.empty() ||
+              candidate.parameterTypes.size() != call->arguments().size())
+            continue;
+          auto nestedTypes = candidate.parameterTypes;
+          std::vector<std::size_t> arguments;
+          for (auto &parameter : nestedTypes) {
+            parameter = substituteType(parameter, classSubstitution(fieldType));
+            const auto source =
+                parameterSource(call->arguments()[arguments.size()], parameter);
+            if (!source)
+              break;
+            arguments.push_back(*source);
+          }
+          if (arguments.size() != nestedTypes.size())
+            continue;
+          if (matched)
+            return {}; // Never choose among ambiguous dependency producers.
+          matched = true;
+          const auto childBindings =
+              self(self, fieldType, candidate.declaration, nestedTypes);
+          const auto child = std::find_if(
+              childBindings.begin(), childBindings.end(),
+              [&](const auto &binding) {
+                return binding.destination.fields == sourceFields &&
+                       binding.destination.reference == path.reference;
+              });
+          if (child == childBindings.end() ||
+              child->parameter >= arguments.size())
+            return {};
+          selected = arguments[child->parameter];
+          sourceFields = child->sourceFields;
         }
       }
+      if (!selected) {
+        return {};
+      }
+      result.push_back({.destination = path,
+                        .parameter = *selected,
+                        .sourceFields = std::move(sourceFields)});
     }
-    if (!selected) {
-      return {};
-    }
-    result.push_back(
-        {.destination = path,
-         .parameter = *selected,
-         .sourceFields = {path.fields.begin() + 1, path.fields.end()}});
-  }
-  return result;
+    return result;
+  };
+  return summarize(summarize, type, constructor, parameterTypes);
 }
 
 auto SemanticVisitor::Impl::storedFieldSymbols(
@@ -1795,6 +1883,9 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     }
     if (name == "storage_try_allocate") {
       return IntrinsicKind::StorageTryAllocate;
+    }
+    if (name == "storage_try_adopt") {
+      return IntrinsicKind::StorageTryAdopt;
     }
     if (name == "storage_capacity") {
       return IntrinsicKind::StorageCapacity;
@@ -4301,16 +4392,27 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       semanticModel.recordBindingLoan(binding, child);
       return;
     }
+    const auto *operation = semanticModel.findOperator(*expression);
+    const bool receiverStorageResult =
+        (resolved != nullptr &&
+         resolved->returnType.kind == SemanticType::Reference &&
+         resolved->borrowOrigin == BorrowOriginKind::Receiver &&
+         resolved->borrowFields.empty()) ||
+        (operation != nullptr &&
+         operation->returnType.kind == SemanticType::Reference &&
+         operation->borrowOrigin == BorrowOriginKind::Receiver &&
+         operation->borrowFields.empty());
     if (carrier->type.kind == SemanticType::Reference &&
         carrier->type.arguments.size() == 1 &&
-        typeTraits(carrier->type.arguments.front()).containsBorrowedState &&
+        (typeTraits(carrier->type.arguments.front()).containsBorrowedState ||
+         receiverStorageResult) &&
         sourceLoan->kind == SemanticLoanKind::StoredValue &&
         !source->transfer) {
       // Referencing the carrier is not a copy of its stored dependency.
       // Protect the addressable shell and retain its existing external-owner
       // authority through a separate edge. Neither permission upgrades the
       // other; ordinary reference binding already checks shell access.
-      SemanticLoanPlace shell = loanPlace(expression);
+      SemanticLoanPlace shell = retainedLoanPlace(expression);
       if (shell.root == 0 && !shell.receiver) {
         report(expressionToken(expression),
                "A reference to borrowed-state storage requires a stable "
@@ -7901,6 +8003,8 @@ auto SemanticVisitor::Impl::analyzeStorageIntrinsicCall(const Call &expr,
       switch (intrinsic) {
       case IntrinsicKind::StorageCapacity:
         return std::size_t{1};
+      case IntrinsicKind::StorageTryAdopt:
+        return std::size_t{5};
       case IntrinsicKind::StorageTryAllocate:
       case IntrinsicKind::StorageRelocate:
       case IntrinsicKind::StorageShiftRight:
@@ -7932,6 +8036,7 @@ auto SemanticVisitor::Impl::analyzeStorageIntrinsicCall(const Call &expr,
   const SemanticType storageType = argumentTypes.front();
   const SemanticType elementType = storageType.arguments.front();
   const bool mutatesFirst = intrinsic == IntrinsicKind::StorageTryAllocate ||
+                            intrinsic == IntrinsicKind::StorageTryAdopt ||
                             intrinsic == IntrinsicKind::StorageConstruct ||
                             intrinsic == IntrinsicKind::StorageReadMut ||
                             intrinsic == IntrinsicKind::StorageDestroy ||
@@ -7943,7 +8048,22 @@ auto SemanticVisitor::Impl::analyzeStorageIntrinsicCall(const Call &expr,
                           storageIntrinsicName(intrinsic));
   }
 
-  if (intrinsic == IntrinsicKind::StorageTryAllocate) {
+  if (intrinsic == IntrinsicKind::StorageTryAdopt) {
+    requireUnsafe(expr, UnsafeOperationKind::StorageAdoption, expr.paren(),
+                  "Adopting externally owned raw storage");
+    if (argumentTypes.size() >= 2 &&
+        argumentTypes[1] != SemanticType::Unknown &&
+        argumentTypes[1] != SemanticType::rawPointerTo(SemanticType::Void)) {
+      report(expressionToken(expr.arguments()[1]),
+             "storage_try_adopt requires a writable void* region address.",
+             "GTI-S2019");
+    }
+    for (std::size_t index = 2; index < argumentTypes.size(); ++index) {
+      requireStorageIndex(expr.arguments()[index], argumentTypes[index],
+                          intrinsic);
+    }
+    currentType = SemanticType::Int32;
+  } else if (intrinsic == IntrinsicKind::StorageTryAllocate) {
     if (argumentTypes.size() >= 2) {
       requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
     }

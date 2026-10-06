@@ -328,6 +328,14 @@ focused checks; the local evidence is recorded in
 [verification](../architecture/verification.md#low-level-memory-phase-1).
 Stateful allocator policies and resource leases remain Phase 2.
 
+The Phase 2 storage extension removes the public movable-element restriction
+from allocation and final-address emplacement. Handle movement transfers the
+same slots without moving their objects. Completed-value construction and
+element relocation keep their distinct capability requirements. The existing
+MIR constructor/preflight and cleanup engines already represent those facts;
+there is no second immovable-object lifecycle. Example 120 demonstrates the
+distinction with an ordinary owning class whose copy and move are deleted.
+
 ## Revision: optional unsafe auditing
 
 The Phase 1 provenance analysis exposed an inappropriate acceptance boundary:

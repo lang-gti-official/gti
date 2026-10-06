@@ -1702,7 +1702,8 @@ private:
            candidate != scope->loans.rend(); ++candidate) {
         const auto *loan = output.findLoan(*candidate);
         if (loan != nullptr && (failureCleanup || !loan->entry) &&
-            !loan->lifecycleBound && !loan->escapes &&
+            (!loan->lifecycleBound || loan->id == carrier.loan->id) &&
+            !loan->escapes &&
             (failureCleanup || loan->carriers.empty()) &&
             !retained.contains(loan->id) &&
             !containsLoan(alreadyEnded, loan->id) &&
@@ -1711,7 +1712,10 @@ private:
         }
       }
     }
-    return result;
+    // The exact temporary has just been retired, including its own cleanup
+    // obligation. End that Stored child before any resource ancestor; other
+    // lifecycle-bound carriers still belong to their own cleanup schedule.
+    return childFirstMirLoans(result);
   }
 
   [[nodiscard]] std::unordered_set<MirLoanId>
@@ -2229,7 +2233,11 @@ private:
     }
     if (inheritSourceMetadata && instruction.hirValue != 0) {
       if (const HirValue *source = findValue(instruction.hirValue)) {
-        if (source->unsafeOperation != UnsafeOperationKind::None) {
+        // Region adoption is one explicit call, not an assertion by its
+        // surrounding full-expression/lifecycle bookkeeping markers.
+        if (source->unsafeOperation != UnsafeOperationKind::None &&
+            (source->unsafeOperation != UnsafeOperationKind::StorageAdoption ||
+             instruction.kind == MirInstructionKind::Call)) {
           instruction.unsafeOperation = source->unsafeOperation;
         }
         if (source->ownership) {
@@ -8206,8 +8214,12 @@ private:
     const MirLoanId sourceLoan = loanForValue(valueId);
     const MirLoan *source = output.findLoan(sourceLoan);
     const HirValue *value = findValue(valueId);
+    const bool constructed = source != nullptr && value != nullptr &&
+                             !source->entry && !source->escapes &&
+                             source->producedBy == valueId &&
+                             value->constructorTarget.has_value();
     if (source == nullptr || source->kind != MirLoanKind::Stored ||
-        !source->entry || source->designatedFields.empty() ||
+        (!constructed && (!source->entry || source->designatedFields.empty())) ||
         source->access != access || value == nullptr ||
         !value->info.traits.containsBorrowedState) {
       valid = false;

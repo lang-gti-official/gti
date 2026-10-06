@@ -1,0 +1,30 @@
+#include <std/string>
+#include <std/vector>
+
+struct Resource {
+  int id;
+  Resource(int id) : id(id) {}
+  ~Resource() { std::println(100 + this.id); }
+};
+class PairGuard {
+  Resource& left;
+  Resource& right;
+public:
+  PairGuard(Resource& left, Resource& right) : left(left), right(right) {}
+  ~PairGuard() { std::println(this.left.id); std::println(this.right.id); }
+};
+class Reversed {
+  PairGuard pair;
+public:
+  Reversed(Resource& first, Resource& second, int divisor)
+      : pair(PairGuard(second, first)) {
+    int primary = 1 / divisor;
+  }
+};
+int main(int argc, std::vector<std::string> argv) {
+  Resource first{10};
+  Resource second{20};
+  Reversed owner{first, second, argc - 2};
+  std::println(77);
+  return 0;
+}

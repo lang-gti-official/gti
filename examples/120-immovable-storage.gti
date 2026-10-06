@@ -1,0 +1,44 @@
+#include <std/memory>
+#include <std/string>
+
+// This object owns text and remembers its final address. Neither copying nor
+// moving it is allowed; storage's handle can still be moved independently.
+class Anchor {
+  std::string label;
+  int value;
+  mut const int* original = nullptr;
+public:
+  Anchor(std::string label, int value)
+      : label(std::move(label)), value(value) {
+    this.original = &this.value;
+  }
+  Anchor(Anchor& other) = delete;
+  Anchor(Anchor&& other) = delete;
+
+  bool stable() { return this.original == &this.value; }
+  std::string_view name() { return this.label.view(); }
+  int read() { return this.value; }
+};
+
+int main() {
+  std::allocator allocator{};
+  auto attempt = allocator.try_storage<Anchor>(std::size_t(2));
+  if (!attempt) { return 1; }
+  mut auto slots = std::move(attempt).value();
+  slots.emplace(std::size_t(1), std::string("fixed address"), 42);
+
+  Anchor& anchor = slots.get(std::size_t(1));
+  if (!anchor.stable() || anchor.name() != "fixed address") { return 2; }
+  // The reference's last use is above. Only the allocation owner moves.
+  mut auto moved = std::move(slots);
+  if (!moved.get(std::size_t(1)).stable() ||
+      moved.get(std::size_t(1)).read() != 42) { return 3; }
+
+  // Element relocation and passing a completed Anchor by value are forbidden.
+  // Destruction and fresh construction at an empty slot remain supported.
+  moved.destroy(std::size_t(1));
+  moved.emplace(std::size_t(1), std::string("reconstructed"), 7);
+  if (!moved.get(std::size_t(1)).stable()) { return 4; }
+  moved.release();
+  return moved.capacity() == std::size_t(0) ? 0 : 5;
+}

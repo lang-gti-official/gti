@@ -60,6 +60,33 @@ int main() { return 0; }
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
                 "textDocument": {"uri": uri, "version": 2}, "contentChanges": [{"text": valid}]}})
             assert not diagnostics(2)
+            nested = """struct Resource {
+  mut int value = 7;
+  void reset() mut { this.value = 8; }
+};
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  ~Guard() { int observed = this.resource.value; }
+};
+class Owner {
+  Guard guard;
+public:
+  Owner(Resource& resource) : guard(Guard(resource)) {}
+};
+int main() { mut Resource resource{}; Owner owner{resource}; resource.reset(); return 0; }
+"""
+            session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+                "textDocument": {"uri": uri, "version": 3}, "contentChanges": [{"text": nested}]}})
+            errors = diagnostics(3)
+            assert any(item.get("code") == "GTI-S2017" for item in errors), errors
+            assert not any(item.get("code") == "GTI-B0001" for item in errors), errors
+            nested_valid = nested.replace(" resource.reset();", "").replace(
+                "mut Resource resource{}", "Resource resource{}")
+            session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+                "textDocument": {"uri": uri, "version": 4}, "contentChanges": [{"text": nested_valid}]}})
+            assert not diagnostics(4)
         finally:
             session.close()
     print("cleanup-bound borrow LSP diagnostic passed")

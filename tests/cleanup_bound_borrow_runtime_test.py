@@ -55,11 +55,18 @@ if __name__ == "__main__":
         f"{returned.name}:{return_secondary}: runtime error[GTI-R0014]: "
         "failure_during_cleanup; primary [GTI-R0002] at "
         f"{returned.name}:{return_primary}; secondary [GTI-R0002]\n")
+    constructed = root / "tests/fixtures/cleanup_bound_constructed_field.gti"
+    constructed_line = next(index for index, line in enumerate(
+        constructed.read_text().splitlines(), 1) if "primary =" in line)
+    constructed_failure = (
+        f"{constructed.name}:{constructed_line}: runtime error[GTI-R0002]: "
+        "division_by_zero in integer_division\n")
     run_runtime_matrix(
         names=("cleanup_bound_guards", "cleanup_bound_guards_example",
                "allocator_bookkeeping", "cleanup_bound_nested_guards",
                "cleanup_bound_inert_shell", "cleanup_bound_nested_failures",
-               "nested_cleanup_bound_guard", "cleanup_bound_return_failure"),
+               "nested_cleanup_bound_guard", "cleanup_bound_return_failure",
+               "cleanup_bound_constructed_field"),
         cases={"cleanup_bound_guards": [
             ((), (0, "42\n102\n41\n101\n40\n", "")),
             (("fail",), (70, "102\n41\n101\n40\n", failure)),
@@ -93,6 +100,9 @@ if __name__ == "__main__":
              (70, "55\n42\n41\n", return_double_failure)),
             (("guard", "cleanup", "only"),
              (70, "55\n77\n42\n41\n99\n", return_failure(return_secondary))),
+        ], "cleanup_bound_constructed_field": [
+            ((), (0, "77\n20\n10\n120\n110\n", "")),
+            (("rollback",), (70, "20\n10\n120\n110\n", constructed_failure)),
         ]},
         fixture_paths={"cleanup_bound_guards_example":
                        root / "examples/118-cleanup-bound-guards.gti"})

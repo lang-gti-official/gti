@@ -787,6 +787,73 @@ int main() {
          "transitive cleanup fixture covers normal and failure endpoints");
 }
 
+void checkConstructedFieldPublication() {
+  const auto control = analyze("constructed field publication", R"gti(
+class PairGuard {
+  Resource& left; Resource& right;
+public:
+  PairGuard(Resource& left, Resource& right) : left(left), right(right) {}
+  ~PairGuard() { observed += this.left.value + this.right.value; }
+};
+class Reversed {
+  PairGuard pair;
+public:
+  Reversed(Resource& first, Resource& second) : pair(PairGuard(second, first)) {}
+};
+int main() { Resource first{}; Resource second{}; Reversed owner{first,second}; return 0; }
+)gti");
+  if (!control)
+    return;
+  bool checked = false;
+  for (const auto &constructor : control->constructorInstances()) {
+    const BodyKey key{lang::MirBodyKind::Constructor, constructor.id};
+    for (const auto &block : constructor.body.blocks)
+      for (const auto &publication : block.instructions) {
+        if (publication.kind != lang::MirInstructionKind::Borrow ||
+            !publication.loan || publication.operands.size() != 1 ||
+            publication.operands.front().kind != lang::MirOperandKind::Loan)
+          continue;
+        const auto &operand = publication.operands.front();
+        const auto *producer = definition(constructor.body, operand.value);
+        const auto *retained = constructor.body.findLoan(operand.loan);
+        if (!producer || producer->kind != lang::MirInstructionKind::Construct ||
+            !retained || retained->entry || producer->borrowFields.size() != 2)
+          continue;
+        checked = true;
+        auto wrongMap = *control;
+        auto *forged = instruction(body(wrongMap, key), producer->id);
+        std::swap(forged->borrowFields[0].parameter, forged->borrowFields[1].parameter);
+        rejected(wrongMap, "nested producer cannot forge reordered formal mapping");
+
+        auto missingOwner = *control;
+        body(missingOwner, key).loans[*publication.loan - 1].additionalDependencies.clear();
+        rejected(missingOwner, "nested field publication retains every child dependency");
+
+        const auto end = loanEnd(constructor.body, retained->id);
+        expect(end.has_value(), "constructed carrier has an explicit transfer endpoint");
+        if (end) {
+          auto early = *control;
+          expect(moveBefore(body(early, key), *end, publication.id),
+                 "constructed child early endpoint mutation is applied");
+          rejected(early, "constructed child cannot retire before field publication");
+        }
+        for (const auto &stageBlock : constructor.body.blocks)
+          for (const auto &stage : stageBlock.instructions)
+            for (std::size_t i = 0; i < stage.lifecycle.size(); ++i)
+              if (stage.kind == lang::MirInstructionKind::Initialize &&
+                  stage.lifecycle[i].kind == lang::MirLifecycleEventKind::Reparent &&
+                  stage.operands.size() == 1 && stage.operands.front().value == operand.value) {
+                auto unarmed = *control;
+                auto *changed = instruction(body(unarmed, key), stage.id);
+                changed->lifecycle[i].kind = lang::MirLifecycleEventKind::TransferOut;
+                changed->lifecycle[i].target = 0;
+                rejected(unarmed, "constructed field cannot lose rollback authority");
+              }
+      }
+  }
+  expect(checked, "nested constructor fixture exercises child publication");
+}
+
 } // namespace
 
 int main() {
@@ -796,6 +863,7 @@ int main() {
   checkCompleteDependencySet();
   checkMandatoryLocalRetention();
   checkTransitiveCleanupDependency();
+  checkConstructedFieldPublication();
   if (failures == 0)
     std::cout << mutations << " cleanup-bound proof mutations rejected\n";
   return failures == 0 ? 0 : 1;

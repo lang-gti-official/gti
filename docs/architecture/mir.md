@@ -288,6 +288,15 @@ exact carrier drop, failed producer, consuming call, constructor-field
 publication or owned return transfer. Field publication must reparent the same
 SSA value into its exact construction-rollback obligation. Ordinary receiver
 and reference entries do not acquire this ownership.
+An explicit nested constructor may instead supply that completed SSA value.
+Its result loan retains every child field dependency through the successful
+value-to-field reparent, then publishes the field's escaping dependency and
+retires the consumed child loan. Constructor verification derives each outer
+field-to-formal origin recursively from the selected child `Construct` and its
+actual prepared operands; matching caller/callee field maps alone are not
+proof. Reordered and multi-owner inputs preserve their individual paths and
+permissions. The native backend erases this proven publication without
+changing the existing field construction or rollback schedule.
 An owned return may publish a distinct dependency before intervening fallible
 local cleanup. Its result must belong to the original carrier's exact typed
 drop-transfer chain. If that cleanup fails, the exported dependency remains
@@ -693,6 +702,19 @@ errors, whose record is already complete and must not be overwritten. Caller
 cleanup drains the remaining live elements. Source-defined vector/storage
 `clear()` loops use these same operations. The v63 extension supplies the
 arbitrary-index prefix erase hole/shift protocol for the represented family.
+
+`StorageTryAdopt` is a declaration-bound, status-returning call with the
+mandatory `StorageAdoption` unsafe marker. It requires an exact mutable private
+storage destination, writable erased address, count, byte extent and alignment.
+The shared verification query is consumed independently by whole-program MIR
+verification and backend admission. Adoption is an optimizer barrier: it may
+allocate bookkeeping and publishes storage authority, even if its returned
+status is discarded. It has no defined-failure edge and must not inherit
+constructor or destructor effects. Full-expression markers cannot claim this
+unsafe operation. The adopted slots use the existing preflight, initialization
+map, element-drop recipes and checked loans. Releasing this private storage
+releases its bitmap but never the external region; an enclosing source-defined
+lease owns that separate release after element cleanup.
 
 Program v61/body v53 extend the cleanup tree with one unprojected element
 recipe for owning storage and prefix storage. A collection drop walks live
