@@ -37,6 +37,9 @@ also closes the race with other machines. It does not lock ordinary editing.
 | `status [task]` | Read task records and current remote PR state. |
 | `protection [--configure]` | Audit, or establish the owner-approved PR-only/up-to-date main rule, retaining existing review/status requirements. |
 
+Checkpoint paths are literal files: Git pathspec magic, directory/root staging,
+and pre-existing staged work cannot silently include another task's changes.
+
 `--repo <checkout>` precedes the command when invoked elsewhere. Credentials
 come from `GTI_GITEA_TOKEN`, `GITEA_TOKEN`, or the primary checkout's ignored
 `.env`; the helper parses the token key without executing the file. A worktree
@@ -48,7 +51,9 @@ The first branch push can contain no changes; draft creation waits for a real
 commit because unchanged branches cannot form meaningful PRs. Gitea's `WIP:`
 title marks drafts. The helper verifies that the instance recognizes the draft.
 An interrupted PR-create request is recovered by branch lookup before another
-create. Closed task branches are not reused.
+create. Head and base repository identities must both be canonical GTI, so a
+similarly named fork branch cannot be adopted or modified. Closed task branches
+are not reused.
 
 Checkpoint publication is distinct from validation. The agent selects suitable
 checks using the owning skill and `verify-change`, with optimized compilers,
@@ -70,6 +75,8 @@ automation does not change the packaged compiler version.
 ## Preservation and cleanup
 
 Fast-forward sync leaves unrelated primary edits in place and refuses overlap.
+Incoming paths are checked for untracked/ignored collisions, and Git receives
+`--no-overwrite-ignore` so a newly tracked path cannot overwrite ignored data.
 The agent backs up only the overlapping intended files and reconciles them
 before retrying. Divergent primary commits receive a named recovery ref and
 must be integrated through a separate PR; no reset or hidden merge rewrites
@@ -88,4 +95,8 @@ Interrupted operations are retried using the same task. Task records survive
 merge rejection and sync failure. A confirmed remote merge resumes at sync;
 cleanup tolerates branches already deleted. If records are lost, preserve and
 adopt the published branch/worktree, rediscover the PR, and confirm the remote
-merge before proceeding. Server API rejections are reported without secrets.
+merge before proceeding. Recovery adoption accepts an existing open/ready PR
+even when main advanced, allowing helper reconciliation without first requiring
+an unknown task to reconcile itself. Already merged tasks resume sync; lost
+abandonment responses are confirmed remotely and do not republish closed work.
+Server API rejections are reported without secrets.

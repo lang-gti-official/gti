@@ -24,6 +24,7 @@ class Gitea:
         self.merge_payload = None
         self.reject_merge = False
         self.lose_create_response = False
+        self.lose_close_response = False
         self.before_merge = None
 
     def request(self, method, path, payload=None):
@@ -39,7 +40,9 @@ class Gitea:
             pr = {**payload, "number": len(self.prs) + 1,
                   "html_url": "https://example.invalid/pulls/1", "state": "open",
                   "draft": True, "merged": False,
-                  "head": {"ref": payload["head"], "sha": head}, "base": {"ref": "main"}}
+                  "head": {"ref": payload["head"], "sha": head,
+                           "repo": {"full_name": module.REPOSITORY}},
+                  "base": {"ref": "main", "repo": {"full_name": module.REPOSITORY}}}
             self.prs.append(pr)
             if self.lose_create_response:
                 self.lose_create_response = False
@@ -54,6 +57,9 @@ class Gitea:
             pr.update(payload)
             if "title" in payload:
                 pr["draft"] = payload["title"].startswith("WIP:")
+            if self.lose_close_response and payload.get("state") == "closed":
+                self.lose_close_response = False
+                raise Error("simulated lost close response")
             return pr
         if path.endswith("/merge"):
             self.merge_payload = payload
@@ -263,6 +269,83 @@ class Lifecycle(unittest.TestCase):
             self.flow.checkpoint("task", "broad", ["."])
         with self.assertRaisesRegex(Error, "canonical"):
             module.Workflow(self.primary, self.api)
+
+    def test_literal_pathspecs_do_not_commit_unrelated_files(self):
+        self.start()
+        (self.worktree / "wanted.txt").write_text("wanted")
+        (self.worktree / "unrelated.txt").write_text("other task")
+        with self.assertRaises(Error):
+            self.flow.checkpoint("task", "unsafe broad path", [":/"])
+        self.assertEqual(git(self.worktree, "diff", "--cached", "--name-only"), "")
+        self.assertEqual(git(self.worktree, "rev-list", "--count", "origin/main..HEAD"), "0")
+
+    def test_sync_never_overwrites_ignored_untracked_files(self):
+        self.start()
+        secret = self.primary / ".env"
+        secret.write_text("preserve user secret")
+        (self.worktree / ".env").write_text("incoming tracked file")
+        git(self.worktree, "add", "-f", ".env")
+        git(self.worktree, "commit", "-m", "incoming path")
+        self.flow.checkpoint("task")
+        self.flow.protection(True)
+        self.flow.verify("task", [[sys.executable, "-c", "pass"]])
+        with self.assertRaisesRegex(Error, "would be overwritten"):
+            self.flow.finish("task", "description")
+        self.assertEqual(secret.read_text(), "preserve user secret")
+        self.assertEqual(self.flow.load("task")["phase"], "sync-blocked")
+
+    def test_reconcile_never_mutates_integrated_branch(self):
+        self.ready()
+        self.flow.finish("task", "description")
+        head = git(self.worktree, "rev-parse", "HEAD")
+        with self.assertRaisesRegex(Error, "integrated"):
+            self.flow.reconcile("task")
+        self.assertEqual(git(self.worktree, "rev-parse", "HEAD"), head)
+        self.assertEqual(self.flow.load("task")["phase"], "synced")
+
+    def test_fork_pr_cannot_be_adopted_by_name(self):
+        self.start()
+        head = git(self.worktree, "rev-parse", "HEAD")
+        self.api.prs.append({"number": 1, "state": "open", "draft": True,
+                             "head": {"ref": self.branch, "sha": head,
+                                      "repo": {"full_name": "someone/fork"}},
+                             "base": {"ref": "main", "repo": {"full_name": module.REPOSITORY}}})
+        self.checkpoint()
+        self.assertEqual(self.flow.load("task")["pr"], 2)
+        self.assertEqual(len(self.api.prs), 2)
+
+    def test_recover_ready_pr_after_main_advancement(self):
+        self.ready()
+        self.flow.finish("task", "description", pr_only=True)
+        self.flow.file("task").unlink()
+        self.advance_remote()
+        state = self.flow.start("task", "Task outcome", self.worktree, self.branch, adopt=True)
+        self.assertEqual(state["pr"], 1)
+        self.assertEqual(len(self.api.prs), 1)
+        self.flow.reconcile("task")
+        self.flow.verify("task", [[sys.executable, "-c", "pass"]])
+        self.flow.finish("task", "description")
+
+    def test_recover_merged_pr_without_recreating_branch(self):
+        self.ready()
+        self.flow.finish("task", "description")
+        self.flow.file("task").unlink()
+        state = self.flow.start("task", "Task outcome", self.worktree, self.branch, adopt=True)
+        self.assertEqual(state["phase"], "synced")
+        self.assertEqual(len(self.api.prs), 1)
+        self.flow.cleanup("task")
+
+    def test_recover_lost_abandon_response(self):
+        self.start()
+        self.checkpoint()
+        self.api.lose_close_response = True
+        with self.assertRaisesRegex(Error, "lost close"):
+            self.flow.abandon("task", "superseded")
+        self.assertEqual(self.flow.load("task")["phase"], "abandoning")
+        state = self.flow.abandon("task", "superseded")
+        self.assertEqual(state["phase"], "abandoned")
+        self.assertTrue(self.worktree.exists())
+        self.assertEqual(len(self.api.prs), 1)
 
 
 if __name__ == "__main__":
