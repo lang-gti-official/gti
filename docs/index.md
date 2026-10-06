@@ -171,6 +171,10 @@ Implemented behavior must be documented in `docs/architecture/` or
 
 ## Maintenance
 
+Repository implementation tasks use the maintained
+[agent workflow](architecture/agent-workflow.md) for published checkpoints,
+PR integration, local-main synchronization and recoverable cleanup.
+
 When behavior changes, update the existing owning document, its tests, and any
 affected plan status. Create an ADR only for rationale worth preserving. Remove
 or merge superseded proposals instead of keeping `v2`, `final`, or
