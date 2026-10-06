@@ -22,12 +22,12 @@ FrontendResult analyze(const CompilationRequest &request,
   // Compilation and `check` consume diagnostics, semantics, and symbols; only
   // editor position queries read the occurrence table, so it is not built on
   // this path.
-  const FrontendOptions options{
-      .target = request.target(),
-      .configurationFlags = request.configurationFlags(),
-      .toolingOccurrences = false,
-      .requireEntryPoint = request.requiresEntryPoint(),
-      .progress = progress};
+  FrontendOptions options{.target = request.target(),
+                          .configurationFlags = request.configurationFlags(),
+                          .toolingOccurrences = false,
+                          .requireEntryPoint = request.requiresEntryPoint(),
+                          .progress = progress};
+  options.rawPointerAudit = request.rawPointerAudit();
   FrontendResult result = Frontend(options).analyzeLoaded(
       request.entry(), std::move(inputs.sourceGraph), std::move(inputs.sources),
       std::move(inputs.diagnostics), inputs.sourceValid);
@@ -241,7 +241,8 @@ CompilationRequest::CompilationRequest(
     std::vector<PackageSourceRoot> packageSourceRoots,
     ConfigurationFlags configurationFlags,
     OptimizationOutputRequest optimizationOutputs, WarningPolicy warnings,
-    bool debugInfo, PackageWarningPolicy packageWarnings)
+    bool debugInfo, PackageWarningPolicy packageWarnings,
+    RawPointerAuditMode rawPointerAudit)
     : entryPath(std::move(entry)),
       standardLibraryLayout(std::move(standardLibrary)),
       targetInfo(std::move(target)), optimizationLevel(optimization),
@@ -251,7 +252,7 @@ CompilationRequest::CompilationRequest(
       requestedOptimizationOutputs(optimizationOutputs),
       warningPolicy(std::move(warnings)),
       packageWarningPolicy(std::move(packageWarnings)),
-      sourceDebugInfo(debugInfo) {
+      sourceDebugInfo(debugInfo), rawPointerAuditMode(rawPointerAudit) {
   normalizeConfigurationFlags(configuredFlags);
 }
 
@@ -272,6 +273,10 @@ OptimizationLevel CompilationRequest::optimization() const {
 CppStandard CompilationRequest::cppStandard() const { return backendStandard; }
 
 bool CompilationRequest::debugInfo() const { return sourceDebugInfo; }
+
+RawPointerAuditMode CompilationRequest::rawPointerAudit() const {
+  return rawPointerAuditMode;
+}
 
 const std::vector<PackageSourceRoot> &
 CompilationRequest::packageSources() const {

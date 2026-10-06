@@ -1672,6 +1672,43 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
     module.load_build_provenance(
         legacy_path, selected_gti, selected_cxx, sequential_entry
     )
+    require(
+        sequential_report.get("raw_pointer_audit") == "off",
+        "benchmark sidecar did not record the default raw audit policy",
+    )
+    legacy_audit_report = copy.deepcopy(legacy_report)
+    del legacy_audit_report["raw_pointer_audit"]
+    legacy_audit_path = root / "legacy-raw-audit-report.json"
+    legacy_audit_path.write_text(json.dumps(legacy_audit_report), encoding="utf-8")
+    decoded_legacy = module.load_build_provenance(
+        legacy_audit_path, selected_gti, selected_cxx, sequential_entry
+    )
+    require(
+        decoded_legacy["build"]["raw_pointer_audit"] == "off",
+        "legacy schema-2 report did not default raw auditing to off",
+    )
+    for policy in ("off", "warn", "strict"):
+        policy_report = copy.deepcopy(sequential_report)
+        policy_report["raw_pointer_audit"] = policy
+        policy_path = root / "valid-raw-audit-report.json"
+        policy_path.write_text(json.dumps(policy_report), encoding="utf-8")
+        decoded_policy = module.load_build_provenance(
+            policy_path, selected_gti, selected_cxx, sequential_entry
+        )
+        require(decoded_policy["build"]["raw_pointer_audit"] == policy,
+                "decoded provenance lost its raw audit policy")
+    for policy in (True, 1, None, [], {}, "", "unknown", "WARN"):
+        policy_report = copy.deepcopy(sequential_report)
+        policy_report["raw_pointer_audit"] = policy
+        policy_path = root / "invalid-raw-audit-report.json"
+        policy_path.write_text(json.dumps(policy_report), encoding="utf-8")
+        expect_benchmark_error(
+            module,
+            lambda: module.load_build_provenance(
+                policy_path, selected_gti, selected_cxx, sequential_entry
+            ),
+            "raw_pointer_audit must be off, warn, or strict",
+        )
     for invalid_policy, diagnostic in (
         (True, "must disable source debug info"),
         (1, "debug_info must be a boolean"),

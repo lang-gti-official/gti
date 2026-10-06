@@ -193,6 +193,7 @@ struct ProjectProfile {
   OptimizationLevel optimization = OptimizationLevel::O0;
   CppStandard cppStandard = CppStandard::Cpp23;
   ExecutionProfile executionProfile = ExecutionProfile::SingleThreaded;
+  RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
   WarningPolicy warningPolicy;
   bool dependencyWarnings = true;
   bool keepCpp = false;

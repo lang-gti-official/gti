@@ -644,6 +644,8 @@ ProjectBuildPlan makeBuildPlan(
   const bool keepCpp = overrides.keepCpp.value_or(selectedProfile.keepCpp);
   const bool debugInfo =
       overrides.debugInfo.value_or(selectedProfile.debugInfo);
+  const RawPointerAuditMode rawPointerAudit =
+      overrides.rawPointerAudit.value_or(selectedProfile.rawPointerAudit);
   ConfigurationFlags configurationFlags = manifest.build().defines;
   configurationFlags.insert(configurationFlags.end(),
                             overrides.configurationFlags.begin(),
@@ -692,6 +694,8 @@ ProjectBuildPlan makeBuildPlan(
   nativeInputs.targetPolicy = {.triple = toolchain.nativeTarget,
                                .sysroot = toolchain.sysroot};
   std::string modelIdentity = workspace.modelIdentity();
+  modelIdentity += "\nraw-pointer-audit:" +
+                   std::string(rawPointerAuditModeName(rawPointerAudit));
   modelIdentity += selectedProfile.dependencyWarnings
                        ? "\ndependency-warnings:true"
                        : "\ndependency-warnings:false";
@@ -809,7 +813,7 @@ ProjectBuildPlan makeBuildPlan(
       configuration.configurationFlags(), std::move(warningPolicy),
       std::move(modelIdentity), std::move(bindgenImports),
       std::move(buildScripts), std::move(toolchain), debugInfo,
-      std::move(packageWarningPolicy));
+      std::move(packageWarningPolicy), rawPointerAudit);
 }
 
 Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,
@@ -984,7 +988,7 @@ ProjectBuildPlan::ProjectBuildPlan(
     std::vector<BindgenImportPlan> bindgenImports,
     std::vector<BuildScriptPlan> buildScripts,
     ResolvedProjectToolchain toolchain, bool debugInfo,
-    PackageWarningPolicy packageWarnings)
+    PackageWarningPolicy packageWarnings, RawPointerAuditMode rawPointerAudit)
     : projectManifestPath(std::move(manifestPath)),
       projectRoot(std::move(packageRoot)),
       projectWorkspaceRoot(std::move(workspaceRoot)),
@@ -1004,7 +1008,8 @@ ProjectBuildPlan::ProjectBuildPlan(
       resolvedProjectModelIdentity(std::move(projectModelIdentity)),
       resolvedBindgenImports(std::move(bindgenImports)),
       resolvedBuildScripts(std::move(buildScripts)),
-      resolvedToolchain(std::move(toolchain)), sourceDebugInfo(debugInfo) {}
+      resolvedToolchain(std::move(toolchain)), sourceDebugInfo(debugInfo),
+      rawPointerAuditMode(rawPointerAudit) {}
 
 const std::filesystem::path &ProjectBuildPlan::manifestPath() const {
   return projectManifestPath;
@@ -1061,6 +1066,10 @@ CppStandard ProjectBuildPlan::cppStandard() const { return backendStandard; }
 bool ProjectBuildPlan::keepCpp() const { return retainGeneratedSource; }
 
 bool ProjectBuildPlan::debugInfo() const { return sourceDebugInfo; }
+
+RawPointerAuditMode ProjectBuildPlan::rawPointerAudit() const {
+  return rawPointerAuditMode;
+}
 
 const NativeInputs &ProjectBuildPlan::nativeInputs() const {
   return resolvedNativeInputs;

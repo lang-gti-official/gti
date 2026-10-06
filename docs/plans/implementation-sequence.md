@@ -3542,6 +3542,21 @@ do not expose C++ object layout as GTI semantics.
 
 ### S-ALLOC-04: General Low-Level Memory Facilities
 
+- **Follow-up boundary revision (implemented and locally validated):** raw
+  provenance/access/effect auditing is
+  optional (`off` by default, `warn`, or CI-oriented `strict`). Ordinary
+  typing, unsafe permission, checked ownership/loans/escape, and HIR/MIR
+  verification remain mandatory. Unsafe raw validity and witness association
+  are programmer obligations, not acceptance predicates requiring complete
+  interprocedural proof. Independent per-demand query budgets and root-only
+  reuse repair declaration-order dependence inside the optional analyzer.
+  The historical Phase 1 evidence below predates this revision. Current
+  validation covers Off/Warn emitted-MIR/C++ parity, mandatory negative controls,
+  ordering/recursion/cache-capacity and CLI/project/LSP policy tests. All 440
+  registered production gates pass across the full run and documented reruns;
+  see [combined verification](../architecture/verification.md#optional-raw-audit-and-combined-reconciliation)
+  for the exact scope, installed-SDK checks and platform limitations.
+  See the revision in ADR 022 and the current raw-pointer language contract.
 - **State/role:** implemented and locally validated, full Phase 1 campaign.
   This extends ADR 022; the existing checked typed-storage interface remains
   supported.
@@ -3575,8 +3590,9 @@ do not expose C++ object layout as GTI semantics.
   Add an optional declaration-level, identity-resolved return-borrow origin
   selecting a parameter or receiver, retaining unambiguous inference. Safe
   returns must prove the declared origin; unsafe raw-reference creation must
-  explicitly assert validity within lexical `unsafe` and cannot contradict
-  known origins or access. Reuse the implemented bridge/loan facts and replace
+  explicitly assert validity within lexical `unsafe`; type/access restrictions
+  remain mandatory and contradictory provenance is an optional audit finding.
+  Reuse the implemented bridge/loan facts and replace
   the convenience helpers' private-only implementation with ordinary GTI.
   This is not general lifetime generics or permission to relabel a local borrow.
   The `[[borrowed_from(owner)]]`/`[[borrowed_from(this)]]` syntax, explicit-summary
@@ -3600,8 +3616,9 @@ do not expose C++ object layout as GTI semantics.
   Release compiler. These bounded summaries do not claim full interprocedural
   inference.
 - **Contract:** raw pointers remain non-owning. Unsafe code may assert unknown
-  validity but cannot erase known invalid provenance, access, or lifetime
-  facts. An explicit raw-to-reference assertion names an owner/lifetime
+  validity subject to programmer-owned raw obligations; optional auditing
+  preserves known provenance while mandatory type/access and checked lifetime
+  rules still apply. An explicit raw-to-reference assertion names an owner/lifetime
   witness; storing a pointer in a field is not such a witness. Returned shared
   or exclusive references use the existing place, loan, and escape model.
   Built-in `&place` is safe when its supported operand is safe to evaluate;
@@ -3652,13 +3669,14 @@ do not expose C++ object layout as GTI semantics.
   explicit construction/destruction/release and typed transfer, using a typed
   request as the ordinary-object layout authority; (3) implement explicit
   erased/typed address conversion and owner-witness checked-reference bridges;
-  (4) preserve and reject contradictory known raw provenance across these
+  (4) preserve and optionally audit contradictory known raw provenance across these
   operations and existing pointer operations; (5) close runtime, verifier,
   optimizer, LSP, installed-toolchain and documentation/example evidence.
 - **Required evidence:** an unrelated owner and raw-backed view demonstrate
   final-address construction, shared/exclusive checked borrowing, movement,
   destruction and constructor-failure cleanup. Reject lifetime escape,
-  conflicting checked/raw access and permission upgrades. Allocation failure
+  conflicting checked access and permission upgrades; optional auditing covers
+  raw/checked conflicts. Allocation failure
   remains recoverable; constructor panic propagates its original identity and
   never becomes an allocation error. Prove exactly-once cleanup, including
   partial construction, optimized builds and C++20/C++23 parity. Independent

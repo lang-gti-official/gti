@@ -797,7 +797,9 @@ std::string serializeBuildProvenanceJson(const BuildProvenance &provenance) {
   std::ostringstream stream;
   stream << "{\n  \"schema\": " << provenance.schema
          << ",\n  \"debug_info\": " << (provenance.debugInfo ? "true" : "false")
-         << ",\n  \"producer\": {\n    \"executable\": ";
+         << ",\n  \"raw_pointer_audit\": ";
+  writeJsonString(stream, rawPointerAuditModeName(provenance.rawPointerAudit));
+  stream << ",\n  \"producer\": {\n    \"executable\": ";
   writeBuildFileJson(stream, provenance.producerExecutable);
   stream << ",\n    \"compiler_build\": {\"state\":";
   writeJsonString(stream,
@@ -942,6 +944,18 @@ parseBuildProvenanceJson(std::string_view text, std::string &errorMessage) {
     return std::nullopt;
   }
   provenance.schema = currentBuildProvenanceSchema;
+  if (document->member("raw_pointer_audit") != nullptr) {
+    std::string mode;
+    if (!requireString(*document, "raw_pointer_audit", "report", mode,
+                       errorMessage))
+      return std::nullopt;
+    const auto parsed = parseRawPointerAuditMode(mode);
+    if (!parsed) {
+      errorMessage = "report.raw_pointer_audit must be off, warn, or strict";
+      return std::nullopt;
+    }
+    provenance.rawPointerAudit = *parsed;
+  }
   if (document->member("debug_info") != nullptr &&
       !requireBoolean(*document, "debug_info", "report", provenance.debugInfo,
                       errorMessage)) {
@@ -1199,6 +1213,9 @@ compareBuildProvenance(const BuildProvenance &recorded,
                recorded.debugInfo ? "true" : "false",
                observed.debugInfo ? "true" : "false");
   compareProject(differences, recorded.project, observed.project);
+  compareValue(differences, "build policy", "raw pointer audit",
+               std::string(rawPointerAuditModeName(recorded.rawPointerAudit)),
+               std::string(rawPointerAuditModeName(observed.rawPointerAudit)));
   compareFile(differences, "producer executable", recorded.producerExecutable,
               observed.producerExecutable);
   compareValue(

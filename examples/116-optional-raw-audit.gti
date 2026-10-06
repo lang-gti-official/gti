@@ -1,0 +1,24 @@
+#include <std/memory>
+
+struct Counter {
+  mut int value = 41;
+  void increment() mut { this.value += 1; }
+};
+
+int main() {
+  mut Counter owner{};
+  const int* address = &owner.value;
+
+  // This method changes a scalar, not its address or lifetime. Reviewing that
+  // fact is part of this small unsafe implementation's programmer obligation.
+  // The optional audit may conservatively flag a mutable aggregate call:
+  //   gti examples/116-optional-raw-audit.gti --raw-pointer-audit=warn
+  // Ordinary compilation does not require the audit to prove this valid.
+  owner.increment();
+  unsafe {
+    // Once converted to a checked reference, the owner loan and escape rules
+    // are mandatory even with --raw-pointer-audit=off (the default).
+    int& observed = std::assume_ref(address, owner);
+    return observed - 42;
+  }
+}

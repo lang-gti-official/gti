@@ -87,8 +87,13 @@ adapters validate names against the typed registry before constructing a
 `CompilationRequest`, and that request applies the policy to source-loading
 and frontend diagnostics. Suppression tests both severity and group, so an
 error cannot be hidden merely because it has a group. The currently
-disableable groups are `configuration`, `unreachable-code`, `unused-mut`, and
-`unused-unsafe`.
+disableable groups are `configuration`, `unreachable-code`, `unused-mut`,
+`unused-unsafe`, `raw-pointer-violation`, `raw-pointer-potential`, and
+`raw-pointer-incomplete`. Raw-pointer findings require explicit audit enablement
+and distinguish contradictory evidence, possible violations and incomplete
+analysis. `--raw-pointer-audit=strict` promotes only those findings at the
+frontend boundary after inference; promoted errors cannot be suppressed by
+warning policy. See [raw pointers](../language/raw-pointers.md).
 
 Project profiles may independently set `dependency-warnings = false`. The
 driver's immutable `PackageWarningPolicy` suppresses only warnings whose

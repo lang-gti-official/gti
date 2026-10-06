@@ -3832,6 +3832,8 @@ auto SemanticVisitor::Impl::completeRawBorrowArgument(
 
 auto SemanticVisitor::Impl::recordRawBorrowCall(
     const Call &call, const ResolvedCallInfo &resolved) -> void {
+  if (!rawAuditEnabled())
+    return;
   if (resolved.declaration == nullptr ||
       (resolved.intrinsic != IntrinsicKind::None &&
        resolved.intrinsic != IntrinsicKind::RawBorrow &&
@@ -3901,24 +3903,28 @@ auto SemanticVisitor::Impl::analyzeRawReferenceReturn(const ExprPtr &expression)
     return false;
   }
   witness.place = assertion.owner;
-  // Reuse the same assertion obligations as explicit bridge calls, including
-  // wrapper propagation and deferred loop-backedge provenance. This contract
-  // does not make a known unrelated, expired or read-only address valid.
-  validateRawPointerAccess(dereference->right(), dereference->oper(), access);
-  RawBorrowCallUse use{.caller = currentFunctionDeclaration,
-                       .intrinsic = access == AccessMode::Mutable
-                                        ? IntrinsicKind::RawBorrowMut
-                                        : IntrinsicKind::RawBorrow,
-                       .location = dereference->oper(),
-                       .arguments = {rawBorrowArgument(dereference->right(),
-                                                       dereference->oper()),
-                                     std::move(witness)}};
-  requestSession.rawBorrowCallUses.push_back(std::move(use));
+  // The programmer asserts raw validity/owner association. Optional auditing
+  // checks available evidence, while the checked reference fact below is
+  // always recorded and remains subject to ordinary lifetime verification.
+  if (rawAuditEnabled()) {
+    validateRawPointerAccess(dereference->right(), dereference->oper(), access);
+    RawBorrowCallUse use{.caller = currentFunctionDeclaration,
+                         .intrinsic = access == AccessMode::Mutable
+                                          ? IntrinsicKind::RawBorrowMut
+                                          : IntrinsicKind::RawBorrow,
+                         .location = dereference->oper(),
+                         .arguments = {rawBorrowArgument(dereference->right(),
+                                                         dereference->oper()),
+                                       std::move(witness)}};
+    requestSession.rawBorrowCallUses.push_back(std::move(use));
+  }
   semanticModel.recordRawReferenceAssertion(*source, std::move(assertion));
   return true;
 }
 
 auto SemanticVisitor::Impl::finalizeRawBorrowContracts() -> void {
+  if (!rawAuditEnabled())
+    return;
   const auto inputFor = [](const RawBorrowCallUse &use, bool receiver,
                            std::size_t index) -> const RawBorrowCallArgument * {
     if (receiver)
@@ -4029,10 +4035,10 @@ auto SemanticVisitor::Impl::finalizeRawBorrowContracts() -> void {
           // Recursive field traversal can produce an unbounded path summary.
           // Fail closed at the analysis budget; never erase the witness.
           if (forwarded.ownerProjections.size() > 32) {
-            report(use.location,
-                   "Raw-borrow wrapper analysis exceeds its owner-projection "
-                   "limit.",
-                   "GTI-S2056");
+            diagnostics.push_back(
+                makeDiagnostic(DiagnosticId::RawAuditIncomplete, use.location,
+                               {"Raw-borrow wrapper analysis exceeds its "
+                                "owner-projection limit."}));
             return;
           }
           if (std::find(updated.rawBorrowContracts.begin(),
@@ -4053,11 +4059,11 @@ auto SemanticVisitor::Impl::finalizeRawBorrowContracts() -> void {
     const auto *function = semanticModel.findFunction(*use.caller);
     if (function && function->virtualMethod &&
         !function->rawBorrowContracts.empty()) {
-      report(use.caller->name(),
-             "Raw-reference assertion requirements cannot cross virtual or "
-             "interface dispatch in this slice; use a statically selected "
-             "helper that establishes the checked reference first.",
-             "GTI-S2056");
+      diagnostics.push_back(makeDiagnostic(
+          DiagnosticId::RawAuditIncomplete, use.caller->name(),
+          {"Raw-reference assertion audit is incomplete across virtual or "
+           "interface dispatch; verify the unsafe owner relationship for every "
+           "target."}));
     }
   }
   for (const auto &use : requestSession.rawBorrowCallUses) {
@@ -4077,10 +4083,11 @@ auto SemanticVisitor::Impl::finalizeRawBorrowContracts() -> void {
            std::any_of(
                pointer.loopUse->origins.begin(), pointer.loopUse->origins.end(),
                [](const auto &origin) { return origin.loopInput != 0; }))) {
-        report(use.location,
-               "A loop-carried raw address requires a proven backedge origin "
-               "before checked borrowing.",
-               "GTI-S2056");
+        diagnostics.push_back(
+            makeDiagnostic(DiagnosticId::RawAuditIncomplete, use.location,
+                           {"Raw-pointer audit could not resolve a "
+                            "loop-carried backedge origin "
+                            "before checked borrowing."}));
         continue;
       }
       if (hasLoopInputs) {
@@ -4122,9 +4129,16 @@ auto SemanticVisitor::Impl::finalizeRawBorrowContracts() -> void {
              relation.relation == PlaceRelation::LeftStrictPrefix))
           continue;
         auto diagnostic = makeDiagnostic(
-            "GTI-S2056", DiagnosticPhase::Semantics, use.location,
-            "The raw address's known origin is not contained in its checked "
-            "owner witness.");
+            relation.relation == PlaceRelation::Disjoint &&
+                    origins.size() == 1 && !origin.possible
+                ? DiagnosticId::RawAuditViolation
+                : DiagnosticId::RawAuditPotential,
+            use.location,
+            {origin.possible
+                 ? "The raw address may originate outside its checked owner "
+                   "witness."
+                 : "The raw address's known origin is not contained in its "
+                   "checked owner witness."});
         diagnostic.related.push_back(
             {origin.addressSite, "Raw address obtained from this storage."});
         diagnostic.hints.emplace_back(

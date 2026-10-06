@@ -80,14 +80,16 @@ private:
 
 class CompilationRequest final {
 public:
-  CompilationRequest(std::filesystem::path entry,
-                     StandardLibraryLayout standardLibrary, TargetInfo target,
-                     OptimizationLevel optimization, CppStandard cppStandard,
-                     std::vector<PackageSourceRoot> packageSourceRoots = {},
-                     ConfigurationFlags configurationFlags = {},
-                     OptimizationOutputRequest optimizationOutputs = {},
-                     WarningPolicy warningPolicy = {}, bool debugInfo = false,
-                     PackageWarningPolicy packageWarnings = {});
+  CompilationRequest(
+      std::filesystem::path entry, StandardLibraryLayout standardLibrary,
+      TargetInfo target, OptimizationLevel optimization,
+      CppStandard cppStandard,
+      std::vector<PackageSourceRoot> packageSourceRoots = {},
+      ConfigurationFlags configurationFlags = {},
+      OptimizationOutputRequest optimizationOutputs = {},
+      WarningPolicy warningPolicy = {}, bool debugInfo = false,
+      PackageWarningPolicy packageWarnings = {},
+      RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off);
 
   [[nodiscard]] const std::filesystem::path &entry() const;
   [[nodiscard]] const StandardLibraryLayout &standardLibrary() const;
@@ -95,6 +97,7 @@ public:
   [[nodiscard]] OptimizationLevel optimization() const;
   [[nodiscard]] CppStandard cppStandard() const;
   [[nodiscard]] bool debugInfo() const;
+  [[nodiscard]] RawPointerAuditMode rawPointerAudit() const;
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
   [[nodiscard]] const OptimizationOutputRequest &optimizationOutputs() const;
@@ -116,6 +119,7 @@ private:
   PackageWarningPolicy packageWarningPolicy;
   bool entryPointRequired = false;
   bool sourceDebugInfo = false;
+  RawPointerAuditMode rawPointerAuditMode = RawPointerAuditMode::Off;
 };
 
 enum class CompilationStatus {

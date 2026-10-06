@@ -17,19 +17,24 @@ void expect(bool valid, const std::string &message) {
     ++failures;
   }
 }
-lang::FrontendResult analyze(const std::string &source) {
+lang::FrontendResult
+analyze(const std::string &source,
+        lang::RawPointerAuditMode mode = lang::RawPointerAuditMode::Off) {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
-  return lang::Frontend().analyze(root / "pointer-conversion-test.gti", source,
-                                  {root / "stdlib/prelude.gti"}, {},
-                                  {root / "stdlib"});
+  lang::FrontendOptions options;
+  options.rawPointerAudit = mode;
+  return lang::Frontend(options).analyze(root / "pointer-conversion-test.gti",
+                                         source, {root / "stdlib/prelude.gti"},
+                                         {}, {root / "stdlib"});
 }
 void show(const lang::FrontendResult &result) {
   for (const auto &d : result.diagnostics)
     std::cerr << d.code << ": " << d.message << '\n';
 }
 void negative(const std::string &name, const std::string &source,
-              const std::string &fragment) {
-  const auto result = analyze(source);
+              const std::string &fragment,
+              lang::RawPointerAuditMode mode = lang::RawPointerAuditMode::Off) {
+  const auto result = analyze(source, mode);
   const bool matched = std::any_of(
       result.diagnostics.begin(), result.diagnostics.end(), [&](const auto &d) {
         return d.message.find(fragment) != std::string::npos;
@@ -37,6 +42,12 @@ void negative(const std::string &name, const std::string &source,
   if (result.canGenerateCode() || !matched)
     show(result);
   expect(!result.canGenerateCode() && matched, name);
+}
+void auditNegative(const std::string &name, const std::string &source,
+                   const std::string &fragment) {
+  negative(name, source, fragment, lang::RawPointerAuditMode::Strict);
+  expect(analyze(source).canGenerateCode(),
+         name + " remains unchecked with audit Off");
 }
 void positiveAndMir() {
   const auto result = analyze(R"(
@@ -161,45 +172,45 @@ int value = 0; uint64_t address = uint64_t(&value); return 0; })",
   negative("no implicit erasure", R"(int main() {
 mut int value = 0; void* p = &value; return 0; })",
            "Cannot initialize");
-  negative("known type survives erasure",
-           R"(using E = void*; using P = uint64_t*;
+  auditNegative("known type survives erasure",
+                R"(using E = void*; using P = uint64_t*;
 int main() { mut int value = 0; E e = E(&value); P p = P(e); return 0; })",
-           "known pointee type");
-  negative("ordinary helpers cannot hide known type", R"(
+                "known pointee type");
+  auditNegative("ordinary helpers cannot hide known type", R"(
 #include <std/memory>
 struct Item { int value = 0; };
 struct Other { int value = 0; };
 int main() { mut Item value{}; void* e = std::erase_address(&value);
 Other* p = std::typed_address<Other>(e); return 0; })",
-           "known pointee type");
-  negative("foreign typed parameter retains known type", R"(
+                "known pointee type");
+  auditNegative("foreign typed parameter retains known type", R"(
 using E = void*; using P = uint64_t*;
 void test(int* address) { E e = E(address); P p = P(e); }
 int main() { return 0; })",
-           "known pointee type");
-  negative("aggregate copy retains type-only records", R"(
+                "known pointee type");
+  auditNegative("aggregate copy retains type-only records", R"(
 using E = void*; using P = uint64_t*;
 struct Carrier { void* address = nullptr; };
 int main() { mut int value = 0; Carrier a{.address = E(&value)};
 Carrier b = a; P p = P(b.address); return 0; })",
-           "known pointee type");
-  negative("conditional retains contradictory possibility", R"(
+                "known pointee type");
+  auditNegative("conditional retains contradictory possibility", R"(
 using E = void*; using P = uint64_t*;
 void test(bool choose) { mut int a = 0; mut uint64_t b = 0;
 E e = choose ? E(&a) : E(&b); P p = P(e); }
 int main() { return 0; })",
-           "known pointee type");
-  negative("backedge retains contradictory pointee", R"(
+                "known pointee type");
+  auditNegative("backedge retains contradictory pointee", R"(
 using E = void*; using P = int*;
 int main() { mut int a = 0; mut uint64_t b = 0; mut E e = E(&a);
 for (mut int i = 0; i < 2; i++) { P p = P(e); e = E(&b); }
 return 0; })",
-           "later loop iteration");
-  negative("known expired origin survives round trip",
-           R"(using E = const void*; using P = const int*;
+                "later loop iteration");
+  auditNegative("known expired origin survives round trip",
+                R"(using E = const void*; using P = const int*;
 int main() { mut E e = nullptr; { int local = 42; e = E(&local); }
 P p = P(e); unsafe { return *p; } })",
-           "scope has ended");
+                "scope has ended");
   negative("round trip grants no access",
            R"(using E = const void*; using P = const int*;
 int main() { int value = 42; E e = E(&value); P p = P(e); return *p; })",

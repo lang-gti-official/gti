@@ -480,6 +480,43 @@ Syntax, ownership, LSP analysis, and runtime behavior are unchanged.
 
 ## Project Mode
 
+### Raw pointer audit policy
+
+Direct compilation and project `build`, `check`, `run`, `test`, and `verify`
+accept `--raw-pointer-audit=off|warn|strict` (also a separate value operand).
+The default is `off`. A project profile may select the same policy:
+
+```toml
+[profiles.dev]
+raw-pointer-audit = "warn"
+```
+
+An explicit command-line choice overrides the selected profile, including an
+explicit `off`; duplicate or unknown choices are rejected. `build --all`
+forwards the override to every child. `run --no-build` rejects it because no
+analysis takes place. Direct mode remains manifest-independent.
+The selection governs the requested GTI target. Approved `build.gti` host
+tools retain their independent fixed compilation policy, including audit
+`off`; changing the target's audit mode does not reinterpret a build script.
+
+This policy selects compiler-owned optional raw-pointer auditing, not the
+mandatory type, constness, unsafe-context, checked-borrow, or ownership rules.
+`warn` publishes demonstrated violations, potential violations, and incomplete
+analysis as distinct warning groups. `strict` promotes those findings to
+errors at the frontend boundary, after the same analysis; warning suppression
+cannot hide a strict error. Neither mode supplies optimization authority or
+proves that foreign pointers are valid.
+
+The immutable `CompilationRequest`, resolved profile/plan and read-only
+`ProjectFacts` carry the same enum into the frontend. The mode joins project
+model and executable cache identity; an `off` artifact cannot satisfy a
+`strict` request. Unchanged-policy cache hits keep the existing no-warning-
+replay contract; use `check` or `--no-cache` for fresh diagnostics. Metadata
+schema 14 includes the additive `rawPointerAudit` field on profiles and plans.
+Build-report schema 2 includes `raw_pointer_audit` (older reports imply `off`);
+`verify` replays that policy unless explicitly overridden and compares it as a
+separate provenance fact.
+
 The implemented manifest path discovers `gti.toml`, parses schema version 1,
 resolves executable and test targets, profiles, declared cross-compilation
 toolchains, and structured native inputs (including declared C and C++

@@ -5151,7 +5151,7 @@ auto SemanticVisitor::Impl::conflictIsInConditionalArm(
 
 auto SemanticVisitor::Impl::reportBorrowConflict(
     const Token &token, const std::vector<SemanticLoanId> &loans,
-    std::string message) -> void {
+    std::string message, bool rawAudit) -> void {
   std::vector<SemanticLoanId> active;
   for (const SemanticLoanId loan : loans) {
     if (loanFlow.records.contains(loan)) {
@@ -5161,21 +5161,36 @@ auto SemanticVisitor::Impl::reportBorrowConflict(
   if (active.empty()) {
     return;
   }
-  Diagnostic diagnostic = makeDiagnostic(
-      "GTI-S2017", DiagnosticPhase::Semantics, token, std::move(message));
+  Diagnostic diagnostic =
+      rawAudit
+          ? makeDiagnostic(DiagnosticId::RawAuditPotential, token, {message})
+          : makeDiagnostic("GTI-S2017", DiagnosticPhase::Semantics, token,
+                           std::move(message));
   if (loanFlow.currentStatement == nullptr || loanFlow.currentRegion == 0) {
     diagnostics.emplace_back(std::move(diagnostic));
     return;
   }
-  loanFlow.conflicts.push_back({.loans = std::move(active),
-                                .region = loanFlow.currentRegion,
-                                .order = loanFlow.currentOrder,
-                                .sequence = loanFlow.nextSequence++,
-                                .statement = loanFlow.currentStatement,
-                                .path = loanFlow.activeConditionalArms,
-                                .switchPath = loanFlow.activeSwitchArms,
-                                .loops = loanFlow.activeLoops,
-                                .diagnostic = std::move(diagnostic)});
+  auto &pending = rawAudit ? loanFlow.rawAuditConflicts : loanFlow.conflicts;
+  pending.push_back(
+      {.loans = std::move(active),
+       .region = loanFlow.currentRegion,
+       .order = loanFlow.currentOrder,
+       .sequence = rawAudit ? loanFlow.nextSequence : loanFlow.nextSequence++,
+       .statement = loanFlow.currentStatement,
+       .path = loanFlow.activeConditionalArms,
+       .switchPath = loanFlow.activeSwitchArms,
+       .loops = loanFlow.activeLoops,
+       .diagnostic = std::move(diagnostic)});
+}
+
+auto SemanticVisitor::Impl::reportRawLoanConflict(
+    const Token &token, const SemanticLoanPlace &place, AccessMode access,
+    SemanticLoanId throughLoan) -> void {
+  if (!rawAuditEnabled() || !place.valid())
+    return;
+  reportBorrowConflict(
+      token, conflictingLoans(place, access, throughLoan),
+      "Raw access may overlap a live incompatible checked borrow.", true);
 }
 
 auto SemanticVisitor::Impl::recordProvenLoanEndpoint(
@@ -5244,6 +5259,12 @@ auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
       }
     }
   }
+  // Endpoint decisions above see mandatory conflicts only. Append optional
+  // observations afterward solely to reuse diagnostic liveness filtering.
+  const auto mandatoryConflicts = loanFlow.conflicts.size();
+  for (auto &conflict : loanFlow.rawAuditConflicts)
+    loanFlow.conflicts.push_back(std::move(conflict));
+  loanFlow.rawAuditConflicts.clear();
   for (std::size_t conflictIndex = 0; conflictIndex < loanFlow.conflicts.size();
        ++conflictIndex) {
     PendingBorrowConflict &conflict = loanFlow.conflicts[conflictIndex];
@@ -5361,6 +5382,7 @@ auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
       diagnostics.emplace_back(std::move(conflict.diagnostic));
     }
   }
+  loanFlow.conflicts.resize(mandatoryConflicts);
 }
 
 auto SemanticVisitor::Impl::removeLoanCarrier(Symbol &carrier) -> void {

@@ -500,6 +500,18 @@ or checksum-mismatched project publishes the driver's structured diagnostics
 and never invents a partial package graph.
 
 The default profile also supplies warning-group and dependency-warning policy.
+It also supplies `raw-pointer-audit = "off"|"warn"|"strict"`. A process option
+`gti_lsp --raw-pointer-audit=off|warn|strict` explicitly overrides that profile;
+without either selection standalone documents use `off`. Duplicate, missing,
+or unknown process values are rejected. Analysis and completion both pass the
+resolved enum to the compiler before analysis, rather than filtering raw
+diagnostics afterwards. Mandatory type/unsafe/checked-borrow errors remain
+errors in every mode. Audit warning/error severity comes from the same
+frontend boundary as CLI compilation; the LSP does not promote findings or
+infer safety itself. Watched manifest changes invalidate these snapshots even
+when source bytes are unchanged. No environment-variable or independent
+dynamic editor policy is introduced.
+
 The protocol adapter applies the shared driver's primary-source package
 classifier when publishing diagnostics, not a directory-name heuristic.
 `dependency-warnings = false` removes dependency warnings without hiding

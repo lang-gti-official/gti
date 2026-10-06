@@ -26,6 +26,7 @@
     "113-erased-addresses.gti": 38,
     "114-owning-storage-view.gti": 369,
     "115-discardable-results.gti": 41,
+    "116-optional-raw-audit.gti": 32,
     "12-fixed-arrays.gti": 28,
     "13-ownership.gti": 44,
     "14-operators.gti": 38,
@@ -113,5 +114,5 @@
     "98-shared-ownership.gti": 359,
     "99-borrowed-expected.gti": 351
   },
-  "total": 14891
+  "total": 14923
 }
