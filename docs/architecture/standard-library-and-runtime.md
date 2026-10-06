@@ -263,10 +263,17 @@ successful storage owner carries allocation extent, alignment, per-slot live
 state, reverse cleanup, and release authority together. Allocation failure is
 returned as `expected`, while bounds and invalid slot-state operations use the
 normal defined-failure route. The public owner requires `std::movable T`
-without borrowed state. Construction consumes one completed `T`, so failure
-while creating the argument remains under ordinary MIR cleanup;
-arbitrary in-slot emplacement is intentionally not delegated to the private
-C++ representation. ADR 022 owns the public provenance and failure contract.
+without borrowed state. `construct(index, value)` consumes one completed `T`,
+so failure while creating the argument remains under ordinary MIR cleanup.
+`emplace<Args...>(index, args...)` also supports construction at the final slot
+address: semantics selects the constructor, HIR preserves its concrete
+parameters, and MIR schedules non-consuming slot preflight before parameter
+handoff. The slot becomes live only after that constructor succeeds; partial
+members are rolled back with the original constructor failure record. The
+backend implements this verified schedule rather than independently selecting
+a native constructor or cleanup policy. Existing emplacement does not remove
+the public movable-element constraint or permit adoption of application-chosen
+backing memory. ADR 022 owns the public provenance and failure contract.
 
 `std::arena<T>`, `std::pool<T>`, `std::try_make_arena`, and
 `std::try_make_pool` are the first bounded allocation-policy clients. They are
