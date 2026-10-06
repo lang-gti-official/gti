@@ -1437,6 +1437,24 @@ interfaces. The proof requires an empty initialization list and passive base
 and field surfaces; a conservative failure summary alone does not invalidate
 the otherwise empty schedule.
 
+A single first field may instead be a cleanup-bound borrowed child constructed
+from exact read-only reference formals. This bounded prefix requires one field,
+no bases, a selected non-failing child constructor with an existing ordinary
+native overload, and nothing before construction except its exact reference
+argument stages. Read ownership metadata must name that same parameter place
+and leave it available. The success edge activates the child value's exact
+drop; the adjacent field `Initialize` reparents it into the field's rollback
+obligation, followed by the exact stored-dependency publication and source-loan
+retirement. Only those argument/construction/publication instructions disappear
+into native member initialization. Later body work, including failure, remains
+in MIR order. Rollback consumes the same proved field drop and drains the
+retained reference-bearing shell without default construction or a second
+destructor call. Normal cleanup, original failure propagation and secondary
+cleanup failure use the existing verified schedule. Fallible child construction,
+multiple fields, by-value carrier arguments and mutable-reference inputs do not
+use this prefix proof; it is not the complete allocator/container composition
+capability.
+
 The sealed native `OptionalStorage` capability has one narrower empty-prefix
 case: a cleanup-free storage field may use the native initializer list when its
 exact empty construction, field publication, and full-expression boundary are

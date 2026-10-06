@@ -3,7 +3,8 @@
 
 struct Resource {
   int id;
-  Resource(int id) : id(id) {}
+  int cleanupDivisor;
+  Resource(int id, int cleanupDivisor = 1) : id(id), cleanupDivisor(cleanupDivisor) {}
   ~Resource() { std::println(100 + this.id); }
 };
 class PairGuard {
@@ -11,7 +12,11 @@ class PairGuard {
   Resource& right;
 public:
   PairGuard(Resource& left, Resource& right) : left(left), right(right) {}
-  ~PairGuard() { std::println(this.left.id); std::println(this.right.id); }
+  ~PairGuard() {
+    std::println(this.left.id);
+    int cleanup = 1 / this.left.cleanupDivisor;
+    std::println(this.right.id);
+  }
 };
 class Reversed {
   PairGuard pair;
@@ -23,8 +28,8 @@ public:
 };
 int main(int argc, std::vector<std::string> argv) {
   Resource first{10};
-  Resource second{20};
-  Reversed owner{first, second, argc - 2};
+  Resource second{20, argc < 3 ? 1 : 0};
+  Reversed owner{first, second, argc == 1 || argc == 4 ? 1 : 0};
   std::println(77);
   return 0;
 }

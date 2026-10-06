@@ -61,6 +61,15 @@ if __name__ == "__main__":
     constructed_failure = (
         f"{constructed.name}:{constructed_line}: runtime error[GTI-R0002]: "
         "division_by_zero in integer_division\n")
+    constructed_cleanup_line = next(index for index, line in enumerate(
+        constructed.read_text().splitlines(), 1) if "cleanup =" in line)
+    constructed_cleanup_failure = (
+        f"{constructed.name}:{constructed_cleanup_line}: runtime error[GTI-R0002]: "
+        "division_by_zero in integer_division\n")
+    constructed_double_failure = (
+        f"{constructed.name}:{constructed_cleanup_line}: runtime error[GTI-R0014]: "
+        "failure_during_cleanup; primary [GTI-R0002] at "
+        f"{constructed.name}:{constructed_line}; secondary [GTI-R0002]\n")
     run_runtime_matrix(
         names=("cleanup_bound_guards", "cleanup_bound_guards_example",
                "allocator_bookkeeping", "cleanup_bound_nested_guards",
@@ -103,6 +112,9 @@ if __name__ == "__main__":
         ], "cleanup_bound_constructed_field": [
             ((), (0, "77\n20\n10\n120\n110\n", "")),
             (("rollback",), (70, "20\n10\n120\n110\n", constructed_failure)),
+            (("rollback", "cleanup"), (70, "20\n", constructed_double_failure)),
+            (("cleanup", "only", "normal"),
+             (70, "77\n20\n120\n110\n", constructed_cleanup_failure)),
         ]},
         fixture_paths={"cleanup_bound_guards_example":
                        root / "examples/118-cleanup-bound-guards.gti"})
