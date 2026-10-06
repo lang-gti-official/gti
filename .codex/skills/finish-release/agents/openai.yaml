@@ -1,4 +1,4 @@
 interface:
   display_name: "Finish GTI Release"
-  short_description: "Commit, tag, and dispatch GTI releases"
-  default_prompt: "Use $finish-release to commit and publish a validated GTI release through canonical Gitea without waiting for remote CI."
+  short_description: "Apply release policy through validated GTI PRs"
+  default_prompt: "Use $finish-release with $agent-workflow to integrate validated GTI work and dispatch releases without waiting for post-merge packaging."
