@@ -246,6 +246,8 @@ class Workflow:
             elif not self.ancestor(base, git(root, "rev-parse", "HEAD")):
                 raise WorkflowError("Adopted branch must include current origin/main; reconcile it first")
         else:
+            if git(self.primary, "ls-remote", "origin", "refs/heads/" + branch) or self.find_pr(branch):
+                raise WorkflowError("Remote branch or PR already uses this identity; adopt preserved work or choose a new branch")
             if git(self.primary, "show-ref", "--verify", "refs/heads/" + branch, check=False).returncode == 0:
                 raise WorkflowError("Branch already exists; do not reuse another task's work")
             # Persist identity before mutations so interruptions can be resumed.
@@ -268,13 +270,24 @@ class Workflow:
                 target = (root / item).resolve()
                 if target == root or root not in target.parents or target.is_dir() or item in {".", "*"}:
                     raise WorkflowError("Stage explicit in-worktree paths, never the repository root")
+                if not target.exists():
+                    names = git(root, "--literal-pathspecs", "ls-files", "-z", "--", item)
+                    if list(filter(None, names.split("\0"))) != [target.relative_to(root).as_posix()]:
+                        raise WorkflowError("Deleted paths must name one exact tracked file, not a directory or prefix")
             git(root, "--literal-pathspecs", "add", "--", *paths)
             git(root, "diff", "--cached", "--check")
             git(root, "commit", "-m", message)
         clean(root)
-        if state.get("pr") and self.pull(state)["state"] != "open":
+        existing = self.pull(state) if state.get("pr") else self.find_pr(state["branch"])
+        if existing and existing["state"] != "open":
             raise WorkflowError("PR is closed; do not publish more work to this branch")
-        git(root, "push", "-u", "origin", "HEAD:refs/heads/" + state["branch"])
+        ref = "refs/heads/" + state["branch"]
+        remote = git(root, "ls-remote", "origin", ref)
+        if not remote:
+            # Compare-and-create only: do not advance a concurrently created ref.
+            git(root, "push", "-u", "--force-with-lease=" + ref + ":", "origin", "HEAD:" + ref)
+        else:
+            git(root, "push", "-u", "origin", "HEAD:" + ref)
         state["published_head"] = git(root, "rev-parse", "HEAD")
         state.pop("verified", None)
         self.save(state, "active")
