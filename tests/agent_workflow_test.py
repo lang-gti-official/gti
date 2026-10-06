@@ -347,6 +347,36 @@ class Lifecycle(unittest.TestCase):
         self.assertTrue(self.worktree.exists())
         self.assertEqual(len(self.api.prs), 1)
 
+    def test_deleted_directory_never_stages_other_task_deletions(self):
+        self.start()
+        old = self.worktree / "old"
+        old.mkdir()
+        (old / "ours.txt").write_text("ours")
+        (old / "other.txt").write_text("other task")
+        git(self.worktree, "add", "old/ours.txt", "old/other.txt")
+        git(self.worktree, "commit", "-m", "initial files")
+        self.flow.checkpoint("task")
+        (old / "ours.txt").unlink()
+        (old / "other.txt").unlink()
+        old.rmdir()
+        head = git(self.worktree, "rev-parse", "HEAD")
+        with self.assertRaisesRegex(Error, "one exact tracked file"):
+            self.flow.checkpoint("task", "delete", ["old"])
+        self.assertEqual(git(self.worktree, "rev-parse", "HEAD"), head)
+        self.assertEqual(git(self.worktree, "diff", "--cached", "--name-only"), "")
+
+    def test_closed_remote_branch_never_reused(self):
+        self.ready()
+        self.flow.finish("task", "description")
+        old = git(self.remote, "rev-parse", self.branch)
+        git(self.primary, "worktree", "remove", str(self.worktree))
+        git(self.primary, "branch", "-d", self.branch)
+        self.flow.file("task").unlink()
+        with self.assertRaisesRegex(Error, "already uses"):
+            self.flow.start("new-task", "new task", self.worktree, self.branch)
+        self.assertEqual(git(self.remote, "rev-parse", self.branch), old)
+        self.assertFalse(self.worktree.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

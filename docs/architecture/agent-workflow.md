@@ -37,8 +37,11 @@ also closes the race with other machines. It does not lock ordinary editing.
 | `status [task]` | Read task records and current remote PR state. |
 | `protection [--configure]` | Audit, or establish the owner-approved PR-only/up-to-date main rule, retaining existing review/status requirements. |
 
-Checkpoint paths are literal files: Git pathspec magic, directory/root staging,
+Checkpoint paths are literal files, including exact identities for deleted
+files: Git pathspec magic, deleted-directory prefixes, directory/root staging,
 and pre-existing staged work cannot silently include another task's changes.
+New task starts reject any already-published branch/PR identity. First publication
+uses a compare-and-create lease, so a concurrently created branch is preserved.
 
 `--repo <checkout>` precedes the command when invoked elsewhere. Credentials
 come from `GTI_GITEA_TOKEN`, `GITEA_TOKEN`, or the primary checkout's ignored
