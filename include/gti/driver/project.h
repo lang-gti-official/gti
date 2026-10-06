@@ -16,6 +16,7 @@ struct ProjectBuildOverrides {
   std::optional<OptimizationLevel> optimization;
   std::optional<CppStandard> cppStandard;
   std::optional<ExecutionProfile> executionProfile;
+  std::optional<RawPointerAuditMode> rawPointerAudit;
   std::optional<bool> keepCpp;
   std::optional<bool> debugInfo;
   ConfigurationFlags configurationFlags;
@@ -140,24 +141,23 @@ struct BuildScriptPlan {
 
 class ProjectBuildPlan final {
 public:
-  ProjectBuildPlan(std::filesystem::path manifestPath,
-                   std::filesystem::path packageRoot,
-                   std::filesystem::path workspaceRoot, std::string packageName,
-                   std::string packageVersion, std::string targetName,
-                   ProjectTargetKind targetKind, std::string profileName,
-                   std::filesystem::path entry, std::filesystem::path output,
-                   std::filesystem::path generatedSource, TargetInfo target,
-                   OptimizationLevel optimization, CppStandard cppStandard,
-                   bool keepCpp, NativeInputs nativeInputs,
-                   std::vector<PackageSourceRoot> packageSourceRoots,
-                   ConfigurationFlags configurationFlags,
-                   WarningPolicy warningPolicy,
-                   std::string projectModelIdentity,
-                   std::vector<BindgenImportPlan> bindgenImports = {},
-                   std::vector<BuildScriptPlan> buildScripts = {},
-                   ResolvedProjectToolchain toolchain = {},
-                   bool debugInfo = false,
-                   PackageWarningPolicy packageWarnings = {});
+  ProjectBuildPlan(
+      std::filesystem::path manifestPath, std::filesystem::path packageRoot,
+      std::filesystem::path workspaceRoot, std::string packageName,
+      std::string packageVersion, std::string targetName,
+      ProjectTargetKind targetKind, std::string profileName,
+      std::filesystem::path entry, std::filesystem::path output,
+      std::filesystem::path generatedSource, TargetInfo target,
+      OptimizationLevel optimization, CppStandard cppStandard, bool keepCpp,
+      NativeInputs nativeInputs,
+      std::vector<PackageSourceRoot> packageSourceRoots,
+      ConfigurationFlags configurationFlags, WarningPolicy warningPolicy,
+      std::string projectModelIdentity,
+      std::vector<BindgenImportPlan> bindgenImports = {},
+      std::vector<BuildScriptPlan> buildScripts = {},
+      ResolvedProjectToolchain toolchain = {}, bool debugInfo = false,
+      PackageWarningPolicy packageWarnings = {},
+      RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off);
 
   [[nodiscard]] const std::filesystem::path &manifestPath() const;
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
@@ -175,6 +175,7 @@ public:
   [[nodiscard]] CppStandard cppStandard() const;
   [[nodiscard]] bool keepCpp() const;
   [[nodiscard]] bool debugInfo() const;
+  [[nodiscard]] RawPointerAuditMode rawPointerAudit() const;
   [[nodiscard]] const NativeInputs &nativeInputs() const;
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
@@ -211,6 +212,7 @@ private:
   std::vector<BuildScriptPlan> resolvedBuildScripts;
   ResolvedProjectToolchain resolvedToolchain;
   bool sourceDebugInfo = false;
+  RawPointerAuditMode rawPointerAuditMode = RawPointerAuditMode::Off;
 };
 
 class ProjectMetadata final {

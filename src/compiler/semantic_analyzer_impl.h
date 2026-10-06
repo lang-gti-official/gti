@@ -81,9 +81,11 @@ public:
 
   explicit Impl(TargetInfo target, const SourceGraph *sourceGraph,
                 bool toolingOccurrences, FrontendWorkMetrics *workMetrics,
-                const SourceManager *sources)
+                const SourceManager *sources,
+                RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off)
       : target(std::move(target)), sourceGraph(sourceGraph), sources(sources),
-        toolingOccurrences(toolingOccurrences), workMetrics(workMetrics) {
+        toolingOccurrences(toolingOccurrences), workMetrics(workMetrics),
+        rawPointerAudit(rawPointerAudit) {
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
   }
 
@@ -91,6 +93,10 @@ public:
   // Constructor configuration remains on Impl; no result, AST pointer, flow
   // fact, diagnostic, or identity counter survives this operation.
   void resetRequestState(const Program *program);
+
+  [[nodiscard]] bool rawAuditEnabled() const {
+    return rawPointerAudit != RawPointerAuditMode::Off;
+  }
 
   bool check(const Program &program);
 
@@ -399,6 +405,7 @@ private:
     bool requiresUnsafe = false;
     bool neverReturns = false;
     bool tracksCaller = false;
+    bool discardableResult = false;
     CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
     LanguageLinkage linkage = LanguageLinkage::Gti;
     std::string externalSymbol;
@@ -697,6 +704,9 @@ private:
     std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
     std::vector<SemanticLoanId> receiverStorageLoans;
     std::vector<PendingBorrowConflict> conflicts;
+    // Audit uses may inspect checked liveness, but cannot request an endpoint
+    // or otherwise change the mandatory loan schedule.
+    std::vector<PendingBorrowConflict> rawAuditConflicts;
     std::vector<LoanFlowUse> uses;
     std::vector<LoanFlowConditionalBoundary> conditionalBoundaries;
     std::vector<LoanFlowSwitchBoundary> switchBoundaries;
@@ -732,6 +742,9 @@ private:
     std::vector<PlaceKey> lifetimeInvalidations;
     // A type-only origin has no place and grants no lifetime/access proof.
     SemanticType pointeeType = SemanticType::Unknown;
+    // A may-origin survives a choice or conservative source summary; even a
+    // singleton then does not prove that this storage is selected at the use.
+    bool possible = false;
     friend bool operator==(const RawPointerOrigin &,
                            const RawPointerOrigin &) = default;
   };
@@ -784,13 +797,21 @@ private:
     bool writesComplete = true;
     bool accessesComplete = true;
     std::size_t identity = 0;
+    // Only independently budgeted top-level outcomes may be reused by another
+    // demand. Nested results depend on their enclosing family's remaining work.
+    bool topLevel = false;
     bool complete = false;
     bool valid = false;
     std::optional<Diagnostic> failure;
   };
 
   struct RawResultQueryState {
+    // Interned diagnostic records only. Keeping evidence is independent of
+    // admitting a complete root result to the bounded reuse cache.
     std::vector<std::shared_ptr<RawResultQuery>> entries;
+    std::vector<std::shared_ptr<RawResultQuery>> cachedRoots;
+    std::vector<std::shared_ptr<RawResultQuery>> familyEntries;
+    std::size_t nextIdentity = 1;
     std::size_t depth = 0;
     std::optional<bool> hasRawGlobals;
   };
@@ -1552,6 +1573,9 @@ private:
                                AccessMode requested, std::string message,
                                SemanticLoanId throughLoan = 0);
 
+  void reportRawLoanConflict(const Token &token, const SemanticLoanPlace &place,
+                             AccessMode access, SemanticLoanId throughLoan);
+
   void validateLoanPlaceAccess(const Expr &expression, OccurrenceRole roles);
 
   void
@@ -1721,7 +1745,7 @@ private:
 
   void reportBorrowConflict(const Token &token,
                             const std::vector<SemanticLoanId> &loans,
-                            std::string message);
+                            std::string message, bool rawAudit = false);
 
   void recordProvenLoanEndpoint(SemanticLoanId id,
                                 const LoanFlowArmEndpoint &endpoint);
@@ -4518,6 +4542,7 @@ private:
   // model is cleared at the start of each check().
   bool toolingOccurrences = true;
   FrontendWorkMetrics *workMetrics = nullptr;
+  RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
 };
 
 } // namespace lang

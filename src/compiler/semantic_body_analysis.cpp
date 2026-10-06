@@ -1424,8 +1424,16 @@ auto SemanticVisitor::Impl::visitExpressionStmt(const ExpressionStmt &stmt)
     return;
   }
 
-  if (call != nullptr && resultType != SemanticType::Void &&
-      resultType != SemanticType::Unknown &&
+  const auto *selected =
+      call == nullptr ? nullptr : semanticModel.findCall(*call);
+  const auto *callOperator =
+      call == nullptr ? nullptr : semanticModel.findOperator(*call);
+  const auto *target =
+      semanticModel.findFunction(selected       ? selected->function
+                                 : callOperator ? callOperator->function
+                                                : 0);
+  if (call != nullptr && !(target && target->discardableResult) &&
+      resultType != SemanticType::Void && resultType != SemanticType::Unknown &&
       !expressionNeverReturns(stmt.expression().get())) {
     Diagnostic diagnostic =
         makeDiagnostic(DiagnosticId::IgnoredReturnValue, call->paren());
@@ -1734,6 +1742,18 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   std::unordered_set<std::string> functionAttributeNames;
   for (const auto &contract : stmt.functionAttributes()) {
     const Token &attribute = contract.name;
+    if (attribute.lexeme == "discardable") {
+      if (!functionAttributeNames.insert(attribute.lexeme).second) {
+        reportContract(attribute,
+                       "Duplicate function attribute 'discardable'.");
+      } else if (functionInfo != nullptr &&
+                 functionInfo->returnType == SemanticType::Void) {
+        reportContract(
+            attribute,
+            "A discardable contract requires a non-void return type.");
+      }
+      continue;
+    }
     if (attribute.lexeme == "borrowed_from") {
       if (!functionAttributeNames.insert(attribute.lexeme).second) {
         reportContract(attribute,
@@ -5045,16 +5065,20 @@ auto SemanticVisitor::Impl::analyzeAliasConversion(
       for (const auto &origin : rawPointerOrigins(expr.arguments().front())) {
         if (origin.pointeeType != SemanticType::Unknown &&
             origin.pointeeType != targetType.arguments.front()) {
-          report(expressionToken(expr.callee()),
-                 "Explicit raw pointer conversion contradicts the known "
-                 "pointee type '" +
-                     typeSpelling(origin.pointeeType) + "'.",
-                 "GTI-S2014");
+          diagnostics.push_back(makeDiagnostic(
+              origin.possible ? DiagnosticId::RawAuditPotential
+                              : DiagnosticId::RawAuditViolation,
+              expressionToken(expr.callee()),
+              {std::string(origin.possible
+                               ? "Explicit raw pointer conversion may "
+                                 "contradict a possible pointee type '"
+                               : "Explicit raw pointer conversion "
+                                 "contradicts the known pointee type '") +
+               typeSpelling(origin.pointeeType) + "'."}));
           diagnostics.back().related.push_back(
               {origin.addressSite,
                "Pointee type retained at this conversion."});
-          currentType = SemanticType::Unknown;
-          return;
+          break;
         }
       }
     }

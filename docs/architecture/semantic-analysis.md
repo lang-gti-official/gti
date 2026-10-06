@@ -2,7 +2,36 @@
 
 Status: Current implementation.
 
-## Known raw address origins
+## Optional function results
+
+Function result-discard policy belongs to the selected declaration. Callable
+registration records `[[discardable]]` in `CallableDeclaration`, then publishes
+it in `FunctionInfo`. Expression-statement analysis consults the resolved call
+identity, never a public function spelling or the result's representation.
+Signature queries expose the same fact. This only admits the existing discarded
+full-expression path; HIR/MIR cleanup, failure and borrow rules are unchanged.
+
+## Optional raw-address auditing
+
+`RawPointerAuditMode` is an immutable frontend policy (`Off`, `Warn`, `Strict`).
+Off is the default and bypasses raw origin/field traversal, result/effect
+queries, loop substitution and wrapper assertions. Ordinary raw type/constness,
+unsafe permission, checked ownership/loans, and explicit reference contracts
+remain mandatory. Audit facts do not authorize HIR/MIR execution or backend
+representation. In particular `RawReferenceAssertionInfo` is recorded even
+with the audit disabled: the programmer asserts the raw validity/owner relation,
+and the compiler verifies the resulting witness loan and escape boundary.
+
+Warn and Strict perform identical inference. Semantic/query workers emit
+typed warnings, split into observed violations, potential violations and
+incomplete analysis. The frontend promotes these warnings only after the
+requested frontend phases for Strict; promotion cannot poison query summaries.
+Audit-only conflicts are excluded from mandatory loan endpoint planning and
+inspect its completed liveness facts only for diagnostics. No checked loan,
+cleanup schedule or native output may depend on audit mode.
+
+The remaining section describes the optional analyzer, not extra mandatory
+conditions for compiling an unsafe implementation.
 
 Local raw pointer flow retains address origins as existing `PlaceKey` values,
 with the address source span and originating checked-loan identity when one
@@ -13,11 +42,24 @@ member writes and selected mutable receiver calls consult source availability
 and the same checked-loan conflict/last-use machinery as ordinary accesses.
 The backend does not reconstruct this rule from native pointer syntax.
 
+An origin's monotone `possible` flag records path/call uncertainty, including
+choices where the other alternative carries no known origin. Singleton origin
+sets are not completeness proofs. Weak writes, loop substitutions and source
+summary imports conservatively retain this flag; exact direct linear copies
+can retain definite evidence. Potential facts cannot become demonstrated
+violations merely because merging removed duplicate origins.
+
+Class field symbols are established with declaration-owned field types before
+the catalog is sealed, in every audit mode. Isolated workers therefore retain
+canonical projected field identities even when a constructor's class body has
+not yet been visited by the caller; worker-local symbol allocation cannot
+silently lose a returned field's provenance.
+
 Explicit pointer type calls resolve to `RawPointerConversion` by the target
 type, not a library spelling. Erasure adds a type-only provenance record with
 no origin place; it grants no lifetime or access fact. Copies, joins and source
 result queries retain it alongside the complete storage-origin records.
-Conversion/result checking rejects a known contradictory restored pointee.
+Conversion/result auditing reports a known contradictory restored pointee.
 Lifetime invalidation and witness containment do not treat the place-less type
 record as an allocation. Concrete HIR resolves dependent target type calls;
 MIR lowers the inert operation to a tightly checked pointer `Convert`.
@@ -134,7 +176,12 @@ temporaries and scope exits. These conservative boundaries preserve existing
 expired/conflicting facts and permit inert transport; they are not precise
 destructor/captured-alias write summaries.
 
-The query is bounded to 32 active bodies and 2,048 cached instances. Query
+Each independent top-level demand is bounded to 32 active bodies and 2,048
+distinct family entries. Its nested summaries never participate in cross-root
+reuse. Completed top-level outcomes have a separate 2,048-entry cache; when full,
+further demands are evaluated uncached under the same family budget. Thus cache
+warmth or declaration order cannot change completeness. Lightweight diagnostic
+evidence is interned separately from bounded heavy summaries. Query
 workers and staged constexpr workers preserve both request-local query
 accounting and the existing constexpr work/depth budget. Their mutual calls
 cannot restart either limit; mutable body-analysis state remains isolated.
@@ -145,8 +192,8 @@ results, and raw-bearing source results with expanded parameter packs preserve
 an unresolved-source marker. Constructor-relative self addresses and raw fields
 behind unresolved stored checked references do likewise; concrete retained
 loans are resolved first, without recursively treating borrowed fields as owned
-storage. Memory use/borrow assertions reject these markers; inert transport and
-comparison remain permitted. Abstract source dispatch signatures remain
+storage. Memory use/borrow assertions report incomplete analysis for these
+markers; inert transport and comparison remain permitted. Abstract source dispatch signatures remain
 unresolved even without a body; readonly receivers still carry mutable raw
 aliases whose possible write destinations must remain unresolved. Native,
 statically selected bodyless, and runtime-bound outputs instead retain the
@@ -174,10 +221,10 @@ typed raw-borrow MIR operation; no private source declaration or public-name
 recognition is needed. The backend validates and consumes the MIR loan.
 Known raw-input obligations propagate through source wrappers and receiver/
 aggregate-field transport. Reference fields use stored-loan dependencies to
-resolve their external referents. Polymorphic raw-assertion bodies fail closed
-until their dispatch-family obligations are represented. Source-produced output
-facts use the bounded queries above; this does not imply complete campaign or
-release acceptance.
+resolve their external referents. Polymorphic raw-assertion bodies report
+incomplete optional auditing until their dispatch-family observations are
+represented. Source-produced output facts use the bounded queries above;
+this does not imply complete campaign or release acceptance.
 
 ## Exact structural member signatures
 

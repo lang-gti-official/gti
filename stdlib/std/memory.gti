@@ -232,6 +232,7 @@ public:
   /// Constructs directly in the final slot and borrows the completed object.
   /// Failed construction cleans up its initialized members and leaves the
   /// slot uninitialized; it propagates the constructor's original failure.
+  [[discardable]]
   mut T& emplace<Args...>(size_t index, Args... args) mut {
     gti_internal::storage_construct(this.data, index, args...);
     return gti_internal::storage_read_mut(this.data, index);

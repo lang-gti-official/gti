@@ -1610,6 +1610,7 @@ struct DiagnosticPublication {
 // failure is retained as a structured diagnostic while frontend recovery
 // continues without inventing a partial package graph.
 struct ProjectAnalysisInputs {
+  lang::RawPointerAuditMode rawPointerAudit = lang::RawPointerAuditMode::Off;
   lang::driver::AnalysisConfiguration configuration;
   std::vector<lang::PackageSourceRoot> packageSourceRoots;
   lang::WarningPolicy warnings;
@@ -1622,9 +1623,12 @@ struct ProjectAnalysisInputs {
 
 ProjectAnalysisInputs resolveProjectAnalysisInputs(
     const std::filesystem::path &entryPath,
-    std::optional<lang::ExecutionProfile> executionProfileOverride) {
+    std::optional<lang::ExecutionProfile> executionProfileOverride,
+    std::optional<lang::RawPointerAuditMode> rawPointerAuditOverride) {
   const lang::TargetInfo host = lang::TargetInfo::host();
   ProjectAnalysisInputs result{
+      .rawPointerAudit =
+          rawPointerAuditOverride.value_or(lang::RawPointerAuditMode::Off),
       .configuration = lang::driver::AnalysisConfiguration(
           host,
           executionProfileOverride.value_or(
@@ -1664,6 +1668,8 @@ ProjectAnalysisInputs resolveProjectAnalysisInputs(
   }
   result.packageSourceRoots = facts.packageSourceRoots();
   if (const auto *profile = facts.findProfile(facts.defaultProfileName())) {
+    result.rawPointerAudit =
+        rawPointerAuditOverride.value_or(profile->rawPointerAudit);
     result.warnings = profile->warningPolicy;
     result.packageWarnings = facts.packageWarnings(profile->name);
   }
@@ -1679,11 +1685,15 @@ ProjectAnalysisInputs resolveProjectAnalysisInputs(
 
 class LanguageServer {
 public:
-  explicit LanguageServer(lang::StandardLibraryLayout standardLibrary,
-                          std::optional<lang::ExecutionProfile>
-                              executionProfileOverride = std::nullopt)
+  explicit LanguageServer(
+      lang::StandardLibraryLayout standardLibrary,
+      std::optional<lang::ExecutionProfile> executionProfileOverride =
+          std::nullopt,
+      std::optional<lang::RawPointerAuditMode> rawPointerAuditOverride =
+          std::nullopt)
       : standardLibrary(std::move(standardLibrary)),
         executionProfileOverride(executionProfileOverride),
+        rawPointerAuditOverride(rawPointerAuditOverride),
         frontendTracePath(frontendTracePathFromEnvironment()),
         analysisWorker(std::optional<unsigned>{frontendWorkerStackSize},
                        [this] { runAnalysisWorker(); }),
@@ -2840,6 +2850,7 @@ private:
     const std::string rootPath = canonicalPath(*filePath).string();
     result.rootPath = rootPath;
     lang::FrontendOptions frontendOptions;
+    frontendOptions.rawPointerAudit = project.rawPointerAudit;
     frontendOptions.analyzeRecoveredProgram = true;
     frontendOptions.requireEntryPoint = project.requireEntryPoint;
     // HIR performs the compiler's concrete generic-instance reanalysis. The
@@ -3165,13 +3176,15 @@ private:
         const SteadyClock::time_point frontendStart = SteadyClock::now();
         try {
           ProjectAnalysisInputs project = resolveProjectAnalysisInputs(
-              request.entryPath, executionProfileOverride);
+              request.entryPath, executionProfileOverride,
+              rawPointerAuditOverride);
           completion = lang::LanguageQueries().complete(
               {.entryPath = request.entryPath,
                .source = request.source,
                .byteOffset = request.byteOffset,
                .target = project.configuration.target(),
                .configurationFlags = project.configuration.configurationFlags(),
+               .rawPointerAudit = project.rawPointerAudit,
                .preludePaths = {standardLibrary.prelude},
                .sourceOverrides = request.sourceOverrides,
                .standardLibraryRoots = {standardLibrary.root},
@@ -3269,8 +3282,8 @@ private:
         ProjectAnalysisInputs project;
         if (const std::optional<std::filesystem::path> path =
                 filePathFromUri(request.uri)) {
-          project =
-              resolveProjectAnalysisInputs(*path, executionProfileOverride);
+          project = resolveProjectAnalysisInputs(
+              *path, executionProfileOverride, rawPointerAuditOverride);
         }
         guarded = runIsolatedAnalysis(request, project);
       } catch (const std::exception &error) {
@@ -3682,6 +3695,7 @@ private:
 
   lang::StandardLibraryLayout standardLibrary;
   std::optional<lang::ExecutionProfile> executionProfileOverride;
+  std::optional<lang::RawPointerAuditMode> rawPointerAuditOverride;
   std::optional<std::filesystem::path> frontendTracePath;
   mutable std::mutex frontendTraceMutex;
   lang::lsp::FrontendSnapshotState frontendSnapshots;
@@ -3739,6 +3753,7 @@ int main(int argc, char *argv[]) {
     return 0;
   }
   std::optional<lang::ExecutionProfile> executionProfile;
+  std::optional<lang::RawPointerAuditMode> rawPointerAudit;
   for (int index = 1; index < argc; ++index) {
     const std::string_view argument = argv[index];
     if (argument == "--execution-profile") {
@@ -3759,12 +3774,34 @@ int main(int argc, char *argv[]) {
       }
       continue;
     }
+    if (argument == "--raw-pointer-audit" ||
+        argument.starts_with("--raw-pointer-audit=")) {
+      std::string_view value;
+      if (argument == "--raw-pointer-audit") {
+        if (++index >= argc) {
+          std::cerr
+              << "gti_lsp: --raw-pointer-audit requires off, warn, or strict\n";
+          return 64;
+        }
+        value = argv[index];
+      } else {
+        value =
+            argument.substr(std::string_view("--raw-pointer-audit=").size());
+      }
+      if (rawPointerAudit ||
+          !(rawPointerAudit = lang::parseRawPointerAuditMode(value))) {
+        std::cerr << "gti_lsp: --raw-pointer-audit must be off, warn, or "
+                     "strict and specified only once\n";
+        return 64;
+      }
+      continue;
+    }
     std::cerr << "gti_lsp: unknown option '" << argument << "'\n";
     return 64;
   }
   return LanguageServer(
              lang::discoverStandardLibrary(argc > 0 ? argv[0] : "gti_lsp",
                                            GTI_BUILD_STDLIB_ROOT),
-             executionProfile)
+             executionProfile, rawPointerAudit)
       .run();
 }

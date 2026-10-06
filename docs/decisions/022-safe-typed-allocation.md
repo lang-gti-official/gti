@@ -327,3 +327,31 @@ The full completion suite and installed/tooling checks complement those
 focused checks; the local evidence is recorded in
 [verification](../architecture/verification.md#low-level-memory-phase-1).
 Stateful allocator policies and resource leases remain Phase 2.
+
+## Revision: optional unsafe auditing
+
+The Phase 1 provenance analysis exposed an inappropriate acceptance boundary:
+a valid raw-pointer relay could fail solely because a bounded query was
+incomplete, while reordering definitions warmed its cache and accepted the
+same program. An ordinary aggregate mutator was likewise treated as definitely
+ending an object's lifetime despite only conservative effect knowledge.
+
+The revised boundary keeps typing, constness, unsafe permission, checked
+ownership/loan/escape contracts and all HIR/MIR verification mandatory. The
+programmer explicitly assumes raw validity, alignment, initialization, aliasing
+and owner association at unsafe access or a raw-to-checked bridge. Safe return
+annotations alone cannot relabel unrelated lifetimes. The resulting checked
+reference remains compiler-tracked, including retained owner dependencies.
+
+Raw provenance/access/effect checking is now optional (`off` by default,
+`warn`, or CI-oriented `strict`). Disabled analysis performs no source-summary
+queries. Enabled analysis distinguishes observed contradictions, potential
+violations and incomplete inference. Strict promotes findings without changing
+inference or runtime behavior. This is neither an unchecked release mode nor
+permission for undefined behavior; it makes the guarantee/obligation boundary
+explicit and avoids treating a bounded audit as a complete proof system.
+
+Independent per-demand query budgets and root-only reuse also remove the
+declaration-order bug within the optional analyzer itself. Disabling the audit
+is not the fix for that bug. Existing useful Phase 1 storage, placement,
+release, transport and owner-witness facilities are retained.

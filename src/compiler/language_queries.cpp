@@ -36,6 +36,9 @@ SignaturePrinter::function(const FunctionInfo &info,
   if (info.tracksCaller) {
     result += "[[track_caller]] ";
   }
+  if (info.discardableResult) {
+    result += "[[discardable]] ";
+  }
   if (info.explicitReturnBorrowOrigin) {
     if (info.returnBorrowOrigin == BorrowOriginKind::Receiver) {
       result += "[[borrowed_from(this)]] ";
@@ -1145,6 +1148,7 @@ public:
     FrontendOptions options;
     options.target = input.target;
     options.configurationFlags = input.configurationFlags;
+    options.rawPointerAudit = input.rawPointerAudit;
     options.analyzeRecoveredProgram = true;
     options.completionOffset = input.byteOffset;
     options.workMetrics = input.workMetrics;

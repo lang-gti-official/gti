@@ -3,6 +3,7 @@
 #include "gti/frontend.h"
 #include "gti/lexer.h"
 #include "gti/mir.h"
+#include "gti/mir_printer.h"
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"
 
@@ -19,19 +20,24 @@ void expect(bool valid, const std::string &message) {
     ++failures;
   }
 }
-lang::FrontendResult analyze(const std::string &source) {
+lang::FrontendResult
+analyze(const std::string &source,
+        lang::RawPointerAuditMode mode = lang::RawPointerAuditMode::Off) {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
-  return lang::Frontend().analyze(root / "raw-borrow-test.gti", source,
-                                  {root / "stdlib/prelude.gti"}, {},
-                                  {root / "stdlib"});
+  lang::FrontendOptions options;
+  options.rawPointerAudit = mode;
+  return lang::Frontend(options).analyze(root / "raw-borrow-test.gti", source,
+                                         {root / "stdlib/prelude.gti"}, {},
+                                         {root / "stdlib"});
 }
 void show(const lang::FrontendResult &result) {
   for (const auto &diagnostic : result.diagnostics)
     std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
 }
 void negative(const std::string &name, const std::string &source,
-              const std::string &fragment) {
-  const auto result = analyze(source);
+              const std::string &fragment,
+              lang::RawPointerAuditMode mode = lang::RawPointerAuditMode::Off) {
+  const auto result = analyze(source, mode);
   const bool matched = std::any_of(
       result.diagnostics.begin(), result.diagnostics.end(), [&](const auto &d) {
         return d.message.find(fragment) != std::string::npos;
@@ -39,6 +45,145 @@ void negative(const std::string &name, const std::string &source,
   if (result.canGenerateCode() || !matched)
     show(result);
   expect(!result.canGenerateCode() && matched, name);
+}
+void auditNegative(const std::string &name, const std::string &source,
+                   const std::string &fragment) {
+  const auto result = analyze(source, lang::RawPointerAuditMode::Strict);
+  const bool matched = std::any_of(
+      result.diagnostics.begin(), result.diagnostics.end(), [&](const auto &d) {
+        return (d.code == "GTI-S2101" || d.code == "GTI-S2102" ||
+                d.code == "GTI-S2103") &&
+               d.severity == lang::DiagnosticSeverity::Error &&
+               d.message.find(fragment) != std::string::npos;
+      });
+  if (result.canGenerateCode() || !matched)
+    show(result);
+  expect(!result.canGenerateCode() && matched, name);
+}
+lang::FrontendResult auditAnalyze(const std::string &source) {
+  return analyze(source, lang::RawPointerAuditMode::Strict);
+}
+void auditOutputParity() {
+  const std::pair<std::string, std::string> cases[] = {
+      {"nested constructor fields declared after the caller", R"(
+int main() {
+  int live = 7;
+  Wrapper wrapper{&live};
+  unsafe { return *wrapper.inner.pointer - 7; }
+}
+struct Wrapper {
+  Holder inner;
+  Wrapper(const int* input) : inner(Holder(input)) {}
+};
+struct Holder {
+  const int* pointer = nullptr;
+  Holder(const int* input) : pointer(input) {}
+};
+)"},
+      {"scalar receiver mutation with a retained address", R"(
+struct Box {
+  mut int value = 7;
+  void bump() mut { this.value += 1; }
+};
+int main() {
+  mut Box box{};
+  const int* pointer = &box.value;
+  box.bump();
+  unsafe { return *pointer - 8; }
+}
+)"},
+      {"generic and public borrowed-from witnesses", R"(
+#include <std/memory>
+[[borrowed_from(owner)]]
+unsafe T& observe<T>(const T* address, T& owner) {
+  unsafe { return *address; }
+}
+int main() {
+  int owner = 7;
+  const int* address = &owner;
+  unsafe {
+    int& first = observe<int>(address, owner);
+    int& second = std::assume_ref(address, owner);
+    return first + second - 14;
+  }
+}
+)"},
+      {"checked loan endpoints in branches and loops", R"(
+#include <std/memory>
+int inspect(bool choose) {
+  mut int owner = 7;
+  const int* address = &owner;
+  if (choose) {
+    unsafe {
+      int& view = std::assume_ref(address, owner);
+      int copy = view;
+      owner = copy + 1;
+    }
+  } else {
+    int& view = owner;
+    int copy = view;
+    owner = copy + 2;
+  }
+  for (mut int i = 0; i < 2; ++i) {
+    unsafe {
+      int& view = std::assume_ref(address, owner);
+      int copy = view;
+      owner = copy + 1;
+    }
+  }
+  return owner;
+}
+int main() { return inspect(true) - 10; }
+)"},
+      {"native pointer adaptation and checked failure schedule", R"(
+extern "C" { int32_t native_read(const int32_t* address); }
+int32_t quotient(int32_t divisor) { return 42 / divisor; }
+int main() {
+  int32_t value = 7;
+  unsafe { return quotient(native_read(&value)); }
+}
+)"}};
+  for (const auto &[name, source] : cases) {
+    const auto off = analyze(source, lang::RawPointerAuditMode::Off);
+    const auto warn = analyze(source, lang::RawPointerAuditMode::Warn);
+    if (!off.canGenerateCode())
+      show(off);
+    if (!warn.canGenerateCode())
+      show(warn);
+    expect(off.canGenerateCode() && warn.canGenerateCode(),
+           name + " is valid in both audit modes");
+    if (!off.canGenerateCode() || !warn.canGenerateCode())
+      continue;
+    expect(lang::MirPrinter().print(off.mir) ==
+               lang::MirPrinter().print(warn.mir),
+           name + " has identical mandatory MIR including loans and failures");
+    for (const auto standard :
+         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
+      for (const auto level :
+           {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
+        const auto ordinary = gti_test::emitCppText(
+            off, standard, lang::TargetInfo::host(), level);
+        const auto audited = gti_test::emitCppText(
+            warn, standard, lang::TargetInfo::host(), level);
+        expect(!ordinary.empty() && ordinary == audited,
+               name + " emits identical C++ with audit Off and Warn");
+      }
+  }
+}
+void canonicalConstructorFields() {
+  const std::string caller = R"(
+int main() { Holder value{}; unsafe { return *value.pointer; } }
+)";
+  const std::string declaration = R"(
+struct Holder {
+  mut const int* pointer = nullptr;
+  Holder() { int dead = 7; this.pointer = &dead; }
+};
+)";
+  auditNegative("later constructor field identity preserves expired output",
+                caller + declaration, "scope has ended");
+  auditNegative("earlier constructor field identity preserves expired output",
+                declaration + caller, "scope has ended");
 }
 void assertionReset() {
   lang::Lexer lexer;
@@ -236,7 +381,7 @@ int main() {
            "verified bridge has a C++20/C++23 production consumer");
 }
 void producedResults() {
-  const auto ordinaryGeneric = analyze(R"(
+  const auto ordinaryGeneric = auditAnalyze(R"(
 #include <std/memory>
 T forward_exact<T>(T input) { return input; }
 int main() { mut int value = 7;
@@ -249,8 +394,9 @@ int main() { mut int value = 7;
     show(ordinaryGeneric);
   expect(ordinaryGeneric.canGenerateCode(),
          "ordinary concrete generic source outputs retain usable provenance");
-  negative("raw-output argument pack does not erase unresolved source facts",
-           R"(
+  auditNegative(
+      "raw-output argument pack does not erase unresolved source facts",
+      R"(
 #include <std/memory>
 T forward_exact<T, Args...>(Args... args) { return T(args...); }
 int main() { mut int value = 7;
@@ -259,8 +405,9 @@ int main() { mut int value = 7;
   unsafe { auto wrong = std::typed_address<double>(forwarded); return int(*wrong); }
 }
 )",
-           "completed source-result");
-  negative("constructor-produced local cannot become an owner assertion", R"(
+      "completed source-result");
+  auditNegative("constructor-produced local cannot become an owner assertion",
+                R"(
 #include <std/memory>
 class Address {
 public:
@@ -270,8 +417,8 @@ public:
 int main() { int witness = 7; Address address{};
   unsafe { int& value = std::assume_ref(address.pointer, witness); return value; } }
 )",
-           "scope has ended");
-  negative("callee-produced expired origin cannot become unknown", R"(
+                "scope has ended");
+  auditNegative("callee-produced expired origin cannot become unknown", R"(
 #include <std/memory>
 int main() {
   int witness = 9;
@@ -280,8 +427,8 @@ int main() {
 }
 const int* dangling() { int local = 1; return &local; }
 )",
-           "scope has ended");
-  negative("callee-produced global origin requires its actual witness", R"(
+                "scope has ended");
+  auditNegative("callee-produced global origin requires its actual witness", R"(
 #include <std/memory>
 int global = 1;
 int main() {
@@ -291,8 +438,9 @@ int main() {
 }
 const int* source() { return &global; }
 )",
-           "not contained");
-  negative("callee-produced aggregate field cannot hide an expired origin", R"(
+                "may originate outside its checked owner witness");
+  auditNegative("callee-produced aggregate field cannot hide an expired origin",
+                R"(
 #include <std/memory>
 struct Address { const int* pointer = nullptr; };
 int main() {
@@ -302,9 +450,10 @@ int main() {
 }
 Address source() { int local = 1; return {.pointer = &local}; }
 )",
-           "scope has ended");
-  negative("concrete generic source result preserves expired parameter storage",
-           R"(
+                "scope has ended");
+  auditNegative(
+      "concrete generic source result preserves expired parameter storage",
+      R"(
 #include <std/memory>
 int main() {
   int witness = 9;
@@ -313,8 +462,8 @@ int main() {
 }
 const T* source<T>(T input) { return &input; }
 )",
-           "scope has ended");
-  const auto global = analyze(R"(
+      "scope has ended");
+  const auto global = auditAnalyze(R"(
 #include <std/memory>
 int global = 7;
 int main() {
@@ -351,7 +500,7 @@ int main() { int value = 7;
 }
 
 void nestedQuerySymbols() {
-  negative(
+  auditNegative(
       "nested source queries preserve repeated and inherited symbol identities",
       R"(
 #include <std/memory>
@@ -396,8 +545,8 @@ class Base { public: mut const int* pointer = nullptr; };
 class Derived : public Base {};
 Derived dangling() { int dead = 7; mut Derived result{}; result.pointer = &dead; return result; }
 int main() { auto wrapped = dangling(); unsafe { return *wrapped.pointer; } })"})
-    negative("tagged and inherited raw fields preserve callee expiry", source,
-             "scope has ended");
+    auditNegative("tagged and inherited raw fields preserve callee expiry",
+                  source, "scope has ended");
   for (const auto &source : {R"(
 #include <std/memory>
 expected<const int*, int> address_of(int& owner) { return &owner; }
@@ -430,7 +579,7 @@ int main() { int live = 7; auto wrapped = address_of(live);
 expected<const int*, int> dangling() { int dead = 7; return &dead; }
 int main() { auto wrapped = dangling(); auto copy = wrapped;
   return copy.value() == wrapped.value() ? 0 : 1; })"}) {
-    const auto result = analyze(source);
+    const auto result = auditAnalyze(source);
     if (!result.canGenerateCode())
       show(result);
     expect(result.canGenerateCode(),
@@ -454,12 +603,12 @@ void unchanged() {}
         "bad(); [[discard]] run && ((pointer = &witness) == nullptr);",
         "while (run) { unsafe { [[discard]] std::assume_ref(pointer, witness); "
         "} bad(); run = false; }"})
-    negative("global raw writes preserve conditional and backedge origins",
-             globals + "int probe(mut bool run) { " + body +
-                 " unsafe { return std::assume_ref(pointer, witness); } } "
-                 "int main() { return probe(false); }",
-             "scope has ended");
-  const auto resetAfterControl = analyze(globals + R"(
+    auditNegative("global raw writes preserve conditional and backedge origins",
+                  globals + "int probe(mut bool run) { " + body +
+                      " unsafe { return std::assume_ref(pointer, witness); } } "
+                      "int main() { return probe(false); }",
+                  "scope has ended");
+  const auto resetAfterControl = auditAnalyze(globals + R"(
 int probe(bool run) { if (run) { bad(); } reset();
   unsafe { return std::assume_ref(pointer, witness); } }
 int main() { return probe(true); })");
@@ -471,33 +620,34 @@ int main() { return probe(true); })");
        {"unsafe { bad(address); } address = &second; count -= 1;",
         "unsafe { [[discard]] std::assume_ref(second.pointer, second); "
         "bad(address); } address = &second; count -= 1;"})
-    negative("source raw writes follow later-iteration alias destinations",
-             R"(#include <std/memory>
+    auditNegative("source raw writes follow later-iteration alias destinations",
+                  R"(#include <std/memory>
 struct Holder { mut const int* pointer = nullptr; };
 unsafe void bad(Holder* out) { int gone = 1; unsafe { out->pointer = &gone; } }
 int probe(mut int count) { mut Holder first{}; mut Holder second{};
   mut auto address = &first; while (count > 0) { )" +
-                 std::string(body) + R"( }
+                      std::string(body) + R"( }
   unsafe { return std::assume_ref(second.pointer, second); } }
 int main() { return probe(2); })",
-             "scope has ended");
-  negative("abstract source dispatch cannot become foreign unknown writes",
-           globals + R"(
+                  "scope has ended");
+  auditNegative("abstract source dispatch cannot become foreign unknown writes",
+                globals + R"(
 class Writer { public: virtual void write() = 0; };
 class Bad : public Writer { public: void write() override { bad(); } };
 int probe(Writer& writer) { writer.write();
   unsafe { return std::assume_ref(pointer, witness); } }
 int main() { Bad writer{}; return probe(writer); })",
-           "completed source-result");
-  negative("readonly virtual receivers preserve stored mutable raw aliases",
-           R"(#include <std/memory>
+                "completed source-result");
+  auditNegative(
+      "readonly virtual receivers preserve stored mutable raw aliases",
+      R"(#include <std/memory>
 struct Holder { mut const int* pointer = nullptr; };
 class Writer { public: Holder* out = nullptr;
   Writer(Holder* value) : out(value) {}
   virtual void write() { int gone = 1; unsafe { out->pointer = &gone; } } };
 int main() { mut Holder out{}; Writer writer{&out}; writer.write();
   unsafe { return std::assume_ref(out.pointer, out); } })",
-           "completed source-result");
+      "completed source-result");
 }
 
 void sourceRawWrites() {
@@ -513,10 +663,10 @@ int main() { set(); auto address = get();
   unsafe { int& value = std::assume_ref(address, witness); return value; } }
 )";
   for (const bool earlier : {false, true})
-    negative("global raw write effects are declaration-order independent",
-             globals +
-                 (earlier ? setter + getter + use : use + setter + getter),
-             "scope has ended");
+    auditNegative("global raw write effects are declaration-order independent",
+                  globals +
+                      (earlier ? setter + getter + use : use + setter + getter),
+                  "scope has ended");
   for (const auto &source : {
            R"(#include <std/memory>
 struct Holder { mut const int* pointer = nullptr; };
@@ -536,8 +686,8 @@ int witness = 7; mut const int* pointer = &witness;
 int main() { relay(); unsafe { return std::assume_ref(pointer, witness); } }
 void relay() { set(); }
 void set() { int gone = 1; pointer = &gone; })"})
-    negative("source-produced raw writes preserve callee expiry", source,
-             "scope has ended");
+    auditNegative("source-produced raw writes preserve callee expiry", source,
+                  "scope has ended");
   const std::vector<std::string> valid = {
       globals + setter + getter +
           R"(int main() { auto address = get(); unsafe { return std::assume_ref(address, witness); } })",
@@ -553,13 +703,13 @@ struct Holder { mut const int* pointer = nullptr; };
 int main() { int value = 7; mut Holder out{}; unsafe { set(&out, value); return std::assume_ref(out.pointer, value); } }
 unsafe void set(Holder* out, int& input) { unsafe { out->pointer = &input; } })"};
   for (const auto &source : valid) {
-    const auto result = analyze(source);
+    const auto result = auditAnalyze(source);
     if (!result.canGenerateCode())
       show(result);
     expect(result.canGenerateCode(), "uncalled setters and exact valid source "
                                      "writes/reset preserve usable raw facts");
   }
-  negative(
+  auditNegative(
       "conditional reset cannot erase a previous expired global write",
       globals +
           R"(int main() { set(); reset(false); unsafe { return std::assume_ref(pointer, witness); } })" +
@@ -571,7 +721,7 @@ unsafe void set(Holder* out, int& input) { unsafe { out->pointer = &input; } })"
             "struct Writer { Writer() { int gone = 1; pointer = &gone; } };"),
         std::string("struct Writer { ~Writer() { int gone = 1; pointer = "
                     "&gone; } };")}) {
-    const auto result = analyze(
+    const auto result = auditAnalyze(
         globals + body +
         "int main() { unsafe { return std::assume_ref(pointer, witness); } }");
     if (!result.canGenerateCode())
@@ -579,19 +729,19 @@ unsafe void set(Holder* out, int& input) { unsafe { out->pointer = &input; } })"
     expect(result.canGenerateCode(),
            "unselected lifecycle bodies do not execute global raw writes");
   }
-  const auto uncalledLambda = analyze(globals + R"(
+  const auto uncalledLambda = auditAnalyze(globals + R"(
 int main() { auto writer = []() -> void { int gone = 1; pointer = &gone; };
   unsafe { return std::assume_ref(pointer, witness); } })");
   if (!uncalledLambda.canGenerateCode())
     show(uncalledLambda);
   expect(uncalledLambda.canGenerateCode(),
          "uncalled lambda does not execute global raw writes");
-  negative("selected constructor imports known callee-local writes",
-           globals + R"(
+  auditNegative("selected constructor imports known callee-local writes",
+                globals + R"(
 struct Writer { Writer() { int gone = 1; pointer = &gone; } };
 int main() { Writer writer{}; unsafe { return std::assume_ref(pointer, witness); } })",
-           "scope has ended");
-  negative(
+                "scope has ended");
+  auditNegative(
       "conditional constructor initializers cannot erase a known expired write",
       globals + R"(
 struct Factory {
@@ -602,36 +752,38 @@ struct Outer { Factory field;
   Outer(bool choose) : field(choose ? Factory(0) : Factory(true)) {} };
 int main() { Outer value{true}; unsafe { return std::assume_ref(pointer, witness); } })",
       "scope has ended");
-  negative("selected constructor imports mapped formal writes", R"(
+  auditNegative("selected constructor imports mapped formal writes", R"(
 #include <std/memory>
 struct Holder { mut const int* pointer = nullptr; };
 struct Writer { Writer(mut Holder& out) { int gone = 1; out.pointer = &gone; } };
 int main() { mut Holder out{}; Writer writer{out}; unsafe { return std::assume_ref(out.pointer, out); } })",
-           "scope has ended");
-  negative("called lambda writer retains unresolved source facts", globals + R"(
+                "scope has ended");
+  auditNegative("called lambda writer retains unresolved source facts",
+                globals + R"(
 int main() { auto writer = []() -> void { int gone = 1; pointer = &gone; }; writer();
   unsafe { return std::assume_ref(pointer, witness); } })",
-           "completed source-result");
-  negative("source destructor cleanup retains unresolved global writes",
-           globals + R"(
+                "completed source-result");
+  auditNegative("source destructor cleanup retains unresolved global writes",
+                globals + R"(
 struct Writer { ~Writer() { int gone = 1; pointer = &gone; } };
 int main() { { Writer writer{}; } unsafe { return std::assume_ref(pointer, witness); } })",
-           "completed source-result");
-  negative("source raw formal relay preserves callee expiry", R"(
+                "completed source-result");
+  auditNegative("source raw formal relay preserves callee expiry", R"(
 #include <std/memory>
 struct Holder { mut const int* pointer = nullptr; };
 unsafe void set(Holder* out) { int gone = 1; unsafe { out->pointer = &gone; } }
 unsafe void relay(Holder* out) { unsafe { set(out); } }
 int main() { mut Holder out{}; unsafe { relay(&out); return std::assume_ref(out.pointer, out); } })",
-           "scope has ended");
-  negative("captured raw alias writer retains unresolved destination facts", R"(
+                "scope has ended");
+  auditNegative(
+      "captured raw alias writer retains unresolved destination facts", R"(
 #include <std/memory>
 struct Holder { mut const int* pointer = nullptr; };
 int main() { mut Holder out{}; auto address = &out;
   auto writer = [address]() -> void { int gone = 1; unsafe { address->pointer = &gone; } };
   writer(); unsafe { return std::assume_ref(out.pointer, out); } })",
-           "completed source-result");
-  negative("source destructor follows stored raw aliases", R"(
+      "completed source-result");
+  auditNegative("source destructor follows stored raw aliases", R"(
 #include <std/memory>
 struct Holder { mut const int* pointer = nullptr; };
 struct Writer { Holder* address = nullptr;
@@ -639,8 +791,8 @@ struct Writer { Holder* address = nullptr;
   ~Writer() { int gone = 1; unsafe { this.address->pointer = &gone; } } };
 int main() { mut Holder out{}; { Writer writer{&out}; }
   unsafe { return std::assume_ref(out.pointer, out); } })",
-           "completed source-result");
-  const auto exactCaptures = analyze(R"(
+                "completed source-result");
+  const auto exactCaptures = auditAnalyze(R"(
 #include <std/memory>
 struct Holder { mut const int* pointer = nullptr; };
 int main() { int witness = 7; mut Holder changed{}; mut Holder untouched{.pointer = &witness};
@@ -667,18 +819,19 @@ struct Alias { Holder* value = nullptr;
   void set() { int gone = 1; unsafe { this.value->pointer = &gone; } } };
 int main() { mut Holder out{}; Alias alias{.value = &out}; alias.set();
   unsafe { return std::assume_ref(out.pointer, out); } })"})
-    negative(
+    auditNegative(
         "source writes follow stored formal and readonly receiver raw aliases",
         source, "scope has ended");
-  negative("source callback wrapper preserves captured raw writer effects", R"(
+  auditNegative("source callback wrapper preserves captured raw writer effects",
+                R"(
 #include <std/memory>
 #include <std/functional>
 struct Holder { mut const int* pointer = nullptr; };
 int main() { mut Holder out{}; auto address = &out;
   auto writer = [address]() -> void { int gone = 1; unsafe { address->pointer = &gone; } };
   std::invoke_once(writer); unsafe { return std::assume_ref(out.pointer, out); } })",
-           "completed source-result");
-  const auto validStoredAlias = analyze(R"(
+                "completed source-result");
+  const auto validStoredAlias = auditAnalyze(R"(
 #include <std/memory>
 struct Holder { mut const int* pointer = nullptr; };
 struct Alias { Holder* value = nullptr; };
@@ -691,7 +844,8 @@ int main() { int witness = 7; mut Holder out{}; Alias alias{.value = &out}; set(
          "exact stored formal aliases preserve valid setter origins");
 }
 void rawInvocationBoundaries() {
-  negative("derived raw fields cannot disappear behind a base reference", R"(
+  auditNegative("derived raw fields cannot disappear behind a base reference",
+                R"(
 class Base { public: virtual int read() = 0; };
 class Derived : public Base {
 public:
@@ -704,8 +858,8 @@ int main() {
   Base& base = value;
   return base.read();
 })",
-           "scope has ended");
-  negative("foreign call cannot certify an inert source wrapper", R"(
+                "scope has ended");
+  auditNegative("foreign call cannot certify an inert source wrapper", R"(
 extern "C" { int foreign_read(const int* pointer); }
 int read(const int* pointer) { unsafe { return foreign_read(pointer); } }
 int main() {
@@ -713,8 +867,8 @@ int main() {
   { int dead = 7; pointer = &dead; }
   return read(pointer);
 })",
-           "scope has ended");
-  negative("foreign call cannot certify an inert captured callable", R"(
+                "scope has ended");
+  auditNegative("foreign call cannot certify an inert captured callable", R"(
 extern "C" { int foreign_read(const int* pointer); }
 int main() {
   mut const int* pointer = nullptr;
@@ -722,7 +876,7 @@ int main() {
   auto read = [pointer]() -> int { unsafe { return foreign_read(pointer); } };
   return read();
 })",
-           "scope has ended");
+                "scope has ended");
   const std::string arrow = R"(
 #include <std/memory>
 struct Holder {
@@ -739,12 +893,13 @@ struct Relay {
 };
 Relay make(const int* live) { int dead = 7; return Relay(live, &dead); }
 )";
-  negative("arrow result retains the selected expired raw field", arrow + R"(
+  auditNegative("arrow result retains the selected expired raw field",
+                arrow + R"(
 int main() { int live = 9; Relay value = make(&live);
   unsafe { return *value->other; } }
 )",
-           "scope has ended");
-  const auto live = analyze(arrow + R"(
+                "scope has ended");
+  const auto live = auditAnalyze(arrow + R"(
 int main() { int live = 9; Relay value = make(&live);
   unsafe { return std::assume_ref(value->chosen, live); } }
 )");
@@ -752,14 +907,14 @@ int main() { int live = 9; Relay value = make(&live);
     show(live);
   expect(live.canGenerateCode(),
          "arrow projection does not join unrelated raw fields");
-  negative("temporary aggregate field projection preserves source expiry",
-           arrow + R"(
+  auditNegative("temporary aggregate field projection preserves source expiry",
+                arrow + R"(
 Holder project(const int* live) { return make(live).inner; }
 int main() { int live = 9; Holder result = project(&live);
   unsafe { return *result.other; } }
 )",
-           "scope has ended");
-  const auto nullHandle = analyze(R"(
+                "scope has ended");
+  const auto nullHandle = auditAnalyze(R"(
 extern "C" { void close_native(void* handle); }
 struct Receiver {
   mut void* handle = nullptr;
@@ -773,14 +928,15 @@ int main() { mut Receiver value{}; int read = 1; mut int write = 0;
     show(nullHandle);
   expect(nullHandle.canGenerateCode(),
          "complete no-write query does not manufacture a raw origin");
-  negative("ordinary checked reference results retain projected raw fields",
-           arrow + R"(
+  auditNegative(
+      "ordinary checked reference results retain projected raw fields",
+      arrow + R"(
 Holder& view(Relay& value) { return value.inner; }
 int main() { int live = 9; Relay value = make(&live);
   unsafe { return *view(value).other; } }
 )",
-           "scope has ended");
-  const auto passive = analyze(R"(
+      "scope has ended");
+  const auto passive = auditAnalyze(R"(
 #include <std/utility>
 struct Passive { mut const int* pointer = nullptr; };
 int main() {
@@ -795,7 +951,7 @@ int main() {
     show(passive);
   expect(passive.canGenerateCode(),
          "passive restoring transfer is inert address transport");
-  negative("source cleanup prevents an inert restoring-transfer proof", R"(
+  auditNegative("source cleanup prevents an inert restoring-transfer proof", R"(
 #include <std/utility>
 struct Dropping {
   mut const int* pointer = nullptr;
@@ -808,11 +964,13 @@ int main() {
   std::swap(first, second);
   return 0;
 })",
-           "scope has ended");
+                "scope has ended");
 }
 } // namespace
 
 int main() {
+  auditOutputParity();
+  canonicalConstructorFields();
   rawInvocationBoundaries();
   nestedQuerySymbols();
   sourceRawWrites();
@@ -877,8 +1035,9 @@ int main() { Reading owner{}; View view{owner}; return view.get() - 42; }
   expect(retainedOwner.canGenerateCode(),
          "raw-backed view resolves its retained reference field to the "
          "external owner");
-  negative("receiver raw assertion cannot conceal an unrelated field origin",
-           R"(
+  auditNegative(
+      "receiver raw assertion cannot conceal an unrelated field origin",
+      R"(
 struct Reading {
   mut const int* address = nullptr;
   [[borrowed_from(this)]] int& read() { unsafe { return *this.address; } }
@@ -890,8 +1049,9 @@ int main() {
   return owner.read();
 }
 )",
-           "known origin");
-  negative("raw assertion wrapper preserves aggregate field provenance", R"(
+      "known origin");
+  auditNegative("raw assertion wrapper preserves aggregate field provenance",
+                R"(
 struct Address { const int* value = nullptr; };
 [[borrowed_from(owner)]]
 int& read(Address address, int& owner) { unsafe { return *address.value; } }
@@ -902,8 +1062,8 @@ int main() {
   return read(address, owner);
 }
 )",
-           "known origin");
-  negative(
+                "known origin");
+  auditNegative(
       "raw assertion obligations cannot disappear through virtual dispatch", R"(
 class Provider {
 public:
@@ -914,7 +1074,7 @@ public:
 };
 int main() { return 0; }
 )",
-      "cannot cross virtual or interface dispatch");
+      "audit is incomplete across virtual or interface dispatch");
   const auto selectedOrigin = analyze(R"(
 [[borrowed_from(left)]]
 int& select(int& left, int& right) { return left; }
@@ -959,7 +1119,8 @@ int main() {
     show(loop);
   expect(loop.canGenerateCode(),
          "repaired loop address can create a checked borrow");
-  negative("backedge cannot change a borrow to an unrelated live owner", R"(
+  auditNegative("backedge cannot change a borrow to an unrelated live owner",
+                R"(
 #include <std/memory>
 int main() {
   int owner = 42;
@@ -972,8 +1133,9 @@ int main() {
   return 0;
 }
 )",
-           "not contained");
-  negative("backedge cannot turn expired storage into a checked borrow", R"(
+                "may originate outside its checked owner witness");
+  auditNegative("backedge cannot turn expired storage into a checked borrow",
+                R"(
 #include <std/memory>
 int main() {
   int owner = 42;
@@ -985,7 +1147,7 @@ int main() {
   return 0;
 }
 )",
-           "scope has ended");
+                "scope has ended");
   negative("bridge still requires unsafe", R"(
 #include <std/memory>
 int main() {
@@ -996,7 +1158,7 @@ int main() {
 }
 )",
            "unsafe");
-  negative("known unrelated witness is rejected", R"(
+  auditNegative("known unrelated witness is rejected", R"(
 #include <std/memory>
 int main() {
   int owner = 42;
@@ -1008,8 +1170,8 @@ int main() {
   }
 }
 )",
-           "not contained");
-  negative("expired pointer cannot hide behind aliased wrapper", R"(
+                "not contained");
+  auditNegative("expired pointer cannot hide behind aliased wrapper", R"(
 #include <std/memory>
 unsafe int& relay(const int* address, int& owner) {
   const int* alias = address;
@@ -1025,7 +1187,7 @@ int main() {
   }
 }
 )",
-           "scope has ended");
+                "scope has ended");
   negative("mutable witness cannot upgrade const address", R"(
 #include <std/memory>
 int main() {

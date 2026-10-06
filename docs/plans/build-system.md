@@ -24,6 +24,13 @@ a binary module system, or a second language for writing build scripts.
 
 ## Current Implementation
 
+Raw-pointer audit policy is now resolved through the existing immutable
+direct/project request path: `off` by default, profile
+`raw-pointer-audit = "off"|"warn"|"strict"`, and explicit command override.
+The policy is retained in read-only editor project facts, child invocations,
+cache identities and build-report verification. It does not add another
+language-analysis pipeline or change native arguments.
+
 The direct compiler contract is frozen and covered by CLI tests. The compiled
 `gti_driver` library now owns immutable whole-program compilation requests,
 resolved toolchain resources, structured C and C++ native compile requests,

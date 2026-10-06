@@ -70,5 +70,32 @@
     "group": "unused-unsafe",
     "format": "This unsafe block contains no operation requiring unsafe permission.",
     "arguments": 0
+  },
+  {
+    "id": "RawAuditViolation",
+    "code": "GTI-S2101",
+    "phase": "Semantics",
+    "severity": "Warning",
+    "group": "raw-pointer-violation",
+    "format": "{0}",
+    "arguments": 1
+  },
+  {
+    "id": "RawAuditPotential",
+    "code": "GTI-S2102",
+    "phase": "Semantics",
+    "severity": "Warning",
+    "group": "raw-pointer-potential",
+    "format": "{0}",
+    "arguments": 1
+  },
+  {
+    "id": "RawAuditIncomplete",
+    "code": "GTI-S2103",
+    "phase": "Semantics",
+    "severity": "Warning",
+    "group": "raw-pointer-incomplete",
+    "format": "{0}",
+    "arguments": 1
   }
 ]

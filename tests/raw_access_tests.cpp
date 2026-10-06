@@ -12,7 +12,9 @@ void check(const std::string &name, const std::string &source,
            const std::string &code = {}, const std::string &call = {}) {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   const auto path = root / "raw-access-test.gti";
-  const auto result = lang::Frontend().analyze(
+  lang::FrontendOptions options;
+  options.rawPointerAudit = lang::RawPointerAuditMode::Strict;
+  const auto result = lang::Frontend(options).analyze(
       path, source, {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
   bool passed = result.canGenerateCode();
   if (!code.empty()) {
@@ -66,7 +68,7 @@ int main() {
   mut const int* pointer = nullptr;
   { int dead = 7; pointer = &dead; }
   unsafe { return )" + read + "(pointer); } }",
-          "GTI-S2056", read + "(pointer)");
+          "GTI-S2102", read + "(pointer)");
     check("read conflicts with retained exclusive loan through " + read,
           helpers + R"(
 int main() {
@@ -78,7 +80,7 @@ int main() {
   held = 8;
   return held;
 })",
-          "GTI-S2017", read + "(pointer)");
+          "GTI-S2102", read + "(pointer)");
     check("read coexists with shared loan through " + read, helpers + R"(
 int main() {
   mut int owner = 7;
@@ -99,7 +101,7 @@ int main() {
               write + R"((pointer); }
   return held;
 })",
-          "GTI-S2017", write + "(pointer)");
+          "GTI-S2102", write + "(pointer)");
     // Match ordinary same-block loan endpoints. Entering a nested block still
     // conservatively retains an outer loan in the existing NLL contract.
     check("write after checked loan's last use through " + write, helpers + R"(
@@ -127,7 +129,7 @@ int main() {
   const int* copied = copy_address(pointer);
   unsafe { return read_address(copied); }
 })",
-        "GTI-S2056", "read_address(copied)");
+        "GTI-S2102", "read_address(copied)");
   check("ordinary user aggregate parameter retains raw access requirements",
         R"(
 struct Address { mut const int* pointer = nullptr; };
@@ -139,7 +141,7 @@ int main() {
   { int dead = 7; address.pointer = &dead; }
   unsafe { return read_record(address); }
 })",
-        "GTI-S2056", "read_record(address)");
+        "GTI-S2102", "read_record(address)");
   check("constructor access retains raw argument expiry", R"(
 struct Observed {
   mut int value = 0;
@@ -151,7 +153,7 @@ int main() {
   Observed observed{pointer};
   return observed.value;
 })",
-        "GTI-S2056", "Observed observed{pointer}");
+        "GTI-S2102", "Observed observed{pointer}");
   check("receiver field access retains raw argument expiry", R"(
 struct Address {
   mut const int* pointer = nullptr;
@@ -162,7 +164,7 @@ int main() {
   { int dead = 7; address.pointer = &dead; }
   return address.read();
 })",
-        "GTI-S2056", "address.read()");
+        "GTI-S2102", "address.read()");
   check("operator receiver retains raw access requirements", R"(
 struct Address {
   mut const int* pointer = nullptr;
@@ -173,7 +175,7 @@ int main() {
   { int dead = 7; address.pointer = &dead; }
   return address + 0;
 })",
-        "GTI-S2056", "address + 0");
+        "GTI-S2102", "address + 0");
   check("operator receiver may compare an expired address inertly", R"(
 struct Address {
   mut const int* pointer = nullptr;
@@ -197,7 +199,7 @@ int main() {
   { int dead = 7; address.pointer = &dead; }
   return address();
 })",
-        "GTI-S2056", "address()");
+        "GTI-S2102", "address()");
   check("contextual bool operator retains raw access requirements", R"(
 struct Address {
   mut const int* pointer = nullptr;
@@ -209,7 +211,7 @@ int main() {
   if (address) { return 0; }
   return 1;
 })",
-        "GTI-S2056", "if (address)");
+        "GTI-S2102", "if (address)");
   check("inert captured raw address does not conflict with exclusive loan", R"(
 int main() {
   mut int owner = 7;
@@ -230,7 +232,7 @@ int main() {
   held = 8;
   return observed + held;
 })",
-        "GTI-S2017", "read()");
+        "GTI-S2102", "read()");
   check("operator result retains callee-local expiry", R"(
 struct Maker {
   const int* operator+(int ignored) {
@@ -243,7 +245,7 @@ int main() {
   const int* pointer = maker + 0;
   unsafe { return *pointer; }
 })",
-        "GTI-S2056", "*pointer");
+        "GTI-S2102", "*pointer");
   check("operator write retains callee-local expiry", R"(
 struct Address {
   mut const int* pointer = nullptr;
@@ -257,7 +259,7 @@ int main() {
   address += 0;
   unsafe { return *address.pointer; }
 })",
-        "GTI-S2056", "*address.pointer");
+        "GTI-S2102", "*address.pointer");
   check("subscript operator preserves raw access requirements", R"(
 struct Address {
   mut const int* pointer = nullptr;
@@ -268,7 +270,7 @@ int main() {
   { int dead = 7; address.pointer = &dead; }
   return address[0];
 })",
-        "GTI-S2056", "address[0]");
+        "GTI-S2102", "address[0]");
   check("operator setter preserves live incoming origins", R"(
 struct Address {
   mut const int* pointer = nullptr;
@@ -308,7 +310,7 @@ public:
   }
 };
 )" + dispatchMain,
-        "GTI-S2056", "dispatch(observer, pointer)");
+        "GTI-S2101", "dispatch(observer, pointer)");
   const std::string genericDispatch = R"(
 interface Channel<T> { T inspect(T value); };
 class Model<T> : public Channel<T> {
@@ -336,6 +338,6 @@ int main() {
   Model<const int*> model{};
   return dispatch(model, pointer) != nullptr ? 0 : 1;
 })",
-        "GTI-S2056", "dispatch(model, pointer)");
+        "GTI-S2101", "dispatch(model, pointer)");
   return failures == 0 ? 0 : 1;
 }
