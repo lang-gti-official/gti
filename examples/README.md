@@ -153,7 +153,7 @@ is a teaching helper, not a production server.
 | `115-discardable-results.gti` | optional API results, explicit call-site discard, checked reference last use and storage insertion |
 | `116-optional-raw-audit.gti` | programmer-owned unsafe validity versus mandatory checked loans, with optional conservative raw-pointer auditing |
 | `117-unsafe-member-contracts.gti` | unsafe instance/static methods and exact structural requirements preserving caller obligations through generic forwarding |
-| `118-cleanup-bound-guards.gti` | resource dependencies retained through guard destruction, simultaneous shared guards and transfer by movement |
+| `118-cleanup-bound-guards.gti` | resource dependencies retained through guard destruction, simultaneous shared guards, movement and explicit nested child construction |
 | `119-runtime-object-layout.gti` | runtime size/alignment descriptors for owning, immovable and nested ordinary types without constructing an object |
 | `120-immovable-storage.gti` | fixed-address owning objects, moving their storage handle, checked access and destruction without element movement |
 

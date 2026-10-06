@@ -87,9 +87,147 @@ void rejected(const lang::MirProgram &source, std::size_t fields,
   expect(!lang::cppMirOwnedParameterFieldBindings(program, *constructor), name);
   ++mutations;
 }
+
+void constructedFieldPrefix() {
+  const auto control = analyze(R"gti(
+class ActiveGuard {
+  Resource& resource;
+public:
+  ActiveGuard(Resource& resource) : resource(resource) {}
+  ~ActiveGuard() { observed += this.resource.value; }
+};
+class Reversed {
+  ActiveGuard retained;
+public:
+  Reversed(Resource& first, Resource& second, int divisor)
+      : retained(ActiveGuard(second)) { int checked = 1 / divisor; }
+};
+int main() { Resource first{}; Resource second{}; Reversed value{first, second, 1}; return 0; }
+)gti");
+  expect(control.canGenerateCode(),
+         "constructed retained field control compiles");
+  if (!control.canGenerateCode())
+    return;
+  lang::HirConstructorInstanceId selected = 0;
+  for (const auto &constructor : control.mir.constructorInstances())
+    if (constructor.parameterTypes.size() == 3)
+      selected = constructor.id;
+  const auto *constructor = control.mir.findConstructorInstance(selected);
+  expect(constructor != nullptr, "constructed retained field target found");
+  if (constructor == nullptr)
+    return;
+  const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
+      control.mir, *constructor);
+  expect(bindings.size() == 1,
+         "constructed retained field has exact native prefix");
+  if (bindings.size() != 1 && std::getenv("GTI_TEST_DUMP_MIR") != nullptr)
+    std::cerr << lang::MirPrinter().print(constructor->body);
+  if (bindings.size() != 1)
+    return;
+  expect(bindings.front().arguments.size() == 1 &&
+             bindings.front().arguments.front().parameter == 1,
+         "constructed retained field preserves reordered reference argument");
+  expect(!gti_test::emitCppText(control).empty(),
+         "constructed retained field emits");
+  const auto reject = [&](const auto &mutate, std::string_view name) {
+    auto program = control.mir;
+    auto &changed = const_cast<lang::MirConstructorInstance &>(
+        *program.findConstructorInstance(selected));
+    expect(mutate(changed, bindings.front()),
+           "constructed prefix mutation applied");
+    expect(lang::cppMirConstructedFieldInitializerBindings(program, changed)
+               .empty(),
+           name);
+    ++mutations;
+  };
+  reject(
+      [](auto &target, const auto &binding) {
+        auto *initialize =
+            instruction(target.body, binding.initializeInstruction);
+        initialize->lifecycle.front().target = binding.valueDrop;
+        return true;
+      },
+      "constructed prefix cannot reparent back into its temporary drop");
+  reject(
+      [](auto &target, const auto &binding) {
+        auto *construct =
+            instruction(target.body, binding.constructInstruction);
+        construct->successResultDrop = binding.fieldDrop;
+        return true;
+      },
+      "constructed prefix cannot activate the field before publication");
+  reject(
+      [](auto &target, const auto &binding) {
+        auto *input =
+            instruction(target.body, binding.argumentInstructions.front());
+        input->callInputIndex = 1;
+        return true;
+      },
+      "constructed prefix cannot forge selected child argument position");
+  reject(
+      [](auto &target, const auto &binding) {
+        auto *input =
+            instruction(target.body, binding.argumentInstructions.front());
+        if (!input->ownership)
+          return false;
+        input->ownership->kind = lang::OwnershipEventKind::Move;
+        return true;
+      },
+      "constructed prefix cannot disguise an ownership transfer as a reference "
+      "read");
+  reject(
+      [](auto &target, const auto &binding) {
+        auto *construct =
+            instruction(target.body, binding.constructInstruction);
+        construct->constructorTarget = target.id;
+        return true;
+      },
+      "constructed prefix cannot substitute an unrelated constructor target");
+  reject(
+      [](auto &target, const auto &binding) {
+        auto *initialize =
+            instruction(target.body, binding.initializeInstruction);
+        initialize->operands.front().value = 1;
+        return true;
+      },
+      "constructed prefix cannot publish a different SSA value");
+  reject(
+      [](auto &target, const auto &binding) {
+        for (auto &block : target.body.blocks)
+          for (auto &item : block.instructions)
+            if (item.kind == lang::MirInstructionKind::Borrow &&
+                item.operands.size() == 1 &&
+                item.operands.front().value == binding.constructedValue) {
+              item.operands.front().loan = 0;
+              return true;
+            }
+        return false;
+      },
+      "constructed prefix cannot lose its exact dependency publication");
+  reject(
+      [](auto &target, const auto &) {
+        auto &entry = target.body.blocks[target.body.entry - 1];
+        entry.terminator.successLifecycle.front().target = 0;
+        return true;
+      },
+      "constructed prefix cannot lose success-edge cleanup activation");
+  reject(
+      [](auto &target, const auto &) {
+        auto &entry = target.body.blocks[target.body.entry - 1];
+        for (auto &block : target.body.blocks)
+          for (const auto &item : block.instructions)
+            if (!item.localFailureSites.empty()) {
+              entry.instructions.insert(entry.instructions.begin(), item);
+              return true;
+            }
+        return false;
+      },
+      "constructed prefix cannot hoist before earlier fallible work");
+}
 } // namespace
 
 int main() {
+  constructedFieldPrefix();
   auto control = analyze(R"gti(
 class Box {
   Guard item;

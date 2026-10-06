@@ -519,12 +519,12 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
 // construct-then-publish schedule: the field is constructed once, in place,
 // with no intermediate object and no invented copy or move.
 //
-// The proof is deliberately whole-constructor. Because C++ initializes members
-// in declaration order, one hoisted initializer could otherwise be reordered
-// against a sibling that still publishes from the body. This family therefore
-// claims a schedule only when every declared field has its own explicit
-// initializer in declaration order and the entry block contains nothing but the
-// instructions named below.
+// The main proof is deliberately whole-constructor. Because C++ initializes
+// members in declaration order, one hoisted initializer could otherwise be
+// reordered against a sibling that still publishes from the body. This family
+// therefore claims a schedule only when every declared field has its own
+// explicit initializer in declaration order and the entry block contains
+// nothing but the instructions named below.
 //
 // A cleanup-free field retains its exact Initialize and This-rooted field
 // place; only its temporary slot and drop identities are zero. Scalar literal
@@ -533,6 +533,10 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
 // `Value` obligation, its `Reparent` into the field's `ConstructionRollback`
 // obligation, and one unconditional transfer-out at normal completion. Every
 // other initializer-expression shape stays in the MIR body schedule.
+// A separate exact prefix admits one cleanup-bound borrowed child field from
+// read-only reference formals and a non-failing selected constructor. Its
+// Value-to-ConstructionRollback publication and dependency transfer remain
+// mandatory; later body/failure cleanup is not part of the fused prefix.
 struct CppMirConstructedFieldInitializerArgument {
   SemanticType type = SemanticType::Unknown;
   std::optional<std::size_t> parameter;
