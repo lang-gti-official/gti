@@ -186,9 +186,10 @@ name in the compiler.
    new AST/HIR-only `CppEmitter` behavior and cite the MIR-emitted family that
    owns production execution. Advance `VERSION` when the repository's shipped
    behavior/version policy requires it.
-7. Use `$finish-release` to commit completed work and initiate the appropriate
-   version/tag/release path. Once Gitea accepts the push or workflow dispatch,
-   finish without polling or waiting for asynchronous CI/CD.
+7. Use `$agent-workflow` and `$finish-release` to integrate validated work through
+   its PR, sync local main and apply version policy. Respect required PR checks;
+   post-merge release packaging does not block completion. Explicit PR-only or
+   local-only user instructions override integration.
 
 Do not use `1.0` as a reason to postpone a capability needed by the systems-
 readiness workloads in ADR 012. The target is soft and revisable; accepted
