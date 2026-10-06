@@ -45,9 +45,19 @@ specified in the existing build/driver architecture document.
 The user-facing workflow adds one-time `gti registry login`, `status` and
 `logout`. The initial protected store is macOS Keychain, never a project/cache
 file. Environment overrides remain the first choice for CI and can explicitly
-disable stored login with an empty value. Gitea verifies the supplied token
-through its authenticated package-read API, without requiring user-profile
-permission or mutating remote state; failed validation preserves old login.
+disable stored login with an empty value. Existing-token login verifies the
+supplied token through the authenticated package-read API without requiring
+user-profile permission or mutating remote state; failed validation preserves
+old login.
+
+Normal login now exchanges ephemeral username/password/optional TOTP input for
+a newly created token with only package-read permission (`--publish` selects
+package-write). Only the issued token enters protected storage. The optional
+backend issuance/rollback capability stays separate from store and package
+format. A unique per-attempt name bounds best-effort rollback; incomplete cleanup
+is an explicit diagnostic, not silent token proliferation or deletion of prior
+credentials. Password/API-policy restrictions fall back to explicit existing-
+token login, never plaintext password persistence or automatic broad scopes.
 
 Keep credential kind/storage independent of registry transport and source
 archive codecs. A GTI-owned optional authentication contract lets other

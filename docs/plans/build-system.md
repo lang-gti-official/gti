@@ -1055,7 +1055,10 @@ script permission remains consumer-owned. Tests use in-memory backends and a
 local fake Gitea service, not a live registry dependency.
 
 One-time scoped registry login is implemented with protected macOS Keychain
-storage and automatic acquisition/publication lookup. The environment override
+storage and automatic acquisition/publication lookup. Normal Gitea login uses
+username/password/optional TOTP to issue a package-only token; existing-token
+login remains available. Failed issuance/save has attempt-scoped rollback with
+visible partial-outcome diagnostics. The environment override
 remains available on all hosts. Credential-store and optional authentication
 interfaces are independent of transport and archive format; other OS stores,
 browser/device login and token refresh remain future work, with no plaintext

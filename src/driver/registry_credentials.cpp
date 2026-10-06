@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <exception>
 
 namespace lang::driver {
 namespace {
@@ -19,6 +20,24 @@ void validateRegistryCredential(const RegistryCredential &credential) {
       !std::all_of(credential.secret.begin(), credential.secret.end(),
                    [](unsigned char c) { return c > 0x20 && c < 0x7f; })) {
     invalid();
+  }
+}
+void validateRegistryPasswordLogin(const RegistryPasswordLogin &login) {
+  const auto clean = [](std::string_view value) {
+    return std::all_of(value.begin(), value.end(),
+                       [](unsigned char c) { return c >= 0x20 && c != 0x7f; });
+  };
+  if (login.username.empty() || login.username.size() > 256 ||
+      !clean(login.username) || login.username.find(':') != std::string::npos ||
+      login.password.empty() || login.password.size() > 4096 ||
+      !clean(login.password) || login.oneTimeCode.size() > 128 ||
+      !clean(login.oneTimeCode) ||
+      (login.permission != RegistryLoginPermission::Read &&
+       login.permission != RegistryLoginPermission::Publish)) {
+    throw RegistryError("GTI-B1725",
+                        "Invalid registry sign-in input; provide a "
+                        "username, nonempty password and optional "
+                        "authenticator code without control characters.");
   }
 }
 std::string registryCredentialAccount(const RegistryCredentialTarget &target) {
@@ -72,6 +91,17 @@ void Registry::validateCredential(const RegistryCredential &) {
   throw RegistryError("GTI-B1725",
                       "This registry backend does not support login.");
 }
+RegistryIssuedCredential
+Registry::issueCredential(const RegistryPasswordLogin &) {
+  throw RegistryError("GTI-B1725",
+                      "This registry backend does not support "
+                      "username/password login; use --token instead.");
+}
+void Registry::discardIssuedCredential(const RegistryPasswordLogin &,
+                                       const RegistryIssuedCredential &) {
+  throw RegistryError("GTI-B1727", "This registry backend cannot revoke the "
+                                   "newly issued login credential.");
+}
 void loginRegistry(Registry &registry, RegistryCredentialStore &store,
                    const RegistryCredential &credential) {
   const auto info = registry.authentication();
@@ -96,6 +126,47 @@ void logoutRegistry(Registry &registry, RegistryCredentialStore &store) {
                         "This registry backend does not support logout.");
   }
   store.erase(info->target);
+}
+void loginRegistryWithPassword(Registry &registry,
+                               RegistryCredentialStore &store,
+                               const RegistryPasswordLogin &login) {
+  const auto info = registry.authentication();
+  if (!info || !info->passwordLogin) {
+    throw RegistryError("GTI-B1725",
+                        "This registry backend does not support "
+                        "username/password login; use --token instead.");
+  }
+  if (!store.available()) {
+    throw RegistryError("GTI-B1724",
+                        "Secure registry credential storage is not "
+                        "available; use an existing token in token-env.");
+  }
+  validateRegistryPasswordLogin(login);
+  const auto issued = registry.issueCredential(login);
+  try {
+    loginRegistry(registry, store, issued.credential);
+  } catch (...) {
+    const auto failure = std::current_exception();
+    try {
+      registry.discardIssuedCredential(login, issued);
+    } catch (...) {
+      std::string cause;
+      try {
+        std::rethrow_exception(failure);
+      } catch (const RegistryError &original) {
+        cause = " Original failure [" + original.code + "]: " + original.what();
+      } catch (...) {
+        // Unknown exception details need not be credential-safe.
+      }
+      throw RegistryError(
+          "GTI-B1727", "Login failed and the newly created remote "
+                       "token could not be revoked. Remove GTI's "
+                       "new token in the server's account settings "
+                       "before retrying; previous saved login is unchanged." +
+                           cause);
+    }
+    std::rethrow_exception(failure);
+  }
 }
 
 #if !defined(__APPLE__)

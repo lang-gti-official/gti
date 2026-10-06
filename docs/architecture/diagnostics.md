@@ -215,7 +215,11 @@ diagnostics or letting a backend message choose either identity.
 Registry authentication keeps driver-owned structured codes: `GTI-B1713` for
 server authentication/package-permission rejection, `GTI-B1724` for unavailable,
 denied or unsupported protected credential storage, and `GTI-B1725` for invalid
-token/input/authentication capability. Registry-command errors have no source
+token/input/authentication capability. `GTI-B1727` owns unconfirmed credential
+issuance/revocation after failed login and directs manual removal of the newly
+created token without exposing a password, OTP, Basic header or token. Bad
+password/TOTP/server policy remains `GTI-B1713`; unsupported password issuance
+uses `GTI-B1725` and suggests explicit `--token`. Registry-command errors have no source
 token and use an empty primary span; acquisition errors retain the dependency
 manifest span. Messages never render tokens, Keychain item data or server
 response bodies. A failed login does not replace stored state. Permission
