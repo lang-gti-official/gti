@@ -297,6 +297,19 @@ discovery/download/publication, per-command store lookup, environment overrides,
 redaction, argument/input bounds and network-free status. Terminal tests restore
 echo after interrupt, termination and suspension cancellation.
 
+The password-login extension uses the same gates. The unrelated model backend
+proves capability rejection before issuance, token-only storage, failed-write
+rollback, previous-login preservation and explicit cleanup-failure reporting.
+The real Gitea adapter fixture checks Basic encoding (including Unicode/colon
+passwords), optional OTP, exact read/write package scopes, unique attempt names,
+forged/broad/malformed responses, denied owner access, dropped replies and
+non-followed redirects. Rollback deletes only the current attempt's name,
+never enumerates or deletes preexisting tokens. Password/OTP prompts restore
+echo after cancellation and never expose input or encoded Basic headers.
+Opt-in Keychain coverage also signs in through the default username/password
+CLI, acquires a package with its saved read token, rejects publishing with that
+token, then signs in with `--publish` plus TOTP and publishes successfully.
+
 Set `GTI_TEST_REGISTRY_KEYCHAIN=1` to additionally exercise the production macOS
 store with one synthetic credential scoped to a random loopback registry.
 Login/status/failed replacement, scope changes, automatic `gti add`/locked
@@ -1146,6 +1159,17 @@ non-gating full language audit was not repeated. No publication or active user
 installation has been performed for this slice.
 
 Status: Current test and audit structure.
+
+## Agent task lifecycle
+
+`agent_workflow` uses disposable real Git repositories and a fake Gitea API to
+exercise branch publication, draft creation/retry, successful PR integration,
+upstream reconciliation, exact head/base validation, server merge races and
+required-check refusal. It checks preservation of dirty/divergent local main,
+cleanup refusal for new commits/ignored/source files, conditional branch
+deletion, abandonment, locks and preservation of existing protection settings.
+It performs no production network request or GTI compilation. Live lifecycle
+delivery verifies the actual instance's draft, protection and merge APIs.
 
 ## CLI terminal colour
 
