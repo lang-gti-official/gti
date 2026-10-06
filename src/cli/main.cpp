@@ -11,6 +11,7 @@
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"
 #include "gti/driver/project.h"
+#include "gti/driver/registry.h"
 #include "gti/executable_path.h"
 #include "gti/support.h"
 #include "gti/target.h"
@@ -188,6 +189,14 @@ struct ProjectOptions {
 
 struct FetchOptions {
   bool offline = false;
+  bool locked = false;
+};
+
+struct RegistryOptions {
+  std::string package;
+  std::string requirement;
+  std::string registry = "official";
+  bool dryRun = false;
 };
 
 struct ScaffoldOptions {
@@ -236,7 +245,9 @@ void printUsage(std::ostream &stream) {
          "       gti verify --build-report <path> [options]\n"
          "       gti new <path> [--name <name>]\n"
          "       gti init [path] [--name <name>] [--git]\n"
-         "       gti fetch [--offline]\n"
+         "       gti add <package[@requirement]> [--registry <name>]\n"
+         "       gti fetch [--offline] [--locked]\n"
+         "       gti publish [--registry <name>] [--name <name>] [--dry-run]\n"
          "       gti clean\n"
          "       gti metadata [--format json] [--package <name>]\n"
          "       gti format init [directory]\n"
@@ -381,7 +392,11 @@ void printUsage(std::ostream &stream) {
          "test target.\n"
          "  verify               Rebuild a recorded --build-report and report "
          "every recorded fact that no longer matches.\n"
-         "  fetch                Acquire pinned git dependencies and write "
+         "  add                  Add a registry dependency and update the "
+         "exact lock.\n"
+         "  publish              Publish a validated immutable source "
+         "package.\n"
+         "  fetch                Acquire declared dependencies and write "
          "gti.lock.\n"
          "  clean                Remove the active workspace's build/gti "
          "subtree.\n"
@@ -1175,7 +1190,65 @@ ArgumentResult parseFetchArguments(int argc, char *argv[],
       options.offline = true;
       continue;
     }
+    if (argument == "--locked") {
+      options.locked = true;
+      continue;
+    }
     std::cerr << "gti: unknown fetch option '" << argument << "'\n";
+    return ArgumentResult::ExitFailure;
+  }
+  return ArgumentResult::Run;
+}
+
+ArgumentResult parseRegistryArguments(int argc, char *argv[],
+                                      RegistryOptions &options, bool publish) {
+  for (int index = 2; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
+    const std::string argument = argv[index];
+    if (argument == "-h" || argument == "--help") {
+      printUsage(std::cout);
+      return ArgumentResult::ExitSuccess;
+    }
+    if (publish && argument == "--dry-run") {
+      options.dryRun = true;
+      continue;
+    }
+    if (argument == "--registry" || (publish && argument == "--name")) {
+      if (++index >= argc) {
+        std::cerr << "gti: " << argument << " needs a value\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (argument == "--registry") {
+        options.registry = argv[index];
+      } else {
+        options.package = argv[index];
+      }
+      continue;
+    }
+    if (!publish && !argument.starts_with('-') && options.package.empty()) {
+      const auto at = argument.find('@');
+      options.package = argument.substr(0, at);
+      if (at != argument.npos) {
+        options.requirement = argument.substr(at + 1);
+        if (options.requirement.empty()) {
+          std::cerr << "gti: missing package version requirement after '@'\n";
+          return ArgumentResult::ExitFailure;
+        }
+      }
+      continue;
+    }
+    std::cerr << "gti: unknown " << (publish ? "publish" : "add")
+              << " argument '" << argument << "'\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if (!publish && options.package.empty()) {
+    std::cerr << "gti: add requires one package name\n";
     return ArgumentResult::ExitFailure;
   }
   return ArgumentResult::Run;
@@ -2967,7 +3040,10 @@ int runFetch(const FetchOptions &options) {
   lang::driver::WorkspaceResolutionResult resolution =
       lang::driver::resolveProjectWorkspace(
           *currentDirectory, std::nullopt,
-          {.requireLock = false, .allowAcquisition = !options.offline});
+          {.requireLock = options.locked,
+           .allowAcquisition = !options.offline,
+           .acquireRegistry = !options.offline,
+           .materializeRegistry = true});
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     return exitCode(ExitStatus::Compilation);
@@ -2982,7 +3058,8 @@ int runFetch(const FetchOptions &options) {
   std::error_code existsError;
   const bool lockExists =
       std::filesystem::is_regular_file(lockPath, existsError) && !existsError;
-  if (lock.packages.empty() && !lockExists) {
+  const auto packageCount = lock.packages.size() + lock.registryPackages.size();
+  if (packageCount == 0 && !lockExists) {
     std::cout << "No git dependencies to lock\n";
     return exitCode(ExitStatus::Success);
   }
@@ -2991,6 +3068,12 @@ int runFetch(const FetchOptions &options) {
     std::cout << "Locked " << package.name << '@' << package.version << " git+"
               << package.url << '#' << package.revision << '\n';
   }
+  for (const auto &package : lock.registryPackages) {
+    std::cout << "Locked " << package.package << '@' << package.version
+              << " registry " << package.registry << '\n';
+  }
+  const std::string dependencyDescription =
+      lock.registryPackages.empty() ? " git dependenc" : " dependenc";
 
   const std::string rendered = lang::driver::renderDependencyLock(lock);
   if (lockExists) {
@@ -2998,21 +3081,24 @@ int runFetch(const FetchOptions &options) {
     const std::string current{std::istreambuf_iterator<char>(existing),
                               std::istreambuf_iterator<char>()};
     if (existing && current == rendered) {
-      std::cout << "gti.lock is up to date (" << lock.packages.size()
-                << (lock.packages.size() == 1 ? " git dependency"
-                                              : " git dependencies")
+      std::cout << "gti.lock is up to date (" << packageCount
+                << dependencyDescription << (packageCount == 1 ? "y" : "ies")
                 << ")\n";
       return exitCode(ExitStatus::Success);
     }
+  }
+  if (options.locked) {
+    std::cerr << "gti: --locked refuses to change gti.lock; run `gti fetch` "
+                 "without --locked to reconcile it\n";
+    return exitCode(ExitStatus::Compilation);
   }
   std::string writeError;
   if (!lang::driver::writeDependencyLock(workspace.root(), lock, writeError)) {
     std::cerr << "gti: failed to write gti.lock: " << writeError << '\n';
     return exitCode(ExitStatus::Io);
   }
-  std::cout << "Wrote " << lockPath.string() << " (" << lock.packages.size()
-            << (lock.packages.size() == 1 ? " git dependency"
-                                          : " git dependencies")
+  std::cout << "Wrote " << lockPath.string() << " (" << packageCount
+            << dependencyDescription << (packageCount == 1 ? "y" : "ies")
             << ")\n";
   return exitCode(ExitStatus::Success);
 }
@@ -3437,6 +3523,36 @@ int main(int argc, char *argv[]) {
       return runProjectBuildAll(options, argv[0]);
     }
     return runProject(options, argv[0]);
+  }
+
+  if (command == "add" || command == "publish") {
+    RegistryOptions options;
+    const auto parsed =
+        parseRegistryArguments(argc, argv, options, command == "publish");
+    if (parsed == ArgumentResult::ExitSuccess) {
+      return exitCode(ExitStatus::Success);
+    }
+    if (parsed == ArgumentResult::ExitFailure) {
+      return exitCode(ExitStatus::Usage);
+    }
+    const auto directory = workingDirectory();
+    if (!directory) {
+      return exitCode(ExitStatus::Io);
+    }
+    const auto result =
+        command == "add"
+            ? lang::driver::addRegistryDependency(*directory, options.package,
+                                                  options.requirement,
+                                                  options.registry)
+            : lang::driver::publishRegistryPackage(*directory, options.registry,
+                                                   options.package,
+                                                   options.dryRun);
+    if (!result.succeeded()) {
+      reportDiagnostics(result.diagnostics, result.sources);
+      return exitCode(ExitStatus::Compilation);
+    }
+    std::cout << result.summary << '\n';
+    return exitCode(ExitStatus::Success);
   }
 
   if (command == "fetch") {
