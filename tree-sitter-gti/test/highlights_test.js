@@ -645,6 +645,7 @@ const functionContractRow = fixtureLines.findIndex((line) =>
 );
 requireCapture(functionContractRow, "noreturn", "attribute");
 requireCapture(functionContractRow, "track_caller", "attribute");
+requireCapture(fixtureLines.findIndex((line) => line.includes("optional_highlight")), "discardable", "attribute");
 requireCapture(functionContractRow, "terminal_highlight", "function");
 
 const borrowOriginRow = fixtureLines.findIndex((line) =>

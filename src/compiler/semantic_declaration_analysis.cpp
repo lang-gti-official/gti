@@ -2907,6 +2907,7 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
           .requiresUnsafe = function->unsafeKeyword().has_value(),
           .neverReturns = function->hasFunctionAttribute("noreturn"),
           .tracksCaller = function->hasFunctionAttribute("track_caller"),
+          .discardableResult = function->hasFunctionAttribute("discardable"),
           .linkage = function->linkage(),
           .externalSymbol =
               function->hasCLinkage()
@@ -6386,6 +6387,7 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .requiresUnsafe = declaration.requiresUnsafe,
       .neverReturns = declaration.neverReturns,
       .tracksCaller = declaration.tracksCaller,
+      .discardableResult = declaration.discardableResult,
       .cThreadOperation = declaration.cThreadOperation,
       .requiresCThreadRuntime =
           requiresCThreadConcurrency(declaration.cThreadOperation),

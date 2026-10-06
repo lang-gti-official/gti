@@ -1,5 +1,12 @@
 # Diagnostics
 
+`GTI-S2009` retains the non-discardable-by-default call rule and its explicit
+`[[discard]]` fix-it. A selected `[[discardable]]` declaration suppresses that
+requirement, not other diagnostics or call analysis. Duplicate discardable
+attributes and void-result declarations use `GTI-S2099` at the attribute name;
+malformed arguments and non-function placement use parser diagnostics. CLI and
+LSP consume the same policy and source spans.
+
 Status: Current infrastructure and conventions.
 
 ## Terminal colour
