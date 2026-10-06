@@ -70,13 +70,28 @@ if __name__ == "__main__":
         f"{constructed.name}:{constructed_cleanup_line}: runtime error[GTI-R0014]: "
         "failure_during_cleanup; primary [GTI-R0002] at "
         f"{constructed.name}:{constructed_line}; secondary [GTI-R0002]\n")
+    destructor = root / "tests/fixtures/cleanup_bound_destructor_receiver.gti"
+    destructor_lines = destructor.read_text().splitlines()
+    def destructor_site(message):
+        line = next(index for index, text in enumerate(destructor_lines, 1)
+                    if f'std::panic("{message}")' in text)
+        return f"{destructor.name}:{line}"
+    def destructor_panic(message):
+        return (f'{destructor_site(message)}: runtime error[GTI-R0017]: '
+                f'panic: "{message}"\n')
+    destructor_double_failure = (
+        f"{destructor_site('destructor failed')}: runtime error[GTI-R0014]: "
+        "failure_during_cleanup; primary [GTI-R0017] at "
+        f"{destructor_site('primary failed')} "
+        'message="primary failed"; secondary [GTI-R0017] '
+        'message="destructor failed"\n')
     run_runtime_matrix(
         names=("cleanup_bound_owned_field", "cleanup_bound_nested_view",
                "cleanup_bound_guards", "cleanup_bound_guards_example",
                "allocator_bookkeeping", "cleanup_bound_nested_guards",
                "cleanup_bound_inert_shell", "cleanup_bound_nested_failures",
                "nested_cleanup_bound_guard", "cleanup_bound_return_failure",
-               "cleanup_bound_constructed_field"),
+               "cleanup_bound_constructed_field", "cleanup_bound_destructor_receiver"),
         cases={"cleanup_bound_guards": [
             ((), (0, "42\n102\n41\n101\n40\n", "")),
             (("fail",), (70, "102\n41\n101\n40\n", failure)),
@@ -116,6 +131,13 @@ if __name__ == "__main__":
             (("rollback", "cleanup"), (70, "20\n", constructed_double_failure)),
             (("cleanup", "only", "normal"),
              (70, "77\n20\n120\n110\n", constructed_cleanup_failure)),
+        ], "cleanup_bound_destructor_receiver": [
+            ((), (0, "77\n7\n41\n55\n99\n", "")),
+            (("primary",),
+             (70, "7\n41\n55\n99\n", destructor_panic("primary failed"))),
+            (("primary", "cleanup"), (70, "7\n", destructor_double_failure)),
+            (("cleanup", "only", "normal"),
+             (70, "77\n7\n41\n55\n99\n", destructor_panic("destructor failed"))),
         ]},
         fixture_paths={"cleanup_bound_guards_example":
                        root / "examples/118-cleanup-bound-guards.gti"})

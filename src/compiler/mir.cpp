@@ -8691,7 +8691,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       const bool sharedDerivedCall =
           (loan.kind == MirLoanKind::CallResult ||
            (loan.kind == MirLoanKind::Stored &&
-            parent.kind == MirLoanKind::CallResult)) &&
+            (parent.kind == MirLoanKind::CallResult ||
+             (parent.kind == MirLoanKind::Stored &&
+              parent.storedDependency != 0)))) &&
           loan.access == AccessMode::ReadOnly &&
           parent.access == AccessMode::ReadOnly;
       const bool projectedStoredChild = parent.kind == MirLoanKind::Stored &&

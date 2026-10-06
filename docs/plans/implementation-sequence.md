@@ -3757,9 +3757,12 @@ do not expose C++ object layout as GTI semantics.
 - **Current client checkpoint (in progress):** source-defined `resource_ref`,
   `resource_storage` and `resource_vector` clients, a real monotonic arena,
   a counting/failure adapter and an unrelated fixed-address container are
-  drafted. The process-memory runtime and external adoption contract have
-  focused passing evidence. The new arena/container runtime matrix is not
-  passing yet and is not acceptance evidence. Explicit nested constructors now
+  implemented. The complete allocator runtime fixture, example 121, independent
+  arena placement, raw-owner movement, constructor rollback and region-contract
+  fixtures pass all eight native configurations: C++20/C++23 at O0/O1/O3,
+  disabled elision and ASan/UBSan. This is focused local macOS arm64 evidence;
+  full production and installed-toolchain verification remain outstanding.
+  Explicit nested constructors now
   compose formal-to-field dependency paths, with generic three-level and
   reordered two-origin tests. Backend nested-publication admission remains
   under validation. Client integration exposed a separate lifetime bug:
@@ -3768,12 +3771,18 @@ do not expose C++ object layout as GTI semantics.
   Unrelated-class semantic regressions now cover reset/move conflicts, exact
   nested shared-view returns and physical-shell versus external-owner
   references. Focused semantic/MIR checks and all 61 ownership-suite cases
-  pass; 91 forged lifetime/return proofs are rejected. All resource-protocol
-  contract tests and 76 lifecycle-emitter cases pass. The owned-field,
+  passed at the earlier checkpoint; the expanded ownership suite is under
+  reconciliation. All resource-protocol contract tests and 81 lifecycle-emitter
+  cases pass, and 106 forged lifetime/return proofs are rejected at the latest
+  focused checkpoint. The owned-field,
   passive-field assignment and constructor-rollback regressions pass all
-  eight native modes, including copied-formal status failure. Full nested
-  arena/container clients still expose lifetime-composition gaps and are
-  under validation, so these are not full acceptance evidence.
+  eight native modes, including copied-formal status failure. Generic source
+  destructors retain caller-owned receiver dependencies without acquiring
+  their own release authority; normal, primary-failure, destructor-failure and
+  double-failure traces pass all eight configurations. Iterator/reference
+  tests distinguish physical container storage from its external resource,
+  including explicitly retained iterators, copied adapters and range loops.
+  Integration and broader validation remain required for completion.
   A separate raw-region owner regression passes O0/O1/O3 under C++20/C++23,
   disabled elision and ASan/UBSan: generated movement preserves the region
   address and transfers exactly one release obligation. The arena shell now
@@ -3781,8 +3790,9 @@ do not expose C++ object layout as GTI semantics.
   region and metadata do not move. This is not evidence for safe owner loans.
   The independent arena-placement fixture now passes all eight native modes,
   including aligned subregions, invalid requests, recoverable exhaustion,
-  reset and reuse. Safe typed-owner/container integration and growth acceptance
-  remain outstanding; unrelated raw placement is not evidence for those loans.
+  reset and reuse. The separate typed-owner/container matrix now also covers
+  growth, failure preservation and exact release; unrelated raw placement alone
+  was not used as evidence for those loans.
 - **Approved resource model:** a move-only allocation lease
   retains a shared checked borrow of its resource through final cleanup. Each
   allocation owns an independent region; object references borrow its typed

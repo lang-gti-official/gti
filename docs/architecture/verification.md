@@ -282,6 +282,54 @@ ASan/UBSan. A nontrivial copy-constructor control proves that byte construction
 does not bypass selected nontrivial behavior. These are helper-level tests,
 not evidence that every source call/container transport route is closed.
 
+## Programmable allocation and cleanup-bound resource leases
+
+Phase 2 remains in progress; the following gates define its evidence, not an
+assertion that the combined outcome has passed. `S-ALLOC-05` in the
+implementation sequence records the current acceptance status.
+
+`resource_protocol_contract` covers the one-time unsafe binding, structural
+provider signatures, final-address immovable elements, owner movement,
+recoverable allocation, growth, and rejection of owner invalidation while an
+element reference or an explicitly retained iterator remains live. Safe resource
+reset, escaping a local provider, forged bindings, and assignment between retained resources have negative
+controls. `resource_memory_runtime` independently checks the process-memory
+size/alignment/status boundary. `storage_adoption_contract` and runtime object-layout
+gates own the compiler-private placement contract and its malformed-MIR cases.
+
+`cleanup_bound_borrow`, `cleanup_bound_borrow_mutations`, and
+`cleanup_bound_backend_mutations` distinguish external referents from the
+physical storage of a carrier. They check exact dependencies through copied
+passive views, moved cleanup owners, nested field construction, calls and
+returns. Corruption tests independently reject forged field/owner mappings,
+missing retention, premature loan endpoints and incorrect rollback transfers.
+The complete ownership partition remains an adjacent gate: iterator and
+fallible-reference results must not accidentally borrow the wrapper's storage.
+
+`cleanup_bound_borrow_runtime` checks source-defined guards, raw bookkeeping,
+nested movement, reverse cleanup, failure during constructor/return cleanup,
+and double failure. The generic destructor-receiver fixture independently
+checks caller-owned entry dependencies and exact normal, primary-failure,
+destructor-failure and double-failure traces.
+`constructor_passive_field_rollback_runtime` covers passive
+field copies and assignments alongside active owners, exact status-call
+initialization, and copied formal parameters. Both use C++20/C++23 at O0/O1/O3,
+disabled elision and generated-program ASan/UBSan. Their focused successes do
+not replace the allocator-client matrix.
+
+`programmable_allocators_runtime` executes example 121 and its shared arena
+implementation, raw placement and movement controls, counting/failure injection,
+container growth, and owning/immovable constructor rollback. Its required
+observations include simultaneous disjoint allocations, alignment and exhaustion,
+unchanged elements after failed growth, stable object addresses, and exactly-once
+destruction before matching resource release. Region-contract controls check
+retained over-alignment and defensive descriptor rejection with exactly-once
+release; they do not dereference invalid memory or claim containment of an
+allocator that violates its unsafe obligations. The arena chooses its own
+subregions; a counting adapter alone is not acceptance. All eight native modes,
+the relevant LSP/grammar/example gates, and the full production CTest and
+installed-consumer checks are required before completion.
+
 ## Source package registry bootstrap
 
 ### Protected registry authentication

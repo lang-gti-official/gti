@@ -288,6 +288,10 @@ exact carrier drop, failed producer, consuming call, constructor-field
 publication or owned return transfer. Field publication must reparent the same
 SSA value into its exact construction-rollback obligation. Ordinary receiver
 and reference entries do not acquire this ownership.
+In particular, publishing a reference field to a cleanup-bound object retains
+its checked owner dependencies but does not transfer the object's destructor or
+create a construction-rollback obligation for the referent. Marking such a
+reference publication as lifecycle-bound is rejected independently.
 An explicit nested constructor may instead supply that completed SSA value.
 Its result loan retains every child field dependency through the successful
 value-to-field reparent, then publishes the field's escaping dependency and

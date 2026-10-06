@@ -67,8 +67,9 @@ struct SemanticLoanInfo {
   bool entry = false;
   // Receiver-only abstract entry dependencies have no source binding. This
   // identity keeps them in their declaring body when one model holds many
-  // functions; it is consumed during HIR lowering, never by the backend.
-  const FunctionDecl *entryFunction = nullptr;
+  // functions and destructors; it is consumed during HIR lowering, never by
+  // the backend.
+  const Stmt *entryDeclaration = nullptr;
   SemanticLoanPlace place;
   AccessMode access = AccessMode::ReadOnly;
   bool protectsStorage = false;

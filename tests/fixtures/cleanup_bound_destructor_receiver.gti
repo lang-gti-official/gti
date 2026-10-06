@@ -1,0 +1,42 @@
+#include <std/string>
+#include <std/vector>
+#include <std/panic>
+
+class Resource {
+public:
+  int value = 7;
+  ~Resource() { std::println(99); }
+};
+class Cell<T> {
+  Resource& resource;
+  T tag;
+public:
+  Cell(Resource& resource, T tag) : resource(resource), tag(tag) {}
+  int read() { return this.resource.value; }
+  ~Cell() { std::println(55); }
+};
+class Trace {
+public:
+  ~Trace() { std::println(41); }
+};
+class Observer<T> {
+  Cell<T>& owner;
+  bool fail;
+  Trace trace{};
+public:
+  Observer(Cell<T>& owner, bool fail) : owner(owner), fail(fail) {}
+  Cell<T>& get() { return this.owner; }
+  ~Observer() {
+    // The returned Cell<T>& retains its shell and its own borrowed resource.
+    std::println(this.get().read());
+    if (this.fail) { std::panic("destructor failed"); }
+  }
+};
+int main(int argc, std::vector<std::string> argv) {
+  Resource resource{};
+  Cell<int> cell{resource, 1};
+  Observer<int> observer{cell, argc > 2};
+  if (argc == 2 or argc == 3) { std::panic("primary failed"); }
+  std::println(77);
+  return 0;
+}

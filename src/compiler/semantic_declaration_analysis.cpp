@@ -5504,11 +5504,26 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
       for (const auto *returned : returns) {
         auto nested = self(self, *returned, *target, receiverType);
         std::optional<Origin> base;
-        if (nested && nested->source.origin == BorrowOriginKind::Receiver)
+        if (nested && nested->source.origin == BorrowOriginKind::Receiver) {
           base = receiver;
-        else if (nested &&
-                 nested->source.origin == BorrowOriginKind::Argument &&
-                 nested->source.parameter < call->arguments().size())
+          // A call exposes its receiver as the owner of inline fields or
+          // owned allocations, not the callee's private storage path. Only
+          // a path crossing one of its stored references is an external
+          // field-origin contract that callers may compose further.
+          const auto paths = storedReferencePaths(receiverType);
+          const bool external =
+              std::any_of(paths.begin(), paths.end(), [&](const auto &path) {
+                const auto fields =
+                    storedFieldSymbols(receiverType, path.fields);
+                return nested->source.sourceFields.size() >= fields.size() &&
+                       std::equal(fields.begin(), fields.end(),
+                                  nested->source.sourceFields.begin());
+              });
+          if (!external)
+            nested->source.sourceFields.clear();
+        } else if (nested &&
+                   nested->source.origin == BorrowOriginKind::Argument &&
+                   nested->source.parameter < call->arguments().size())
           base = self(self, call->arguments()[nested->source.parameter],
                       context, contextOwner);
         if (!base) {
@@ -5535,6 +5550,67 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
   const auto returnFields = [&](const ExprPtr &expression)
       -> std::optional<std::vector<BorrowedFieldOrigin>> {
     std::vector<BorrowedFieldOrigin> fields;
+    if (singleValuePath && function.returnType.kind == SemanticType::Class) {
+      const auto *call = exprAs<Call>(expression.get());
+      const auto *member =
+          call == nullptr ? nullptr : exprAs<Get>(call->callee().get());
+      auto receiver = member == nullptr ? std::optional<Origin>{}
+                                        : origin(origin, member->object(),
+                                                 function, ownerType);
+      if (receiver) {
+        auto receiverType = receiver->type;
+        if (receiverType.kind == SemanticType::Reference &&
+            receiverType.arguments.size() == 1)
+          receiverType = SemanticType(receiverType.arguments.front());
+        const auto *selected = findMember(receiverType, member->name());
+        const auto *target =
+            selected != nullptr && selected->symbol.overloads.size() == 1 &&
+                    selected->symbol.overloads.front().declaration != nullptr
+                ? semanticModel.findFunction(
+                      *selected->symbol.overloads.front().declaration)
+                : nullptr;
+        const auto resultPaths = storedReferencePaths(function.returnType);
+        auto sourceOwner =
+            receiver->source.origin == BorrowOriginKind::Receiver
+                ? ownerType
+                : function.parameterTypes[receiver->source.parameter];
+        if (sourceOwner.kind == SemanticType::Reference &&
+            sourceOwner.arguments.size() == 1)
+          sourceOwner = SemanticType(sourceOwner.arguments.front());
+        const auto sourcePaths = storedReferencePaths(sourceOwner);
+        const bool externalReceiver = std::any_of(
+            sourcePaths.begin(), sourcePaths.end(), [&](const auto &path) {
+              const auto sourceFields =
+                  storedFieldSymbols(sourceOwner, path.fields);
+              return receiver->source.sourceFields.size() >=
+                         sourceFields.size() &&
+                     std::equal(sourceFields.begin(), sourceFields.end(),
+                                receiver->source.sourceFields.begin());
+            });
+        if (target != nullptr && !target->staticMember &&
+            !target->virtualMethod && !target->overrideMethod &&
+            target->intrinsic == IntrinsicKind::None &&
+            target->declaration != nullptr &&
+            target->declaration->body() != nullptr &&
+            target->returnBorrowOrigin == BorrowOriginKind::Receiver &&
+            target->returnBorrowParameters.empty() &&
+            target->returnBorrowFields.empty() &&
+            target->parameterTypes.size() == call->arguments().size() &&
+            substituteType(target->returnType,
+                           classSubstitution(receiverType)) ==
+                function.returnType &&
+            resultPaths.size() == 1 && externalReceiver) {
+          // Relaying an ordinary owner-tied adapter through a stored reference
+          // keeps that external owner, not this wrapper's shell. The selected
+          // call and the return body independently validate this proposed map.
+          auto mapping = receiver->source;
+          mapping.resultFields = storedFieldSymbols(function.returnType,
+                                                    resultPaths.front().fields);
+          mapping.access = resultPaths.front().reference.referenceAccess;
+          return std::vector<BorrowedFieldOrigin>{std::move(mapping)};
+        }
+      }
+    }
     if (auto source = origin(origin, expression, function, ownerType)) {
       if (function.returnType.kind == SemanticType::Reference) {
         // Ordinary owner/field references already use the projected-place
@@ -5580,8 +5656,6 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
       }
       return fields.empty() ? std::nullopt : std::optional{fields};
     }
-    if (singleValuePath)
-      return std::nullopt;
     const auto *call = exprAs<Call>(expression.get());
     std::optional<ClassId> constructed;
     if (call != nullptr) {
@@ -5623,6 +5697,28 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
                                          binding.sourceFields);
         mapping.sourceFields.insert(mapping.sourceFields.end(), nested.begin(),
                                     nested.end());
+        if (singleValuePath) {
+          // A freshly constructed single-path adapter normally retains the
+          // compact owner contract. When its argument crosses a stored
+          // reference, however, its referent is external to that owner: the
+          // source field map must survive construction just as it does a
+          // direct reference return.
+          auto sourceOwner = mapping.origin == BorrowOriginKind::Receiver
+                                 ? ownerType
+                                 : function.parameterTypes[mapping.parameter];
+          if (sourceOwner.kind == SemanticType::Reference &&
+              sourceOwner.arguments.size() == 1)
+            sourceOwner = SemanticType(sourceOwner.arguments.front());
+          const auto paths = storedReferencePaths(sourceOwner);
+          if (std::none_of(paths.begin(), paths.end(), [&](const auto &path) {
+                const auto sourceFields =
+                    storedFieldSymbols(sourceOwner, path.fields);
+                return mapping.sourceFields.size() >= sourceFields.size() &&
+                       std::equal(sourceFields.begin(), sourceFields.end(),
+                                  mapping.sourceFields.begin());
+              }))
+            return std::nullopt;
+        }
         mapping.access = binding.destination.reference.referenceAccess;
         fields.push_back(std::move(mapping));
       }

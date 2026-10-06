@@ -4305,6 +4305,26 @@ int main() {
          "unqualified instance fields should retain receiver provenance for "
          "reference and stored-reference returns");
 
+  auto movedWrapperSource = source;
+  movedWrapperSource.insert(movedWrapperSource.find("  int& wrapped_value"),
+                            "  auto moved_wrapper = std::move(wrapped);\n");
+  const auto movedWrapper =
+      lang::Frontend().analyze("stored-reference-external-adapter-move.gti",
+                               movedWrapperSource, {standardLibraryPrelude()});
+  expect(movedWrapper.canGenerateCode() &&
+             lang::verifyMirProgram(movedWrapper.mir).valid(),
+         "an adapter relayed through a stored reference does not freeze the "
+         "independently movable wrapper shell");
+  auto invalidWrapperSource = source;
+  invalidWrapperSource.insert(invalidWrapperSource.find("  int& wrapped_value"),
+                              "  wrapped_range.replace(9);\n");
+  const auto invalidWrapper = lang::Frontend().analyze(
+      "stored-reference-external-adapter-reset.gti", invalidWrapperSource,
+      {standardLibraryPrelude()});
+  expect(!invalidWrapper.canGenerateCode() &&
+             hasDiagnosticCode(invalidWrapper.diagnostics, "GTI-S2017"),
+         "an externally relayed adapter still freezes its actual range owner");
+
   const lang::FunctionDecl *storedReferenceMain =
       findTopLevelFunction(frontend.program, "main");
   const lang::VariableDecl *originalIterator =
@@ -6528,6 +6548,202 @@ int main() {
          "moving a relay's carrier must not allow mutation of its still "
          "borrowed external field");
 
+  const std::string ownedAccessorSource = R"(
+class ValueBox<T> {
+  mut T payload;
+public:
+  ValueBox(T value) : payload(value) {}
+  T& get() { return this.payload; }
+  void set(T value) mut { this.payload = value; }
+};
+class BorrowedBox<T> {
+  ValueBox<T>& owner;
+public:
+  BorrowedBox(ValueBox<T>& owner) : owner(owner) {}
+  T& get() { return this.owner.get(); }
+};
+int main() {
+  mut ValueBox<int> owner{4};
+  BorrowedBox<int> carrier{owner};
+  int& value = carrier.get();
+  auto moved = std::move(carrier);
+  return value + moved.get() - 8;
+}
+)";
+  const auto ownedAccessor =
+      lang::Frontend().analyze("stored-carrier-generic-owned-accessor.gti",
+                               ownedAccessorSource, {standardLibraryPrelude()});
+  expect(ownedAccessor.canGenerateCode() &&
+             lang::verifyMirProgram(ownedAccessor.mir).valid(),
+         "generic accessor composition must preserve the called method's "
+         "receiver-owner contract without exposing its private field path");
+  if (!ownedAccessor.canGenerateCode())
+    for (const auto &diagnostic : ownedAccessor.diagnostics)
+      std::cerr << "Owned accessor relay diagnostic: " << diagnostic.code << ' '
+                << diagnostic.message << '\n';
+  auto invalidOwnedAccessorSource = ownedAccessorSource;
+  invalidOwnedAccessorSource.insert(
+      invalidOwnedAccessorSource.find("  return value"), "  owner.set(9);\n");
+  const auto invalidOwnedAccessor = lang::Frontend().analyze(
+      "stored-carrier-generic-owned-accessor-write.gti",
+      invalidOwnedAccessorSource, {standardLibraryPrelude()});
+  expect(!invalidOwnedAccessor.canGenerateCode() &&
+             hasDiagnosticCode(invalidOwnedAccessor.diagnostics, "GTI-S2017"),
+         "a composed owned-storage accessor still freezes its external owner "
+         "after the passive carrier moves");
+
+  const std::string mutableStorageSource = R"(
+class MixedStorage<T> {
+  T& external;
+  mut T local;
+public:
+  MixedStorage(T& external, T local) : external(external), local(local) {}
+  T& get() { return this.local; }
+  mut T& get_mut() mut { return this.local; }
+  T implicit_read() { T& value = get(); return value; }
+  T& external_value() { return this.external; }
+  ~MixedStorage() {}
+};
+int main() {
+  int external = 4;
+  mut MixedStorage<int> owner{external, 7};
+  mut int& element = owner.get_mut();
+  element = 9;
+  return owner.implicit_read() + owner.external_value() - 13;
+}
+)";
+  const auto mutableStorage = lang::Frontend().analyze(
+      "stored-carrier-mutable-owned-storage.gti", mutableStorageSource,
+      {standardLibraryPrelude()});
+  expect(mutableStorage.canGenerateCode() &&
+             lang::verifyMirProgram(mutableStorage.mir).valid(),
+         "mutable owned storage is independent of the carrier's read-only "
+         "external dependency");
+  if (!mutableStorage.canGenerateCode())
+    for (const auto &diagnostic : mutableStorage.diagnostics)
+      std::cerr << "Mutable owned-storage diagnostic: " << diagnostic.code
+                << ' ' << diagnostic.message << '\n';
+  auto invalidMutableStorageSource = mutableStorageSource;
+  invalidMutableStorageSource.replace(
+      invalidMutableStorageSource.find("owner.get_mut()"),
+      std::string("owner.get_mut()").size(), "owner.external_value()");
+  const auto invalidMutableStorage = lang::Frontend().analyze(
+      "stored-carrier-read-only-external-storage.gti",
+      invalidMutableStorageSource, {standardLibraryPrelude()});
+  expect(!invalidMutableStorage.canGenerateCode() &&
+             hasDiagnosticCode(invalidMutableStorage.diagnostics, "GTI-S2017"),
+         "mutable carrier storage cannot upgrade its read-only external "
+         "reference to mutable access");
+
+  const std::string factorySource = R"(
+class Cell {
+  int& resource;
+  mut int value = 7;
+public:
+  Cell(int& resource) : resource(resource) {}
+  int read() { return this.value; }
+  void reset() mut { this.value = 9; }
+  ~Cell() {}
+};
+class Reference<T> {
+  T& owner;
+public:
+  Reference(T& owner) : owner(owner) {}
+  T& get() { return this.owner; }
+};
+Reference<T> bind<T>(T& owner) { return Reference<T>(owner); }
+int main() {
+  int resource = 4;
+  mut Cell owner{resource};
+  auto reference = bind(owner);
+  return reference.get().read() - 7;
+}
+)";
+  const auto factory =
+      lang::Frontend().analyze("stored-carrier-reference-factory.gti",
+                               factorySource, {standardLibraryPrelude()});
+  expect(factory.canGenerateCode() &&
+             lang::verifyMirProgram(factory.mir).valid(),
+         "a source factory retains both its argument's physical shell and "
+         "the borrowed owners inside that shell");
+  if (!factory.canGenerateCode())
+    for (const auto &diagnostic : factory.diagnostics)
+      std::cerr << "Reference factory diagnostic: " << diagnostic.code << ' '
+                << diagnostic.message << '\n';
+  auto invalidFactorySource = factorySource;
+  invalidFactorySource.insert(invalidFactorySource.find("  return reference"),
+                              "  owner.reset();\n");
+  const auto invalidFactory = lang::Frontend().analyze(
+      "stored-carrier-reference-factory-reset.gti", invalidFactorySource,
+      {standardLibraryPrelude()});
+  expect(!invalidFactory.canGenerateCode() &&
+             hasDiagnosticCode(invalidFactory.diagnostics, "GTI-S2017"),
+         "a reference factory must not allow mutation of its carrier shell "
+         "while the returned wrapper still uses it");
+
+  const std::string adapterSource = R"(
+class Cell {
+  int& resource;
+  mut int value = 7;
+public:
+  Cell(int& resource) : resource(resource) {}
+  int read() { return this.value; }
+  int& get() { return this.value; }
+  void reset() mut { this.value = 9; }
+  ~Cell() {}
+};
+class Cursor {
+  Cell& cell;
+public:
+  Cursor(Cell& cell) : cell(cell) {}
+  int read() { return this.cell.read(); }
+  int& operator*() { return this.cell.get(); }
+};
+Cursor relay(Cursor cursor) { return cursor; }
+class Collection {
+  mut Cell cell;
+public:
+  Collection(int& resource) : cell(Cell(resource)) {}
+  Cursor cursor() { return Cursor(this.cell); }
+  void reset() mut { this.cell.reset(); }
+};
+int main() {
+  int resource = 4;
+  mut Collection owner{resource};
+  auto cursor = owner.cursor();
+  auto copied = relay(cursor);
+  int& element = *copied;
+  int result = element;
+  owner.reset();
+  return result - 7;
+}
+)";
+  const auto adapter =
+      lang::Frontend().analyze("stored-carrier-value-receiver-adapter.gti",
+                               adapterSource, {standardLibraryPrelude()});
+  expect(adapter.canGenerateCode() &&
+             lang::verifyMirProgram(adapter.mir).valid(),
+         "a value-returning receiver adapter and its copies retain physical "
+         "storage until their final use, not the receiver's external resource");
+  if (!adapter.canGenerateCode())
+    for (const auto &diagnostic : adapter.diagnostics)
+      std::cerr << "Receiver adapter diagnostic: " << diagnostic.code << ' '
+                << diagnostic.message << '\n';
+  for (const auto &mutation : {std::string("owner.reset();"),
+                               std::string("auto moved = std::move(owner);")}) {
+    auto invalidAdapterSource = adapterSource;
+    invalidAdapterSource.insert(invalidAdapterSource.find("  int result"),
+                                "  " + mutation + "\n");
+    const auto invalidAdapter = lang::Frontend().analyze(
+        "stored-carrier-value-adapter-invalidation.gti", invalidAdapterSource,
+        {standardLibraryPrelude()});
+    expect(!invalidAdapter.canGenerateCode() &&
+               hasDiagnosticCode(invalidAdapter.diagnostics, "GTI-S2017"),
+           "an independently copied adapter rejects physical owner "
+           "invalidation before its last use: " +
+               mutation);
+  }
+
   const std::string validSource = R"(
 class ReadCarrier {
 public:
@@ -8616,6 +8832,7 @@ int main() {
   mut ReadingView<int> relay_source = make_view<int>(reading.read());
   ReadingView<int> generic_relay =
       unconstrained_relay<ReadingView<int>>(std::move(relay_source));
+  ViewCallable<int> relocated_callable = std::move(callable);
   return relayed + static_view.get() + called_view.get() + indexed_view.get() +
       direct_value.value + generic_relay.get() + shared_aliases() - 42;
 }
@@ -8873,6 +9090,48 @@ int shared_aliases() {
   expect(callsPreserveArgumentDependency,
          "resolved free and static calls should carry the selected owner "
          "argument into lowering");
+
+  const std::string externalOperatorSource = R"(
+class ReadingView<T> {
+  T& value;
+public:
+  ReadingView(T& value) : value(value) {}
+  T& get() { return this.value; }
+};
+class ViewCallable<T> {
+  T& source;
+public:
+  ViewCallable(T& value) : source(value) {}
+  ReadingView<T> operator()() { return ReadingView<T>(this.source); }
+  ReadingView<T> operator[](uint64_t index) {
+    return ReadingView<T>(this.source);
+  }
+};
+int main() {
+  mut int owner = 7;
+  ViewCallable<int> callable{owner};
+)";
+  for (const auto *operation : {"callable()", "callable[uint64_t(0)]"}) {
+    const auto invalidOwner = analyzeWithMemory(
+        "operator-external-owner-invalidation.gti",
+        externalOperatorSource + "  auto view = " + operation + R"(;
+  ViewCallable<int> relocated = std::move(callable);
+  owner = 8;
+  return view.get();
+}
+)");
+    expect(!invalidOwner.canGenerateCode() &&
+               hasDiagnosticCode(invalidOwner.diagnostics, "GTI-S2017") &&
+               hasDiagnostic(invalidOwner.diagnostics,
+                             "Cannot assign to storage while an overlapping "
+                             "borrow") &&
+               !hasDiagnostic(invalidOwner.diagnostics,
+                              "Cannot move storage while an overlapping "
+                              "borrow") &&
+               !hasDiagnosticCode(invalidOwner.diagnostics, "GTI-B0001"),
+           "moving an operator wrapper must not release the returned view's "
+           "external owner loan");
+  }
 
   const lang::FrontendResult invalid =
       analyzeWithMemory("invalid-owner-dependent-returns.gti", R"(

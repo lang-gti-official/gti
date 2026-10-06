@@ -1321,6 +1321,10 @@ auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
                                .id = owner.id};
   auto enclosingRawProgramStorage = saveRawProgramStorage();
   beginScope();
+  declareReceiverState();
+  if (Symbol *receiver = receiverStateSymbol();
+      receiver != nullptr && isDirectStoredReferenceType(receiver->type))
+    recordStoredEntryDependency(*receiver, 0, receiver->type, true, &stmt);
 
   analyze(stmt.body()->statements());
   finalizeLoanFlow();

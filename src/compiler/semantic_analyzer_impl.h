@@ -1600,6 +1600,7 @@ private:
   [[nodiscard]] SemanticLoanPlace transientLoanPlace(const ExprPtr &expression);
 
   [[nodiscard]] SemanticLoanPlace retainedLoanPlace(const ExprPtr &expression);
+  [[nodiscard]] bool receiverStorageBorrow(const ExprPtr &expression) const;
 
   static const ExprPtr *operatorReceiverExpression(const ExprPtr &expression);
 
@@ -1658,7 +1659,8 @@ private:
   SemanticLoanId recordStoredEntryDependency(Symbol &carrier,
                                              SymbolId carrierSymbol,
                                              const SemanticType &type,
-                                             bool receiver);
+                                             bool receiver,
+                                             const Stmt *declaration = nullptr);
 
   void recordRetainedBorrow(const VariableDecl &binding,
                             const ExprPtr &expression);
