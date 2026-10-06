@@ -312,6 +312,13 @@ color/progress, project-facts LSP and link-surface gates pass, including the
 opt-in synthetic Keychain workflow. No frontend language semantics change.
 Linux/Windows protected-store persistence is not implemented by this slice.
 
+The reconciled 0.377.0 stage also passes all eleven external installed-library
+consumers. The installed CLI passes the synthetic Keychain authentication,
+automatic add/fetch and logout workflow. The local installer passes its archive/
+Neovim smoke and activates compiler/LSP 0.377.0 in the primary checkout. This is
+focused local system-LLVM evidence, not a full compiler matrix or cross-platform
+release-packaging run.
+
 ### Bootstrap evidence
 
 `package_registry_model` uses an in-memory backend to exercise the shared
