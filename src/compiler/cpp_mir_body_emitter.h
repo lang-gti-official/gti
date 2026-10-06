@@ -559,6 +559,9 @@ struct CppMirConstructedFieldInitializerBinding {
   MirPlaceId fieldPlace = 0;
   MirDropObligationId valueDrop = 0;
   MirDropObligationId fieldDrop = 0;
+  // The first native field uses its selected status-tag constructor. The
+  // enclosing body preserves that status and executes the original MIR Invoke.
+  bool failureStatus = false;
 };
 // Returns the complete claimed schedule, or an empty vector when this
 // constructor is outside the family. The family is purely additive: an

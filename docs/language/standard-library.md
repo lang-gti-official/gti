@@ -744,7 +744,8 @@ an initialization proof, or a new constant expression. The existing bounded
   immovable objects constructed directly with `emplace`;
 - `std::alignment` carries an explicit minimum byte alignment; and
 - `std::alloc_errc` distinguishes `invalid_alignment`, `size_overflow`, and
-  `resource_exhausted`.
+  `resource_exhausted`; the custom-resource slice additionally uses
+  `invalid_region` and `invalid_state`.
 
 Both allocator operations return
 `expected<std::storage<T>, std::alloc_errc>`. Zero capacity succeeds without a
@@ -788,7 +789,56 @@ See [structural relocation](ownership-and-lifetimes.md#structural-relocation).
 ADR 022 defines its provenance and comparison with other systems-language
 models.
 
-The same module implements two fixed-capacity policies over that owner:
+### Custom resource protocol (in progress)
+
+`<std/resource>` contains the source-defined Phase 2 protocol. Its checked
+owner/container integration is not yet a completed, fully validated allocation
+surface; [S-ALLOC-05](../plans/implementation-sequence.md#s-alloc-05-programmable-allocators-and-safe-container-integration)
+tracks the remaining work. It is separate from the process-backed
+`std::allocator`/`std::storage<T>` API above.
+
+`memory_resource<R>` requires read-only `allocate(layout)` and
+`release(raw_allocation)` calls under an explicit unsafe requirement.
+`raw_allocation` carries `address`, `bytes`, `alignment` and provider-defined
+`id`, but owns nothing. `unsafe bind_resource(R&)` establishes a reusable,
+sealed `resource_ref<R>`; constructing an empty `resource_storage<T,R>` from
+that checked binding is safe. Binding is the one-time programmer proof for
+all future calls through the binding and its copies, not a compiler proof of
+raw-region validity. See the full
+[unsafe binding obligations](raw-pointers.md#explicit-resource-binding).
+
+The resource owner derives element layout from `layout_of<T>()`, checks count
+multiplication and requested power-of-two alignment, and verifies the reported
+region before typed adoption. Requested over-alignment is retained across
+prefix growth. A fresh-only allocation attempt reports `invalid_state` for an
+occupied owner; provider errors are preserved, and malformed region metadata
+is not silently converted to exhaustion. Adoption allocates only a slot
+liveness bitmap. The typed storage never frees the external region: ordinary
+reverse field cleanup destroys elements first, then the resource lease returns
+the original descriptor. These checks do not establish provenance, actual
+extent, non-overlap, writability or race freedom.
+
+`process_resource` is a source wrapper over a narrow aligned raw allocation
+runtime interface, with distinct invalid-alignment, size-overflow and
+resource-exhaustion results. Direct `allocate` and `release` remain unsafe;
+release requires a matching outstanding descriptor. There is no global
+resource-selection policy or public-name compiler special case.
+
+The unrelated `engine::Arena` in
+[`examples/allocator-support/arena.gti`](../../examples/allocator-support/arena.gti)
+is a single-threaded monotonic resource, not a heap-free arena implementation.
+It obtains one backing region and separately heap-allocates stable bookkeeping;
+typed adoption also needs its liveness bitmap. Suballocations use checked
+padding/extent arithmetic, remain disjoint while live, and are reclaimed for
+reuse only by reset after all releases. Its read-only methods mutate separately
+owned bookkeeping through reviewed unsafe pointers; read-only receiver access
+does not supply synchronization. Raw allocate/release placement tests are
+supplementary evidence, not evidence that the unfinished safe owner/container
+integration has passed.
+
+### Existing typed container policies
+
+`<std/memory>` implements two fixed-capacity policies over `std::storage<T>`:
 
 - `try_make_arena<T>(capacity)` returns
   `expected<arena<T>, alloc_errc>`. The move-only arena inserts monotonically,

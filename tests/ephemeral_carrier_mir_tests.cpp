@@ -436,8 +436,11 @@ int main() {
     expect(frontend.canGenerateCode(),
            std::string("borrowed-result operator keeps its original loan ") +
                "schedule in conditional expressions: " + expression);
-    if (!frontend.canGenerateCode())
+    if (!frontend.canGenerateCode()) {
+      for (const auto &diagnostic : frontend.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
       continue;
+    }
     bool foundValueReceiver = false;
     for (const auto &function : frontend.mir.functionInstances()) {
       for (const auto &block : function.body.blocks) {

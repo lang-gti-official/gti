@@ -458,6 +458,22 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testRawPointerConstructorFieldPublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveClassFieldRollback",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testBoundPassiveClassFieldRollback",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testNativeStatusFieldRollback",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testNestedConstructorRepresentationPrecedence",
       "suite": "lifecycle"
     },

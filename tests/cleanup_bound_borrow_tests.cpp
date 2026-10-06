@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <set>
 #include <string>
 #include <utility>
 
@@ -46,8 +48,18 @@ void show(const lang::FrontendResult &result) {
   for (const auto &diagnostic : result.diagnostics)
     std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   if (std::getenv("GTI_TEST_DUMP_MIR") != nullptr) {
+    std::set<std::pair<lang::MirBodyKind, std::size_t>> printed;
     for (const auto &error : lang::verifyMirProgram(result.mir).errors) {
+      std::cerr << "MIR body " << static_cast<int>(error.bodyKind) << ':'
+                << error.owner << " instruction " << error.instruction << ": "
+                << error.message << '\n';
+      if (!printed.emplace(error.bodyKind, error.owner).second)
+        continue;
       if (error.bodyKind == lang::MirBodyKind::Function) {
+        if (const auto *function = result.hir.findFunctionInstance(error.owner);
+            function != nullptr && function->source != nullptr)
+          std::cerr << "function " << error.owner << " "
+                    << function->source->name().lexeme << '\n';
         if (const auto *function = result.mir.findFunctionInstance(error.owner))
           std::cerr << lang::MirPrinter().print(function->body);
       } else if (error.bodyKind == lang::MirBodyKind::Constructor) {
@@ -85,6 +97,13 @@ void negative(const std::string &name, const std::string &source,
 } // namespace
 
 int main() {
+  {
+    const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                         "fixtures/nested_borrow_fields.gti";
+    std::ifstream input(fixture);
+    positive("nested borrowed members preserve receiver and by-value origins",
+             std::string{std::istreambuf_iterator<char>(input), {}});
+  }
   const std::string mixedOwner = R"gti(
 class Mixed {
   Resource& resource;
@@ -117,12 +136,83 @@ int main() { Resource resource{}; mut Mixed mixed{resource};
 int main() { Resource resource{}; mut Mixed mixed{resource};
   Resource& external = mixed.external(); mixed.reset(); return external.value - 7; }
 )gti");
+  positive("references before repeated carrier movement keep exact ancestry",
+           mixedOwner + R"gti(
+int main() { Resource resource{}; Mixed first{resource};
+  int& a = first.get(); int sum = a;
+  auto second = std::move(first);
+  int& b = second.get(); int sum2 = sum + b;
+  auto third = std::move(second);
+  return sum2 + third.get() - 21;
+}
+)gti");
+  const std::string nestedView = R"gti(
+class View {
+  Resource& owner;
+public:
+  View(Resource& owner) : owner(owner) {}
+  Resource& get() { return this.owner; }
+};
+class Wrapper {
+  View view;
+  mut int scratch;
+public:
+  Wrapper(Resource& owner) : view(View(owner)), scratch(0) {}
+  View binding() { return this.view; }
+  void touch() mut { this.scratch++; }
+  int inspect() mut {
+    auto copy = this.binding();
+    this.touch();
+    return copy.get().value;
+  }
+};
+)gti";
+  positive("copied nested view protects the referent rather than wrapper shell",
+           nestedView + R"gti(
+int main() { Resource resource{}; mut Wrapper wrapper{resource};
+  auto view = wrapper.binding(); wrapper.touch();
+  return view.get().value + wrapper.inspect() - 14;
+}
+)gti");
+  negative("copied nested view keeps its actual resource borrowed",
+           nestedView + R"gti(
+int main() { mut Resource resource{}; Wrapper wrapper{resource};
+  auto view = wrapper.binding(); resource.reset(); return view.get().value;
+}
+)gti");
   positive("shared independent guards and whole movement", R"gti(
 int main() {
   mut Resource owner{};
   { Guard first{owner}; Guard second{owner}; auto moved = std::move(first); }
   owner.reset(); return observed - 14;
 })gti");
+  const std::string copiedViewOwner = R"gti(
+struct PlainView {
+  Resource& resource;
+  PlainView(Resource& resource) : resource(resource) {}
+};
+class ViewOwner {
+  PlainView view;
+public:
+  ViewOwner(PlainView view) : view(view) {}
+  ~ViewOwner() { observed += this.view.resource.value; }
+};
+)gti";
+  positive(
+      "copying a passive view into an owner retains a distinct cleanup loan",
+      copiedViewOwner + R"gti(
+int main() { mut Resource resource{};
+  { PlainView view{resource}; ViewOwner first{view}; ViewOwner second{view}; }
+  resource.reset(); return observed - 14;
+}
+)gti");
+  negative("copied passive view remains protected through the owning wrapper "
+           "cleanup",
+           copiedViewOwner + R"gti(
+int main() { mut Resource resource{}; PlainView view{resource};
+  ViewOwner owner{view}; resource.reset(); return 0;
+}
+)gti");
   positive("guard factory", R"gti(
 Guard acquire(Resource& owner) { return Guard(owner); }
 int main() { Resource owner{}; auto guard = acquire(owner); return 0; }

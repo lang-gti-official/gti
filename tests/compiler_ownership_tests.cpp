@@ -6487,6 +6487,47 @@ int main() {
 }
 
 void testStoredCarrierReturnProvenance() {
+  const std::string projectedSource = R"(
+struct Counter { mut int value = 4; };
+class ProjectedCarrier {
+  Counter& owner;
+public:
+  ProjectedCarrier(Counter& source) : owner(source) {}
+  int& relay() { return this.read(); }
+  int& read() { return this.owner.value; }
+};
+int main() {
+  mut Counter owner{};
+  ProjectedCarrier original = ProjectedCarrier(owner);
+  ProjectedCarrier& alias = original;
+  int& value = alias.relay();
+  ProjectedCarrier moved = std::move(original);
+  return value + moved.read() - 8;
+}
+)";
+  const auto projected =
+      lang::Frontend().analyze("stored-carrier-projected-relay.gti",
+                               projectedSource, {standardLibraryPrelude()});
+  expect(
+      projected.canGenerateCode() &&
+          lang::verifyMirProgram(projected.mir).valid(),
+      "an accessor relay through a stored reference must retain the external "
+      "field, not freeze the independently movable carrier shell");
+  if (!projected.canGenerateCode())
+    for (const auto &diagnostic : projected.diagnostics)
+      std::cerr << "Projected relay diagnostic: " << diagnostic.code << ' '
+                << diagnostic.message << '\n';
+  auto invalidProjected = projectedSource;
+  invalidProjected.insert(invalidProjected.find("  return value"),
+                          "  owner.value = 9;\n");
+  const auto invalidProjection =
+      lang::Frontend().analyze("stored-carrier-projected-relay-owner-write.gti",
+                               invalidProjected, {standardLibraryPrelude()});
+  expect(!invalidProjection.canGenerateCode() &&
+             hasDiagnosticCode(invalidProjection.diagnostics, "GTI-S2017"),
+         "moving a relay's carrier must not allow mutation of its still "
+         "borrowed external field");
+
   const std::string validSource = R"(
 class ReadCarrier {
 public:
@@ -17245,6 +17286,21 @@ int main() {
              lang::verifyMirProgram(frontend.mir).valid(),
          "receiver-, parameter-, and global-tied fallible borrows should "
          "reach verified MIR, including local copy, move, and forwarding");
+  for (const auto &loan : frontend.semantics.loans()) {
+    const auto *call = dynamic_cast<const lang::Call *>(loan.origin);
+    const auto *projection =
+        call == nullptr ? nullptr : frontend.semantics.findCall(*call);
+    if (projection != nullptr &&
+        projection->intrinsic == lang::IntrinsicKind::ExpectedValue &&
+        projection->returnType.kind == lang::SemanticType::Reference &&
+        projection->returnType.arguments.size() == 1 &&
+        projection->returnType.arguments.front().kind ==
+            lang::SemanticType::Int32) {
+      expect(loan.storedDependency == 0,
+             "extracting a scalar fallible borrow retains the external "
+             "referent, not a physical shell dependency on its carrier");
+    }
+  }
 
   std::size_t fallibleFunctions = 0;
   std::size_t escapingReturnLoans = 0;

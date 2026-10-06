@@ -1,0 +1,51 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Empty {
+public:
+  Empty() {}
+};
+struct Token {
+  void* address = nullptr;
+  int bytes;
+  Token(void* address, int bytes) : address(address), bytes(bytes) {}
+};
+expected<Token, int> token_result(int bytes) {
+  return Token(nullptr, bytes);
+}
+class Leaf {
+public:
+  Leaf() {}
+  ~Leaf() { std::println(10); }
+};
+class Owner {
+  Empty empty{};
+  mut Token token{nullptr, 7};
+  std::unique_ptr<Leaf> metadata;
+public:
+  Owner(int divisor) : metadata(std::make_unique<Leaf>()) {
+    this.token = token_result(9).expect("passive field assignment");
+    if (this.token.address != nullptr || this.token.bytes != 9) {
+      std::println(99);
+    }
+    Token replacement{nullptr, 11};
+    this.copy_token(replacement);
+    if (this.token.bytes != 11) { std::println(98); }
+    Token previous = this.take_token();
+    if (previous.bytes != 11 || this.token.bytes != 0) { std::println(97); }
+    int checked = 1 / divisor;
+  }
+  void copy_token(Token replacement) mut { this.token = replacement; }
+  Token take_token() mut {
+    Token previous = this.token;
+    this.token = Token(nullptr, 0);
+    return previous;
+  }
+  ~Owner() { std::println(20); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  Owner owner{argc == 1 ? 1 : 0};
+  std::println(30);
+  return 0;
+}

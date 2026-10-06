@@ -5,6 +5,49 @@
 
 namespace lang::mir_detail {
 
+bool bindingReceivedStoredLoan(const MirBody &body, HirBindingId binding,
+                               MirLoanId dependency, std::size_t depth) {
+  const auto *loan = body.findLoan(dependency);
+  if (depth > body.places.size() || loan == nullptr ||
+      loan->kind != MirLoanKind::Stored || !loan->lifecycleBound)
+    return false;
+  const MirInstruction *publication = nullptr;
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions) {
+      const auto *place = instruction.destination
+                              ? body.findPlace(*instruction.destination)
+                              : nullptr;
+      if (instruction.kind != MirInstructionKind::Initialize ||
+          place == nullptr || place->root != MirPlaceRootKind::Binding ||
+          place->binding != binding || !place->projections.empty())
+        continue;
+      if (publication != nullptr)
+        return false;
+      publication = &instruction;
+    }
+  if (publication == nullptr || publication->operands.size() != 1 ||
+      publication->operands.front().kind != MirOperandKind::Value)
+    return false;
+  const auto *producer =
+      definitionFor(body, publication->operands.front().value);
+  const auto *destination = body.findPlace(*publication->destination);
+  if (producer == nullptr || destination == nullptr ||
+      producer->info.type != destination->type ||
+      !destination->traits.containsBorrowedState)
+    return false;
+  if (producer->loan == dependency)
+    return true;
+  if (producer->kind != MirInstructionKind::Move ||
+      producer->operands.size() != 1 ||
+      producer->operands.front().kind != MirOperandKind::Move)
+    return false;
+  const auto *previous = body.findPlace(producer->operands.front().place);
+  return previous != nullptr && previous->root == MirPlaceRootKind::Binding &&
+         previous->projections.empty() && previous->type == destination->type &&
+         bindingReceivedStoredLoan(body, previous->binding, dependency,
+                                   depth + 1);
+}
+
 const MirPlace *storageAdoptionDestination(const MirBody &body,
                                            const MirInstruction &instruction) {
   if (instruction.kind != MirInstructionKind::Call ||

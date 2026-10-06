@@ -1292,8 +1292,34 @@ origins. Selected reference accessors do not inherit an unrelated first field's
 permission. Concrete generic reanalysis substitutes these same facts.
 Lifecycle traits reject copying any exclusive path, and transfer preserves all
 parents until the final child/carrier endpoint. Custom destruction,
-globals/captures, dependency reseating, dynamic origins and ambiguous return
-provenance remain outside this bounded graph.
+when present, extends the dependency endpoint through cleanup; it does not
+change the origin or access mode. Globals/captures, dependency reseating,
+dynamic origins and ambiguous return provenance remain outside this bounded
+graph.
+
+A reference returned from an ordinary receiver's owned field or owned storage
+protects the receiver's physical storage separately from its external stored
+dependencies. Exact stored-reference-field returns instead preserve the
+selected external referent. Field-origin summaries distinguish these cases,
+including single-path carriers; a type merely containing borrowed state is
+not permission to replace its shell origin with its resource dependency.
+An exact field-origin path can extend beneath a stored external reference.
+An unambiguous nonvirtual accessor relay composes that path, and independent
+body analysis checks its actual return. Returning through a reference alias
+uses the selected stored dependency, not the alias's separate physical-shell
+loan. A projected referent retains its exact suffix instead of becoming an
+alias of the whole external owner. Dynamic, ambiguous and recursive declaration
+provenance remain conservative.
+Moving a cleanup-bound carrier updates flow availability and transfers the
+active loan, but retains the declaration's historical loan identity so earlier
+reference uses still lower against the original shell and dependency.
+
+A direct by-value return of a nested copyable shared view records the exact
+receiver field prefix and the result-relative reference path. Copying that
+view creates independent shell storage while retaining its external referent.
+This is distinct from returning a reference to the field, which also protects
+the enclosing shell. Concrete field identities, not public type names, select
+the rule.
 
 Addressable namespace bindings and non-generic static data members use the
 same symbol-rooted place whether their source spelling is qualified or

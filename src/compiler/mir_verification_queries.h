@@ -37,6 +37,13 @@ fusedSignedMinimumNegation(const MirBody &body, const MirInstruction &carrier);
 
 [[nodiscard]] const MirInstruction *definitionFor(const MirBody &body,
                                                   MirValueId value);
+// Recover a cleanup-bound carrier's original publication after subsequent
+// moves changed its current carrier list. This proves identity, not liveness;
+// ordinary ownership/loan dataflow still checks availability at each use.
+[[nodiscard]] bool bindingReceivedStoredLoan(const MirBody &body,
+                                             HirBindingId binding,
+                                             MirLoanId dependency,
+                                             std::size_t depth = 0);
 [[nodiscard]] std::optional<MirPlaceId>
 borrowSourceForPlace(const MirBody &body, MirPlaceId place, std::size_t depth);
 [[nodiscard]] std::optional<MirPlaceId>

@@ -3765,15 +3765,24 @@ do not expose C++ object layout as GTI semantics.
   under validation. Client integration exposed a separate lifetime bug:
   an accessor returning an owned field of a borrowed carrier must protect that
   carrier's physical storage, not substitute its external resource dependency.
-  Unrelated-class semantic regressions cover reset/move conflicts; matching
-  MIR publication and forged-origin checks remain required before delivery.
+  Unrelated-class semantic regressions now cover reset/move conflicts, exact
+  nested shared-view returns and physical-shell versus external-owner
+  references. Focused semantic/MIR checks and all 61 ownership-suite cases
+  pass; 91 forged lifetime/return proofs are rejected. All resource-protocol
+  contract tests and 76 lifecycle-emitter cases pass. The owned-field,
+  passive-field assignment and constructor-rollback regressions pass all
+  eight native modes, including copied-formal status failure. Full nested
+  arena/container clients still expose lifetime-composition gaps and are
+  under validation, so these are not full acceptance evidence.
   A separate raw-region owner regression passes O0/O1/O3 under C++20/C++23,
   disabled elision and ASan/UBSan: generated movement preserves the region
   address and transfers exactly one release obligation. The arena shell now
   uses this existing generated-move contract; its separately allocated backing
   region and metadata do not move. This is not evidence for safe owner loans.
-  The independent arena-placement fixture is registered but still fails backend
-  admission, so placement/growth acceptance remains outstanding.
+  The independent arena-placement fixture now passes all eight native modes,
+  including aligned subregions, invalid requests, recoverable exhaustion,
+  reset and reuse. Safe typed-owner/container integration and growth acceptance
+  remain outstanding; unrelated raw placement is not evidence for those loans.
 - **Approved resource model:** a move-only allocation lease
   retains a shared checked borrow of its resource through final cleanup. Each
   allocation owns an independent region; object references borrow its typed

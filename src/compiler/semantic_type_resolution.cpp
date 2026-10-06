@@ -5204,8 +5204,7 @@ auto SemanticVisitor::Impl::applyGenericDefaults(
 auto SemanticVisitor::Impl::makeGenericParameters(
     const std::vector<GenericParameter> &parameters,
     const Token &declarationName, const std::vector<std::string> &fromScope,
-    bool allowStructural)
-    -> std::vector<GenericParameterInfo> {
+    bool allowStructural) -> std::vector<GenericParameterInfo> {
   std::vector<GenericParameterInfo> result;
   result.reserve(parameters.size());
   std::unordered_set<std::string> names;

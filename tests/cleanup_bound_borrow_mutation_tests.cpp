@@ -816,42 +816,421 @@ int main() { Resource first{}; Resource second{}; Reversed owner{first,second}; 
         const auto &operand = publication.operands.front();
         const auto *producer = definition(constructor.body, operand.value);
         const auto *retained = constructor.body.findLoan(operand.loan);
-        if (!producer || producer->kind != lang::MirInstructionKind::Construct ||
+        if (!producer ||
+            producer->kind != lang::MirInstructionKind::Construct ||
             !retained || retained->entry || producer->borrowFields.size() != 2)
           continue;
         checked = true;
         auto wrongMap = *control;
         auto *forged = instruction(body(wrongMap, key), producer->id);
-        std::swap(forged->borrowFields[0].parameter, forged->borrowFields[1].parameter);
-        rejected(wrongMap, "nested producer cannot forge reordered formal mapping");
+        std::swap(forged->borrowFields[0].parameter,
+                  forged->borrowFields[1].parameter);
+        rejected(wrongMap,
+                 "nested producer cannot forge reordered formal mapping");
 
         auto missingOwner = *control;
-        body(missingOwner, key).loans[*publication.loan - 1].additionalDependencies.clear();
-        rejected(missingOwner, "nested field publication retains every child dependency");
+        body(missingOwner, key)
+            .loans[*publication.loan - 1]
+            .additionalDependencies.clear();
+        rejected(missingOwner,
+                 "nested field publication retains every child dependency");
 
         const auto end = loanEnd(constructor.body, retained->id);
-        expect(end.has_value(), "constructed carrier has an explicit transfer endpoint");
+        expect(end.has_value(),
+               "constructed carrier has an explicit transfer endpoint");
         if (end) {
           auto early = *control;
           expect(moveBefore(body(early, key), *end, publication.id),
                  "constructed child early endpoint mutation is applied");
-          rejected(early, "constructed child cannot retire before field publication");
+          rejected(early,
+                   "constructed child cannot retire before field publication");
         }
         for (const auto &stageBlock : constructor.body.blocks)
           for (const auto &stage : stageBlock.instructions)
             for (std::size_t i = 0; i < stage.lifecycle.size(); ++i)
               if (stage.kind == lang::MirInstructionKind::Initialize &&
-                  stage.lifecycle[i].kind == lang::MirLifecycleEventKind::Reparent &&
-                  stage.operands.size() == 1 && stage.operands.front().value == operand.value) {
+                  stage.lifecycle[i].kind ==
+                      lang::MirLifecycleEventKind::Reparent &&
+                  stage.operands.size() == 1 &&
+                  stage.operands.front().value == operand.value) {
                 auto unarmed = *control;
                 auto *changed = instruction(body(unarmed, key), stage.id);
-                changed->lifecycle[i].kind = lang::MirLifecycleEventKind::TransferOut;
+                changed->lifecycle[i].kind =
+                    lang::MirLifecycleEventKind::TransferOut;
                 changed->lifecycle[i].target = 0;
-                rejected(unarmed, "constructed field cannot lose rollback authority");
+                rejected(unarmed,
+                         "constructed field cannot lose rollback authority");
               }
       }
   }
   expect(checked, "nested constructor fixture exercises child publication");
+}
+
+void checkOwnedFieldReference() {
+  const auto control = analyze("owned field reference", R"gti(
+class Mixed {
+  Resource& resource;
+  mut int local;
+public:
+  Mixed(Resource& resource, int local) : resource(resource), local(local) {}
+  int& get() { return this.local; }
+  Resource& external() { return this.resource; }
+  void reset() mut { this.local = 9; }
+  ~Mixed() { observed += this.resource.value; }
+};
+int main() {
+  Resource resource{};
+  mut Mixed first{resource, 3};
+  Mixed second{resource, 5};
+  int& item = first.get();
+  int value = item;
+  first.reset();
+  auto moved = std::move(first);
+  int& later = moved.get();
+  int result = value + later;
+  auto final_owner = std::move(moved);
+  return result + final_owner.get() - 21;
+}
+)gti");
+  if (!control)
+    return;
+  bool checked = false;
+  for (const auto &function : control->functionInstances()) {
+    const BodyKey key{lang::MirBodyKind::Function, function.id};
+    for (const auto &block : function.body.blocks) {
+      for (const auto &call : block.instructions) {
+        const auto *target =
+            call.functionTarget
+                ? control->findFunctionInstance(*call.functionTarget)
+                : nullptr;
+        if (call.kind != lang::MirInstructionKind::Call || !call.loan ||
+            target == nullptr ||
+            target->returnType.kind != lang::SemanticType::Reference ||
+            target->returnType.arguments !=
+                std::vector<lang::SemanticType>{lang::SemanticType::Int32} ||
+            call.borrowOrigin != lang::BorrowOriginKind::Receiver ||
+            !call.borrowFields.empty())
+          continue;
+        const auto *loan = function.body.findLoan(*call.loan);
+        const auto *dependency =
+            loan ? function.body.findLoan(loan->storedDependency) : nullptr;
+        const auto *source =
+            loan ? function.body.findPlace(loan->source) : nullptr;
+        expect(loan && dependency && source,
+               "owned field retains physical and external authorities");
+        if (!loan || !dependency || !source)
+          continue;
+        checked = true;
+        auto erased = *control;
+        body(erased, key).loans[loan->id - 1].storedDependency = 0;
+        rejected(erased,
+                 "owned field reference cannot erase its stored dependency");
+
+        auto flattened = *control;
+        body(flattened, key).loans[loan->id - 1].source = dependency->source;
+        rejected(
+            flattened,
+            "owned field reference cannot substitute the external resource");
+
+        bool changedOwner = false;
+        for (const auto &place : function.body.places) {
+          if (place.root != lang::MirPlaceRootKind::Binding ||
+              place.type != source->type || !place.projections.empty() ||
+              place.binding == source->binding)
+            continue;
+          for (const auto &other : function.body.loans) {
+            if (other.kind != lang::MirLoanKind::Stored ||
+                std::find(other.carriers.begin(), other.carriers.end(),
+                          place.binding) == other.carriers.end())
+              continue;
+            auto forged = *control;
+            auto &changed = body(forged, key).loans[loan->id - 1];
+            changed.source = place.id;
+            changed.storedDependency = other.id;
+            rejected(
+                forged,
+                "owned field reference cannot forge a coherent sibling owner");
+            changedOwner = true;
+            break;
+          }
+          if (changedOwner)
+            break;
+        }
+        expect(changedOwner,
+               "owned field fixture has an independently bound sibling");
+        const auto end = loanEnd(function.body, dependency->id);
+        expect(end.has_value(), "owned field resource has a checked endpoint");
+        if (end) {
+          auto early = *control;
+          expect(moveBefore(body(early, key), *end, call.id),
+                 "owned field ancestor endpoint mutation is applied");
+          rejected(
+              early,
+              "owned field dependency cannot end before reference extraction");
+        }
+      }
+    }
+  }
+  expect(checked,
+         "owned field fixture exercises a scalar receiver-storage result");
+}
+
+void checkNestedViewCopy() {
+  const auto control = analyze("nested view copy", R"gti(
+class View {
+  Resource& owner;
+public:
+  View(Resource& owner) : owner(owner) {}
+  Resource& get() { return this.owner; }
+};
+class Wrapper {
+  View view;
+  mut int count;
+public:
+  Wrapper(Resource& owner) : view(View(owner)), count(0) {}
+  View binding() { return this.view; }
+  void touch() mut { this.count++; }
+  int inspect() mut { auto copy = this.binding(); this.touch(); return copy.get().value; }
+};
+int main() { Resource owner{}; mut Wrapper wrapper{owner}; return wrapper.inspect() - 7; }
+)gti");
+  if (!control)
+    return;
+  bool checked = false;
+  for (const auto &function : control->functionInstances()) {
+    if (function.returnType.kind != lang::SemanticType::Class ||
+        function.returnBorrowFields.size() != 1 ||
+        function.returnBorrowFields.front().sourceFields.size() != 2 ||
+        function.returnBorrowFields.front().resultFields.size() != 1)
+      continue;
+    const BodyKey key{lang::MirBodyKind::Function, function.id};
+    for (const auto &block : function.body.blocks) {
+      if (block.terminator.kind != lang::MirTerminatorKind::Return ||
+          !block.terminator.returnLoan)
+        continue;
+      checked = true;
+      const auto returned = *block.terminator.returnLoan;
+      auto wrongPath = *control;
+      body(wrongPath, key).loans[returned - 1].designatedFields =
+          function.returnBorrowFields.front().sourceFields;
+      rejected(wrongPath,
+               "nested returned copy must use result-relative field paths");
+
+      auto wrongMap = *control;
+      auto &changed = *const_cast<lang::MirFunctionInstance *>(
+          wrongMap.findFunctionInstance(function.id));
+      changed.returnBorrowFields.front().sourceFields =
+          changed.returnBorrowFields.front().resultFields;
+      // Keep caller and callee metadata consistent: executable Load evidence
+      // must still reject the fabricated source path independently.
+      for (const auto &caller : wrongMap.functionInstances())
+        for (auto &callerBlock :
+             const_cast<lang::MirFunctionInstance &>(caller).body.blocks)
+          for (auto &call : callerBlock.instructions)
+            if (call.functionTarget == function.id)
+              call.borrowFields = changed.returnBorrowFields;
+      rejected(wrongMap, "nested source origin is independently proved from "
+                         "the returned copy");
+
+      for (const auto &transferBlock : function.body.blocks)
+        for (const auto &transfer : transferBlock.instructions) {
+          if (transfer.kind != lang::MirInstructionKind::Borrow ||
+              transfer.loan != returned)
+            continue;
+          auto erased = *control;
+          instruction(body(erased, key), transfer.id)->operands.front().value =
+              0;
+          rejected(erased,
+                   "nested copy cannot erase its runtime value evidence");
+          const auto *producer =
+              definition(function.body, transfer.operands.front().value);
+          expect(producer && producer->kind == lang::MirInstructionKind::Load,
+                 "nested copy has a concrete load producer");
+          if (producer) {
+            auto forged = *control;
+            auto &place =
+                body(forged, key).places[producer->operands.front().place - 1];
+            place.projections.clear();
+            rejected(forged,
+                     "nested copy cannot claim an unprojected source shell");
+          }
+        }
+    }
+  }
+  expect(checked,
+         "nested view fixture exercises exact member-copy publication");
+}
+
+void checkMappedAliasParent() {
+  const auto control = analyze("mapped alias parent", R"gti(
+class Projection {
+  Resource& resource;
+public:
+  Projection(Resource& resource) : resource(resource) {}
+  int& get() { return this.resource.value; }
+};
+int main() {
+  Resource first{}; Resource second{};
+  Projection left{first}; Projection right{second};
+  Projection& left_alias = left;
+  Projection& right_alias = right;
+  int& a = left_alias.get();
+  int& b = right_alias.get();
+  return a + b - 14;
+}
+)gti");
+  if (!control)
+    return;
+  bool checked = false;
+  for (const auto &function : control->functionInstances()) {
+    const BodyKey key{lang::MirBodyKind::Function, function.id};
+    for (const auto &block : function.body.blocks)
+      for (const auto &call : block.instructions) {
+        const auto *child =
+            call.loan ? function.body.findLoan(*call.loan) : nullptr;
+        if (call.kind != lang::MirInstructionKind::Call ||
+            call.borrowFields.size() != 1 || child == nullptr ||
+            child->kind != lang::MirLoanKind::CallResult || child->parent == 0)
+          continue;
+        const auto *parent = function.body.findLoan(child->parent);
+        const auto alias =
+            std::find_if(function.body.loans.begin(), function.body.loans.end(),
+                         [&](const auto &loan) {
+                           return loan.storedDependency == child->parent;
+                         });
+        const auto other =
+            std::find_if(function.body.loans.begin(), function.body.loans.end(),
+                         [&](const auto &loan) {
+                           return parent != nullptr &&
+                                  loan.kind == lang::MirLoanKind::Stored &&
+                                  loan.id != parent->id &&
+                                  loan.source != parent->source &&
+                                  loan.access == parent->access &&
+                                  !loan.entry && !loan.escapes;
+                         });
+        if (parent == nullptr || alias == function.body.loans.end() ||
+            other == function.body.loans.end())
+          continue;
+        checked = true;
+        auto wrongParent = *control;
+        body(wrongParent, key).loans[child->id - 1].parent = other->id;
+        rejected(wrongParent,
+                 "mapped alias cannot substitute another owner's parent");
+
+        auto wrongDependency = *control;
+        body(wrongDependency, key).loans[alias->id - 1].storedDependency =
+            other->id;
+        rejected(wrongDependency,
+                 "mapped alias must retain its exact input dependency");
+
+        auto missingMap = *control;
+        instruction(body(missingMap, key), call.id)->borrowFields.clear();
+        expect(!lang::verifyMirBody(body(missingMap, key)).valid(),
+               "body verifier requires a field map before bypassing alias "
+               "shell parent");
+        rejected(missingMap,
+                 "mapped alias cannot erase its external field contract");
+
+        auto wrongField = *control;
+        instruction(body(wrongField, key), call.id)
+            ->borrowFields.front()
+            .sourceFields.pop_back();
+        rejected(wrongField,
+                 "mapped alias cannot discard its exact projected field");
+
+        auto wrongAccess = *control;
+        instruction(body(wrongAccess, key), call.id)
+            ->borrowFields.front()
+            .access = lang::AccessMode::Mutable;
+        rejected(wrongAccess,
+                 "mapped alias cannot upgrade shared field access");
+
+        if (const auto end = loanEnd(function.body, parent->id)) {
+          auto early = *control;
+          expect(moveBefore(body(early, key), *end, call.id),
+                 "mapped alias early parent retirement mutation applies");
+          rejected(
+              early,
+              "mapped alias requires an active selected stored dependency");
+        }
+        break;
+      }
+    if (checked)
+      break;
+  }
+  expect(checked,
+         "mapped alias fixture exercises two distinct same-typed owners");
+}
+
+void checkPassiveCleanupParent() {
+  const auto control = analyze("passive cleanup parent", R"gti(
+struct View {
+  Resource& resource;
+  View(Resource& resource) : resource(resource) {}
+};
+class Holder {
+  View view;
+public:
+  Holder(View view, int divisor) : view(view) { int checked = 1 / divisor; }
+  ~Holder() { observed += 1; }
+};
+int main() {
+  Resource first{}; Resource second{};
+  View left{first}; View right{second};
+  Holder held{left, 1};
+  return right.resource.value - 7;
+}
+)gti");
+  if (!control)
+    return;
+  bool checked = false;
+  for (const auto &function : control->functionInstances()) {
+    const BodyKey key{lang::MirBodyKind::Function, function.id};
+    for (const auto &child : function.body.loans) {
+      if (!child.lifecycleBound || child.kind != lang::MirLoanKind::Stored ||
+          child.parent == 0 || child.entry || child.escapes)
+        continue;
+      const auto *parent = function.body.findLoan(child.parent);
+      if (parent == nullptr || parent->kind != lang::MirLoanKind::Stored ||
+          parent->lifecycleBound ||
+          parent->access != lang::AccessMode::ReadOnly)
+        continue;
+      const auto other = std::find_if(
+          function.body.loans.begin(), function.body.loans.end(),
+          [&](const auto &loan) {
+            return loan.kind == lang::MirLoanKind::Stored &&
+                   loan.id != parent->id && loan.source != parent->source &&
+                   !loan.lifecycleBound && !loan.entry && !loan.escapes;
+          });
+      if (other == function.body.loans.end())
+        continue;
+      checked = true;
+      auto wrongParent = *control;
+      body(wrongParent, key).loans[child.id - 1].parent = other->id;
+      rejected(wrongParent,
+               "cleanup-bearing construction cannot substitute passive parent");
+      auto wrongAccess = *control;
+      body(wrongAccess, key).loans[child.id - 1].access =
+          lang::AccessMode::Mutable;
+      rejected(wrongAccess,
+               "cleanup-bearing child cannot upgrade passive shared parent");
+      for (const auto &block : function.body.blocks)
+        for (const auto &producer : block.instructions)
+          if (producer.loan == child.id &&
+              producer.kind == lang::MirInstructionKind::Construct)
+            if (const auto end = loanEnd(function.body, parent->id)) {
+              auto early = *control;
+              expect(moveBefore(body(early, key), *end, producer.id),
+                     "passive parent endpoint mutation applies");
+              rejected(early, "cleanup child cannot outlive an already retired "
+                              "passive parent");
+            }
+      break;
+    }
+    if (checked)
+      break;
+  }
+  expect(checked, "cleanup child has an independent local passive parent");
 }
 
 } // namespace
@@ -864,6 +1243,10 @@ int main() {
   checkMandatoryLocalRetention();
   checkTransitiveCleanupDependency();
   checkConstructedFieldPublication();
+  checkOwnedFieldReference();
+  checkNestedViewCopy();
+  checkMappedAliasParent();
+  checkPassiveCleanupParent();
   if (failures == 0)
     std::cout << mutations << " cleanup-bound proof mutations rejected\n";
   return failures == 0 ? 0 : 1;

@@ -1019,6 +1019,33 @@ initialization may copy that shell only when the copy binding also proves its
 exact entry-to-field `Stored` publication. The same proof admits the parameter's
 representation slot; it does not turn the by-value shell into the referent.
 
+A nested shared-view value return binds the actual `Load` operand's field
+prefix to the source entry dependency and publishes result-relative stored
+paths. The verifier checks the runtime load independently of the summary;
+changing only the summary, load prefix or result path cannot redirect a view.
+At a call on a nested member, lowering composes the receiver's exact field
+prefix with the callee's relative path before selecting a concrete stored
+dependency. Different same-typed referents therefore remain distinct.
+
+References to a carrier's owned scalar or owned allocation instead protect
+its physical shell as well as any external stored dependency. That dependency
+does not make an owned element survive moving, replacing or destroying its
+carrier. Conversely, copying an external shared view does not freeze ordinary
+disjoint shell fields. A cleanup-bound carrier may have received its dependency
+through an exact whole-value initialization or move chain; the shared verifier
+query proves that historical identity while the flow verifier still requires
+the currently active owner and valid loan state. This is not an exemption for
+use after movement or for ending a resource loan before cleanup.
+A newly constructed cleanup-bound owner can retain a copied passive view's
+shared dependency as a distinct child loan. Its cleanup obligation does not
+merge with that view's ordinary last-use endpoint. Mapped reference returns
+through carrier aliases select the exact active stored dependency as parent;
+the physical alias and the external referent are not interchangeable. Body
+verification checks the selected operand/dependency ancestry and access, while
+program verification independently substitutes its typed field path, including
+projections beneath the stored reference. Lowering preserves the typed path
+prefixes and publishes returned call-result loans before child-first retirement.
+
 The bounded mutable-carrier extension reuses this explicit loan vocabulary
 rather than adding backend-only lifetime inference. A mutable parameter or
 local origin owns one active loan. Constructing a direct mutable carrier emits

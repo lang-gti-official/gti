@@ -7654,6 +7654,7 @@ public:
       std::vector<bool> movedParameters;
       std::vector<CppMirConstructedFieldInitializerArgument>
           constructedArguments;
+      HirConstructorInstanceId statusConstructor = 0;
     };
     std::vector<InitializerBinding> initializers;
     initializers.reserve(baseBindings->size() + bindings->size() +
@@ -7681,7 +7682,10 @@ public:
                               .initializer = binding.initializer,
                               .field = binding.field,
                               .fieldType = binding.fieldType,
-                              .constructedArguments = binding.arguments});
+                              .constructedArguments = binding.arguments,
+                              .statusConstructor = binding.failureStatus
+                                                       ? binding.constructor
+                                                       : 0});
     }
     if (ownedBindings) {
       for (const CppMirOwnedParameterFieldBinding &binding : *ownedBindings) {
@@ -7814,9 +7818,16 @@ public:
         output << fieldName << '(';
         emitSemanticType(initializer.fieldType);
         output << '(';
+        if (initializer.statusConstructor != 0) {
+          if (!failureForm)
+            throw std::logic_error("raising native field requires status form");
+          output << cppMirFailureConstructorTagSpelling(
+                        initializer.statusConstructor)
+                 << "{}";
+        }
         for (std::size_t argument = 0;
              argument < initializer.constructedArguments.size(); ++argument) {
-          if (argument != 0) {
+          if (argument != 0 || initializer.statusConstructor != 0) {
             output << ", ";
           }
           const CppMirConstructedFieldInitializerArgument &source =
@@ -7837,6 +7848,8 @@ public:
             }
           }
         }
+        if (initializer.statusConstructor != 0)
+          output << ", __gti_mir_constructor_success, __gti_mir_failure_record";
         output << "))";
         continue;
       }

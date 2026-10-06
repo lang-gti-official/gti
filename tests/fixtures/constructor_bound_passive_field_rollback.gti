@@ -1,0 +1,25 @@
+#include <std/string>
+#include <std/vector>
+
+struct Resource { int value = 42; };
+struct View {
+  Resource& resource;
+  View(Resource& resource) : resource(resource) {}
+};
+class Holder {
+  View view;
+  int marker = 7;
+public:
+  Holder(View view, int divisor) : view(view) {
+    int checked = 1 / divisor;
+  }
+  int read() { return this.view.resource.value + this.marker; }
+  ~Holder() { std::println(20); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  Resource resource{};
+  View view{resource};
+  Holder holder{view, argc == 1 ? 1 : 0};
+  std::println(holder.read());
+  return 0;
+}

@@ -757,6 +757,13 @@ Local copies made inside a borrowed receiver/reference body currently require
 the same complete carrier type as that entry; a differently typed nested field
 copy still needs per-copy dependency-path representation. Direct supported
 field access and reference-returning accessors do not require that copy.
+A direct by-value accessor may return a nested copyable shared view using its
+exact field-origin contract. Calling that accessor creates an independent
+view retaining the external resource, rather than a reference to the enclosing
+object's shell. It does not grant mutable access to the resource. An accessor
+returning a reference to an owned field or owned storage still protects the
+enclosing owner; an external resource remaining alive cannot make an element
+reference survive destruction or movement of its own storage owner.
 
 Inherited borrowed state, arrays of borrowed carriers,
 global/static or captured borrowed storage, dependency-changing returns, and
