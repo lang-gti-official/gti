@@ -55,6 +55,55 @@ ArtifactWriteStatus writeArtifact(const std::filesystem::path &path,
                 : ArtifactWriteStatus::WriteFailure;
 }
 
+DiagnosticLogResult writeDiagnosticLog(std::string_view contents) {
+  std::error_code error;
+  const auto root = std::filesystem::temp_directory_path(error);
+  if (error) {
+    return {.error = error};
+  }
+  const auto directory =
+      root / ("gti-" + temporaryIdentity() + "-backend-diagnostics");
+  if (!std::filesystem::create_directory(directory, error)) {
+    return {.error =
+                error ? error : std::make_error_code(std::errc::file_exists)};
+  }
+  const auto path = directory / "backend.log";
+  const auto fail = [&](std::error_code cause) {
+    std::error_code ignored;
+    // Both leaves belong to this newly created directory; no recursive
+    // deletion or user-supplied output path is involved.
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove(directory, ignored);
+    return DiagnosticLogResult{.error = cause};
+  };
+#if !defined(_WIN32)
+  std::filesystem::permissions(directory, std::filesystem::perms::owner_all,
+                               std::filesystem::perm_options::replace, error);
+  if (error) {
+    return fail(error);
+  }
+#endif
+  std::ofstream output(path, std::ios::binary);
+  if (!output) {
+    return fail(std::make_error_code(std::errc::io_error));
+  }
+  output << contents;
+  output.close();
+  if (!output) {
+    return fail(std::make_error_code(std::errc::io_error));
+  }
+#if !defined(_WIN32)
+  std::filesystem::permissions(path,
+                               std::filesystem::perms::owner_read |
+                                   std::filesystem::perms::owner_write,
+                               std::filesystem::perm_options::replace, error);
+  if (error) {
+    return fail(error);
+  }
+#endif
+  return {.path = path};
+}
+
 bool artifactPathsAlias(const std::filesystem::path &left,
                         const std::filesystem::path &right) {
   std::error_code leftError;

@@ -4791,7 +4791,7 @@ validFailureInstructionShape(const MirInstruction &instruction) {
       instruction.kind != MirInstructionKind::CallInput &&
       instruction.kind != MirInstructionKind::Call &&
       instruction.kind != MirInstructionKind::AllocateObject &&
-      instruction.kind != MirInstructionKind::PrefixAppendPreflight &&
+      instruction.kind != MirInstructionKind::StorageConstructPreflight &&
       instruction.kind != MirInstructionKind::CleanupBeforeAssign &&
       instruction.kind != MirInstructionKind::Construct) {
     return false;
@@ -4847,14 +4847,17 @@ validFailureInstructionShape(const MirInstruction &instruction) {
             (instruction.kind == MirInstructionKind::Call &&
              ((instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
                instruction.objectAllocation != 0) ||
-              (instruction.intrinsic == IntrinsicKind::PrefixStorageAppend &&
+              ((instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+                instruction.intrinsic == IntrinsicKind::StorageConstruct) &&
                instruction.constructorKind == ConstructorKind::Ordinary &&
                !instruction.operands.empty() &&
                instruction.operands.size() ==
                    instruction.parameterTypes.size() &&
                instruction.parameterTypes.front().kind ==
-                   SemanticType::PrefixStorage &&
-               instruction.prefixPreflight != 0)))) &&
+                   (instruction.intrinsic == IntrinsicKind::StorageConstruct
+                        ? SemanticType::Storage
+                        : SemanticType::PrefixStorage) &&
+               instruction.storagePreflight != 0)))) &&
            instruction.constructorTarget.has_value();
   case FailurePropagationKind::Callable:
     return instruction.kind == MirInstructionKind::Call &&
@@ -5089,8 +5092,9 @@ bool mirBodyRoutesFailureEdges(const MirBody &body) {
   return true;
 }
 
-const MirInstruction *mirPrefixAppendForPreflight(const MirBody &body,
-                                                  MirInstructionId preflight) {
+const MirInstruction *
+mirStorageConstructForPreflight(const MirBody &body,
+                                MirInstructionId preflight) {
   if (preflight == 0)
     return nullptr;
   const MirBlock *source = nullptr;
@@ -5098,7 +5102,7 @@ const MirInstruction *mirPrefixAppendForPreflight(const MirBody &body,
     for (const auto &instruction : block.instructions)
       if (instruction.id == preflight) {
         if (source != nullptr ||
-            instruction.kind != MirInstructionKind::PrefixAppendPreflight ||
+            instruction.kind != MirInstructionKind::StorageConstructPreflight ||
             block.instructions.back().id != instruction.id ||
             block.terminator.kind != MirTerminatorKind::Invoke ||
             block.terminator.invokeInstruction != instruction.id ||
@@ -5112,13 +5116,18 @@ const MirInstruction *mirPrefixAppendForPreflight(const MirBody &body,
     return nullptr;
   const auto &check = source->instructions.back();
   const auto &append = success->instructions.front();
+  const std::size_t operandCount =
+      append.intrinsic == IntrinsicKind::StorageConstruct ? 2 : 1;
   if (append.kind != MirInstructionKind::Call ||
-      append.intrinsic != IntrinsicKind::PrefixStorageAppend ||
-      append.prefixPreflight != preflight || !append.constructorTarget ||
+      (append.intrinsic != IntrinsicKind::PrefixStorageAppend &&
+       append.intrinsic != IntrinsicKind::StorageConstruct) ||
+      append.storagePreflight != preflight || !append.constructorTarget ||
       append.constructorKind != ConstructorKind::Ordinary ||
       check.callSite != append.callSite || check.hirValue != append.hirValue ||
-      check.operands.size() != 1 || append.operands.empty() ||
-      check.operands.front() != append.operands.front())
+      check.operands.size() != operandCount ||
+      append.operands.size() < operandCount ||
+      !std::equal(check.operands.begin(), check.operands.end(),
+                  append.operands.begin()))
     return nullptr;
   std::size_t incoming = 0;
   for (const auto &block : body.blocks) {
@@ -5126,7 +5135,7 @@ const MirInstruction *mirPrefixAppendForPreflight(const MirBody &body,
       if (successor == success->id)
         ++incoming;
     for (const auto &instruction : block.instructions)
-      if (instruction.prefixPreflight == preflight &&
+      if (instruction.storagePreflight == preflight &&
           instruction.id != append.id)
         return nullptr;
   }
@@ -5135,7 +5144,7 @@ const MirInstruction *mirPrefixAppendForPreflight(const MirBody &body,
 
 bool requiresMirFailureControlFlow(const MirInstruction &instruction,
                                    MirFailureControlFlowPosition position) {
-  if (instruction.kind == MirInstructionKind::PrefixAppendPreflight)
+  if (instruction.kind == MirInstructionKind::StorageConstructPreflight)
     return true;
   if (instruction.kind == MirInstructionKind::CleanupBeforeAssign)
     return !instruction.definedFailure.empty();
@@ -7097,6 +7106,12 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       return false;
     }
     const SemanticType &resultType = result->info.type;
+    if (instruction.operation == MirOperation::Convert &&
+        (resultType.kind == SemanticType::RawPointer ||
+         (!instruction.operands.empty() &&
+          instruction.operands.front().type.kind == SemanticType::RawPointer)))
+      return resultType == instruction.info.type &&
+             mir_detail::rawPointerConversion(instruction);
     if (instruction.operation == MirOperation::AddressOf) {
       if (instruction.operands.size() != 1 ||
           instruction.operands.front().kind != MirOperandKind::Address ||
@@ -7290,9 +7305,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         (instruction.replacementPair != 0 &&
          instruction.kind != MirInstructionKind::CleanupBeforeAssign &&
          instruction.kind != MirInstructionKind::Assign) ||
-        (instruction.prefixPreflight != 0 &&
+        (instruction.storagePreflight != 0 &&
          (instruction.kind != MirInstructionKind::Call ||
-          instruction.intrinsic != IntrinsicKind::PrefixStorageAppend ||
+          (instruction.intrinsic != IntrinsicKind::PrefixStorageAppend &&
+           instruction.intrinsic != IntrinsicKind::StorageConstruct) ||
           !instruction.constructorTarget ||
           instruction.constructorKind != ConstructorKind::Ordinary)) ||
         (instruction.constructorInitializer != 0 &&
@@ -7331,7 +7347,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         (instruction.kind != MirInstructionKind::CallInput &&
          instruction.kind != MirInstructionKind::Call &&
          instruction.kind != MirInstructionKind::Construct &&
-         instruction.kind != MirInstructionKind::PrefixAppendPreflight &&
+         instruction.kind != MirInstructionKind::StorageConstructPreflight &&
          instruction.callSite != 0) ||
         ((instruction.kind == MirInstructionKind::Call ||
           instruction.kind == MirInstructionKind::Construct) &&
@@ -8269,7 +8285,25 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              !instruction.functionTarget && !instruction.constructorTarget &&
              instruction.bodyTarget.has_value() && !instruction.lambdaTarget &&
              instruction.info.type == SemanticType::Void;
-    case MirInstructionKind::PrefixAppendPreflight:
+    case MirInstructionKind::StorageConstructPreflight: {
+      const bool sparse =
+          instruction.operands.size() == 2 &&
+          instruction.operands.front().type.kind == SemanticType::Storage &&
+          instruction.operands[1].kind == MirOperandKind::Value &&
+          instruction.operands[1].type == SemanticType::UInt64;
+      const std::vector<DefinedFailureOutcome> outcomes =
+          sparse
+              ? std::vector<DefinedFailureOutcome>{{DefinedFailureCode::
+                                                        IndexOutOfBounds,
+                                                    DefinedFailureDetail::
+                                                        PrivateStorage},
+                                                   {DefinedFailureCode::
+                                                        InvalidStorageState,
+                                                    DefinedFailureDetail::
+                                                        DuplicateConstruction}}
+              : std::vector<DefinedFailureOutcome>{
+                    {DefinedFailureCode::InvalidStorageState,
+                     DefinedFailureDetail::RelocationCapacity}};
       return noOperation && !hasResult && !instruction.destination &&
              !instruction.receiver && !instruction.loan &&
              !instruction.functionTarget && !instruction.constructorTarget &&
@@ -8281,17 +8315,16 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              instruction.unsafeOperation == UnsafeOperationKind::None &&
              instruction.callSite != 0 &&
              instruction.callSite == instruction.hirValue &&
-             instruction.operands.size() == 1 &&
+             (sparse || (instruction.operands.size() == 1 &&
+                         instruction.operands.front().type.kind ==
+                             SemanticType::PrefixStorage)) &&
              instruction.operands.front().kind == MirOperandKind::Value &&
-             instruction.operands.front().type.kind ==
-                 SemanticType::PrefixStorage &&
              instruction.definedFailure.propagation ==
                  FailurePropagationKind::None &&
              instruction.definedFailure.localOrigins.size() == 1 &&
              instruction.definedFailure.localOrigins.front().outcomes ==
-                 std::vector<DefinedFailureOutcome>{
-                     {DefinedFailureCode::InvalidStorageState,
-                      DefinedFailureDetail::RelocationCapacity}};
+                 outcomes;
+    }
     case MirInstructionKind::AllocateObject: {
       const MirDropObligation *allocation =
           body.findDropObligation(instruction.objectAllocation);
@@ -11161,17 +11194,17 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   std::unordered_map<HirValueId, std::size_t> orderedInvocationCounts;
   for (const auto &block : body.blocks) {
     for (const auto &instruction : block.instructions) {
-      if (instruction.kind != MirInstructionKind::PrefixAppendPreflight &&
-          instruction.prefixPreflight == 0)
+      if (instruction.kind != MirInstructionKind::StorageConstructPreflight &&
+          instruction.storagePreflight == 0)
         continue;
       const auto id =
-          instruction.kind == MirInstructionKind::PrefixAppendPreflight
+          instruction.kind == MirInstructionKind::StorageConstructPreflight
               ? instruction.id
-              : instruction.prefixPreflight;
-      const auto *append = mirPrefixAppendForPreflight(body, id);
+              : instruction.storagePreflight;
+      const auto *append = mirStorageConstructForPreflight(body, id);
       const auto check = instructionsById.find(id);
       if (append == nullptr || check == instructionsById.end() ||
-          (instruction.prefixPreflight != 0 && append != &instruction))
+          (instruction.storagePreflight != 0 && append != &instruction))
         return failure(
             body, owner,
             "prefix construction has no exact preflight success pair", block.id,
@@ -11220,19 +11253,26 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         ++preparedParameterCounts[*instruction.preparedParameterDrop - 1];
       }
       std::vector<MirValueUse> uses = body.usesOf(*instruction.result);
-      // The sole extra use is an exact non-consuming check of argument zero.
+      // Storage and (for sparse storage) its index have one non-consuming
+      // preflight use in addition to the exact constructor invocation.
       // The pair and all staged inputs were independently validated above.
       if (instruction.callInputRole == MirCallInputRole::Argument &&
-          instruction.callInputIndex == 0 &&
-          instruction.callInputKind == HirCallInputKind::MutableBorrow) {
+          ((instruction.callInputIndex == 0 &&
+            instruction.callInputKind == HirCallInputKind::MutableBorrow) ||
+           (instruction.callInputIndex == 1 &&
+            instruction.callInputKind == HirCallInputKind::Value &&
+            instruction.info.type == SemanticType::UInt64))) {
         std::erase_if(uses, [&](const MirValueUse &use) {
           const auto *append =
-              mirPrefixAppendForPreflight(body, use.instruction);
+              mirStorageConstructForPreflight(body, use.instruction);
           return append != nullptr &&
                  append->callSite == instruction.callSite &&
                  use.kind == MirValueUseKind::InstructionOperand &&
-                 use.operandIndex == 0 &&
-                 append->operands.front().value == *instruction.result;
+                 use.operandIndex == instruction.callInputIndex &&
+                 (use.operandIndex == 0 ||
+                  append->intrinsic == IntrinsicKind::StorageConstruct) &&
+                 append->operands[use.operandIndex].value ==
+                     *instruction.result;
         });
       }
       if (uses.empty() && mirCallInputAbandonedByTerminal(body, instruction)) {
@@ -11579,8 +11619,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         }
       }
       for (const MirLifecycleEvent &event : invocation.lifecycle) {
-        if (invocation.intrinsic == IntrinsicKind::PrefixStorageAppend &&
-            invocation.prefixPreflight != 0 &&
+        if ((invocation.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+             invocation.intrinsic == IntrinsicKind::StorageConstruct) &&
+            invocation.storagePreflight != 0 &&
             (event.kind != MirLifecycleEventKind::TransferOut ||
              !preparedDrops.contains(event.source))) {
           return failure(body, owner,

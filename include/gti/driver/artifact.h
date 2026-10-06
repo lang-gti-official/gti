@@ -18,6 +18,18 @@ enum class ArtifactWriteStatus {
 [[nodiscard]] ArtifactWriteStatus
 writeArtifact(const std::filesystem::path &path, std::string_view contents);
 
+struct DiagnosticLogResult {
+  std::filesystem::path path;
+  std::error_code error;
+
+  [[nodiscard]] bool succeeded() const { return !path.empty() && !error; }
+};
+
+// Retains failure evidence in a fresh private temporary directory, outside
+// build outputs and caches. Never overwrites an existing path. A failed write
+// does not claim a saved log; callers retain the original failure status/text.
+[[nodiscard]] DiagnosticLogResult writeDiagnosticLog(std::string_view contents);
+
 // True when two path spellings select the same normalized destination or when
 // both existing paths identify the same filesystem object. A missing path is
 // permitted and conflicts only through its normalized spelling.

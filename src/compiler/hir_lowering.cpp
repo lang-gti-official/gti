@@ -4706,6 +4706,45 @@ private:
       value.info = *info;
       (void)enqueueClass(info->type);
     }
+    if (const auto *assertion = model.findRawReferenceAssertion(*raw)) {
+      const auto *dereference = exprAs<Unary>(raw);
+      if (!dereference || value.operands.size() != 1 ||
+          assertion->ownerReference.kind != SemanticType::Reference ||
+          assertion->ownerReference.arguments.size() != 1) {
+        lifecycleValid = false;
+      } else {
+        const auto access = assertion->ownerReference.referenceAccess;
+        HirValueId witness = 0;
+        if (assertion->owner.receiver) {
+          witness = lowerImplicitReceiver(body);
+        } else {
+          witness = nextValueId++;
+          const auto &owner = assertion->ownerReference.arguments.front();
+          body.values.push_back(
+              {.id = witness,
+               .kind = HirValueKind::Variable,
+               .info = {.type = owner,
+                        .category = ValueCategory::Place,
+                        .access = access,
+                        .traits = instanceProvider->traitsFor(owner)},
+               .symbol = assertion->owner.root,
+               .place = qualifyPlace(assertion->owner, body.placeDomain)});
+        }
+        value.kind = kind = HirValueKind::Call;
+        value.operation.reset();
+        value.place.reset();
+        value.intrinsic = access == AccessMode::Mutable
+                              ? IntrinsicKind::RawBorrowMut
+                              : IntrinsicKind::RawBorrow;
+        value.parameterTypes = {model.typeOf(*dereference->right()),
+                                assertion->ownerReference};
+        value.operands.push_back(witness);
+        value.borrowOrigin = BorrowOriginKind::Argument;
+        value.borrowArgument = 1;
+        value.borrowAccess = access;
+        value.info.access = access;
+      }
+    }
     if (value.kind == HirValueKind::Grouping && value.operands.size() == 1) {
       if (const auto *inner = body.findValue(value.operands.front())) {
         value.retainedReceiverProjection = inner->retainedReceiverProjection;
@@ -4760,7 +4799,7 @@ private:
     const bool loweredAssignmentCall =
         value.kind == HirValueKind::Call && resolvedValueOperator != nullptr &&
         isAssignmentOperator(resolvedValueOperator->kind);
-    if (!loweredAssignmentCall) {
+    if (!loweredAssignmentCall && !model.findRawReferenceAssertion(*raw)) {
       if (const PlaceKey *place = model.findPlace(*raw)) {
         value.place = qualifyPlace(*place, body.placeDomain);
       }
@@ -5300,7 +5339,8 @@ private:
         }
       }
     }
-    if (value.intrinsic == IntrinsicKind::PrefixStorageAppend &&
+    if ((value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+         value.intrinsic == IntrinsicKind::StorageConstruct) &&
         ((value.constructorTarget &&
           value.constructorKind == ConstructorKind::Ordinary) ||
          (!value.constructorTarget &&

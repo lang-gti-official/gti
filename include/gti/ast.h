@@ -424,6 +424,11 @@ struct NativeCArrayAttribute {
   Token countParameter;
 };
 
+struct FunctionAttribute {
+  Token name;
+  std::optional<Token> argument;
+};
+
 struct NativeLinkNameAttribute {
   Token attribute;
   Token symbol;
@@ -2118,7 +2123,7 @@ public:
       std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
       std::optional<Token> unsafeKeyword = std::nullopt,
-      std::vector<Token> functionAttributes = {})
+      std::vector<FunctionAttribute> functionAttributes = {})
       : returnType_(std::move(returnType)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)), body_(std::move(body)),
@@ -2202,16 +2207,21 @@ public:
   [[nodiscard]] const std::optional<Token> &unsafeKeyword() const {
     return unsafeKeyword_;
   }
-  [[nodiscard]] const std::vector<Token> &functionAttributes() const {
+  [[nodiscard]] const std::vector<FunctionAttribute> &
+  functionAttributes() const {
     return functionAttributes_;
   }
-  [[nodiscard]] bool hasFunctionAttribute(std::string_view name) const {
-    for (const Token &attribute : functionAttributes_) {
-      if (attribute.lexeme == name) {
-        return true;
+  [[nodiscard]] const FunctionAttribute *
+  findFunctionAttribute(std::string_view name) const {
+    for (const FunctionAttribute &attribute : functionAttributes_) {
+      if (attribute.name.lexeme == name) {
+        return &attribute;
       }
     }
-    return false;
+    return nullptr;
+  }
+  [[nodiscard]] bool hasFunctionAttribute(std::string_view name) const {
+    return findFunctionAttribute(name) != nullptr;
   }
 
 private:
@@ -2234,7 +2244,7 @@ private:
   std::optional<NativeCArrayAttribute> nativeCArray_;
   std::optional<NativeLinkNameAttribute> nativeLinkName_;
   std::optional<Token> unsafeKeyword_;
-  std::vector<Token> functionAttributes_;
+  std::vector<FunctionAttribute> functionAttributes_;
 };
 
 class IfStmt final : public StmtOfKind<StmtKind::IfStmt> {

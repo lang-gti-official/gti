@@ -2492,16 +2492,21 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
         }
       }
       const MirConstructorInstance *constructorTarget = nullptr;
+      const bool sparseConstruction =
+          instruction.intrinsic == IntrinsicKind::StorageConstruct;
+      const std::size_t storageArgumentCount = sparseConstruction ? 2 : 1;
       if (instruction.kind == MirInstructionKind::Call &&
-          instruction.intrinsic == IntrinsicKind::PrefixStorageAppend &&
-          !instruction.parameterTypes.empty() &&
+          (instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+           sparseConstruction) &&
+          instruction.parameterTypes.size() >= storageArgumentCount &&
           instruction.operands.size() == instruction.parameterTypes.size() &&
-          (instruction.prefixPreflight != 0 ||
-           std::all_of(instruction.parameterTypes.begin() + 1,
-                       instruction.parameterTypes.end(),
-                       isPassiveScalarValueType)) &&
+          (instruction.storagePreflight != 0 ||
+           std::all_of(
+               instruction.parameterTypes.begin() + storageArgumentCount,
+               instruction.parameterTypes.end(), isPassiveScalarValueType)) &&
           instruction.parameterTypes.front().kind ==
-              SemanticType::PrefixStorage &&
+              (sparseConstruction ? SemanticType::Storage
+                                  : SemanticType::PrefixStorage) &&
           instruction.parameterTypes.front().arguments.size() == 1 &&
           !instruction.constructorTarget) {
         const auto &element =
@@ -2512,7 +2517,7 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
               return candidate.type == element;
             });
         if (elementOwner != program.classInstances().end() &&
-            (instruction.parameterTypes.size() != 1 ||
+            (instruction.parameterTypes.size() != storageArgumentCount ||
              elementOwner->defaultConstructor ==
                  SpecialMemberStatus::Declared)) {
           return verificationFailure(body, owner,
@@ -2611,18 +2616,20 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                 ? FailurePropagationKind::Constructor
                 : FailurePropagationKind::None;
         if (instruction.kind == MirInstructionKind::Call &&
-            instruction.intrinsic == IntrinsicKind::PrefixStorageAppend &&
+            (instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+             sparseConstruction) &&
             !instruction.parameterTypes.empty() &&
             instruction.constructorKind == ConstructorKind::Ordinary &&
             (instruction.operands.size() != instruction.parameterTypes.size() ||
-             constructorTarget->parameterTypes.size() + 1 !=
+             constructorTarget->parameterTypes.size() + storageArgumentCount !=
                  instruction.parameterTypes.size() ||
              !std::equal(constructorTarget->parameterTypes.begin(),
                          constructorTarget->parameterTypes.end(),
-                         instruction.parameterTypes.begin() + 1) ||
-             instruction.prefixPreflight == 0 ||
-             mirPrefixAppendForPreflight(body, instruction.prefixPreflight) !=
-                 &instruction ||
+                         instruction.parameterTypes.begin() +
+                             storageArgumentCount) ||
+             instruction.storagePreflight == 0 ||
+             mirStorageConstructForPreflight(
+                 body, instruction.storagePreflight) != &instruction ||
              instruction.definedFailure.propagation != expectedPropagation)) {
           return verificationFailure(
               body, owner,
@@ -9291,6 +9298,16 @@ verifyMirProgramContracts(const MirProgram &program) {
                  .message = "enum extraction does not preserve the exact "
                             "integral-enum underlying type"});
           }
+        }
+        if ((instruction.intrinsic == IntrinsicKind::RawBorrow ||
+             instruction.intrinsic == IntrinsicKind::RawBorrowMut) &&
+            mir_detail::rawBorrowResultLoan(body, instruction) == nullptr) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .instruction = instruction.id,
+               .message = "raw borrow loses its typed address, explicit owner "
+                          "witness, access or loan identity"});
         }
         const auto cThreadSync = cThreadSynchronization(program, instruction);
         const bool nativeThreadClaim =

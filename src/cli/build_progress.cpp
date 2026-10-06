@@ -134,13 +134,15 @@ std::string BuildProgress::phaseDetail(bool perUnit) const {
   case ProgressPhase::Optimizing:
     return "program (-O" + std::to_string(optimization_) + ")";
   case ProgressPhase::Emitting:
-    return (detail_ == "cpp" ? "C++" : detail_) + std::string(" backend");
+    return detail_ == "mir"             ? "MIR"
+           : detail_ == "native-header" ? "native interface"
+                                        : "backend representation";
   case ProgressPhase::Cache:
     return detail_;
   case ProgressPhase::NativeSource:
     return "compiling " + detail_;
   case ProgressPhase::NativeLink:
-    return "compiling and linking (" + detail_ + ")";
+    return "compiling and linking";
   case ProgressPhase::Symbols:
     return "collecting debug information";
   case ProgressPhase::Publishing:

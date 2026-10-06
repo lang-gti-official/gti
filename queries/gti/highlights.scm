@@ -40,6 +40,8 @@
   attribute: (identifier) @attribute)
 (function_declaration "unsafe" @keyword)
 (function_contract_attribute ["noreturn" "track_caller"] @attribute)
+(borrow_origin_attribute "borrowed_from" @attribute)
+(borrow_origin_attribute origin: (identifier) @variable.parameter)
 (native_c_array_attribute
   attribute: (identifier) @attribute
   count: (identifier) @variable.parameter)

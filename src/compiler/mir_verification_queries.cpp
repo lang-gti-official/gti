@@ -5,6 +5,35 @@
 
 namespace lang::mir_detail {
 
+bool rawPointerConversion(const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Compute ||
+      instruction.operation != MirOperation::Convert ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly ||
+      instruction.operands.size() != 1 || !instruction.result ||
+      instruction.operands.front().kind != MirOperandKind::Value ||
+      instruction.intrinsic != IntrinsicKind::None || instruction.loan ||
+      instruction.rawMemoryAccess ||
+      instruction.unsafeOperation != UnsafeOperationKind::None ||
+      instruction.borrowOrigin != BorrowOriginKind::None ||
+      !instruction.lifecycle.empty() || instruction.ownership ||
+      !instruction.definedFailure.empty() ||
+      !instruction.localFailureSites.empty())
+    return false;
+  const auto &source = instruction.operands.front().type;
+  const auto &target = instruction.info.type;
+  return source.kind == SemanticType::RawPointer &&
+         target.kind == SemanticType::RawPointer &&
+         source.arguments.size() == 1 && target.arguments.size() == 1 &&
+         source.arguments.front().kind != SemanticType::RawPointer &&
+         target.arguments.front().kind != SemanticType::RawPointer &&
+         (source.pointerAccess == AccessMode::Mutable ||
+          target.pointerAccess == AccessMode::ReadOnly) &&
+         (source.arguments.front() == target.arguments.front() ||
+          source.arguments.front() == SemanticType::Void ||
+          target.arguments.front() == SemanticType::Void);
+}
+
 namespace {
 
 [[nodiscard]] std::optional<std::uint64_t>
@@ -246,6 +275,59 @@ std::optional<MirPlaceId> borrowSourceForValue(const MirBody &body,
                                   depth + 1);
   }
   return std::nullopt;
+}
+
+const MirLoan *rawBorrowResultLoan(const MirBody &body,
+                                   const MirInstruction &instruction) {
+  const bool mutableBorrow =
+      instruction.intrinsic == IntrinsicKind::RawBorrowMut;
+  if ((!mutableBorrow && instruction.intrinsic != IntrinsicKind::RawBorrow) ||
+      instruction.kind != MirInstructionKind::Call || !instruction.result ||
+      instruction.functionTarget || instruction.receiver ||
+      instruction.destination || instruction.operands.size() != 2 ||
+      instruction.parameterTypes.size() != 2 ||
+      instruction.unsafeOperation != UnsafeOperationKind::RawDereference ||
+      !instruction.definedFailure.empty() ||
+      !instruction.localFailureSites.empty() ||
+      !instruction.lifecycle.empty() || !instruction.loan ||
+      instruction.borrowOrigin != BorrowOriginKind::Argument ||
+      instruction.borrowArgument != 1 || !instruction.borrowArguments.empty() ||
+      !instruction.borrowFields.empty() || instruction.borrowPlace)
+    return nullptr;
+  const auto access =
+      mutableBorrow ? AccessMode::Mutable : AccessMode::ReadOnly;
+  const auto &pointer = instruction.operands[0];
+  const auto &witness = instruction.operands[1];
+  const auto *address = pointer.kind == MirOperandKind::Value
+                            ? body.findValue(pointer.value)
+                            : nullptr;
+  const auto source = borrowSourceForOperand(body, witness);
+  const auto *loan = body.findLoan(*instruction.loan);
+  const auto *parent = witness.kind == MirOperandKind::Loan
+                           ? body.findLoan(witness.loan)
+                           : nullptr;
+  if (!address || address->info.type != pointer.type ||
+      pointer.type.kind != SemanticType::RawPointer ||
+      pointer.type.arguments.size() != 1 ||
+      pointer.type.arguments.front() == SemanticType::Void ||
+      (mutableBorrow && pointer.type.pointerAccess != AccessMode::Mutable) ||
+      instruction.parameterTypes[0] != pointer.type ||
+      instruction.parameterTypes[1].kind != SemanticType::Reference ||
+      instruction.parameterTypes[1].arguments.size() != 1 ||
+      instruction.parameterTypes[1].referenceAccess != access ||
+      witness.type != instruction.parameterTypes[1] ||
+      instruction.info.type != pointer.type.arguments.front() ||
+      instruction.info.category != ValueCategory::Place ||
+      instruction.info.access != access || instruction.borrowAccess != access ||
+      !source || !loan || loan->kind != MirLoanKind::CallResult ||
+      loan->source != *source || loan->access != access ||
+      loan->producedBy != instruction.hirValue || loan->entry ||
+      loan->escapes || loan->lifecycleBound ||
+      (witness.kind == MirOperandKind::Loan &&
+       (!parent || loan->parent != witness.loan ||
+        (mutableBorrow && parent->access != AccessMode::Mutable))))
+    return nullptr;
+  return loan;
 }
 
 } // namespace lang::mir_detail

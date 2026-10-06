@@ -59,6 +59,10 @@ def main():
                     # arguments; separate translation units hide this collision.
                     assert "unique_ptr<char8_t>" in generated
                     assert "unique_ptr<std::uint8_t>" in generated
+                    # A source raw pointer remains a semantic scalar while its
+                    # native representation is an inert address carrier class.
+                    assert "raw_address<std::int32_t>" in generated
+                    assert "std::is_scalar_v<T> || is_raw_address_v<T>" in generated
                 assert (result.returncode, result.stdout, result.stderr) == expected, (
                     name, mode, result, expected)
                 print(f"{name}: {mode} passed", flush=True)

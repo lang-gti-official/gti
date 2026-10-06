@@ -237,7 +237,7 @@ constexpr int exitCode(ExitStatus status) { return static_cast<int>(status); }
 
 void printUsage(std::ostream &stream) {
   stream
-      << "Usage: gti <source.gti> [options] [-- <c++ compiler arguments>]\n"
+      << "Usage: gti <source.gti> [options] [-- <native compiler arguments>]\n"
          "       gti build [target] [options]\n"
          "       gti check [target] [--profile <name> | --release]\n"
          "       gti run [target] [options] [-- <program arguments>]\n"
@@ -263,18 +263,19 @@ void printUsage(std::ostream &stream) {
          "\n"
          "Direct compiler options:\n"
          "  -o, --output <path>  Set the executable or emitted artifact path.\n"
-         "      --emit-cpp       Emit C++ without building an executable.\n"
+         "      --emit-cpp       Emit the backend representation without "
+         "building an executable.\n"
          "      --emit-mir       Emit the deterministic verified-MIR "
          "serialization.\n"
          "      --emit-native-header\n"
          "                       Emit a C17 and C++20/C++23 compatible C ABI "
          "header.\n"
-         "      --keep-cpp       Keep the generated C++ beside the "
+         "      --keep-cpp       Keep the backend representation beside the "
          "executable.\n"
          "  -g, --debug-info     Emit GTI source line mappings and native "
          "debug symbols.\n"
          "      --no-debug-info  Disable source-level debug info.\n"
-         "      --cxx <path>     Select the native C++ compiler.\n"
+         "      --cxx <path>     Select the native compiler.\n"
          "      --std <version>  Select c++20 or c++23 (default: c++23).\n"
          "      --execution-profile <name>\n"
          "                       Select single-threaded (default) or "
@@ -316,7 +317,7 @@ void printUsage(std::ostream &stream) {
          "      --all            Build every declared target (gti build "
          "only).\n"
          "      --jobs <count>   Bound native build-script and --all jobs.\n"
-         "      --cxx <path>     Override the native C++ compiler.\n"
+         "      --cxx <path>     Override the native compiler.\n"
          "      --cc <path>      Override the native C compiler.\n"
          "      --std <version>  Override c++20 or c++23.\n"
          "      --execution-profile <name>\n"
@@ -332,9 +333,11 @@ void printUsage(std::ostream &stream) {
          "select the record to reproduce (gti verify).\n"
          "      --emit-mir       Emit the deterministic verified-MIR "
          "serialization instead of building.\n"
-         "      --keep-cpp       Retain generated C++ in the intermediate "
+         "      --keep-cpp       Retain the backend representation in the "
+         "intermediate "
          "directory.\n"
-         "      --no-keep-cpp    Remove generated C++ after a successful "
+         "      --no-keep-cpp    Remove the backend representation after a "
+         "successful "
          "build.\n"
          "  -g, --debug-info     Emit GTI source line mappings and native "
          "debug symbols.\n"
@@ -380,7 +383,7 @@ void printUsage(std::ostream &stream) {
          "  new                  Create a new executable package.\n"
          "  init                 Initialize an existing directory as a "
          "package; --git also creates a repository and .gitignore.\n"
-         "  check                Analyze a target without C++ emission or "
+         "  check                Analyze a target without backend emission or "
          "native compilation.\n"
          "  run                  Build and run a target, or use --no-build to "
          "launch its existing artifact; arguments after -- belong to the "
@@ -694,7 +697,8 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
     return ArgumentResult::ExitFailure;
   }
   if (options.debugInfo && (options.emitMir || options.emitNativeHeader)) {
-    std::cerr << "gti: debug info requires executable or C++ output\n";
+    std::cerr << "gti: debug info requires executable or backend "
+                 "representation output\n";
     return ArgumentResult::ExitFailure;
   }
   if ((options.emitCpp || options.emitNativeHeader || options.emitMir) &&
@@ -1744,8 +1748,27 @@ void reportCapturedOutput(std::string_view output, std::string_view heading) {
   }
 }
 
+void reportBackendDiagnosticLog(const lang::driver::DiagnosticLogResult &log) {
+  if (log.succeeded()) {
+    std::cerr << "gti: backend diagnostics saved at " << log.path.string()
+              << '\n';
+  } else {
+    std::cerr << "gti: failed to save backend diagnostics: "
+              << log.error.message() << '\n';
+  }
+}
+
+void reportSavedRepresentation(
+    const lang::driver::ExecutableBuildResult &result) {
+  if (result.generatedSourceRetained) {
+    std::cerr << "gti: backend 'c++' representation saved at "
+              << result.generatedSource.string() << '\n';
+  }
+}
+
 int reportCompilationFailure(
-    const lang::driver::CompilationResult &compilation) {
+    const lang::driver::CompilationResult &compilation, bool verbose,
+    const lang::driver::DiagnosticLogResult *savedLog = nullptr) {
   if (!compilation.succeeded()) {
     switch (compilation.status) {
     case lang::driver::CompilationStatus::FrontendFailure:
@@ -1761,6 +1784,18 @@ int reportCompilationFailure(
       break;
     case lang::driver::CompilationStatus::Success:
       break;
+    }
+  }
+  if (compilation.backendFailureDetails) {
+    const auto log = savedLog == nullptr
+                         ? lang::driver::writeDiagnosticLog(
+                               *compilation.backendFailureDetails)
+                         : *savedLog;
+    reportBackendDiagnosticLog(log);
+    // If preservation fails, never hide the only remaining developer evidence.
+    if (verbose || !log.succeeded()) {
+      reportCapturedOutput(*compilation.backendFailureDetails,
+                           "gti: backend diagnostics:\n");
     }
   }
   DiagnosticSummary summary = summarizeDiagnostics(compilation.diagnostics);
@@ -1825,11 +1860,10 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
       std::cerr << *compilation.process.driverDiagnostic << '\n';
     }
     if (verbose || !compilation.process.succeeded()) {
-      const std::string prefix =
-          compilation.process.succeeded()
-              ? std::string{}
-              : "gti: native C compiler diagnostics for '" +
-                    compilation.source.string() + "':\n";
+      const std::string prefix = compilation.process.succeeded()
+                                     ? std::string{}
+                                     : "gti: native source diagnostics for '" +
+                                           compilation.source.string() + "':\n";
       reportCapturedOutput(compilation.process.output, prefix);
     }
   }
@@ -1842,11 +1876,10 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
       std::cerr << *compilation.process.driverDiagnostic << '\n';
     }
     if (verbose || !compilation.process.succeeded()) {
-      const std::string prefix =
-          compilation.process.succeeded()
-              ? std::string{}
-              : "gti: native C++ compiler diagnostics for '" +
-                    compilation.source.string() + "':\n";
+      const std::string prefix = compilation.process.succeeded()
+                                     ? std::string{}
+                                     : "gti: native source diagnostics for '" +
+                                           compilation.source.string() + "':\n";
       reportCapturedOutput(compilation.process.output, prefix);
     }
   }
@@ -1856,25 +1889,29 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
   if (result.driverDiagnostic) {
     std::cerr << *result.driverDiagnostic << '\n';
   }
-  if (result.nativeProcess && (verbose || !result.nativeProcess->succeeded())) {
+  if (result.nativeProcess &&
+      (verbose || (result.backendDiagnosticLog &&
+                   !result.backendDiagnosticLog->succeeded()))) {
     reportCapturedOutput(result.nativeProcess->output,
                          result.nativeProcess->succeeded()
                              ? std::string_view{}
-                             : "gti: native C++ compiler diagnostics:\n");
+                             : "gti: backend diagnostics:\n");
   }
 
   switch (result.status) {
   case lang::driver::ExecutableBuildStatus::Success:
     return exitCode(ExitStatus::Success);
   case lang::driver::ExecutableBuildStatus::CompilationFailure:
-    return reportCompilationFailure(result.compilation);
+    return reportCompilationFailure(
+        result.compilation, verbose,
+        result.backendDiagnosticLog ? &*result.backendDiagnosticLog : nullptr);
   case lang::driver::ExecutableBuildStatus::OutputDirectoryFailure:
     return finishFailure(exitCode(ExitStatus::Io));
   case lang::driver::ExecutableBuildStatus::GeneratedArtifactFailure:
     std::cerr << (result.artifactWriteStatus ==
                           lang::driver::ArtifactWriteStatus::OpenFailure
-                      ? "gti: failed to open generated C++ file: "
-                      : "gti: failed to write generated C++ file: ")
+                      ? "gti: failed to open backend representation file: "
+                      : "gti: failed to write backend representation file: ")
               << result.generatedSource << '\n';
     return finishFailure(exitCode(ExitStatus::Io));
   case lang::driver::ExecutableBuildStatus::ToolchainConfigurationFailure:
@@ -1883,43 +1920,44 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
           << (*result.resourceError ==
                       lang::driver::ToolchainResourceError::RuntimeFilesMissing
                   ? "gti: native runtime files were not found\n"
-                  : "gti: C++20 expected compatibility header was not "
+                  : "gti: backend compatibility header was not "
                     "found\n");
     }
     return finishFailure(exitCode(ExitStatus::ToolchainConfiguration));
   case lang::driver::ExecutableBuildStatus::NativeCCompilerFailure: {
     const lang::driver::NativeCCompilationResult &compilation =
         result.cCompilations.back();
-    std::cerr << "gti: native C compiler failed for "
+    std::cerr << "gti: native source compiler failed for "
               << compilation.source.string() << " with exit code "
-              << compilation.process.exitCode << '\n'
-              << "gti: generated C++ retained at "
-              << result.generatedSource.string() << '\n';
+              << compilation.process.exitCode << '\n';
+    reportSavedRepresentation(result);
     return finishFailure(compilation.process.exitCode);
   }
   case lang::driver::ExecutableBuildStatus::NativeCppCompilerFailure: {
     const lang::driver::NativeCppCompilationResult &compilation =
         result.cppCompilations.back();
-    std::cerr << "gti: native C++ compiler failed for "
+    std::cerr << "gti: native source compiler failed for "
               << compilation.source.string() << " with exit code "
-              << compilation.process.exitCode << '\n'
-              << "gti: generated C++ retained at "
-              << result.generatedSource.string() << '\n';
+              << compilation.process.exitCode << '\n';
+    reportSavedRepresentation(result);
     return finishFailure(compilation.process.exitCode);
   }
   case lang::driver::ExecutableBuildStatus::NativeObjectPublicationFailure:
-    std::cerr << "gti: generated C++ retained at "
-              << result.generatedSource.string() << '\n';
+    reportSavedRepresentation(result);
     return finishFailure(exitCode(ExitStatus::Io));
   case lang::driver::ExecutableBuildStatus::NativeCompilerFailure:
-    std::cerr << "gti: native C++ compiler failed with exit code "
-              << result.nativeProcess->exitCode << '\n'
-              << "gti: generated C++ retained at "
-              << result.generatedSource.string() << '\n';
+    std::cerr
+        << terminalStyle.code(std::cerr, Style::Error)
+        << "gti: backend failed while compiling and linking the executable "
+        << "(exit code " << result.nativeProcess->exitCode << ')'
+        << terminalStyle.code(std::cerr, Style::Reset) << '\n';
+    reportSavedRepresentation(result);
+    if (result.backendDiagnosticLog) {
+      reportBackendDiagnosticLog(*result.backendDiagnosticLog);
+    }
     return finishFailure(result.nativeProcess->exitCode);
   case lang::driver::ExecutableBuildStatus::ArtifactPublicationFailure:
-    std::cerr << "gti: generated C++ retained at "
-              << result.generatedSource.string() << '\n';
+    reportSavedRepresentation(result);
     return finishFailure(exitCode(ExitStatus::Io));
   case lang::driver::ExecutableBuildStatus::ArtifactPathConflict:
     return finishFailure(exitCode(ExitStatus::Usage));
@@ -1960,7 +1998,7 @@ int runDirect(const Options &options, const char *driver) {
                    : lang::driver::compileToCpp(request, progress.observer()));
     progress.suspend();
     if (!compilation.succeeded()) {
-      return reportCompilationFailure(compilation);
+      return reportCompilationFailure(compilation, options.verbose);
     }
     reportDiagnostics(compilation.diagnostics, compilation.sources);
     const int optimizationOutputStatus =
@@ -1976,7 +2014,8 @@ int runDirect(const Options &options, const char *driver) {
                 << collision->string() << "' with emitted "
                 << (options.emitNativeHeader
                         ? "native header"
-                        : (options.emitMir ? "MIR output" : "C++ output"))
+                        : (options.emitMir ? "MIR output"
+                                           : "backend representation output"))
                 << " '" << options.output.string() << "'\n";
       return exitCode(ExitStatus::Usage);
     }
@@ -2048,7 +2087,7 @@ int runDirect(const Options &options, const char *driver) {
     std::cout << "Build report " << *options.buildReport << '\n';
   }
   if (options.keepCpp) {
-    std::cout << "Kept C++ " << generatedSource << '\n';
+    std::cout << "Kept backend representation " << generatedSource << '\n';
   }
   reportDiagnosticSummary(std::cout,
                           summarizeDiagnostics(result.compilation.diagnostics));
@@ -2075,11 +2114,10 @@ void reportProjectPlan(const lang::driver::ProjectBuildPlan &plan,
             << plan.profileName() << ", "
             << lang::driver::targetTriple(plan.target()) << "]\n"
             << "gti: configuration -O"
-            << lang::cli::optimizationNumber(plan.optimization()) << ", "
-            << lang::cli::cppStandardName(plan.cppStandard())
+            << lang::cli::optimizationNumber(plan.optimization())
             << ", execution-profile="
             << lang::executionProfileName(plan.target().executionProfile)
-            << ", keep-cpp=" << (plan.keepCpp() ? "true" : "false")
+            << ", keep-representation=" << (plan.keepCpp() ? "true" : "false")
             << ", debug-info=" << (plan.debugInfo() ? "true" : "false") << '\n';
   if (!plan.configurationFlags().empty()) {
     std::cerr << "gti: defines";
@@ -2648,7 +2686,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
             progress.observer());
     progress.suspend();
     if (!compilation.succeeded()) {
-      return reportCompilationFailure(compilation);
+      return reportCompilationFailure(compilation, options.verbose);
     }
     reportDiagnostics(compilation.diagnostics, compilation.sources);
     std::filesystem::path output = plan.output();
@@ -2737,7 +2775,8 @@ int runProject(const ProjectOptions &options, const char *driver) {
     statusStream << "Build report " << options.buildReport->string() << '\n';
   }
   if (plan.keepCpp()) {
-    statusStream << "Kept C++ " << plan.generatedSource().string() << '\n';
+    statusStream << "Kept backend representation "
+                 << plan.generatedSource().string() << '\n';
   }
   reportDiagnosticSummary(statusStream, diagnosticSummary);
 
@@ -2943,7 +2982,8 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
 
     reportProjectSuccess(std::cerr, "Built", plan);
     if (plan.keepCpp()) {
-      std::cerr << "Kept C++ " << plan.generatedSource().string() << '\n';
+      std::cerr << "Kept backend representation "
+                << plan.generatedSource().string() << '\n';
     }
     std::cerr << terminalStyle.code(std::cerr, Style::Note) << "Testing"
               << terminalStyle.code(std::cerr, Style::Reset) << ' '

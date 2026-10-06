@@ -3990,7 +3990,8 @@ private:
   }
 
   [[nodiscard]] static MirOperation computeOperation(const HirValue &value) {
-    if (value.unsafeOperation == UnsafeOperationKind::AddressOf) {
+    if (value.kind == HirValueKind::Unary &&
+        value.operation == TokenKind::AMPERSAND) {
       return MirOperation::AddressOf;
     }
     if (value.unsafeOperation == UnsafeOperationKind::PointerArithmetic &&
@@ -4541,6 +4542,21 @@ private:
     if (terminated()) {
       return;
     }
+    if (value.intrinsic == IntrinsicKind::RawPointerConversion) {
+      const auto arguments = callArgumentValues(value);
+      if (arguments.size() != 1 || !value.definedFailure.empty()) {
+        valid = false;
+        return;
+      }
+      auto operand = valueOperand(arguments.front());
+      (void)appendInstruction({.kind = MirInstructionKind::Compute,
+                               .hirValue = value.id,
+                               .result = resultFor(value),
+                               .operands = {std::move(operand)},
+                               .operation = MirOperation::Convert,
+                               .info = value.info});
+      return;
+    }
     if (value.intrinsic == IntrinsicKind::ExactTypeParameterConstruction) {
       std::vector<MirOperand> operands;
       for (const HirValueId id : callArgumentValues(value)) {
@@ -4626,7 +4642,8 @@ private:
                                 ? FailurePropagationKind::VirtualCall
                                 : FailurePropagationKind::DirectCall;
     }
-    if (value.intrinsic == IntrinsicKind::PrefixStorageAppend &&
+    if ((value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+         value.intrinsic == IntrinsicKind::StorageConstruct) &&
         failure.propagation == FailurePropagationKind::Constructor &&
         value.constructorTarget) {
       // Semantics selected this constructor protocol from its exact signature.
@@ -4839,10 +4856,13 @@ private:
         const auto enclosingFailure = beginPreparedArgumentFailure(
             argument.value, argument.kind, argument.parameterType);
         MirOperand sourceArgument =
-            value.intrinsic == IntrinsicKind::PrefixStorageAppend &&
+            (value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+             value.intrinsic == IntrinsicKind::StorageConstruct) &&
                     argument.parameterIndex == 0 &&
                     argument.kind == HirCallInputKind::MutableBorrow &&
-                    argument.parameterType.kind == SemanticType::PrefixStorage
+                    (argument.parameterType.kind ==
+                         SemanticType::PrefixStorage ||
+                     argument.parameterType.kind == SemanticType::Storage)
                 ? receiverOperand(argument.value, AccessMode::Mutable)
             : argument.kind == HirCallInputKind::ReadTemporaryBorrow
                 ? temporaryBorrowOperand(argument.value, AccessMode::ReadOnly,
@@ -5442,30 +5462,40 @@ private:
       call.definedFailure.propagation = normalizedConstructorPropagation(
           FailurePropagationKind::Constructor, value.constructorTarget);
     }
-    if (value.intrinsic == IntrinsicKind::PrefixStorageAppend &&
+    if ((value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+         value.intrinsic == IntrinsicKind::StorageConstruct) &&
         value.definedFailure.propagation ==
             FailurePropagationKind::Constructor &&
         value.constructorTarget &&
         value.constructorKind == ConstructorKind::Ordinary) {
-      if (call.operands.empty() || call.callSite == 0) {
+      const std::size_t preflightOperands =
+          value.intrinsic == IntrinsicKind::StorageConstruct ? 2 : 1;
+      if (call.operands.size() < preflightOperands || call.callSite == 0) {
         valid = false;
         return;
       }
       DefinedFailureOperation preflightFailure;
       for (auto &origin : call.definedFailure.localOrigins) {
         DefinedFailureOrigin check = origin;
-        std::erase_if(check.outcomes, [](DefinedFailureOutcome outcome) {
-          return outcome != DefinedFailureOutcome{
+        const auto isPreflightOutcome = [](DefinedFailureOutcome outcome) {
+          return outcome ==
+                     DefinedFailureOutcome{
+                         DefinedFailureCode::InvalidStorageState,
+                         DefinedFailureDetail::RelocationCapacity} ||
+                 outcome ==
+                     DefinedFailureOutcome{
+                         DefinedFailureCode::IndexOutOfBounds,
+                         DefinedFailureDetail::PrivateStorage} ||
+                 outcome == DefinedFailureOutcome{
                                 DefinedFailureCode::InvalidStorageState,
-                                DefinedFailureDetail::RelocationCapacity};
+                                DefinedFailureDetail::DuplicateConstruction};
+        };
+        std::erase_if(check.outcomes, [&](DefinedFailureOutcome outcome) {
+          return !isPreflightOutcome(outcome);
         });
         if (!check.outcomes.empty())
           preflightFailure.localOrigins.push_back(std::move(check));
-        std::erase_if(origin.outcomes, [](DefinedFailureOutcome outcome) {
-          return outcome == DefinedFailureOutcome{
-                                DefinedFailureCode::InvalidStorageState,
-                                DefinedFailureDetail::RelocationCapacity};
-        });
+        std::erase_if(origin.outcomes, isPreflightOutcome);
       }
       std::erase_if(call.definedFailure.localOrigins,
                     [](const DefinedFailureOrigin &origin) {
@@ -5473,14 +5503,15 @@ private:
                     });
       // No parameter has transferred yet. Failure here drains every prepared
       // owner; only the success edge reaches the constructor handoff below.
-      call.prefixPreflight =
-          appendInstruction({.kind = MirInstructionKind::PrefixAppendPreflight,
-                             .hirValue = value.id,
-                             .callSite = call.callSite,
-                             .operands = {call.operands.front()},
-                             .definedFailure = std::move(preflightFailure),
-                             .info = {.type = SemanticType::Void}},
-                            false);
+      call.storagePreflight = appendInstruction(
+          {.kind = MirInstructionKind::StorageConstructPreflight,
+           .hirValue = value.id,
+           .callSite = call.callSite,
+           .operands = {call.operands.begin(),
+                        call.operands.begin() + preflightOperands},
+           .definedFailure = std::move(preflightFailure),
+           .info = {.type = SemanticType::Void}},
+          false);
     }
     if (!value.callPlan && !expandsPack) {
       for (std::size_t index = 0; index < arguments.size(); ++index) {

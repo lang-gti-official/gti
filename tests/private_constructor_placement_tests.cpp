@@ -35,7 +35,8 @@ int main() {
       ++constructors;
       lexical &=
           line.find("::new (static_cast<void *>(") != std::string::npos &&
-          line.find("std::construct_at(") == std::string::npos;
+          line.find("std::construct_at(") == std::string::npos &&
+          line.find("construct_representation_at(") == std::string::npos;
     }
     expect(emitted.emitted() && constructors != 0 && lexical,
            "failure-tag construction executes in the member's lexical access "

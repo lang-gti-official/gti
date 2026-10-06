@@ -41,7 +41,7 @@ template <typename Enum> void census(Enum last) {
 
 void testCensus() {
   using namespace lang;
-  census(MirInstructionKind::PrefixAppendPreflight);
+  census(MirInstructionKind::StorageConstructPreflight);
   census(MirOperation::PostDecrement);
   census(IntrinsicKind::SourceColumn);
   census(MirTerminatorKind::TerminateCleanupFailure);

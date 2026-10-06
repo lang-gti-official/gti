@@ -222,8 +222,8 @@ look like this (counts and timings are illustrative):
   Lowering  HIR
   Lowering  MIR
 Optimizing  program (-O2)
-  Emitting  C++ backend
-    Native  compiling and linking (clang++)
+  Emitting  backend representation
+    Native  compiling and linking
 Publishing  executable and build cache
   Finished  tea (2.81s)
 ```
@@ -251,9 +251,41 @@ those paths and a slow interactive parse shows the current path. Semantic
 analysis, HIR/MIR lowering, optimization, and backend emission remain
 whole-program stages: the CLI does not invent a per-file semantic or object
 compilation counter. Declared native sources report their exact source paths;
-the final generated-C++ compilation and link are honestly one `Native` stage.
+the final representation compilation and link are honestly one `Native` stage.
 Native dependency build scripts and Darwin symbol collection have separate
-rows. Native tool diagnostics retain the existing captured-output contract.
+rows. Neither the emission row nor the native row names the selected backend
+or its compiler executable. Exact commands remain available under `--verbose`.
+
+Human-readable build output describes GTI work rather than exposing the current
+representation language. Retention summaries say `Kept backend representation`.
+The legacy `--emit-cpp`, `--keep-cpp`, `--cxx`, standard-selection flags, manifest
+keys, artifact extensions and machine-readable metadata/provenance fields stay
+unchanged for compatibility; this presentation policy does not promise a new
+backend or change the representation itself.
+
+Backend generation exceptions produce an entry-anchored `GTI-B0001` diagnostic
+without the backend name or implementation exception text. `CompilationResult`
+retains the complete developer details separately. Executable builds preserve
+those details, or a failed native invocation's exact command, exit status,
+driver diagnostic and captured tool output, in a fresh private temporary
+`backend.log`. Direct emit-only CLI failures use the same log writer. The CLI
+reports the saved log path; `--verbose` additionally exposes the raw evidence.
+Logs are retained outside outputs/caches and POSIX directories/files are
+owner-only. If saving fails, the original evidence is displayed instead of
+being silently lost or claiming a saved file. They may contain sensitive native
+arguments, so review them before including them in a bug report.
+
+A retained artifact is identified explicitly as `backend 'c++' representation
+saved at <path>`: its format is relevant when inspecting evidence, not as the
+language's public compilation model. That line is emitted only when retention
+actually occurred. An emitter failure before artifact construction reports a
+log, not a nonexistent representation. A native compilation/link failure is
+reported as a backend build failure, not automatically an internal compiler
+bug: missing tools, native libraries and link inputs can also cause that stage
+to fail. Handwritten native source failures keep actionable tool diagnostics
+under language-neutral `native source` headings. GTI build-script compilation
+uses the same preservation/reporting contract. Failure exit codes, previous
+artifact preservation and successful output bytes remain unchanged.
 
 An optional caller-owned `ProgressObserver` observes synchronous begin/update/end
 events through the compiler frontend and reusable driver entry points.

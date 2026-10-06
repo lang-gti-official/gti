@@ -7,6 +7,15 @@
 
 namespace lang::mir_detail {
 
+// Inert, const-preserving typed/erased address conversion; never a borrow or
+// an assertion that the pointee is initialized, aligned, live or writable.
+[[nodiscard]] bool rawPointerConversion(const MirInstruction &instruction);
+
+// The runtime address comes from operand zero; the checked lifetime and
+// access authority come from the explicit witness in operand one.
+[[nodiscard]] const MirLoan *
+rawBorrowResultLoan(const MirBody &body, const MirInstruction &instruction);
+
 // Recognize the exact, single-use signed-minimum literal schedule shared by
 // native emission and constant execution. Ordinary runtime negation is not
 // interchangeable with this failure-free literal formation.

@@ -40,6 +40,208 @@ with Git unavailable and no registry token. The official server rejects
 unauthenticated discovery with HTTP 401; configured token guidance and a
 deterministic fake-server regression cover that policy. The user's active
 compiler installation and project repositories are unchanged.
+## Low-level memory Phase 1
+
+Completion validation on 2026-10-06 uses the Release/Ninja compiler on macOS
+arm64 with AppleClang 21 and LLVM 22.1.8. The full 433-test CTest run passed
+429 gates. Its four failures were stale generated-representation assertions
+(`optional_runtime`, `retained_generic_lifecycle`,
+`mir_class_value_lifecycle_runtime`) and the analyzer-consumer allowlist for
+the new request-reset test (`semantic_header_boundary`). After test-only
+corrections, all four registered gates passed together. No production compiler
+change occurred between that full run and the corrected rerun. The final
+format check passes all 422 first-party C/C++ files, and `git diff --check`
+passes. Focused checks and installed/tooling evidence are detailed below.
+
+The optional full language audit also passes: 23 contract cases, 24 typed
+differential programs, four composition programs, 100 malformed-source
+mutations (17 accepted and 83 rejected), and all 111 public examples across
+four configurations, with seed `20260809`. It reported no additional defect.
+
+This is local macOS evidence, not Linux/Windows execution or a bundled-LLVM
+production archive check. The local build uses system LLVM; the isolated
+installed SDK, CLI/LSP and local Neovim archive checks pass with that setup.
+The release workflow remains responsible for bundled production packaging.
+
+`raw_pointer_conversion_contract` checks ordinary pointer-alias and dependent
+type calls, source-defined erasure/restoration helpers, constness, forbidden
+integer/unrelated-pointer conversions, known pointee facts through aggregates,
+calls and loop backedges, expired origins and the separate unsafe-access rule.
+Its seven MIR mutations reject forged operand shape, constness, pointee type,
+loan, access and raw-memory claims. `raw_pointer_conversion_lsp` checks
+source-located UTF-16 diagnostics, related type provenance, alias-call
+definition identity and invalid-to-valid recovery. The runtime matrix passes
+C++20/C++23 O0/O1/O3, disabled elision and ASan/UBSan with the integer-backed
+address carrier, including inert expired-address conversion across a loop.
+Example 113 builds and runs with zero diagnostics. These focused gates use the
+optimized Release compiler; they do not constitute full Phase 1 acceptance.
+
+The first prerequisite generalizes final-slot constructor preflight from prefix
+to sparse storage. `prefix_constructor_contract` now also checks sparse exact
+index pairing, source constructor identity, prepared-owner transfer and failure
+propagation. Mutations are rejected by both MIR verification and independent
+backend admission. Negative public calls reject escaping emplaced references
+and destruction during a retained element borrow.
+
+`storage_final_address_runtime` checks construction address stability, slot
+reuse, partial-member rollback, preflight failure cleanup of prepared owners,
+and cleanup of an earlier live slot when a later construction fails. It runs
+C++20/C++23 at O0/O1/O3, disabled elision and ASan/UBSan. Original constructor
+failure identity is distinct from the bounds/duplicate-slot preflight records.
+Example 111 additionally moves the allocation owner without moving its element.
+
+The explicit-release extension adds `storage_release.gti` to that same eight-mode
+matrix. Its unrelated `Depot` owns sparse storage of an ordinary owning
+`Package` containing a string, requests over-alignment, moves the allocation
+owner, releases early and repeats empty release. Both success and destructor
+panic preserve exact reverse-slot/outer cleanup traces; panic retains its
+original source and message. All eight modes pass on the optimized compiler.
+Example 111 also exercises explicit allocation release. These checks establish
+the release lifecycle; cross-call stale-address rejection has separate semantic
+coverage and is not implied by native runtime success.
+
+The same harness executes example 114 directly as its own entry source. Its
+unrelated `Box` owns final-address storage and its `Reading` retains a checked
+owner witness beside the raw address. All eight modes pass through construction,
+checked observation, owner movement, a new view and explicit release. The raw
+owner fixture additionally transports expired addresses through ordinary source
+parameters/results, passive record copies, fixed arrays, and erasure/restoration;
+O0/C++20 and ASan/UBSan pass without dereferencing an expired address.
+
+Local evidence uses the optimized Release compiler on macOS arm64, AppleClang
+21 and LLVM 22.1.8. The new matrix and constructor contract pass, as do the
+existing allocator, prepared-prefix runtime and optimizer conformance gates.
+The updated standard-library manifest passes after sorting the new case.
+These are the focused prerequisites of the combined acceptance recorded above;
+they are not substitutes for the broad suite. The implemented facilities have
+the additional coverage below.
+
+The integrated candidate additionally passes all eleven external Release/Ninja
+SDK consumers from an isolated toolchain install, installed CLI/project/LSP
+smoke checks, and examples 111–114 at C++20/O0 and C++23/O3. The local archive
+Neovim smoke passes outside the tool sandbox; inside it the filesystem watcher
+reports `EMFILE`, so that sandboxed run is not clean editor evidence. No active
+user installation is needed for these checks. Tree-sitter's 71 corpus cases,
+highlight/locals/rainbow checks and all 173 shipped sources pass; regeneration
+leaves the generated parser files unchanged. These installed/tooling checks
+supplement, rather than replace, the full production CTest completion gate.
+
+The latest focused integration checkpoint passes the raw-pointer, conversion,
+borrow-contract, backend-preflight and native storage-representation checks.
+The borrow suite includes local-witness escape rejection, competing loans, and
+a raw-backed view that blocks owner release/movement before its last use but
+permits release afterward. Reusing a semantic visitor clears assertion facts;
+nested source queries preserve declaration identities in semantic deltas.
+The final-address runtime matrix also checks a user owner whose constructor
+fails after constructing one slot: partial members, the completed slot and
+outer locals are cleaned exactly once, the incomplete owner's destructor is
+not called, and the original constructor failure survives.
+
+`raw_native_record_transport_runtime` passes C++20/C++23 at O0/O2/O3 with
+elision disabled. It checks emitted internal reference/output signatures as
+well as inert expired-address transport through source calls, lambdas,
+virtual dispatch and retained generic callables. The separate native-record
+container matrix additionally passes all eight C++20/C++23 O0/O1/O3,
+no-elide and ASan/UBSan modes, including Expected and enum transport,
+native arrays, owning alternatives, captures and generic relays. The latest
+semantic access-summary integration passes both matrices after deriving inert
+restoring transfer from the existing recursive cleanup/relocation facts. An
+additional negative fixture rejects expired addresses passed to an erased
+callback whose concrete target is unknown. Live-address erased callbacks still
+exercise the native ABI; this boundary is structural rather than tied to a
+standard-library name.
+
+Complete source result/write queries supersede the older blanket input union.
+The borrow gate checks a constructor returning distinct live/expired fields,
+ordinary reference and arrow projections, raw fields projected from temporary
+aggregates, and a no-write receiver call that must not give a null handle a
+fabricated receiver lifetime. Incomplete queries retain conservative input
+origins and an unresolved marker. The constexpr partition additionally checks
+that staging and raw-query workers share request-local recursion/work limits;
+dependent constant recursion must diagnose exhaustion instead of overflowing
+the compiler stack. These are integration checks, not new constexpr features.
+
+`raw_pointer_pipeline` now also covers known expired address origins through
+explicit and inferred pointer bindings, reseating, copies and branch joins;
+moved owners; raw array aliasing; raw mutable receiver calls; and checked-loan
+conflicts before versus after their ordinary last-use endpoints. The
+`raw_pointer_provenance_lsp` protocol test verifies the same lifetime error,
+the original address's related location, UTF-16 positions, invalid-source
+recovery and clearing on subsequent document generations. These checks cover
+local provenance; the source-result and owner-witness gates below cover the
+additional call and borrow boundaries.
+
+`raw_access_contract` isolates access preconditions across ordinary source
+helpers: direct and forwarded expired reads, read/exclusive-loan conflicts,
+write/shared-loan conflicts, and raw fields carried by an unrelated user
+aggregate, selected constructors, and receiver fields. Positive controls retain
+shared reads, writes after the checked loan's same-block last use, and inert
+copying/equality of expired addresses. Negative
+cases require semantic codes at the caller, not the helper definition. The
+LSP provenance test additionally checks helper-call attribution, original
+address notes, UTF-16 conversion and diagnostic clearing. These focused checks
+pass on the optimized macOS compiler. Operator receiver, result and write
+checks additionally cover arithmetic, call, contextual-bool and subscript
+forms, plus inert/accessing captures. The bounded dynamic-dispatch controls
+also pass: closed inert families and exact local generic receivers accept inert
+transport, while a hostile alternate override or an open generic family prevents
+that proof. The combined acceptance additionally requires the broad and
+installed evidence recorded above.
+
+`raw_borrow_contract` covers shared/exclusive owner witnesses, inferred generic
+arguments, source-wrapper pointer aliases, unrelated witnesses, expired origins,
+loop-carried witness changes, const-preserving access and malformed MIR loan
+contracts. The shared backend-admission query and whole-program verifier reject
+mutations independently of source validation. `raw_owner_witness_runtime` runs
+C++20/C++23 O0/O1/O3, disabled elision and ASan/UBSan. Example 112 demonstrates a
+raw-backed view that separately retains a checked reference to its owner.
+These focused gates pass on the optimized macOS compiler, alongside the broad
+and installed checks recorded above.
+
+The public-language checkpoint adds `borrow_origin_syntax` for parsed owner
+arguments, formatter token preservation/idempotence, resolved signatures and
+identity-based definition/references/rename. The LSP protocol gate checks the
+same attribute/parameter identities, UTF-16 ranges, broken-to-valid recovery
+and renamed hover. `raw_borrow_contract` additionally checks application-defined
+generic bridges, explicit multi-parameter origin selection, safe mismatch
+rejection, receiver raw fields, retained reference-field witnesses and the
+polymorphic assertion barrier. The runtime matrix also exercises an unrelated
+source-defined raw-backed view. All nine focused/adjacent gates pass locally:
+the six raw/syntax/LSP/manifest gates plus `unsafe_function_contract`,
+`prefix_constructor_contract` and `optimizer_conformance`. Example 112 builds
+and runs with zero diagnostics. The existing optimized ownership suite also
+passes all 61 named tests. These checkpoint results are not full Phase 1
+acceptance. A subsequent emission-only adversarial probe exposed callee-local
+expiry loss; it was never executed. The source-result query repair now rejects
+that probe and covers formal/receiver/global origins, default arguments,
+aggregate fields and constructor outputs. The raw-pointer, raw-borrow and
+conversion contracts pass after that repair. Unsupported source query families
+fail closed for access while retaining inert address transport.
+
+Inert expired-address copying/equality also has a distinct native-representation
+gate. The local runtime fixture proves only the exercised compiler/target
+combinations. C++20/C++23 native `T*` carriers alone do not supply a portable
+guarantee for these operations; [WG21 P3347R5](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2025/p3347r5.pdf)
+explains the invalid-pointer implementation-defined boundary. `S-ALLOC-04`
+tracks the required integer-address carrier and explicit native ABI boundary.
+The ordinary integer-backed carrier and byte-staged native output parameters
+are now implemented. C-compatible aggregate copy/parameter/result transport
+is covered by the native-record and container gates above; its native pointer
+fields use byte-preserving transport rather than C++ memberwise invalid-pointer
+copying.
+Acceptance must cover expiry after lexical scope and allocation release,
+copies through fields/calls, null and same-address equality, optimization,
+and C++20/C++23, without exercising stale dereferences. Passing these probes
+does not by itself justify accepting an otherwise unsupported pointer ABI.
+
+`prefix_storage_native_evidence` independently probes representation primitives
+using an over-aligned passive native record after its pointer's allocation is
+released. Its record checks inspect address bytes, never an expired pointer
+value. MIR temporary slots, optional storage, sparse shifts and prefix
+insert/erase/relocation pass C++20/C++23 O0/O3 with disabled elision, plus
+ASan/UBSan. A nontrivial copy-constructor control proves that byte construction
+does not bypass selected nontrivial behavior. These are helper-level tests,
+not evidence that every source call/container transport route is closed.
 
 ## Unsafe declaration keyword migration and dependency warnings
 
@@ -205,6 +407,33 @@ Linux/Windows execution or completed asynchronous publication. The active user
 installation is unchanged.
 
 ## Live build progress
+
+The backend-neutral presentation regression covers default emission/native
+rows, kept-artifact summaries, unchanged legacy input spellings, and private
+saved native diagnostics instead of raw default-terminal replay. The live TTY
+probe verifies the same failure contract after its heartbeat. `driver_pipeline`
+checks generic backend exception messages, separately retained exact backend
+details, private binary-safe unique log writes, log-write failures without
+overwriting unrelated files, and native command/failure evidence. Existing CLI
+and project workflows cover preserved prior artifacts and actionable
+handwritten-native-source errors. No language or emitted-artifact rule changes.
+Developer failure capture and feature-interaction campaigns explicitly request
+verbose compiler evidence, retaining the real cause in their existing raw logs
+and signatures. Capture recognizes both legacy and neutral native-failure
+headings; model tests distinguish backend faults sharing the same user summary.
+Generated-program execution never receives the compiler verbosity option.
+The source-defined build-script regression retains a frontend warning alongside
+its later backend build error and saved-evidence hints, rather than allowing the
+warning-only snapshot to conceal the actual failure.
+
+The 0.372.1 backend-output change passes sixteen selected compiler, driver,
+CLI/colour/progress, project/cache, debug-info, release-policy, QA and LSP gates
+with a Release/Ninja compiler on macOS arm64 (AppleClang 21, LLVM 22.1.8).
+The final failure-capture/model/progress rerun also passes. All eleven clean
+installed-library consumers and the isolated installed CLI progress regression
+pass, including the source-warning/native-failure case. All 416 first-party
+C/C++ files pass clang-format 22.1.8. This is focused local evidence, not a claim
+of full-suite or cross-platform execution; the active installation is unchanged.
 
 `driver_pipeline` checks exact begin/end phase order, loaded/parsed unit counts,
 semantic-failure short circuiting, balanced lifetimes, and byte-identical emitted

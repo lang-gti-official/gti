@@ -24,9 +24,39 @@ inline constexpr std::string_view cppEmittedStandardNamespace = "__gti_std";
 cppFunctionHasFailureResultChannel(const LoweredProgram &program,
                                    const LoweredFunctionDeclaration &function);
 
+// A virtual slot whose declaration has a class-bound symbolic value result
+// retains a defaulted internal output channel across every override. Native
+// byte-transport results use that channel; other results keep ordinary returns.
+[[nodiscard]] bool cppVirtualFamilyHasConditionalResultChannel(
+    const LoweredProgram &program, const LoweredFunctionDeclaration &function);
+
 [[nodiscard]] std::string cppSemanticTypeSpelling(const LoweredProgram &program,
                                                   CppStandard standard,
                                                   const SemanticType &type);
+
+// Foreign declarations and native-layout fields retain their actual pointer
+// ABI. Ordinary GTI values use inert integer-address carriers instead.
+[[nodiscard]] std::string cppNativeTypeSpelling(const LoweredProgram &program,
+                                                CppStandard standard,
+                                                const SemanticType &type);
+
+// Internal value transport must not evaluate a native object-pointer member
+// after its pointee expires. This representation fact is transitive through
+// inline aggregates, not through references or owning handles. It does not
+// change semantic copyability, cleanup, failure effects, or the external ABI.
+[[nodiscard]] bool cppRequiresBytePreservingTransport(const MirProgram &program,
+                                                      const SemanticType &type);
+
+// Native records cannot acquire custom C++ special members without changing
+// their external ABI. Their direct internal values (including fixed arrays)
+// therefore cross source function boundaries through reference/output slots.
+// Ordinary containing carriers have representation-owned safe special members.
+[[nodiscard]] bool cppRequiresIndirectValueTransport(const MirProgram &program,
+                                                     const SemanticType &type);
+
+// A retained native template's direct dependent field needs the same physical
+// selection as a concrete native record or inline array thereof.
+[[nodiscard]] bool cppUsesDependentByteField(const SemanticType &type);
 
 // A deterministic GTI-owned class symbol for one concrete, nameable generic
 // class application. The direct representation is deliberately limited to

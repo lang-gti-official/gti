@@ -56,3 +56,53 @@ struct Guard {
               (primary_expression
                 (identifier))
               (argument_list))))))))
+
+==================
+Borrow-origin contracts on functions and receivers
+==================
+
+[[borrowed_from(owner), track_caller]] int& borrow(int& owner) { return owner; }
+struct Holder {
+  [[borrowed_from(this)]] int& get() { return this.value; }
+};
+
+---
+
+(source_file
+  (function_declaration
+    (function_contract_attribute
+      (borrow_origin_attribute
+        (identifier)))
+    (type
+      (primitive_type)
+      (reference_declarator))
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (primitive_type)
+          (reference_declarator))
+        (identifier)))
+    (block
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (identifier))))))
+  (class_declaration
+    (identifier)
+    (class_body
+      (method_declaration
+        (function_contract_attribute
+          (borrow_origin_attribute))
+        (type
+          (primitive_type)
+          (reference_declarator))
+        (identifier)
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (member_expression
+                (primary_expression
+                  (this_expression))
+                (identifier)))))))))
