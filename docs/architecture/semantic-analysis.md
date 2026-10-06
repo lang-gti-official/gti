@@ -2,6 +2,15 @@
 
 Status: Current implementation.
 
+## Optional function results
+
+Function result-discard policy belongs to the selected declaration. Callable
+registration records `[[discardable]]` in `CallableDeclaration`, then publishes
+it in `FunctionInfo`. Expression-statement analysis consults the resolved call
+identity, never a public function spelling or the result's representation.
+Signature queries expose the same fact. This only admits the existing discarded
+full-expression path; HIR/MIR cleanup, failure and borrow rules are unchanged.
+
 ## Known raw address origins
 
 Local raw pointer flow retains address origins as existing `PlaceKey` values,

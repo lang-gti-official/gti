@@ -301,6 +301,7 @@ uint64_t default_extent_highlight<uint64_t N = 3,
 
 unsafe void retain_context_highlight(void* context) {}
 [[noreturn, track_caller]] void terminal_highlight() { while (true) {} }
+[[discardable]] int optional_highlight() { return 1; }
 [[borrowed_from(owner)]] int& borrow_highlight(int& owner) { return owner; }
 
 concept snapshot_highlight<T> =

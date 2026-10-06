@@ -491,7 +491,10 @@ private:
       Token first = consume(TokenKind::IDENTIFIER,
                             "Expect an attribute name after '[['.");
       if (first.lexeme == "c_array" || first.lexeme == "link_name") {
-        if (!functionAttributes.empty()) {
+        if (std::any_of(functionAttributes.begin(), functionAttributes.end(),
+                        [](const FunctionAttribute &attribute) {
+                          return attribute.name.lexeme != "discardable";
+                        })) {
           throw error(first, "GTI function attributes cannot be combined with "
                              "native function attributes.");
         }
@@ -537,11 +540,13 @@ private:
         }
         return typedDeclaration(true, std::nullopt, false, false, true, linkage,
                                 std::move(nativeCArray),
-                                std::move(nativeLinkName));
+                                std::move(nativeLinkName), std::nullopt,
+                                std::move(functionAttributes));
       }
-      if (parsedNativeFunctionAttribute) {
-        throw error(first, "Only [[c_array(...)]] and [[link_name(...)]] may "
-                           "be combined on a native function.");
+      if (parsedNativeFunctionAttribute && first.lexeme != "discardable") {
+        throw error(first,
+                    "Only [[c_array(...)]], [[link_name(...)]] and "
+                    "[[discardable]] may be combined on a native function.");
       }
 
       auto parseAttribute = [&](Token name) {
@@ -574,9 +579,16 @@ private:
               "Expect ']]' after declaration attributes.");
       bool functionAttributeList = !functionAttributes.empty();
       for (const FunctionAttribute &attribute : attributes) {
+        if (parsedNativeFunctionAttribute &&
+            attribute.name.lexeme != "discardable") {
+          throw error(attribute.name,
+                      "Only [[discardable]] may be combined with native "
+                      "function attributes.");
+        }
         functionAttributeList = functionAttributeList ||
                                 attribute.name.lexeme == "noreturn" ||
                                 attribute.name.lexeme == "track_caller" ||
+                                attribute.name.lexeme == "discardable" ||
                                 attribute.name.lexeme == "borrowed_from";
       }
       if (functionAttributeList) {
@@ -593,8 +605,9 @@ private:
         }
         return typedDeclaration(
             true, std::nullopt, currentClassName.has_value(),
-            currentClassName.has_value(), true, linkage, std::nullopt,
-            std::nullopt, std::nullopt, std::move(functionAttributes));
+            currentClassName.has_value(), true, linkage,
+            std::move(nativeCArray), std::move(nativeLinkName), std::nullopt,
+            std::move(functionAttributes));
       }
       if (!match({TokenKind::CLASS, TokenKind::STRUCT, TokenKind::INTERFACE,
                   TokenKind::UNION})) {

@@ -3837,6 +3837,10 @@
               "value": "track_caller"
             },
             {
+              "type": "STRING",
+              "value": "discardable"
+            },
+            {
               "type": "SYMBOL",
               "name": "borrow_origin_attribute"
             }
@@ -3861,6 +3865,10 @@
                   {
                     "type": "STRING",
                     "value": "track_caller"
+                  },
+                  {
+                    "type": "STRING",
+                    "value": "discardable"
                   },
                   {
                     "type": "SYMBOL",
