@@ -203,6 +203,47 @@ ASan/UBSan. A nontrivial copy-constructor control proves that byte construction
 does not bypass selected nontrivial behavior. These are helper-level tests,
 not evidence that every source call/container transport route is closed.
 
+## Source package registry bootstrap
+
+`package_registry_model` uses an in-memory backend to exercise the shared
+SemVer model, strict metadata and manifest declarations, newest complete
+metadata-only solving, lock preference, missing/conflicting candidates,
+backtracking, cycles, canonical-name collisions and exact lock edges. Archive
+checks cover deterministic ordering, binary bytes, traversal/reserved paths,
+case/file-directory collisions, every truncated prefix and trailing bytes.
+Read-only project facts require existing verified sources and never unpack a
+cached archive. Corrupt cached sources are rejected rather than repaired.
+
+`package_registry_cli` runs a loopback-only fake Gitea server with deterministic
+publication/authentication behavior. It covers dry runs, archive-before-marker
+uploads, duplicate/partial publication, anonymous and authenticated reads,
+credential isolation/redaction, disabled repository fsmonitor hooks,
+comment-preserving manifest edits, direct/transitive version upgrades,
+compatible exact lock reuse, cache deletion and concurrent acquisition,
+offline native builds, LSP hover/diagnostics and integrity failures. Conflicts
+are detected before source acquisition; failed additions leave project files
+unchanged. C++20/O0 and C++23/O3 exercise the production native build path.
+
+The 0.375.0 candidate uses Release/Ninja on macOS arm64, AppleClang 21 and system
+LLVM 22.1.8. The registry model/CLI gates and selected driver, project, CLI,
+color/progress, project-facts LSP and LLVM link-surface gates pass. An isolated
+installation passes all eleven external library consumers, including the
+LLVM-free registry driver API. The installed registry CLI/LSP workflow also
+passes with checkout resource overrides cleared. All 429 first-party C/C++
+files pass clang-format 22.1.8; Python syntax and `git diff --check` pass.
+This is focused build/package evidence, not a full compiler/corpus execution,
+Linux/Windows validation or a bundled-LLVM release archive check.
+
+With explicit user approval, the live official registry receives `libc@0.1.0`
+from the clean package checkout. Its deterministic archive digest is
+`sha256:3af5f338e8c17bee32040feb544f4c929eda7b80113b19ddc1e7d346f60f443d`.
+A fresh isolated consumer adds it through authenticated registry discovery,
+then performs an uncached locked/offline build and runs `getuid`/`getpwuid`
+with Git unavailable and no registry token. The official server rejects
+unauthenticated discovery with HTTP 401; configured token guidance and a
+deterministic fake-server regression cover that policy. The user's active
+compiler installation and project repositories are unchanged.
+
 ## Unsafe declaration keyword migration and dependency warnings
 
 `unsafe_function_contract` covers namespace/static/generic/constexpr call

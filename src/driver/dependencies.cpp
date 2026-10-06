@@ -2,6 +2,7 @@
 
 #include "gti/driver/artifact.h"
 #include "gti/driver/process.h"
+#include "gti/driver/registry.h"
 #include "sha256.h"
 // Every driver translation unit must configure toml++ identically:
 // manifest.cpp established the no-exceptions mode, and mixing modes across
@@ -285,6 +286,17 @@ const LockedGitPackage *DependencyLock::find(const GitSourceKey &key) const {
   return found == packages.end() ? nullptr : &*found;
 }
 
+const LockedRegistryPackage *
+DependencyLock::findRegistry(std::string_view registry,
+                             std::string_view package) const {
+  for (const auto &entry : registryPackages) {
+    if (entry.registry == registry && entry.package == package) {
+      return &entry;
+    }
+  }
+  return nullptr;
+}
+
 std::filesystem::path
 dependencyLockPath(const std::filesystem::path &workspaceRoot) {
   return workspaceRoot / lockFilename;
@@ -339,8 +351,8 @@ loadDependencyLock(const std::filesystem::path &workspaceRoot) {
   const std::optional<std::int64_t> version =
       versionNode == nullptr ? std::nullopt
                              : versionNode->value<std::int64_t>();
-  if (!version || *version != currentDependencyLockVersion) {
-    reject("gti.lock must declare lock-version = 1.");
+  if (!version || (*version != 1 && *version != 2)) {
+    reject("gti.lock must declare lock-version = 1 or 2.");
     return result;
   }
   for (const auto &[key, node] : document) {
@@ -385,8 +397,68 @@ loadDependencyLock(const std::filesystem::path &workspaceRoot) {
       return true;
     };
     if (!requireString("name", locked.name) ||
-        !requireString("version", locked.version) ||
-        !requireString("source", locked.url) ||
+        !requireString("version", locked.version)) {
+      return result;
+    }
+    if (package->get("registry")) {
+      LockedRegistryPackage entry{.name = locked.name,
+                                  .version = locked.version};
+      if (*version != 2) {
+        reject("Registry entries require lock-version = 2.");
+        return result;
+      }
+      if (!requireString("registry", entry.registry) ||
+          !requireString("package", entry.package) ||
+          !requireString("checksum", entry.checksum) ||
+          !requireString("metadata-checksum", entry.metadataChecksum)) {
+        return result;
+      }
+      for (const auto &[key, node] : *package) {
+        if (key.str() != "name" && key.str() != "version" &&
+            key.str() != "registry" && key.str() != "package" &&
+            key.str() != "checksum" && key.str() != "metadata-checksum" &&
+            key.str() != "dependencies") {
+          reject("gti.lock registry package contains an unknown field '" +
+                 std::string(key.str()) + "'.");
+          return result;
+        }
+      }
+      if (!validRegistryName(entry.registry) ||
+          !validRegistryName(entry.package) ||
+          !parsePackageVersion(entry.version) ||
+          !validPackageChecksum(entry.checksum) ||
+          !validPackageChecksum(entry.metadataChecksum)) {
+        reject("gti.lock registry package has invalid identity, version or "
+               "checksum.");
+        return result;
+      }
+      if (const auto *node = package->get("dependencies")) {
+        const auto *array = node->as_array();
+        if (!array) {
+          reject("Registry lock dependencies must be strings.");
+          return result;
+        }
+        for (const auto &item : *array) {
+          auto text = item.value<std::string>();
+          if (!text || text->empty()) {
+            reject("Registry lock dependencies must be strings.");
+            return result;
+          }
+          entry.dependencies.push_back(*text);
+        }
+      }
+      if (!names.insert(entry.name).second ||
+          !sources.insert("registry:" + entry.registry + ":" + entry.package)
+               .second) {
+        reject("gti.lock records duplicate registry identities or canonical "
+               "package names.");
+        return result;
+      }
+      std::sort(entry.dependencies.begin(), entry.dependencies.end());
+      result.lock.registryPackages.push_back(std::move(entry));
+      continue;
+    }
+    if (!requireString("source", locked.url) ||
         !requireString("rev", locked.revision) ||
         !requireString("checksum", locked.checksum)) {
       return result;
@@ -485,6 +557,30 @@ std::string renderDependencyLock(const DependencyLock &lock) {
           text += ", ";
         }
         text += tomlString(dependencies[index]);
+      }
+      text += "]\n";
+    }
+  }
+  if (!lock.registryPackages.empty()) {
+    text.replace(text.find("lock-version = 1"), 16, "lock-version = 2");
+    std::vector<LockedRegistryPackage> orderedRegistry = lock.registryPackages;
+    std::sort(orderedRegistry.begin(), orderedRegistry.end(),
+              [](const auto &a, const auto &b) { return a.name < b.name; });
+    for (const auto &entry : orderedRegistry) {
+      text += "\n[[package]]\nname = " + tomlString(entry.name) +
+              "\nversion = " + tomlString(entry.version) +
+              "\nregistry = " + tomlString(entry.registry) +
+              "\npackage = " + tomlString(entry.package) +
+              "\nchecksum = " + tomlString(entry.checksum) +
+              "\nmetadata-checksum = " + tomlString(entry.metadataChecksum) +
+              "\ndependencies = [";
+      auto edges = entry.dependencies;
+      std::sort(edges.begin(), edges.end());
+      for (std::size_t i = 0; i < edges.size(); ++i) {
+        if (i) {
+          text += ", ";
+        }
+        text += tomlString(edges[i]);
       }
       text += "]\n";
     }

@@ -1,6 +1,8 @@
 #include "gti/driver/workspace.h"
 
+#include "gti/driver/artifact.h"
 #include "gti/driver/dependencies.h"
+#include "gti/driver/registry.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -73,6 +75,12 @@ std::string ResolvedProjectPackage::identity() const {
 }
 
 std::optional<std::string> ResolvedProjectPackage::sourceIdentity() const {
+  if (registrySource) {
+    const auto &source = *registrySource;
+    return "registry+" + source.registry + ":" + source.package + "@" +
+           source.version + "#" + source.checksum + "#" +
+           source.metadataChecksum;
+  }
   if (!gitSource) {
     return std::nullopt;
   }
@@ -158,11 +166,18 @@ std::string ProjectWorkspace::modelIdentity() const {
   return identity;
 }
 
-WorkspaceResolutionResult
-resolveProjectWorkspace(const std::filesystem::path &startDirectory,
-                        const std::optional<std::string> &requestedPackage,
-                        const WorkspaceDependencyPolicy &dependencyPolicy) {
+WorkspaceResolutionResult resolveProjectWorkspace(
+    const std::filesystem::path &startDirectory,
+    const std::optional<std::string> &requestedPackage,
+    const WorkspaceDependencyPolicy &dependencyPolicy,
+    const std::optional<WorkspaceManifestOverlay> &overlay) {
   WorkspaceResolutionResult result;
+  const auto load = [&](const std::filesystem::path &path) {
+    return loadProjectManifest(
+        path, overlay && artifactPathsAlias(path, overlay->path)
+                  ? std::optional<std::string>(overlay->text)
+                  : std::nullopt);
+  };
   ManifestDiscoveryResult discovery = discoverProjectManifest(startDirectory);
   if (!discovery.succeeded()) {
     result.status = WorkspaceResolutionStatus::DiscoveryFailure;
@@ -170,7 +185,7 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
     return result;
   }
 
-  ManifestLoadResult nearestLoad = loadProjectManifest(*discovery.path);
+  ManifestLoadResult nearestLoad = load(*discovery.path);
   mergeSources(result.sources, nearestLoad.sources);
   if (!nearestLoad.succeeded()) {
     result.status = WorkspaceResolutionStatus::ManifestFailure;
@@ -186,7 +201,7 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
     const std::filesystem::path candidate = parent / manifestFilename;
     std::error_code error;
     if (std::filesystem::is_regular_file(candidate, error) && !error) {
-      ManifestLoadResult candidateLoad = loadProjectManifest(candidate);
+      ManifestLoadResult candidateLoad = load(candidate);
       if (candidateLoad.succeeded() && candidateLoad.manifest->workspace()) {
         const auto &members = candidateLoad.manifest->workspace()->members;
         if (std::find(members.begin(), members.end(), nearestRoot) !=
@@ -249,7 +264,7 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
   ManifestLoadResult workspaceLoad =
       workspaceManifest == nearestLoad.manifest->path()
           ? std::move(nearestLoad)
-          : loadProjectManifest(workspaceManifest);
+          : load(workspaceManifest);
   const std::optional<std::size_t> rootIndex = addLoadedManifest(
       std::move(workspaceLoad), ProjectPackageMembership::Root, std::nullopt,
       std::nullopt, "Workspace root");
@@ -267,7 +282,7 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
         *packages[*rootIndex].manifest.workspace();
     for (std::size_t index = 0; index < workspace.members.size(); ++index) {
       const std::filesystem::path &memberRoot = workspace.members[index];
-      if (!addLoadedManifest(loadProjectManifest(memberRoot / manifestFilename),
+      if (!addLoadedManifest(load(memberRoot / manifestFilename),
                              ProjectPackageMembership::Member, memberRoot,
                              workspace.memberDeclarations[index],
                              "Workspace member")) {
@@ -282,6 +297,7 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
   std::optional<DependencyLockLoadResult> lockLoad;
   bool lockDiagnosticsReported = false;
   std::string gitExecutable;
+  std::vector<std::pair<std::size_t, ProjectDependency>> registryRequests;
   const auto dependencyLock = [&]() -> const DependencyLockLoadResult & {
     if (!lockLoad) {
       lockLoad = loadDependencyLock(workspaceRoot);
@@ -304,6 +320,10 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
     const std::vector<ProjectDependency> dependencies =
         packages[packageIndex].manifest.dependencies();
     for (const ProjectDependency &dependency : dependencies) {
+      if (dependency.registry) {
+        registryRequests.emplace_back(packageIndex, dependency);
+        continue;
+      }
       std::filesystem::path targetRoot = dependency.packageRoot;
       std::optional<GitSourceKey> gitSource;
       std::string gitChecksum;
@@ -510,6 +530,112 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
     }
   }
 
+  if (!registryRequests.empty() && result.diagnostics.empty()) {
+    const auto &loadedLock = dependencyLock();
+    if (loadedLock.status != DependencyLockLoadStatus::Missing &&
+        !loadedLock.succeeded()) {
+      result.diagnostics.insert(result.diagnostics.end(),
+                                loadedLock.diagnostics.begin(),
+                                loadedLock.diagnostics.end());
+    } else {
+      try {
+        std::vector<RegistryDependency> roots;
+        for (const auto &[parent, dependency] : registryRequests) {
+          const auto &source = *dependency.registry;
+          roots.push_back({dependency.alias,
+                           {source.registry, source.package},
+                           source.requirement});
+        }
+        auto registries = configuredRegistries();
+        std::vector<std::string> reservedNames;
+        for (const auto &package : packages) {
+          reservedNames.push_back(package.manifest.package().name);
+        }
+        const auto selection = resolveRegistryPackages(
+            roots, loadedLock.lock, *registries, dependencyPolicy.requireLock,
+            !dependencyPolicy.acquireRegistry,
+            dependencyPolicy.preferLatestRegistryPackage, reservedNames);
+        std::map<RegistryPackageKey, std::size_t> selectedIndices;
+        for (const auto &[key, chosen] : selection) {
+          const auto *pinned =
+              loadedLock.lock.findRegistry(key.registry, key.package);
+          if (pinned && pinned->version != chosen.metadata.version) {
+            // An explicitly resolved upgrade is a different immutable version,
+            // not a mutation of the previously locked archive.
+            pinned = nullptr;
+          }
+          auto source = materializeRegistryPackage(
+              chosen, *registries,
+              {.allowAcquisition = dependencyPolicy.acquireRegistry,
+               .allowMaterialization = dependencyPolicy.materializeRegistry},
+              pinned);
+          for (const auto &dependency : chosen.metadata.dependencies) {
+            source.dependencies.push_back(
+                dependency.key.identity() + "@" +
+                selection.at(dependency.key).metadata.version);
+          }
+          std::sort(source.dependencies.begin(), source.dependencies.end());
+          const auto directory = registryPackageSource(source);
+          const auto index = addLoadedManifest(
+              loadProjectManifest(directory / manifestFilename),
+              ProjectPackageMembership::Dependency, directory,
+              roots.empty()
+                  ? std::nullopt
+                  : std::optional<SourceSpan>(
+                        registryRequests.front().second.pathDeclaration),
+              "Registry dependency");
+          if (!index) {
+            continue;
+          }
+          packages[*index].registrySource = std::move(source);
+          selectedIndices.emplace(key, *index);
+          for (const auto &dep : packages[*index].manifest.dependencies()) {
+            registryRequests.emplace_back(*index, dep);
+          }
+        }
+        for (const auto &[parent, dependency] : registryRequests) {
+          const auto &source = *dependency.registry;
+          const auto found =
+              selectedIndices.find({source.registry, source.package});
+          if (found == selectedIndices.end()) {
+            continue;
+          }
+          const auto &target = packages[found->second];
+          auto &edges = packages[parent].dependencies;
+          if (std::any_of(edges.begin(), edges.end(), [&](const auto &edge) {
+                return edge.targetIdentity == target.identity();
+              })) {
+            result.diagnostics.push_back(workspaceDiagnostic(
+                "GTI-B1602", dependency.pathDeclaration,
+                "Dependency aliases resolve to the same registry package; "
+                "declare it once per package."));
+          } else {
+            edges.push_back({dependency.alias, target.identity(),
+                             target.manifest.packageRoot(),
+                             dependency.pathDeclaration});
+          }
+        }
+      } catch (const RegistryError &error) {
+        auto diagnostic = workspaceDiagnostic(
+            error.code, registryRequests.front().second.pathDeclaration,
+            error.what());
+        diagnostic.hints.push_back(
+            error.code == "GTI-B1713"
+                ? "Set the configured token-env variable to a package-read "
+                  "token (GTI_REGISTRY_TOKEN for the default official "
+                  "registry); anonymous reads depend on server policy."
+                : "Use `gti fetch` to resolve/acquire declared packages; "
+                  "ordinary registry builds and editor analysis are offline "
+                  "and read-only.");
+        result.diagnostics.push_back(std::move(diagnostic));
+      } catch (const std::filesystem::filesystem_error &) {
+        result.diagnostics.push_back(workspaceDiagnostic(
+            "GTI-B1722", registryRequests.front().second.pathDeclaration,
+            "Cannot safely access the registry package cache."));
+      }
+    }
+  }
+
   std::unordered_map<std::string, std::size_t> packageByName;
   for (std::size_t index = 0; index < packages.size(); ++index) {
     const std::string &name = packages[index].manifest.package().name;
@@ -643,6 +769,10 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
 DependencyLock lockFromWorkspace(const ProjectWorkspace &workspace) {
   DependencyLock lock;
   for (const ResolvedProjectPackage &package : workspace.packages()) {
+    if (package.registrySource) {
+      lock.registryPackages.push_back(*package.registrySource);
+      continue;
+    }
     if (!package.gitSource) {
       continue;
     }

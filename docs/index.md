@@ -119,6 +119,9 @@ for the current implementation when a document is stale or ambiguous.
 - [024: Explicit source module interfaces](decisions/024-source-module-interfaces.md)
   — package-registered interfaces, private declarations, imports
   and explicit re-exports while preserving legacy includes and whole-program compilation.
+- [025: Backend-independent source package registry](decisions/025-source-package-registry.md)
+  — logical identities, shared SemVer, exact integrity locks and explicit
+  acquisition/publication over the official Gitea storage backend.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.

@@ -5,7 +5,9 @@
 > [`docs/architecture/build-and-driver.md`](../architecture/build-and-driver.md).
 
 Status: implementation in progress; Milestones 0 through 7 are complete for
-their bounded local/path/native and pinned-Git dependency scopes
+their bounded local/path/native and pinned-Git dependency scopes. The source
+registry bootstrap is also implemented; Stage 4 below records its accepted
+scope and remaining service/governance work.
 
 Operational ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). At the current
@@ -186,21 +188,22 @@ directory bypass it.
 
 Pinned git dependencies are implemented:
 `alias = { git = "<url>", rev = "<full 40-hex commit>" }` is the only accepted
-git form, `gti fetch` is the sole writer of the workspace `gti.lock`
+git form. `gti fetch` (and registry `gti add`) writes the workspace `gti.lock`
 (lock-version 1, sorted entries with `sha256:` tree checksums and dependency
 edges), and build/check/run/test verify lock coverage plus stored-tree
 checksums and locked package identity before source loading. `--offline` and
 `--locked` refuse acquisition; a plain build may materialize a lock-covered
-missing checkout. Branch/tag selectors and registry ranges remain rejected.
-Package-level native inputs on a dependency are rejected until native
-dependency composition is defined.
-is selected; declared native sources, include and library search
+missing checkout. Branch/tag selectors remain rejected. Registry requirements
+now resolve through a backend-independent source-package protocol, with
+`gti add`, locked/offline fetch, immutable checksummed archives, and Gitea Generic
+Packages as the configured official backend; see the current architecture
+document for its explicit bounded format and security policy.
+
+Declared native sources, include and library search
 directories, content-complete exact link files, and resolvable `-l` names
 join cache identity through native dependency discovery and full-tree
 identity, while opaque native argument vectors, frameworks, unresolved or
-ambiguous `-l` names, and non-content-complete link inputs still bypass it. Git/registry dependency declarations and fetch
-options are not implemented and are rejected. A `gti.lock` file is not yet
-consumed or authoritative; its presence has no effect. Package-level native
+ambiguous `-l` names, and non-content-complete link inputs still bypass it. Package-level native
 inputs on a dependency compose into every dependent build as isolated
 per-package groups: structured contained inputs (include directories, C and C++
 sources, the C standard, library directories, link files, libraries,
@@ -1034,11 +1037,21 @@ network access. `gti fetch` populates the source cache without compiling.
 
 ### Stage 4: registry evaluation
 
-Do not create a registry merely because a manifest exists. First specify name
-ownership, semantic-version policy, immutable releases, yanking, checksums,
-signing/trust, malicious-package handling, source availability, and native
-dependency policy. A registry is a service and governance commitment, not a CLI
-subcommand.
+Status: complete for the source-package bootstrap accepted by ADR 025.
+
+The official backend is Gitea Generic Packages under configurable `gti-lang`
+ownership, behind logical registry identity and an independent GTI metadata/
+archive protocol. General bounded SemVer solving, exact lock closures,
+deterministic source packaging, completeness-last publication, explicit
+acquisition, user caching and integrity checks are implemented. Native build
+script permission remains consumer-owned. Tests use in-memory backends and a
+local fake Gitea service, not a live registry dependency.
+
+Package signing, yanking, mirrors, search, richer feature/target solving and
+multiple versions of one canonical workspace name remain deferred. Initial
+package publication and publishing permissions are service operations, not
+automatic compiler release side effects. A registry remains a governance/trust
+commitment rather than a guarantee that arbitrary package code is safe to run.
 
 ### Build hooks
 
@@ -1502,7 +1515,7 @@ lockfile as a side effect of opening an editor.
 
 - replacing CMake for building the GTI compiler itself;
 - arbitrary `build.gti` programs or dependency-supplied shell hooks;
-- a central package registry;
+- a central package registry (superseded by the implemented Stage 4 bootstrap);
 - binary GTI modules or a stable cross-version GTI ABI;
 - separate compilation that imitates C++ translation units;
 - automatic C/C++ header discovery;
