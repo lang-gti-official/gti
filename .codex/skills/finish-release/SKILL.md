@@ -1,16 +1,20 @@
 ---
 name: finish-release
-description: Complete validated GTI work by reconciling remote changes, committing only the intended files, advancing VERSION when required, and initiating the repository's Gitea tag and release path. Use when an implementation is ready to deliver or the user asks to commit, tag, publish, push, or release. Treat successful Gitea push or dispatch as completion; do not wait for asynchronous CI/CD.
+description: Apply GTI version and release policy to validated work delivered through the agent-workflow PR lifecycle. Use when an implementation is ready to deliver or the user asks to commit, publish or release. Required PR checks precede integration; asynchronous release packaging does not block completion.
 ---
 
 # Finish A GTI Release
 
-Deliver validated work without maintaining a second validation loop in Gitea.
+Deliver validated work through [agent-workflow](../agent-workflow/SKILL.md).
+The normal implementation outcome is a merged PR and synchronized local main;
+explicit PR-only/local-only instructions override integration. Apply release
+policy below without bypassing that lifecycle.
 
 ## Choose The Delivery Level
 
-- Do not publish a review-only task, an incomplete change, or work the user
-  explicitly asked to leave local.
+- Do not release incomplete work or publish a read-only review or work the user
+  asked to leave local. Unfinished implementation checkpoints may be published
+  to their task branch and draft PR under agent-workflow.
 - Commit completed in-scope repository changes after local validation.
 - Treat a change as release-bearing when repository version policy requires a
   `VERSION` advance, when it changes shipped behavior or packaging, or when the
@@ -34,8 +38,8 @@ Deliver validated work without maintaining a second validation loop in Gitea.
 ## Initiate The Release
 
 Use the repository's Gitea release workflow as the tag and release authority.
-For the current workflow, pushing a release-bearing commit with an advanced
-`VERSION` to canonical Gitea `main` dispatches packaging and publication of the
+For the current workflow, merging a release-bearing PR with an advanced
+`VERSION` into canonical Gitea `main` dispatches packaging and publication of the
 matching `v<VERSION>` tag and Gitea release. Do not also push a competing tag.
 
 Manual workflow dispatch may rebuild the release for the selected commit, but
@@ -44,10 +48,9 @@ unvalidated tree by hand.
 
 ## Finish After Dispatch
 
-Once the push, tag push, or workflow dispatch command returns success, report
-the commit, pushed ref, intended release tag, and local validation, then finish
-the task. Do not poll, watch, or wait for Gitea Actions, packaging jobs, or the
-Gitea release to complete. Do not repeatedly query run status. An immediate
-push or dispatch rejection is still a task failure and
-must be reported; a later asynchronous CI/CD failure can be handled when the
-user re-prompts.
+Respect required PR checks/reviews before integration; never force a merge or
+administratively bypass them. Once integration and local-main sync succeed,
+report the PR, commit, intended version when applicable, validation and cleanup.
+Do not wait for post-merge packaging or release publication. A merge/sync failure
+is an incomplete task and must remain visible; a later asynchronous packaging
+failure can be handled separately.

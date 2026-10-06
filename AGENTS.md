@@ -13,6 +13,34 @@ syntax, explicit ownership, deterministic cleanup, and a native C++ backend.
 - Use repository skills under [`.codex/skills/`](.codex/skills/) for repeatable
   workflows. Skills describe how to work; they do not replace canonical docs.
 
+## Implementation Task Lifecycle
+
+- Apply [agent-workflow](.codex/skills/agent-workflow/SKILL.md) to implementation
+  tasks. The owner's standing authorization is to publish task checkpoints,
+  open/update the task PR, merge validated in-scope work through that PR, sync
+  primary local `main`, and safely clean up that task's integrated branch and
+  worktree. An implementation is normally complete when local `main` contains
+  the merged change and is ready for the user's local install script.
+- Explicit requests such as "PR only", "leave local", "do not merge", or
+  "review first" override automatic integration. Read-only reviews/discussions
+  do not authorize implementation or publication. Installation remains opt-in.
+- Begin from current canonical `origin/main` in a clean task-specific branch
+  and worktree. Publish the branch immediately; create a draft PR after the
+  first meaningful checkpoint. Commit and push coherent checkpoints before
+  pauses/handoffs and at completion. Do not leave meaningful task work only in
+  an opaque local checkout or reuse another task's branch.
+- Use `scripts/agent_workflow.py` for lifecycle operations. Reconcile upstream,
+  validate the resulting head/base, and merge only through Gitea PRs. Respect
+  required checks/reviews. No direct pushes to `main`, rewritten shared history,
+  or administrative bypasses. The owner authorizes the helper's `protection
+  --configure` to establish this PR-only/up-to-date rule; preserve existing
+  review and status requirements.
+- Preserve unrelated primary-checkout edits and unique commits during sync.
+  Confirm remote integration before archiving/removing a task worktree or
+  deleting its branches. Preserve needed ignored files and any residual source
+  first. Explicitly mark and publish abandoned/superseded work; never silently
+  discard it. See [the lifecycle contract](docs/architecture/agent-workflow.md).
+
 ## Documentation Roles
 
 - `docs/architecture/` describes implemented compiler and tooling

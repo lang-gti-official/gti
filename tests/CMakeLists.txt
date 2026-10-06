@@ -874,6 +874,11 @@ set_tests_properties(
 
 if(Python3_Interpreter_FOUND)
   add_test(
+    NAME agent_workflow
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/agent_workflow_test.py"
+  )
+  add_test(
     NAME cmake_test_ownership
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/cmake_test_ownership_test.py"
