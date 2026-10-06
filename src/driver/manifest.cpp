@@ -1569,7 +1569,7 @@ parseToolchains(const toml::table &document,
       Diagnostic diagnostic = buildDiagnostic(
           "GTI-B1902", toolchain.declaration,
           "Toolchain '" + toolchain.declaredTriple +
-              "' must declare 'cxx', the native C++ compiler and linker for "
+              "' must declare 'cxx', the native compiler and linker for "
               "that target.");
       diagnostic.hints.push_back(
           "Without it the build would fall back to host compiler discovery "

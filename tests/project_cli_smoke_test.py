@@ -1207,9 +1207,9 @@ def main():
             expected=1,
             cwd=native_nested,
         )
-        assert "native C compiler diagnostics" in failed_c_build.stderr
-        assert "native C compiler failed" in failed_c_build.stderr
-        assert "generated C++ retained" in failed_c_build.stderr
+        assert "native source diagnostics" in failed_c_build.stderr
+        assert "native source compiler failed" in failed_c_build.stderr
+        assert "backend 'c++' representation saved" in failed_c_build.stderr
         assert native_object.read_bytes() == previous_object
         run([str(native_executable)])
 
@@ -1230,9 +1230,9 @@ def main():
             expected=1,
             cwd=native_nested,
         )
-        assert "native C++ compiler diagnostics" in failed_cpp_build.stderr
-        assert "native C++ compiler failed for" in failed_cpp_build.stderr
-        assert "generated C++ retained" in failed_cpp_build.stderr
+        assert "native source diagnostics" in failed_cpp_build.stderr
+        assert "native source compiler failed for" in failed_cpp_build.stderr
+        assert "backend 'c++' representation saved" in failed_cpp_build.stderr
         assert native_cpp_object.read_bytes() == previous_cpp_object
         run([str(native_executable)])
 
@@ -2846,7 +2846,7 @@ def main():
         (composed_app / "gti.toml").write_text(leak_manifest, encoding="utf-8")
         leak_build = run([gti, "build"], expected=1, cwd=composed_app)
         assert "wrap.h" in leak_build.stderr
-        assert "native C compiler failed" in leak_build.stderr
+        assert "native source compiler failed" in leak_build.stderr
         (composed_app / "gti.toml").write_text(
             leak_manifest.replace(
                 '[package.native]\nc-sources = ["native/leak.c"]\n\n', ""
@@ -2980,7 +2980,7 @@ def main():
         broken_dependency = run(
             [gti, "build"], expected=1, cwd=chained_native_app
         )
-        assert "native C compiler failed" in broken_dependency.stderr
+        assert "native source compiler failed" in broken_dependency.stderr
         assert "base.c" in broken_dependency.stderr
         (base_package / "native/base.c").write_text(
             "int base_value(void) { return 40; }\n", encoding="utf-8"

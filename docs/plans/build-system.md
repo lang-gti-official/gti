@@ -48,6 +48,11 @@ artifact, cache or program-output policy. Parallel target children remain quiet
 and the parent reports target waits. The current contract and deliberately
 whole-program boundaries are documented in
 [Live Build Progress](../architecture/build-and-driver.md#live-build-progress).
+Human-readable backend progress, retention and failure summaries are
+representation-neutral; explicit legacy input spellings and machine-readable
+schemas remain compatible. Raw backend evidence is retained in private logs,
+with the actual representation format named only when reporting a saved
+artifact. This is implemented presentation policy, not a backend migration.
 
 Direct mode and project builds now resolve the same explicit execution-profile
 fact. The direct option is
@@ -973,9 +978,12 @@ error[GTI-B1104]: Target root escapes the package directory.
 note: dependency source roots must be declared in [dependencies].
 ```
 
-Native compiler failures remain explicitly labeled as generated-backend
-failures and retain the generated C++ artifact for investigation. Build-system
-diagnostics must not disguise C++ backend failures as GTI source errors.
+Native compiler/link failures remain labeled as backend build failures and
+retain available representation and raw diagnostic evidence for investigation.
+Build-system diagnostics must not disguise backend failures as GTI source
+errors or label every external-toolchain failure as a compiler bug. Default
+human-readable output is backend-neutral; saved artifacts identify their actual
+format, and explicit input spellings and metadata schemas remain compatible.
 
 `gti metadata --format json` exposes the manifest schema version, canonical
 manifest and package paths, package identity, host target fields, sorted
