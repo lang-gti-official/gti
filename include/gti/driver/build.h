@@ -333,6 +333,9 @@ struct ExecutableBuildResult {
   std::vector<std::string> nativeCommand;
   std::filesystem::path generatedSource;
   std::optional<std::string> driverDiagnostic;
+  // Complete developer evidence for a backend-generation/native-build
+  // failure, including native argv/output when available. Not a cache input.
+  std::optional<DiagnosticLogResult> backendDiagnosticLog;
   BuildCacheResult cache;
   std::optional<BuildProvenance> provenance;
   bool generatedSourceRetained = false;

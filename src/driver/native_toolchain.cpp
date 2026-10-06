@@ -664,7 +664,7 @@ NativeToolchain::invoke(const NativeCCompileRequest &request,
       command(request),
       {.outputMode = ProcessOutputMode::Capture,
        .captureSuccessfulOutput = options.captureSuccessfulOutput,
-       .description = "native C compiler"});
+       .description = "native source compiler"});
 }
 
 NativeProcessResult
@@ -674,7 +674,7 @@ NativeToolchain::invoke(const NativeCppCompileRequest &request,
       command(request),
       {.outputMode = ProcessOutputMode::Capture,
        .captureSuccessfulOutput = options.captureSuccessfulOutput,
-       .description = "native C++ source compiler"});
+       .description = "native source compiler"});
 }
 
 std::string renderCommand(std::span<const std::string> arguments) {

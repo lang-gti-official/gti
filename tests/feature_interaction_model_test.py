@@ -19,6 +19,7 @@ from debug.feature_interaction_model import (
     FACTORS, V1_FACTORS, SELECTED_TRIPLES, InteractionCase, coverage, covering_array, make_case,
 )
 from debug import feature_interactions as runner
+from debug import capture_compiler_failure as capture
 
 
 class ModelTests(unittest.TestCase):
@@ -152,6 +153,7 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(retained, failure)
         self.assertEqual(len(failure["observations"]), 3)
         self.assertIn("--keep-cpp", failure["observations"][0]["command"])
+        self.assertIn("--verbose", failure["observations"][0]["command"])
         self.assertTrue((self.root / "bad/002-run.stdout").is_file())
 
     def test_nondeterminism_and_missing_artifact(self):
@@ -177,6 +179,38 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(failure["signature"], {"kind": "timeout", "stage": "build"})
         self.assertEqual(failure["observations"][0]["stdout"], "partial")
         self.assertEqual(failure["observations"][0]["stderr"], "detail")
+
+    def test_backend_neutral_output_keeps_distinct_developer_causes(self):
+        heading = "error[GTI-B0001]: Internal compiler error: backend failed while generating a representation.\n"
+        failures = []
+        for reason in ("invalid call input 17", "invalid cleanup 23"):
+            text = heading + "Backend: cpp\nDetail: " + reason + "\n"
+            observed = runner.Observation("build", ["gti"], 65, "", text)
+            failures.append(runner.compiler_failure(observed))
+            record = {"stage": "cpp-emission", "timed_out": False, "signal": None,
+                      "exit": 65, "_stdout": b"", "_stderr": text.encode()}
+            self.assertEqual(capture.signature_from(record)["stem"], reason)
+        self.assertNotEqual(failures[0]["reason"], failures[1]["reason"])
+        self.assertEqual(failures[0]["reason"], "invalid call input #")
+        text = ("Emitting backend representation\n+ compiler /tmp/random-17.cpp\n"
+                "gti: backend diagnostics:\n/tmp/random-17.cpp:42: error: invalid native call 19\n"
+                "gti: backend failed while compiling and linking the executable (exit code 1)\n")
+        native = runner.Observation("build", ["gti"], 1, "", text)
+        self.assertEqual(runner.compiler_failure(native)["reason"], "invalid native call #")
+        for heading in ("gti: backend failed while compiling and linking the executable (exit code 9)",
+                        "gti: native C++ compiler failed with exit code 9"):
+            record = {"stage": "native-build", "timed_out": False, "signal": None,
+                      "exit": 9, "_stdout": b"", "_stderr": heading.encode()}
+            self.assertEqual(capture.signature_from(record)["kind"], "native-toolchain")
+        for probe in capture.direct_ladder("main.gti"):
+            self.assertEqual("--verbose" in probe.argv, probe.stage != "run")
+        record = {"stage": "native-build", "timed_out": False, "signal": None,
+                  "exit": 1, "_stdout": b"",
+                  "_stderr": b"/tmp/random-17.cpp:42:9: error: invalid call\ngti: backend failed while compiling and linking"}
+        current = capture.signature_from(record)
+        self.assertEqual(current["stem"], "invalid call")
+        legacy = dict(current, stem="random-99.cpp: error: invalid call")
+        self.assertTrue(capture.signatures_match(legacy, current))
 
     def test_actual_process_timeout_and_capture(self):
         with self.assertRaises(subprocess.TimeoutExpired) as caught:
