@@ -1047,6 +1047,13 @@ acquisition, user caching and integrity checks are implemented. Native build
 script permission remains consumer-owned. Tests use in-memory backends and a
 local fake Gitea service, not a live registry dependency.
 
+One-time scoped registry login is implemented with protected macOS Keychain
+storage and automatic acquisition/publication lookup. The environment override
+remains available on all hosts. Credential-store and optional authentication
+interfaces are independent of transport and archive format; other OS stores,
+browser/device login and token refresh remain future work, with no plaintext
+fallback. The current build/driver document owns the exact workflow.
+
 Package signing, yanking, mirrors, search, richer feature/target solving and
 multiple versions of one canonical workspace name remain deferred. Initial
 package publication and publishing permissions are service operations, not

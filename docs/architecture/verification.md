@@ -2,6 +2,36 @@
 
 ## Source package registry bootstrap
 
+### Protected registry authentication
+
+`package_registry_auth_model` exercises an unrelated registry adapter with an
+in-memory protected store: validate-before-save, failed-login preservation,
+unsupported/denied storage, exact logical/endpoint/owner isolation,
+length-framed account hashing, environment precedence/empty opt-out, bounded
+control-free tokens, versioned record validation and idempotent logout.
+`package_registry_auth_cli` uses a local fake Gitea server to exercise the real
+adapter's explicit login validation, automatic stored authentication for
+discovery/download/publication, per-command store lookup, environment overrides,
+redaction, argument/input bounds and network-free status. Terminal tests restore
+echo after interrupt, termination and suspension cancellation.
+
+Set `GTI_TEST_REGISTRY_KEYCHAIN=1` to additionally exercise the production macOS
+store with one synthetic credential scoped to a random loopback registry.
+Login/status/failed replacement, scope changes, automatic `gti add`/locked
+fetch, secret-free project/cache files and idempotent logout use that exact
+record; cleanup removes only the fixture record. Default CI never accesses a
+real Keychain item or requires an unlocked desktop session. The installed C++
+driver smoke constructs/injects the store without Objective-C/LLVM types in its
+headers or a credential query.
+
+Local evidence uses the Release/Ninja compiler on macOS arm64 with AppleClang
+21 and system LLVM 22.1.8: all 14 selected registry, driver, project, CLI,
+color/progress, project-facts LSP and link-surface gates pass, including the
+opt-in synthetic Keychain workflow. No frontend language semantics change.
+Linux/Windows protected-store persistence is not implemented by this slice.
+
+### Bootstrap evidence
+
 `package_registry_model` uses an in-memory backend to exercise the shared
 SemVer model, strict metadata and manifest declarations, newest complete
 metadata-only solving, lock preference, missing/conflicting candidates,

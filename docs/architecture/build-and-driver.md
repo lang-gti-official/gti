@@ -1254,11 +1254,58 @@ owner = "gti-lang"
 token-env = "GTI_REGISTRY_TOKEN"
 ```
 
-Credentials belong only in the named environment variable, not the project,
-lock, archive or metadata. Anonymous public reads are supported when permitted
+On macOS, authenticate once using `gti registry login` (default `official`) or
+`gti registry login <name>`. Paste a Gitea personal access token into the hidden
+terminal prompt. GTI verifies package-read access to the configured owner before
+saving the token in macOS Keychain. Subsequent explicit `add`, `fetch` and
+`publish` commands look it up automatically. No password is requested and no
+token is placed in command-line arguments. Login verifies read permission;
+publication still requires package-write permission and can fail independently.
+Create the token in Gitea's user settings; this slice does not implement OAuth,
+browser/device login, automatic token issuance or refresh.
+
+`gti registry status [name]` reports the selected credential source without
+showing the token or contacting the server. `gti registry logout [name]` removes
+only that scoped Keychain record, idempotently; it does not revoke the server's
+token. `login --token-stdin` explicitly accepts a single token from a pipeline,
+with an optional final LF/CRLF. Avoid commands that expose the token in shell
+history or process arguments; use a secret manager's output instead.
+Nonterminal login without that option fails rather than reading a secret with
+echo enabled. Terminal cancellation restores echo.
+
+An explicitly set `token-env` variable takes precedence over Keychain, for CI
+and existing automation. An explicitly empty variable selects anonymous access
+and disables Keychain lookup; unset it to use saved login. Login always validates
+the newly entered token, ignoring existing stored/environment values, and only
+replaces the saved record after validation succeeds. Logout leaves environment
+overrides alone and reports that they remain set.
+
+`RegistryCredentialStore` is a backend-neutral protected-storage interface;
+`Registry::authentication()` and `validateCredential()` are optional transport
+capabilities, independent of metadata/archive formats. Credentials are typed
+access tokens in a versioned private record, scoped by the logical registry,
+normalized configured endpoint (trailing slashes removed) and owner/realm. The
+Keychain service is `dev.gti.registry.credentials.v1`; its account is the full
+SHA-256 of a length-framed scope tuple. Changing endpoint or owner deliberately
+requires a new login. Package-format/backend changes alone do not alter scope.
+No enumeration of unrelated Keychain items or plaintext fallback is performed.
+Keychain access errors fail visibly, with an environment-variable alternative;
+GTI requests noninteractive OS access. Unlocking/access authorization, stable
+code signing and reauthorization after replacing a locally built executable
+remain OS concerns. The private Objective-C++ adapter links system frameworks,
+not an external secret-storage library. Other hosts currently support environment
+tokens and anonymous access only; protected-store adapters and new credential
+kinds can be added without changing the resolver or package formats.
+
+Credentials belong only in the OS store or the named environment variable,
+not the project, lock, archive, metadata, reports or package cache. Store lookup
+is lazy and cached for one acquisition/publication provider lifetime; ordinary
+offline builds, checks, metadata and LSP facts never request credentials, nor
+does `publish --dry-run`. Anonymous public reads are supported when permitted
 by the server; a server that requires sign-in also needs a package-read token
 for `add`/`fetch`. The current official server requires authenticated discovery.
-Set `GTI_REGISTRY_TOKEN` outside the project for its default mapping.
+Use `gti registry login` on macOS, or set `GTI_REGISTRY_TOKEN` outside the project
+for its default mapping.
 Publication requires a package-write token. HTTPS uses the existing dynamically loaded
 libcurl host transport with certificate verification; redirects are never
 followed and response bodies are not included in failures. Plain HTTP is

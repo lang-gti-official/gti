@@ -16,6 +16,7 @@
 #include "gti/support.h"
 #include "gti/target.h"
 #include "project_presentation.h"
+#include "registry_input.h"
 #include "terminal_style.h"
 
 #include <llvm/Support/ConvertUTF.h>
@@ -23,6 +24,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -199,6 +201,12 @@ struct RegistryOptions {
   bool dryRun = false;
 };
 
+struct RegistryAuthenticationOptions {
+  std::string action;
+  std::string registry = "official";
+  bool tokenStdin = false;
+};
+
 struct ScaffoldOptions {
   lang::driver::ProjectScaffoldMode mode =
       lang::driver::ProjectScaffoldMode::NewPackage;
@@ -248,6 +256,9 @@ void printUsage(std::ostream &stream) {
          "       gti add <package[@requirement]> [--registry <name>]\n"
          "       gti fetch [--offline] [--locked]\n"
          "       gti publish [--registry <name>] [--name <name>] [--dry-run]\n"
+         "       gti registry login [name] [--token-stdin]\n"
+         "       gti registry logout [name]\n"
+         "       gti registry status [name]\n"
          "       gti clean\n"
          "       gti metadata [--format json] [--package <name>]\n"
          "       gti format init [directory]\n"
@@ -1254,6 +1265,54 @@ ArgumentResult parseRegistryArguments(int argc, char *argv[],
   return ArgumentResult::Run;
 }
 
+ArgumentResult
+parseRegistryAuthenticationArguments(int argc, char *argv[],
+                                     RegistryAuthenticationOptions &options) {
+  if (argc < 3) {
+    std::cerr << "gti: registry requires login, logout, or status\n";
+    return ArgumentResult::ExitFailure;
+  }
+  options.action = argv[2];
+  if (options.action == "--help" || options.action == "-h") {
+    printUsage(std::cout);
+    return ArgumentResult::ExitSuccess;
+  }
+  if (options.action != "login" && options.action != "logout" &&
+      options.action != "status") {
+    std::cerr << "gti: registry requires login, logout, or status\n";
+    return ArgumentResult::ExitFailure;
+  }
+  bool nameSelected = false;
+  for (int index = 3; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
+    const std::string_view argument = argv[index];
+    if (argument == "--help" || argument == "-h") {
+      printUsage(std::cout);
+      return ArgumentResult::ExitSuccess;
+    }
+    if (argument == "--token-stdin" && options.action == "login" &&
+        !options.tokenStdin) {
+      options.tokenStdin = true;
+    } else if (!argument.starts_with('-') && !nameSelected &&
+               lang::driver::validRegistryName(argument)) {
+      options.registry = argument;
+      nameSelected = true;
+    } else {
+      // Unknown operands may be mistakenly supplied secrets; never echo them.
+      std::cerr << "gti: invalid registry argument; tokens are accepted only "
+                   "through hidden input or --token-stdin\n";
+      return ArgumentResult::ExitFailure;
+    }
+  }
+  return ArgumentResult::Run;
+}
+
 ArgumentResult parseCleanArguments(int argc, char *argv[]) {
   for (int index = 2; index < argc; ++index) {
     const auto color = parseColorArgument(argc, argv, index);
@@ -1562,6 +1621,69 @@ void reportDiagnostics(const std::vector<lang::Diagnostic> &diagnostics,
                        const lang::SourceManager &sources) {
   for (const lang::Diagnostic &diagnostic : diagnostics) {
     reportDiagnostic(diagnostic, sources);
+  }
+}
+
+int runRegistryAuthentication(const RegistryAuthenticationOptions &options) {
+  using namespace lang::driver;
+  try {
+    auto store = systemRegistryCredentialStore();
+    auto providers = configuredRegistries(store);
+    auto &registry = providers->get(options.registry);
+    const auto info = registry.authentication();
+    if (!info) {
+      throw RegistryError("GTI-B1725",
+                          "This registry backend does not support login.");
+    }
+    if (options.action == "login") {
+      if (!store->available()) {
+        throw RegistryError("GTI-B1724",
+                            "Secure registry credential storage is "
+                            "not available on this host; use "
+                            "the configured token-env variable.");
+      }
+      if (!options.tokenStdin) {
+        std::cerr << "Logging in to " << info->target.endpoint << " ("
+                  << info->target.realm << ")\n";
+      }
+      loginRegistry(
+          registry, *store,
+          {.secret = lang::cli::readRegistryToken(options.tokenStdin)});
+      std::cout << "Saved " << options.registry << " credential in "
+                << store->name() << ".\n";
+    } else if (options.action == "logout") {
+      logoutRegistry(registry, *store);
+      std::cout << "Removed stored " << options.registry
+                << " credential. "
+                   "The server token has not been revoked.\n";
+    } else {
+      const auto selected = resolveRegistryCredential(*info, *store);
+      std::cout << options.registry << ": " << info->target.endpoint << " ("
+                << info->target.realm << ")\nCredential: ";
+      if (selected.source == RegistryCredentialSource::Environment) {
+        std::cout << "environment (" << info->tokenEnvironment << ")"
+                  << (selected.credential ? "" : " — empty; anonymous");
+      } else if (selected.source == RegistryCredentialSource::Stored) {
+        std::cout << store->name();
+      } else {
+        std::cout << "anonymous"
+                  << (store->available() ? ""
+                                         : " (secure storage unavailable)");
+      }
+      std::cout << '\n';
+    }
+    if (options.action != "status" &&
+        std::getenv(info->tokenEnvironment.c_str())) {
+      std::cout << "Environment override " << info->tokenEnvironment
+                << " remains set; unset it to use stored credentials.\n";
+    }
+    return exitCode(ExitStatus::Success);
+  } catch (const RegistryError &error) {
+    const auto diagnostic =
+        lang::makeDiagnostic(error.code, lang::DiagnosticPhase::Driver,
+                             lang::SourceSpan{}, error.what());
+    reportDiagnostics({diagnostic}, {});
+    return exitCode(ExitStatus::Compilation);
   }
 }
 
@@ -3523,6 +3645,19 @@ int main(int argc, char *argv[]) {
       return runProjectBuildAll(options, argv[0]);
     }
     return runProject(options, argv[0]);
+  }
+
+  if (command == "registry") {
+    RegistryAuthenticationOptions options;
+    const auto parsed =
+        parseRegistryAuthenticationArguments(argc, argv, options);
+    if (parsed == ArgumentResult::ExitSuccess) {
+      return exitCode(ExitStatus::Success);
+    }
+    if (parsed == ArgumentResult::ExitFailure) {
+      return exitCode(ExitStatus::Usage);
+    }
+    return runRegistryAuthentication(options);
   }
 
   if (command == "add" || command == "publish") {

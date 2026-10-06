@@ -196,6 +196,15 @@ else()
 endif()
 set_tests_properties(package_registry_cli PROPERTIES TIMEOUT 240)
 
+add_executable(gti_registry_auth_tests registry_auth_tests.cpp)
+target_include_directories(gti_registry_auth_tests PRIVATE "${PROJECT_SOURCE_DIR}/src/driver")
+target_link_libraries(gti_registry_auth_tests PRIVATE gti_driver)
+add_test(NAME package_registry_auth_model COMMAND gti_registry_auth_tests)
+add_test(NAME package_registry_auth_cli
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/registry_auth_cli_test.py"
+    $<TARGET_FILE:gti> $<TARGET_FILE:gti_registry_auth_tests>)
+set_tests_properties(package_registry_auth_cli PROPERTIES TIMEOUT 90)
+
 add_executable(gti_designated_construction_tests designated_construction_tests.cpp)
 target_link_libraries(gti_designated_construction_tests PRIVATE gti_cpp_backend)
 add_test(NAME designated_construction_pipeline COMMAND gti_designated_construction_tests)

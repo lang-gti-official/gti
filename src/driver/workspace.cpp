@@ -621,7 +621,8 @@ WorkspaceResolutionResult resolveProjectWorkspace(
             error.what());
         diagnostic.hints.push_back(
             error.code == "GTI-B1713"
-                ? "Set the configured token-env variable to a package-read "
+                ? "Use `gti registry login <registry>` on macOS or set the "
+                  "configured token-env variable to a package-read "
                   "token (GTI_REGISTRY_TOKEN for the default official "
                   "registry); anonymous reads depend on server policy."
                 : "Use `gti fetch` to resolve/acquire declared packages; "

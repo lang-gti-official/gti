@@ -50,8 +50,10 @@ struct Reply {
 };
 class GiteaGenericRegistry final : public Registry {
 public:
-  explicit GiteaGenericRegistry(Configuration value)
-      : config(std::move(value)) {
+  explicit GiteaGenericRegistry(std::string identity, Configuration value,
+                                std::shared_ptr<RegistryCredentialStore> store)
+      : config(std::move(value)), credentials(std::move(store)),
+        registryIdentity(std::move(identity)) {
     while (config.url.ends_with('/')) {
       config.url.pop_back();
     }
@@ -76,6 +78,28 @@ public:
                               (c >= '0' && c <= '9') || c == '_';
                      })) {
       configurationError();
+    }
+  }
+  std::optional<RegistryAuthenticationInfo> authentication() const override {
+    return RegistryAuthenticationInfo{
+        .target = {registryIdentity, config.url, config.owner},
+        .tokenEnvironment = config.tokenEnvironment};
+  }
+  void validateCredential(const RegistryCredential &credential) override {
+    validateRegistryCredential(credential);
+    // This authenticated API requires package-read scope, not read:user.
+    // Use the supplied token directly, ignoring environment/stored credentials.
+    auto reply = request(GTI_HTTP_GET_V1,
+                         "/api/v1/packages/" + escaped(config.owner) +
+                             "?type=generic&page=1&limit=1",
+                         {}, 1024U * 1024U, &credential);
+    require(reply, 200);
+    auto json = llvm::json::parse(reply.body);
+    if (!json || !json->getAsArray()) {
+      if (!json) {
+        llvm::consumeError(json.takeError());
+      }
+      malformed();
     }
   }
   std::vector<std::string> listVersions(std::string_view package) override {
@@ -136,10 +160,10 @@ public:
   void publish(std::string_view package, std::string_view version,
                std::string_view archiveBytes,
                std::string_view metadataBytes) override {
-    if (environment(config.tokenEnvironment.c_str()).empty()) {
+    if (!credential()) {
       throw RegistryError("GTI-B1713",
-                          "Publishing needs a package-write token in the "
-                          "configured token-env environment variable.");
+                          "Publishing needs a package-write token; log in "
+                          "or set the configured token-env variable.");
     }
     auto preflight = request(GTI_HTTP_GET_V1, apiPackage(package) + "/" +
                                                   escaped(version) + "/files");
@@ -166,6 +190,24 @@ public:
 
 private:
   Configuration config;
+  std::shared_ptr<RegistryCredentialStore> credentials;
+  std::string registryIdentity;
+  mutable bool storedLoaded = false;
+  mutable std::optional<RegistryCredential> storedCredential;
+  std::optional<RegistryCredential> credential() const {
+    // Never read the OS store when an environment override is present, even
+    // explicitly empty. Otherwise read once per provider/command lifetime.
+    if (std::getenv(config.tokenEnvironment.c_str())) {
+      return resolveRegistryCredential(*authentication(), *credentials)
+          .credential;
+    }
+    if (!storedLoaded) {
+      storedCredential =
+          resolveRegistryCredential(*authentication(), *credentials).credential;
+      storedLoaded = true;
+    }
+    return storedCredential;
+  }
   [[noreturn]] static void malformed() {
     throw RegistryError("GTI-B1714",
                         "Registry returned malformed version-list metadata.");
@@ -194,8 +236,12 @@ private:
                                          "); redirects are not followed.");
   }
   Reply request(gti_http_method_v1 method, std::string_view path,
-                std::string_view body = {},
-                std::uint64_t limit = 1024U * 1024U) const {
+                std::string_view body = {}, std::uint64_t limit = 1024U * 1024U,
+                const RegistryCredential *explicitCredential = nullptr) const {
+    const auto selected =
+        explicitCredential
+            ? std::optional<RegistryCredential>(*explicitCredential)
+            : credential();
     std::int64_t client = 0, response = 0;
     if (gti_rt_http_client_create_v1(&client) != GTI_HTTP_OK_V1) {
       throw RegistryError("GTI-B1712",
@@ -210,9 +256,8 @@ private:
       headers += '\0';
     };
     header("Content-Type", "application/octet-stream");
-    const auto token = environment(config.tokenEnvironment.c_str());
-    if (!token.empty()) {
-      header("Authorization", "token " + token);
+    if (selected) {
+      header("Authorization", "token " + selected->secret);
     }
     const auto url = config.url + std::string(path);
     std::int32_t native = 0;
@@ -220,8 +265,8 @@ private:
       return gti_c_string_view{value.data(), value.size()};
     };
     const auto status = gti_rt_http_client_send_v1(
-        client, method, view(url), view(headers), token.empty() ? 1 : 2,
-        view(body), 10000, 90000, limit, view({}), &response, &native);
+        client, method, view(url), view(headers), selected ? 2 : 1, view(body),
+        10000, 90000, limit, view({}), &response, &native);
     gti_rt_http_client_destroy_v1(client);
     if (status != GTI_HTTP_OK_V1) {
       throw RegistryError(
@@ -242,6 +287,8 @@ private:
 };
 class ConfiguredRegistries final : public RegistryProvider {
 public:
+  explicit ConfiguredRegistries(std::shared_ptr<RegistryCredentialStore> store)
+      : credentials(std::move(store)) {}
   Registry &get(std::string_view identity) override {
     const std::string name(identity);
     if (!validRegistryName(name)) {
@@ -258,13 +305,15 @@ public:
       throw RegistryError("GTI-B1720",
                           "Unknown logical registry '" + name + "'.");
     }
-    auto backend = std::make_unique<GiteaGenericRegistry>(found->second);
+    auto backend = std::make_unique<GiteaGenericRegistry>(name, found->second,
+                                                          credentials);
     auto &result = *backend;
     registries.emplace(name, std::move(backend));
     return result;
   }
 
 private:
+  std::shared_ptr<RegistryCredentialStore> credentials;
   bool loaded = false;
   std::map<std::string, Configuration> configurations;
   std::map<std::string, std::unique_ptr<Registry>> registries;
@@ -353,7 +402,9 @@ private:
   }
 };
 } // namespace
-std::unique_ptr<RegistryProvider> configuredRegistries() {
-  return std::make_unique<ConfiguredRegistries>();
+std::unique_ptr<RegistryProvider>
+configuredRegistries(std::shared_ptr<RegistryCredentialStore> credentials) {
+  return std::make_unique<ConfiguredRegistries>(
+      credentials ? std::move(credentials) : systemRegistryCredentialStore());
 }
 } // namespace lang::driver

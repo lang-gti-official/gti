@@ -50,7 +50,8 @@ void fail(RegistryCommandResult &result, const std::filesystem::path &path,
                                    {path.string(), 0, 1, 1}, error.what());
   if (error.code == "GTI-B1713") {
     diagnostic.hints.push_back(
-        "Set the configured token-env variable to a token with the required "
+        "Use `gti registry login <registry>` on macOS or set the configured "
+        "token-env variable to a token with the required "
         "package permissions (GTI_REGISTRY_TOKEN for the default official "
         "registry); anonymous reads depend on server policy.");
   }
