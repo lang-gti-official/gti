@@ -88,7 +88,8 @@ only when the rationale is significant and durable.
 Validate architectural changes with focused structural tests plus the relevant
 matrix in
 [`docs/architecture/verification.md`](../../../docs/architecture/verification.md).
-For implementation work, use `$finish-release` after local validation to
-commit and initiate any required version/tag/release path. Do not publish a
-review-only report, and do not wait for asynchronous Gitea CI/CD after a
-successful dispatch.
+For implementation work, use `$agent-workflow` and `$finish-release` after local
+validation for PR integration, local-main sync and version policy. Respect
+required PR checks; post-merge packaging does not block completion. Do not
+publish a read-only review. Explicit PR-only/local-only instructions override
+integration.
