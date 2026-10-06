@@ -1,5 +1,32 @@
 # Compiler Verification
 
+## Declaration-level discardable results
+
+The `discardable_result` frontend gate covers optional results on free,
+generic, static, virtual and call-operator declarations, exact function items,
+extern-C/link-name composition, overload-specific policy and static virtual
+selection. It retains rejection for unannotated calls/lambdas, invalid
+attributes, escaping references and conflicting live loans. Compiler-owned
+hover and formatting preserve the annotation. `discardable_result_lsp` checks
+the default diagnostic's UTF-16 range, unsaved annotation edits, hover,
+incomplete-source recovery and explicit call-site discard.
+
+`discarded_nominal_result_runtime` covers explicit and implicit discard,
+defined-failure propagation, owning-result destruction at the semicolon, and
+example 115 under C++20/C++23 O0/O1/O3, disabled elision and ASan/UBSan. No new
+MIR operation or backend path is introduced: both spellings use the existing
+full-expression call, loan, failure and cleanup machinery. Example 111 now
+also uses the optional `storage<T>::emplace` result. The example inventories
+add only example 115; existing body/declaration counts are unchanged.
+
+Local validation uses Release/Ninja, AppleClang 21 and system LLVM 22.1.8 on
+macOS arm64. Compiler pipeline, raw-borrow and unsafe-function contracts,
+full-expression MIR, CLI/project workflows, focused LSP gates and the stdlib
+surface manifest pass. Tree-sitter passes 71 corpus cases, highlight/locals/
+rainbow queries and parsing all 174 shipped sources. Formatting checks 423
+first-party C/C++ files. This is branch-level evidence, not a rerun of every
+registered test, cross-platform packaging or an installed-toolchain release.
+
 ## Low-level memory Phase 1
 
 Completion validation on 2026-10-06 uses the Release/Ninja compiler on macOS

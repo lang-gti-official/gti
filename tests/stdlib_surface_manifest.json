@@ -24,7 +24,7 @@
     "stdlib/std/json.gti": "3de0a06f6b25109551714c74f21f62fe9421f97e520efd73a428178dc8af21f9",
     "stdlib/std/list.gti": "f208f55111c02facf979574b9eceab97ab9676bb91cb8e52ff5a27ee09ca8244",
     "stdlib/std/map.gti": "39a314ff20943e99786f0165a77baca5d9276a73c6b31d253d8a5967647d706b",
-    "stdlib/std/memory.gti": "1638cd5ac53f5f829bd1a384b11b8261c6f8936730bafec3e6e7e2a32fe463fb",
+    "stdlib/std/memory.gti": "6b8725d79629643e1dfbebcc4c5fb5120755a74b8f0a03efd966dd1a42c402e6",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2fe329a8585d1eee0a1be02f42b9cb6d388c80e898a3f58d34e9de12989388fb",
     "stdlib/std/optional.gti": "0e4556056be7121c4abd6ed1a416c259b7a210f9e46cbbec12620c084405fae9",
@@ -937,6 +937,13 @@
       "id": "span",
       "mode": "run",
       "source": "tests/fixtures/span_owner_dependent.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "storage-discardable-result",
+      "mode": "run",
+      "source": "examples/115-discardable-results.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -2025,7 +2032,7 @@
         "std::try_make_pool<T>",
         "std::typed_address<T>"
       ],
-      "case_ids": ["allocator-storage", "storage-final-address", "storage-owning-view", "storage-release", "arena-pool", "raw-owner-witness", "raw-pointer-conversion", "structural-relocation", "owned-error-pipelines"],
+      "case_ids": ["allocator-storage", "storage-discardable-result", "storage-final-address", "storage-owning-view", "storage-release", "arena-pool", "raw-owner-witness", "raw-pointer-conversion", "structural-relocation", "owned-error-pipelines"],
       "required_instantiations": [
         "std::alignment(64)",
         "std::arena<int32_t>",

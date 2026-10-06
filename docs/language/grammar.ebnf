@@ -105,13 +105,15 @@ function-contract-attributes = function-contract-attribute
                               { function-contract-attribute } ;
 function-contract-attribute = "[[" function-contract-name
                               { "," function-contract-name } "]]" ;
-function-contract-name = "noreturn" | "track_caller"
+function-contract-name = "noreturn" | "track_caller" | "discardable"
                        | "borrowed_from" "(" ( IDENTIFIER | "this" ) ")" ;
 (* noreturn/track_caller: defined, non-polymorphic GTI functions only, except trusted compiler
    intrinsic declarations; operator annotations are rejected semantically.
    noreturn forbids normal returns and reachable
    fallthrough. track_caller propagates the external caller location through
    direct calls. Neither changes the declared result type.
+   discardable permits ignoring a non-void function or method result; it
+   does not change evaluation, failure, cleanup, borrowing or the result type.
    borrowed_from selects one checked reference parameter or a non-static
    receiver as the returned reference's owner. Safe returns must preserve it.
    A direct raw dereference returned inside lexical unsafe may assert that
@@ -293,7 +295,8 @@ native-function-attributes
 
 native-function-attribute
                        = native-c-array-attribute
-                       | native-link-name-attribute ;
+                       | native-link-name-attribute
+                       | "[[" "discardable" "]]" ;
 
 native-c-array-attribute
                        = "[[" "c_array" "(" IDENTIFIER ")" "]]" ;

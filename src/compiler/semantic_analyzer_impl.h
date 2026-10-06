@@ -399,6 +399,7 @@ private:
     bool requiresUnsafe = false;
     bool neverReturns = false;
     bool tracksCaller = false;
+    bool discardableResult = false;
     CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
     LanguageLinkage linkage = LanguageLinkage::Gti;
     std::string externalSymbol;

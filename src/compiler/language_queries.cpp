@@ -36,6 +36,9 @@ SignaturePrinter::function(const FunctionInfo &info,
   if (info.tracksCaller) {
     result += "[[track_caller]] ";
   }
+  if (info.discardableResult) {
+    result += "[[discardable]] ";
+  }
   if (info.explicitReturnBorrowOrigin) {
     if (info.returnBorrowOrigin == BorrowOriginKind::Receiver) {
       result += "[[borrowed_from(this)]] ";

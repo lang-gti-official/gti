@@ -1,0 +1,18 @@
+#include <std/string>
+
+class Resource {
+  int value;
+public:
+  Resource(int value) : value(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() { std::println(this.value); }
+};
+
+[[discardable]] Resource acquire() { return Resource(7); }
+
+int main() {
+  acquire(); // The unused owner must be destroyed at this semicolon.
+  std::println(8);
+  return 0;
+}
