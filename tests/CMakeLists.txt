@@ -2268,6 +2268,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(hosted_constructor_identity_runtime PROPERTIES TIMEOUT 600)
   add_test(
+    NAME hosted_exit_status_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/hosted_exit_status_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(hosted_exit_status_runtime PROPERTIES TIMEOUT 480)
+  add_test(
     NAME discarded_nominal_result_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/discarded_nominal_result_test.py"
@@ -2491,6 +2498,13 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_lsp>"
     )
     set_tests_properties(executable_entry_cli_lsp PROPERTIES TIMEOUT 180)
+    add_test(
+      NAME missing_definition_cli_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/missing_definition_test.py"
+              "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(missing_definition_cli_lsp PROPERTIES TIMEOUT 180)
   endif()
     add_test(
       NAME owner_tied_by_value_argument_runtime

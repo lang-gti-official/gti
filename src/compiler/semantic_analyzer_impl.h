@@ -82,10 +82,12 @@ public:
   explicit Impl(TargetInfo target, const SourceGraph *sourceGraph,
                 bool toolingOccurrences, FrontendWorkMetrics *workMetrics,
                 const SourceManager *sources,
-                RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off)
+                RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
+                bool requireFunctionDefinitions = false)
       : target(std::move(target)), sourceGraph(sourceGraph), sources(sources),
         toolingOccurrences(toolingOccurrences), workMetrics(workMetrics),
-        rawPointerAudit(rawPointerAudit) {
+        rawPointerAudit(rawPointerAudit),
+        requireFunctionDefinitions(requireFunctionDefinitions) {
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
   }
 
@@ -2260,6 +2262,9 @@ private:
                      std::vector<std::size_t> ephemeralBorrowArguments,
                      std::vector<CallableArgumentBoundary> callableArguments,
                      CallReceiverMode receiverMode);
+
+  void requireFunctionDefinition(const CallableCandidate &function,
+                                 const Token &location);
 
   [[nodiscard]] static SemanticType
   callExpressionType(const SemanticType &returnType);
@@ -4546,6 +4551,9 @@ private:
   bool toolingOccurrences = true;
   FrontendWorkMetrics *workMetrics = nullptr;
   RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
+  // Fragment analysis may resolve declarations without publishing executable
+  // code. Closed executable/library requests need every actual GTI call target.
+  bool requireFunctionDefinitions = false;
 };
 
 } // namespace lang

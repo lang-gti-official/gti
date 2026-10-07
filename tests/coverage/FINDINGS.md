@@ -58,7 +58,7 @@ had no regression protection.
 | Resolved, now gated as passing | F8, F9, F11, F12, F13, F15 (its `(a + b).value()` form), S03, S05, S07, S10, S11 |
 | Improved | S08: the 40-link chain compiles in about 1.2s (was 6.5s) |
 | Still reproduced, gated as known | F10, F14, F16, F17, S01, S02, S04, S06, S09, S12, S15, tracked together in [#103](https://git.internal.howetotech.dev/gti-lang/gti/issues/103) (F14's wrong diagnostic is now GTI-S2015 rather than GTI-S2046) |
-| Still reproduced, new reproducers | F7 ([#51](https://git.internal.howetotech.dev/gti-lang/gti/issues/51)): the original `std::optional` reproducer passes because `optional` gained bodies, but declaration-only `std::weak_ptr` members and any user-declared GTI function without a body still fail at the native link |
+| Fixed in the issue campaign, gated as located rejection | F7 ([#51](https://git.internal.howetotech.dev/gti-lang/gti/issues/51)): selected bodyless ordinary GTI functions, declaration-only `std::weak_ptr` members and primary JSON codecs now produce `GTI-S2106` in closed programs before backend/native entry; the original optional reproducer remains passing |
 | Not gated (resource or tooling inputs) | F18, F19, F20, S13, S14 |
 
 ## Test-gap audit (A-series, 0.379.2)
@@ -99,9 +99,9 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | Finding | Issue | Gated outcome today | Tests |
 | --- | --- | --- | --- |
 | A01 | [#53](https://git.internal.howetotech.dev/gti-lang/gti/issues/53) C++ backend ICE assigning a class value into a class-typed field | ice | `reproducers/a01-call-result-into-field`<br>`reproducers/a01-class-value-into-field`<br>`reproducers/a01-field-assign-from-call-result-method` |
-| A02 | [#54](https://git.internal.howetotech.dev/gti-lang/gti/issues/54) main's int result is truncated to 8 bits, so gti test reports a failing test as passed | wrong-result | `projects/a02-test-status-truncation` |
+| A02 | [#54](https://git.internal.howetotech.dev/gti-lang/gti/issues/54) hosted entry maps results outside 0..255 to failure status 1 after cleanup | fixed; passing regression | `projects/a02-test-status-truncation` |
 | A03 | [#55](https://git.internal.howetotech.dev/gti-lang/gti/issues/55) Program-wide initializer proof rejects any generic call (GTI-S2068) | rejected | `reproducers/a03-generic-call-in-global-initializer` |
-| A04 | [#56](https://git.internal.howetotech.dev/gti-lang/gti/issues/56) A dependency's own [build] defines are silently ignored | wrong-result | `projects/a04-dependency-defines` |
+| A04 | [#56](https://git.internal.howetotech.dev/gti-lang/gti/issues/56) dependency defines participate in the selected program's shared configuration | fixed; passing regression | `projects/a04-dependency-defines` |
 | A05 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Diagnostics suggest invalid fixes and misdescribe explicit generic arguments | bad-diagnostic | `reproducers/a05-string-view-help-suggests-invalid-form` |
 | A06 | [#57](https://git.internal.howetotech.dev/gti-lang/gti/issues/57) Compiler hangs on unbounded polymorphic generic recursion | hang | `reproducers/a06-polymorphic-recursion-hang` |
 | A07 | [#58](https://git.internal.howetotech.dev/gti-lang/gti/issues/58) Unknown function attribute is misparsed as a class attribute (GTI-P0001 instead of GTI-S2099) | rejected | `rejections/diag-p10-unknown-attribute`<br>`reproducers/a07-unknown-function-attribute` |
