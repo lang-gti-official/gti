@@ -295,13 +295,14 @@ int recovered_after() { return 0; }
 }
 
 void testInvalidConditionRecovery() {
-  for (const std::string source : {
-           "#if FLAG\nint first() { return 1; }\n#endif\n",
-           "#if defined(OK)\nint first() { return 1; }\n"
-           "#elif FLAG\nint second() { return 2; }\n#endif\n",
-           "#if FLAG\n#if defined(INNER)\nint inner() { return 1; }\n"
-           "#else\nint other() { return 2; }\n#endif\n#endif\n"}) {
-    const std::string complete = source + "int recovered_after() { return 0; }\n";
+  for (const std::string source :
+       {"#if FLAG\nint first() { return 1; }\n#endif\n",
+        "#if defined(OK)\nint first() { return 1; }\n"
+        "#elif FLAG\nint second() { return 2; }\n#endif\n",
+        "#if FLAG\n#if defined(INNER)\nint inner() { return 1; }\n"
+        "#else\nint other() { return 2; }\n#endif\n#endif\n"}) {
+    const std::string complete =
+        source + "int recovered_after() { return 0; }\n";
     lang::Lexer lexer;
     lang::Parser parser(lexer.scan(complete, "bad-condition.gti"));
     const auto program = parser.parse();
@@ -316,7 +317,8 @@ void testInvalidConditionRecovery() {
              "the original malformed-condition diagnostic retains its span");
     }
     expect(findConditional(program.declarations()) != nullptr &&
-               findFunction(program.declarations(), "recovered_after") != nullptr,
+               findFunction(program.declarations(), "recovered_after") !=
+                   nullptr,
            "condition recovery preserves nesting and subsequent declarations");
   }
 }

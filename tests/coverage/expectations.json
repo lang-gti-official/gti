@@ -1705,12 +1705,10 @@
     },
     "a05-string-view-help-suggests-invalid-form": {
       "code": "GTI-S2003",
-      "finding": "A05",
       "forbid": [
         "std::string_view(value)"
       ],
-      "issue": 69,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a06-polymorphic-recursion-hang": {
       "finding": "A06",
@@ -1738,30 +1736,24 @@
     },
     "a10-payload-arity-cascade": {
       "code": "GTI-S2067",
-      "finding": "A10",
       "forbid": [
         "can reach the end"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a11-explicit-generic-argument-messages": {
-      "finding": "A11",
       "forbid": [
         "Conflicting types inferred",
         "from a fixed-array argument extent"
       ],
-      "issue": 69,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a12-extern-c-overload-duplicate": {
       "at_most": {
         "error[GTI-S2054]": 1
       },
       "code": "GTI-S2054",
-      "finding": "A12",
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a13-mir-field-symbol-order": {
       "deterministic": "--emit-mir",
@@ -1811,21 +1803,18 @@
       "outcome": "bad-diagnostic"
     },
     "a21-value-argument-resolved-as-type": {
-      "finding": "A21",
+      "code": "GTI-S2026",
       "forbid": [
         "Unknown type 'runtime'"
       ],
-      "issue": 69,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a22-spurious-s2068-after-constexpr-failure": {
       "code": "GTI-S2057",
-      "finding": "A22",
       "forbid": [
         "GTI-S2068"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a23-recursive-value-generic-layout": {
       "code": "GTI-S2082",
@@ -1921,12 +1910,14 @@
       "outcome": "rejected"
     },
     "a35-expected-ref-field-stale-message": {
-      "finding": "A35",
+      "code": "GTI-S2045",
+      "at_most": {
+        "error[GTI-S2045]": 1
+      },
       "forbid": [
         "may contain only one stored-reference dependency"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a36-unique-ptr-member-init-nullptr": {
       "code": "GTI-S2003",
@@ -1995,23 +1986,20 @@
       "outcome": "ice"
     },
     "a43-callback-argument-unknown-type": {
-      "finding": "A43",
+      "code": "GTI-S2076",
       "forbid": [
         "type 'unknown'"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a44-raw-audit-duplicate-warning": {
       "at_most": {
         "warning[GTI-S2102]": 1
       },
-      "finding": "A44",
       "flags": [
         "--raw-pointer-audit=warn"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "pass"
     },
     "a45-base-plus-string-field-unsupported": {
       "code": "GTI-B0003",
