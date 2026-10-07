@@ -1016,7 +1016,58 @@ Union copies are passive byte-representation copies; unions do not acquire
 hidden lifecycle behavior. `GTI-S2066` owns declaration-shape failures, while
 the ordinary unsafe diagnostic owns safe member access.
 
-An `enum class` with at least one parameterized alternative is a closed tagged
+The declaration spellings `enum Name` and `enum class Name` have identical
+meaning. Both declare scoped nominal enums; neither injects enumerators into
+the enclosing namespace or permits implicit conversion to integers.
+
+A payload enum may declare ordinary nominal generic parameters:
+
+```gti
+enum Message<T, uint64_t Channel = 3> {
+  idle,
+  received(T payload),
+  stopped(int32_t reason)
+};
+using TextMessage = Message<std::string>;
+```
+
+Type parameters, a suffix of immutable `uint64_t` parameters, inline
+constraints, defaults and one final type pack use the existing nominal generic
+argument rules. A pack may expand in nominal type metadata, not into a variable
+number of alternatives or payload fields; it cannot coexist with value
+parameters or defaults. Every argument contributes to exact enum identity,
+including metadata unused by a payload. Transparent aliases, defaulted
+arguments and equivalent primitive spellings denote the same instance.
+Generic integral-only declarations remain unsupported.
+
+The owner must be concrete at a value use: `Message<int, 7>::received(4)` or
+`TextMessage::received(std::string("hello"))`. A bare owner is accepted only
+when all required arguments are defaulted. Arguments cannot be attached to the
+alternative, and construction does not infer owner arguments from payloads.
+Exact nominal argument deduction through ordinary generic function parameters
+can decompose enum type/value arguments and a final metadata pack, just as it
+does other nominal types. Patterns must name the subject's exact enum instance;
+sharing a primary declaration is not enough.
+
+Semantic substitution validates actual payload signatures, constraints,
+copy/move/cleanup and concurrency capabilities before executable lowering.
+An unused generic primary is not a concrete runtime representation. Forward
+class/enum type-default dependencies are resolved against complete nominal
+identities without declaration-order-dependent acceptance; cyclic defaults are
+ill-formed. Value defaults still require earlier visible constant bindings.
+Aliases do not bypass instantiated
+payload validation. Generic arguments are metadata, not ownership edges: an
+unused `void` or reference type argument does not become a payload. An actual
+field substituted to an unsupported type is still ill-formed, including when
+constructing another alternative.
+
+By-value layout checks distinguish concrete generic instances when traversing
+class fields and enum alternatives. A cycle cannot be hidden by visiting the
+same generic primary with different arguments. Finite nested class payloads
+remain valid; direct recursive layouts and structurally growing by-value
+recurrence remain ill-formed.
+
+An enum with at least one parameterized alternative is a closed tagged
 sum. It cannot declare an integral backing type or explicit enumerator values.
 Every payload field is named, immutable, and non-variadic. The admitted field
 types are primitive scalars, `std::string_view`, `nullptr_t`, one-level raw

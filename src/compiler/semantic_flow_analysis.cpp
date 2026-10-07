@@ -1050,6 +1050,9 @@ auto SemanticVisitor::Impl::statementSourceUnit(const Stmt &statement) const
   if (const auto *classDecl = stmtAs<ClassDecl>(&statement)) {
     return sourceUnitFor(classDecl->name());
   }
+  if (const auto *enumDecl = stmtAs<EnumDecl>(&statement)) {
+    return sourceUnitFor(enumDecl->name());
+  }
   if (const auto *function = stmtAs<FunctionDecl>(&statement)) {
     return sourceUnitFor(function->name());
   }
@@ -2274,6 +2277,7 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   bool mutableBinding = false;
   bool staticMember = false;
   SymbolId symbolId = 0;
+  bool enumeratorOccurrence = false;
   OccurrenceRole roles = requestedRoles;
   if (kind == ExprKind::Variable) {
     const Variable &variable = static_cast<const Variable &>(expr);
@@ -2325,6 +2329,7 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     if (const ResolvedEnumeratorInfo *enumerator =
             semanticModel.findEnumerator(qualified);
         enumerator != nullptr && enumerator->declaration != nullptr) {
+      enumeratorOccurrence = true;
       symbolId = symbolForDeclaration(enumerator->declaration->name);
       if (symbolId == 0) {
         const EnumTypeInfo *owner =
@@ -2417,9 +2422,10 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(token),
-         .kind = functionItemDeclaration == nullptr
-                     ? SemanticOccurrenceKind::Expression
-                     : SemanticOccurrenceKind::Function,
+         .kind = functionItemDeclaration != nullptr
+                     ? SemanticOccurrenceKind::Function
+                 : enumeratorOccurrence ? SemanticOccurrenceKind::Symbol
+                                        : SemanticOccurrenceKind::Expression,
          .symbol = symbolId,
          .roles = roles,
          .name = token.lexeme,
@@ -2908,6 +2914,16 @@ auto SemanticVisitor::Impl::toolingSymbolFor(const Symbol &symbol) -> SymbolId {
 
 auto SemanticVisitor::Impl::genericParameterInfo(GenericParameterId id) const
     -> const GenericParameterInfo * {
+  for (const EnumInfo &owner : enums) {
+    const auto found = std::find_if(
+        owner.genericParameters.begin(), owner.genericParameters.end(),
+        [id](const GenericParameterInfo &parameter) {
+          return parameter.id == id;
+        });
+    if (found != owner.genericParameters.end()) {
+      return &*found;
+    }
+  }
   for (const ClassInfo &owner : classes) {
     const auto found = std::find_if(
         owner.genericParameters.begin(), owner.genericParameters.end(),
@@ -3939,7 +3955,8 @@ auto SemanticVisitor::Impl::captureUnqualifiedCompletion(
   semanticModel.recordCompletion(std::move(context));
 }
 
-auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path)
+auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
+                                                       const TypeRef *ownerType)
     -> void {
   const Token &completion = path.last();
   SemanticCompletionContext context{.kind = SemanticCompletionKind::Namespace,
@@ -3972,10 +3989,12 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path)
       }
     }
   }
-  if (const std::optional<EnumId> owner =
-          resolveEnumPath(ownerPath, currentNamespace)) {
+  const SemanticType selectedEnum =
+      typeOf(ownerType ? *ownerType : TypeRef(ownerPath));
+  if (selectedEnum.kind == SemanticType::Enum && selectedEnum.enumId != 0 &&
+      selectedEnum.enumId <= enums.size() && enumTypeFor(selectedEnum)) {
     context.kind = SemanticCompletionKind::Enum;
-    const EnumInfo &enumeration = enums.at(*owner - 1);
+    const EnumInfo &enumeration = enums.at(selectedEnum.enumId - 1);
     for (const auto &[name, enumerator] : enumeration.enumerators) {
       context.candidates.push_back(
           {.kind = SemanticCompletionCandidateKind::Enumerator,
@@ -3983,9 +4002,9 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path)
            .qualifiedName = qualifiedName(enumeration.namespaceScope,
                                           enumeration.name.lexeme) +
                             "::" + name,
-           .type = enumerator.symbol.type,
+           .type = selectedEnum,
            .scopeDistance = 0,
-           .enumType = *owner});
+           .enumType = selectedEnum.enumId});
     }
   } else if (const std::optional<ClassId> owner = completionOwner) {
     context.kind = SemanticCompletionKind::Member;
@@ -4878,21 +4897,44 @@ auto SemanticVisitor::Impl::resolveEnumerator(const NamePath &path,
   return found == owner.enumerators.end() ? nullptr : &found->second;
 }
 
+auto SemanticVisitor::Impl::resolveEnumerator(
+    const QualifiedName &expression) const -> std::optional<EnumeratorRecord> {
+  if (expression.name().segments.size() < 2)
+    return std::nullopt;
+  const auto ownerType = expression.ownerType()
+                             ? typeOf(*expression.ownerType())
+                             : typeOf(TypeRef(NamePath(std::vector<Token>(
+                                   expression.name().segments.begin(),
+                                   expression.name().segments.end() - 1))));
+  if (ownerType.kind != SemanticType::Enum || ownerType.enumId == 0 ||
+      ownerType.enumId > enums.size())
+    return std::nullopt;
+  const auto &owner = enums[ownerType.enumId - 1];
+  const auto found = owner.enumerators.find(expression.name().last().lexeme);
+  if (found == owner.enumerators.end())
+    return std::nullopt;
+  auto result = found->second;
+  result.symbol.type = ownerType;
+  const auto substitution = enumSubstitution(ownerType);
+  for (auto &payload : result.payloadTypes)
+    payload = substituteType(payload, substitution);
+  return result;
+}
+
 auto SemanticVisitor::Impl::payloadEnumeratorForCallee(
-    const ExprPtr &callee) const -> const EnumeratorRecord * {
+    const ExprPtr &callee) const -> std::optional<EnumeratorRecord> {
   const auto *qualified = exprAs<QualifiedName>(callee.get());
   if (qualified == nullptr) {
-    return nullptr;
+    return std::nullopt;
   }
-  const EnumeratorRecord *enumerator = resolveEnumerator(qualified->name());
-  if (enumerator == nullptr ||
-      enumerator->symbol.type.kind != SemanticType::Enum) {
-    return nullptr;
+  const auto enumerator = resolveEnumerator(*qualified);
+  if (!enumerator || enumerator->symbol.type.kind != SemanticType::Enum) {
+    return std::nullopt;
   }
   const EnumId owner = enumerator->symbol.type.enumId;
   return owner != 0 && owner <= enums.size() && enums[owner - 1].payload
              ? enumerator
-             : nullptr;
+             : std::nullopt;
 }
 
 auto SemanticVisitor::Impl::analyzePayloadConstruction(
@@ -4922,7 +4964,7 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
            "Unit variant '" + enumerator.declaration->name.lexeme +
                "' is a value; write it without '()'.",
            "GTI-S2067");
-    currentType = SemanticType::enumType(owner);
+    currentType = enumerator.symbol.type;
     return;
   }
 
@@ -4985,10 +5027,11 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
   }
   semanticModel.recordPayloadConstruction(
       call, {.owner = owner,
+             .type = enumerator.symbol.type,
              .declaration = enumerator.declaration,
              .variantIndex = enumerator.variantIndex,
              .parameterTypes = enumerator.payloadTypes});
-  currentType = SemanticType::enumType(owner);
+  currentType = enumerator.symbol.type;
 }
 
 auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
@@ -5004,8 +5047,8 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
            "GTI-S2067");
     return std::nullopt;
   }
-  const EnumeratorRecord *enumerator = resolveEnumerator(qualified->name());
-  if (enumerator == nullptr || enumerator->symbol.type != subjectType) {
+  const auto enumerator = resolveEnumerator(*qualified);
+  if (!enumerator || enumerator->symbol.type != subjectType) {
     report(qualified->name().last(),
            "Switch case must name a variant of '" + typeSpelling(subjectType) +
                "'.",
@@ -5022,6 +5065,7 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
   analyzingCallCallee = enclosingCallCallee;
 
   ResolvedPayloadPatternInfo result{.owner = subjectType.enumId,
+                                    .type = subjectType,
                                     .declaration = enumerator->declaration,
                                     .variantIndex = enumerator->variantIndex};
   if (call == nullptr) {
@@ -7194,7 +7238,7 @@ auto SemanticVisitor::Impl::rawPointerFieldPaths(const SemanticType &type)
             result.push_back(std::move(path));
       };
       if (current.kind == SemanticType::Enum) {
-        if (const auto *info = semanticModel.findEnumType(current.enumId))
+        if (const auto info = enumTypeFor(current))
           for (const auto &variant : info->enumerators)
             for (const auto &payload : variant.payloadTypes)
               append(payload);
@@ -7285,7 +7329,7 @@ auto SemanticVisitor::Impl::rawPointerTypesAt(
       return;
     }
     if (current.kind == SemanticType::Enum) {
-      if (const auto *info = semanticModel.findEnumType(current.enumId))
+      if (const auto info = enumTypeFor(current))
         for (const auto &variant : info->enumerators)
           for (const auto &payload : variant.payloadTypes)
             self(self, payload, index);
@@ -10771,8 +10815,13 @@ auto SemanticVisitor::Impl::baseTypeOf(
     }
     if (const std::optional<EnumId> id =
             resolveEnumPath(type.name, fromScope)) {
-      return type.arguments.empty() ? SemanticType::enumType(*id)
-                                    : SemanticType::Unknown;
+      if (*id == 0 || *id > enums.size())
+        return SemanticType::Unknown;
+      const auto arguments = nominalArguments(enums[*id - 1].genericParameters,
+                                              type.arguments, fromScope);
+      return arguments ? SemanticType::enumType(*id, arguments->types,
+                                                arguments->values)
+                       : SemanticType::Unknown;
     }
     if (const std::optional<ClassId> id =
             resolveClassPath(type.name, fromScope)) {

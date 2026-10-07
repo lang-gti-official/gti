@@ -67,7 +67,7 @@ is a teaching helper, not a production server.
 | `18-lambdas.gti` | typed lambdas with explicit immutable value captures |
 | `19-auto.gti` | local type inference, inferred mutability, and ownership traits |
 | `20-strings.gti` | checked string views and source-defined move-only owning strings |
-| `21-scoped-enums.gti` | nominal scoped enums, fixed backing types, aliases, and equality |
+| `21-scoped-enums.gti` | nominal scoped enums with optional `class` spelling, fixed backing types, aliases, and equality |
 | `22-switch.gti` | exact case matching, grouped labels, and explicit non-fallthrough arms |
 | `23-direct-initialization.gti` | exact class construction, class field replacement, generated field defaults and omitted designated defaults |
 | `24-static.gti` | source-local storage and type-owned class members |
@@ -170,6 +170,7 @@ is a teaching helper, not a production server.
 | `125-manual-object-lifetimes.gti` | source-defined inline ownership, immovable final-address construction, checked access and explicit owning relocation |
 | `126-conditional-thread-capabilities.gti` | audited source cleanup with payload-conditional transfer/share assertions, retaining thread-affine payload restrictions |
 | `128-inline-object-pool.gti` | an application-defined two-slot pool using public manual-lifetime facilities, immovable owning objects, recoverable capacity failure and checked access |
+| `129-generic-payload-enums.gti` | exact generic messages with default/value arguments, owning inbox transport, borrowed payload patterns and optional `class` spelling |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run

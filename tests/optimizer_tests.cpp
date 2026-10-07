@@ -3737,7 +3737,7 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v79\n") &&
+  expect(dump.starts_with("mir-body-v80\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&
@@ -5924,10 +5924,18 @@ int switch_reactivation(mut int& parent) {
   lang::MirBody sharedLocalChild = branchState;
   sharedLocalChild.loans[0].access = lang::AccessMode::ReadOnly;
   sharedLocalChild.loans[1].access = lang::AccessMode::ReadOnly;
-  expect(hasError(lang::verifyMirBody(sharedLocalChild),
-                  "read-only derived call result"),
-         "a read-only Local child must reuse its parent's identity instead of "
-         "forming persistent read-only ancestry");
+  expect(lang::verifyMirBody(sharedLocalChild).valid(),
+         "a checked non-escaping read-only Local child may retain its exact "
+         "parent ancestry until its own endpoint");
+  lang::MirBody escapingSharedChild = sharedLocalChild;
+  escapingSharedChild.loans[1].escapes = true;
+  expect(hasError(lang::verifyMirBody(escapingSharedChild),
+                  "non-escaping Local, CallResult, or Stored"),
+         "a shared child must not escape its parent's checked topology");
+  lang::MirBody entrySharedChild = sharedLocalChild;
+  entrySharedChild.loans[1].entry = true;
+  expect(hasError(lang::verifyMirBody(entrySharedChild), "non-entry"),
+         "a shared child must be created locally, not forged as an entry loan");
 
   lang::MirBody overlappingCallResults{
       .kind = lang::MirBodyKind::Function,

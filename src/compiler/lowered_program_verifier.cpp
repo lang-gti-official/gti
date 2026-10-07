@@ -365,6 +365,8 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
     if (payload == nullptr || payload->id == 0 ||
         declaration.semanticIdentity != payload->id ||
         declaration.name.empty() || payload->qualifiedName.empty() ||
+        payload->type.kind != SemanticType::Enum ||
+        payload->type.enumId != payload->id || !resolvedType(payload->type) ||
         !resolvedType(payload->underlyingType) ||
         payload->underlyingType == SemanticType::Void ||
         std::any_of(
@@ -693,7 +695,7 @@ verifyLoweredProgram(const LoweredProgram &program) {
 
   std::unordered_map<LoweredDeclarationId, std::size_t> nextOrdinal;
   std::unordered_map<ClassId, LoweredDeclarationId> classDeclarations;
-  std::unordered_map<EnumId, LoweredDeclarationId> enumDeclarations;
+  std::vector<SemanticType> enumDeclarations;
   std::unordered_map<FunctionId, LoweredDeclarationId> functionDeclarations;
   std::unordered_map<ConstructorId, LoweredDeclarationId>
       constructorDeclarations;
@@ -732,9 +734,13 @@ verifyLoweredProgram(const LoweredProgram &program) {
       recordIdentity(classDeclarations, payload->id, "class");
     } else if (const auto *payload =
                    std::get_if<LoweredEnumDeclaration>(&declaration.payload)) {
-      recordIdentity(enumDeclarations, payload->id, "enum");
+      if (std::find(enumDeclarations.begin(), enumDeclarations.end(),
+                    payload->type) != enumDeclarations.end())
+        addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+                 "duplicate exact enum instance", std::nullopt, declaration.id);
+      enumDeclarations.push_back(payload->type);
       const MirPayloadEnum *mirEnumeration =
-          program.mir_.findPayloadEnum(payload->id);
+          program.mir_.findPayloadEnum(payload->type);
       if (payload->payload) {
         bool exact =
             mirEnumeration != nullptr &&
@@ -763,6 +769,13 @@ verifyLoweredProgram(const LoweredProgram &program) {
         addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
                  "non-payload enum has a MIR payload lifecycle table",
                  std::nullopt, declaration.id);
+      } else {
+        const auto *integral = program.mir_.findIntegralEnum(payload->type);
+        if (integral == nullptr ||
+            integral->underlyingType != payload->underlyingType)
+          addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+                   "integral enum declaration differs from its exact MIR row",
+                   std::nullopt, declaration.id);
       }
     } else if (const auto *payload = std::get_if<LoweredFunctionDeclaration>(
                    &declaration.payload)) {

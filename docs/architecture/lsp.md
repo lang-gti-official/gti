@@ -3,6 +3,14 @@
 Status: Current implementation, with future symbol/index work explicitly
 separated below.
 
+Generic payload enum variant hover and completion use exact occurrence and
+candidate types with the retained semantic instance signatures. Defaults and
+transparent aliases print the same canonical owner and substituted payload
+types. Definition and documentation still target the primary declaration.
+Generic binder identities, optional `class` spelling and dirty dependency
+overlays follow the existing snapshot/navigation protocol; the LSP does not
+perform generic substitution itself.
+
 The LSP is an adapter over compiler-owned semantics:
 
 ```text
@@ -442,6 +450,9 @@ compiler work.
 - Completed analysis is published only if the document and dependency
   generations still match. Only then may its source digests be learned. Stale
   semantic requests and stale digest publications are rejected.
+  Diagnostic aggregation also excludes retained roots whose snapshot generation
+  is obsolete, rather than republishing their old errors under a newer document
+  version while replacement analysis is queued.
 - The dynamic file watcher covers `**/*.gti`, `**/gti.toml`, and `**/gti.lock`.
   A manifest or lockfile change invalidates semantic-token caches and
   reanalyses every open document, so configuration, package aliases, and

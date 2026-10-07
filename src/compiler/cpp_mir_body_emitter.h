@@ -139,6 +139,7 @@ struct CppMirPayloadVariantRepresentation {
 
 struct CppMirEnumRepresentation {
   EnumId owner = 0;
+  SemanticType type = SemanticType::Unknown;
   std::string spelling;
   SemanticType underlyingType = SemanticType::Unknown;
   SemanticTypeTraits traits{};

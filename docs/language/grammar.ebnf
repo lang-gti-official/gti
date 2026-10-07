@@ -238,7 +238,8 @@ compiler-constraint-binding
    binding directly. Compiler-trusted standard-library units may compose a
    bound declaration into public source concepts. *)
 
-enum-declaration       = "enum" "class" IDENTIFIER
+enum-declaration       = "enum" [ "class" ] IDENTIFIER
+                         [ generic-parameter-clause ]
                          [ ":" integer-type ]
                          "{" [ enumerator { "," enumerator } [ "," ] ] "}"
                          ";" ;
@@ -248,7 +249,9 @@ enumerator             = IDENTIFIER [ parameter-clause ]
 
 signed-integer-literal = [ "+" | "-" ] INT_LITERAL ;
 
-(* GTI supports scoped enums only. Enumerators are addressed through
+(* GTI supports scoped enums only. The optional `class` keyword is a spelling
+   choice with no semantic effect: `enum E` and `enum class E` are identical.
+   Enumerators are addressed through
    `EnumName::value` (or a namespace-qualified/aliased enum name) and are not
    injected into the surrounding namespace. Each enum is a distinct nominal
    type: it does not implicitly convert to integers or bool and participates
@@ -263,6 +266,17 @@ signed-integer-literal = [ "+" | "-" ] INT_LITERAL ;
    A payload alternative is constructed as `EnumName::case(arguments)`; a
    unit alternative is the value `EnumName::case` and is not called. Payload
    field restrictions and exhaustive switch patterns are semantic rules. *)
+
+(* Payload enums may declare ordinary type parameters, a suffix of uint64_t
+   value parameters, or one final type pack. Defaults and inline constraints
+   use the nominal generic rules. The declaration identity, canonical type
+   arguments and value arguments identify each concrete enum. Generic
+   integral-only enums are not supported. A concrete alternative may be named
+   as `Message<int, 3>::item`, including in construction and switch patterns;
+   namespace qualification and transparent aliases preserve exact identity.
+   Arguments belong to the owner, not the alternative. There is no enum CTAD
+   or partial specialization. Substitution must leave each actual payload field
+   inside the same admitted family as a nongeneric payload enum. *)
 
 (* Type aliases are transparent namespace or class-member names for complete
    types. They are available regardless of declaration order in their direct
@@ -1507,6 +1521,7 @@ primary-expression     = literal
                        | member-requirement
                        | qualified-name
                        | lambda-expression
+                       | generic-qualified-enumerator
                        | unexpected-expression
                        | "this"
                        | "nullptr"
@@ -1514,6 +1529,10 @@ primary-expression     = literal
                        | "(" expression ")" ;
 
 pack-fold-expression   = "(" assignment-expression "," "..." ")" ;
+
+generic-qualified-enumerator
+                       = qualified-name generic-argument-clause
+                         "::" IDENTIFIER ;
 
 (* The assignment-expression in a pack fold is syntactically required to have
    a call as its root. The semantic restrictions above make this a bounded

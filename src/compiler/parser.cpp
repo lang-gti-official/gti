@@ -193,10 +193,8 @@ private:
       return typedDeclaration(true);
     }
 
-    throw error(
-        peek(),
-        "Expect a namespace, concept, enum class, class, struct, interface, "
-        "union, function, or variable declaration.");
+    throw error(peek(), "Expect a namespace, concept, enum, class, struct, "
+                        "interface, union, function, or variable declaration.");
   }
 
   StmtPtr attributedDeclaration() {
@@ -714,11 +712,15 @@ private:
   }
 
   StmtPtr enumDeclaration(Token keyword) {
-    Token classKeyword =
-        consume(TokenKind::CLASS,
-                "Scoped enums use 'enum class'; unscoped enums are not "
-                "supported.");
+    std::optional<Token> classKeyword;
+    if (match({TokenKind::CLASS})) {
+      classKeyword = previous();
+    }
     Token name = consume(TokenKind::IDENTIFIER, "Expect scoped enum name.");
+    std::vector<GenericParameter> genericParameters;
+    if (check(TokenKind::LESS)) {
+      genericParameters = genericParameterList();
+    }
     std::optional<TypeRef> underlyingType;
     if (match({TokenKind::COLON})) {
       underlyingType = parseType();
@@ -747,7 +749,8 @@ private:
     consume(TokenKind::SEMICOLON, "Expect ';' after scoped enum declaration.");
     return std::make_shared<EnumDecl>(
         std::move(keyword), std::move(classKeyword), std::move(name),
-        std::move(underlyingType), std::move(enumerators));
+        std::move(underlyingType), std::move(enumerators),
+        std::move(genericParameters));
   }
 
   StmtPtr typedDeclaration(
@@ -2673,7 +2676,24 @@ private:
     ExprPtr expr = primary();
 
     while (true) {
-      if (isExplicitGenericCallStart()) {
+      if (isGenericOwnerStart()) {
+        std::vector<TypeRef> arguments = typeArgumentList();
+        NamePath owner = [&]() {
+          if (auto *qualified = exprAs<QualifiedName>(expr.get()))
+            return NamePath(qualified->name().segments);
+          if (auto *variable = exprAs<Variable>(expr.get()))
+            return NamePath(variable->name());
+          throw error(peek(),
+                      "A qualified generic owner requires a type name.");
+        }();
+        consume(TokenKind::SCOPE, "Expect '::' after generic owner type.");
+        Token member = consume(TokenKind::IDENTIFIER,
+                               "Expect member name after generic owner.");
+        NamePath path(owner.segments);
+        path.segments.push_back(std::move(member));
+        expr = std::make_unique<QualifiedName>(
+            std::move(path), TypeRef(std::move(owner), std::move(arguments)));
+      } else if (isExplicitGenericCallStart()) {
         std::vector<TypeRef> typeArguments = typeArgumentList();
         consume(TokenKind::LEFT_PAREN,
                 "Expect '(' after explicit generic arguments.");
@@ -3099,6 +3119,26 @@ private:
     }
     return peekAt(next).kind == TokenKind::GREATER &&
            peekAt(next + 1).kind == TokenKind::LEFT_PAREN;
+  }
+
+  [[nodiscard]] bool isGenericOwnerStart() const {
+    if (!check(TokenKind::LESS))
+      return false;
+    std::size_t next = 1;
+    if (peekAt(next).kind == TokenKind::GREATER)
+      return peekAt(next + 1).kind == TokenKind::SCOPE;
+    auto end = genericArgumentEnd(next);
+    if (!end)
+      return false;
+    next = *end;
+    while (peekAt(next).kind == TokenKind::COMMA) {
+      end = genericArgumentEnd(next + 1);
+      if (!end)
+        return false;
+      next = *end;
+    }
+    return peekAt(next).kind == TokenKind::GREATER &&
+           peekAt(next + 1).kind == TokenKind::SCOPE;
   }
 
   [[nodiscard]]

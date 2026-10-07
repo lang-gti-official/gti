@@ -1272,7 +1272,7 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
                          .requiresActiveCleanup = true};
     }
     if (selected.kind == SemanticType::Enum) {
-      const auto *enumeration = program.findPayloadEnum(selected.enumId);
+      const auto *enumeration = program.findPayloadEnum(selected);
       if (enumeration == nullptr)
         return std::nullopt;
       MirDropType result{.type = selected,
@@ -1314,7 +1314,7 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
               alternative.kind == SemanticType::CString ||
               alternative.kind == SemanticType::StringView ||
               (alternative.kind == SemanticType::Enum &&
-               program.findPayloadEnum(alternative.enumId) == nullptr);
+               program.findPayloadEnum(alternative) == nullptr);
           if (passive) {
             child = MirDropType{.type = alternative};
           } else {
@@ -1373,7 +1373,7 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
           value.kind == SemanticType::CString ||
           value.kind == SemanticType::StringView ||
           (value.kind == SemanticType::Enum &&
-           program.findPayloadEnum(value.enumId) == nullptr)) {
+           program.findPayloadEnum(value) == nullptr)) {
         return MirDropType{.type = selected, .requiresActiveCleanup = true};
       }
       if (selected.kind == SemanticType::PrefixStorage) {
@@ -1498,7 +1498,9 @@ mirDropDestructorTargets(const MirDropType &type) {
 RelocationKind mirTypeRelocationKind(const MirProgram &program,
                                      const SemanticType &type) {
   std::unordered_set<HirClassInstanceId> visiting;
-  std::unordered_set<EnumId> enums;
+  // One declaration family may occur repeatedly along a finite layout path
+  // with distinct arguments. Only revisiting the same exact type is a cycle.
+  std::vector<SemanticType> enums;
   const auto derive = [&](const auto &self,
                           const SemanticType &candidate) -> RelocationKind {
     const auto merge = [](RelocationKind left, RelocationKind right) {
@@ -1539,14 +1541,15 @@ RelocationKind mirTypeRelocationKind(const MirProgram &program,
       return result;
     }
     if (candidate.kind == SemanticType::Enum) {
-      if (const auto *enumeration = program.findPayloadEnum(candidate.enumId)) {
-        if (!enums.insert(candidate.enumId).second)
+      if (const auto *enumeration = program.findPayloadEnum(candidate)) {
+        if (std::find(enums.begin(), enums.end(), candidate) != enums.end())
           return RelocationKind::Unavailable;
+        enums.push_back(candidate);
         auto result = RelocationKind::Structural;
         for (const auto &variant : enumeration->variants)
           for (const auto &payload : variant.payloadTypes)
             result = merge(result, self(self, payload));
-        enums.erase(candidate.enumId);
+        enums.pop_back();
         return result;
       }
     }

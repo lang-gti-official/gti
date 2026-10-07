@@ -255,7 +255,7 @@ int main() {
 
   const std::string snapshot = lang::MirPrinter().print(frontend.mir);
   const bool validSnapshot =
-      snapshot.starts_with("mir-v94 ") &&
+      snapshot.starts_with("mir-v95 ") &&
       snapshot.find("failure-metadata artifact=" +
                     metadata.artifactIdentity().hex()) != std::string::npos &&
       snapshot.find("failure-site @1 source=8:main.gti") != std::string::npos &&
@@ -1852,10 +1852,10 @@ int main() { return checked_add(1, 2); }
        lang::MirOperation::Negate,
        {{.code = lang::DefinedFailureCode::IntegerOverflow,
          .detail = lang::DefinedFailureDetail::Negation}}},
-      {"signed_minimum_literal",
-       lang::MirOperation::Negate,
-       {{.code = lang::DefinedFailureCode::IntegerOverflow,
-         .detail = lang::DefinedFailureDetail::Negation}}},
+      // The source literal is checked in its exact contextual domain. The
+      // positive boundary magnitude produces the signed minimum without a
+      // possible runtime overflow, just like the contextual comparisons.
+      {"signed_minimum_literal", lang::MirOperation::Negate, {}},
       {"contextual_int8_minimum", lang::MirOperation::Negate, {}},
       {"contextual_int32_minimum", lang::MirOperation::Negate, {}},
       {"checked_convert",
@@ -2038,6 +2038,22 @@ int main() { return checked_add(1, 2); }
          "the contextual literal mutation should locate its exact source "
          "literal");
   expectContractRejection(outOfRangeContextualLiteral,
+                          "fixed-width operand and result domains");
+
+  lang::MirProgram outOfRangeSignedMinimum = frontend.mir;
+  bool changedSignedMinimum = false;
+  if (const auto function =
+          functionInstance(frontend, "signed_minimum_literal"))
+    if (auto *body = functionBody(outOfRangeSignedMinimum, *function))
+      for (auto &block : body->blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.operation == lang::MirOperation::Literal) {
+            instruction.literal = std::uint64_t{2147483649};
+            changedSignedMinimum = true;
+          }
+  expect(changedSignedMinimum,
+         "the signed minimum mutation changes its boundary magnitude");
+  expectContractRejection(outOfRangeSignedMinimum,
                           "fixed-width operand and result domains");
 
   lang::MirProgram driftedConversionSource = frontend.mir;

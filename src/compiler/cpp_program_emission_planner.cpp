@@ -1339,11 +1339,14 @@ public:
       }
       if (const auto *enumeration =
               std::get_if<LoweredEnumDeclaration>(&declaration->payload)) {
+        const std::string name =
+            cppConcreteEnumName(loweredProgram, enumeration->type)
+                .value_or(declaration->name);
         writeIndent();
         if (enumeration->payload) {
-          output << "struct " << declaration->name << ";\n";
+          output << "struct " << name << ";\n";
         } else {
-          output << "enum class " << declaration->name << " : ";
+          output << "enum class " << name << " : ";
           emitSemanticType(enumeration->underlyingType);
           output << ";\n";
         }
@@ -2071,9 +2074,12 @@ public:
 
   void emitLoweredEnumDefinition(const LoweredDeclaration &row,
                                  const LoweredEnumDeclaration &enumeration) {
+    const std::string name =
+        cppConcreteEnumName(loweredProgram, enumeration.type)
+            .value_or(row.name);
     writeIndent();
     if (enumeration.payload) {
-      output << "struct " << row.name << " {\n";
+      output << "struct " << name << " {\n";
       ++indentation;
       for (const LoweredEnumerator &variant : enumeration.enumerators) {
         writeIndent();
@@ -2113,15 +2119,15 @@ public:
       }
       output << "> __gti_value;\n";
       writeIndent();
-      output << "friend bool operator==(const " << row.name << " &, const "
-             << row.name << " &) = default;\n";
+      output << "friend bool operator==(const " << name << " &, const " << name
+             << " &) = default;\n";
       --indentation;
       writeIndent();
       output << "};\n";
       return;
     }
 
-    output << "enum class " << row.name << " : ";
+    output << "enum class " << name << " : ";
     emitSemanticType(enumeration.underlyingType);
     output << " {\n";
     ++indentation;
@@ -4267,7 +4273,7 @@ public:
       const auto *declaration =
           std::get_if<LoweredEnumDeclaration>(&enumeration->payload);
       if (declaration == nullptr || declaration->id == 0 ||
-          !sourceEnumerationSchedule.emplace(declaration->id, enumeration)
+          !sourceEnumerationSchedule.emplace(enumeration->id, enumeration)
                .second) {
         throw std::logic_error(
             "lowered enum schedule contains a duplicate or invalid identity");
@@ -4353,9 +4359,13 @@ public:
         return;
       }
       case SemanticType::Enum:
-        if (type.enumId != 0 &&
-            sourceEnumerationSchedule.contains(type.enumId)) {
-          result.enumerations.push_back(type.enumId);
+        for (const auto &[identity, row] : sourceEnumerationSchedule) {
+          const auto *enumeration =
+              std::get_if<LoweredEnumDeclaration>(&row->payload);
+          if (enumeration != nullptr && enumeration->type == type) {
+            result.enumerations.push_back(identity);
+            break;
+          }
         }
         return;
       case SemanticType::Array:
@@ -4541,7 +4551,7 @@ public:
       const LoweredDeclaration &row = *scheduled->second;
       const auto *declaration =
           std::get_if<LoweredEnumDeclaration>(&row.payload);
-      if (declaration == nullptr || declaration->id != id) {
+      if (declaration == nullptr || row.id != id) {
         throw std::logic_error(
             "lowered enum schedule lost its declaration payload");
       }
@@ -4639,7 +4649,7 @@ public:
         throw std::logic_error(
             "lowered enum schedule lost its declaration payload");
       }
-      emitEnumeration(declaration->id);
+      emitEnumeration(enumeration->id);
     }
   }
 

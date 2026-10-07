@@ -55,6 +55,9 @@ def main() -> None:
         # Reuses one analyzer across requests to verify that raw-reference
         # assertion state is cleared; the Frontend facade cannot expose this.
         "tests/raw_borrow_tests.cpp",
+        # Reuses one analyzer to verify snapshot-owned concrete enum rows are
+        # cleared; independent Frontend snapshots cannot exercise that reset.
+        "tests/generic_enum_declaration_tests.cpp",
     }
     actual: set[str] = set()
     for directory in ("include", "src", "tests"):

@@ -26,6 +26,12 @@ struct MirVerificationResult {
 [[nodiscard]] MirVerificationResult verifyMirBody(const MirBody &body,
                                                   std::size_t owner = 0);
 
+// Identity-only projection containment using the same carrier/value forwarding
+// as loan verification. This is not a liveness or access permission proof.
+[[nodiscard]] bool mirCanonicalPlaceContains(const MirBody &body,
+                                             MirPlaceId parent,
+                                             MirPlaceId child);
+
 enum class MirVerificationComponent : std::uint8_t {
   BodyLocal = 1U << 0U,
   ProgramContracts = 1U << 1U,

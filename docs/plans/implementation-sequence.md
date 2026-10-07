@@ -7228,7 +7228,105 @@ consumer, and release refreshes remain outstanding for the full campaign.
   `std::variant` wrapper without making that library type source semantics.
 - **Remaining scope:** Add direct enum lambda capture, consuming payload
   bindings, fixed-array and direct result-alternative transport, generic
-  payload declarations, and deterministic layout in separately proven families.
+  payload declaration completion gates, and deterministic layout in separately proven families.
+  The general generic-declaration campaign is active in
+  `codex/generic-payload-enums`. The candidate retains ordinary semantic binders
+  and exact substituted alternative signatures, including defaults, type/value
+  arguments and a final metadata pack. Concrete construction/matching, HIR
+  discovery, verified lifecycle and detached representation use the complete
+  enum type rather than the primary declaration alone. Forward defaults,
+  alias payload validation and nominal deduction have focused regressions.
+  The original 22-fixture native matrix passes all 176 configurations with
+  19 source-rejection cases; added generic/nongeneric owning-field fixtures
+  pass all 16 native configurations. Exact instance LSP signatures and fresh
+  dependency diagnostics pass the focused protocol gate. Original A47, A48,
+  and A49 reproducers also pass all 24 native configurations. S15 plain-class
+  payload emission and its generic/nongeneric publication fixtures pass focused
+  native checks. Final review repairs cross-nominal default-ordering, exact
+  concrete layout/relocation traversal, snapshot reset and nested executable
+  payload storage identity. Focused declaration/backend/optimizer/raw-audit
+  gates and nested/receiver/sibling native matrices pass. Two valid-source
+  composition gaps remain follow-ups, not new source restrictions: a nested
+  local reborrow while two shared sibling payload bindings remain live reaches
+  a MIR sibling-conflict error
+  ([#121](https://git.internal.howetotech.dev/gti-lang/gti/issues/121)); two
+  fresh class constructors with enum arguments inside one alternative call
+  exceed the current fused emission staging proof
+  ([#122](https://git.internal.howetotech.dev/gti-lang/gti/issues/122)).
+  Preconstructing those class inputs is supported. The expanded 28-fixture
+  native matrix passes all 224 configurations and the 19 source-rejection
+  cases. All 24 broader focused gates pass, with two test-maintenance retries;
+  both complete MIR/Lowered corpus censuses and 12 isolated installed-library
+  consumers also pass. Further backend review repairs alias-driven phantom
+  class-layout discovery while retaining exact enum rows and real payload
+  layouts; synthetic catalog and signed-minimum failure-contract checks gain
+  independent malformed-input rejection cases. All eight post-correction
+  owning gates, the 224 native configurations, refreshed installed consumers
+  and both unchanged corpus censuses pass. The standalone 427-case coverage
+  gate reports two
+  `GTI-S2106` JSON failures (`c137` and `c138`), also reproduced by the optimized
+  pre-enum 0.382.1 compiler under native closed-program compilation; their
+  expected passing outcomes remain unchanged; the reduction is recorded on
+  [the definition-check issue](https://git.internal.howetotech.dev/gti-lang/gti/issues/51#issuecomment-458).
+  Reconciliation with canonical PRs 116 and 115 preserves passive native
+  call-result and class-field publication. The optimized overlap gates pass
+  14/14 and then 10/10 on the resulting main-based tree, including the full
+  224-configuration enum matrix, both corpus censuses and the upstream
+  publication regressions. These are focused integration checks, not a full
+  release-suite claim. The allocator campaign owns the symbolic-primary
+  definition-check repair; its published checkpoint is combined only in the
+  isolated draft, not released or integrated into canonical main.
+  A non-mutating preview identifies the two emitter resolutions: retain the
+  passive-default assignment proof together with the stricter ordinary
+  construction guard, and consistently use the passive-default helper.
+  Subsequent reconciliation with canonical PR126 retains deterministic field
+  identity and exact-owner callable transport; all 12 focused overlap gates
+  pass, including the enum matrix and both censuses. Tree-sitter regeneration
+  has no diff, all 76 corpus cases and 187 shipped sources parse, and
+  highlight/locals/source-text checks pass with the correct rebuilt worktree
+  parser rather than another worktree's shared cached grammar.
+  A subsequent combined-release fixture adds distinct owning enum instances
+  in base, derived and enclosing fields, requiring reverse-order cleanup after
+  a later derived-field construction fails. This 29th fixture is pending the
+  allocator campaign's selected-base-stage implementation; the standalone
+  branch reports the existing located backend-vocabulary rejection. The prior
+  224-configuration evidence does not claim this new integration fixture passed.
+  Draft reconciliation of published allocator checkpoint `514c859e` preserves
+  exact enum identities, assignment-shell proofs and generated constructor
+  schedules. Combined snapshots reserve MIR95/body80/Lowered15; the merged
+  grammar passes all 76 cases. Optimized combined compiler and runtime checks
+  remain pending, together with the allocator's selected-base-stage correction.
+  The optimized combined build subsequently succeeds. Eighteen of 22 focused
+  cross-layer checks pass, including exact enum queries/backend, manual-lifetime
+  and conditional-capability contracts/runtime/LSP, cleanup mutations and
+  symbolic-definition publication. Both formerly failing JSON coverage programs
+  compile natively at O3 and run successfully. Aggregate inventory and stale
+  native-default spelling assertions are repaired without dropping tests:
+  declaration fixtures retain read-only MIR fields and selected generated
+  constructor identities; target fixtures construct/read their selected object.
+  The complete compiler aggregate then passes (39.02 seconds). Base body
+  vocabulary checks and the reviewed corpus census refresh remain outstanding;
+  this is not combined full-release evidence.
+  Published base-stage checkpoint `f832985c` is subsequently reconciled in the
+  isolated draft. The new base/derived/enclosing enum regression passes all
+  eight native configurations (including no-elide and ASan/UBSan), retaining
+  exact `Event<Resource, 1/2/3>` identities and cleanup order `22`, `11`, `9`.
+  Lifecycle vocabulary and the complete native base-constructor matrix pass.
+  The broader base unit fixtures and an old inheritance-spelling assertion
+  still require reconciliation with the allocator agent's next checkpoint;
+  the earlier aggregate pass precedes this newer base-stage integration.
+  The combined 29-fixture matrix first exposes four container clients failing
+  MIR storage verification: new allocator trait helpers queried only a primary
+  enum ID, losing concrete arguments. All three lookup sites now use exact
+  enum types. General conditional-capability tests cover distinct real payload
+  policies and metadata-only parameters; no storage or borrow permission is
+  relaxed. All six focused gates then pass (110.63 seconds), including every
+  one of the 232 native enum configurations and 19 source rejections.
+  Combined full-suite/coverage-corpus
+  validation and upstream release integration remain delivery gates. This
+  campaign is not an `expected` implementation. The owner's spelling
+  amendment makes `class` optional with identical scoped semantics for both
+  declaration forms.
 - **Non-goals:** Implicit conversions, open variants, making `std::variant`
   compiler magic, or treating the separately implemented passive native union
   as a tagged sum or C ABI union.

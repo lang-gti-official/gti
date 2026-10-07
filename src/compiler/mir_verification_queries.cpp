@@ -77,7 +77,7 @@ bool completeObjectType(const MirProgram &program,
              type.arguments.front().kind != SemanticType::TypeParameter &&
              type.arguments.front().kind != SemanticType::Unknown;
     case SemanticType::Enum:
-      return program.findIntegralEnum(type.enumId) != nullptr;
+      return program.findIntegralEnum(type) != nullptr;
     case SemanticType::Array:
       return type.arguments.size() == 1 && type.arrayLength > 0 &&
              self(self, type.arguments.front(), depth + 1);
