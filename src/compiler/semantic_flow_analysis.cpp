@@ -2442,8 +2442,8 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
          .span = tokenSpan(token),
          .kind = functionItemDeclaration != nullptr
                      ? SemanticOccurrenceKind::Function
-                     : enumeratorOccurrence ? SemanticOccurrenceKind::Symbol
-                                            : SemanticOccurrenceKind::Expression,
+                 : enumeratorOccurrence ? SemanticOccurrenceKind::Symbol
+                                        : SemanticOccurrenceKind::Expression,
          .symbol = symbolId,
          .roles = roles,
          .name = token.lexeme,

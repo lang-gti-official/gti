@@ -921,7 +921,18 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
 
     if (place->root == MirPlaceRootKind::Value) {
       const MirValue *value = body.findValue(place->value);
-      if (value != nullptr && value->info.category == ValueCategory::Place) {
+      // A raw dereference designates pointee storage, not storage containing
+      // the pointer. Following a pointer load's borrow origin here would
+      // equate that unsafe pointee with the checked carrier shell and apply
+      // the shell's access permissions to unrelated memory.
+      const bool rawPointee = std::any_of(
+          place->projections.begin(), place->projections.end(),
+          [](const MirPlaceProjection &projection) {
+            return projection.kind == MirProjectionKind::RawDereference ||
+                   projection.kind == MirProjectionKind::RawIndex;
+          });
+      if (value != nullptr && value->info.category == ValueCategory::Place &&
+          !rawPointee) {
         const auto source = borrowSourceForValue(body, place->value, depth + 1);
         if (source && *source != id) {
           auto result = self(self, *source, depth + 1);
