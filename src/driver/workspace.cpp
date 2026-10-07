@@ -144,6 +144,29 @@ std::vector<PackageSourceRoot> ProjectWorkspace::packageSourceRoots() const {
   return roots;
 }
 
+ConfigurationFlags ProjectWorkspace::configurationFlags() const {
+  ConfigurationFlags flags;
+  std::set<std::string> visited;
+  std::vector<const ResolvedProjectPackage *> pending{&selectedPackage()};
+  while (!pending.empty()) {
+    const ResolvedProjectPackage &package = *pending.back();
+    pending.pop_back();
+    if (!visited.insert(package.identity()).second) {
+      continue;
+    }
+    const ConfigurationFlags &declared = package.manifest.build().defines;
+    flags.insert(flags.end(), declared.begin(), declared.end());
+    for (const ResolvedProjectDependency &dependency : package.dependencies) {
+      if (const ResolvedProjectPackage *target =
+              findPackage(dependency.targetIdentity)) {
+        pending.push_back(target);
+      }
+    }
+  }
+  normalizeConfigurationFlags(flags);
+  return flags;
+}
+
 std::string ProjectWorkspace::modelIdentity() const {
   std::string identity = "gti-workspace-v1";
   for (const ResolvedProjectPackage &package : resolvedPackages) {
