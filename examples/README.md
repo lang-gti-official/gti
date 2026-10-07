@@ -73,7 +73,7 @@ is a teaching helper, not a production server.
 | `24-static.gti` | source-local storage and type-owned class members |
 | `25-polymorphic-ranges.gti` | generic interfaces, virtual operators, iterator protocols, and range-based `for` |
 | `26-stored-references.gti` | owner-tied source iterators with tracked stored-reference lifetime |
-| `27-copy-move-policies.gti` | explicit structural default construction/destruction and defaulted or deleted copy/move policy |
+| `27-copy-move-policies.gti` | explicit structural default construction/destruction, copy/move policy, and reinitialization after a consuming loop break |
 | `28-callable-parameters.gti` | confined generic operations with lambdas and function objects |
 | `29-callable-predicates.gti` | exact bool predicate results from confined generic callables |
 | `30-callable-forwarding.gti` | proven confined callable forwarding through generic helper layers |

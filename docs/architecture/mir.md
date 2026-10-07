@@ -405,6 +405,20 @@ operations as explicit mutable-memory/ownership barriers. The C++ consumer
 uses verified result slots and generated relocation; it does not grant
 reference consumption or use native move assignment as semantic authority.
 
+Ownership and scalar-initialization dataflow follow only the executable edge
+of a typed literal boolean branch, including its exact same-typed identity
+chain. Structural CFG edges remain intact for dominance, loan endpoints and
+cleanup validation. This prevents an impossible natural exit of `while (true)`
+from changing a post-break moved-state assignment into a live replacement.
+Unknown conditions still join both edges; this proof does not evaluate calls,
+loads, arithmetic or constant contexts, and does not relax loop-backedge or
+use-after-move checking. Ownership dataflow first solves the complete executable
+CFG, then validates each instruction against stable block-entry states. This
+retains exact `Available|Moved` reinitialization facts at a conditional break
+without rejecting an intermediate worklist state before its other predecessor
+arrives; transfer states remain derived from MIR operations, not asserted event
+results.
+
 Checked indexed swap is a third sealed intrinsic over one mutable fixed-array
 or initialized-prefix storage reference and two staged `uint64_t` indices.
 Its one local `IndexOutOfBounds/PrivateStorage` outcome preflights both indices

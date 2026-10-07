@@ -37,6 +37,16 @@ add_test(NAME charconv_runtime_boundary COMMAND gti_runtime_charconv_tests)
 add_executable(gti_mir_full_expression_tests mir_full_expression_tests.cpp)
 target_link_libraries(gti_mir_full_expression_tests PRIVATE gti_compiler)
 add_test(NAME mir_full_expression COMMAND gti_mir_full_expression_tests)
+add_executable(gti_loop_break_reinitialization_tests
+               loop_break_reinitialization_tests.cpp)
+target_link_libraries(gti_loop_break_reinitialization_tests PRIVATE gti_compiler)
+add_test(NAME loop_break_reinitialization
+         COMMAND gti_loop_break_reinitialization_tests)
+add_test(NAME loop_break_reinitialization_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/loop_break_reinitialization_runtime_test.py"
+                 "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+set_tests_properties(loop_break_reinitialization_runtime PROPERTIES TIMEOUT 300)
 add_executable(gti_ephemeral_carrier_mir_tests ephemeral_carrier_mir_tests.cpp)
 add_executable(gti_resource_memory_runtime_tests resource_memory_runtime_tests.cpp)
 target_link_libraries(gti_resource_memory_runtime_tests PRIVATE gti_runtime)

@@ -1,0 +1,77 @@
+#include <std/string>
+
+class Parcel {
+  int id;
+  std::string payload;
+
+public:
+  Parcel(int id) : id(id), payload(std::string("owned")) {}
+  Parcel(Parcel& other) = delete;
+  Parcel(Parcel&& other) = default;
+  ~Parcel() { std::println(this.id); }
+  int read() { return this.id; }
+};
+
+void consume(Parcel parcel) {}
+
+int while_break() {
+  mut Parcel parcel{1};
+  while ((true)) {
+    consume(std::move(parcel));
+    break;
+  }
+  parcel = Parcel(2);
+  return parcel.read() - 2;
+}
+
+int for_break() {
+  mut Parcel parcel{3};
+  for (mut int index = 0; true; ++index) {
+    if (index == 1) {
+      consume(std::move(parcel));
+      break;
+    }
+  }
+  parcel = Parcel(4);
+  return parcel.read() - 4;
+}
+
+int nested_break() {
+  mut Parcel parcel{5};
+  while (true) {
+    while (true) {
+      consume(std::move(parcel));
+      break;
+    }
+    break;
+  }
+  parcel = Parcel(6);
+  return parcel.read() - 6;
+}
+
+int false_loop() {
+  mut Parcel parcel{7};
+  while (false) {
+    consume(std::move(parcel));
+    break;
+  }
+  parcel = Parcel(8);
+  return parcel.read() - 8;
+}
+
+int dynamic_break(bool condition, int initial, int replacement) {
+  mut Parcel parcel{initial};
+  while (condition) {
+    consume(std::move(parcel));
+    break;
+  }
+  // The natural exit leaves it live; the break exit consumes it. Both states
+  // permit plain assignment, which only cleans the prior active object.
+  parcel = Parcel(replacement);
+  return parcel.read() - replacement;
+}
+
+int main() {
+  return while_break() + for_break() + nested_break() + false_loop() +
+         dynamic_break(true, 9, 10) + dynamic_break(false, 11, 12);
+}
