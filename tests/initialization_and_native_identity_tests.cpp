@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <set>
 #include <string>
 
 int main() {
@@ -113,5 +114,110 @@ int main() { return 0; }
   rejected("extern \"C\" { [[link_name(\"__gti_c_fn_1\")]] int32_t call(); } "
            "int main() { return 0; }",
            "GTI-S2054");
+
+  auto unnamed = analyze(R"gti(
+interface I { int32_t inspect(int32_t, uint32_t); };
+int32_t discard(int32_t, uint32_t) { return 0; }
+int main() { return discard(1, uint32_t(2)); }
+)gti");
+  expect(unnamed.canGenerateCode(),
+         "unnamed bodyless and executable formals need physical identities");
+  for (const std::string shape : {"int32_t", "int32_t&", "mut int32_t&",
+                                  "int32_t*"}) {
+    for (const std::string &declaration : {
+             "int32_t f(" + shape + ");",
+             "class C { public: int32_t f(" + shape + "); };",
+             "interface I { int32_t f(" + shape + "); };"}) {
+      auto cell = analyze(declaration + " int main() { return 0; }");
+      expect(cell.canGenerateCode(),
+             "each bodyless unnamed formal shape must retain canonical MIR");
+      if (cell.canGenerateCode())
+        expect(!gti_test::emitCpp(cell).contents.empty(),
+               "each bodyless unnamed shape must reach production emission");
+    }
+    if (shape == "int32_t" || shape == "int32_t*") {
+      auto cell = analyze("extern \"C\" { int32_t f(" + shape +
+                          "); } int main() { return 0; }");
+      expect(cell.canGenerateCode(),
+             "unnamed valid C ABI shape must retain canonical MIR");
+      if (cell.canGenerateCode())
+        expect(!gti_test::emitCpp(cell).contents.empty(),
+               "unnamed C ABI shape must reach production emission");
+    }
+  }
+  if (unnamed.canGenerateCode()) {
+    std::set<lang::SymbolId> ids;
+    std::set<std::pair<std::size_t, std::size_t>> spans;
+    for (const auto &symbol : unnamed.semantics.database().symbols()) {
+      if (symbol.kind != lang::SymbolKind::Parameter)
+        continue;
+      expect(symbol.generated, "unnamed formal must remain tooling-hidden");
+      expect(symbol.id != 0 && !symbol.nameSpan.source.empty() &&
+                 symbol.nameSpan.end > symbol.nameSpan.start,
+             "unnamed formal needs a real type source anchor");
+      expect(unnamed.semantics.database().occurrencesForSymbol(symbol.id).empty(),
+             "synthetic formal must not become a source name occurrence");
+      ids.insert(symbol.id);
+      spans.emplace(symbol.nameSpan.start, symbol.nameSpan.end);
+    }
+    expect(ids.size() == 4 && spans.size() == 4,
+           "each owner and formal index must retain distinct identities");
+    const auto lowered =
+        gti_test::lowerProgram(unnamed, unnamed.mir, unnamed.mir);
+    int emptyNames = 0;
+    for (const auto &declaration : lowered.declarations()) {
+      const auto *function =
+          std::get_if<lang::LoweredFunctionDeclaration>(&declaration.payload);
+      if (function == nullptr)
+        continue;
+      for (const auto &parameter : function->parameters) {
+        expect(parameter.name.empty(),
+               "Lowered formal must not acquire a manufactured public name");
+        expect(parameter.symbol != 0,
+               "Lowered formal must retain exact physical symbol");
+        ++emptyNames;
+      }
+    }
+    expect(emptyNames == 4, "both unnamed signatures must reach publication");
+    expect(!gti_test::emitCpp(unnamed).contents.empty(),
+           "unnamed formals must reach verified executable emission");
+  }
+  auto constexprUnnamed = analyze(
+      "constexpr int32_t reads(int32_t*) { return 0; }\n"
+      "int main() { return 0; }");
+  expect(!constexprUnnamed.canGenerateCode(),
+         "raw pointer constexpr restriction remains intact");
+  const auto constDiagnostic = std::find_if(
+      constexprUnnamed.diagnostics.begin(), constexprUnnamed.diagnostics.end(),
+      [](const auto &d) { return d.code == "GTI-S2057"; });
+  expect(constDiagnostic != constexprUnnamed.diagnostics.end() &&
+             constDiagnostic->primary.start == 24 &&
+             constDiagnostic->primary.end == 31,
+         "unnamed constexpr diagnostic must anchor the actual type token");
+
+  auto wrongOrigin = analyze(R"gti(
+class Holder {
+  int32_t& value;
+public:
+  Holder(int32_t& source) : value(source) {}
+};
+Holder build(int32_t&) {
+  int32_t local = 2;
+  return Holder(local);
+}
+int main() { return 0; }
+)gti");
+  const auto originDiagnostic = std::find_if(
+      wrongOrigin.diagnostics.begin(), wrongOrigin.diagnostics.end(),
+      [](const auto &d) { return d.code == "GTI-S2045"; });
+  expect(!wrongOrigin.canGenerateCode() &&
+             originDiagnostic != wrongOrigin.diagnostics.end() &&
+             originDiagnostic->message.find("unnamed read-only parameter 1") !=
+                 std::string::npos &&
+             originDiagnostic->related.size() == 1 &&
+             !originDiagnostic->related.front().span.source.empty() &&
+             originDiagnostic->related.front().span.end >
+                 originDiagnostic->related.front().span.start,
+         "borrow origin diagnostic needs the unnamed formal's real type span");
   return failures ? 1 : 0;
 }

@@ -36,7 +36,7 @@
     "122-native-function-invocation.gti": 29,
     "123-native-c-scalars.gti": 31,
     "124-nested-raw-pointers.gti": 29,
-    "13-ownership.gti": 46,
+    "13-ownership.gti": 51,
     "14-operators.gti": 38,
     "15-variadic-generics.gti": 36,
     "16-move-generics.gti": 41,
@@ -104,7 +104,7 @@
     "78-owning-payload-enums.gti": 30,
     "79-class-scoped-type-aliases.gti": 30,
     "80-function-items.gti": 98,
-    "83-complete-ranges.gti": 119,
+    "83-complete-ranges.gti": 136,
     "84-optional-values.gti": 49,
     "85-payload-enum-fields.gti": 33,
     "86-owning-callbacks.gti": 239,
@@ -122,5 +122,5 @@
     "98-shared-ownership.gti": 361,
     "99-borrowed-expected.gti": 353
   },
-  "total": 16173
+  "total": 16195
 }

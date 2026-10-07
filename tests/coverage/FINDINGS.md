@@ -489,12 +489,12 @@ verification.
 | --- | --- |
 | F10 | Reproduces; direct call-result assignment needs general typed destination syntax/places. Main123's projected assignment repair is a separate prerequisite. |
 | F14 | Reproduces; nested generic callable-result arguments need coherent exact signature inference, not a brace diagnostic or guessed result type. |
-| F16 | Reproduces; canonical iterator comparison still rejects the temporary sentinel. |
-| F17 | Reproduces; unnamed-parameter related spans need declaration-owned anchors. |
+| F16 | Resolved in focused native checks: exact copyable-value sentinel comparisons and distances compose with range-for and algorithms; reference sentinels remain supported. |
+| F17 | Resolved in focused source checks: unnamed lifetime sources use their real type span and a one-based parameter index. |
 | S01 | Reproduces; grouped class construction is outside the current production representation proof. |
 | S02 | Reproduces; class-valued conditional publication is outside the current production representation proof. |
-| S04 | Reproduces; bodyless unnamed formals leave a noncanonical declaration body. |
-| S06 | Reproduces; unnamed constexpr formal lacks its diagnostic anchor. |
+| S04 | Resolved in focused frontend/backend checks: unnamed formals retain distinct generated physical symbols without adding public/source names. |
+| S06 | Resolved in focused source checks: constexpr eligibility still rejects the raw-pointer formal, anchored at its written type token. |
 | S09 | Resolved in focused source checks: initializer-less ordinary mutable locals report located GTI-S2000 before MIR/backend. Program-storage and field policies remain separate. |
 | S12 | Documented rounding policy still reproduces; owner policy decision pending before changing implicit conversions. |
 | S15 | Reproduces on canonical main; PR110's enum lifecycle prerequisite must be integrated/revalidated rather than duplicated. |
@@ -633,6 +633,13 @@ correction is on the record rather than silently edited away.
 
 ## F16 — The canonical C++ iterator loop does not compile over `std::vector`
 
+**Resolved in focused optimized checks.** A general exact copyable-value
+sentinel parameter complements the existing read-only-reference family in
+range-for, `sentinel_for`, and `sized_sentinel_for`. The vector's self-contained
+position sentinel uses that ordinary value family. The original loop and an
+unrelated application range pass; a noncopyable value sentinel is rejected
+before MIR. This does not relax temporary-reference binding.
+
 `reproducers/f16-canonical-iterator-loop.gti`
 
 ```gti
@@ -668,6 +675,11 @@ Corpus program: `c55_iterator_utilities`.
 ---
 
 ## F17 — Diagnostic with an empty name and an out-of-source span
+
+**Resolved in focused optimized checks.** Unnamed formal source anchors use
+the written type, and lifetime diagnostics identify the one-based parameter
+index. The original remains correctly rejected with GTI-S2045 and a real
+related source span.
 
 `reproducers/f17-unnamed-parameter-bad-span.gti`
 
@@ -873,6 +885,11 @@ so there may be two defects here.
 
 ## S04 — ICE: any bodyless declaration with an unnamed parameter
 
+**Resolved in focused optimized checks.** Unnamed formals receive distinct,
+source-anchored generated semantic binding identities. Public AST and
+Lowered names remain empty; no source name occurrences are fabricated. The
+original interface declaration now reaches verified executable publication.
+
 `reproducers/s04-bodyless-decl-unnamed-param.gti`
 
 ```gti
@@ -914,6 +931,10 @@ guarantee the emitter can spell what it accepts, or decline with `GTI-B0001`.
 Here it did neither.
 
 ## S06 — A primary diagnostic with no location at all
+
+**Resolved in focused optimized checks.** Constexpr eligibility diagnostics
+use the unnamed formal's written type as their source anchor. The original
+still reports GTI-S2057, now with an in-source primary span.
 
 `reproducers/s06-constexpr-unnamed-param-no-span.gti`
 

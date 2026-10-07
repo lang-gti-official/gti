@@ -126,7 +126,8 @@ or a distinct sentinel type.
 The iterator must provide:
 
 - `operator!=(Sentinel&)`, with one read-only reference parameter that exactly
-  accepts the sentinel;
+  accepts the sentinel, or `operator!=(Sentinel)` when the exact sentinel type
+  is copyable;
 - `operator*()`, returning a checked reference;
 - `void operator++() mut`, the prefix increment operation.
 
@@ -134,6 +135,16 @@ These are ordinary GTI methods. Access control, generic substitution, receiver
 mutability, exact overload matching, virtual dispatch, result ownership, and
 borrow checks all run through the normal frontend. C++ argument-dependent
 lookup and native range-for semantics are never consulted.
+
+The value-parameter family copies the endpoint for each comparison; it does
+not move from the hidden sentinel or extend a temporary reference's lifetime.
+The same two parameter families apply to `sentinel_for<S, I>` and to the
+`operator-(S&)` / `operator-(S)` requirement of `sized_sentinel_for<S, I>`.
+Both operations require a read-only receiver and their exact protocol result
+(`bool` for comparison, `ptrdiff_t` for distance). A move-only sentinel must
+use the reference family. Self-contained endpoints, such as the vector's
+position sentinel, can use the value family, including comparisons against a
+fresh `end()` result in ordinary source.
 
 A by-value loop declaration such as `for (T value : range)` copies the
 selected element and therefore rejects a move-only lvalue. `for (T& value :
@@ -313,7 +324,7 @@ public library name:
   prefix increment; ordinary parameter ownership separately checks whether a
   particular iterator expression can be transferred into an algorithm;
 - `std::sentinel_for<S, I>` proves exact public read-only
-  `bool I::operator!=(S&)`;
+  `bool I::operator!=(S&)`, or `bool I::operator!=(S)` when `S` is copyable;
 - `std::output_iterator<I>` proves mut checked dereference returning a mutable
   reference plus mutable prefix increment, and `std::writes_to<I, T>` refines
   the mutable referent to exactly `T`;
@@ -325,8 +336,8 @@ public library name:
   `mut T& I::operator[](std::ptrdiff_t) mut` for exactly `T`, the positioned
   write contract that keeps one exclusive cursor over a whole range;
 - `std::sized_sentinel_for<S, I>` composes `sentinel_for` with read-only
-  `std::ptrdiff_t I::operator-(S&)`, the signed distance from the iterator to
-  the sentinel.
+  `std::ptrdiff_t I::operator-(S&)`, or `std::ptrdiff_t I::operator-(S)` when
+  `S` is copyable, the signed distance from the iterator to the sentinel.
 
 `<std/numeric>` additionally defines `std::accumulates_into<I, T>`, whose first
 version proves that read-only dereferencing `I` returns a checked reference to

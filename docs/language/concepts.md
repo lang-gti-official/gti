@@ -345,7 +345,7 @@ The current structural capability set is intentionally small:
   iterator into an algorithm is checked separately by ordinary parameter
   ownership rules;
 - `sentinel_for<S, I>` requires an exact public read-only
-  `bool I::operator!=(S&)`; and
+  `bool I::operator!=(S&)`, or `bool I::operator!=(S)` when `S` is copyable; and
 - `dereferences_to<I, T>` requires public read-only `I::operator*()` to return
   a checked reference whose referent is exactly `T`;
 - `writable_iterator<I>` requires public `mut I::operator*() mut` returning a
@@ -359,8 +359,8 @@ The current structural capability set is intentionally small:
 - `subscripts_to_mut<I, T>` requires public
   `mut T& I::operator[](std::ptrdiff_t) mut` with exactly `T`;
 - `sized_sentinel_for<S, I>` requires public read-only
-  `std::ptrdiff_t I::operator-(S&)`, the signed distance from the iterator to
-  the sentinel;
+  `std::ptrdiff_t I::operator-(S&)`, or `std::ptrdiff_t I::operator-(S)` when
+  `S` is copyable, the signed distance from the iterator to the sentinel;
 - `input_range<R>` derives exact public read-only `begin()`/`end()` endpoints
   and requires their iterator/sentinel pair to satisfy the input protocol;
 - `range_of<R, T>` refines that range to an exact read-only `T&` dereference,

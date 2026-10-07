@@ -1,0 +1,60 @@
+#include <std/algorithm>
+#include <std/iterator>
+#include <std/vector>
+
+mut int32_t endpoint_calls = 0;
+mut int32_t comparisons = 0;
+
+// An application-owned endpoint: no borrowed state and no library identity.
+class finish {
+  std::size_t limit;
+public:
+  finish(std::size_t limit) : limit(limit) {}
+  std::size_t position() { return this.limit; }
+};
+class reading_cursor {
+  readings& owner;
+  mut std::size_t index;
+public:
+  reading_cursor(readings& owner, std::size_t index)
+      : owner(owner), index(index) {}
+  int32_t& operator*() { return this.owner.at(this.index); }
+  void operator++() mut { this.index++; }
+  bool operator!=(finish last) {
+    comparisons++;
+    return this.index != last.position();
+  }
+  std::ptrdiff_t operator-(finish last) {
+    return std::ptrdiff_t(last.position()) - std::ptrdiff_t(this.index);
+  }
+};
+class readings {
+  int32_t[3] values = {2, 4, 6};
+public:
+  int32_t& at(std::size_t index) { return this.values[index]; }
+  reading_cursor begin() { return reading_cursor(this, std::size_t(0)); }
+  finish end() { endpoint_calls++; return finish(std::size_t(3)); }
+};
+
+bool accepts_sized<I, S>(I first, S last)
+    requires std::sized_sentinel_for<S, I> {
+  return first - last == 3;
+}
+
+int main() {
+  readings values{};
+  mut int32_t sum = 0;
+  for (int32_t value : values) { sum += value; }
+  if (sum != 12 || endpoint_calls != 1 || comparisons != 4) { return 1; }
+  if (!accepts_sized(values.begin(), values.end()) ||
+      std::distance(values.begin(), values.end()) != 3) { return 2; }
+  int32_t target = 4;
+  if (!std::contains(values, target)) { return 3; }
+  auto first = values.begin();
+  if (!(first != values.end())) { return 4; }
+  // The motivating library follows the same exact copyable-value contract.
+  std::vector<int32_t> vector = {2, 4, 6};
+  if (!(vector.begin() != vector.end()) ||
+      std::distance(vector.begin(), vector.end()) != 3) { return 5; }
+  return 0;
+}

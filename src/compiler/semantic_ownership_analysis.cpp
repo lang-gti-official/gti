@@ -1571,7 +1571,7 @@ auto SemanticVisitor::Impl::reportMissingFunctionReturnBorrowSummary(
                   borrowAccess(parameter) == AccessMode::ReadOnly));
       if (eligible) {
         diagnostic.related.push_back(
-            {tokenSpan(function.parameters()[index].name),
+            {tokenSpan(function.parameters()[index].sourceAnchor()),
              "Eligible owner dependency source is here."});
       }
     }

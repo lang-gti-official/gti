@@ -127,7 +127,7 @@ is a teaching helper, not a production server.
 | `78-owning-payload-enums.gti` | closed payload enums that directly own active-cleanup alternatives |
 | `79-class-scoped-type-aliases.gti` | access-controlled aliases declared as class members |
 | `80-function-items.gti` | exact namespace free functions passed to confined generic callables |
-| `83-complete-ranges.gti` | structural whole-range algorithms over application ranges and fixed arrays |
+| `83-complete-ranges.gti` | structural whole-range algorithms, copyable value sentinels, and fixed arrays |
 | `84-optional-values.gti` | allocation-free optional storage, checked access, reset, emplacement, and move-only payloads |
 | `85-payload-enum-fields.gti` | ordinary class and struct fields that directly own active-cleanup payload enums |
 | `86-owning-callbacks.gti` | retained lambda callbacks, `std::function`, cloning/replacement, mutable state, move-only captures, and one-shot invocation |
@@ -412,6 +412,10 @@ read-only, mutable, and sized structural protocol. The same source-defined
 `std::all_of` and `std::fill` implementations accept that nominal range and a
 fixed array; `std::sized_range` also proves a generic `size()` call without
 compiler recognition of either the range or algorithm name.
+It also defines an independent cursor and a copyable scalar endpoint passed
+by value, demonstrating range-for, sized distance, and comparison with a
+fresh endpoint. Move-only endpoints continue to require read-only-reference
+comparison parameters.
 
 `84-optional-values.gti` uses the bounded move-only `std::optional<T>` surface.
 The optional slot stores `T` inline, destroys only an engaged value, and checks

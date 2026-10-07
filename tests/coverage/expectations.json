@@ -313,10 +313,8 @@
       "outcome": "rejected"
     },
     "c55_iterator_utilities": {
-      "code": "GTI-S2022",
-      "finding": "F16",
       "issue": 103,
-      "outcome": "rejected"
+      "outcome": "pass"
     }
   },
   "projects": {
@@ -2187,16 +2185,13 @@
       "outcome": "pass"
     },
     "f16-canonical-iterator-loop": {
-      "code": "GTI-S2022",
-      "finding": "F16",
       "issue": 103,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "f17-unnamed-parameter-bad-span": {
       "code": "GTI-S2045",
-      "finding": "F17",
       "issue": 103,
-      "outcome": "bad-location"
+      "outcome": "rejected"
     },
     "f2-generic-callable-by-reference": {
       "outcome": "pass"
@@ -2248,18 +2243,16 @@
       "outcome": "pass"
     },
     "s04-bodyless-decl-unnamed-param": {
-      "finding": "S04",
       "issue": 103,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "s05-owning-enum-assign-invalid-cpp": {
       "outcome": "pass"
     },
     "s06-constexpr-unnamed-param-no-span": {
       "code": "GTI-S2057",
-      "finding": "S06",
       "issue": 103,
-      "outcome": "bad-location"
+      "outcome": "rejected"
     },
     "s07-alias-as-scope-qualifier": {
       "outcome": "pass"

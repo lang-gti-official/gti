@@ -2,6 +2,34 @@
 #include <std/iterator>
 #include <std/vector>
 
+// A self-contained, copyable endpoint can be taken by value. The compiler
+// establishes the same protocol for application types and library cursors.
+class stop {
+  std::size_t position_;
+public:
+  stop(std::size_t position) : position_(position) {}
+  std::size_t position() { return this.position_; }
+};
+class cursor {
+  fixed_readings& owner;
+  mut std::size_t index;
+public:
+  cursor(fixed_readings& owner, std::size_t index) : owner(owner), index(index) {}
+  int32_t& operator*() { return this.owner.at(this.index); }
+  void operator++() mut { this.index++; }
+  bool operator!=(stop end) { return this.index != end.position(); }
+  std::ptrdiff_t operator-(stop end) {
+    return std::ptrdiff_t(end.position()) - std::ptrdiff_t(this.index);
+  }
+};
+class fixed_readings {
+  int32_t[3] values = {2, 4, 6};
+public:
+  int32_t& at(std::size_t index) { return this.values[index]; }
+  cursor begin() { return cursor(this, std::size_t(0)); }
+  stop end() { return stop(std::size_t(3)); }
+};
+
 class readings {
   mut std::vector<int32_t> values = std::vector<int32_t>({2, 4, 6});
 
@@ -42,6 +70,11 @@ std::size_t measured_size<Range>(Range& range)
 }
 
 int main() {
+  fixed_readings application{};
+  mut int32_t sum = 0;
+  for (int32_t reading : application) { sum += reading; }
+  if (sum != 12 || std::distance(application.begin(), application.end()) != 3 ||
+      !(application.begin() != application.end())) { return 3; }
   mut readings samples{};
   mut int32_t[3] fixed = {1, 3, 5};
 

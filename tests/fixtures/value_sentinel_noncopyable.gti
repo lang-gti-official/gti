@@ -1,0 +1,33 @@
+#include <std/iterator>
+
+class finish {
+  std::size_t limit;
+public:
+  finish(std::size_t limit) : limit(limit) {}
+  finish(finish& other) = delete;
+  finish(finish&& other) = default;
+  std::size_t position() { return this.limit; }
+};
+class cursor {
+  readings& owner;
+  mut std::size_t index;
+public:
+  cursor(readings& owner, std::size_t index) : owner(owner), index(index) {}
+  int32_t& operator*() { return this.owner.at(this.index); }
+  void operator++() mut { this.index++; }
+  bool operator!=(finish last) { return this.index != last.position(); }
+};
+class readings {
+  int32_t[1] values = {4};
+public:
+  int32_t& at(std::size_t index) { return this.values[index]; }
+  cursor begin() { return cursor(this, std::size_t(0)); }
+  finish end() { return finish(std::size_t(1)); }
+};
+int32_t probe<I, S>(I first, S last) requires std::sentinel_for<S, I> {
+  return first != last ? 1 : 0;
+}
+int main() {
+  readings values{};
+  return probe(values.begin(), values.end());
+}

@@ -359,7 +359,7 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     case StructuralConstraintKind::SentinelFor:
       diagnostic.hints.emplace_back(
           "The iterator must provide public read-only bool operator!=(S&) "
-          "for the exact sentinel type.");
+          "or operator!=(S) for an exact copyable sentinel type.");
       break;
     case StructuralConstraintKind::DereferencesTo:
       diagnostic.hints.emplace_back(
@@ -394,7 +394,8 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     case StructuralConstraintKind::SizedSentinelFor:
       diagnostic.hints.emplace_back(
           "The iterator must provide public read-only "
-          "std::ptrdiff_t operator-(S&) for the exact sentinel type, "
+          "std::ptrdiff_t operator-(S&) or operator-(S) for an exact copyable "
+          "sentinel type, "
           "returning the signed distance from the iterator to the sentinel.");
       break;
     case StructuralConstraintKind::InputRange:

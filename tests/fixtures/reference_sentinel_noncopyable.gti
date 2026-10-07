@@ -1,0 +1,39 @@
+#include <std/algorithm>
+#include <std/iterator>
+
+class finish {
+  std::size_t limit;
+public:
+  finish(std::size_t limit) : limit(limit) {}
+  finish(finish& other) = delete;
+  finish(finish&& other) = default;
+  std::size_t position() { return this.limit; }
+};
+class cursor {
+  readings& owner;
+  mut std::size_t index;
+public:
+  cursor(readings& owner, std::size_t index) : owner(owner), index(index) {}
+  int32_t& operator*() { return this.owner.at(this.index); }
+  void operator++() mut { this.index++; }
+  bool operator!=(finish& last) { return this.index != last.position(); }
+  std::ptrdiff_t operator-(finish& last) {
+    return std::ptrdiff_t(last.position()) - std::ptrdiff_t(this.index);
+  }
+};
+class readings {
+  int32_t[3] values = {2, 4, 6};
+public:
+  int32_t& at(std::size_t index) { return this.values[index]; }
+  cursor begin() { return cursor(this, std::size_t(0)); }
+  finish end() { return finish(std::size_t(3)); }
+};
+int main() {
+  readings values{};
+  mut int32_t sum = 0;
+  for (int32_t value : values) { sum += value; }
+  int32_t target = 4;
+  if (sum != 12 || !std::contains(values, target) ||
+      std::distance(values.begin(), values.end()) != 3) { return 1; }
+  return 0;
+}
