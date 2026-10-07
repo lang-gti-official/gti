@@ -1,5 +1,9 @@
 # Semantic Analysis
 
+Status: Current implementation.
+
+## Exact-owner construction
+
 For one completed value of a class's exact owner type, semantic construction
 selects that owner's copy or move lifecycle according to the analyzed value
 category. A generic by-value converting constructor instantiated with that
@@ -9,8 +13,6 @@ selected `ConstructorKind`, declaration and argument facts continue through
 HIR/MIR. Completed-value optional publication therefore transports the selected
 lifecycle value rather than invoking another converting constructor at the
 private storage boundary. No public callable/container name defines this rule.
-
-Status: Current implementation.
 
 ## Native C scalar target facts
 
@@ -102,8 +104,7 @@ instance queries can first-reference them through lookup maps. This includes
 interleaved static and instance fields; inherited lookup aliases and concrete
 instances reuse the primary declaration identity. Hash/address iteration cannot
 assign identities later consumed by printed IR. Symbols retain declaration-owned
-field types before
-the catalog is sealed, in every audit mode. Isolated workers therefore retain
+field types before the catalog is sealed, in every audit mode. Isolated workers therefore retain
 canonical projected field identities even when a constructor's class body has
 not yet been visited by the caller; worker-local symbol allocation cannot
 silently lose a returned field's provenance.
