@@ -19,11 +19,25 @@ not an extra integer-width distinction; consumers can canonicalize genuine
 aliases without conflating different native primitives. GTI's `char` code unit
 does not acquire C `char` identity through this query.
 
-This target-data prerequisite does not yet expose `c_int`, `c_long`, or the
-other proposed scalar spellings to GTI source. Source resolution, exact type
-identity through HIR/MIR, native import/header/backend use and editor surfaces
-remain implementation work in the C interop campaign. Existing fixed-width
-GTI type behavior is unchanged.
+The trusted prelude declares the `c_*` families as ordinary global aliases.
+Their private declarations bind `NativeCScalar` by declaration identity;
+application spellings cannot manufacture the capability. Resolution produces a
+primitive numeric type, not an executable nominal class. A type retains its
+native primitive identity separately from its numeric value domain only when
+it differs from that domain's fixed-width C typedef. Genuine aliases therefore
+canonicalize, while equal-width `long` and `long long`, or plain `char` and
+`signed char`, remain distinct. Exact overload matching, generic instance
+identity, HIR hashing, MIR types and native declarations preserve that fact.
+Numeric conversions and operations use the existing checked GTI rules; equal
+width integer arithmetic chooses the higher C declaration family independently
+of operand order.
+
+MIR owns the selected target and validates native scalar identities across its
+declaration, aggregate, callable and body type inventories. Lowered-program
+verification requires the same target; native headers and C++ representation
+consume these verified facts. Bindgen retains the primitive family supplied by
+Clang rather than replacing it solely by bit width. Existing fixed-width GTI
+types and GTI's distinct `char` code unit retain their meaning.
 
 ## Optional function results
 

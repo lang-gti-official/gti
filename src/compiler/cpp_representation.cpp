@@ -1,5 +1,7 @@
 #include "cpp_representation.h"
 
+#include <stdexcept>
+
 #include "gti/lowered_program.h"
 
 #include <llvm/ADT/ArrayRef.h>
@@ -294,6 +296,14 @@ concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
 [[nodiscard]] bool appendConcreteTypeIdentity(std::vector<std::uint8_t> &output,
                                               const LoweredProgram &program,
                                               const SemanticType &type) {
+  if (type.nativeCScalar != NativeCScalarKind::None) {
+    if (SemanticType::nativeCScalarType(type.nativeCScalar, program.target()) !=
+        type) {
+      return false;
+    }
+    appendIdentityText(output, nativeCScalarKindName(type.nativeCScalar));
+    return true;
+  }
   const auto appendArguments = [&]() {
     appendIdentityInteger(output, type.arguments.size());
     for (const SemanticType &argument : type.arguments) {
@@ -692,6 +702,14 @@ bool cppRequiresBytePreservingTransport(const MirProgram &program,
 std::string cppSemanticTypeSpelling(const LoweredProgram &program,
                                     CppStandard standard,
                                     const SemanticType &type) {
+  if (type.nativeCScalar != NativeCScalarKind::None) {
+    if (SemanticType::nativeCScalarType(type.nativeCScalar, program.target()) !=
+        type) {
+      throw std::logic_error(
+          "invalid native C scalar identity reached C++ representation");
+    }
+    return std::string(nativeCScalarDeclarationName(type.nativeCScalar));
+  }
   const auto spell = [&](const SemanticType &inner) {
     return cppSemanticTypeSpelling(program, standard, inner);
   };

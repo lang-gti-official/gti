@@ -60,15 +60,17 @@ int engine_submit(Engine *engine, Vec2 position, Stamp stamp);
   expect(contains(printed, "enum Mode\n  MODE_A = 0\n  MODE_B = 5\n"
                            "  MODE_C = 6"),
          "enumerators should carry explicit and successor values");
-  expect(contains(printed, "typedef Stamp = u64"),
+  expect(contains(printed, "typedef Stamp = c_ulonglong[u64]"),
          "the multi-word builtin typedef should model as u64");
-  expect(contains(printed, "typedef Log = fn(i32, ptr(const char)) -> void"),
+  expect(contains(printed,
+                  "typedef Log = fn(c_int[i32], ptr(const char)) -> void"),
          "the callback typedef should model its shape");
-  expect(contains(printed, "function engine_create(mode: i32) -> "
+  expect(contains(printed, "function engine_create(mode: c_int[i32]) -> "
                            "ptr(record:Engine)"),
          "the pointer-returning prototype should model");
-  expect(contains(printed, "function engine_submit(engine: ptr(record:Engine), "
-                           "position: record:Vec2, stamp: alias:Stamp) -> i32"),
+  expect(contains(printed,
+                  "function engine_submit(engine: ptr(record:Engine), "
+                  "position: record:Vec2, stamp: alias:Stamp) -> c_int[i32]"),
          "parameters should model by value, pointer, and alias");
 }
 
@@ -86,7 +88,7 @@ int always(void);
 )");
   expect(read.usable(), "the guarded header should read");
   const std::string printed = lang::bindgen::printNativeModel(read.model);
-  expect(contains(printed, "function always() -> i32"),
+  expect(contains(printed, "function always() -> c_int[i32]"),
          "the guarded declaration should survive preprocessing");
   expect(!contains(printed, "win_only"),
          "the false conditional should exclude its declarations");
@@ -117,7 +119,7 @@ int fine(int value);
   const std::string printed = lang::bindgen::printNativeModel(read.model);
   expect(!contains(printed, "rejected_unknown"),
          "a declaration with native C errors should not import");
-  expect(contains(printed, "function fine(value: i32) -> i32"),
+  expect(contains(printed, "function fine(value: c_int[i32]) -> c_int[i32]"),
          "declarations after a native error should still model");
   bool sawNativeError = false;
   bool sawSkip = false;
@@ -172,11 +174,11 @@ int engine_submit(Engine *engine, Vec2 position, Stamp stamp);
              "  MODE_A = 0\n"
              "  MODE_B = 5\n"
              "  MODE_C = 6\n"
-             "typedef Stamp = u64\n"
-             "typedef Log = fn(i32, ptr(const char)) -> void\n"
-             "function engine_create(mode: i32) -> ptr(record:Engine)\n"
+             "typedef Stamp = c_ulonglong[u64]\n"
+             "typedef Log = fn(c_int[i32], ptr(const char)) -> void\n"
+             "function engine_create(mode: c_int[i32]) -> ptr(record:Engine)\n"
              "function engine_submit(engine: ptr(record:Engine), "
-             "position: record:Vec2, stamp: alias:Stamp) -> i32\n",
+             "position: record:Vec2, stamp: alias:Stamp) -> c_int[i32]\n",
          "the mixed-declaration corpus golden should hold");
 
   const lang::bindgen::ReadResult skips = readC(R"(
@@ -190,15 +192,18 @@ int definition(void) { return 1; }
 int stdint_names(int8_t a, uint16_t b, int32_t c, uint64_t d, size_t e,
                  intptr_t f, uintptr_t g, ptrdiff_t h);
 )");
-  expect(lang::bindgen::printNativeModel(skips.model) ==
-             "function variadic_call(format: ptr(const char), ...) -> i32\n"
-             "record Fixed\n"
-             "  field values: array[i32 x 4]\n"
-             "function with_array_param(values: ptr(i32), count: i32) -> "
-             "i32\n"
-             "function stdint_names(a: i8, b: u16, c: i32, d: u64, e: u64, "
-             "f: i64, g: u64, h: i64) -> i32\n",
-         "the skip-class corpus golden should hold");
+  expect(
+      lang::bindgen::printNativeModel(skips.model) ==
+          "function variadic_call(format: ptr(const char), ...) -> c_int[i32]\n"
+          "record Fixed\n"
+          "  field values: array[c_int[i32] x 4]\n"
+          "function with_array_param(values: ptr(c_int[i32]), count: "
+          "c_int[i32]) -> "
+          "c_int[i32]\n"
+          "function stdint_names(a: c_schar[i8], b: c_ushort[u16], c: "
+          "c_int[i32], d: c_ulong[u64], e: c_ulong[u64], "
+          "f: c_long[i64], g: c_ulong[u64], h: c_long[i64]) -> c_int[i32]\n",
+      "the skip-class corpus golden should hold");
   bool sawStatic = false;
   bool sawInline = false;
   bool sawVariable = false;
@@ -232,8 +237,9 @@ int with_const_array(const int values[], int count);
   expect(contains(printed, "enum \n  BARE_A = 0\n  BARE_B = 9"),
          "a bare anonymous enum should keep its enumerators under an empty "
          "name");
-  expect(contains(printed, "function with_const_array(values: ptr(const i32), "
-                           "count: i32) -> i32"),
+  expect(contains(printed,
+                  "function with_const_array(values: ptr(const c_int[i32]), "
+                  "count: c_int[i32]) -> c_int[i32]"),
          "parameter array decay should preserve the element's const");
 }
 
@@ -251,11 +257,13 @@ int sum_row(Row row);
   const std::string printed = lang::bindgen::printNativeModel(read.model);
   // C-06: the assembler label is a model fact; link_name preserves it instead
   // of silently calling the header spelling.
-  expect(contains(printed, "function renamed_symbol(value: i32) -> i32 "
-                           "[asm \"actual_symbol\"]"),
+  expect(contains(printed,
+                  "function renamed_symbol(value: c_int[i32]) -> c_int[i32] "
+                  "[asm \"actual_symbol\"]"),
          "an assembler label should model as a function fact");
-  expect(contains(printed, "function sum_row(row: ptr(i32)) -> i32"),
-         "a typedef'd array parameter should decay to its element pointer");
+  expect(
+      contains(printed, "function sum_row(row: ptr(c_int[i32])) -> c_int[i32]"),
+      "a typedef'd array parameter should decay to its element pointer");
   const lang::bindgen::BindingPlan plan =
       lang::bindgen::planBindings(read.model, {});
   const lang::bindgen::BindingItem *renamed = findItem(plan, "renamed_symbol");
@@ -287,10 +295,11 @@ int plain(int value);
             lang::bindgen::CTargetProfile(lang::bindgen::CDataModel::Llp64));
   expect(read.usable(), "the calling-convention header should read");
   const std::string printed = lang::bindgen::printNativeModel(read.model);
-  expect(contains(printed, "function win_callback(value: i32) -> i32 "
-                           "[callconv vectorcall]"),
+  expect(contains(printed,
+                  "function win_callback(value: c_int[i32]) -> c_int[i32] "
+                  "[callconv vectorcall]"),
          "a non-C calling convention should model as a function fact");
-  expect(contains(printed, "function plain(value: i32) -> i32\n"),
+  expect(contains(printed, "function plain(value: c_int[i32]) -> c_int[i32]\n"),
          "the C calling convention should carry no fact");
   const lang::bindgen::BindingPlan plan =
       lang::bindgen::planBindings(read.model, {});
@@ -315,18 +324,19 @@ int fill(int *__restrict__ buffer, int count);
 )");
   expect(read.usable(), "field and qualifier forms should read");
   const std::string printed = lang::bindgen::printNativeModel(read.model);
-  expect(contains(printed, "field cells: array[array[i32 x 3] x 2]"),
+  expect(contains(printed, "field cells: array[array[c_int[i32] x 3] x 2]"),
          "a multi-extent array field should model as nested arrays");
-  expect(contains(printed, "field rows: array[ptr(i32) x 4]"),
+  expect(contains(printed, "field rows: array[ptr(c_int[i32]) x 4]"),
          "a pointer-element array field should model faithfully");
   expect(contains(printed, "enum \n  FLAG_A = 1\n  FLAG_B = 2"),
          "a bare anonymous enum should model its constants");
   expect(contains(printed, "function copy_board(destination: "
                            "ptr(const record:Board), source: "
-                           "ptr(const record:Board)) -> i32"),
+                           "ptr(const record:Board)) -> c_int[i32]"),
          "'restrict' qualifiers should not disturb pointer parameters");
-  expect(contains(printed, "function fill(buffer: ptr(i32), count: i32) "
-                           "-> i32"),
+  expect(contains(printed,
+                  "function fill(buffer: ptr(c_int[i32]), count: c_int[i32]) "
+                  "-> c_int[i32]"),
          "'__restrict__' should read as an ignorable qualifier");
 }
 
@@ -374,9 +384,8 @@ int use_plain(struct Plain plain);
 }
 
 void testFieldPositionDegradation() {
-  // GTI's [[c_abi]] field set has no c_string or nested-pointer position;
-  // records using them must degrade honestly rather than generating source
-  // the frontend rejects.
+  // Native char pointer fields use c_char rather than the call-only c_string
+  // conversion family. Unsupported nested fields still degrade honestly.
   const lang::bindgen::ReadResult read = readC(R"(
 struct Labeled { const char *text; int code; };
 struct Tails { const char **tails; };
@@ -385,9 +394,9 @@ struct Tails { const char **tails; };
       lang::bindgen::planBindings(read.model, {});
   const lang::bindgen::BindingItem *labeled = findItem(plan, "Labeled");
   expect(labeled != nullptr &&
-             labeled->kind == lang::bindgen::BindingItemKind::Opaque &&
-             contains(labeled->reason, "c_string crosses only function"),
-         "a 'const char*' field should degrade the record with its reason");
+             labeled->kind == lang::bindgen::BindingItemKind::Record &&
+             labeled->fields.front().spelling == "const c_char* text",
+         "a 'const char*' field must retain native plain char identity");
   const lang::bindgen::BindingItem *tails = findItem(plan, "Tails");
   expect(tails != nullptr &&
              tails->kind == lang::bindgen::BindingItemKind::Opaque &&
@@ -431,11 +440,11 @@ typedef struct Panel {
     }
     return {};
   };
-  expect(fieldSpelling("grid") == "int32_t grid[2][3]",
+  expect(fieldSpelling("grid") == "c_int grid[2][3]",
          "a multi-extent array field should spell every extent in order");
-  expect(fieldSpelling("cursors") == "int32_t* cursors[4]",
+  expect(fieldSpelling("cursors") == "c_int* cursors[4]",
          "a scalar-pointer array field should spell its element pointer");
-  expect(fieldSpelling("gains") == "const float* gains[2]",
+  expect(fieldSpelling("gains") == "const c_float* gains[2]",
          "a const-pointee pointer array field should keep its qualifier");
   expect(fieldSpelling("engines") == "Engine* engines[2]",
          "an opaque-handle pointer array field should import");
@@ -488,18 +497,19 @@ int _Reserved(int value);
   expect(scalars != nullptr &&
              scalars->kind == lang::bindgen::BindingItemKind::Function &&
              scalars->parameters.size() == 4 &&
-             scalars->parameters[0].spelling == "int8_t" &&
-             scalars->parameters[1].spelling == "uint16_t" &&
-             scalars->parameters[2].spelling == "int64_t" &&
-             scalars->parameters[3].spelling == "uint64_t",
-         "platform integer spellings should map through the LP64 profile");
+             scalars->parameters[0].spelling == "c_schar" &&
+             scalars->parameters[1].spelling == "c_ushort" &&
+             scalars->parameters[2].spelling == "c_long" &&
+             scalars->parameters[3].spelling == "c_ulonglong",
+         "platform integer spellings must retain their native declaration "
+         "families");
   const lang::bindgen::BindingItem *pointers = findItem(plan, "pointers");
   expect(pointers != nullptr &&
              pointers->kind == lang::bindgen::BindingItemKind::Function &&
              pointers->resultSpelling == "void*" &&
              pointers->parameters[0].spelling == "c_string" &&
              pointers->parameters[1].spelling == "void*" &&
-             pointers->parameters[2].spelling == "const double*",
+             pointers->parameters[2].spelling == "const c_double*",
          "pointer spellings should map c_string, void*, and const pointees");
   const lang::bindgen::BindingItem *openItem = findItem(plan, "open_item");
   const lang::bindgen::BindingItem *findTail = findItem(plan, "find_tail");
@@ -519,8 +529,14 @@ int _Reserved(int value);
            std::string(name) + " should skip mentioning '" +
                std::string(fragment) + "'");
   };
-  expectSkip("rejected_bool", "not a GTI C ABI scalar");
-  expectSkip("rejected_char", "plain 'char'");
+  for (const auto &[name, spelling] : {std::pair{"rejected_bool", "c_bool"},
+                                       std::pair{"rejected_char", "c_char"}}) {
+    const auto *item = findItem(plan, name);
+    expect(item && item->kind == lang::bindgen::BindingItemKind::Function &&
+               item->parameters.front().spelling == spelling,
+           std::string(name) +
+               " must import with its exact native scalar identity");
+  }
   expectSkip("rejected_two_level", "two-level pointers are limited");
   expectSkip("rejected_const_handle", "two-level pointers are limited");
   expectSkip("template", "reserved GTI spelling");
@@ -540,16 +556,21 @@ long transform(long value, size_t count);
       header, lang::bindgen::CTargetProfile(lang::bindgen::CDataModel::Llp64));
   const std::string lp64Model = lang::bindgen::printNativeModel(lp64.model);
   const std::string llp64Model = lang::bindgen::printNativeModel(llp64.model);
-  expect(contains(lp64Model, "typedef NativeLong = i64") &&
-             contains(lp64Model, "typedef NativeUnsignedLong = u64") &&
-             contains(lp64Model, "function transform(value: i64, count: u64) "
-                                 "-> i64"),
+  expect(contains(lp64Model, "typedef NativeLong = c_long[i64]") &&
+             contains(lp64Model, "typedef NativeUnsignedLong = c_ulong[u64]") &&
+             contains(
+                 lp64Model,
+                 "function transform(value: c_long[i64], count: c_ulong[u64]) "
+                 "-> c_long[i64]"),
          "LP64 should model long as 64 bits and size_t as 64 bits");
-  expect(contains(llp64Model, "typedef NativeLong = i32") &&
-             contains(llp64Model, "typedef NativeUnsignedLong = u32") &&
-             contains(llp64Model, "function transform(value: i32, count: u64) "
-                                  "-> i32"),
-         "LLP64 should model long as 32 bits and size_t as 64 bits");
+  expect(
+      contains(llp64Model, "typedef NativeLong = c_long[i32]") &&
+          contains(llp64Model, "typedef NativeUnsignedLong = c_ulong[u32]") &&
+          contains(
+              llp64Model,
+              "function transform(value: c_long[i32], count: c_ulonglong[u64]) "
+              "-> c_long[i32]"),
+      "LLP64 should model long as 32 bits and size_t as 64 bits");
 }
 
 void testEnumAndTypedefPlanning() {
@@ -576,7 +597,7 @@ int uses_enum(enum Small value, Named named, Flags flags, Handle handle);
   const lang::bindgen::BindingItem *flags = findItem(plan, "Flags");
   expect(flags != nullptr &&
              flags->kind == lang::bindgen::BindingItemKind::Alias &&
-             flags->aliasSpelling == "uint32_t",
+             flags->aliasSpelling == "c_uint",
          "an object typedef should alias its mapped scalar");
   const lang::bindgen::BindingItem *handle = findItem(plan, "Handle");
   expect(handle != nullptr &&
@@ -616,7 +637,7 @@ int engine_variadic(const char *format, ...);
          "the namespace option should wrap the generated source names");
   expect(contains(first.gtiSource, "[[c_opaque]] struct Engine;"),
          "the opaque handle should emit");
-  expect(contains(first.gtiSource, "mut float x;"),
+  expect(contains(first.gtiSource, "mut c_float x;"),
          "record fields should emit as mutable");
   expect(contains(first.gtiSource, "constexpr int32_t ENGINE_CAP_BASIC = 1;") &&
              !contains(first.gtiSource, "using  ="),
@@ -703,14 +724,14 @@ typedef struct Engine Engine;
 void engine_on_event(Engine *engine, void (*handler)(int code));
 void engine_on_error(Engine *engine, void (*handler)(int code));
 typedef struct Hooks { void (*on_tick)(void *user); } Hooks;
-void engine_bad(void (*handler)(int code), char *broken);
+void engine_bad(void (*handler)(int code), long double *broken);
 int engine_no_proto(void (*handler)());
 )",
                                  "hooks.h");
   expect(result.usable(), "the callback header should read");
   const std::string &source = result.gtiSource;
   expect(
-      contains(source, "using engine_on_event_handler_fn = (int32_t) -> void;"),
+      contains(source, "using engine_on_event_handler_fn = (c_int) -> void;"),
       "the inline function pointer should synthesize a named alias");
   expect(contains(source, "engine_on_event(Engine* engine, "
                           "engine_on_event_handler_fn handler)"),
@@ -756,7 +777,7 @@ int take_writable(char **buffers);
                                  "argv.h");
   expect(result.usable(), "the string-array header should read");
   const std::string &source = result.gtiSource;
-  expect(contains(source, "run_tool(c_string* arguments, int32_t count)"),
+  expect(contains(source, "run_tool(c_string* arguments, c_int count)"),
          "a const char* const* parameter should bind as c_string*");
   expect(contains(source, "take_out(c_string* out_message)"),
          "the const char** out parameter should stay bound");
@@ -844,7 +865,7 @@ void testSourceProvenanceAndImportPolicy() {
            "the user include should classify as user provenance");
   }
   const std::string &source = result.gtiSource;
-  expect(contains(source, "int64_t app_now()"),
+  expect(contains(source, "c_long app_now()"),
          "a system typedef should spell canonically at its use");
   expect(!contains(source, "using time_t"),
          "the system typedef itself should not emit");
@@ -857,7 +878,7 @@ void testSourceProvenanceAndImportPolicy() {
          "a user macro referencing a system macro should evaluate");
   expect(!contains(source, "CLOCK_MONO ="),
          "the system macro itself should not emit");
-  expect(contains(source, "int32_t util_helper(int32_t value)"),
+  expect(contains(source, "c_int util_helper(c_int value)"),
          "user-include declarations should import");
   expect(!contains(source, "system_only"),
          "system functions should stay out of the import and its skip "
@@ -876,7 +897,7 @@ void testSourceProvenanceAndImportPolicy() {
                 "# 2 \"/work/app.h\" 2\n"
                 "time_t app_now(void);\n")
           .model);
-  expect(contains(printed, "typedef time_t = i64 (external)"),
+  expect(contains(printed, "typedef time_t = c_long[i64] (external)"),
          "system declarations should print with external provenance");
 
   // The closing gate: the policy-filtered source is real GTI.
@@ -952,8 +973,8 @@ int lib_public(int value);
     options.renames.emplace("lib_public", "lib_renamed");
     const lang::bindgen::BindgenResult result =
         lang::bindgen::runCBindgen(header, "lib.h", options);
-    expect(contains(result.gtiSource, "[[link_name(\"lib_public\")]] int32_t "
-                                      "lib_renamed(int32_t value)"),
+    expect(contains(result.gtiSource, "[[link_name(\"lib_public\")]] c_int "
+                                      "lib_renamed(c_int value)"),
            "a renamed function should expose its GTI name and retain its C "
            "link symbol");
     expect(result.plan.policyProblems.empty(),
@@ -967,10 +988,10 @@ int lib_public(int value);
         lang::bindgen::runCBindgen(header, "lib.h", options);
     expect(contains(result.gtiSource,
                     "[[c_array(count)]] const Point* lib_points("
-                    "uint32_t* count)"),
+                    "c_uint* count)"),
            "a one-level array result should carry the attribute");
     expect(contains(result.gtiSource,
-                    "[[c_array(count)]] Handle** lib_handles(int32_t* count)"),
+                    "[[c_array(count)]] Handle** lib_handles(c_int* count)"),
            "the two-level array result form should import with the "
            "attribute");
     const lang::bindgen::BindgenResult unannotated =

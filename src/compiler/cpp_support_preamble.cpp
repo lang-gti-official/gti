@@ -190,6 +190,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "mutable_receiver",
       "negate",
       "numeric_cast",
+      "integer_comparison_type",
       "numeric_conversion_error",
       "once_call",
       "offset",
@@ -3497,11 +3498,18 @@ inline void simd_binary(const std::array<Value, Count> &left,
 )";
   }
   output << R"(
+// std::in_range/cmp_* exclude plain char, but GTI's C char has a selected
+// signed or unsigned numeric domain. Normalize only for range comparison.
+template <typename T>
+using integer_comparison_type = std::conditional_t<std::is_same_v<T, char>,
+    std::conditional_t<std::is_signed_v<char>, signed char, unsigned char>, T>;
+
 template <typename Array, typename Index>
 inline decltype(auto) array_at(Array &&array, Index index) {
   static_assert(std::is_integral_v<std::remove_cvref_t<Index>>);
-  if (std::cmp_less(index, 0) ||
-      std::cmp_greater_equal(index, std::size(array))) {
+  const auto numeric_index = static_cast<integer_comparison_type<Index>>(index);
+  if (std::cmp_less(numeric_index, 0) ||
+      std::cmp_greater_equal(numeric_index, std::size(array))) {
     array_bounds_error();
   }
   return std::forward<Array>(array)[static_cast<std::size_t>(index)];
@@ -3510,7 +3518,8 @@ inline decltype(auto) array_at(Array &&array, Index index) {
 template <typename Index>
 inline char8_t string_view_at(std::string_view value, Index index) {
   static_assert(std::is_integral_v<std::remove_cvref_t<Index>>);
-  if (std::cmp_less(index, 0) || std::cmp_greater_equal(index, value.size())) {
+  const auto numeric_index = static_cast<integer_comparison_type<Index>>(index);
+  if (std::cmp_less(numeric_index, 0) || std::cmp_greater_equal(numeric_index, value.size())) {
     string_view_bounds_error();
   }
   return static_cast<char8_t>(static_cast<unsigned char>(
@@ -3531,7 +3540,8 @@ inline Target numeric_cast(Source value) {
                    std::is_same_v<Source, char8_t>));
   } else if constexpr (std::is_integral_v<Target> &&
                 std::is_integral_v<Source>) {
-    if (!std::in_range<Target>(value)) {
+    if (!std::in_range<integer_comparison_type<Target>>(
+            static_cast<integer_comparison_type<Source>>(value))) {
       numeric_conversion_error();
     }
   } else if constexpr (std::is_integral_v<Target> &&

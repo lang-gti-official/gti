@@ -1617,6 +1617,7 @@ struct MirPayloadEnum {
 class MirProgram {
 public:
   [[nodiscard]] bool valid() const { return valid_; }
+  [[nodiscard]] const TargetInfo &target() const { return target_; }
   [[nodiscard]] ExecutionProfile executionProfile() const {
     return executionProfile_;
   }
@@ -1759,6 +1760,7 @@ private:
   friend struct MirProgramTestAccess;
 
   bool valid_ = true;
+  TargetInfo target_ = TargetInfo::host();
   ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
   FailureMetadata failureMetadata_;
   MirProgramInitializationPlan programInitialization;

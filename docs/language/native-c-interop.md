@@ -20,7 +20,7 @@ int main() {
 ```
 
 This is a bounded C ABI rather than a general foreign-definition facility. It
-supports fixed-width values, passive `[[c_abi]]` records, nominal pointer-only
+supports fixed-width and target-correct C scalar values, passive `[[c_abi]]` records, nominal pointer-only
 `[[c_opaque]]` handles, bounded one-level raw pointers, NUL-terminated
 `c_string` values, and annotated native pointer-plus-count returns behind
 lexical `unsafe`. It also supports named exact native callback types and
@@ -43,6 +43,42 @@ identity because a C++ consumer must be able to complete that type. This is
 deliberately a C ABI that C++ code can implement and consume, not an
 `extern "C++"` ABI for classes, overloads, exceptions, templates, or native
 C++ ownership.
+
+## Target-Correct C Scalar Types
+
+The prelude supplies `c_bool`, `c_char`, `c_schar`, `c_uchar`, `c_short`,
+`c_ushort`, `c_int`, `c_uint`, `c_long`, `c_ulong`, `c_longlong`,
+`c_ulonglong`, `c_float`, `c_double`, `c_size_t`, `c_ptrdiff_t`,
+`c_intptr_t`, `c_uintptr_t`, and the `c_void` alias for `void`.
+These describe the selected target's native declaration, not the compiler host.
+For example, `c_long` is 64-bit on accepted macOS/Linux targets and 32-bit on
+Windows. `c_char` is C's distinct plain `char`: unsigned on Linux arm64 and
+signed on the other accepted profiles. GTI's ordinary `char` remains a distinct
+code unit and is not a C ABI scalar.
+
+Equal width does not imply equal type: `c_long` and `c_longlong` remain distinct
+even on LP64, including overloads, generic arguments and pointer pointees.
+Genuine native typedef aliases do canonicalize. For example, `c_int` is the
+same type as `int32_t`, and `c_size_t` canonicalizes to `c_ulong` on
+macOS/Linux or `c_ulonglong` on Windows. `c_bool` aliases GTI `bool` and has
+C `_Bool` / C++ `bool` representation. Numeric C families retain ordinary GTI
+checked arithmetic and explicit narrowing conversions rather than C wrapping
+or implicit narrowing. Mixed equal-width integer families choose the higher
+native rank (`long long` over `long` over `int`) independently of operand order.
+
+```gti
+extern "C" {
+  c_long labs(c_long value);
+  c_size_t strlen(c_string text);
+}
+```
+
+The runnable [native scalar example](../../examples/123-native-c-scalars.gti)
+uses real C library calls, unrelated generic aggregates and checked numeric
+conversion. `gti bindgen` emits these families for the corresponding C
+primitives; native header emission preserves exact primitive identity or a
+genuine target-native fixed-width typedef alias. Long double and target-specific
+extended scalar formats are not admitted by this vocabulary.
 
 ## Declaration Contract
 
@@ -121,7 +157,7 @@ header generation.
 The current ABI allowlist is based on the resolved type, so a transparent alias
 follows the same rule as its canonical allowed type:
 
-- returns: `void`, `int8_t`, `int16_t`, `int32_t`, `int64_t`, `uint8_t`,
+- returns: `void`, the C scalar families above, `bool`, `int8_t`, `int16_t`, `int32_t`, `int64_t`, `uint8_t`,
   `uint16_t`, `uint32_t`, `uint64_t`, `float`, `double`, valid `[[c_abi]]`
   records, `c_string`, exact named native function types, and one-level raw
   pointers whose pointee is `void`, one
@@ -129,7 +165,7 @@ follows the same rule as its canonical allowed type:
   `[[c_opaque]]` handle. A `[[c_array(count)]]` declaration may additionally
   return the exact bounded two-level form whose inner pointer satisfies this
   same allowlist;
-- parameters: the same fixed-width scalar types, passed immutably by value,
+- parameters: the same scalar types, passed immutably by value,
   valid C ABI records passed immutably by value, one-level raw pointers with
   immutable bindings and the same permitted pointees, plus
   `std::string_view` as the counted input-buffer case and `c_string` as the
@@ -144,8 +180,7 @@ native writable and read-only pointee access respectively; leading declaration
 `mut` is not permitted on a C parameter and would only describe reseating the
 local parameter binding, not the C ABI.
 
-`bool` and `char` are intentionally not C ABI scalars in this contract because
-their source meaning should not inherit platform C representation choices.
+GTI `char` is not a C ABI scalar; use `c_char` for native plain `char`.
 Enums, ordinary complete classes/structs/interfaces, `expected`, owners,
 references, arrays, mutable parameters, packs, string-view returns,
 general pointer-to-pointer types, anonymous or general function-pointer
@@ -193,7 +228,7 @@ set, including callback fields and fixed arrays with multiple extents or record,
 pointer, callback, and scalar elements; `restrict` qualifiers are read and
 dropped because they do not change the caller's contract. Field positions the
 record surface
-rejects — `char` pointers and nested pointers — degrade the record to an
+rejects — unsupported nested pointers — degrade the record to an
 opaque handle with the reason recorded, so generated source always satisfies
 this contract's own validation. Everything
 the bounded surface cannot express is reported with its

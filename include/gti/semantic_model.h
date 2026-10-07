@@ -412,6 +412,7 @@ enum class CompilerCapabilityTypeKind {
   MutexStorage,
   MutexLockToken,
   SharedOwner,
+  NativeCScalar,
 };
 
 enum class ProgramEntryKind {

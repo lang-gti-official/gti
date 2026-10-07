@@ -311,6 +311,12 @@ private:
     if (declaration == nullptr || declaration->declaration == nullptr) {
       return std::nullopt;
     }
+    // These trusted declarations establish primitive identities in semantics;
+    // they have no nominal class representation or executable lifecycle.
+    if (declaration->compilerCapability ==
+        CompilerCapabilityTypeKind::NativeCScalar) {
+      return std::nullopt;
+    }
     const ClassLifecycleInfo *lifecycle =
         baseModel->findClassLifecycle(*declaration->declaration);
     const bool lifecycleBoundBorrowCarrier =

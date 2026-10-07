@@ -1,5 +1,10 @@
 # GTI examples
 
+[`123-native-c-scalars.gti`](123-native-c-scalars.gti) demonstrates target-correct
+C integer and character families, real libc calls, unrelated generic values,
+and checked conversion/indexing. C types preserve native declaration identity;
+they do not import unchecked C arithmetic.
+
 These examples are a runnable introduction to GTI. Read them in numerical
 order: each file introduces one small group of language features and has its
 own `main` function.
