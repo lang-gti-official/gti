@@ -4,7 +4,7 @@
     "02-control-flow.gti": 23,
     "03-functions.gti": 26,
     "04-integers.gti": 24,
-    "05-objects.gti": 31,
+    "05-objects.gti": 35,
     "06-namespaces.gti": 24,
     "07-generics.gti": 35,
     "08-expected.gti": 27,
@@ -51,7 +51,7 @@
     "24-static.gti": 28,
     "25-polymorphic-ranges.gti": 41,
     "26-stored-references.gti": 36,
-    "27-copy-move-policies.gti": 34,
+    "27-copy-move-policies.gti": 36,
     "28-callable-parameters.gti": 30,
     "29-callable-predicates.gti": 30,
     "30-callable-forwarding.gti": 27,
@@ -111,7 +111,7 @@
     "86-owning-callbacks.gti": 239,
     "87-associative-containers.gti": 509,
     "88-consuming-builders.gti": 355,
-    "89-library-workflow.gti": 797,
+    "89-library-workflow.gti": 832,
     "90-generic-algorithms.gti": 250,
     "91-json-documents.gti": 491,
     "92-json-codecs.gti": 516,
@@ -123,5 +123,5 @@
     "98-shared-ownership.gti": 361,
     "99-borrowed-expected.gti": 353
   },
-  "total": 16542
+  "total": 16583
 }

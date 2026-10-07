@@ -436,25 +436,28 @@ private:
 
   void stageBaseInitializer(const HirConstructorInitializer &initializer,
                             std::size_t initializerIndex) {
-    // The first base-failure family has no constructor parameters or owning
-    // derived fields. In particular there are no completed default fields at
-    // entry that could be incorrectly unwound before the base has begun.
+    // A base is a distinct under-construction place. Its exact selected
+    // initializer completes before derived fields and arms one rollback token.
+    // Argument effects stay in this MIR prefix; a backend must prove how that
+    // prefix executes before its native base initializer, not move it later.
     if (constructor == nullptr || constructorOwner == nullptr ||
-        constructorUnarmedTransfer || !constructor->parameterTypes.empty() ||
-        constructorOwner->destructor ||
-        constructorOwner->requiresActiveDropState ||
+        constructorUnarmedTransfer ||
         initializer.kind != ConstructorInitializerTargetKind::Base ||
-        !initializer.constructorTarget || !initializer.arguments.empty() ||
-        initializer.generatedDefault ||
-        std::any_of(constructorOwner->declaredFields.begin(),
-                    constructorOwner->declaredFields.end(),
-                    [](const MirClassFieldInfo &field) {
-                      return field.dropKind != DropKind::Trivial ||
-                             field.requiresActiveCleanup;
-                    }) ||
-        normalizedConstructorPropagation(FailurePropagationKind::Constructor,
-                                         initializer.constructorTarget) !=
-            FailurePropagationKind::Constructor) {
+        (!initializer.constructorTarget && !initializer.generatedDefault) ||
+        initializer.storesReference || initializer.ownedParameter ||
+        std::any_of(
+            output.dropObligations.begin(), output.dropObligations.end(),
+            [](const MirDropObligation &drop) {
+              return drop.kind == MirDropObligationKind::ConstructionRollback &&
+                     drop.initiallyActive;
+            }) ||
+        std::none_of(constructorOwner->bases.begin(),
+                     constructorOwner->bases.end(),
+                     [&](const HirBaseInstance &base) {
+                       return !base.interface &&
+                              base.instance == initializer.base &&
+                              base.type == initializer.targetType;
+                     })) {
       return;
     }
     const auto base = std::find_if(
@@ -463,9 +466,40 @@ private:
           return candidate.id == initializer.base &&
                  candidate.type == initializer.targetType;
         });
-    if (base == program.classInstances().end() || base->destructor ||
-        base->requiresActiveDropState) {
+    if (base == program.classInstances().end() ||
+        base->traits.containsBorrowedState) {
       return;
+    }
+    if (!initializer.constructorTarget &&
+        (base->defaultConstructor != SpecialMemberStatus::Generated ||
+         base->generatedDefaultRequiresSchedule ||
+         std::any_of(
+             base->bases.begin(), base->bases.end(),
+             [](const HirBaseInstance &nested) { return !nested.interface; }) ||
+         std::any_of(base->fields.begin(), base->fields.end(),
+                     [](const HirClassField &field) {
+                       return field.requiresActiveCleanup ||
+                              field.info.traits.drop != DropKind::Trivial ||
+                              field.info.traits.containsBorrowedState;
+                     }) ||
+         std::any_of(base->fieldInitializers.values.begin(),
+                     base->fieldInitializers.values.end(),
+                     [](const HirValue &value) {
+                       return !value.definedFailure.empty() ||
+                              value.functionTarget || value.constructorTarget ||
+                              value.lambdaTarget;
+                     })))
+      return;
+    std::vector<MirOperand> arguments;
+    std::vector<SemanticType> parameterTypes;
+    for (const auto argument : initializer.arguments) {
+      const HirValue *value = findValue(argument);
+      if (value == nullptr || value->info.traits.drop != DropKind::Trivial ||
+          value->info.traits.containsBorrowedState ||
+          value->info.type.kind == SemanticType::Reference)
+        return;
+      arguments.push_back(valueOperand(argument));
+      parameterTypes.push_back(value->info.type);
     }
     const SemanticTypeTraits traits = resolvedTraits(initializer.targetType);
     const MirPlaceId destination =
@@ -485,17 +519,27 @@ private:
              {.type = base->type,
               .classInstance = base->id,
               .requiresActiveCleanup = base->requiresActiveCleanup})});
-    (void)appendInstruction(
-        {.kind = MirInstructionKind::InitializeBase,
-         .constructorInitializer = initializerIndex + 1,
-         .successResultDrop = rollback,
-         .destination = destination,
-         .definedFailure = {.propagation = FailurePropagationKind::Constructor},
-         .constructorTarget = initializer.constructorTarget,
-         .info = {.type = base->type,
-                  .category = ValueCategory::Place,
-                  .access = AccessMode::Mutable,
-                  .traits = traits}});
+    const auto propagation = initializer.constructorTarget
+                                 ? normalizedConstructorPropagation(
+                                       FailurePropagationKind::Constructor,
+                                       initializer.constructorTarget)
+                                 : FailurePropagationKind::None;
+    MirInstruction stage{.kind = MirInstructionKind::InitializeBase,
+                         .constructorInitializer = initializerIndex + 1,
+                         .successResultDrop = rollback,
+                         .destination = destination,
+                         .operands = std::move(arguments),
+                         .parameterTypes = std::move(parameterTypes),
+                         .definedFailure = {.propagation = propagation},
+                         .constructorTarget = initializer.constructorTarget,
+                         .info = {.type = base->type,
+                                  .category = ValueCategory::Place,
+                                  .access = AccessMode::Mutable,
+                                  .traits = traits}};
+    if (propagation == FailurePropagationKind::None)
+      stage.lifecycle.push_back(
+          {.kind = MirLifecycleEventKind::Initialize, .target = rollback});
+    (void)appendInstruction(std::move(stage));
     (void)removeTemporary(rollback);
     constructorRollback.push_back(rollback);
   }

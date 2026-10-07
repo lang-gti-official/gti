@@ -1,0 +1,24 @@
+class AbstractCounter {
+public:
+  mut int state = 0;
+  virtual bool advance() mut = 0;
+  void stop() mut { this.state = 9; }
+  bool run() mut { return this.advance(); }
+};
+
+class Counter : public AbstractCounter {
+public:
+  Counter() {}
+  bool advance() mut override {
+    this.state++;
+    this.stop();
+    return true;
+  }
+  bool complete() { return this.state == 9; }
+};
+
+int main() {
+  mut Counter value{};
+  if (!value.run()) { return 1; }
+  return value.complete() ? 0 : 2;
+}
