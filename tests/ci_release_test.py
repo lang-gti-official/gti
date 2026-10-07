@@ -153,9 +153,9 @@ def archive_contract(root, cmake):
         libclang.write_bytes(b"fixture libclang\n")
         libclang.with_name("libclang.so.20").symlink_to(libclang.name)
 
-        def package(channel, tag, destination, build_id="", success=True):
+        def package(channel, tag, destination, build_id="", success=True, platform="linux-x64"):
             command = [str(cmake), f"-DGTI_SOURCE_DIR={root}", f"-DGTI_STAGE_DIR={stage}",
-                       f"-DGTI_OUTPUT_DIR={destination}", "-DGTI_PLATFORM=linux-x64",
+                       f"-DGTI_OUTPUT_DIR={destination}", f"-DGTI_PLATFORM={platform}",
                        f"-DGTI_CHANNEL={channel}", f"-DGTI_EXPECTED_TAG={tag}",
                        f"-DGTI_BUILD_ID={build_id}", "-P", str(script)]
             run(command, work, success)
@@ -193,6 +193,11 @@ def archive_contract(root, cmake):
         assert stable_archive.read_bytes() == stable_bytes, "nightly rewrote the immutable archive"
         assert stable["lib/gti/llvm/libclang.so.20"] == ("symlink", "libclang.so.20.1")
         rejected = work / "rejected"
+        package("stable", f"v{version}", rejected, success=False, platform="darwin-arm64")
+        assert not rejected.exists(), "macOS stage without runtime verification produced an archive"
+        (stage / "share/gti/host-runtime.json").write_text('{"schema":1,"libraries":[]}\n')
+        package("stable", f"v{version}", work / "darwin", platform="darwin-arm64")
+        assert (work / "darwin" / f"gti-v{version}-darwin-arm64.tar.gz").is_file()
         package("stable", "v99.99.99", rejected, success=False)
         package("nightly", "nightly", rejected, "not-a-sha", success=False)
         (stage / "lib/libgti_runtime.a").unlink()
