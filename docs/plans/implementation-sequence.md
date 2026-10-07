@@ -7307,6 +7307,14 @@ consumer, and release refreshes remain outstanding for the full campaign.
   The complete compiler aggregate then passes (39.02 seconds). Base body
   vocabulary checks and the reviewed corpus census refresh remain outstanding;
   this is not combined full-release evidence.
+  Published base-stage checkpoint `f832985c` is subsequently reconciled in the
+  isolated draft. The new base/derived/enclosing enum regression passes all
+  eight native configurations (including no-elide and ASan/UBSan), retaining
+  exact `Event<Resource, 1/2/3>` identities and cleanup order `22`, `11`, `9`.
+  Lifecycle vocabulary and the complete native base-constructor matrix pass.
+  The broader base unit fixtures and an old inheritance-spelling assertion
+  still require reconciliation with the allocator agent's next checkpoint;
+  the earlier aggregate pass precedes this newer base-stage integration.
   Combined full-suite/coverage-corpus
   validation and upstream release integration remain delivery gates. This
   campaign is not an `expected` implementation. The owner's spelling
