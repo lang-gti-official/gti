@@ -389,14 +389,26 @@ public:
     rebuildMirReachability(output);
     valid = rebuildMirValueUses(output) && valid;
     valid = validateSourceProvenance() && valid;
-    const MirVerificationResult verification = verifyMirBody(output);
+    verification = verifyMirBody(output);
     valid = verification.valid() && valid;
     return std::move(output);
   }
 
   [[nodiscard]] bool isValid() const { return valid; }
+  [[nodiscard]] const MirVerificationResult &proof() const {
+    return verification;
+  }
+  [[nodiscard]] const std::optional<std::pair<HirValueId, std::string>> &
+  rejection() const {
+    return firstRejection;
+  }
 
 private:
+  void reject(HirValueId value, std::string message) {
+    valid = false;
+    if (!firstRejection)
+      firstRejection = std::pair{value, std::move(message)};
+  }
   struct Scope {
     std::vector<MirPlaceId> drops;
     std::vector<MirLoanId> loans;
@@ -8283,7 +8295,8 @@ private:
               (!sameBorrowSource(transient->source, retained->source) &&
                !retainableCallResultChain(existing, found->second, valueId,
                                           desired->access))) {
-            valid = false;
+            reject(valueId, "reference initializer's accessor result does not "
+                            "retain the selected owner and access");
           }
         }
         recordLoanIdentity(found->second, *desired, binding);
@@ -8364,6 +8377,8 @@ private:
         // unspellable alias and lose the runtime element selection.
         const MirPlaceId desiredSource = desiredSourcePlace();
         if (desiredSource == 0) {
+          reject(valueId, "reference initializer cannot materialize its "
+                          "selected semantic origin");
           return {};
         }
         const auto found = semanticLoans.find(desired->parent);
@@ -10668,6 +10683,8 @@ private:
   }
 
   const HirProgram &program;
+  MirVerificationResult verification;
+  std::optional<std::pair<HirValueId, std::string>> firstRejection;
   const FailureMetadata &failureMetadata;
   const HirBody &source;
   std::unordered_set<HirValueId> borrowedTemporaryTransfers;
@@ -10733,6 +10750,7 @@ MirBody MirLowerer::lowerBody(
     const HirBody &body, MirBodyKind kind, SemanticType returnType,
     const std::vector<HirValueId> &prologueValues,
     const MirDefinedFailureEffects &definedFailureEffects, bool &valid,
+    std::vector<MirLoweringError> &errors, std::size_t owner,
     bool implicitZeroReturn,
     const std::vector<HirConstructorInitializer> *initializers,
     const HirFunctionInstance *function,
@@ -10758,6 +10776,75 @@ MirBody MirLowerer::lowerBody(
                                  SynchronizationOperationKind::None;
                         });
                   });
+  if (!lowerer.isValid()) {
+    const auto sourceFor = [&](HirValueId value) -> std::optional<SourceSpan> {
+      if (value == 0) {
+        if (function && function->source)
+          return function->source->extent();
+        if (constructor && constructor->source)
+          return constructor->source->extent();
+        if (destructor && destructor->source)
+          return destructor->source->extent();
+        if (lambda && lambda->source)
+          return tokenSpan(lambda->source->bracket());
+      }
+      std::optional<SourceSpan> selected;
+      for (const auto &statement : body.statements) {
+        if (!statement.source || !statement.source->extent())
+          continue;
+        bool contains = false;
+        std::vector<HirValueId> pending;
+        if (statement.value)
+          pending.push_back(*statement.value);
+        if (statement.condition)
+          pending.push_back(*statement.condition);
+        std::unordered_set<HirValueId> visited;
+        while (!pending.empty() && !contains) {
+          const auto next = pending.back();
+          pending.pop_back();
+          if (!visited.insert(next).second)
+            continue;
+          contains = next == value;
+          if (const auto *expression = body.findValue(next))
+            pending.insert(pending.end(), expression->operands.begin(),
+                           expression->operands.end());
+        }
+        const auto &span = *statement.source->extent();
+        if (contains && (!selected || span.end - span.start <
+                                          selected->end - selected->start))
+          selected = span;
+      }
+      return selected;
+    };
+    if (const auto &rejection = lowerer.rejection(); rejection)
+      errors.push_back({.body = {kind, owner},
+                        .source = sourceFor(rejection->first),
+                        .message = rejection->second});
+    for (const auto &error : lowerer.proof().errors) {
+      HirValueId value = 0;
+      std::optional<SourceSpan> anchor;
+      if (const auto *block = result.findBlock(error.block))
+        for (const auto &instruction : block->instructions)
+          if (instruction.id == error.instruction) {
+            value = instruction.hirValue != 0 ? instruction.hirValue
+                                              : instruction.callSite;
+            if (const auto *statement =
+                    body.findStatement(instruction.hirStatement);
+                statement && statement->source)
+              anchor = statement->source->extent();
+          }
+      errors.push_back({.body = {kind, owner},
+                        .block = error.block,
+                        .instruction = error.instruction,
+                        .source = anchor ? anchor : sourceFor(value),
+                        .message = error.message});
+    }
+    if (!lowerer.rejection() && lowerer.proof().valid())
+      errors.push_back({.body = {kind, owner},
+                        .source = sourceFor(0),
+                        .message = "body lowering rejected its checked HIR "
+                                   "before program initialization"});
+  }
   valid = valid && lowerer.isValid();
   return result;
 }

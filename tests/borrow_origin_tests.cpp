@@ -1,4 +1,5 @@
 #include "cpp_mir_body_emitter_test_fixture.h"
+#include "gti/mir_lowering.h"
 
 namespace {
 void checkReferents() {
@@ -178,11 +179,52 @@ void checkOwnedFieldPlaces() {
            "owned field fixture retains a distinct accessor address");
   }
 }
+
+void checkLoweringFailureContext() {
+  const auto frontend = analyze("lowering-context.gti", R"gti(
+struct Item { mut int value = 0; };
+int main() {
+  Item item{};
+  Item& alias = item;
+  return alias.value;
+}
+)gti");
+  expect(frontend.canGenerateCode(), "lowering context mutation starts valid");
+  const auto *entry =
+      frontend.sourceGraph.findUnit(frontend.sourceGraph.entryUnit());
+  auto malformed = frontend.hir;
+  lang::HirFunctionInstanceId owner = 0;
+  for (const auto &function : malformed.functionInstances()) {
+    if (function.entryKind == lang::ProgramEntryKind::None)
+      continue;
+    owner = function.id;
+    auto *changed = const_cast<lang::HirFunctionInstance *>(
+        malformed.findFunctionInstance(function.id));
+    for (auto &loan : changed->body.loans)
+      loan.parent = loan.semanticLoan;
+  }
+  const auto rejected =
+      lang::MirLowerer().lower(malformed, frontend.failureMetadata);
+  expect(!rejected.valid() && !rejected.errors.empty(),
+         "lowering retains its rejection before hosted startup");
+  for (const auto &error : rejected.errors) {
+    expect(error.body.kind == lang::MirBodyKind::Function &&
+               error.body.owner == owner,
+           "lowering error retains its exact concrete body identity");
+    expect(
+        entry && error.source && error.source->source == entry->path.string() &&
+            error.source->end > error.source->start && error.source->line > 1,
+        "lowering rejection retains an enclosing source statement");
+    expect(error.message.find("hosted-startup") == std::string::npos,
+           "lowering context reports its cause, not absent startup");
+  }
+}
 } // namespace
 
 int main() {
   checkReferents();
   checkInvalidEscapes();
   checkOwnedFieldPlaces();
+  checkLoweringFailureContext();
   return failures == 0 ? 0 : 1;
 }
