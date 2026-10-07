@@ -2423,8 +2423,336 @@ private:
          "mutable-reference semantics");
 }
 
+void testUnknownFunctionAttributeClassification() {
+  const std::string source =
+      "[[noretrun]]\nvoid stop() {}\nint main() { return 0; }\n";
+  const auto result = lang::Frontend().analyze("unknown-attribute.gti", source);
+  expect(!result.canGenerateCode() && result.diagnostics.size() == 1,
+         "an unknown function attribute should have one owning diagnostic");
+  if (result.diagnostics.size() != 1) {
+    return;
+  }
+  const auto &diagnostic = result.diagnostics.front();
+  expect(diagnostic.code == "GTI-S2099" &&
+             diagnostic.phase == lang::DiagnosticPhase::Semantics &&
+             diagnostic.severity == lang::DiagnosticSeverity::Error &&
+             diagnostic.message.find(
+                 "Unknown GTI function attribute 'noretrun'") !=
+                 std::string::npos &&
+             diagnostic.primary.source ==
+                 std::filesystem::absolute("unknown-attribute.gti").string() &&
+             diagnostic.primary.start == 2 && diagnostic.primary.end == 10 &&
+             diagnostic.primary.line == 1,
+         "attribute classification should retain its semantic code and exact "
+         "span");
+  expect(findTopLevelFunction(result.program, "main") != nullptr,
+         "an unknown attribute must preserve following declarations");
+  const auto known = lang::Frontend().analyze(
+      "known-attribute.gti", "[[discardable]] int compute() { return 4; }");
+  expect(known.canGenerateCode(),
+         "recognized function attributes remain valid");
+  const auto classAttribute = lang::Frontend().analyze(
+      "class-attribute.gti", "[[not_an_attribute]] struct Record {}; ");
+  expect(!classAttribute.canGenerateCode() &&
+             !hasDiagnostic(classAttribute.diagnostics,
+                            "Unknown GTI function attribute"),
+         "class attributes retain their owning class validation");
+}
+
+void testUnknownTypeCascadeSuppression() {
+  const auto result = lang::Frontend().analyze("unknown-cascade.gti", R"(
+int main() {
+  Missing value{};
+  auto result = missing + "text";
+  int independent = "text";
+  return 0;
+}
+)");
+  expect(!result.canGenerateCode(), "unknown operands must remain rejected");
+  expect(
+      hasDiagnostic(result.diagnostics, "Unknown type 'Missing'") &&
+          hasDiagnostic(result.diagnostics, "Undefined name 'missing'") &&
+          hasDiagnostic(result.diagnostics, "Cannot initialize 'independent'"),
+      "poison recovery retains lookup errors and independent type errors");
+  expect(!hasDiagnostic(result.diagnostics, "of type 'unknown'") &&
+             !hasDiagnostic(result.diagnostics, "and 'unknown'"),
+         "poison types must not create initializer or operator cascades");
+  const auto numeric = lang::Frontend().analyze(
+      "numeric-mismatch.gti", "int main() { return 1 + true; }");
+  expect(!numeric.canGenerateCode() &&
+             hasDiagnostic(numeric.diagnostics, "requires numeric operands"),
+         "known operand mismatches retain their diagnostic");
+}
+
+lang::FrontendResult analyzeDiagnosticFixture(
+    std::string_view name,
+    lang::RawPointerAuditMode audit = lang::RawPointerAuditMode::Off) {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto path =
+      root / "tests/coverage/reproducers" / (std::string(name) + ".gti");
+  lang::FrontendOptions options;
+  options.rawPointerAudit = audit;
+  return lang::Frontend(options).analyze(
+      path, std::nullopt, {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+}
+
+void testRecoveryFindingDiagnostics() {
+  for (const auto &[name, code] :
+       std::array<std::pair<std::string_view, std::string_view>, 5>{{
+           {"a10-payload-arity-cascade", "GTI-S2067"},
+           {"a12-extern-c-overload-duplicate", "GTI-S2054"},
+           {"a22-spurious-s2068-after-constexpr-failure", "GTI-S2057"},
+           {"a35-expected-ref-field-stale-message", "GTI-S2045"},
+           {"a43-callback-argument-unknown-type", "GTI-S2076"},
+       }}) {
+    const auto result = analyzeDiagnosticFixture(name);
+    const bool boundedDiscovery =
+        name == "a22-spurious-s2068-after-constexpr-failure";
+    const std::size_t expectedCount = boundedDiscovery ? 2 : 1;
+    expect(!result.canGenerateCode() &&
+               result.diagnostics.size() == expectedCount,
+           std::string(name) + " retains only its actual owning diagnostics");
+    if (result.diagnostics.size() != expectedCount)
+      continue;
+    if (boundedDiscovery) {
+      const auto &cause = result.diagnostics.front();
+      expect(cause.code == "GTI-S2105" &&
+                 cause.phase == lang::DiagnosticPhase::Semantics &&
+                 cause.severity == lang::DiagnosticSeverity::Error &&
+                 cause.primary.source.ends_with(std::string(name) + ".gti") &&
+                 cause.primary.end > cause.primary.start &&
+                 cause.related.size() == 1,
+             "bounded discovery retains its real recursive-call cause, not a "
+             "runtime initialization-effect cascade");
+      expect(std::none_of(
+                 result.diagnostics.begin(), result.diagnostics.end(),
+                 [](const auto &entry) { return entry.code == "GTI-S2068"; }),
+             "failed constant has no spurious runtime effect error");
+      const auto *text = result.sources.find(cause.primary.source);
+      const std::string_view recursiveCall = "depth<N - 1>()";
+      const auto recursive =
+          text == nullptr ? std::string::npos : text->find(recursiveCall);
+      const auto declaration = text == nullptr
+                                   ? std::string::npos
+                                   : text->find("depth<uint64_t N>()");
+      expect(recursive != std::string::npos &&
+                 cause.primary.start == recursive + recursiveCall.size() - 1 &&
+                 cause.primary.end == recursive + recursiveCall.size() &&
+                 cause.related.size() == 1 &&
+                 declaration != std::string::npos &&
+                 cause.related.front().span.source == cause.primary.source &&
+                 cause.related.front().span.start == declaration &&
+                 cause.related.front().span.end == declaration + 5,
+             "discovery cause and primary template retain exact source spans");
+    }
+    const auto &diagnostic = result.diagnostics.back();
+    expect(
+        diagnostic.code == code &&
+            diagnostic.phase == lang::DiagnosticPhase::Semantics &&
+            diagnostic.severity == lang::DiagnosticSeverity::Error &&
+            diagnostic.primary.source.ends_with(std::string(name) + ".gti") &&
+            diagnostic.primary.end > diagnostic.primary.start &&
+            diagnostic.message.find("unknown") == std::string::npos &&
+            diagnostic.message.find("may contain only one") ==
+                std::string::npos,
+        std::string(name) + " retains a located, specific semantic error");
+    const auto *source = result.sources.find(diagnostic.primary.source);
+    const std::string_view anchor = code == "GTI-S2067"   ? "Command::move(x)"
+                                    : code == "GTI-S2054" ? "twice(int64_t"
+                                    : code == "GTI-S2057" ? "depth<200>()"
+                                    : code == "GTI-S2045" ? "slot_"
+                                                          : "visit, 1";
+    const std::size_t offset =
+        source == nullptr ? std::string::npos : source->find(anchor);
+    const bool closing = code == "GTI-S2067" || code == "GTI-S2057";
+    const std::size_t start = offset + (closing ? anchor.size() - 1 : 0);
+    const std::size_t length = closing ? 1 : 5;
+    expect(offset != std::string::npos && diagnostic.primary.start == start &&
+               diagnostic.primary.end == start + length,
+           std::string(name) + " retains the exact owning source span");
+    if (code == "GTI-S2076") {
+      expect(diagnostic.related.size() == 1 &&
+                 diagnostic.related.front().message.find("int64_t") !=
+                     std::string::npos &&
+                 diagnostic.message.find("int32_t") != std::string::npos,
+             "callback mismatch shows both required and candidate signatures");
+    }
+  }
+  const auto missingReturn =
+      lang::Frontend().analyze("independent-return.gti", R"(
+enum class Command { stop, move(int x, int y) };
+int run(Command command) {
+  switch (command) {
+  case Command::stop: return 0;
+  case Command::move(x): break;
+  }
+}
+)");
+  expect(hasDiagnostic(missingReturn.diagnostics, "exposes 2 payload fields") &&
+             hasDiagnostic(missingReturn.diagnostics, "can reach the end"),
+         "a malformed payload binding does not hide real return fallthrough");
+  const auto effects = lang::Frontend().analyze("independent-init.gti", R"(
+class Globals {
+public:
+  static int read() { return Globals::later; }
+  static mut int first = Globals::read();
+  static mut int later = 1;
+};
+int main() { return Globals::first; }
+)");
+  expect(hasDiagnostic(effects.diagnostics, "before its initialization step"),
+         "ordinary runtime initializer dependencies remain diagnosed");
+  const auto carriers =
+      lang::Frontend().analyze("multiple-reference-fields.gti", R"(
+class Pair {
+  int& first;
+  int& second;
+public:
+  Pair(int& a, int& b) : first(a), second(b) {}
+};
+int main() { int a = 1; int b = 2; Pair pair{a, b}; return 0; }
+)");
+  expect(carriers.canGenerateCode(),
+         "ordinary multiple checked-reference fields remain supported");
+}
+
+void testGenericArgumentDiagnosticGuidance() {
+  const auto explicitArguments =
+      analyzeDiagnosticFixture("a11-explicit-generic-argument-messages");
+  expect(
+      !explicitArguments.canGenerateCode() &&
+          explicitArguments.diagnostics.size() == 2 &&
+          hasDiagnostic(explicitArguments.diagnostics,
+                        "parameter requires 'int32_t'") &&
+          hasDiagnostic(explicitArguments.diagnostics,
+                        "uint64_t compile-time value") &&
+          !hasDiagnostic(explicitArguments.diagnostics,
+                         "Conflicting types inferred") &&
+          !hasDiagnostic(explicitArguments.diagnostics,
+                         "fixed-array argument extent"),
+      "explicit generic type and value failures describe the written contract");
+  const auto runtime =
+      analyzeDiagnosticFixture("a21-value-argument-resolved-as-type");
+  expect(!runtime.canGenerateCode() && runtime.diagnostics.size() == 1 &&
+             runtime.diagnostics.front().code == "GTI-S2026" &&
+             runtime.diagnostics.front().message.find("compile-time value") !=
+                 std::string::npos &&
+             !hasDiagnostic(runtime.diagnostics, "Unknown type"),
+         "a runtime identifier in an explicit value slot is not a type lookup");
+  const auto inferred =
+      lang::Frontend().analyze("genuine-inference-conflict.gti", R"(
+T choose<T>(T left, T right) { return left; }
+int main() { return choose(1, true); }
+)");
+  expect(hasDiagnostic(inferred.diagnostics, "Conflicting types inferred"),
+         "genuine conflicting inferred types retain their explanation");
+  const auto valid = lang::Frontend().analyze("valid-value-arguments.gti", R"(
+uint64_t extent<uint64_t N>() { return N; }
+constexpr uint64_t count = 4;
+int main() { return int32_t(extent<count>()) - 4; }
+)");
+  expect(valid.canGenerateCode(),
+         "named compile-time value arguments remain valid");
+}
+
+void testConversionDiagnosticGuidance() {
+  const auto result =
+      analyzeDiagnosticFixture("a05-string-view-help-suggests-invalid-form");
+  expect(result.diagnostics.size() == 1 &&
+             result.diagnostics.front().code == "GTI-S2003" &&
+             result.diagnostics.front().hints.size() == 1 &&
+             result.diagnostics.front().hints.front().find("value.view()") !=
+                 std::string::npos &&
+             result.diagnostics.front().fixes.empty(),
+         "an exact public view accessor is guidance, not an automatic lifetime "
+         "edit");
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto valid = lang::Frontend().analyze("applied-view-guidance.gti", R"(
+#include <std/string>
+int main() {
+  std::string word = std::string("abc");
+  mut std::string output{};
+  output.append(word.view());
+  return 0;
+}
+)",
+                                              {root / "stdlib/prelude.gti"}, {},
+                                              {root / "stdlib"});
+  expect(valid.canGenerateCode(),
+         "the recommended explicit view accessor compiles");
+  const auto ordinary = lang::Frontend().analyze("user-view-guidance.gti", R"(
+class Number { public: int view() { return 1; } };
+int consume(int value) { return value; }
+int main() { Number value{}; return consume(value); }
+)");
+  expect(ordinary.diagnostics.size() == 1 &&
+             ordinary.diagnostics.front().hints.front().find("value.view()") !=
+                 std::string::npos,
+         "view guidance is discovered from an ordinary user type, not a std "
+         "type name");
+  const auto hidden = lang::Frontend().analyze("private-view-guidance.gti", R"(
+class Number { private: int view() { return 1; } };
+int consume(int value) { return value; }
+int main() { Number value{}; return consume(value); }
+)");
+  expect(hidden.diagnostics.size() == 1 &&
+             hidden.diagnostics.front().hints.front().find("value.view()") ==
+                 std::string::npos,
+         "conversion guidance does not suggest an inaccessible accessor");
+}
+
+void testRawAuditDiagnosticPublication() {
+  const auto result = analyzeDiagnosticFixture(
+      "a44-raw-audit-duplicate-warning", lang::RawPointerAuditMode::Warn);
+  expect(result.canGenerateCode() && result.diagnostics.size() == 1 &&
+             result.diagnostics.front().code == "GTI-S2102" &&
+             result.diagnostics.front().severity ==
+                 lang::DiagnosticSeverity::Warning &&
+             result.diagnostics.front().related.size() == 1,
+         "direct and checked-owner audit observations publish one lifetime "
+         "warning");
+  const auto off = analyzeDiagnosticFixture("a44-raw-audit-duplicate-warning");
+  expect(off.canGenerateCode() && off.diagnostics.empty(),
+         "audit warning publication does not alter off-mode semantics");
+  const auto strict = analyzeDiagnosticFixture(
+      "a44-raw-audit-duplicate-warning", lang::RawPointerAuditMode::Strict);
+  expect(!strict.canGenerateCode() && strict.diagnostics.size() == 1 &&
+             strict.diagnostics.front().severity ==
+                 lang::DiagnosticSeverity::Error,
+         "strict mode still promotes the one audit warning to an error");
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  std::ifstream input(
+      root / "tests/coverage/reproducers/a44-raw-audit-duplicate-warning.gti");
+  std::string source((std::istreambuf_iterator<char>(input)), {});
+  const auto point = source.find("return r - 2;");
+  expect(point != std::string::npos,
+         "audit fixture retains its second-access insertion point");
+  if (point != std::string::npos) {
+    source.replace(
+        point, std::string("return r - 2;").size(),
+        "int32_t& second = std::assume_ref(first, c); return r + second - 4;");
+    lang::FrontendOptions options;
+    options.rawPointerAudit = lang::RawPointerAuditMode::Warn;
+    const auto distinct = lang::Frontend(options).analyze(
+        "distinct-audit-accesses.gti", source, {root / "stdlib/prelude.gti"},
+        {}, {root / "stdlib"});
+    expect(
+        distinct.canGenerateCode() && distinct.diagnostics.size() == 2 &&
+            distinct.diagnostics[0].primary != distinct.diagnostics[1].primary,
+        "identical origins at distinct unsafe accesses keep separate warnings");
+  }
+}
+
 constexpr NamedTest kTests[] = {
     {"testSemanticVisitorRequestReuse", testSemanticVisitorRequestReuse},
+    {"testUnknownFunctionAttributeClassification",
+     testUnknownFunctionAttributeClassification},
+    {"testUnknownTypeCascadeSuppression", testUnknownTypeCascadeSuppression},
+    {"testRecoveryFindingDiagnostics", testRecoveryFindingDiagnostics},
+    {"testGenericArgumentDiagnosticGuidance",
+     testGenericArgumentDiagnosticGuidance},
+    {"testConversionDiagnosticGuidance", testConversionDiagnosticGuidance},
+    {"testRawAuditDiagnosticPublication", testRawAuditDiagnosticPublication},
     {"testSemanticDiagnostics", testSemanticDiagnostics},
     {"testOwnershipAndMissingIncludeDiagnostics",
      testOwnershipAndMissingIncludeDiagnostics},

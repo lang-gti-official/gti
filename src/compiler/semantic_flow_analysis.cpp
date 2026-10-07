@@ -922,6 +922,14 @@ auto SemanticVisitor::Impl::validateProgramInitializationEffects(
     if (initializer.role == ProgramInitializationStepRole::DataOnly) {
       continue;
     }
+    if (initializer.declaration->isConstexpr()) {
+      const auto *binding = semanticModel.findBinding(*initializer.declaration);
+      if (binding == nullptr || !binding->constant) {
+        // A rejected required constant has no executable initializer. Its
+        // evaluation diagnostic owns the failure, not runtime effect proof.
+        continue;
+      }
+    }
     std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash> visiting;
     std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash> visited;
     const std::function<bool(ProgramEffectOwner, std::optional<SourceSpan>)>
@@ -3431,6 +3439,14 @@ auto SemanticVisitor::Impl::appendFunctionOverload(Symbol &existing,
     const bool candidateC = candidate.declaration != nullptr &&
                             candidate.declaration->hasCLinkage();
     if (previousC || candidateC) {
+      // The external-symbol catalog owns duplicate C symbol diagnostics,
+      // including this same-name case. Keep the GTI overload rule for mixed
+      // linkage and distinct native link names.
+      if (previousC && candidateC &&
+          previous.record().externalSymbol ==
+              candidate.record().externalSymbol) {
+        return true;
+      }
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2054", DiagnosticPhase::Semantics, name,
           "extern \"C\" functions cannot be overloaded or share their "
@@ -9111,6 +9127,31 @@ auto SemanticVisitor::Impl::rawPointerLifetimeDiagnostic(
   return std::nullopt;
 }
 
+auto SemanticVisitor::Impl::publishRawLifetimeDiagnostic(
+    const Diagnostic &diagnostic) -> void {
+  // A direct primitive and its checked-owner summary can check the same
+  // access. Only identical reports in this analysis context are duplicates;
+  // different origin/access spans or generic context notes stay visible.
+  const bool published = std::any_of(
+      diagnostics.begin(), diagnostics.end(), [&](const Diagnostic &previous) {
+        return previous.code == diagnostic.code &&
+               previous.severity == diagnostic.severity &&
+               previous.primary == diagnostic.primary &&
+               previous.message == diagnostic.message &&
+               previous.hints == diagnostic.hints &&
+               previous.related.size() == diagnostic.related.size() &&
+               std::equal(previous.related.begin(), previous.related.end(),
+                          diagnostic.related.begin(),
+                          [](const RelatedDiagnostic &left,
+                             const RelatedDiagnostic &right) {
+                            return left.span == right.span &&
+                                   left.message == right.message;
+                          });
+      });
+  if (!published)
+    diagnostics.push_back(diagnostic);
+}
+
 auto SemanticVisitor::Impl::validateRawPointerAccess(const ExprPtr &pointer,
                                                      const Token &site,
                                                      AccessMode access)
@@ -9506,7 +9547,7 @@ auto SemanticVisitor::Impl::validateRawPointerOrigins(
     if (origin.parameterPointee || origin.loopInput != 0)
       continue;
     if (auto diagnostic = rawPointerLifetimeDiagnostic(origin, site)) {
-      diagnostics.emplace_back(std::move(*diagnostic));
+      publishRawLifetimeDiagnostic(*diagnostic);
       continue;
     }
     if (checksLoans)
@@ -9743,7 +9784,7 @@ auto SemanticVisitor::Impl::endRawPointerLoop(const ScopeStack &backedge,
           if (use.deferred)
             use.deferred->diagnostics.emplace_back(std::move(*diagnostic));
           else
-            diagnostics.emplace_back(std::move(*diagnostic));
+            publishRawLifetimeDiagnostic(*diagnostic);
         } else if (use.memoryAccess && use.loanContext &&
                    !origin.parameterPointee && origin.loopInput == 0) {
           // Resolve the new place against the loans and sequence at the use,
@@ -9970,8 +10011,8 @@ auto SemanticVisitor::Impl::analyzeBinaryOperands(const Binary &expression)
 auto SemanticVisitor::Impl::requireNumeric(SemanticType left,
                                            SemanticType right,
                                            const Token &token) -> void {
-  if ((left != SemanticType::Unknown && !isNumeric(left)) ||
-      (right != SemanticType::Unknown && !isNumeric(right))) {
+  if (left != SemanticType::Unknown && right != SemanticType::Unknown &&
+      (!isNumeric(left) || !isNumeric(right))) {
     report(token,
            "Operator '" + token.lexeme +
                "' requires numeric operands but found '" + typeSpelling(left) +
@@ -9983,8 +10024,8 @@ auto SemanticVisitor::Impl::requireNumeric(SemanticType left,
 auto SemanticVisitor::Impl::requireOrdered(SemanticType left,
                                            SemanticType right,
                                            const Token &token) -> void {
-  if ((left != SemanticType::Unknown && !isOrdered(left)) ||
-      (right != SemanticType::Unknown && !isOrdered(right))) {
+  if (left != SemanticType::Unknown && right != SemanticType::Unknown &&
+      (!isOrdered(left) || !isOrdered(right))) {
     report(token,
            "Operator '" + token.lexeme +
                "' requires ordered operands but found '" + typeSpelling(left) +
@@ -9996,8 +10037,8 @@ auto SemanticVisitor::Impl::requireOrdered(SemanticType left,
 auto SemanticVisitor::Impl::requireInteger(SemanticType left,
                                            SemanticType right,
                                            const Token &token) -> void {
-  if ((left != SemanticType::Unknown && !isIntegral(left)) ||
-      (right != SemanticType::Unknown && !isIntegral(right))) {
+  if (left != SemanticType::Unknown && right != SemanticType::Unknown &&
+      (!isIntegral(left) || !isIntegral(right))) {
     report(token,
            "Operator '" + token.lexeme +
                "' requires integer operands but found '" + typeSpelling(left) +
