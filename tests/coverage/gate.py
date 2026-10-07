@@ -33,6 +33,10 @@ on how often a text may appear (for example a duplicated error), and a compile
 `flags`. A program may instead list `cases`, each running the built program
 with `args` and comparing its `exit`, exact `stdout`, and a `stderr` regular
 expression; this checks defined runtime failure reports and cleanup order.
+`native_sources` may name C17 fixtures beneath this directory's `native/`
+folder. The gate compiles them as C, then links their objects into the GTI
+program; invalid paths or C compiler failures are test-infrastructure errors,
+never accepted GTI finding outcomes.
 
 An entry without `finding` describes correct behavior. An entry with
 `finding` is a known, unresolved defect: it records the outcome the defect
@@ -68,6 +72,43 @@ COMPILE_SECONDS = 180
 RUN_SECONDS = 60
 CODE = re.compile(r"(?:error|warning)\[(GTI-[A-Z][0-9]{4})\]")
 UNLOCATED = re.compile(r"^<source>:", re.MULTILINE)
+
+
+class CoverageInfrastructureError(RuntimeError):
+    pass
+
+
+def native_objects(output: Path, expectation: dict) -> list[str]:
+    entries = expectation.get("native_sources", [])
+    if not isinstance(entries, list):
+        raise CoverageInfrastructureError("native_sources must be a list")
+    objects = []
+    root = (ROOT / "native").resolve()
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, str) or "\\" in entry:
+            raise CoverageInfrastructureError("native fixture must be a relative C source path")
+        relative = Path(entry)
+        if relative.is_absolute() or ".." in relative.parts or relative.parts[:1] != ("native",):
+            raise CoverageInfrastructureError("native fixture must stay beneath native/")
+        path = ROOT
+        for part in relative.parts:
+            path /= part
+            if path.is_symlink():
+                raise CoverageInfrastructureError("native fixture paths cannot traverse symlinks")
+        if not path.is_file() or path.suffix != ".c" or not path.resolve().is_relative_to(root):
+            raise CoverageInfrastructureError("native fixture must be an existing .c file beneath native/")
+        obj = output.with_suffix(f".native-{index}.o")
+        command = [os.environ.get("CC", "cc"), "-std=c17", "-c", str(path), "-o", str(obj)]
+        try:
+            compiled = subprocess.run(command, capture_output=True, text=True, timeout=COMPILE_SECONDS)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise CoverageInfrastructureError(f"native fixture compilation failed: {error}") from error
+        log = compiled.stdout + compiled.stderr
+        output.with_suffix(f".native-{index}.log").write_text(log, encoding="utf-8")
+        if compiled.returncode != 0 or not obj.is_file():
+            raise CoverageInfrastructureError(f"native fixture {entry} failed to compile: {log}")
+        objects.append(str(obj))
+    return objects
 BACKEND_LOG = re.compile(r"backend diagnostics saved at (\S+)")
 
 
@@ -147,6 +188,11 @@ def classify(gti: Path, source: Path, output: Path, expectation: dict) -> tuple[
         command += ["--execution-profile", "concurrent"]
     command += [str(source), "-o", str(output), *COMMON_FLAGS,
                 *expectation.get("flags", [])]
+    objects = native_objects(output, expectation)
+    if objects:
+        if "--" not in command:
+            command.append("--")
+        command += objects
     try:
         compiled = subprocess.run(command, capture_output=True, text=True,
                                   timeout=compile_seconds)
@@ -196,6 +242,8 @@ def classify(gti: Path, source: Path, output: Path, expectation: dict) -> tuple[
 
 def check(name: str, expectation: dict, outcome: str, detail: str) -> str | None:
     """Return a failure message, or None when the outcome meets expectation."""
+    if outcome == "test-error":
+        return f"{name}: test infrastructure failed ({detail})"
     expected = expectation.get("outcome", "pass")
     finding = expectation.get("finding")
     code = expectation.get("code")
@@ -250,7 +298,10 @@ def main() -> int:
         if group == "projects":
             outcome, detail = classify_project(args.gti, source, target, expectation)
         else:
-            outcome, detail = classify(args.gti, source, target, expectation)
+            try:
+                outcome, detail = classify(args.gti, source, target, expectation)
+            except CoverageInfrastructureError as error:
+                outcome, detail = "test-error", str(error)
         return group, name, expectation, outcome, detail
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:

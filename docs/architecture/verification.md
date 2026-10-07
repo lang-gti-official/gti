@@ -1,5 +1,29 @@
 # Compiler Verification
 
+## Typed passive fixed-array construction
+
+The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes
+the focused repair gates for issues #63, #85 and #93. Six original coverage
+reproducers plus one stronger fixture pass all C++20/C++23 O0/O1/O3 modes
+(42 native executions), with native C17 record-return linkage and elision
+disabled. The stronger fixture also passes ASan/UBSan at O1, proves copying
+named records never invokes extra default constructors, and includes a record
+with no default constructor. Four source negatives preserve literal-range and
+unsafe union access checks. Four union movement mutations and ten aggregate
+shape mutations retain fail-closed MIR/emitter proofs. Existing owning field
+array empty-state verification remains passing.
+
+Example 12 now demonstrates narrow signed literals, named passive record
+copies, and zero-initialized union arrays while preserving its output. Its
+reviewed inventory grows by five MIR bodies and six declarations (two added
+types' field/static initializer pairs plus designated construction); generated
+items are unchanged. The six repaired coverage entries require actual native
+success, including an independent C17 fixture rather than emission-only proof.
+The fixture harness rejects path/symlink escapes and treats native compilation
+failure as infrastructure failure, never as an accepted GTI defect outcome.
+This is focused candidate evidence, not the combined campaign's full-suite,
+installed-toolchain, Linux or Windows verification.
+
 ## Reconciled dormant engine embedding foundation
 
 The PR #102 foundation is reconciled with the native scalar/nested-pointer

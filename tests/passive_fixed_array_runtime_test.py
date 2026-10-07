@@ -21,7 +21,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-passive-arrays-") as temporary:
         scratch = Path(temporary)
         native = scratch / "native.o"
-        run(["cc", "-std=c17", "-c", str(fixtures / "passive_fixed_array_native.c"), "-o", str(native)])
+        run(["cc", "-std=c17", "-c", str(repository / "tests/coverage/native/passive_records.c"), "-o", str(native)])
         sources = [fixtures / "passive_fixed_array_values.gti"] + [
             repository / f"tests/coverage/reproducers/{name}.gti"
             for name in (
