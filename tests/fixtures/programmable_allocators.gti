@@ -65,6 +65,13 @@ int failed_growth(std::resource_ref<CountingResource<engine::Arena>> resource) {
   if (resource.get().allocations() != uint64_t(1) ||
       resource.get().attempts() != uint64_t(2) ||
       resource.get().releases() != uint64_t(0)) { return 5; }
+  // A failed push consumes its argument without publishing it; the existing
+  // element, capacity and region are unchanged.
+  auto pushed = items.try_push_back(Item(9));
+  if (pushed || pushed.error() != std::alloc_errc::resource_exhausted ||
+      items.size() != std::size_t(1) || items.capacity() != std::size_t(1) ||
+      items.get(std::size_t(0)).value() != 7 || alive != 1 || destroyed != 9 ||
+      resource.get().releases() != uint64_t(0)) { return 6; }
   return 0;
 }
 
@@ -76,7 +83,7 @@ int invalid_requests(std::resource_ref<CountingResource<engine::Arena>> resource
   if (invalid || invalid.error() != std::alloc_errc::invalid_alignment) { return 11; }
   auto overflow = slots.try_allocate(std::MAX_UINT64);
   if (overflow || overflow.error() != std::alloc_errc::size_overflow) { return 12; }
-  if (resource.get().attempts() != uint64_t(2)) { return 13; }
+  if (resource.get().attempts() != uint64_t(3)) { return 13; }
   return 0;
 }
 
@@ -111,7 +118,7 @@ int main() {
       int invalid = invalid_requests(resource);
       if (invalid != 0) { return invalid; }
     }
-    if (alive != 0 || destroyed != 7 || counted.releases() != uint64_t(1)) { return 30; }
+    if (alive != 0 || destroyed != 16 || counted.releases() != uint64_t(1)) { return 30; }
   }
   arena.reset();
   unsafe {
