@@ -2282,8 +2282,13 @@ movement and drop use the ordinary lambda lifecycle obligation, including
 recursively cleanup-owning captured values. For captures with complete cleanup
 recipes, the obligation retains their exact reverse-order aggregate schedule,
 including nested class/owner/collection cleanup. Destruction failure therefore
-belongs to the enclosing MIR cleanup edge, not native closure teardown. Class
-lifecycle metadata contains every lexically dropped field in
+belongs to the enclosing MIR cleanup edge, not native closure teardown.
+The caller's active failure remains authoritative across calls made by cleanup;
+a callee's next failure cannot enter its own local-cleanup schedule before the
+existing cleanup-emergency path consumes the exact primary and secondary records.
+This inherited dynamic fact does not require a second source-level control-flow
+rule or a public failure-context type.
+Class lifecycle metadata contains every lexically dropped field in
 declaration order; its independently retained drop projection must be the exact
 reverse order. Trivial fields remain structural HIR/layout facts rather than
 lifecycle-verifier authority.

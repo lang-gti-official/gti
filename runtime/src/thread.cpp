@@ -85,6 +85,31 @@ public:
   ~ActiveTaskObjectCleanupScope() { activeTaskObjectCleanup = false; }
 };
 
+[[nodiscard]] bool acceptsCleanupEnvelope(
+    const gti_thread_state_v1 &state, const gti_failure_emergency_v2 &failure,
+    const gti_failure_artifact_descriptor_v1 *primaryArtifact) noexcept {
+  if (state.failureKind == GTI_THREAD_WORKER_FAILURE_NONE_V1) {
+    return true;
+  }
+  // The incoming context copies this already-owned primary. Completing its
+  // two-record envelope is not a third failure; any other primary still is.
+  return activeTaskObjectCleanup &&
+         state.failureKind == GTI_THREAD_WORKER_FAILURE_ORDINARY_V1 &&
+         state.primaryArtifact == primaryArtifact &&
+         state.failure.abi_version == failure.primary.abi_version &&
+         state.failure.code == failure.primary.code &&
+         state.failure.detail == failure.primary.detail &&
+         state.failure.site_index == failure.primary.site_index &&
+         state.failure.reserved == failure.primary.reserved &&
+         std::memcmp(state.failure.artifact_identity,
+                     failure.primary.artifact_identity,
+                     sizeof(state.failure.artifact_identity)) == 0 &&
+         state.failure.message_size == failure.primary.message_size &&
+         state.failure.message_flags == failure.primary.message_flags &&
+         std::memcmp(state.failure.message, failure.primary.message,
+                     sizeof(state.failure.message)) == 0;
+}
+
 void recordWorkerFailure(
     gti_thread_state_v1 &state, const gti_failure_record_v2 &record,
     const gti_failure_artifact_descriptor_v1 *artifact) noexcept {
@@ -297,7 +322,7 @@ void clear_managed_failure_handoff() noexcept {
   }
   {
     const std::lock_guard lock(state->failureMutex);
-    if (state->failureKind != GTI_THREAD_WORKER_FAILURE_NONE_V1) {
+    if (!acceptsCleanupEnvelope(*state, failure, primaryArtifact)) {
       std::terminate();
     }
     state->cleanupFailure = failure;
@@ -329,6 +354,22 @@ bool record_managed_task_cleanup_failure(
     const gti_failure_record_v1 &record,
     const gti_failure_artifact_descriptor_v1 *artifact) noexcept {
   return record_managed_task_cleanup_failure(promoteFailure(record), artifact);
+}
+
+bool copy_managed_task_cleanup_primary_v2(
+    gti_failure_record_v2 &record,
+    const gti_failure_artifact_descriptor_v1 *&artifact) noexcept {
+  gti_thread_state_v1 *state = activeWorker;
+  if (state == nullptr || !activeTaskObjectCleanup) {
+    return false;
+  }
+  const std::lock_guard lock(state->failureMutex);
+  if (state->failureKind != GTI_THREAD_WORKER_FAILURE_ORDINARY_V1) {
+    return false;
+  }
+  record = state->failure;
+  artifact = state->primaryArtifact;
+  return true;
 }
 
 bool record_managed_task_cleanup_failure(
@@ -372,9 +413,8 @@ bool record_managed_task_cleanup_emergency(
     std::terminate();
   }
   const std::lock_guard lock(state->failureMutex);
-  if (state->failureKind != GTI_THREAD_WORKER_FAILURE_NONE_V1) {
-    // The supplied envelope already contains two failures. Any prior worker
-    // failure would require an unrepresentable third record.
+  if (!acceptsCleanupEnvelope(*state, *failure, primaryArtifact)) {
+    // A differing pending primary would require a third record.
     std::terminate();
   }
   state->cleanupFailure = *failure;

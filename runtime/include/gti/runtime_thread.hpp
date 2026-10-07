@@ -27,6 +27,12 @@ void clear_managed_failure_handoff() noexcept;
 [[nodiscard]] gti_thread_worker_failure_kind_v1
 managed_task_cleanup_failure_kind() noexcept;
 
+// Copy, never borrow, the pending primary into a generated cleanup frame.
+// The descriptor is immutable and remains pinned by worker-owned state.
+[[nodiscard]] bool copy_managed_task_cleanup_primary_v2(
+    gti_failure_record_v2 &record,
+    const gti_failure_artifact_descriptor_v1 *&artifact) noexcept;
+
 [[noreturn]] void handoff_managed_worker_failure(
     const gti_failure_record_v1 &record,
     const gti_failure_artifact_descriptor_v1 *artifact);
