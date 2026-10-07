@@ -2220,10 +2220,22 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
       if (origin.pointeeType != SemanticType::Unknown &&
           !containsOpenTypeParameter(origin.pointeeType) &&
           origin.pointeeType != info.type.arguments.front()) {
-        report(expressionToken(expr),
-               "Raw pointer result contradicts the known pointee type '" +
-                   typeSpelling(origin.pointeeType) + "'.",
-               "GTI-S2014");
+        // These origins are optional audit evidence, not the source type of
+        // the call. In particular, a source allocator may erase byte-address
+        // arithmetic before constructing a different object in its region.
+        // Preserve the finding (and Strict promotion), without making Warn
+        // change acceptance. Static pointer shape/constness remain mandatory
+        // checks in analyzeAliasConversion, independently of this metadata.
+        diagnostics.push_back(makeDiagnostic(
+            origin.possible ? DiagnosticId::RawAuditPotential
+                            : DiagnosticId::RawAuditViolation,
+            expressionToken(expr),
+            {std::string(origin.possible
+                             ? "Raw pointer result may contradict a possible "
+                               "pointee type '"
+                             : "Raw pointer result contradicts the known "
+                               "pointee type '") +
+             typeSpelling(origin.pointeeType) + "'."}));
         diagnostics.back().related.push_back(
             {origin.addressSite, "Pointee type retained at this conversion."});
         break;

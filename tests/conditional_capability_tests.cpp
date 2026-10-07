@@ -108,6 +108,62 @@ int main() {
                            [](const auto &d) { return d.code == "GTI-S2029"; }),
            "conditional assertion must not erase a payload capability denial");
   }
+  // The public source owner must retain the old payload-dependent capability
+  // contract without a compiler-recognized storage type. These are separate
+  // clients of the general Reviewed<T> assertions above, not replacements.
+  const std::string storageDeclarations =
+      "#include <std/memory>\n#include <std/resource>\n" +
+      std::string(declarations);
+  const auto storage = analyze(storageDeclarations + R"(
+int main() {
+  std::allocator allocator{};
+  auto values = allocator.try_storage<int>(std::size_t(1)).expect("allocate");
+  observe(values);
+  consume(std::move(values));
+  auto shared = allocator.try_storage<Affine>(std::size_t(1)).expect("allocate");
+  observe(shared);
+  auto transferred = allocator.try_storage<Exclusive>(std::size_t(1)).expect("allocate");
+  consume(std::move(transferred));
+  std::process_resource provider{};
+  unsafe {
+    auto binding = std::bind_resource(provider);
+    std::resource_storage<int, std::process_resource> local{binding};
+    if (local.capacity() != std::size_t(0)) { return 1; }
+  }
+  return 0;
+})");
+  if (!storage.canGenerateCode())
+    for (const auto &diagnostic : storage.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(storage.canGenerateCode(),
+         "source storage preserves independent payload transfer/share "
+         "capabilities and resource storage remains usable locally");
+  for (const char *statement : {
+           "std::allocator allocator{}; auto slots = "
+           "allocator.try_storage<Affine>(std::size_t(1)).expect(\"allocate\");"
+           " "
+           "consume(std::move(slots));",
+           "std::allocator allocator{}; auto slots = "
+           "allocator.try_storage<Exclusive>(std::size_t(1)).expect("
+           "\"allocate\"); "
+           "observe(slots);",
+           "std::process_resource provider{}; unsafe { "
+           "auto binding = std::bind_resource(provider); "
+           "std::resource_storage<int, std::process_resource> slots{binding}; "
+           "consume(std::move(slots)); }",
+           "std::process_resource provider{}; unsafe { "
+           "auto binding = std::bind_resource(provider); "
+           "std::resource_storage<int, std::process_resource> slots{binding}; "
+           "observe(slots); }",
+       }) {
+    const auto bad = analyze(storageDeclarations + "int main() { " + statement +
+                             " return 0; }");
+    expect(!bad.canGenerateCode() &&
+               std::any_of(bad.diagnostics.begin(), bad.diagnostics.end(),
+                           [](const auto &d) { return d.code == "GTI-S2029"; }),
+           "source storage must not erase payload denial or a resource "
+           "owner's checked external borrow");
+  }
   for (const char *declaration :
        {"[[unsafe_transfer(U)]] class Wrong<T> {};",
         "[[unsafe_transfer(N)]] class Wrong<uint64_t N> {};",

@@ -49,7 +49,8 @@ bool bindingReceivedStoredLoan(const MirBody &body, HirBindingId binding,
                                    depth + 1);
 }
 
-bool completeObjectType(const MirProgram &program, const SemanticType &selected) {
+bool completeObjectType(const MirProgram &program,
+                        const SemanticType &selected) {
   const auto eligible = [&](const auto &self, const SemanticType &type,
                             std::size_t depth) -> bool {
     if (depth > 128 || type.arrayLengthParameterId != 0)

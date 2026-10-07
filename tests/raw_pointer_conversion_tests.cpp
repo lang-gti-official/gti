@@ -48,6 +48,101 @@ void auditNegative(const std::string &name, const std::string &source,
   negative(name, source, fragment, lang::RawPointerAuditMode::Strict);
   expect(analyze(source).canGenerateCode(),
          name + " remains unchecked with audit Off");
+  const auto warned = analyze(source, lang::RawPointerAuditMode::Warn);
+  if (!warned.canGenerateCode())
+    show(warned);
+  expect(warned.canGenerateCode(), name + " remains advisory with audit Warn");
+  expect(std::any_of(warned.diagnostics.begin(), warned.diagnostics.end(),
+                     [&](const auto &diagnostic) {
+                       return diagnostic.severity ==
+                                  lang::DiagnosticSeverity::Warning &&
+                              diagnostic.message.find(fragment) !=
+                                  std::string::npos;
+                     }),
+         name + " preserves its warning rather than dropping evidence");
+}
+
+void sourceResultAuditPolicy() {
+  // An unrelated source byte-address adapter models the transport used by
+  // allocators, without accessing memory or requiring allocator recognition.
+  // The audit retains uint8_t as a possible origin but cannot prove a later
+  // object lifetime; that conservative fact must not become a hard type error.
+  const std::string source = R"(
+using Address = void*;
+using BytePointer = uint8_t*;
+using ItemPointer = int*;
+Address byte_transport(Address address) {
+  BytePointer bytes = BytePointer(address);
+  return Address(bytes);
+}
+Target restore<Target>(Address address) { return Target(address); }
+int main() {
+  Address address = byte_transport(nullptr);
+  ItemPointer restored = restore<ItemPointer>(address);
+  return restored == nullptr ? 0 : 1;
+}
+)";
+  const auto off = analyze(source);
+  const auto warn = analyze(source, lang::RawPointerAuditMode::Warn);
+  const auto strict = analyze(source, lang::RawPointerAuditMode::Strict);
+  if (!off.canGenerateCode())
+    show(off);
+  if (!warn.canGenerateCode())
+    show(warn);
+  expect(off.canGenerateCode() && warn.canGenerateCode(),
+         "source result provenance is advisory in Warn, absent in Off");
+  expect(!strict.canGenerateCode(),
+         "Strict still rejects source result provenance contradictions");
+  for (const auto &[result, severity] :
+       {std::pair{&warn, lang::DiagnosticSeverity::Warning},
+        std::pair{&strict, lang::DiagnosticSeverity::Error}}) {
+    const auto diagnostic = std::find_if(
+        result->diagnostics.begin(), result->diagnostics.end(),
+        [](const auto &item) {
+          return item.code == "GTI-S2102" &&
+                 item.message.find("Raw pointer result may contradict") !=
+                     std::string::npos;
+        });
+    expect(diagnostic != result->diagnostics.end(),
+           "source-result may-origin uses the potential audit diagnostic");
+    if (diagnostic != result->diagnostics.end()) {
+      expect(diagnostic->severity == severity,
+             "source-result severity follows audit policy");
+      expect(diagnostic->primary.start ==
+                 source.find("(address)", source.find("restore<ItemPointer>")) +
+                     std::string("(address").size(),
+             "source-result finding identifies the caller closing token");
+      expect(!diagnostic->related.empty(),
+             "source-result finding retains its conversion provenance");
+      expect(diagnostic->fixes.empty(),
+             "no unsafe mechanical fix for a pointee audit finding");
+    }
+  }
+  if (off.canGenerateCode() && warn.canGenerateCode())
+    for (const auto standard :
+         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
+      expect(gti_test::emitCppText(off, standard) ==
+                 gti_test::emitCppText(warn, standard),
+             "Off and Warn emit identical source-result pointer code");
+
+  // Unlike provenance observations, declared pointer compatibility and
+  // constness cannot be disabled by any audit policy.
+  for (const auto mode :
+       {lang::RawPointerAuditMode::Off, lang::RawPointerAuditMode::Warn,
+        lang::RawPointerAuditMode::Strict}) {
+    negative("source helper cannot remove pointee constness", R"(
+using Pointer = int*;
+Pointer restore(const void* address) { return Pointer(address); }
+int main() { return 0; }
+)",
+             "cannot remove pointee constness", mode);
+    negative("source helper cannot reinterpret unrelated typed pointers", R"(
+using Pointer = uint64_t*;
+Pointer restore(int* address) { return Pointer(address); }
+int main() { return 0; }
+)",
+             "same pointee type", mode);
+  }
 }
 void positiveAndMir() {
   const auto result = analyze(R"(
@@ -182,7 +277,7 @@ struct Item { int value = 0; };
 struct Other { int value = 0; };
 int main() { mut Item value{}; void* e = std::erase_address(&value);
 Other* p = std::typed_address<Other>(e); return 0; })",
-                "known pointee type");
+                "possible pointee type 'Item'");
   auditNegative("foreign typed parameter retains known type", R"(
 using E = void*; using P = uint64_t*;
 void test(int* address) { E e = E(address); P p = P(e); }
@@ -199,7 +294,7 @@ using E = void*; using P = uint64_t*;
 void test(bool choose) { mut int a = 0; mut uint64_t b = 0;
 E e = choose ? E(&a) : E(&b); P p = P(e); }
 int main() { return 0; })",
-                "known pointee type");
+                "possible pointee type 'int32_t'");
   auditNegative("backedge retains contradictory pointee", R"(
 using E = void*; using P = int*;
 int main() { mut int a = 0; mut uint64_t b = 0; mut E e = E(&a);
@@ -223,5 +318,6 @@ int main() { E e = E(); return 0; })",
 int main() {
   positiveAndMir();
   negatives();
+  sourceResultAuditPolicy();
   return failures == 0 ? 0 : 1;
 }

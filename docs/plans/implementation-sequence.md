@@ -4292,21 +4292,21 @@ example and the earlier memory API declarations in memory consumers, with no
 change to existing generated-family counts. Full native corpus, installed
 consumers and final current-main reconciliation remain final campaign gates.
 
-The public-storage integration is now under validation, not complete. Sparse
+The public-storage integration remains under validation, not complete. Sparse
 policy resides directly in `<std/memory>` so ordinary source-unit visibility
 does not require transitive includes. Both process storage and resource storage
 use separate object and live-slot leases; `storage_element<T>` makes the existing
 no-checked-borrow payload boundary an explicit source constraint. A narrow
 native address-alignment observation preserves defensive provider validation;
 it does not prove provenance or replace the unsafe provider obligations.
-Source sparse runtime/cleanup and native alignment/ABI checks pass. Resource
-integration exposed multi-field lifetime identity and constructor-representation
-gaps; these are being fixed with unrelated guarded-pair and malformed-MIR
-regressions before claiming public runtime parity. Two-allocation rollback,
-descriptor/release tests have been updated but the full resource runtime matrix
-is not yet passing evidence. Old sparse compiler paths remain temporarily for
-comparison and must still be retired, followed by census/current-main
-reconciliation, canonical documentation and the remaining acceptance gates.
+Source sparse runtime/cleanup and native alignment/ABI checks pass. The
+multi-field lifetime identity and constructor-representation gaps are fixed,
+with unrelated guarded-pair runtime and malformed-MIR regressions. The full
+focused resource runtime matrix now passes, including two-allocation rollback
+and original descriptor/release ordering. Legacy sparse compiler paths have
+been retired. Current-main/census reconciliation, optional-audit parity, broad
+production and installed-consumer acceptance remain outstanding; the focused
+results are not a completed-campaign claim.
 
 #### Why This Campaign Exists
 
@@ -4529,9 +4529,10 @@ unless requested.
 - **State/role:** in progress. The owner authorized provider-layer preparation
   in parallel with `S-ALLOC-06`. This independent slice moves process
   request validation, native-size/zero handling, target selection and failure
-  mapping into GTI, using POSIX/CRT forwarding adapters. Default sparse routing,
-  metadata policy and retirement of generated storage allocation still depend
-  on `S-ALLOC-06`; this checkpoint does not complete the campaign. The owner delegates the
+  mapping into GTI, using POSIX/CRT forwarding adapters. The combined candidate
+  now routes default sparse storage and its metadata through that provider and
+  retires generated sparse allocation. Final acceptance remains coupled to
+  `S-ALLOC-06`; this checkpoint does not complete the campaign. The owner delegates the
   source/compiler/platform split described here. This is not a claim that
   every allocation client has migrated or every ABI adapter is removable.
 - **Outcome:** the default typed-storage and process-resource paths acquire

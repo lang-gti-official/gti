@@ -470,8 +470,12 @@ These are safe inert address operations, not accesses. They establish no
 initialization, alignment, lifetime, ownership or write permission and create
 no checked loan. Existing origin records survive erasure and restoration,
 including expired/replaced origins and known pointee-type contradictions.
-Known contradictory restoration is an optional audit finding; the conversion
-alone still grants no access permission. Actual dereference and checked
+Known contradictory restoration is an optional audit finding, including when
+the restored pointer is returned through an ordinary generic source helper.
+Warn retains that finding without changing code generation or acceptance;
+Strict promotes it. This bounded audit may retain a byte-pointer origin from
+allocator address arithmetic without proving a later object-lifetime change.
+The conversion alone still grants no access permission. Actual dereference and checked
 owner-witness borrowing retain their own obligations. Pointer conversions do not extend constant evaluation or
 promise stable object layout. Example 113 demonstrates an unrelated user type.
 

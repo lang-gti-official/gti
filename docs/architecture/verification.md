@@ -38,6 +38,20 @@ reconciling current main and census inventories, full production/tooling and
 installed-consumer checks remain required. No active user toolchain was
 installed, and native Windows/Linux execution is not claimed.
 
+The acceptance audit additionally tests public source-storage transfer/share
+capabilities independently, including each payload denial and the borrowed
+resource-owner boundary. Those contracts pass. Optional raw-pointer auditing
+exposed one source-result producer that incorrectly emitted a mandatory type
+error from advisory provenance. It now uses the existing audit severity policy;
+static pointer compatibility and constness remain mandatory. The reduced
+frontend and LSP regressions pass, including Strict rejection, exact caller
+locations and Off/Warn C++20/C++23 equality. All eleven allocator/manual-lifetime
+sources in `allocator_raw_audit_independence` pass (119.47 seconds).
+Preliminary tooling checks also pass the 73-case Tree-sitter corpus, all 190
+shipped-source parses, highlight/locals/rainbow queries and focused formatter/LSP
+round trips. These results precede the next current-main reconciliation and
+do not replace final combined verification.
+
 ## Source-defined process byte provider (S-ALLOC-07 checkpoint)
 
 The pre-reconciliation storage-cost probe uses frozen optimized compiler,
@@ -96,8 +110,10 @@ family. `resource_memory_runtime` checks actual target facts, writable aligned
 extents and matching native release. The C ABI header smoke fixes the exact
 fixed-width adapter signatures. These are local macOS arm64 tests with optimized
 compiler libraries, not evidence of native Windows/Linux execution. Native CI,
-installed consumers, production gates and the sparse metadata/default-factory
-migration remain required before the full S-ALLOC-07 campaign is complete.
+installed consumers and production gates remain required before the full
+S-ALLOC-07 campaign is complete. The combined candidate now includes the sparse
+metadata/default-factory migration described above; the provider checkpoint's
+independent tests alone do not validate that integration.
 
 ## Reconciled dormant engine embedding foundation
 
