@@ -3066,17 +3066,20 @@ example graph.
 ## Language coverage corpus
 
 `tests/coverage/` holds a breadth sweep of ordinary GTI programs chosen to
-combine syntax and stdlib surface. The fixed c01–c30 tranche is registered as
-`language_coverage_fixed_corpus`; run that exact release gate directly with
-`tests/coverage/run_coverage.sh build/gti <output> --fixed-baseline`. The full
-65-program audit runs with `tests/coverage/run_coverage.sh build/gti` and
-deliberately retains unresolved findings, so it is not a green CTest
-expectation yet.
+combine syntax and stdlib surface, a reproducer for every audit finding, and
+must-reject programs under `rejections/`. `language_coverage_corpus` gates all
+three through `tests/coverage/gate.py <gti> <output>` against
+`tests/coverage/expectations.json`.
 
-The runner separately classifies an ICE (`GTI-B0001`), link failure,
-diagnostic rejection, silent compiler failure, and runtime failure so no class
-can be mistaken for another. `tests/coverage/FINDINGS.md` records the fixed
-F1–F6 reductions and the unresolved F7–F20 audit. Programs here must be valid
+The gate separately classifies pass, runtime failure, ICE (`GTI-B0001`),
+backend and link failure, silent compiler failure, hang, crash, a diagnostic at
+the synthetic `<source>` location, and located rejection, so no class can be
+mistaken for another. Corpus programs must pass unless listed. A listed known
+finding records the outcome its defect produces today and names its finding
+and issue; the gate fails when that outcome changes, so a failing test stays in
+place without hiding either a regression or an unrecorded fix. A must-reject
+program states the diagnostic code it expects. `tests/coverage/FINDINGS.md`
+records every finding and its current status. Corpus programs must be valid
 GTI — a failure is a compiler finding, not a corpus expectation to edit away.
 
 For exact qualified class specializations, `compiler_pipeline` owns qualified
