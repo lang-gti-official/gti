@@ -3378,7 +3378,8 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
       validateStoredBorrowInitialization(declaredType, stmt.initializer());
       recordRetainedBorrow(stmt, stmt.initializer());
     }
-    if (!initializerAssignable) {
+    if (!initializerAssignable && declaredType != SemanticType::Unknown &&
+        initializerType != SemanticType::Unknown) {
       report(expressionToken(stmt.initializer()),
              "Cannot initialize '" + stmt.name().lexeme + "' of type '" +
                  typeSpelling(declaredType) + "' with a value of type '" +

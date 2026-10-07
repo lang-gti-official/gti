@@ -294,6 +294,33 @@ int recovered_after() { return 0; }
          "and retain all later branches");
 }
 
+void testInvalidConditionRecovery() {
+  for (const std::string source : {
+           "#if FLAG\nint first() { return 1; }\n#endif\n",
+           "#if defined(OK)\nint first() { return 1; }\n"
+           "#elif FLAG\nint second() { return 2; }\n#endif\n",
+           "#if FLAG\n#if defined(INNER)\nint inner() { return 1; }\n"
+           "#else\nint other() { return 2; }\n#endif\n#endif\n"}) {
+    const std::string complete = source + "int recovered_after() { return 0; }\n";
+    lang::Lexer lexer;
+    lang::Parser parser(lexer.scan(complete, "bad-condition.gti"));
+    const auto program = parser.parse();
+    expect(parser.errors().size() == 1,
+           "a failed condition should not orphan its branch boundaries");
+    if (parser.errors().size() == 1) {
+      const auto &diagnostic = parser.errors().front();
+      expect(diagnostic.code == "GTI-P0003" &&
+                 diagnostic.primary.source == "bad-condition.gti" &&
+                 diagnostic.primary.start == complete.find("FLAG") &&
+                 diagnostic.primary.end == complete.find("FLAG") + 4,
+             "the original malformed-condition diagnostic retains its span");
+    }
+    expect(findConditional(program.declarations()) != nullptr &&
+               findFunction(program.declarations(), "recovered_after") != nullptr,
+           "condition recovery preserves nesting and subsequent declarations");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -302,6 +329,7 @@ int main() {
   testActiveBoundaryPropagation();
   testActiveExternBoundaryPropagation();
   testNestedBoundaryPropagation();
+  testInvalidConditionRecovery();
 
   if (failures != 0) {
     std::cerr << failures << " parser conditional recovery test(s) failed\n";

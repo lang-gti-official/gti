@@ -264,6 +264,9 @@ target boundary.
 unsupported native, polymorphic, operator or bodyless declarations, caller tracking on
 the hosted entry point, reachable normal completion of a terminal function,
 and loss of caller-location transport at a native callback boundary.
+The following typed declaration determines function-attribute context even
+when the list contains no recognized attribute; unknown plain names therefore
+reach semantic validation rather than a misleading class-attribute parse error.
 The normal-return diagnostic points at the `return` keyword; fallthrough
 points at the function name. A body with an earlier semantic error does not
 receive a speculative terminal-flow cascade. The LSP publishes the same
@@ -273,6 +276,14 @@ Incomplete bracketed declaration attributes retain parser-owned `GTI-P0001`
 at the first unexpected token. The missing-`]]` message is declaration-neutral,
 and recovery retains following declarations with the existing exact delimiter
 insertion fix, without changing the declared contract.
+
+Malformed `#if`/`#elif` conditions retain their conditional owner during
+recovery: the parser publishes the original `GTI-P0003`, consumes the matching
+branch boundaries, and preserves later declarations instead of falsely
+reporting an unmatched `#endif`. Genuinely stray directives remain errors.
+Unknown initializer or binary-operand types are poison from their owning
+lookup/type error, not evidence for an additional assignment or operator
+mismatch. Unrelated, fully known type errors remain reportable.
 
 `GTI-S2094` owns an executable request without a resolved global `main`
 definition in its entry source unit. It is opt-in executable policy, checked
