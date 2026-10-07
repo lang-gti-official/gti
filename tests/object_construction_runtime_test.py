@@ -32,7 +32,8 @@ if __name__ == "__main__":
         (("body", "failure", "cleanup", "success"),
          (70, "7\n20\n10\n900\n", failure(body))),
         (("body", "failure", "cleanup", "also", "fails"),
-         # The secondary destructor still drains its own fields. The outer
-         # region cleanup is then suppressed, as in source_storage_drain.
-         (70, "7\n20\n10\n", double)),
+         # The body failure is already active when Anchor's destructor fails.
+         # Stop before its fields (20/10) and the outer region (900), while
+         # preserving the exact body-primary and destructor-secondary sites.
+         (70, "7\n", double)),
     ]})
