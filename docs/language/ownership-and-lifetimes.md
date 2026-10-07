@@ -1225,6 +1225,10 @@ source-defined exact `operator=(nullptr_t)` overload. `reset()` and null
 assignment destroy a present pointee exactly once and leave the owner empty;
 repeating either operation on an empty owner is valid. The owner remains
 move-only and its ordinary scope cleanup remains deterministic.
+An explicit field constructor initializer such as `Node() : child(nullptr) {}`
+uses the same target-typed construction rule as `child = nullptr` on the field
+declaration. It does not turn an ordinary call's `nullptr` argument into an
+implicit owner conversion.
 
 This is not a general implicit class conversion. In particular, an ordinary
 call such as `consume(nullptr)` does not construct a `unique_ptr` argument;
