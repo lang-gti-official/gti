@@ -43,7 +43,8 @@ void testCensus() {
   using namespace lang;
   census(MirInstructionKind::StorageConstructPreflight);
   census(MirOperation::PostDecrement);
-  census(IntrinsicKind::SourceColumn);
+  census(
+      static_cast<IntrinsicKind>(static_cast<int>(IntrinsicKind::Count) - 1));
   census(MirTerminatorKind::TerminateCleanupFailure);
   census(MirProjectionKind::Base);
   census(MirPlaceRootKind::Loan);
@@ -55,7 +56,7 @@ void testCensus() {
   census(FailurePropagationKind::Destructor);
   census(SynchronizationOperationKind::ConditionNotify);
   census(AtomicMemoryOrder::SequentiallyConsistent);
-  census(UnsafeOperationKind::StorageAdoption);
+  census(UnsafeOperationKind::ObjectLifetime);
   census(MirAnalysisKind::SparseConstants);
   census(MirTransformKind::DevirtualizeCall);
   census(MirTransformProofKind::ExactReceiver);

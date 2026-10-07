@@ -4845,6 +4845,9 @@ private:
     if (const auto *call = exprAs<Call>(raw)) {
       if (const ResolvedCallInfo *resolved = model.findCall(*call)) {
         value.intrinsic = resolved->intrinsic;
+        if (value.intrinsic == IntrinsicKind::ObjectDestroy &&
+            resolved->typeArguments.size() == 1)
+          (void)seedConcreteDeclarationType(resolved->typeArguments.front());
         if ((value.intrinsic == IntrinsicKind::ObjectSize ||
              value.intrinsic == IntrinsicKind::ObjectAlignment) &&
             resolved->typeArguments.size() == 1) {

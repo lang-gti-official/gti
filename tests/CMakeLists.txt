@@ -37,6 +37,10 @@ add_test(NAME resource_memory_runtime COMMAND gti_resource_memory_runtime_tests)
 add_executable(gti_storage_adoption_tests storage_adoption_tests.cpp)
 target_link_libraries(gti_storage_adoption_tests PRIVATE gti_compiler gti_cpp_backend)
 add_test(NAME storage_adoption_contract COMMAND gti_storage_adoption_tests)
+
+add_executable(gti_object_lifetime_tests object_lifetime_tests.cpp)
+target_link_libraries(gti_object_lifetime_tests PRIVATE gti_compiler gti_cpp_backend)
+add_test(NAME object_lifetime_contract COMMAND gti_object_lifetime_tests)
 add_executable(gti_resource_protocol_tests resource_protocol_tests.cpp)
 target_link_libraries(gti_resource_protocol_tests PRIVATE gti_compiler gti_cpp_backend)
 add_test(NAME resource_protocol_contract COMMAND gti_resource_protocol_tests)
@@ -271,6 +275,12 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME source_storage_drain_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_storage_drain_runtime_test.py" $<TARGET_FILE:gti>)
   set_tests_properties(source_storage_drain_runtime PROPERTIES TIMEOUT 240)
+
+  add_test(NAME object_destroy_scalar_runtime
+           COMMAND ${Python3_EXECUTABLE}
+                   "${PROJECT_SOURCE_DIR}/tests/object_destroy_scalar_runtime_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(object_destroy_scalar_runtime PROPERTIES TIMEOUT 240)
   add_test(NAME programmable_allocators_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/programmable_allocators_runtime_test.py" $<TARGET_FILE:gti>)
   set_tests_properties(programmable_allocators_runtime PROPERTIES TIMEOUT 900)

@@ -107,6 +107,98 @@ const MirPlace *storageAdoptionDestination(const MirBody &body,
              : nullptr;
 }
 
+namespace {
+bool completeObjectType(const MirProgram &program, const SemanticType &type) {
+  const auto eligible = [&](const auto &self, const SemanticType &candidate,
+                            std::size_t depth) -> bool {
+    if (depth > 128 || candidate.arrayLengthParameterId != 0)
+      return false;
+    switch (candidate.kind) {
+    case SemanticType::Int8:
+    case SemanticType::Int16:
+    case SemanticType::Int32:
+    case SemanticType::Int64:
+    case SemanticType::UInt8:
+    case SemanticType::UInt16:
+    case SemanticType::UInt32:
+    case SemanticType::UInt64:
+    case SemanticType::Float:
+    case SemanticType::Double:
+    case SemanticType::Bool:
+    case SemanticType::Char:
+      return candidate == SemanticType(candidate.kind);
+    case SemanticType::RawPointer:
+      return candidate.arguments.size() == 1 &&
+             candidate.arguments.front().kind != SemanticType::RawPointer &&
+             candidate.arguments.front().kind != SemanticType::TypeParameter &&
+             candidate.arguments.front().kind != SemanticType::Unknown;
+    case SemanticType::Enum:
+      return program.findIntegralEnum(candidate.enumId) != nullptr;
+    case SemanticType::Array:
+      return candidate.arguments.size() == 1 && candidate.arrayLength > 0 &&
+             self(self, candidate.arguments.front(), depth + 1);
+    case SemanticType::Class: {
+      const MirClassInstance *owner = nullptr;
+      for (const MirClassInstance &instance : program.classInstances()) {
+        if (instance.type == candidate) {
+          if (owner != nullptr)
+            return false;
+          owner = &instance;
+        }
+      }
+      return owner != nullptr && owner->kind != ClassKind::Interface &&
+             !owner->abstract && !owner->cOpaqueHandle &&
+             owner->compilerCapability == CompilerCapabilityTypeKind::None;
+    }
+    default:
+      return false;
+    }
+  };
+  return eligible(eligible, type, 0);
+}
+} // namespace
+
+bool objectDestroy(const MirProgram &program,
+                   const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.intrinsic != IntrinsicKind::ObjectDestroy ||
+      instruction.unsafeOperation != UnsafeOperationKind::ObjectLifetime ||
+      instruction.result || instruction.info.type != SemanticType::Void ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly ||
+      instruction.info.traits != semanticTraits(SemanticType::Void) ||
+      instruction.info.updateArithmeticType != SemanticType::Unknown ||
+      instruction.operands.size() != 1 ||
+      instruction.parameterTypes.size() != 1)
+    return false;
+  const auto &pointer = instruction.parameterTypes.front();
+  if (pointer.kind != SemanticType::RawPointer ||
+      pointer.pointerAccess != AccessMode::Mutable ||
+      pointer.arguments.size() != 1 ||
+      !completeObjectType(program, pointer.arguments.front()) ||
+      instruction.operands.front().kind != MirOperandKind::Value ||
+      instruction.operands.front().type != pointer ||
+      !instruction.definedFailure.localOrigins.empty() ||
+      (instruction.definedFailure.propagation != FailurePropagationKind::None &&
+       instruction.definedFailure.propagation !=
+           FailurePropagationKind::Destructor))
+    return false;
+  const MirInstruction exact{.id = instruction.id,
+                             .kind = MirInstructionKind::Call,
+                             .hirValue = instruction.hirValue,
+                             .hirStatement = instruction.hirStatement,
+                             .callSite = instruction.callSite,
+                             .unsafeOperation =
+                                 UnsafeOperationKind::ObjectLifetime,
+                             .operands = instruction.operands,
+                             .parameterTypes = instruction.parameterTypes,
+                             .intrinsic = IntrinsicKind::ObjectDestroy,
+                             .definedFailure = instruction.definedFailure,
+                             .elementCleanup = instruction.elementCleanup,
+                             .info = instruction.info};
+  return instruction == exact;
+}
+
 bool objectLayoutQuery(const MirProgram &program,
                        const MirInstruction &instruction) {
   if ((instruction.intrinsic != IntrinsicKind::ObjectSize &&
@@ -131,52 +223,7 @@ bool objectLayoutQuery(const MirProgram &program,
                              .info = instruction.info};
   if (instruction != exact)
     return false;
-  const auto eligible = [&](const auto &self, const SemanticType &type,
-                            std::size_t depth) -> bool {
-    if (depth > 128 || type.arrayLengthParameterId != 0)
-      return false;
-    switch (type.kind) {
-    case SemanticType::Int8:
-    case SemanticType::Int16:
-    case SemanticType::Int32:
-    case SemanticType::Int64:
-    case SemanticType::UInt8:
-    case SemanticType::UInt16:
-    case SemanticType::UInt32:
-    case SemanticType::UInt64:
-    case SemanticType::Float:
-    case SemanticType::Double:
-    case SemanticType::Bool:
-    case SemanticType::Char:
-      return type == SemanticType(type.kind);
-    case SemanticType::RawPointer:
-      return type.arguments.size() == 1 &&
-             type.arguments.front().kind != SemanticType::RawPointer &&
-             type.arguments.front().kind != SemanticType::TypeParameter &&
-             type.arguments.front().kind != SemanticType::Unknown;
-    case SemanticType::Enum:
-      return program.findIntegralEnum(type.enumId) != nullptr;
-    case SemanticType::Array:
-      return type.arguments.size() == 1 && type.arrayLength > 0 &&
-             self(self, type.arguments.front(), depth + 1);
-    case SemanticType::Class: {
-      const MirClassInstance *owner = nullptr;
-      for (const MirClassInstance &candidate : program.classInstances()) {
-        if (candidate.type == type) {
-          if (owner != nullptr)
-            return false;
-          owner = &candidate;
-        }
-      }
-      return owner != nullptr && owner->kind != ClassKind::Interface &&
-             !owner->abstract && !owner->cOpaqueHandle &&
-             owner->compilerCapability == CompilerCapabilityTypeKind::None;
-    }
-    default:
-      return false;
-    }
-  };
-  return eligible(eligible, *instruction.objectLayoutType, 0);
+  return completeObjectType(program, *instruction.objectLayoutType);
 }
 
 bool rawPointerConversion(const MirInstruction &instruction) {

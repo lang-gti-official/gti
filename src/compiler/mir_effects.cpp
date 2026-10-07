@@ -449,6 +449,11 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .allocates = true,
                     .invokesRuntime = true,
                     .initializesValue = true}, // StorageTryAdopt
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .mayTrap = true,
+                    .dropsValue = true,
+                    .invokesUserCode = true}, // ObjectDestroy
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -686,6 +691,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "object-size",
     "object-alignment",
     "storage-try-adopt",
+    "object-destroy",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({

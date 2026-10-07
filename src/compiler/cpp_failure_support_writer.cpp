@@ -741,6 +741,17 @@ mir_storage_destroy_v1(::gti_internal::backend::storage<T> &storage,
   return mir_failure_success_v1;
 }
 
+// Raw lifetime operations deliberately have no slot map or allocation policy.
+// GTI's verified recipe consumes payload cleanup first; the native destructor
+// then retires the already-disarmed representation, never the backing bytes.
+template <typename T, typename Cleanup>
+inline bool mir_object_destroy_v1(T *address, ::gti_failure_record_v2 *record,
+                                  Cleanup cleanup) {
+  const bool success = cleanup(*address, record, false);
+  std::destroy_at(address);
+  return success;
+}
+
 template <typename T, std::size_t N>
 inline mir_failure_status_v1
 mir_restoring_indexed_swap_v1(std::array<T, N> &storage,

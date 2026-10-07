@@ -2241,7 +2241,8 @@ private:
         // Region adoption is one explicit call, not an assertion by its
         // surrounding full-expression/lifecycle bookkeeping markers.
         if (source->unsafeOperation != UnsafeOperationKind::None &&
-            (source->unsafeOperation != UnsafeOperationKind::StorageAdoption ||
+            ((source->unsafeOperation != UnsafeOperationKind::StorageAdoption &&
+              source->unsafeOperation != UnsafeOperationKind::ObjectLifetime) ||
              instruction.kind == MirInstructionKind::Call)) {
           instruction.unsafeOperation = source->unsafeOperation;
         }
@@ -5804,6 +5805,7 @@ private:
       }
     }
     if ((value.intrinsic == IntrinsicKind::StorageDestroy ||
+         value.intrinsic == IntrinsicKind::ObjectDestroy ||
          value.intrinsic == IntrinsicKind::PrefixStoragePop ||
          value.intrinsic == IntrinsicKind::PrefixStorageErase ||
          value.intrinsic == IntrinsicKind::OptionalStorageReset) &&
