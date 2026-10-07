@@ -284,6 +284,17 @@ not evidence that every source call/container transport route is closed.
 
 ## Programmable allocation and cleanup-bound resource leases
 
+The S-ALLOC-06 migration prerequisite `source_storage_drain_runtime` proves
+source-defined cleanup-guard traversal over the existing storage surface. An
+unrelated guard drains immovable owning elements in reverse order, continues
+after a first destructor failure, preserves member cleanup and the original
+record, and retains the existing double-failure stop. A marker distinguishes
+the guard's work from the underlying storage's fallback cleanup. The matrix
+includes ordinary entry and entry during failure cleanup across C++20/C++23
+O0/O1/O3, disabled elision and ASan/UBSan. This is baseline lifecycle evidence,
+not a claim that public raw lifetime operations or source-defined sparse
+storage have already landed.
+
 Phase 2 (`S-ALLOC-05`) completed on 2026-10-07. The gates below are its
 acceptance evidence, and the completion record below states what passed.
 
