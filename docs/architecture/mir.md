@@ -2268,6 +2268,27 @@ verification independently requires this exact projected source rather than
 accepting equality of flattened dependency keys. This repairs nested checked
 arrow chains without backend inference or a public-wrapper name rule.
 
+Reference initialization records both the retained provenance loan and the
+exact runtime address place. Those identities may differ when several shared
+aliases protect the same owner but accessors select different referents.
+`referenceAddressRetainsLoan` checks a loan-rooted address against that retained
+loan: it is either a descendant with exact typed call publication or a parallel
+read-only publication over identical source and dependency identities. The
+body verifier and independent C++ admission use the same identity query;
+neither infers an address from carrier order or a coarse owner key.
+
+A read-only local reference may capture an active, unretained read-only
+call-result descendant while its mutable provenance parent is suspended. This
+is permission only for exact `Initialize` into a reference binding already
+listed as a carrier, not for an executable read or write through the parent.
+Loan flow requires the complete address-producing ancestry and stored
+dependencies to be definitely active, and permits no live mutable sibling.
+The child keeps its existing full-expression endpoint and the retained parent
+keeps its existing carrier lifetime. Calls, loads, mutations and returns do not
+gain a general suspended-parent exception. This supports read-only nested
+container references and unrelated source-defined accessors without changing
+overload selection, escape rules, IR serialization or runtime loan tracking.
+
 A reference binding that retains a borrowed call result keeps that call
 result's own loan and adds itself as a carrier, whether the loan is a root or
 already hangs from the parent its retained semantic loan names. Lowering does

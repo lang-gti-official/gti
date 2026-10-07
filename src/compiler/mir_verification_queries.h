@@ -27,6 +27,14 @@ storageAdoptionDestination(const MirBody &body,
 [[nodiscard]] const MirLoan *
 rawBorrowResultLoan(const MirBody &body, const MirInstruction &instruction);
 
+// A distinct loan-rooted address retains either descendant provenance or a
+// parallel read-only loan over the identical source/dependencies. Check typed
+// call publication too; this proves identity and access, never liveness or
+// permission to use a suspended loan.
+[[nodiscard]] bool referenceAddressRetainsLoan(const MirBody &body,
+                                               const MirPlace &address,
+                                               const MirLoan &retained);
+
 // Recognize the exact, single-use signed-minimum literal schedule shared by
 // native emission and constant execution. Ordinary runtime negation is not
 // interchangeable with this failure-free literal formation.

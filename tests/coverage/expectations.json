@@ -2134,14 +2134,10 @@
       "outcome": "pass"
     },
     "a59-map-at-then-element-ref": {
-      "finding": "A59",
-      "issue": 100,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a59-readonly-ref-into-mut-nested-container": {
-      "finding": "A59",
-      "issue": 100,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a60-println-format-missing-include": {
       "finding": "A60",

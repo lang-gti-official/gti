@@ -2,8 +2,56 @@
 
 #include <algorithm>
 #include <climits>
+#include <unordered_set>
 
 namespace lang::mir_detail {
+
+bool referenceAddressRetainsLoan(const MirBody &body, const MirPlace &address,
+                                 const MirLoan &retained) {
+  if (address.root != MirPlaceRootKind::Loan || address.loan == retained.id)
+    return true;
+  std::unordered_set<MirLoanId> visited;
+  MirLoanId link = address.loan;
+  while (link != retained.id) {
+    const MirLoan *child = body.findLoan(link);
+    if (child == nullptr || !visited.insert(link).second)
+      return false;
+    if (child->kind == MirLoanKind::CallResult) {
+      const MirInstruction *producer = nullptr;
+      for (const MirBlock &block : body.blocks)
+        for (const MirInstruction &instruction : block.instructions)
+          if (instruction.kind == MirInstructionKind::Call &&
+              instruction.loan == child->id &&
+              instruction.hirValue == child->producedBy) {
+            if (producer != nullptr)
+              return false;
+            producer = &instruction;
+          }
+      if (producer == nullptr || child->producedBy == 0 ||
+          producer->info.access != child->access)
+        return false;
+      const auto &result = producer->info.type;
+      const SemanticType &referent =
+          result.kind == SemanticType::Reference && result.arguments.size() == 1
+              ? result.arguments.front()
+              : result;
+      if (link == address.loan && referent != address.type)
+        return false;
+      // Shared carrier extraction can publish a fresh address loan with no
+      // reborrow parent. Its exact external source and dependency identities
+      // still agree with the retained read-only owner; a mutable parent cannot
+      // use this parallel-loan family to hide a detached exclusive reborrow.
+      if (child->parent == 0 && child->access == AccessMode::ReadOnly &&
+          retained.access == AccessMode::ReadOnly &&
+          child->source == retained.source &&
+          child->storedDependency == retained.storedDependency &&
+          child->additionalDependencies == retained.additionalDependencies)
+        return true;
+    }
+    link = child->parent;
+  }
+  return !visited.empty();
+}
 
 bool bindingReceivedStoredLoan(const MirBody &body, HirBindingId binding,
                                MirLoanId dependency, std::size_t depth) {
