@@ -1,0 +1,41 @@
+#include <std/functional>
+#include <std/optional>
+#include <std/utility>
+#include <std/vector>
+
+T relay<T>(T value) { return value; }
+
+mut int converted_count = 0;
+struct Owner {
+  int value = 7;
+  Owner() {}
+  Owner<Other>(Other source, int policy = 0) { converted_count += 1; }
+};
+
+int main() {
+  int offset = 1;
+  auto operation = [offset](int value) -> int { return value + offset; };
+  auto copied = relay(std::move(operation));
+  if (copied(41) != 42) return 1;
+
+  Owner original{};
+  Owner copy{original};
+  Owner moved{std::move(original)};
+  Owner converted{4};
+  if (copy.value != 7 || moved.value != 7 || converted_count != 1) return 2;
+
+  mut std::vector<std::move_only_function<int(int)>> handlers{};
+  auto first = std::move_only_function<int(int)>([](int x) -> int { return x + 1; });
+  handlers.push_back(std::move(first));
+  handlers.push_back(std::move_only_function<int(int)>([](int x) -> int { return x + 2; }));
+  mut int total = 0;
+  for (auto& handler : handlers) { total += handler(1); }
+  if (total != 5) return 3;
+
+  mut std::optional<std::move_only_function<int(int)>> maybe{};
+  [[discard]] maybe.emplace([](int x) -> int { return x + 3; });
+  if (maybe.value()(1) != 4) return 4;
+  auto next = std::move_only_function<int(int)>([](int x) -> int { return x + 4; });
+  [[discard]] maybe.emplace(std::move(next));
+  return maybe.value()(1) == 5 ? 0 : 5;
+}
