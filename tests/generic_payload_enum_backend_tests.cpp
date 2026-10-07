@@ -636,5 +636,61 @@ int main() { return 0; }
     for (const auto &diagnostic : finite.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   }
+  const auto aliases =
+      lang::Frontend().analyze("enum-alias-layout-authority.gti", R"(
+struct Phantom<T> { T value; };
+struct Actual<T> { T value; };
+enum Metadata<T> { absent, number(int32_t value) };
+enum Payload<T> { item(Actual<T> value) };
+using ClassOnly = Phantom<int32_t>;
+using EnumOnly = Metadata<Phantom<int32_t>>;
+using ActualPayload = Payload<int32_t>;
+using NestedEnum = Phantom<Metadata<bool>>;
+int main() { return 0; }
+)");
+  expect(aliases.canGenerateCode(),
+         "type-only aliases retain valid exact enum identities");
+  if (aliases.canGenerateCode()) {
+    expect(aliases.hir.classInstances().size() == 1 &&
+               aliases.hir.classInstances().front().source->name().lexeme ==
+                   "Actual" &&
+               aliases.mir.classInstances().size() == 1 &&
+               aliases.mir.payloadEnums().size() == 3,
+           "alias arguments do not instantiate phantom class layouts, while "
+           "actual enum alternatives retain their concrete class layout");
+    const auto aliasLowered =
+        gti_test::lowerProgram(aliases, aliases.mir, aliases.mir);
+    for (const auto standard :
+         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+      const auto text = gti_test::emitCpp(aliases, standard).contents;
+      bool classForwardOnly = false;
+      for (const auto &row : aliasLowered.declarations()) {
+        const auto *alias =
+            std::get_if<lang::LoweredTypeAliasDeclaration>(&row.payload);
+        if (alias == nullptr)
+          continue;
+        if (alias->type.kind == lang::SemanticType::Enum) {
+          const auto name =
+              lang::cppConcreteEnumName(aliasLowered, alias->type);
+          expect(name &&
+                     text.find("struct " + *name + " {") != std::string::npos,
+                 "enum-only aliases publish their exact concrete enum rows");
+        } else if (alias->type.kind == lang::SemanticType::Class) {
+          const auto name =
+              lang::cppConcreteClassName(aliasLowered, alias->type);
+          expect(name &&
+                     text.find("struct " + *name + ";") != std::string::npos &&
+                     text.find("struct " + *name + " {") == std::string::npos,
+                 "class aliases publish forward identities, never layouts");
+          classForwardOnly = true;
+        }
+      }
+      expect(classForwardOnly,
+             "the alias fixture checks a phantom concrete class forward");
+    }
+  } else {
+    for (const auto &diagnostic : aliases.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
   return failures == 0 ? 0 : 1;
 }
