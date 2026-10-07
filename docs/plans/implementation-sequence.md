@@ -7339,6 +7339,17 @@ consumer, and release refreshes remain outstanding for the full campaign.
   will be delivered together through PR94 only after shared full-suite,
   corpus/census and installed acceptance; PR110 stays published until remote
   integration and absence of residual work are confirmed.
+  The six preflight assertions are subsequently updated to the existing typed
+  schedules rather than restoring superseded emission routes: declaration
+  defaults execute in selected constructors without duplicate native field
+  initialization; exact generated construction retains its prepared slot;
+  subscripts evaluate once and use loan-rooted load/arithmetic/assign with
+  checked reference publication and overflow routing. Missing required target
+  representation and erased arithmetic failure-edge mutations remain rejected.
+  The complete optimized preflight gate passes (6.65 seconds). No executable
+  semantics change in this test-maintenance checkpoint. Shared release
+  validation and the empty-owner native ordering correction remain with the
+  combined release owner.
   Combined full-suite/coverage-corpus
   validation and upstream release integration remain delivery gates. This
   campaign is not an `expected` implementation. The owner's spelling
