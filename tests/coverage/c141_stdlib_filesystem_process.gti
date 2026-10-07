@@ -1,0 +1,129 @@
+// Filesystem and process in a private temp tree: create_directories, write
+// files through cstdio, enumerate with directory_entries (sorted with
+// std::sort over move-only paths) and a streaming directory_iterator using
+// '?', file_size/rename/copy_file options/remove_all, then child processes
+// that inspect the tree and report exit codes and execute failures.
+#include <std/filesystem>
+#include <std/process>
+#include <std/cstdio>
+#include <std/chrono>
+#include <std/string>
+#include <std/vector>
+#include <std/algorithm>
+
+bool write_file(std::filesystem::path& target, std::string_view body) {
+  mut auto opened = std::fopen(target.view(), std::file_mode::write);
+  if (!opened) { return false; }
+  mut auto file = std::move(opened).value();
+  auto written = file->write(body);
+  if (!written || written.value() != body.size()) { return false; }
+  auto closed = file->close();
+  if (!closed) { return false; }
+  return true;
+}
+
+expected<int, std::filesystem::errc> count_streamed(std::filesystem::path& directory) {
+  mut auto entries = ?std::filesystem::directory_iterator::open(directory);
+  mut int count = 0;
+  while (?entries.next()) {
+    std::filesystem::path entry = ?entries.entry_path();
+    if (!entry.empty()) { count++; }
+  }
+  return count;
+}
+
+int run_shell(std::string_view script) {
+  mut std::process::command shell = std::process::command("/bin/sh");
+  shell.arg("-c");
+  shell.arg(script);
+  auto status = shell.run();
+  if (!status || !status.value().exited()) { return -1; }
+  return status.value().exit_code();
+}
+
+int main() {
+  auto temp = std::filesystem::temp_directory_path();
+  auto now = std::chrono::system_clock::now();
+  if (!temp || !now) { return 1; }
+  std::string unique = std::to_string(now.value().nanoseconds_since_unix_epoch());
+  mut std::string leaf{"gti-stdlib-probe-"};
+  leaf.append(unique.view());
+  std::filesystem::path leaf_path = std::filesystem::path(leaf.view());
+  std::filesystem::path root = temp.value() / leaf_path;
+  std::filesystem::path src_leaf = std::filesystem::path("src/util");
+  std::filesystem::path nested = root / src_leaf;
+  auto created = std::filesystem::create_directories(nested);
+  if (!created || !created.value()) { return 2; }
+  auto again = std::filesystem::create_directories(nested);
+  if (!again || again.value()) { return 3; }
+
+  std::filesystem::path src = nested.parent_path();
+  std::filesystem::path main_leaf = std::filesystem::path("main.gti");
+  std::filesystem::path lib_leaf = std::filesystem::path("lib.gti");
+  std::filesystem::path readme_leaf = std::filesystem::path("README");
+  std::filesystem::path main_file = src / main_leaf;
+  std::filesystem::path lib_file = src / lib_leaf;
+  std::filesystem::path readme = root / readme_leaf;
+  if (!write_file(main_file, "int main() { return 0; }\n") ||
+      !write_file(lib_file, "int f();\n") || !write_file(readme, "probe")) { return 4; }
+
+  auto size = std::filesystem::file_size(main_file);
+  if (!size || size.value() != uint64_t(25)) { return 5; }
+
+  // Enumerate, sort move-only paths, and compare filenames.
+  mut auto listed = std::filesystem::directory_entries(src);
+  if (!listed) { return 6; }
+  mut std::vector<std::filesystem::path> entries = std::move(listed).value();
+  std::sort(entries);
+  mut std::string names{};
+  for (mut std::size_t i = 0; i < entries.size(); i++) {
+    std::filesystem::path name = entries[i].filename();
+    names.append(name.view());
+    names.push_back(' ');
+  }
+  std::println(names);
+  if (names != "lib.gti main.gti util ") { return 7; }
+  auto streamed = count_streamed(src);
+  if (!streamed || streamed.value() != 3) { return 8; }
+
+  // Rename, then copy with each option.
+  std::filesystem::path renamed_leaf = std::filesystem::path("core.gti");
+  std::filesystem::path renamed = src / renamed_leaf;
+  auto moved = std::filesystem::rename(lib_file, renamed);
+  auto old_exists = std::filesystem::exists(lib_file);
+  if (!moved || !old_exists || old_exists.value()) { return 9; }
+  auto copy_new = std::filesystem::copy_file(main_file, lib_file);
+  auto copy_dup = std::filesystem::copy_file(main_file, lib_file);
+  auto copy_skip = std::filesystem::copy_file(readme, lib_file, std::filesystem::copy_options::skip_existing);
+  auto copy_over = std::filesystem::copy_file(readme, lib_file, std::filesystem::copy_options::overwrite_existing);
+  if (!copy_new || !copy_new.value() || copy_dup || copy_dup.error() != std::filesystem::errc::already_exists) { return 10; }
+  if (!copy_skip || copy_skip.value() || !copy_over || !copy_over.value()) { return 11; }
+  auto overwritten = std::filesystem::file_size(lib_file);
+  if (!overwritten || overwritten.value() != uint64_t(5)) { return 12; }
+  auto not_empty = std::filesystem::remove(src);
+  if (not_empty || not_empty.error() != std::filesystem::errc::directory_not_empty) { return 13; }
+
+  // A child shell observes the tree we built.
+  mut std::string check{"test -f '"};
+  check.append(renamed.view());
+  check.append("' && test -d '");
+  check.append(nested.view());
+  check.append("'");
+  if (run_shell(check.view()) != 0) { return 14; }
+  if (run_shell("exit 3") != 3) { return 15; }
+  std::process::command missing = std::process::command("/nonexistent/gti-probe-binary");
+  auto missing_status = missing.run();
+  if (missing_status || missing_status.error() != std::process::errc::execute_failed) { return 16; }
+  mut std::string with_nul{"a"};
+  with_nul.push_back('\0');
+  mut std::process::command invalid = std::process::command("/bin/echo");
+  invalid.arg(with_nul.view());
+  auto invalid_status = invalid.run();
+  if (invalid.valid() || invalid_status || invalid_status.error() != std::process::errc::invalid_argument) { return 17; }
+
+  auto removed = std::filesystem::remove_all(root);
+  if (!removed || removed.value() != uint64_t(7)) { std::println(removed.value()); return 18; }
+  auto gone = std::filesystem::exists(root);
+  if (!gone || gone.value()) { return 19; }
+  return 0;
+}

@@ -1631,6 +1631,54 @@
     "own-x14-shared-ptr-mutation": {
       "code": "GTI-S2000",
       "outcome": "rejected"
+    },
+    "std-i01-wrong-key-type": {
+      "code": "GTI-S2003",
+      "outcome": "rejected"
+    },
+    "std-i02-missing-include": {
+      "code": "GTI-S2089",
+      "outcome": "rejected"
+    },
+    "std-i03-retained-iterator-then-erase": {
+      "code": "GTI-S2017",
+      "outcome": "rejected"
+    },
+    "std-i04-escaping-element-reference": {
+      "code": "GTI-S2017",
+      "outcome": "rejected"
+    },
+    "std-i05-set-of-unordered-class": {
+      "code": "GTI-S2029",
+      "outcome": "rejected"
+    },
+    "std-i06-format-without-formatter": {
+      "code": "GTI-S2029",
+      "outcome": "rejected"
+    },
+    "std-i07-json-value-copy": {
+      "code": "GTI-S2003",
+      "outcome": "rejected"
+    },
+    "std-i08-insert-during-mutable-iteration": {
+      "code": "GTI-S2017",
+      "outcome": "rejected"
+    },
+    "std-i09-list-remove-without-equality": {
+      "code": "GTI-S2029",
+      "outcome": "rejected"
+    },
+    "std-i11-sort-list": {
+      "code": "GTI-S2012",
+      "outcome": "rejected"
+    },
+    "std-i12-view-outlives-map-key": {
+      "code": "GTI-S2045",
+      "outcome": "rejected"
+    },
+    "std-i13-unordered-map-unhashable-key": {
+      "code": "GTI-S2029",
+      "outcome": "rejected"
     }
   },
   "reproducers": {
@@ -1819,12 +1867,27 @@
       "issue": 72,
       "outcome": "ice"
     },
+    "a28-map-range-for-key-view": {
+      "finding": "A28",
+      "issue": 73,
+      "outcome": "ice"
+    },
     "a28-range-element-field-overloaded-operator": {
       "finding": "A28",
       "issue": 73,
       "outcome": "ice"
     },
+    "a28-range-element-field-ref-method": {
+      "finding": "A28",
+      "issue": 73,
+      "outcome": "ice"
+    },
     "a29-method-on-returned-string-view": {
+      "finding": "A29",
+      "issue": 74,
+      "outcome": "ice"
+    },
+    "a29-string-view-size-on-dynamic-view": {
       "finding": "A29",
       "issue": 74,
       "outcome": "ice"
@@ -2042,6 +2105,82 @@
       "issue": 69,
       "outcome": "bad-diagnostic"
     },
+    "a54-alias-constrained-generic-class-argument": {
+      "code": "GTI-S2029",
+      "finding": "A54",
+      "issue": 95,
+      "outcome": "rejected"
+    },
+    "a54-alias-constrained-generic-user-class": {
+      "code": "GTI-S2029",
+      "finding": "A54",
+      "issue": 95,
+      "outcome": "rejected"
+    },
+    "a55-ctor-pack-move-only-field-init": {
+      "finding": "A55",
+      "issue": 96,
+      "outcome": "ice"
+    },
+    "a55-list-emplace-move-only-argument": {
+      "finding": "A55",
+      "issue": 96,
+      "outcome": "ice"
+    },
+    "a56-make-unique-same-type": {
+      "finding": "A56",
+      "issue": 97,
+      "outcome": "ice"
+    },
+    "a56-make-unique-string-from-string": {
+      "finding": "A56",
+      "issue": 97,
+      "outcome": "ice"
+    },
+    "a57-generic-member-field-range-for-silent": {
+      "finding": "A57",
+      "issue": 98,
+      "outcome": "silent"
+    },
+    "a57-generic-nondependent-range-for-silent": {
+      "finding": "A57",
+      "issue": 98,
+      "outcome": "silent"
+    },
+    "a58-map-unique-ptr-value-deref": {
+      "finding": "A58",
+      "issue": 99,
+      "outcome": "ice"
+    },
+    "a58-ref-to-owner-field-pointee-via-local-ref": {
+      "finding": "A58",
+      "issue": 99,
+      "outcome": "ice"
+    },
+    "a59-map-at-then-element-ref": {
+      "finding": "A59",
+      "issue": 100,
+      "outcome": "ice"
+    },
+    "a59-readonly-ref-into-mut-nested-container": {
+      "finding": "A59",
+      "issue": 100,
+      "outcome": "ice"
+    },
+    "a60-println-format-missing-include": {
+      "finding": "A60",
+      "forbid": [
+        "convert"
+      ],
+      "issue": 69,
+      "outcome": "bad-diagnostic"
+    },
+    "a61-designated-argument-diagnostic": {
+      "code": "GTI-S2091",
+      "finding": "A61",
+      "issue": 69,
+      "outcome": "rejected"
+    },
     "f1-generic-range-for-silent": {
       "outcome": "pass"
     },
@@ -2096,6 +2235,11 @@
       "finding": "F7",
       "issue": 51,
       "outcome": "link"
+    },
+    "f7-json-decode-without-codec": {
+      "finding": "F7",
+      "issue": 51,
+      "outcome": "ice"
     },
     "f7-scaffold-operation-link-error": {
       "outcome": "pass"
