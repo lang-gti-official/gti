@@ -277,6 +277,14 @@ private:
 
 } // namespace
 
+std::string_view cppFailureCodeAbiConstant(DefinedFailureCode code) {
+  return FailureArtifactDescriptorWriter::failureCodeAbiConstant(code);
+}
+
+std::string_view cppFailureDetailAbiConstant(DefinedFailureDetail detail) {
+  return FailureArtifactDescriptorWriter::failureDetailAbiConstant(detail);
+}
+
 void writeCppFailureArtifactDescriptor(std::ostream &output,
                                        const FailureMetadata &metadata) {
   FailureArtifactDescriptorWriter(output).write(metadata);

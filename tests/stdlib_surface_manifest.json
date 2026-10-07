@@ -1,7 +1,7 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "c87bc79c0f19861f9703a4a2b23ab7a645d21db022639c7d54a106b4ab63f8d5",
+    "stdlib/prelude.gti": "cb8b796d01d2b7251bc4d405fd01e9264bddc4818ca63cbd6a8f4cb51c1da717",
     "stdlib/std/algorithm.gti": "f989a6357efa6e9d4be6c0b99747794f6c93bc3a918e9890ea01d27df5328f19",
     "stdlib/std/array.gti": "6b738e22e49dc45108dc3c1b90c90f19b765b4fc8bca48a63a9d565818b45233",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
@@ -13,6 +13,7 @@
     "stdlib/std/cthread.gti": "8980aedce805131cd3f0a528b55ec31b8e3626b267bfb4321501e236138217d9",
     "stdlib/std/deque.gti": "5e014f240f4655824f1c245d507a96805ce4bfb1444570af4af2e6a222c1bba7",
     "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
+    "stdlib/std/detail/sparse_storage.gti": "f18dbe24b64cf8406c24a21e724d17a53f356ee1ce21bd3ec643a087b84d617a",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
     "stdlib/std/filesystem.gti": "1018e88ac78adb603b80f0e83427a431c7c6225e00f39b0924721edcc4820687",
     "stdlib/std/format.gti": "724d3f26a7ba1460d21fb02fafecbd531d4c29e6984169fbcdede21815502171",
@@ -1593,6 +1594,14 @@
       "operations": ["std::detail::panic"],
       "case_ids": ["panic-expected", "format-panic-adoption"],
       "evidence": ["tests/panic_runtime_test.py", "tests/panic_adoption_runtime_test.py"]
+    },
+    {
+      "id": "detail.sparse-storage-candidate",
+      "source": "stdlib/std/detail/sparse_storage.gti",
+      "status": "scaffold",
+      "operations": ["gti_internal::sparse_drain", "gti_internal::sparse_slots"],
+      "reason": "Tested private source-policy candidate, not yet integrated into public std::storage or resource_storage; public allocation leases and sparse-intrinsic retirement remain in progress.",
+      "evidence": ["tests/source_sparse_storage_tests.cpp", "tests/source_sparse_storage_runtime_test.py", "tests/fixtures/source_sparse_slots.gti", "docs/plans/implementation-sequence.md"]
     },
     {
       "id": "encoding.executable",

@@ -44,6 +44,27 @@ add_test(NAME object_lifetime_contract COMMAND gti_object_lifetime_tests)
 add_executable(gti_uninitialized_carrier_tests uninitialized_carrier_tests.cpp)
 target_link_libraries(gti_uninitialized_carrier_tests PRIVATE gti_compiler gti_cpp_backend)
 add_test(NAME uninitialized_carrier_contract COMMAND gti_uninitialized_carrier_tests)
+add_executable(gti_source_sparse_storage_tests source_sparse_storage_tests.cpp)
+target_link_libraries(gti_source_sparse_storage_tests PRIVATE gti_compiler gti_cpp_backend)
+add_test(NAME source_sparse_storage_contract COMMAND gti_source_sparse_storage_tests)
+add_executable(gti_conditional_capability_tests conditional_capability_tests.cpp)
+target_link_libraries(gti_conditional_capability_tests PRIVATE gti_compiler)
+add_test(NAME conditional_capability_contract COMMAND gti_conditional_capability_tests)
+add_test(NAME conditional_capability_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/conditional_capability_runtime_test.py"
+    "$<TARGET_FILE:gti>")
+set_tests_properties(conditional_capability_runtime PROPERTIES TIMEOUT 300)
+if(TARGET gti_lsp)
+  add_test(NAME conditional_capability_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/conditional_capability_lsp_test.py"
+      "$<TARGET_FILE:gti_lsp>")
+  set_tests_properties(conditional_capability_lsp PROPERTIES TIMEOUT 90)
+endif()
+add_test(NAME source_sparse_storage_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_sparse_storage_runtime_test.py"
+    "$<TARGET_FILE:gti_source_sparse_storage_tests>" "${CMAKE_CXX_COMPILER}"
+    "$<TARGET_FILE:gti_runtime>")
+set_tests_properties(source_sparse_storage_runtime PROPERTIES TIMEOUT 300)
 add_executable(gti_resource_protocol_tests resource_protocol_tests.cpp)
 target_link_libraries(gti_resource_protocol_tests PRIVATE gti_compiler gti_cpp_backend)
 add_test(NAME resource_protocol_contract COMMAND gti_resource_protocol_tests)

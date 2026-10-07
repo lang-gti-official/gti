@@ -1172,6 +1172,12 @@ struct MirClassInstance {
   ClassId declaration = 0;
   SemanticType type = SemanticType::Unknown;
   SemanticTypeTraits traits;
+  ConcurrencyCapabilityPolicy transferPolicy =
+      ConcurrencyCapabilityPolicy::Structural;
+  ConcurrencyCapabilityPolicy sharePolicy =
+      ConcurrencyCapabilityPolicy::Structural;
+  std::optional<SemanticType> transferCondition;
+  std::optional<SemanticType> shareCondition;
   CompilerCapabilityTypeKind compilerCapability =
       CompilerCapabilityTypeKind::None;
   bool lifecycleBoundBorrowCarrier = false;

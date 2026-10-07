@@ -4054,6 +4054,37 @@ instances retain concrete semantic/MIR copy and move eligibility. Combined censu
 reconciliation, source sparse migration/retirement, the
 unrelated pool/container example and broad acceptance gates remain outstanding.
 
+The source-policy checkpoint introduces ordinary `sparse_slots<T>` and its
+reverse drain guard in `std/detail/sparse_storage`. Source fields and loops
+perform metadata publication/retirement, checks, final-address construction,
+destruction, relocation and shifts; narrow private boolean checks reuse the
+existing invalid-storage failure families. The candidate runtime matrix passes
+C++20/23 O0/O1/O3, no-elision and ASan/UBSan, including first and secondary
+destructor failures. Checked element loans block mutation and owner movement.
+This helper is not yet wired into public storage: the two source leases,
+allocation rollback and retirement of the old sparse paths remain outstanding.
+
+The owner approved conditional unsafe transfer/share assertions to preserve
+payload-dependent thread capabilities without recognizing a container name.
+The bounded spelling `[[unsafe_transfer(T), unsafe_share(T)]]` names one
+non-pack generic type parameter per assertion. Semantics resolves and
+substitutes that parameter through existing capability analysis; the wrapper
+author still audits all implementation state, access and cleanup. This is a
+general source feature, not an exemption for sparse storage. Conditional-policy
+tests, tooling, a runnable audited-owner example and final integration evidence
+are part of this checkpoint's validation rather than grounds to call the whole
+campaign complete.
+
+Focused conditional-capability contracts and malformed-MIR mutations pass,
+including nested wrappers and Expected payloads. Example 126 passes all eight
+native modes; the LSP test verifies generic-binder navigation, exact invalid
+parameter spans and restoration after unsaved edits. Pinned Tree-sitter passes
+72 corpus cases and all 186 shipped GTI sources. The reviewed 120-example
+census now includes the five private detector declarations/bodies in every
+example and the earlier memory API declarations in memory consumers, with no
+change to existing generated-family counts. Full native corpus, installed
+consumers and final current-main reconciliation remain final campaign gates.
+
 #### Why This Campaign Exists
 
 Phase 2 successfully separated resource selection and region release from

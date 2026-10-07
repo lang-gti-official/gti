@@ -890,6 +890,8 @@ public:
           note += " (explicit opt-out)";
         } else if (policy == ConcurrencyCapabilityPolicy::UnsafeAsserted) {
           note += " (unsafe nominal assertion)";
+        } else if (policy == ConcurrencyCapabilityPolicy::UnsafeConditional) {
+          note += " (conditional unsafe nominal assertion)";
         } else if (policy == ConcurrencyCapabilityPolicy::Required) {
           note += " (interface requirement)";
         }

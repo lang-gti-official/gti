@@ -605,6 +605,8 @@ private:
             .traits = info->traits,
             .transferPolicy = info->transferPolicy,
             .sharePolicy = info->sharePolicy,
+            .transferCondition = info->transferCondition,
+            .shareCondition = info->shareCondition,
             .cAbiLayout = lowerCAbiLayout(*info, semantics_),
             .unionLayout = lowerUnionLayout(*info, semantics_),
             .compilerCapability = info->compilerCapability,

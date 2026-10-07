@@ -561,6 +561,14 @@ private:
           attribute.argument = previous();
           consume(TokenKind::RIGHT_PAREN,
                   "Expect ')' after the borrowed_from owner.");
+        } else if ((attribute.name.lexeme == "unsafe_transfer" ||
+                    attribute.name.lexeme == "unsafe_share") &&
+                   match({TokenKind::LEFT_PAREN})) {
+          attribute.argument = consume(TokenKind::IDENTIFIER,
+                                       "Expect a generic type parameter in the "
+                                       "conditional unsafe assertion.");
+          consume(TokenKind::RIGHT_PAREN,
+                  "Expect ')' after the capability type parameter.");
         } else if (check(TokenKind::LEFT_PAREN)) {
           throw error(attribute.name, "Unknown function attribute '[[" +
                                           attribute.name.lexeme + "(...)]]'.");
@@ -614,15 +622,18 @@ private:
         throw error(peek(), "These attributes apply only to class, "
                             "struct, interface, or union declarations.");
       }
-      std::vector<Token> classAttributes;
+      std::vector<ClassAttribute> classAttributes;
       for (FunctionAttribute &attribute : attributes) {
-        classAttributes.emplace_back(std::move(attribute.name));
+        classAttributes.push_back(
+            {.name = std::move(attribute.name),
+             .capabilityParameter = std::move(attribute.argument)});
       }
       return classDeclaration(std::move(classAttributes), previous());
     }
   }
 
-  StmtPtr classDeclaration(std::vector<Token> attributes, Token keyword) {
+  StmtPtr classDeclaration(std::vector<ClassAttribute> attributes,
+                           Token keyword) {
     const ClassKind kind =
         keyword.kind == TokenKind::STRUCT      ? ClassKind::Struct
         : keyword.kind == TokenKind::INTERFACE ? ClassKind::Interface

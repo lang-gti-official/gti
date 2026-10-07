@@ -1965,16 +1965,17 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
                             storageBoundsCheckDetail());
           break;
         case IntrinsicKind::RequireKey:
-          anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::KeyNotFound,
-                            DefinedFailureDetail::KeyLookup);
-          break;
         case IntrinsicKind::RequireContainerArgument:
+        case IntrinsicKind::RequireVacantStorage:
+        case IntrinsicKind::RequireLiveStorage:
+        case IntrinsicKind::RequireRelocationCapacity:
+        case IntrinsicKind::RequireRelocationSource:
+        case IntrinsicKind::RequireRelocationDestination: {
           anchor(token);
-          addFailureOutcome(operation,
-                            DefinedFailureCode::InvalidContainerArgument,
-                            DefinedFailureDetail::ContainerArgument);
+          const auto outcome = *intrinsicBooleanFailureOutcome(intrinsic);
+          addFailureOutcome(operation, outcome.code, outcome.detail);
           break;
+        }
         case IntrinsicKind::StorageRelocate:
         case IntrinsicKind::StorageShiftRight:
         case IntrinsicKind::StorageShiftLeft:

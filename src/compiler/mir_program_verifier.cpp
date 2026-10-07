@@ -741,6 +741,52 @@ storagePayloadTraits(const MirProgram &program, const SemanticType &type,
   return traits;
 }
 
+// Nominal capability facts come from concrete MIR classes/enums. Only genuine
+// builtin aggregate components are combined here; raw pointees are not owned
+// components, and generic arguments alone do not describe class storage.
+[[nodiscard]] std::optional<ConcurrencyCapabilities>
+conditionalCapabilities(const MirProgram &program, const SemanticType &type,
+                        std::size_t depth = 0) {
+  if (depth > 256 || type.kind == SemanticType::Unknown ||
+      type.kind == SemanticType::TypeParameter ||
+      type.kind == SemanticType::TypePack)
+    return std::nullopt;
+  if (type.kind == SemanticType::Array ||
+      type.kind == SemanticType::UniqueOwner ||
+      type.kind == SemanticType::Storage ||
+      type.kind == SemanticType::PrefixStorage ||
+      type.kind == SemanticType::Expected ||
+      type.kind == SemanticType::Unexpected) {
+    if (type.arguments.empty())
+      return std::nullopt;
+    ConcurrencyCapabilities result{.transferCapable = true,
+                                   .shareCapable = true};
+    for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+      if (type.kind == SemanticType::Expected && index == 0 &&
+          type.arguments[index] == SemanticType::Void)
+        continue;
+      const auto child =
+          conditionalCapabilities(program, type.arguments[index], depth + 1);
+      if (!child)
+        return std::nullopt;
+      result.transferCapable &= child->transferCapable;
+      result.shareCapable &= child->shareCapable;
+    }
+    return result;
+  }
+  if (type.kind == SemanticType::Enum) {
+    if (const auto *enumeration = program.findPayloadEnum(type.enumId))
+      return ConcurrencyCapabilities{
+          .transferCapable = enumeration->traits.transferCapable,
+          .shareCapable = enumeration->traits.shareCapable};
+  }
+  const auto traits = concretePackElementTraits(program, type);
+  if (!traits)
+    return std::nullopt;
+  return ConcurrencyCapabilities{.transferCapable = traits->transferCapable,
+                                 .shareCapable = traits->shareCapable};
+}
+
 [[nodiscard]] bool storageOwnershipTypeValid(const MirProgram &program,
                                              const SemanticType &type) {
   if (type.kind == SemanticType::Storage ||
@@ -10648,6 +10694,41 @@ verifyMirProgramContracts(const MirProgram &program) {
   for (std::size_t index = 0; index < program.classInstances().size();
        ++index) {
     const MirClassInstance &instance = program.classInstances()[index];
+    for (const bool transfer : {true, false}) {
+      const auto policy =
+          transfer ? instance.transferPolicy : instance.sharePolicy;
+      const auto &condition =
+          transfer ? instance.transferCondition : instance.shareCondition;
+      bool exact = (policy == ConcurrencyCapabilityPolicy::UnsafeConditional) ==
+                   condition.has_value();
+      switch (policy) {
+      case ConcurrencyCapabilityPolicy::Structural:
+      case ConcurrencyCapabilityPolicy::Denied:
+      case ConcurrencyCapabilityPolicy::Required:
+      case ConcurrencyCapabilityPolicy::UnsafeAsserted:
+      case ConcurrencyCapabilityPolicy::UnsafeConditional:
+        break;
+      default:
+        exact = false;
+        break;
+      }
+      if (condition) {
+        const auto required = conditionalCapabilities(program, *condition);
+        exact =
+            exact && required && instance.kind != ClassKind::Interface &&
+            instance.compilerCapability == CompilerCapabilityTypeKind::None &&
+            (transfer
+                 ? instance.traits.transferCapable == required->transferCapable
+                 : instance.traits.shareCapable == required->shareCapable);
+      }
+      if (!exact) {
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::FieldInitializers,
+             .owner = instance.id,
+             .message = "class conditional unsafe capability contradicts its "
+                        "concrete condition"});
+      }
+    }
     if (instance.id != index + 1 || instance.sourceUnit == 0 ||
         instance.declaration == 0 ||
         instance.type.kind != SemanticType::Class ||

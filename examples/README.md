@@ -158,6 +158,7 @@ is a teaching helper, not a production server.
 | `120-immovable-storage.gti` | fixed-address owning objects, moving their storage handle, checked access and destruction without element movement |
 | `121-programmable-allocators.gti` | an application-defined arena choosing aligned placement in one backing region, one unsafe resource binding, and safe allocator-aware `resource_vector` and fixed-slot containers sharing it |
 | `122-manual-object-lifetimes.gti` | source-defined inline ownership, immovable final-address construction, checked access and explicit owning relocation |
+| `126-conditional-thread-capabilities.gti` | audited source cleanup with payload-conditional transfer/share assertions, retaining thread-affine payload restrictions |
 
 ## Build and run
 

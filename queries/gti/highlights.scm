@@ -38,6 +38,8 @@
     name: (identifier) @type.definition))
 (class_attribute_list
   attribute: (identifier) @attribute)
+(class_attribute_list
+  capability_parameter: (identifier) @type)
 (function_declaration "unsafe" @keyword)
 (function_contract_attribute ["noreturn" "track_caller" "discardable"] @attribute)
 (borrow_origin_attribute "borrowed_from" @attribute)
