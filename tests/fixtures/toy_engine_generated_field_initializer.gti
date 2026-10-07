@@ -1,12 +1,34 @@
 #include <std/memory>
 
-class Resource { public: Resource() {} };
+mut int constructed = 0;
+mut int construction_order = 0;
+mut int destroyed = 0;
+mut int destruction_order = 0;
+
+class Resource {
+  int identity;
+public:
+  Resource(int identity) : identity(identity) {
+    constructed++;
+    construction_order = construction_order * 10 + identity;
+  }
+  ~Resource() {
+    destroyed++;
+    destruction_order = destruction_order * 10 + this.identity;
+  }
+};
 
 class Application {
-  std::unique_ptr<Resource> resource = std::make_unique<Resource>();
+  std::unique_ptr<Resource> first = std::make_unique<Resource>(3);
+  std::unique_ptr<Resource> second = std::make_unique<Resource>(7);
 };
 
 int main() {
-  Application application{};
-  return 0;
+  {
+    Application application{};
+    if (constructed != 2 || construction_order != 37 || destroyed != 0) {
+      return 1;
+    }
+  }
+  return destroyed == 2 && destruction_order == 73 ? 0 : 2;
 }
