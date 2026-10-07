@@ -2506,11 +2506,46 @@ void testRecoveryFindingDiagnostics() {
            {"a43-callback-argument-unknown-type", "GTI-S2076"},
        }}) {
     const auto result = analyzeDiagnosticFixture(name);
-    expect(!result.canGenerateCode() && result.diagnostics.size() == 1,
-           std::string(name) + " should retain one owning error");
-    if (result.diagnostics.size() != 1)
+    const bool boundedDiscovery =
+        name == "a22-spurious-s2068-after-constexpr-failure";
+    const std::size_t expectedCount = boundedDiscovery ? 2 : 1;
+    expect(!result.canGenerateCode() &&
+               result.diagnostics.size() == expectedCount,
+           std::string(name) + " retains only its actual owning diagnostics");
+    if (result.diagnostics.size() != expectedCount)
       continue;
-    const auto &diagnostic = result.diagnostics.front();
+    if (boundedDiscovery) {
+      const auto &cause = result.diagnostics.front();
+      expect(cause.code == "GTI-S2105" &&
+                 cause.phase == lang::DiagnosticPhase::Semantics &&
+                 cause.severity == lang::DiagnosticSeverity::Error &&
+                 cause.primary.source.ends_with(std::string(name) + ".gti") &&
+                 cause.primary.end > cause.primary.start &&
+                 cause.related.size() == 1,
+             "bounded discovery retains its real recursive-call cause, not a "
+             "runtime initialization-effect cascade");
+      expect(std::none_of(
+                 result.diagnostics.begin(), result.diagnostics.end(),
+                 [](const auto &entry) { return entry.code == "GTI-S2068"; }),
+             "failed constant has no spurious runtime effect error");
+      const auto *text = result.sources.find(cause.primary.source);
+      const std::string_view recursiveCall = "depth<N - 1>()";
+      const auto recursive =
+          text == nullptr ? std::string::npos : text->find(recursiveCall);
+      const auto declaration = text == nullptr
+                                   ? std::string::npos
+                                   : text->find("depth<uint64_t N>()");
+      expect(recursive != std::string::npos &&
+                 cause.primary.start == recursive + recursiveCall.size() - 1 &&
+                 cause.primary.end == recursive + recursiveCall.size() &&
+                 cause.related.size() == 1 &&
+                 declaration != std::string::npos &&
+                 cause.related.front().span.source == cause.primary.source &&
+                 cause.related.front().span.start == declaration &&
+                 cause.related.front().span.end == declaration + 5,
+             "discovery cause and primary template retain exact source spans");
+    }
+    const auto &diagnostic = result.diagnostics.back();
     expect(
         diagnostic.code == code &&
             diagnostic.phase == lang::DiagnosticPhase::Semantics &&
