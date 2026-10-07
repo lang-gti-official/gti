@@ -1248,6 +1248,20 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/scripts/install_neovim_local.py"
   )
   add_test(
+    NAME macos_runtime_bundle
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/macos_runtime_bundle_test.py"
+            "${PROJECT_SOURCE_DIR}/scripts/bundle_macos_runtime.py"
+  )
+  if(APPLE AND GTI_BUILD_LSP)
+    add_test(
+      NAME macos_installed_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/macos_installed_runtime_test.py"
+              "${PROJECT_BINARY_DIR}"
+    )
+  endif()
+  add_test(
     NAME native_packages
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/native_packages_test.py"
