@@ -1,0 +1,28 @@
+struct Point {
+  int x = 0;
+  int y = 0;
+  Point(int x, int y) : x(x), y(y) {}
+};
+
+int broken(int v) {
+  return v + ; //!ERR
+}
+
+int area(Point p) {
+  return p.x * p.y;
+}
+
+class Accumulator {
+  mut int total = 0;
+public:
+  Accumulator() {}
+  void add(int v) mut { this.total += v; }
+  int current() { return this.total; }
+};
+
+int main() {
+  mut Accumulator acc{};
+  acc.add(area(Point(2, 3)));
+  acc.add(broken(1));
+  return acc.current() == 8 ? 0 : 1;
+}

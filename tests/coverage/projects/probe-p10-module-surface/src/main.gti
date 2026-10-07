@@ -1,0 +1,46 @@
+import ledger;
+
+class Recorder : public fin::Auditor {
+public:
+  mut int64_t seen = 0;
+  Recorder() {}
+  void observe(int64_t amount) mut override { seen = amount; }
+};
+
+int main() {
+  mut fin::Ledger book{};
+  fin::events::Event opened = fin::events::Event::opened;
+  fin::events::Event deposit = fin::events::Event::deposit(int64_t(250));
+  book.post(opened);
+  book.post(deposit);
+  auto snap = book.snapshot();
+  if (fin::snapshot_total(snap) != 250 || fin::snapshot_count(snap) != 2) {
+    return 1;
+  }
+  if (snap.total != 250) {
+    return 2;
+  }
+  mut Recorder recorder{};
+  book.audit(recorder);
+  if (recorder.seen != 245) {
+    return 3;
+  }
+  fin::Cents a{int64_t(40)};
+  fin::Cents b{int64_t(2)};
+  fin::Cents c = a + b;
+  fin::Cents wanted{int64_t(42)};
+  if (!(c == wanted)) {
+    return 4;
+  }
+  fin::AccountId id = 7;
+  constexpr int slot_count = fin::max_accounts;
+  int slots[slot_count] = {1, 2, 3, 4};
+  if (id != uint64_t(7) || slots[3] != 4) {
+    return 5;
+  }
+  if (fin::sum(a, b) != 42) {
+    return 6;
+  }
+  std::println("p10 module surface ok");
+  return 0;
+}

@@ -1,0 +1,4 @@
+export module gamma;
+export import alpha;
+
+export int gamma_value() { return 3; }

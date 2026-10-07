@@ -1,0 +1,90 @@
+// Integral scoped enums through constrained generics: exact underlying
+// extraction, a value-generic flag set indexed by enum values, constexpr
+// switch over enumerators feeding array extents and static assertions, and
+// an exact specialization keyed by an enum type.
+enum class Color : uint8_t { red = 0, green = 1, blue = 2, alpha = 3 };
+enum class Level : int16_t { low = -1, mid = 0, high = 1 };
+
+namespace meta {
+class enum_info<E> {
+public:
+  uint64_t count() { return 0; }
+};
+}
+
+class meta::enum_info<Color> {
+public:
+  uint64_t count() { return 4; }
+};
+
+U raw<U, E>(E value) requires std::integral_enum<E> && std::enum_underlying<E, U> {
+  return std::to_underlying<U, E>(value);
+}
+
+class FlagSet<std::integral_enum E, uint64_t N> {
+  mut bool flags[N];
+
+public:
+  FlagSet() : flags({}) {}
+  void set(E value) mut requires std::enum_underlying<E, uint8_t> {
+    this.flags[uint64_t(std::to_underlying<uint8_t, E>(value))] = true;
+  }
+  bool has(E value) requires std::enum_underlying<E, uint8_t> {
+    return this.flags[uint64_t(std::to_underlying<uint8_t, E>(value))];
+  }
+  uint64_t size() {
+    mut uint64_t n = 0;
+    for (mut uint64_t i = 0; i < N; i++) {
+      if (this.flags[i]) { n++; }
+    }
+    return n;
+  }
+};
+
+constexpr uint64_t channel_bits(Color c) {
+  switch (c) {
+    case Color::alpha: return 8;
+    case Color::red:
+    case Color::green:
+    case Color::blue:
+      return 10;
+  }
+  return 0;
+}
+
+constexpr uint64_t pixel_bits() {
+  return channel_bits(Color::red) + channel_bits(Color::green) +
+         channel_bits(Color::blue) + channel_bits(Color::alpha);
+}
+
+constexpr Color favourite = Color::blue;
+static_assert(pixel_bits() == 38);
+static_assert(favourite == Color::blue && favourite != Color::red);
+
+uint64_t info_count<E>() {
+  meta::enum_info<E> info{};
+  return info.count();
+}
+
+int main() {
+  if (raw<uint8_t, Color>(Color::alpha) != 3) { return 1; }
+  if (raw<int16_t, Level>(Level::low) != -1) { return 2; }
+
+  constexpr uint64_t colors = 4;
+  mut FlagSet<Color, colors> seen = FlagSet<Color, colors>();
+  seen.set(Color::green);
+  seen.set(favourite);
+  seen.set(Color::green);
+  if (seen.size() != 2) { return 3; }
+  if (!seen.has(Color::blue) || seen.has(Color::red)) { return 4; }
+
+  constexpr uint64_t bits = pixel_bits();
+  uint8_t packed[bits] = {};
+  if (packed.size() != 38) { return 5; }
+  if (channel_bits(Color::alpha) != 8) { return 6; }
+
+  if (info_count<Color>() != 4) { return 7; }
+  if (info_count<Level>() != 0) { return 8; }
+  std::println(pixel_bits());
+  return 0;
+}

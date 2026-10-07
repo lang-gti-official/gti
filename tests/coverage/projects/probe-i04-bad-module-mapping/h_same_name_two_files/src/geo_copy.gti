@@ -1,0 +1,2 @@
+export module geo;
+export int volume() { return 8; }

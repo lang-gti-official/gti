@@ -1,0 +1,103 @@
+// Valid: pointer-free [[c_abi]] records returned by value from libc
+// (imaxdiv) are callable from SAFE code, copied, stored in fixed arrays and
+// vectors, and passed by value to GTI helpers. An opaque DIR handle lives
+// behind a move-only RAII wrapper; moving the wrapper transfers the single
+// close obligation, observable through a global close counter.
+#include <std/filesystem>
+#include <std/string>
+#include <std/vector>
+
+[[c_abi]]
+struct QuotRem {
+  int64_t quot;
+  int64_t rem;
+};
+
+[[c_opaque]] struct DirStream;
+[[c_opaque]] struct DirEntry;
+
+extern "C" {
+  QuotRem imaxdiv(int64_t numerator, int64_t denominator);
+  DirStream* opendir(c_string path);
+  DirEntry* readdir(DirStream* stream);
+  int32_t closedir(DirStream* stream);
+}
+
+mut int32_t closes = 0;
+
+class Directory {
+  mut DirStream* stream = nullptr;
+public:
+  Directory(std::string& path) {
+    unsafe { this.stream = opendir(path.c_string()); }
+  }
+  Directory(Directory& other) = delete;
+  Directory(Directory&& other) = default;
+  ~Directory() {
+    if (this.stream != nullptr) {
+      unsafe { [[discard]] closedir(this.stream); }
+      closes += 1;
+    }
+  }
+  bool is_open() { return this.stream != nullptr; }
+  int32_t count_entries() mut {
+    mut int32_t total = 0;
+    unsafe {
+      mut DirEntry* entry = readdir(this.stream);
+      while (entry != nullptr) {
+        total += 1;
+        entry = readdir(this.stream);
+      }
+    }
+    return total;
+  }
+};
+
+int64_t recombine(QuotRem value, int64_t divisor) {
+  return value.quot * divisor + value.rem;
+}
+
+int32_t count_once(Directory directory) {
+  mut Directory local = std::move(directory);
+  return local.count_entries();
+}
+
+int main() {
+  // Safe calls: the signature has no raw pointer.
+  QuotRem a = imaxdiv(int64_t(47), int64_t(5));
+  QuotRem b = imaxdiv(int64_t(-47), int64_t(5));
+  if (a.quot != 9 || a.rem != 2 || b.quot != -9 || b.rem != -2) { return 1; }
+  // `QuotRem copies[2] = {a, b};` ICEs (finding; red/n19.gti), so the
+  // records are copied into a vector directly.
+  mut std::vector<QuotRem> history{};
+  history.push_back(a);
+  history.push_back(b);
+  history.push_back(imaxdiv(int64_t(9223372036854775807), int64_t(10)));
+  if (recombine(history[std::size_t(2)], int64_t(10)) != int64_t(9223372036854775807)) { return 2; }
+  if (recombine(history[std::size_t(1)], int64_t(5)) != int64_t(-47)) { return 3; }
+  if (sizeof(QuotRem) != uint64_t(16) || alignof(QuotRem) != uint64_t(8)) { return 4; }
+
+  std::filesystem::path root{"dir_probe_tree"};
+  [[discard]] std::filesystem::remove_all(root);
+  [[discard]] std::filesystem::create_directories(std::filesystem::path("dir_probe_tree/one"));
+  [[discard]] std::filesystem::create_directories(std::filesystem::path("dir_probe_tree/two"));
+  std::string text = root.string();
+  {
+    Directory first{text};
+    if (!first.is_open()) { return 5; }
+    Directory second = std::move(first);
+    // ".", "..", "one", "two"
+    if (count_once(std::move(second)) != 4) { return 6; }
+    if (closes != 1) { return 7; }
+  }
+  if (closes != 1) { return 8; }
+  std::string missing{"dir_probe_tree/absent"};
+  {
+    Directory none{missing};
+    if (none.is_open()) { return 9; }
+  }
+  if (closes != 1) { return 10; }
+  [[discard]] std::filesystem::remove_all(root);
+  std::println("native records and handles ok");
+  return 0;
+}

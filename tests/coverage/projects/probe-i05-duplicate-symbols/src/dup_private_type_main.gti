@@ -1,0 +1,4 @@
+import left;
+import right;
+
+int main() { return shared::left_value() + shared::right_value() - 3; }

@@ -1,0 +1,8 @@
+manifest-version = 1
+
+[package]
+name = "lib"
+version = "0.1.0"
+
+[modules]
+main = "src/limits.gti"

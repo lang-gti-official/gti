@@ -1,0 +1,9 @@
+export module right;
+
+namespace shared {
+  struct Detail {
+    int value;
+    Detail(int v) : value(v) {}
+  };
+  export int right_value() { return Detail(2).value; }
+}

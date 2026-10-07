@@ -1,0 +1,6 @@
+[[nodiscard]] //!ERR
+int compute() { return 4; }
+
+int main() {
+  return compute() - 4;
+}

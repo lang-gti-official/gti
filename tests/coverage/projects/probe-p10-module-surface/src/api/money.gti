@@ -1,0 +1,15 @@
+// Interface reached through a quoted relative import from another interface.
+export module money;
+
+namespace fin {
+  export struct Cents {
+    mut int64_t amount = 0;
+    Cents(int64_t value) : amount(value) {}
+    Cents operator+(Cents& other) { return Cents(amount + other.amount); }
+    bool operator==(Cents& other) { return amount == other.amount; }
+    int64_t total_amount() { return amount; }
+  };
+
+  export using AccountId = uint64_t;
+  export constexpr int max_accounts = 4;
+}

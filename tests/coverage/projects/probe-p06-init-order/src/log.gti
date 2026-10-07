@@ -1,0 +1,8 @@
+namespace trace {
+  mut int sequence = 0;
+
+  int record(int code) {
+    sequence = sequence * 10 + code;
+    return code;
+  }
+}

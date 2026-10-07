@@ -1,0 +1,8 @@
+struct Node { //!ERR
+  int v = 0;
+  Node next; //!ERR
+};
+
+int main() {
+  return 0;
+}

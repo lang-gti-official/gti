@@ -1,0 +1,10 @@
+// A16: the documented relay<T> example fails in the C++ backend for a copyable lambda.
+T relay<T>(T value) {
+  return value;
+}
+
+int main() {
+  auto add_one = [](int32_t v) -> int32_t { return v + 1; };
+  auto relayed = relay(std::move(add_one));
+  return relayed(41) == 42 ? 0 : 1;
+}

@@ -1,0 +1,10 @@
+// Invalid: a lambda declared inside an unsafe block starts a new safety
+// context, so its raw dereference needs its own unsafe block.
+int main() {
+  mut int32_t value = 4;
+  unsafe {
+    int32_t* pointer = &value;
+    auto read = [](int32_t* address) -> int32_t { return *address; };
+    return read(pointer) - 4;
+  }
+}

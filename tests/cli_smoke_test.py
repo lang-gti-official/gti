@@ -3671,7 +3671,7 @@ def main():
             assert "meter_feature" in bindings_text
             assert "meter_disabled" not in bindings_text
             assert (
-                "meter_open_out(int32_t mode, Meter** out_meter)"
+                "meter_open_out(c_int mode, Meter** out_meter)"
                 in bindings_text
             )
             assert 'extern "C" {' in bindings_text
@@ -3700,8 +3700,8 @@ def main():
                     "x86_64-unknown-linux-gnu",
                 ]
             ).stdout
-            assert "using NativeLong = int32_t;" in windows_bindings
-            assert "using NativeLong = int64_t;" in linux_bindings
+            assert "using NativeLong = c_long;" in windows_bindings
+            assert "using NativeLong = c_long;" in linux_bindings
             invalid_bindgen_target = run(
                 [gti, "bindgen", str(target_header), "--target", "banana"],
                 64,

@@ -1,0 +1,22 @@
+import top;
+import left;
+#include "trace.gti"
+
+int main_step = trace::record(4);
+
+int main() {
+  // core (1) first via right's include order? right includes trace then
+  // imports core: trace has no step; core=1, right=3, left=2, main=4.
+  if (trace::sequence != 1324) {
+    return 1;
+  }
+  if (top::both() != 6) {
+    return 2;
+  }
+  core::Pair direct{20, 22};
+  if (direct.sum() != 42 || core::core_value() != 1) {
+    return 3;
+  }
+  std::println("p16 module diamond ok");
+  return 0;
+}

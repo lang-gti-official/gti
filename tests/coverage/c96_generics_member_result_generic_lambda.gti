@@ -1,0 +1,37 @@
+// A member requirement whose exact result is a generic class instance, and a
+// lambda declared inside a generic body whose signature names the type
+// parameter (split from g16 after its value-recursion part was rejected).
+class Box<std::copyable T> {
+  T item;
+
+public:
+  Box(T item) : item(item) {}
+  T get() { return this.item; }
+};
+
+concept boxes_int<T> = requires(T& value) { { value.wrap() } -> Box<int32_t>; };
+
+struct Wrapper {
+  int32_t seed = 3;
+  Box<int32_t> wrap() { return Box<int32_t>(this.seed * 2); }
+};
+
+int32_t unwrap<T>(T& source) requires boxes_int<T> {
+  Box<int32_t> b = source.wrap();
+  return b.get();
+}
+
+T twice_via_lambda<std::numeric T>(T value) {
+  auto doubler = [](T v) -> T { return T(v + v); };
+  return doubler(value);
+}
+
+int main() {
+  Wrapper w{.seed = 21};
+  if (unwrap(w) != 42) { return 3; }
+
+  if (twice_via_lambda(int16_t(300)) != 600) { return 4; }
+  if (twice_via_lambda(1.25d) != 2.5d) { return 5; }
+  std::println(unwrap(w));
+  return 0;
+}

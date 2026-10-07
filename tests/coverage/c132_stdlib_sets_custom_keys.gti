@@ -1,0 +1,120 @@
+// Ordered and hashed sets keyed by application classes: a move-only
+// totally-ordered Version in std::set (default std::less), bounds traversal,
+// a std::hash<Coord> specialization driving unordered_set/unordered_map with
+// the default equal_to, and a reversed std::greater<std::string> set.
+#include <std/set>
+#include <std/unordered_set>
+#include <std/unordered_map>
+#include <std/functional>
+#include <std/string>
+#include <std/vector>
+
+class Version {
+public:
+  int major;
+  int minor;
+  std::string tag;
+  Version(int major, int minor, std::string tag)
+      : major(major), minor(minor), tag(std::move(tag)) {}
+  Version(Version& other) = delete;
+  Version(Version&& other) = default;
+  int key() { return this.major * 100 + this.minor; }
+  bool operator==(Version& other) { return this.key() == other.key(); }
+  bool operator!=(Version& other) { return this.key() != other.key(); }
+  bool operator<(Version& other) { return this.key() < other.key(); }
+  bool operator<=(Version& other) { return this.key() <= other.key(); }
+  bool operator>(Version& other) { return this.key() > other.key(); }
+  bool operator>=(Version& other) { return this.key() >= other.key(); }
+};
+
+struct Coord {
+  int x;
+  int y;
+  Coord(int x, int y) : x(x), y(y) {}
+  bool operator==(Coord& other) { return this.x == other.x && this.y == other.y; }
+  bool operator!=(Coord& other) { return !(this.x == other.x && this.y == other.y); }
+};
+
+class std::hash<Coord> {
+public:
+  std::size_t operator()(Coord& c) {
+    std::hash<int32_t> h{};
+    int32_t xs = c.x;
+    int32_t ys = c.y * 7919;
+    return h(xs) ^ h(ys);
+  }
+};
+
+int main() {
+  mut std::set<Version> releases{};
+  [[discard]] releases.insert(Version(1, 2, std::string("stable")));
+  [[discard]] releases.insert(Version(0, 9, std::string("beta")));
+  [[discard]] releases.emplace(2, 0, std::string("next"));
+  [[discard]] releases.insert(Version(1, 0, std::string("lts")));
+  {
+    auto again = releases.insert(Version(1, 2, std::string("duplicate")));
+    if (again.second) { return 1; }
+    // The returned iterator names the existing element, not the rejected one.
+    if ((*again.first).tag != "stable") { return 2; }
+  }
+  if (releases.size() != 4) { return 3; }
+
+  mut std::string order{};
+  for (auto& v : releases) {
+    std::string& tag = v.tag;
+    order.append(tag.view());
+    order.push_back(' ');
+  }
+  std::println(order);
+  if (order != "beta lts stable next ") { return 4; }
+
+  {
+    Version probe = Version(1, 0, std::string(""));
+    Version ceiling = Version(2, 0, std::string(""));
+    mut auto cursor = releases.lower_bound(probe);
+    auto stop = releases.upper_bound(ceiling);
+    mut int seen = 0;
+    while (cursor != stop) {
+      seen += (*cursor).key();
+      ++cursor;
+    }
+    if (seen != 100 + 102 + 200) { return 5; }
+    auto last = releases.end();
+    auto found = releases.find(probe);
+    if (!(found != last)) { return 6; }
+    if (releases.erase(probe) != 1 || releases.contains(probe)) { return 7; }
+  }
+
+  // Hashed coordinates with a user specialization of std::hash.
+  mut std::unordered_set<Coord> visited{};
+  for (mut int step = 0; step < 20; step++) {
+    [[discard]] visited.insert(Coord(step % 5, step % 3));
+  }
+  if (visited.size() != 15) { return 8; }
+  Coord origin = Coord(0, 0);
+  Coord absent = Coord(4, 4);
+  if (!visited.contains(origin) || visited.contains(absent)) { return 9; }
+
+  mut std::unordered_map<Coord, std::string> labels{};
+  [[discard]] labels.insert(Coord(1, 1), std::string("tree"));
+  [[discard]] labels.insert(Coord(2, 3), std::string("rock"));
+  [[discard]] labels.insert_or_assign(Coord(1, 1), std::string("bush"));
+  Coord tree = Coord(1, 1);
+  if (labels.size() != 2 || labels.at(tree) != "bush") { return 10; }
+  {
+    mut std::string& label = labels.at(tree);
+    label.append("-cut");
+  }
+  if (labels.at(tree) != "bush-cut") { return 11; }
+
+  // A reversed ordered set of owning strings.
+  mut std::set<std::string, std::greater<std::string>> names{};
+  [[discard]] names.insert(std::string("delta"));
+  [[discard]] names.insert(std::string("alpha"));
+  [[discard]] names.insert(std::string("charlie"));
+  mut std::vector<std::string> collected{};
+  for (auto& name : names) { collected.push_back(name.clone()); }
+  if (collected.size() != 3 || collected[std::size_t(0)] != "delta" ||
+      collected[std::size_t(2)] != "alpha") { return 12; }
+  return 0;
+}

@@ -1,0 +1,17 @@
+struct Opaque {
+  int v = 0;
+};
+
+T minimum<std::ordered T>(T left, T right) {
+  if (left < right) {
+    return left;
+  }
+  return right;
+}
+
+int main() {
+  Opaque a{};
+  Opaque b{};
+  Opaque m = minimum(a, b); //!ERR
+  return m.v;
+}

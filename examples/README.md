@@ -1,5 +1,14 @@
 # GTI examples
 
+[`123-native-c-scalars.gti`](123-native-c-scalars.gti) demonstrates target-correct
+C integer and character families, real libc calls, unrelated generic values,
+and checked conversion/indexing. C types preserve native declaration identity;
+they do not import unchecked C arithmetic.
+
+[`124-nested-raw-pointers.gti`](124-nested-raw-pointers.gti) demonstrates stored
+and forwarded pointer-slot addresses, triple pointers, independent slot
+qualification, real libc writeback, and native pointer-array elements.
+
 These examples are a runnable introduction to GTI. Read them in numerical
 order: each file introduces one small group of language features and has its
 own `main` function.
@@ -157,6 +166,7 @@ is a teaching helper, not a production server.
 | `119-runtime-object-layout.gti` | runtime size/alignment descriptors for owning, immovable and nested ordinary types without constructing an object |
 | `120-immovable-storage.gti` | fixed-address owning objects, moving their storage handle, checked access and destruction without element movement |
 | `121-programmable-allocators.gti` | an application-defined arena choosing aligned placement in one backing region, one unsafe resource binding, and safe allocator-aware `resource_vector` and fixed-slot containers sharing it |
+| `122-native-function-invocation.gti` | exact native function-pointer invocation from locals, fields and returned factories under lexical unsafe, with nullable transport |
 | `125-manual-object-lifetimes.gti` | source-defined inline ownership, immovable final-address construction, checked access and explicit owning relocation |
 | `126-conditional-thread-capabilities.gti` | audited source cleanup with payload-conditional transfer/share assertions, retaining thread-affine payload restrictions |
 | `128-inline-object-pool.gti` | an application-defined two-slot pool using public manual-lifetime facilities, immovable owning objects, recoverable capacity failure and checked access |

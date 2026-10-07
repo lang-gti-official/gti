@@ -1,0 +1,7 @@
+int main() { //!ERR
+  int x = 1;
+  if (x == 1) { //!ERR
+    return 0;
+
+  return 1;
+} //!ERR

@@ -1,10 +1,10 @@
 # Raw Pointers And Lexical Unsafe
 
-Status: current bounded language contract
+Status: current language contract
 
-GTI provides one-level raw pointers for native C interoperation and low-level
-implementation work. One bounded C-return form may add a second level when a
-`[[c_array(count)]]` attribute pairs it with an exact integer out parameter.
+GTI provides recursively nested raw pointers for native C interoperation and
+low-level implementation work. Native pointer-plus-count metadata describes
+a separate array contract; it does not determine whether a pointer type exists.
 Their spelling follows C++, while operations that can violate memory safety
 are permitted only inside a Rust-style lexical `unsafe { ... }` block.
 
@@ -32,19 +32,30 @@ it does for every other GTI value:
 | `const T* pointer = nullptr;` | cannot be reseated | read-only |
 | `mut const T* pointer = nullptr;` | may be reseated | read-only |
 
-`const` is accepted in this position only as a raw-pointer pointee qualifier;
-GTI has not introduced general C++-style `const` values or `T* const`
-declarators. A raw-pointer variable or field must have an explicit initializer.
+`const` is accepted only as a raw-pointer pointee qualifier. At an inner
+pointer layer, `T* const*` means a pointer to a read-only pointer slot, whereas
+`const T**` means a writable slot holding a pointer to read-only `T`.
+GTI has not introduced general C++-style `const` values or trailing
+`T* const` binding declarators. An ordinary GTI raw-pointer variable or field
+must have an explicit initializer. Native `[[c_abi]]` record fields instead
+follow their passive representation contract and cannot declare GTI field
+initializers.
 Use `nullptr` when no address is available yet.
 
-The ordinary type surface has exactly one pointer level. Pointer-to-pointer
-locals, parameters, fields, aliases, and unannotated returns, references to raw
-pointers, anonymous/general function-pointer declarators, pointer-to-array
-types, and implicit
-array-to-pointer decay are rejected. The only written `T**` form is an
-`extern "C"` return carrying valid `[[c_array(count)]]` metadata. A fixed array
-may contain one-level pointer values, but the array itself does not become a
-pointer.
+Nested pointers compose in locals, parameters, fields, aliases, generic
+arguments and unannotated returns. Taking the address of a mutable `T*`
+slot yields `T**`; taking an immutable slot's address yields `T* const*`.
+Stored or forwarded slot addresses retain the same writeback identity.
+Each dereference/index remains lexical `unsafe`, including access to the
+pointer slot itself. Adding outer qualification requires an exact inner type:
+`T**` can become `T* const*`, but never implicitly `const T**`.
+Example 124 demonstrates real C writeback and GTI forwarding.
+
+Checked references to raw pointers, anonymous/general function-pointer
+declarators, pointer-to-array types, and implicit array-to-pointer decay remain
+rejected. Fixed arrays may contain nested pointer values; address individual
+elements explicitly. Recursive pointer syntax shares the parser's existing
+structural resource budget rather than a special two-level language limit.
 
 A named native callback alias such as `using Callback = (int32_t) -> void;`
 is a separate bounded C-interoperation type. It has pointer representation but
@@ -603,14 +614,15 @@ C-thread operation outside the exact registered `<std/cthread>` contract.
 
 ## Native C ABI
 
-An `extern "C"` declaration may use a one-level raw pointer when its pointee is
-one of:
+An `extern "C"` declaration may use recursively nested raw pointers whose
+terminal pointee is one of:
 
 - `void`;
-- a fixed-width signed or unsigned integer;
+- a target-correct C scalar or fixed-width signed/unsigned integer;
 - `float` or `double`;
 - a valid passive `[[c_abi]]` record; or
-- a nominal `[[c_opaque]]` handle.
+- a nominal `[[c_opaque]]` handle; or
+- an exact named native callback type or `c_string` pointer alias.
 
 The pointer may have a read-only pointee with `const`. Pointer parameters are
 immutable bindings. Pointers to ordinary GTI classes, enums, arrays,
@@ -620,27 +632,19 @@ has checked public representation; a `[[c_opaque]]` handle deliberately has no
 pointee representation and therefore retains the address-only restriction
 above.
 
-An annotated `[[c_array(count)]]` return may be one admitted pointer or the
-exact two-level form whose inner pointer is admitted. The named count is an
+An annotated `[[c_array(count)]]` return may be any admitted raw pointer. The named count is an
 immutable one-level pointer to a writable fixed-width integer. This metadata
 does not make the native storage owned, non-null, bounded in the raw type, or
 safe to retain; calls and element access stay lexical `unsafe`. See
 [`native-c-interop.md`](native-c-interop.md#native-pointer-plus-count-arrays)
 for the complete pair contract.
 
-A bodyless `extern "C"` function may also take one exact
-`OpaqueHandle**` parameter. This is an out-parameter boundary form, not a
-general pointer-to-pointer type. Its call argument must be the direct
-`&binding` expression for a mutable binding of exact type `OpaqueHandle*`, and
-the call must be inside `unsafe`. The contextual address cannot be retained,
-returned, forwarded, or used outside that full expression. The native
-function may replace the pointer value; GTI infers no non-null, ownership,
-lifetime, allocation, or cleanup guarantee from that write.
-The foreign function must not retain the address of the output slot. The C++
-backend stages internal address carriers into native pointer slots for this
-call and copies updated values back before evaluating subsequent source code.
-Repeated output arguments naming the same binding share one native slot;
-native declarations and C-compatible fields retain their actual pointer ABI.
+`OpaqueHandle**`, scalar out pointers such as `c_char**`, and deeper slot
+addresses all use this general rule. A C call can replace a writable slot
+through a direct, stored or forwarded address. GTI infers no non-null,
+ownership, allocation or cleanup guarantee from that write. Native retention
+requires the unsafe caller to keep the slot itself alive, as well as satisfying
+the native API's obligations for the values stored there.
 
 A declaration is not itself an unsafe operation. Calling a pointer-bearing C
 function is unsafe because the declaration cannot express native bounds,
@@ -699,8 +703,6 @@ exposing it has a separately documented contract.
 
 This feature does not add:
 
-- general pointer-to-pointer types beyond the bounded annotated C-array return
-  and direct opaque-handle C out parameter;
 - anonymous/general function pointers, captured callbacks, or foreign-thread
   GTI callback entry beyond the named exact native callback family;
 - implicit fixed-array decay;

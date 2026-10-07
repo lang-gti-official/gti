@@ -1,0 +1,93 @@
+// User generic functions that forward generic element types, predicates and
+// comparators into stdlib algorithms, instantiated with built-ins and with a
+// user class satisfying ordering/equality.
+#include <std/algorithm>
+#include <std/functional>
+#include <std/iterator>
+#include <std/numeric>
+#include <std/vector>
+
+class Version {
+  int32_t major;
+  int32_t minor;
+
+public:
+  Version(int32_t major, int32_t minor) : major(major), minor(minor) {}
+  int32_t key() { return this.major * 100 + this.minor; }
+  bool operator==(Version& other) { return this.key() == other.key(); }
+  bool operator!=(Version& other) { return this.key() != other.key(); }
+  bool operator<(Version& other) { return this.key() < other.key(); }
+  bool operator<=(Version& other) { return this.key() <= other.key(); }
+  bool operator>(Version& other) { return this.key() > other.key(); }
+  bool operator>=(Version& other) { return this.key() >= other.key(); }
+};
+
+// Range algorithms need the caller to restate the range relation for the
+// dependent std::vector<T>; the element facts alone are not enough.
+std::ptrdiff_t count_matching<std::movable T, Predicate>(std::vector<T>& values, mut Predicate keep)
+  requires std::predicate<Predicate, T> &&
+           std::range_predicate<Predicate, std::vector<T>> {
+  return std::count_if(values, std::move(keep));
+}
+
+void sort_by<std::relocatable T, Compare>(mut std::vector<T>& values, mut Compare compare)
+  requires std::comparator<Compare, T> {
+  std::sort(values, std::move(compare));
+}
+
+bool has_value<std::movable T>(std::vector<T>& values, T& wanted)
+  requires std::equality_comparable<T> && std::range_of<std::vector<T>, T> {
+  return std::contains(values, wanted);
+}
+
+T newest<T>(std::vector<T>& values, T fallback)
+  requires std::totally_ordered<T> && std::copyable<T> {
+  auto last = values.end();
+  auto best = std::max_element(values.begin(), last);
+  if (best != last) { return *best; }
+  return fallback;
+}
+
+T total<Iterator, Sentinel, std::numeric T>(mut Iterator first, Sentinel last, T zero)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::accumulates_into<Iterator, T> {
+  return std::accumulate(std::move(first), std::move(last), zero);
+}
+
+bool is_long(Version& v) { return v.key() >= 200; }
+
+int main() {
+  mut std::vector<int32_t> numbers = std::vector<int32_t>({5, -3, 8, 0, 12, -7});
+  std::ptrdiff_t positives = count_matching(numbers, [](int32_t& v) -> bool { return v > 0; });
+  if (positives != 3) { return 1; }
+
+  sort_by(numbers, [](int32_t& a, int32_t& b) -> bool { return a > b; });
+  if (numbers[std::size_t(0)] != 12 || numbers[std::size_t(5)] != -7) { return 2; }
+
+  int32_t eight = 8;
+  int32_t nine = 9;
+  if (!has_value(numbers, eight) || has_value(numbers, nine)) { return 3; }
+  if (newest(numbers, 0) != 12) { return 4; }
+  if (total(numbers.begin(), numbers.end(), 0) != 15) { return 5; }
+
+  std::vector<int64_t> wide = std::vector<int64_t>({4000000000, 5000000000});
+  if (total(wide.begin(), wide.end(), int64_t(0)) != 9000000000) { return 6; }
+
+  mut std::vector<Version> versions = std::vector<Version>();
+  versions.push_back(Version(1, 4));
+  versions.push_back(Version(2, 1));
+  versions.push_back(Version(1, 9));
+  sort_by(versions, [](Version& a, Version& b) -> bool { return a < b; });
+  if (versions[std::size_t(0)].key() != 104 || versions[std::size_t(2)].key() != 201) { return 7; }
+  Version probe = Version(1, 9);
+  if (!has_value(versions, probe)) { return 8; }
+  if (count_matching(versions, is_long) != 1) { return 9; }
+  Version fallback = Version(0, 0);
+  if (newest(versions, fallback).key() != 201) { return 10; }
+
+  std::vector<Version> none = std::vector<Version>();
+  if (newest(none, fallback).key() != 0) { return 11; }
+  std::println(positives);
+  std::println(total(numbers.begin(), numbers.end(), 0));
+  return 0;
+}

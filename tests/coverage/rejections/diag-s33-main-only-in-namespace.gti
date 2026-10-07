@@ -1,0 +1,5 @@
+namespace app {
+int main() { //!ERR
+  return 0;
+}
+}

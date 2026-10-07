@@ -265,6 +265,33 @@ class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
     output << "mir-v93 valid=" << program.valid() << '\n';
+    if (const std::optional<MirEmbeddingPlan> &embedding =
+            program.embeddingPlan()) {
+      output << "program-kind library embedding-abi=" << embedding->abiVersion
+             << " exports=" << embedding->exports.size() << '\n';
+      for (const MirEmbeddingExport &selected : embedding->exports) {
+        output << "embedding-export symbol=" << std::quoted(selected.symbol)
+               << " function=" << std::quoted(selected.qualifiedName)
+               << " declaration=" << selected.declaration
+               << " instance=" << selected.function << " return=";
+        type(selected.returnType);
+        output << " parameters=[";
+        for (std::size_t index = 0; index < selected.parameterTypes.size();
+             ++index) {
+          separator(index);
+          type(selected.parameterTypes[index]);
+        }
+        output << "] request=" << std::quoted(selected.requestSource.source)
+               << ':' << selected.requestSource.start << ':'
+               << selected.requestSource.end << ':'
+               << selected.requestSource.line << '\n';
+      }
+    }
+    const auto &target = program.target();
+    output << "target os=" << target.os << " vendor=" << target.vendor
+           << " arch=" << target.arch
+           << " pointer-width=" << target.dataLayout.pointerWidthBits()
+           << " execution-profile=" << number(target.executionProfile) << '\n';
     for (const MirNativeCallbackAdapter &adapter :
          program.nativeCallbackAdapters()) {
       output << "native-callback @" << adapter.id
@@ -961,7 +988,8 @@ private:
   void type(const SemanticType &value) {
     output << "type(" << number(value.kind) << ";class=" << value.classId
            << ";enum=" << value.enumId
-           << ";parameter=" << value.genericParameterId;
+           << ";parameter=" << value.genericParameterId
+           << ";native-c=" << static_cast<unsigned>(value.nativeCScalar);
     if (value.functionId != 0) {
       output << ";function=" << value.functionId;
     }
@@ -1048,6 +1076,10 @@ private:
     optional(value.functionTarget);
     output << ";lambda=";
     optional(value.lambdaTarget);
+    if (value.nativeCalleeType) {
+      output << ";native-callee=";
+      type(*value.nativeCalleeType);
+    }
     output << ";required=" << callableCapabilityName(value.requiredCapability)
            << ";selected=";
     if (value.selectedCapability) {
@@ -1550,6 +1582,10 @@ private:
     type(value.dispatchOwner);
     output << " function=";
     optional(value.functionTarget);
+    if (value.nativeCalleeType) {
+      output << " native-callee=";
+      type(*value.nativeCalleeType);
+    }
     output << " constructor=";
     optional(value.constructorTarget);
     output << " object-allocation=" << value.objectAllocation

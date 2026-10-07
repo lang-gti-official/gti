@@ -1,0 +1,15 @@
+// A45: ': Base(50)' with a literal argument is a backend ICE ('Base(s)' works).
+class Base {
+  int32_t score;
+public:
+  Base(int32_t score) : score(score) {}
+  int32_t get() { return this.score; }
+};
+class Derived : public Base {
+public:
+  Derived() : Base(50) {}
+};
+int main() {
+  Derived d = Derived();
+  return d.get() - 50;
+}

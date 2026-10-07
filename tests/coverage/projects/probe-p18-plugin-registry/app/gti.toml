@@ -1,0 +1,19 @@
+manifest-version = 1
+
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+plugins = { path = "../plugins" }
+
+[targets.app]
+kind = "executable"
+root = "src/main.gti"
+
+[targets.registry-tests]
+kind = "test"
+root = "tests/registry_test.gti"
+
+[profiles.release]
+optimization = 3

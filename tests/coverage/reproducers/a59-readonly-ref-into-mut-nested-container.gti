@@ -1,0 +1,13 @@
+// A59: a read-only reference into an element of a mutable nested container is a MIR ICE.
+// ICE (MIR construction): "loan N is used while an exclusive child reborrow
+// is active". A read-only reference to an element of a *mutable* nested
+// container, then a read-only reference into that element. The same code
+// with an immutable owner compiles; a by-value read through `row` compiles.
+#include <std/vector>
+int main() {
+  mut std::vector<std::vector<int>> g{};
+  g.push_back(std::vector<int>({1}));
+  std::vector<int>& row = g[std::size_t(0)];
+  int& x = row[std::size_t(0)];
+  return x == 1 ? 0 : 1;
+}

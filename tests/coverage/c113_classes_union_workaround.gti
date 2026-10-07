@@ -1,0 +1,68 @@
+// WORKAROUND variant of v15 (no fixed arrays of union-bearing values).
+// Hand-rolled tagged union: a passive union nested in a struct with a scoped
+// enum tag, unions inside a fixed array field, nested union members, writes
+// through a mutable struct field inside unsafe, sizeof/alignof of the union,
+// and a method that switches on the tag before reading the active member.
+#include <std/format>
+
+enum class Kind : uint8_t { integer, real, pair };
+
+union Halves {
+  mut uint16_t lo;
+  mut uint32_t whole;
+};
+
+union Payload {
+  mut int32_t i;
+  mut float f;
+  mut Halves h;
+};
+
+struct Value {
+  mut Kind kind = Kind::integer;
+  mut Payload data{};
+
+  int32_t as_int() {
+    switch (this.kind) {
+    case Kind::integer:
+      unsafe { return this.data.i; }
+    case Kind::real:
+      unsafe { return int32_t(this.data.f); }
+    case Kind::pair:
+      unsafe { return int32_t(this.data.h.whole & uint32_t(65535)); }
+    }
+    return -1;
+  }
+};
+
+
+int main() {
+  // WORKAROUND: a fixed array of Value (struct with a union field) ICEs.
+  mut Value s0 = Value();
+  mut Value s1 = Value();
+  mut Value s2 = Value();
+  s0.kind = Kind::integer;
+  unsafe { s0.data.i = 41; }
+  s1.kind = Kind::real;
+  unsafe { s1.data.f = 2.75; }
+  s2.kind = Kind::pair;
+  unsafe { s2.data.h.whole = uint32_t(196613); } // 3 * 65536 + 5
+
+  int32_t sum = s0.as_int() + s1.as_int() + s2.as_int();
+  if (sum != 48) { std::println("sum {}", sum); return 1; }
+
+  if (sizeof(Payload) != std::size_t(4) || alignof(Payload) != std::size_t(4)) { return 2; }
+  if (sizeof(Halves) != std::size_t(4)) { return 3; }
+
+  Payload zero{};
+  unsafe {
+    if (zero.i != 0) { return 4; }
+  }
+  Payload first{int32_t(7)};
+  Payload copy = first;
+  unsafe {
+    if (copy.i != 7) { return 5; }
+  }
+  std::println("union ok {}", sum);
+  return 0;
+}

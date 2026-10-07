@@ -1,0 +1,10 @@
+// INVALID: a span borrowed from a vector stays live across push_back.
+#include <std/span>
+#include <std/vector>
+
+int main() {
+  mut std::vector<int> values = std::vector<int>({1, 2, 3});
+  std::span<int> view = values.as_span();
+  values.push_back(4);
+  return view[std::size_t(0)] == 1 ? 0 : 1;
+}

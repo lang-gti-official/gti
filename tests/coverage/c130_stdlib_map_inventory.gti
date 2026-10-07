@@ -1,0 +1,130 @@
+// Ordered map of move-only class values keyed by owning strings:
+// insertion, try_emplace, borrowed lookup through a free function, find_mut,
+// mutable range-for, bounds traversal, and erase-after-scan logic.
+#include <std/map>
+#include <std/string>
+#include <std/vector>
+
+class Item {
+  std::string label_;
+  mut int quantity_;
+  mut std::vector<int> history_;
+public:
+  Item(std::string label, int quantity)
+      : label_(std::move(label)), quantity_(quantity), history_(std::vector<int>()) {}
+  Item(Item& other) = delete;
+  Item(Item&& other) = default;
+  std::string_view label() { return this.label_.view(); }
+  int quantity() { return this.quantity_; }
+  void adjust(int delta) mut {
+    this.quantity_ += delta;
+    this.history_.push_back(delta);
+  }
+  std::size_t changes() { return this.history_.size(); }
+};
+
+// A borrowed result derived from the one read-only container parameter;
+// the key is an owned by-value parameter so the dependency is unambiguous.
+Item& lookup(std::map<std::string, Item>& inventory, std::string key) {
+  return inventory.at(key);
+}
+
+int total_quantity(std::map<std::string, Item>& inventory) {
+  mut int total = 0;
+  for (auto& entry : inventory) {
+    total += entry.second.quantity();
+  }
+  return total;
+}
+
+int main() {
+  mut std::map<std::string, Item> inventory{};
+  {
+    mut auto first = inventory.insert(std::string("pear"), Item(std::string("Pear"), 4));
+    if (!first.second) { return 1; }
+  }
+  [[discard]] inventory.insert(std::string("apple"), Item(std::string("Apple"), 10));
+  [[discard]] inventory.try_emplace(std::string("cherry"), std::string("Cherry"), 25);
+  [[discard]] inventory.emplace(std::string("banana"), std::string("Banana"), 0);
+  {
+    // Duplicate key: try_emplace must not construct or replace.
+    auto duplicate = inventory.try_emplace(std::string("apple"), std::string("Other"), 99);
+    if (duplicate.second) { return 2; }
+  }
+  if (inventory.size() != 4) { return 3; }
+
+  std::string apple_key{"apple"};
+  {
+    Item& apple = lookup(inventory, apple_key.clone());
+    if (apple.quantity() != 10 || apple.label() != "Apple") { return 4; }
+  }
+
+  // find_mut then mutate through the exclusive iterator.
+  {
+    std::string key{"pear"};
+    // The sentinel carries no loan, so take it before the exclusive cursor.
+    auto last = inventory.end();
+    mut auto found = inventory.find_mut(key);
+    if (!(found != last)) { return 5; }
+    found->second.adjust(3);
+    found->second.adjust(-1);
+  }
+  if (inventory.at(apple_key).changes() != 0) { return 6; }
+
+  // Mutable range-for over every entry.
+  for (mut auto& entry : inventory) {
+    entry.second.adjust(1);
+  }
+  if (total_quantity(inventory) != 10 + 1 + 6 + 1 + 25 + 1 + 0 + 1) { return 7; }
+
+  // Ordered traversal and bounds: keys in [b, d).
+  mut std::string seen{};
+  for (auto& entry : inventory) {
+    // Workaround: entry.first.view() directly ICEs (repro/rB2).
+    std::string& key = entry.first;
+    seen.append(key.view());
+    seen.push_back(',');
+  }
+  std::println(seen);
+  if (seen != "apple,banana,cherry,pear,") { return 8; }
+
+  {
+    std::string low{"b"};
+    std::string high{"d"};
+    mut auto cursor = inventory.lower_bound(low);
+    auto stop = inventory.lower_bound(high);
+    mut int in_range = 0;
+    while (cursor != stop) {
+      in_range++;
+      ++cursor;
+    }
+    if (in_range != 2) { return 9; }
+    std::string cherry{"cherry"};
+    auto after_cherry = inventory.upper_bound(cherry);
+    if ((*after_cherry).first != "pear") { return 10; }
+  }
+
+  // Erase-during-logic: collect keys first, then erase after the scan ends.
+  mut std::vector<std::string> doomed{};
+  for (auto& entry : inventory) {
+    if (entry.second.quantity() < 5) {
+      doomed.push_back(entry.first.clone());
+    }
+  }
+  for (auto& key : doomed) {
+    if (inventory.erase(key) != 1) { return 11; }
+  }
+  if (doomed.size() != 1 || inventory.size() != 3 || inventory.contains(doomed[std::size_t(0)])) { return 12; }
+  std::string missing{"banana"};
+  if (inventory.count(missing) != 0 || inventory.erase(missing) != 0) { return 13; }
+
+  // get_or_insert is unavailable (Item is not default-initializable);
+  // insert_or_assign replaces the mapped value in place.
+  {
+    auto replaced = inventory.insert_or_assign(std::string("apple"), Item(std::string("Green apple"), 2));
+    if (replaced.second) { return 14; }
+  }
+  if (lookup(inventory, apple_key.clone()).label() != "Green apple") { return 15; }
+  std::println(lookup(inventory, apple_key.clone()).label());
+  return 0;
+}

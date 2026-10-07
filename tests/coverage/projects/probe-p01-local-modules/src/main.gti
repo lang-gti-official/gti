@@ -1,0 +1,50 @@
+import main;
+import util;
+#include "helpers.gti"
+
+class Square {
+  int side;
+
+public:
+  Square(int s) : side(s) {}
+  int area() { return side * side; }
+};
+
+int main() {
+  geo::shapes::Rect first{3, 4};
+  geo::shapes::Rect second{1, 2};
+  // scale is 2 (util::factor()), initialized before the facade's users run.
+  if (first.area() != 24) {
+    return 1;
+  }
+  auto extent = first.extent();
+  if (extent.area() != 12 || extent.w != 3) {
+    return 2;
+  }
+  auto made = geo::shapes::make_extent(2, 5);
+  if (made.area() != 10) {
+    return 3;
+  }
+  if (geo::shapes::total_area(first, second) != 28) {
+    return 4;
+  }
+  Square a{3};
+  Square b{4};
+  if (geo::shapes::total_area(a, b) != 25) {
+    return 5;
+  }
+  if (geo::shapes::biased(1) != 101) {
+    return 6;
+  }
+  if (app::describe(4) != 47 || app::version() != 7) {
+    return 7;
+  }
+  if (util::clamp(50, 0, 10) != 10 || util::factor() != 2) {
+    return 8;
+  }
+  if (geo::shapes::helper_sum(20, 22) != 42) {
+    return 9;
+  }
+  std::println("p01 local modules ok");
+  return 0;
+}

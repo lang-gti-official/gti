@@ -1,0 +1,14 @@
+#include "reader.gti"
+
+Late shared_late{};
+// The generic in reader.gti would reach late_value before its step completes.
+int first = reader::read(shared_late);
+int late_value = 9;
+
+class Late {
+public:
+  Late() {}
+  int get() { return late_value; }
+};
+
+int main() { return first - 9; }

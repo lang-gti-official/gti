@@ -1,0 +1,12 @@
+// A18: a function item passed to a callable parameter invoked with a pack is rejected.
+namespace ops {
+int32_t add3(int32_t a, int32_t b, int32_t c) { return a + b + c; }
+}
+
+int32_t invoke_with<F, Args...>(F f, Args... args) {
+  return f(args...);
+}
+
+int main() {
+  return invoke_with(ops::add3, 1, 2, 3) == 6 ? 0 : 1;
+}

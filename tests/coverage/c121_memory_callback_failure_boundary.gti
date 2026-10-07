@@ -1,0 +1,55 @@
+// Valid (failure path): a defined failure inside a GTI function entered from C
+// (ftw's callback). The callback boundary is a terminating containment
+// boundary: the callback's own live owners are cleaned, the report names the
+// GTI detector site, and the process exits 70 without returning through C.
+#include <std/filesystem>
+#include <std/string>
+#include <std/vector>
+#include <std/panic>
+
+[[c_opaque]] struct FileStat;
+using Visitor = (c_string, const FileStat*, int32_t) -> int32_t;
+extern "C" {
+  int32_t ftw(c_string root, Visitor visitor, int32_t depth);
+}
+
+class Note {
+  std::string text;
+public:
+  Note(std::string text) : text(std::move(text)) {}
+  Note(Note& other) = delete;
+  Note(Note&& other) = default;
+  ~Note() { std::println(this.text); }
+};
+
+mut int32_t visits = 0;
+mut int32_t mode = 0;
+mut int32_t scale = 1;
+
+int32_t visit(c_string path, const FileStat* info, int32_t flag) {
+  Note local{std::string("callback local dropped")};
+  visits += 1;
+  if (visits == 3) {
+    if (mode == 0) {
+      scale = 2147483647;
+      int32_t doubled = scale * 2; // overflow-site
+      return doubled;
+    }
+    std::panic("visit {} failed", visits); // panic-site
+  }
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Note outer{std::string("main owner dropped")};
+  mode = argc - 1;
+  std::filesystem::path root{"ftw_failure_tree"};
+  [[discard]] std::filesystem::remove_all(root);
+  auto made = std::filesystem::create_directories(std::filesystem::path("ftw_failure_tree/x/y"));
+  if (!made) { return 1; }
+  std::string text = root.string();
+  std::println("walking");
+  unsafe { [[discard]] ftw(text.c_string(), visit, 4); }
+  std::println("unreachable");
+  return 2;
+}

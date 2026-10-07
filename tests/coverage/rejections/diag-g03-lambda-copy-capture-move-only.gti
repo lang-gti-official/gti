@@ -1,0 +1,13 @@
+#include <std/memory>
+
+struct Widget {
+  mut int v = 0;
+  Widget(int v) : v(v) {}
+  ~Widget() {}
+};
+
+int main() {
+  std::unique_ptr<Widget> w = std::make_unique<Widget>(3);
+  auto reader = [w]() -> int { return w->v; }; //!ERR
+  return reader() - 3;
+}

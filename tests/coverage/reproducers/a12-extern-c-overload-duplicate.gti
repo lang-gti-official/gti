@@ -1,0 +1,9 @@
+// A12: one overloaded extern "C" declaration is reported twice at the same span.
+extern "C" {
+  int32_t twice(int32_t v);
+  int32_t twice(int64_t v);
+}
+
+int main() {
+  return 0;
+}

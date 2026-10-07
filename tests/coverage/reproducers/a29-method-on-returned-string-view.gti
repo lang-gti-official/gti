@@ -1,0 +1,6 @@
+// A29: calling a method on a string_view returned by a call is a backend ICE.
+#include <std/string>
+int main() {
+  std::string s = std::string("build");
+  return s.view().size() == std::size_t(5) ? 0 : 1;
+}

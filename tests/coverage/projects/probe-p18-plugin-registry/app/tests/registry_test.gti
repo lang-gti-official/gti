@@ -1,0 +1,7 @@
+import plugins;
+
+int main() {
+  mut plugins::Registry registry{};
+  auto empty = registry.run_named("double", 1);
+  return !empty && empty.error() == plugins::LookupError::empty ? 0 : 1;
+}

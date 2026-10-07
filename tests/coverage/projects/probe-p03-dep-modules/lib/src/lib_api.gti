@@ -1,0 +1,24 @@
+export module main;
+import geo;
+export import util;
+
+namespace lib {
+  int scale() { return 3; }
+
+  // Private concept constraining an exported generic class.
+  concept weighable<T> = requires(T& item) { { item.weight() } -> int; };
+
+  export class Accumulator<weighable T> {
+    mut int total = 0;
+
+  public:
+    Accumulator() {}
+    void add(T& item) mut { total = total + item.weight() * scale(); }
+    int value() { return total; }
+  };
+
+  export int point_score(int x, int y) {
+    lib::geo::Point p{x, y};
+    return lib::geo::weighted(p, lib::geo::Axis::z);
+  }
+}

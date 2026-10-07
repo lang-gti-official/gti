@@ -1,0 +1,25 @@
+// INVALID: a fallible borrow of a function-local owner escapes the function.
+#include <std/string>
+
+enum class errc { missing };
+
+class Table {
+  std::string value_;
+public:
+  Table() : value_(std::string("v")) {}
+  expected<std::string&, errc> find(bool present) {
+    if (!present) { return unexpected(errc::missing); }
+    return this.value_;
+  }
+};
+
+expected<std::string&, errc> lookup(bool present) {
+  Table table{};
+  std::string& found = ?table.find(present);
+  return found;
+}
+
+int main() {
+  auto result = lookup(true);
+  return result ? 0 : 1;
+}

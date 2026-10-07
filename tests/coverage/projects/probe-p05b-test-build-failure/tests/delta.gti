@@ -1,0 +1,8 @@
+#include "../src/inventory.gti"
+
+int main() {
+  mut inv::Inventory items{};
+  items.add(4);
+  items.add(5);
+  return items.size() == uint64_t(2) && items.at(uint64_t(1)) == 5 ? 0 : 1;
+}

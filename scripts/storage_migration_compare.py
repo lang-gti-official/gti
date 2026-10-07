@@ -46,6 +46,7 @@ def main() -> None:
     report = {'schema': 1, 'scope': 'warm filesystem; sequential direct builds; O2 C++23',
               'warning': 'descriptive local samples, not a statistical performance guarantee',
               'baseline_revision': revision, 'source': benchmark.file_evidence(fixture),
+              'harness': benchmark.file_evidence(Path(__file__).resolve()),
               'repository': benchmark.repository_facts(), 'variants': {}, 'order': []}
     report['tools'] = {'cxx': benchmark.tool_record(
         benchmark.resolved_tool(args.cxx, ('--version',)))}
@@ -121,6 +122,7 @@ def main() -> None:
             (output / name / 'build.json').read_text())
         report['variants'][name]['emitted_cpp'] = benchmark.file_evidence(
             binaries[name].with_suffix('.gti.cpp'))
+        report['variants'][name]['executable'] = benchmark.file_evidence(binaries[name])
         save()
         print(name + ' prepared', flush=True)
     rng = random.Random(1001)
@@ -136,7 +138,10 @@ def main() -> None:
         save()
         print('Compile batch ' + str(run) + ' complete', flush=True)
     for mode, arguments in [('process', []), ('resource', ['resource'])]:
-        expected = None
+        seeds = sum(round % 97 for round in range(25000))
+        total = 128 * seeds + 25000 * 8448
+        expected = list(map(str, [total * (2 if mode == 'resource' else 1),
+                                 25000 * 192, 192 * seeds + 25000 * 12480]))
         for run in range(args.runtime_runs + 2):
             batch = list(binaries)
             rng.shuffle(batch)
@@ -147,9 +152,8 @@ def main() -> None:
                 if len(lines) != 5 or not all(line.isdecimal() for line in lines):
                     raise RuntimeError('malformed complete-state output')
                 state = lines[:3]
-                if expected is not None and state != expected:
-                    raise RuntimeError('complete semantic state diverged')
-                expected = state
+                if state != expected:
+                    raise RuntimeError('complete semantic state differs from arithmetic oracle')
                 counts = list(map(int, lines[3:]))
                 required = 0 if mode == 'process' else (50000 if name == 'baseline' else 100000)
                 if counts != [required, required]:

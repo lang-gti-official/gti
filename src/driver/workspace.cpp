@@ -166,17 +166,20 @@ std::string ProjectWorkspace::modelIdentity() const {
   return identity;
 }
 
-WorkspaceResolutionResult resolveProjectWorkspace(
-    const std::filesystem::path &startDirectory,
-    const std::optional<std::string> &requestedPackage,
-    const WorkspaceDependencyPolicy &dependencyPolicy,
-    const std::optional<WorkspaceManifestOverlay> &overlay) {
+WorkspaceResolutionResult
+resolveProjectWorkspace(const std::filesystem::path &startDirectory,
+                        const std::optional<std::string> &requestedPackage,
+                        const WorkspaceDependencyPolicy &dependencyPolicy,
+                        const std::optional<WorkspaceManifestOverlay> &overlay,
+                        ManifestFeaturePolicy manifestFeatures) {
   WorkspaceResolutionResult result;
   const auto load = [&](const std::filesystem::path &path) {
-    return loadProjectManifest(
-        path, overlay && artifactPathsAlias(path, overlay->path)
-                  ? std::optional<std::string>(overlay->text)
-                  : std::nullopt);
+    return loadProjectManifest(path,
+                               overlay &&
+                                       artifactPathsAlias(path, overlay->path)
+                                   ? std::optional<std::string>(overlay->text)
+                                   : std::nullopt,
+                               manifestFeatures);
   };
   ManifestDiscoveryResult discovery = discoverProjectManifest(startDirectory);
   if (!discovery.succeeded()) {
@@ -486,7 +489,7 @@ WorkspaceResolutionResult resolveProjectWorkspace(
         dependencyIndex = existing->second;
       } else {
         dependencyIndex = addLoadedManifest(
-            loadProjectManifest(targetRoot / manifestFilename),
+            load(targetRoot / manifestFilename),
             ProjectPackageMembership::Dependency, targetRoot,
             dependency.pathDeclaration,
             dependency.git ? "Git dependency" : "Path dependency");

@@ -49,12 +49,12 @@ bool bindingReceivedStoredLoan(const MirBody &body, HirBindingId binding,
                                    depth + 1);
 }
 
-bool completeObjectType(const MirProgram &program, const SemanticType &type) {
-  const auto eligible = [&](const auto &self, const SemanticType &candidate,
+bool completeObjectType(const MirProgram &program, const SemanticType &selected) {
+  const auto eligible = [&](const auto &self, const SemanticType &type,
                             std::size_t depth) -> bool {
-    if (depth > 128 || candidate.arrayLengthParameterId != 0)
+    if (depth > 128 || type.arrayLengthParameterId != 0)
       return false;
-    switch (candidate.kind) {
+    switch (type.kind) {
     case SemanticType::Int8:
     case SemanticType::Int16:
     case SemanticType::Int32:
@@ -67,24 +67,26 @@ bool completeObjectType(const MirProgram &program, const SemanticType &type) {
     case SemanticType::Double:
     case SemanticType::Bool:
     case SemanticType::Char:
-      return candidate == SemanticType(candidate.kind);
+      return type == SemanticType(type.kind) ||
+             (type.nativeCScalar != NativeCScalarKind::None &&
+              type == SemanticType::nativeCScalarType(type.nativeCScalar,
+                                                      program.target()));
     case SemanticType::RawPointer:
-      return candidate.arguments.size() == 1 &&
-             candidate.arguments.front().kind != SemanticType::RawPointer &&
-             candidate.arguments.front().kind != SemanticType::TypeParameter &&
-             candidate.arguments.front().kind != SemanticType::Unknown;
+      return type.arguments.size() == 1 &&
+             type.arguments.front().kind != SemanticType::TypeParameter &&
+             type.arguments.front().kind != SemanticType::Unknown;
     case SemanticType::Enum:
-      return program.findIntegralEnum(candidate.enumId) != nullptr;
+      return program.findIntegralEnum(type.enumId) != nullptr;
     case SemanticType::Array:
-      return candidate.arguments.size() == 1 && candidate.arrayLength > 0 &&
-             self(self, candidate.arguments.front(), depth + 1);
+      return type.arguments.size() == 1 && type.arrayLength > 0 &&
+             self(self, type.arguments.front(), depth + 1);
     case SemanticType::Class: {
       const MirClassInstance *owner = nullptr;
-      for (const MirClassInstance &instance : program.classInstances()) {
-        if (instance.type == candidate) {
+      for (const MirClassInstance &candidate : program.classInstances()) {
+        if (candidate.type == type) {
           if (owner != nullptr)
             return false;
-          owner = &instance;
+          owner = &candidate;
         }
       }
       return owner != nullptr && owner->kind != ClassKind::Interface &&
@@ -95,7 +97,7 @@ bool completeObjectType(const MirProgram &program, const SemanticType &type) {
       return false;
     }
   };
-  return eligible(eligible, type, 0);
+  return eligible(eligible, selected, 0);
 }
 
 bool objectRelocate(const MirProgram &program,
@@ -305,8 +307,6 @@ bool rawPointerConversion(const MirInstruction &instruction) {
   return source.kind == SemanticType::RawPointer &&
          target.kind == SemanticType::RawPointer &&
          source.arguments.size() == 1 && target.arguments.size() == 1 &&
-         source.arguments.front().kind != SemanticType::RawPointer &&
-         target.arguments.front().kind != SemanticType::RawPointer &&
          (source.pointerAccess == AccessMode::Mutable ||
           target.pointerAccess == AccessMode::ReadOnly) &&
          (source.arguments.front() == target.arguments.front() ||

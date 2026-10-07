@@ -348,14 +348,16 @@ for known host identities and is not a general user FFI. The standard runtime
 may declare its entry symbols through the bounded C-linkage surface while
 keeping public policy in ordinary GTI wrappers.
 
-A generated embedding wrapper is a distinct future containment boundary. It
-must convert GTI's explicit failure channel into a structured host result only
-after invocation-owned cleanup; a direct call to a generated C++ symbol does
-not establish that boundary. The current language has neither this wrapper nor
-a stable callable GTI ABI, so the defined-failure contract is not by itself a
-claim that current artifacts can be safely embedded and resumed. E-EMBED-01
-owns the first explicit wrapper, context-validity/poisoning rule, descriptor
-lifetime, and same-process re-entry evidence.
+A generated embedding wrapper is a distinct future containment boundary. ADR
+026 now fixes its version-1 C contract, and the compiler has a dormant
+artifact request that resolves exact exports and carries their verified roots
+through lowered-program construction. It must still convert GTI's explicit
+failure channel into a structured host result only after invocation-owned
+cleanup; a direct call to a generated C++ symbol does not establish that
+boundary. Released manifests therefore still reject `kind = "library"`, and
+the current language has neither a published wrapper/shared-library artifact
+nor a stable callable GTI ABI. `E-EMBED-01B/C` and `B-LIB-02` own the context
+runtime, generated boundary, activation, and same-process re-entry evidence.
 
 **Specification gap:** Annotated opaque-handle ownership transfer, captured or
 userdata callbacks, arbitrary foreign-thread GTI callback entry, array

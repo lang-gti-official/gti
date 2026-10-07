@@ -249,6 +249,26 @@ capabilities; nominal facts remain frontend-owned, while real builtin aggregate
 components compose those facts. Removing the condition or changing the derived
 capability is invalid MIR. The declaration catalog preserves the generic
 condition in `lowered-program-v13`, and optimization replay includes these facts.
+
+MIR also copies the artifact program kind and a pointer-free
+`MirEmbeddingPlan`. Each canonical row names the exact source
+`MirFunctionInstance`, semantic declaration, signature, public symbol, and
+request span selected by HIR. Program verification requires a non-empty ABI-v1
+plan for a library, no plan for an executable, strict symbol order, unique
+function roots, source definitions with GTI linkage, and no hosted startup or
+process-lifetime callback adapter. Optimization coherence treats the entire
+plan as immutable non-body policy. `LoweredProgramBuilder` exact-compares the
+semantic/HIR/MIR chain and copies the rows into `LoweredEmbeddingPlan`, where
+future wrapper and header backends can consume one sealed source of truth.
+
+The combined schema preserves embedding rows for dormant library snapshots
+and uses the same current version for executable and library programs.
+The program header retains the selected target's identity, pointer width and
+execution profile. Every serialized type retains its native C primitive
+discriminator separately from its numeric kind; equal-width `long` and
+`long long`, and plain `char` versus signed/unsigned char, cannot disappear
+from the snapshot. Program verification checks these facts against the selected
+target across declaration, aggregate, callable, cleanup and body inventories.
 Field-aware borrowed-return and construction contracts serialize each result
 field path, selected receiver or parameter, source field path, and permission.
 Calls preserve the semantic contract; program verification also checks the
@@ -1814,7 +1834,8 @@ verification checks its scalar pointee, zero/one exact initializer, result,
 absence of constructor dispatch, and failure metadata. Named native callback
 values are passive ordered by-value inputs, including expanded packs; an
 ordinary callback parameter may also receive the already-admitted null value.
-This does not admit callback invocation or foreign-thread entry.
+Native invocation uses the separate exact-signature call contract below; null
+transport does not make invocation safe or admit foreign-thread entry.
 
 Class unique allocation with a selected ordinary constructor evaluates and
 prepares arguments first, then issues `AllocateObject`. Its local allocation
@@ -2570,6 +2591,20 @@ the verified target invocation, retaining the existing terminating failure
 firewall. Callback thunk text
 and calling-convention spelling remain backend representation choices; MIR
 owns the executable target and containment decision.
+
+An indirect native `Call` instead carries `nativeCalleeType` and a staged
+receiver value. It has no function, lambda, constructor, body, or adapter
+target. `isMirNativeIndirectCall` checks the exact admitted signature, result,
+argument roles/types, receiver `CallInput`, lexical `ForeignPointerCall`, and
+absence of a GTI failure channel. The ordinary ordered-input verifier checks
+callee-before-arguments scheduling and single invocation, while generic
+callable verification retains the concrete parameter boundary. Empty concrete
+semantic failure facts shadow deferred generic facts rather than falling back
+to an inapplicable callable failure channel. Foreign effects remain
+conservative: no GTI body-effect summary is inferred from an arbitrary address.
+Production emission reads this verified signature and staged value, reusing
+the ordinary native ABI operand bridge; it does not resolve a source name or
+consult AST/HIR to discover a target.
 
 MIR v57 retains `CThreadRuntimeOperation` on exact private native declarations.
 Create/join stay ordinary native `Call` instructions with explicit

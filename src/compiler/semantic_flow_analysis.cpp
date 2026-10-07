@@ -1622,7 +1622,8 @@ auto SemanticVisitor::Impl::numericConversionMayFail(const SemanticType &source,
 
 auto SemanticVisitor::Impl::compoundIntermediateType(
     TokenKind operation, const SemanticType &target, const SemanticType &right,
-    const Expr *leftExpression, const Expr *rightExpression) -> SemanticType {
+    const Expr *leftExpression, const Expr *rightExpression) const
+    -> SemanticType {
   if (operation == TokenKind::SHIFT_LEFT_EQUAL ||
       operation == TokenKind::SHIFT_RIGHT_EQUAL) {
     return promotedInteger(target);
@@ -3242,7 +3243,8 @@ auto SemanticVisitor::Impl::sameSignatureType(
       return false;
     }
   }
-  if (left.kind != right.kind || left.classId != right.classId ||
+  if (left.kind != right.kind || left.nativeCScalar != right.nativeCScalar ||
+      left.classId != right.classId ||
       left.genericParameterId != right.genericParameterId ||
       left.functionId != right.functionId ||
       left.arrayLength != right.arrayLength ||
@@ -10082,10 +10084,7 @@ auto SemanticVisitor::Impl::validateShiftCount(SemanticType result,
 }
 
 auto SemanticVisitor::Impl::isInteger(SemanticType type) -> bool {
-  return type == SemanticType::Int8 || type == SemanticType::Int16 ||
-         type == SemanticType::Int32 || type == SemanticType::Int64 ||
-         type == SemanticType::UInt8 || type == SemanticType::UInt16 ||
-         type == SemanticType::UInt32 || type == SemanticType::UInt64;
+  return isSignedInteger(type) || isUnsignedInteger(type);
 }
 
 auto SemanticVisitor::Impl::constraintImplies(GenericConstraintSet actual,
@@ -10170,13 +10169,14 @@ auto SemanticVisitor::Impl::isSignedNumeric(SemanticType type) const -> bool {
 }
 
 auto SemanticVisitor::Impl::isSignedInteger(SemanticType type) -> bool {
-  return type == SemanticType::Int8 || type == SemanticType::Int16 ||
-         type == SemanticType::Int32 || type == SemanticType::Int64;
+  return type.kind == SemanticType::Int8 || type.kind == SemanticType::Int16 ||
+         type.kind == SemanticType::Int32 || type.kind == SemanticType::Int64;
 }
 
 auto SemanticVisitor::Impl::isUnsignedInteger(SemanticType type) -> bool {
-  return type == SemanticType::UInt8 || type == SemanticType::UInt16 ||
-         type == SemanticType::UInt32 || type == SemanticType::UInt64;
+  return type.kind == SemanticType::UInt8 ||
+         type.kind == SemanticType::UInt16 ||
+         type.kind == SemanticType::UInt32 || type.kind == SemanticType::UInt64;
 }
 
 auto SemanticVisitor::Impl::integerRank(SemanticType type) -> int {
@@ -10318,16 +10318,44 @@ auto SemanticVisitor::Impl::integerRangeFits(SemanticType target,
 }
 
 auto SemanticVisitor::Impl::promotedInteger(SemanticType type) -> SemanticType {
-  if (type == SemanticType::Int8 || type == SemanticType::Int16 ||
-      type == SemanticType::UInt8 || type == SemanticType::UInt16) {
+  if (type.kind == SemanticType::Int8 || type.kind == SemanticType::Int16 ||
+      type.kind == SemanticType::UInt8 || type.kind == SemanticType::UInt16) {
     return SemanticType::Int32;
   }
   return type;
 }
 
-auto SemanticVisitor::Impl::widerInteger(SemanticType left, SemanticType right)
+auto SemanticVisitor::Impl::widerInteger(SemanticType left,
+                                         SemanticType right) const
     -> SemanticType {
-  return integerRank(left) >= integerRank(right) ? left : right;
+  if (integerRank(left) != integerRank(right)) {
+    return integerRank(left) > integerRank(right) ? left : right;
+  }
+  // Equal value domains do not imply identical native declarations. Preserve
+  // C's family ordering independently of operand order: long long > long > int.
+  const auto familyRank = [&](const SemanticType &type) {
+    NativeCScalarKind family = type.nativeCScalar;
+    if (family == NativeCScalarKind::None) {
+      const TargetScalarKind value =
+          type.kind == SemanticType::Int64    ? TargetScalarKind::Int64
+          : type.kind == SemanticType::UInt64 ? TargetScalarKind::UInt64
+          : type.kind == SemanticType::Int32  ? TargetScalarKind::Int32
+                                              : TargetScalarKind::UInt32;
+      family =
+          target.fixedCScalarIdentity(value).value_or(NativeCScalarKind::None);
+    }
+    switch (family) {
+    case NativeCScalarKind::LongLong:
+    case NativeCScalarKind::UnsignedLongLong:
+      return 3;
+    case NativeCScalarKind::Long:
+    case NativeCScalarKind::UnsignedLong:
+      return 2;
+    default:
+      return 1;
+    }
+  };
+  return familyRank(left) >= familyRank(right) ? left : right;
 }
 
 auto SemanticVisitor::Impl::canConvertToUnsigned(SemanticType originalType,
@@ -10357,7 +10385,7 @@ auto SemanticVisitor::Impl::isExpectedVoid(const SemanticType &type) -> bool {
 
 auto SemanticVisitor::Impl::numericResult(SemanticType left, SemanticType right,
                                           const Expr *leftExpression,
-                                          const Expr *rightExpression)
+                                          const Expr *rightExpression) const
     -> SemanticType {
   if (left == SemanticType::Unknown || right == SemanticType::Unknown) {
     return SemanticType::Unknown;
@@ -10591,6 +10619,15 @@ auto SemanticVisitor::Impl::baseTypeOf(
     return type.arguments.empty() ? SemanticType::CString
                                   : SemanticType::Unknown;
   }
+  if (compilerCapability == CompilerCapabilityTypeKind::NativeCScalar) {
+    const auto selected = resolveClassPath(type.name, fromScope);
+    if (!selected || !type.arguments.empty()) {
+      return SemanticType::Unknown;
+    }
+    return SemanticType::nativeCScalarType(classInfo(*selected).nativeCScalar,
+                                           target)
+        .value_or(SemanticType::Unknown);
+  }
   if (compilerCapability == CompilerCapabilityTypeKind::UniqueOwner) {
     return type.arguments.size() == 1 ? SemanticType::uniqueOwnerOf(typeOf(
                                             type.arguments[0], fromScope))
@@ -10759,13 +10796,10 @@ auto SemanticVisitor::Impl::typeOf(
     const TypeRef &type, const std::vector<std::string> &fromScope) const
     -> SemanticType {
   SemanticType result = baseTypeOf(type, fromScope);
-  if (type.pointer) {
+  for (const auto &pointer : type.pointers) {
     result = SemanticType::rawPointerTo(
         std::move(result),
-        type.pointeeConst ? AccessMode::ReadOnly : AccessMode::Mutable);
-  }
-  if (type.outerPointer) {
-    result = SemanticType::rawPointerTo(std::move(result));
+        pointer.pointeeConst ? AccessMode::ReadOnly : AccessMode::Mutable);
   }
   for (auto extent = type.arrayExtents.rbegin();
        extent != type.arrayExtents.rend(); ++extent) {

@@ -1,0 +1,4 @@
+// Legacy include unit reopening a namespace that a module also populates.
+namespace geo::shapes {
+  int helper_sum(int a, int b) { return a + b; }
+}

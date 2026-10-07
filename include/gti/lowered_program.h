@@ -530,6 +530,30 @@ struct LoweredLambdaInstance {
                          const LoweredLambdaInstance &) = default;
 };
 
+// Immutable ABI-planning roots consumed by future wrapper and header
+// backends. This is a copy of verified MIR authority, not a place for either
+// backend to repeat semantic name or type eligibility checks.
+struct LoweredEmbeddingExport {
+  FunctionId declaration = 0;
+  LoweredFunctionInstanceId function = 0;
+  std::string qualifiedName;
+  std::string symbol;
+  SemanticType returnType = SemanticType::Unknown;
+  std::vector<SemanticType> parameterTypes;
+  SourceSpan requestSource;
+
+  friend bool operator==(const LoweredEmbeddingExport &,
+                         const LoweredEmbeddingExport &) = default;
+};
+
+struct LoweredEmbeddingPlan {
+  std::uint32_t abiVersion = embeddingAbiVersionV1;
+  std::vector<LoweredEmbeddingExport> exports;
+
+  friend bool operator==(const LoweredEmbeddingPlan &,
+                         const LoweredEmbeddingPlan &) = default;
+};
+
 struct LoweredNativeCallbackItem {
   MirNativeCallbackAdapter adapter;
 
@@ -641,6 +665,7 @@ enum class LoweredProgramIssueKind {
   InvalidSymbolInventory,
   InvalidInstanceInventory,
   InvalidGeneratedItemInventory,
+  InvalidEmbeddingPlan,
   MissingGeneratedItem,
   DuplicateGeneratedItem,
   OrphanGeneratedItem,
@@ -665,6 +690,11 @@ public:
 
   [[nodiscard]] const TargetInfo &target() const { return target_; }
   [[nodiscard]] const MirProgram &mir() const { return mir_; }
+  [[nodiscard]] ProgramKind programKind() const { return programKind_; }
+  [[nodiscard]] const std::optional<LoweredEmbeddingPlan> &
+  embeddingPlan() const {
+    return embeddingPlan_;
+  }
   [[nodiscard]] const std::vector<LoweredBody> &bodies() const {
     return bodies_;
   }
@@ -733,6 +763,8 @@ private:
 
   TargetInfo target_;
   MirProgram mir_;
+  ProgramKind programKind_ = ProgramKind::Executable;
+  std::optional<LoweredEmbeddingPlan> embeddingPlan_;
   std::vector<LoweredBody> bodies_;
   std::vector<LoweredDeclaration> declarations_;
   std::vector<LoweredSymbol> symbols_;

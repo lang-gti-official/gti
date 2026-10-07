@@ -853,6 +853,9 @@ private:
   }
   if (semantics.executionProfile() != hir.executionProfile() ||
       hir.executionProfile() != mir.executionProfile() ||
+      semantics.programKind() != hir.programKind() ||
+      hir.programKind() != mir.programKind() ||
+      hir.embeddingPlan().has_value() != mir.embeddingPlan().has_value() ||
       semantics.placeSnapshot() != hir.module().placeDomain.snapshot ||
       hir.module().placeDomain != mir.module().placeDomain ||
       hir.classInstances().size() != mir.classInstances().size() ||
@@ -868,6 +871,28 @@ private:
           [](const HirEnum &enumeration) { return enumeration.payload; }) !=
           static_cast<std::ptrdiff_t>(mir.payloadEnums().size())) {
     return reject("frontend profile, place domain, or instance counts differ");
+  }
+  if (hir.embeddingPlan() && mir.embeddingPlan()) {
+    if (hir.embeddingPlan()->abiVersion != mir.embeddingPlan()->abiVersion ||
+        hir.embeddingPlan()->exports.size() !=
+            mir.embeddingPlan()->exports.size()) {
+      return reject("embedding plan differs between HIR and MIR");
+    }
+    for (std::size_t index = 0; index < hir.embeddingPlan()->exports.size();
+         ++index) {
+      const HirEmbeddingExport &source = hir.embeddingPlan()->exports[index];
+      const MirEmbeddingExport &lowered = mir.embeddingPlan()->exports[index];
+      if (source.semanticFunction != lowered.declaration ||
+          source.function != lowered.function ||
+          source.qualifiedName != lowered.qualifiedName ||
+          source.symbol != lowered.symbol ||
+          source.returnType != lowered.returnType ||
+          source.parameterTypes != lowered.parameterTypes ||
+          source.requestSource != lowered.requestSource) {
+        return reject("embedding export " + std::to_string(index + 1) +
+                      " differs between HIR and MIR");
+      }
+    }
   }
   for (const HirEnum &source : hir.enumDeclarations()) {
     if (!source.payload) {
@@ -1116,6 +1141,22 @@ LoweredProgramBuild LoweredProgramBuilder::build(
   LoweredProgram lowered;
   lowered.target_ = target;
   lowered.mir_ = optimizedMir;
+  lowered.programKind_ = optimizedMir.programKind();
+  if (const std::optional<MirEmbeddingPlan> &embedding =
+          optimizedMir.embeddingPlan()) {
+    LoweredEmbeddingPlan plan{.abiVersion = embedding->abiVersion};
+    plan.exports.reserve(embedding->exports.size());
+    for (const MirEmbeddingExport &selected : embedding->exports) {
+      plan.exports.push_back({.declaration = selected.declaration,
+                              .function = selected.function,
+                              .qualifiedName = selected.qualifiedName,
+                              .symbol = selected.symbol,
+                              .returnType = selected.returnType,
+                              .parameterTypes = selected.parameterTypes,
+                              .requestSource = selected.requestSource});
+    }
+    lowered.embeddingPlan_ = std::move(plan);
+  }
   lowered.declarations_ =
       DeclarationCollector(semantics, target).collect(program.declarations());
   for (LoweredDeclaration &declaration : lowered.declarations_) {

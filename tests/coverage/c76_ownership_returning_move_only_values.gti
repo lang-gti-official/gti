@@ -1,0 +1,116 @@
+// Returning move-only locals and by-value parameters: implicit `return name;`
+// on several branches and from inside loops, generic relays, expected success
+// payloads with explicit moves, early returns that drop other live owners,
+// and returned owners captured by a class.
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+mut int g_dropped = 0;
+
+class Token {
+  std::string text_;
+
+public:
+  Token(std::string_view text) : text_(std::string(text)) {}
+  ~Token() { g_dropped += 1; }
+  std::string_view text() { return this.text_.view(); }
+};
+
+enum class parse_errc { empty, too_long };
+
+Token pick(Token first, Token second, bool take_first) {
+  if (take_first) {
+    return first;
+  }
+  return second;
+}
+
+Token first_long(std::vector<std::string> words) {
+  for (auto& word : words) {
+    if (word.size() > std::size_t(3)) {
+      Token found{word.view()};
+      return found;
+    }
+  }
+  Token none{"none"};
+  return none;
+}
+
+T relay<T>(T value) { return value; }
+
+expected<Token, parse_errc> parse(std::string_view input) {
+  if (input.empty()) {
+    return unexpected(parse_errc::empty);
+  }
+  Token token{input};
+  if (input.size() > std::size_t(8)) {
+    return unexpected(parse_errc::too_long);
+  }
+  return std::move(token);
+}
+
+expected<std::unique_ptr<Token>, parse_errc> parse_boxed(std::string_view input) {
+  Token token = ?parse(input);
+  std::unique_ptr<Token> boxed = std::make_unique<Token>(token.text());
+  return std::move(boxed);
+}
+
+class Holder {
+  std::unique_ptr<Token> token_;
+
+public:
+  Holder(std::unique_ptr<Token> token) : token_(std::move(token)) {}
+  std::string_view text() { return this.token_->text(); }
+};
+
+Holder wrap(std::string_view text) {
+  std::unique_ptr<Token> owned = std::make_unique<Token>(text);
+  Holder holder{std::move(owned)};
+  return holder;
+}
+
+int main() {
+  {
+    Token chosen = pick(Token("a"), Token("b"), false);
+    if (chosen.text() != "b" || g_dropped != 1) { return 1; }
+  }
+  if (g_dropped != 2) { return 2; }
+
+  mut std::vector<std::string> words{};
+  words.push_back(std::string("to"));
+  words.push_back(std::string("be"));
+  words.push_back(std::string("words"));
+  {
+    Token long_word = first_long(std::move(words));
+    if (long_word.text() != "words") { return 3; }
+    Token relayed = relay<Token>(std::move(long_word));
+    if (relayed.text() != "words") { return 4; }
+  }
+  if (g_dropped != 3) { return 5; }
+
+  auto ok = parse("hello");
+  auto empty = parse("");
+  auto too_long = parse("much-too-long");
+  if (!ok || ok.value().text() != "hello") { return 6; }
+  if (empty || empty.error() != parse_errc::empty) { return 7; }
+  if (too_long || too_long.error() != parse_errc::too_long) { return 8; }
+  // The rejected too_long token was dropped on its early-return path.
+  if (g_dropped != 4) { return 9; }
+
+  {
+    auto boxed = parse_boxed("box");
+    if (!boxed || boxed.value()->text() != "box") { return 10; }
+    std::unique_ptr<Token> owner = std::move(boxed).value();
+    if (owner->text() != "box") { return 11; }
+  }
+  auto failed = parse_boxed("");
+  if (failed || failed.error() != parse_errc::empty) { return 12; }
+
+  Holder holder = wrap("held");
+  Holder moved = relay<Holder>(std::move(holder));
+  if (moved.text() != "held") { return 13; }
+  std::println(moved.text());
+  std::println("v10 ok");
+  return 0;
+}

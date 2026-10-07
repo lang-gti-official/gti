@@ -1,0 +1,27 @@
+import lib;
+
+static_assert(lib::public_factor == 6);
+constexpr int width_count = lib::public_factor;
+
+int main() {
+  if (lib::scaled(5) != 15 || lib::scaled(5, 2) != 10) {
+    return 1;
+  }
+  if (lib::shifted(38) != 42 || lib::shifted(38, 1) != 39) {
+    return 2;
+  }
+  lib::Window window{7};
+  if (window.clipped(100) != 40 || window.clipped(12) != 12) {
+    return 3;
+  }
+  lib::Range range = {.first = 2, .last = 9};
+  if (range.width() != 7 || lib::make_range(1, 43).width() != 42) {
+    return 4;
+  }
+  int widths[width_count] = {};
+  if (widths[5] != 0) {
+    return 5;
+  }
+  std::println("p15 private defaults ok");
+  return 0;
+}

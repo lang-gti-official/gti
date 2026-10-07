@@ -232,7 +232,7 @@ std::string AstPrinter::typeToString(const TypeRef &type) {
     }
     text += type.name.segments[index].lexeme;
   }
-  if (type.pointeeConst) {
+  if (!type.pointers.empty() && type.pointers.front().pointeeConst) {
     text = "const " + text;
   }
   if (type.referenceMutability) {
@@ -248,10 +248,10 @@ std::string AstPrinter::typeToString(const TypeRef &type) {
     }
     text += ">";
   }
-  if (type.pointer) {
-    text += "*";
-  }
-  if (type.outerPointer) {
+  for (std::size_t index = 0; index < type.pointers.size(); ++index) {
+    if (index != 0 && type.pointers[index].pointeeConst) {
+      text += " const";
+    }
     text += "*";
   }
   for (const ArrayExtentExprPtr &extent : type.arrayExtents) {

@@ -1,0 +1,72 @@
+// A payload enum whose alternative owns a unique_ptr<Interface>; dispatch
+// through an `auto&` payload binding; a class holding a stored read-only
+// interface reference; moving the owning enum through a function by value
+// and destruction of the erased payload when the enum is replaced.
+#include <std/format>
+#include <std/memory>
+
+static mut int32_t widget_drops = 0;
+
+interface Widget {
+  int32_t width();
+};
+
+class Button : public Widget {
+  int32_t w;
+public:
+  Button(int32_t w) : w(w) {}
+  ~Button() { widget_drops += 1; }
+  int32_t width() override { return this.w; }
+};
+
+class Label : public Widget {
+public:
+  Label() {}
+  ~Label() { widget_drops += 10; }
+  int32_t width() override { return 3; }
+};
+
+enum class Slot {
+  empty,
+  fixed(int32_t w),
+  owned(std::unique_ptr<Widget> widget),
+};
+
+int32_t slot_width(Slot& s) {
+  switch (s) {
+  case Slot::empty: return 0;
+  case Slot::fixed(w): return w;
+  case Slot::owned(auto& widget): return widget->width();
+  }
+}
+
+Slot pass_through(Slot s) { return s; }
+
+class Measurer {
+  Widget& target;
+public:
+  Measurer(Widget& target) : target(target) {}
+  int32_t twice() { return this.target.width() * 2; }
+};
+
+int main() {
+  Button b = Button(7);
+  Measurer m = Measurer(b);
+  if (m.twice() != 14) { return 1; }
+
+  {
+    mut Slot s = Slot::owned(std::upcast_unique<Widget, Button>(std::make_unique<Button>(5)));
+    if (slot_width(s) != 5) { return 2; }
+    mut Slot moved = pass_through(std::move(s));
+    if (slot_width(moved) != 5) { return 3; }
+    if (widget_drops != 0) { return 4; }
+    moved = Slot::fixed(4);           // drops the Button(5)
+    if (widget_drops != 1 || slot_width(moved) != 4) { return 5; }
+    mut Slot other = Slot::owned(std::upcast_unique<Widget, Label>(std::make_unique<Label>()));
+    if (slot_width(other) != 3) { return 6; }
+  }
+  // Label dropped at scope end
+  if (widget_drops != 11) { std::println("drops {}", widget_drops); return 7; }
+  std::println("enum widgets ok {}", widget_drops);
+  return 0;
+}

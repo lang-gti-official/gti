@@ -1,0 +1,19 @@
+// A01: field assignment from a class-valued call result, including inside methods.
+class V {
+public:
+  int32_t x;
+  V(int32_t x) : x(x) {}
+  V plus(V o) { return V(this.x + o.x); }
+};
+class Acc {
+  mut V total = V(0);
+public:
+  Acc() {}
+  void add(V v) mut { this.total = v.plus(v); }
+  int32_t get() { return this.total.x; }
+};
+int main() {
+  mut Acc a = Acc();
+  a.add(V(3));
+  return a.get() - 6;
+}

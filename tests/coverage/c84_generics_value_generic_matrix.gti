@@ -1,0 +1,98 @@
+// Value generics: a matrix class with two extents, generic methods that
+// produce differently-shaped instances, explicit value arguments built from
+// constexpr bindings and enclosing value parameters, and defaults.
+constexpr uint64_t rows_default = 2;
+
+class Matrix<std::numeric T, uint64_t R = rows_default, uint64_t C = R> {
+  static_assert(R > 0 && C > 0, "matrix needs storage");
+  mut T cells[R][C];
+
+public:
+  Matrix() : cells({}) {}
+
+  uint64_t rows() { return R; }
+  uint64_t cols() { return C; }
+
+  T get(uint64_t r, uint64_t c) { return this.cells[r][c]; }
+  void set(uint64_t r, uint64_t c, T value) mut { this.cells[r][c] = value; }
+
+  Matrix<T, C, R> transpose() {
+    mut Matrix<T, C, R> result = Matrix<T, C, R>();
+    for (mut uint64_t r = 0; r < R; r++) {
+      for (mut uint64_t c = 0; c < C; c++) {
+        result.set(c, r, this.cells[r][c]);
+      }
+    }
+    return result;
+  }
+
+  Matrix<T, R, K> times<uint64_t K>(Matrix<T, C, K>& other) {
+    mut Matrix<T, R, K> result = Matrix<T, R, K>();
+    for (mut uint64_t r = 0; r < R; r++) {
+      for (mut uint64_t k = 0; k < K; k++) {
+        mut T sum = T(0);
+        for (mut uint64_t c = 0; c < C; c++) {
+          sum = T(sum + this.cells[r][c] * other.get(c, k));
+        }
+        result.set(r, k, sum);
+      }
+    }
+    return result;
+  }
+
+  T trace() requires std::copyable<T> {
+    mut T sum = T(0);
+    for (mut uint64_t i = 0; i < R && i < C; i++) { sum = T(sum + this.cells[i][i]); }
+    return sum;
+  }
+};
+
+constexpr uint64_t twice_extent<uint64_t N>() { return N * 2; }
+
+uint64_t outer<uint64_t N>() {
+  return twice_extent<N + 1>() + twice_extent<(N * 3) % 5>();
+}
+
+T sum_row<std::numeric T, uint64_t N>(T values[N]) {
+  mut T total = T(0);
+  for (mut uint64_t i = 0; i < N; i++) { total = T(total + values[i]); }
+  return total;
+}
+
+int main() {
+  mut Matrix<int32_t, 2, 3> a = Matrix<int32_t, 2, 3>();
+  mut int32_t next = 1;
+  for (mut uint64_t r = 0; r < 2; r++) {
+    for (mut uint64_t c = 0; c < 3; c++) {
+      a.set(r, c, next);
+      next++;
+    }
+  }
+  Matrix<int32_t, 3, 2> at = a.transpose();
+  if (at.rows() != 3 || at.cols() != 2) { return 1; }
+  if (at.get(uint64_t(2), uint64_t(1)) != 6 || at.get(uint64_t(0), uint64_t(1)) != 4) { return 2; }
+
+  Matrix<int32_t, 2, 2> product = a.times<2>(at);
+  // [1 2 3;4 5 6] * transpose = [14 32; 32 77]
+  std::println(product.get(uint64_t(0), uint64_t(0)));
+  std::println(product.get(uint64_t(1), uint64_t(1)));
+  if (product.get(uint64_t(0), uint64_t(0)) != 14 || product.get(uint64_t(0), uint64_t(1)) != 32 ||
+      product.get(uint64_t(1), uint64_t(0)) != 32 || product.get(uint64_t(1), uint64_t(1)) != 77) { return 3; }
+  if (product.trace() != 91) { return 4; }
+
+  Matrix<int64_t> defaulted = Matrix<int64_t>();
+  if (defaulted.rows() != 2 || defaulted.cols() != 2) { return 5; }
+  Matrix<double, 3> tall = Matrix<double, 3>();
+  if (tall.cols() != 3) { return 6; }
+
+  uint64_t computed = outer<2>();
+  std::println(computed);
+  // twice_extent<3>() + twice_extent<6 % 5 = 1>() = 6 + 2
+  if (computed != 8) { return 7; }
+
+  int16_t row[4] = {1, 2, 3, 4};
+  int16_t s = sum_row(row);
+  int16_t s_explicit = sum_row<int16_t, 4>(row);
+  if (s != 10 || s_explicit != 10) { return 8; }
+  return 0;
+}

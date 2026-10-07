@@ -1,0 +1,12 @@
+// INVALID: compound assignment operator must return void and be `mut`.
+class Acc {
+  mut int32_t total = 0;
+public:
+  Acc() {}
+  Acc operator+=(int32_t v) { return Acc(); }
+};
+int main() {
+  mut Acc a = Acc();
+  a += 1;
+  return 0;
+}
