@@ -1,0 +1,89 @@
+// constexpr generic records with value-generic fixed-array fields, constexpr
+// constructors and read-only methods, constexpr functions over by-value
+// arrays and records, results feeding array extents, value-generic
+// arguments and static_assert, plus runtime reuse of the same functions.
+struct Vec<uint64_t N> {
+  int32_t items[N];
+  constexpr Vec(int32_t seed) : items({}) {}
+  constexpr int32_t at(uint64_t index) { return this.items[index]; }
+  constexpr uint64_t size() { return N; }
+};
+
+struct Range {
+  mut int32_t low;
+  mut int32_t high;
+  constexpr Range(int32_t low, int32_t high) : low(low), high(high) {}
+  constexpr int32_t span() { return this.high - this.low; }
+  constexpr bool contains(int32_t value) { return value >= this.low && value < this.high; }
+};
+
+constexpr uint64_t next_pow2(uint64_t value) {
+  mut uint64_t result = 1;
+  while (result < value) { result = result * 2; }
+  return result;
+}
+
+constexpr int32_t dot<uint64_t N>(int32_t left[N], int32_t right[N]) {
+  mut int32_t sum = 0;
+  for (mut uint64_t i = 0; i < N; i++) { sum += left[i] * right[i]; }
+  return sum;
+}
+
+constexpr Range widen(Range input, int32_t by) {
+  mut Range result = input;
+  result.low = result.low - by;
+  result.high = result.high + by;
+  return result;
+}
+
+constexpr int32_t ramp<uint64_t N>() {
+  mut int32_t values[N] = {};
+  for (mut uint64_t i = 0; i < N; i++) { values[i] = int32_t(i) * 2; }
+  mut int32_t total = 0;
+  for (mut uint64_t i = 0; i < N; i++) { total += values[i]; }
+  return total;
+}
+
+constexpr uint64_t table_size = next_pow2(uint64_t(5));
+constexpr Range base_range = Range(10, 20);
+constexpr Range wide_range = widen(base_range, 5);
+constexpr Vec<table_size> zeros = Vec<table_size>(0);
+constexpr int32_t ramp_total = ramp<table_size>();
+
+static_assert(table_size == 8);
+static_assert(wide_range.span() == 20 && wide_range.contains(5) && !wide_range.contains(25));
+static_assert(zeros.size() == 8 && zeros.at(uint64_t(7)) == 0);
+static_assert(dot({1, 2, 3}, {4, 5, 6}) == 32);
+static_assert(ramp_total == 56);
+
+class Ring<uint64_t N> {
+  mut int32_t slots[N];
+
+public:
+  Ring() : slots({}) {}
+  uint64_t capacity() { return N; }
+};
+
+int main() {
+  int32_t buffer[table_size] = {};
+  constexpr uint64_t small_size = next_pow2(uint64_t(3));
+  Ring<small_size> small = Ring<small_size>();
+  Ring<table_size> ring = Ring<table_size>();
+  if (buffer.size() != 8) { return 1; }
+  if (small.capacity() != 4) { return 2; }
+  if (ring.capacity() != 8) { return 3; }
+
+  // Runtime calls of the same constexpr functions.
+  mut uint64_t runtime_input = 17;
+  runtime_input += 0;
+  if (next_pow2(runtime_input) != 32) { return 4; }
+  int32_t a[2] = {3, 4};
+  int32_t b[2] = {5, 6};
+  if (dot(a, b) != 39) { return 5; }
+  Range r = widen(Range(0, 1), 2);
+  std::println(r.span());
+  if (r.span() != 5 || !r.contains(-2)) { return 6; }
+  if (ramp<4>() != 12) { return 7; }
+  std::println(ramp_total);
+  return 0;
+}

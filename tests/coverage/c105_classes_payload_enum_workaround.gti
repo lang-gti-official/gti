@@ -1,0 +1,139 @@
+// WORKAROUND variant of v07: mutable payload bindings only on local values and
+// `this.field` subjects (not on mut references), call results are named
+// before being passed by value, and switches over a class
+// field only through `this` (not `obj.field`).
+// Payload enum with scalar, string_view and cleanup-owning class payloads:
+// value bindings, read-only `auto&` and mutable `mut auto&` payload bindings,
+// exhaustive switches without trailing return, switching on reference
+// parameters, a vector of payload enums inside a class, and factory returns.
+#include <std/format>
+#include <std/string>
+#include <std/vector>
+
+static mut int32_t label_drops = 0;
+
+class Label {
+  mut std::string text;
+  int32_t w;
+public:
+  Label(std::string text, int32_t w) : text(std::move(text)), w(w) {}
+  ~Label() { label_drops += 1; }
+  int32_t weight() { return this.w; }
+  std::size_t length() { return this.text.size(); }
+  void append(std::string_view more) mut { this.text.append(more); }
+};
+
+enum class Shape {
+  empty,
+  circle(int32_t r),
+  rect(int32_t w, int32_t h),
+  named(std::string_view tag, int32_t sides),
+  labeled(Label label),
+};
+
+int32_t measure(Shape& s) {
+  switch (s) {
+  case Shape::empty:
+    return 0;
+  case Shape::circle(r):
+    return 3 * r * r;
+  case Shape::rect(w, h):
+    return w * h;
+  case Shape::named(tag, sides):
+    return sides * 100 + int32_t(tag.size());
+  case Shape::labeled(auto& label):
+    return label.weight() + int32_t(label.length());
+  }
+}
+
+class Slot {
+public:
+  mut Shape shape;
+  Slot(Shape shape) : shape(std::move(shape)) {}
+  int32_t rect_kind() {
+    switch (this.shape) {
+    case Shape::rect(w, h):
+      return w != h ? 1 : 0;
+    case Shape::empty:
+      return -1;
+    default:
+      return 0;
+    }
+  }
+  void decorate() mut {
+    switch (this.shape) {
+    case Shape::labeled(mut auto& label):
+      label.append("!!");
+      break;
+    default:
+      break;
+    }
+  }
+};
+
+Shape make(int32_t k) {
+  if (k == 0) { return Shape::empty; }
+  if (k == 1) { return Shape::circle(2); }
+  if (k == 2) { return Shape::rect(3, 4); }
+  if (k == 3) { return Shape::named("tri", 3); }
+  return Shape::labeled(Label(std::string("box"), 40));
+}
+
+class Canvas {
+  mut std::vector<Slot> shapes{};
+public:
+  Canvas() {}
+  void add(Shape s) mut { this.shapes.push_back(Slot(std::move(s))); }
+  int32_t total() {
+    mut int32_t sum = 0;
+    for (auto& s : this.shapes) { sum += measure(s.shape); }
+    return sum;
+  }
+  int32_t count_rects() {
+    mut int32_t n = 0;
+    for (auto& s : this.shapes) {
+      int32_t k = s.rect_kind();
+      if (k < 0) { continue; }
+      n += k;
+    }
+    return n;
+  }
+  void decorate_all() mut {
+    for (mut auto& s : this.shapes) { s.decorate(); }
+  }
+};
+
+int main() {
+  {
+    mut Canvas canvas = Canvas();
+    for (mut int32_t k = 0; k < 5; k++) {
+      Shape made = make(k);
+      canvas.add(std::move(made));
+    }
+    canvas.add(Shape::rect(5, 5));
+    // 0 + 12 + 12 + 303 + (40 + 3) + 25
+    if (canvas.total() != 395) { std::println("total {}", canvas.total()); return 1; }
+    if (canvas.count_rects() != 1) { return 2; }
+    canvas.decorate_all();
+    if (canvas.total() != 397) { return 3; }
+    if (label_drops != 0) { std::println("early drops {}", label_drops); return 4; }
+  }
+  if (label_drops != 1) { std::println("drops {}", label_drops); return 5; }
+
+  mut Shape local = make(4);
+  for (mut int32_t i = 0; i < 2; i++) {
+    switch (local) {
+    case Shape::labeled(mut auto& label):
+      label.append("!!");
+      break;
+    default:
+      break;
+    }
+  }
+  if (measure(local) != 47) { return 6; }
+  local = Shape::circle(1);
+  if (label_drops != 2) { return 7; }
+  if (measure(local) != 3) { return 8; }
+  std::println("payload enum ok {}", label_drops);
+  return 0;
+}

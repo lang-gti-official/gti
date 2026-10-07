@@ -1,0 +1,89 @@
+// expected<unique_ptr<T>, std::string> pipelines: `?` on fresh carriers
+// moves a move-only error, `?std::move(named)`, `.expect` on a moved named
+// carrier, transform/and_then consuming owned payloads, success owners
+// collected into a vector inside a loop, and error strings collected too.
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Widget {
+  int size_;
+
+public:
+  Widget(int size) : size_(size) {}
+  int size() { return this.size_; }
+};
+
+expected<std::unique_ptr<Widget>, std::string> make(int size) {
+  if (size <= 0) {
+    mut std::string message = std::string("bad size ");
+    std::string number = std::to_string(size);
+    message.append(number.view());
+    return unexpected(std::move(message));
+  }
+  return std::make_unique<Widget>(size);
+}
+
+expected<int, std::string> doubled_size(int size) {
+  std::unique_ptr<Widget> widget = ?make(size);
+  return widget->size() * 2;
+}
+
+expected<int, std::string> forward(int size) {
+  auto carrier = make(size);
+  std::unique_ptr<Widget> widget = ?std::move(carrier);
+  return widget->size();
+}
+
+int unwrap(std::unique_ptr<Widget> widget) { return widget->size() + 1; }
+
+expected<int, std::string> checked(int value) {
+  if (value > 100) { return unexpected(std::string("too large")); }
+  return value;
+}
+
+int main() {
+  mut std::vector<std::unique_ptr<Widget>> built{};
+  mut std::vector<std::string> errors{};
+  for (mut int size = -1; size <= 3; size += 1) {
+    auto result = make(size);
+    if (result) {
+      built.push_back(std::move(result).value());
+    } else {
+      errors.push_back(std::move(result).error());
+    }
+  }
+  if (built.size() != std::size_t(3) || errors.size() != std::size_t(2)) {
+    return 1;
+  }
+  if (errors[std::size_t(0)] != "bad size -1" || errors[std::size_t(1)] != "bad size 0") {
+    return 2;
+  }
+
+  auto good = doubled_size(4);
+  auto bad = doubled_size(0);
+  if (!good || good.value() != 8) { return 3; }
+  if (bad || bad.error() != "bad size 0") { return 4; }
+  auto forwarded = forward(5);
+  if (!forwarded || forwarded.value() != 5) { return 5; }
+
+  auto named = make(6);
+  std::unique_ptr<Widget> required = std::move(named).expect("widget 6 is required");
+  if (required->size() != 6) { return 6; }
+
+  auto mapped = make(7).transform(unwrap);
+  if (!mapped || mapped.value() != 8) { return 7; }
+  auto chained = make(9).transform(unwrap).and_then(checked);
+  if (!chained || chained.value() != 10) { return 8; }
+  auto chained_error = make(-5).transform(unwrap).and_then(checked);
+  if (chained_error || chained_error.error() != "bad size -5") { return 9; }
+
+  mut int total = 0;
+  for (auto& widget : built) {
+    total += widget->size();
+  }
+  if (total != 6) { return 10; }
+  std::println(errors[std::size_t(1)]);
+  std::println("v15 ok");
+  return 0;
+}

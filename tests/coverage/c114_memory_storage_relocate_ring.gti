@@ -1,0 +1,86 @@
+// Valid: a small ring of std::storage<T> buffers holding owning records.
+// Relocation moves live prefixes between two allocations repeatedly; every
+// element must be destroyed exactly once and keep its owned text intact.
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+#include <std/format>
+
+mut int32_t destroyed = 0;
+
+class Ticket {
+  std::string owner;
+  mut std::vector<int32_t> seats;
+  int32_t id;
+public:
+  Ticket(std::string owner, int32_t id)
+      : owner(std::move(owner)), seats(std::vector<int32_t>()), id(id) {
+    this.seats.push_back(id * 10);
+    this.seats.push_back(id * 10 + 1);
+  }
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+  ~Ticket() { destroyed += 1; }
+  int32_t key() { return this.id; }
+  std::size_t seat_total() {
+    mut std::size_t total = 0;
+    for (auto& seat : this.seats) { total += std::size_t(seat); }
+    return total;
+  }
+  std::string_view name() { return this.owner.view(); }
+};
+
+int32_t verify(std::storage<Ticket>& slots, std::size_t count, int32_t base) {
+  for (mut std::size_t i = 0; i < count; i++) {
+    if (!slots.initialized(i)) { return 1; }
+    Ticket& t = slots.get(i);
+    int32_t expected_id = base + int32_t(i);
+    if (t.key() != expected_id) { return 2; }
+    if (t.seat_total() != std::size_t(expected_id * 20 + 1)) { return 3; }
+  }
+  return 0;
+}
+
+int main() {
+  std::allocator heap{};
+  mut auto first_attempt = heap.try_storage<Ticket>(std::size_t(4));
+  mut auto second_attempt = heap.try_storage<Ticket>(std::size_t(6), std::alignment(std::size_t(64)));
+  if (!first_attempt || !second_attempt) { return 10; }
+  {
+    mut std::storage<Ticket> left = std::move(first_attempt).value();
+    mut std::storage<Ticket> right = std::move(second_attempt).value();
+    left.emplace(std::size_t(0), std::string("ada"), 1);
+    left.emplace(std::size_t(1), std::string("grace"), 2);
+    left.construct(std::size_t(2), Ticket(std::string("linus"), 3));
+    if (verify(left, std::size_t(3), 1) != 0) { return 11; }
+
+    // Relocate the three live tickets, then refill the source prefix.
+    left.relocate_to(right, std::size_t(3));
+    if (left.initialized(std::size_t(0)) || !right.initialized(std::size_t(2))) { return 12; }
+    if (destroyed != 0) { return 13; }
+    if (verify(right, std::size_t(3), 1) != 0) { return 14; }
+    if (right.get(std::size_t(1)).name() != "grace") { return 15; }
+
+    left.emplace(std::size_t(0), std::string("ken"), 7);
+    // Relocating zero slots is a no-op even with live state on both sides.
+    left.relocate_to(right, std::size_t(0));
+    if (!left.initialized(std::size_t(0))) { return 16; }
+    left.destroy(std::size_t(0));
+    if (destroyed != 1) { return 17; }
+
+    // Move the right prefix back; the slot above it stays empty.
+    right.relocate_to(left, std::size_t(3));
+    if (verify(left, std::size_t(3), 1) != 0) { return 18; }
+    if (right.initialized(std::size_t(0)) || left.initialized(std::size_t(3))) { return 19; }
+    mut Ticket& edit = left.get_mut(std::size_t(2));
+    if (edit.name() != "linus") { return 20; }
+    right.clear();
+    if (destroyed != 1) { return 21; }
+    // Owner movement does not move elements.
+    mut std::storage<Ticket> moved = std::move(left);
+    if (moved.capacity() != std::size_t(4) || verify(moved, std::size_t(3), 1) != 0) { return 22; }
+  }
+  if (destroyed != 4) { return 23; }
+  std::println("relocation ring ok: {}", destroyed);
+  return 0;
+}

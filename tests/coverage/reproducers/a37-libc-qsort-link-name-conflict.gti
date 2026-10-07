@@ -1,0 +1,23 @@
+// A37: the same conflict for qsort; [[link_name]] does not isolate it.
+#include <std/memory>
+using Compare = (const void*, const void*) -> int32_t;
+extern "C" {
+  [[link_name("qsort")]] void sort_raw(void* base, uint64_t count, uint64_t size, Compare compare);
+}
+int32_t ascending(const void* left, const void* right) {
+  const int32_t* a = std::typed_address<int32_t>(left);
+  const int32_t* b = std::typed_address<int32_t>(right);
+  unsafe {
+    if (*a < *b) { return -1; }
+    if (*a > *b) { return 1; }
+    return 0;
+  }
+}
+int main() {
+  mut int32_t values[5] = {5, 1, 4, 2, 3};
+  unsafe {
+    sort_raw(std::erase_address(&values[0]), uint64_t(5), uint64_t(4), ascending);
+  }
+  std::println(values[0]);
+  return values[0] == 1 ? 0 : 1;
+}

@@ -1,0 +1,8 @@
+import config;
+
+int answer = config::value() + local_bonus();
+int bonus = 38;
+
+int local_bonus() { return bonus; }
+
+int main() { return answer - 42; }

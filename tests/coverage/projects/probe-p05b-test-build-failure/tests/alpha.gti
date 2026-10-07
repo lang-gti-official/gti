@@ -1,0 +1,7 @@
+#include "../src/inventory.gti"
+
+int main() {
+  mut inv::Inventory items{};
+  items.add(1);
+  return items.total() == 1 ? 0 : 1;
+}

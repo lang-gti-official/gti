@@ -1,0 +1,11 @@
+// A15: a local declared inside a dependent 'if constexpr' branch ICEs (absent lowered symbol).
+int32_t pick<uint64_t Mode>(int32_t value) {
+  if constexpr (Mode == 0) {
+    int32_t local = value * 2;
+    return local;
+  } else {
+    return value;
+  }
+}
+
+int main() { return pick<0>(3) == 6 ? 0 : 1; }

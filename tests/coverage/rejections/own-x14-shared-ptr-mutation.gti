@@ -1,0 +1,14 @@
+// INVALID: shared_ptr dereference yields a read-only borrow; mutation through
+// it must be rejected.
+#include <std/memory>
+class Counter {
+  mut int n_ = 0;
+public:
+  Counter() {}
+  void bump() mut { this.n_ += 1; }
+};
+int main() {
+  mut std::shared_ptr<Counter> shared = std::make_shared<Counter>();
+  shared->bump();
+  return 0;
+}

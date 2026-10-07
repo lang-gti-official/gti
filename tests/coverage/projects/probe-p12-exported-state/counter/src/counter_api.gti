@@ -1,0 +1,28 @@
+export module main;
+
+namespace counter {
+  int seed() { return 10; }
+
+  export mut int total = seed();
+  export int fixed = total + 5;
+
+  export class Registry {
+  public:
+    static mut int registered = 0;
+    static int capacity = 3;
+    static bool add() {
+      if (registered >= capacity) {
+        return false;
+      }
+      registered = registered + 1;
+      total = total + 1;
+      return true;
+    }
+  };
+
+#ifdef DEP_FLAG
+  export bool dep_flag_seen() { return true; }
+#else
+  export bool dep_flag_seen() { return false; }
+#endif
+}

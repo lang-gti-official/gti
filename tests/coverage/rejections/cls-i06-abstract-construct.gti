@@ -1,0 +1,11 @@
+// INVALID: constructing an abstract class with an unimplemented pure method.
+class Base {
+public:
+  int32_t k = 1;
+  Base() {}
+  virtual int32_t f() = 0;
+};
+int main() {
+  Base b = Base();
+  return b.k;
+}

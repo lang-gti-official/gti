@@ -1,0 +1,35 @@
+#include <tracelib/log>
+import lib;
+#include "local.gti"
+#include <std/string>
+#include <std/vector>
+
+int main_init = trace::record(4);
+
+int main(int argc, std::vector<std::string> argv) {
+  if (trace::sequence != 234) {
+    return 1;
+  }
+  if (lib::initialized() != 2 || local_init != 3 || main_init != 4) {
+    return 2;
+  }
+  if (argv.size() != uint64_t(argc) || argc != 6) {
+    return 3;
+  }
+  if (!(argv[uint64_t(1)] == "") || !(argv[uint64_t(2)] == "two words")) {
+    return 4;
+  }
+  if (!(argv[uint64_t(3)] == "--") || !(argv[uint64_t(4)] == "-DX") ||
+      !(argv[uint64_t(5)] == "--release")) {
+    return 5;
+  }
+  if (lib::count_empty(argv) != 1) {
+    return 6;
+  }
+  std::string text = lib::joined(argv);
+  if (text.size() == uint64_t(0)) {
+    return 7;
+  }
+  std::println("p07 module init and owned argv ok");
+  return 0;
+}

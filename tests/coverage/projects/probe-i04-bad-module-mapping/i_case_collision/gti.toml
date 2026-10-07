@@ -1,0 +1,13 @@
+manifest-version = 1
+
+[package]
+name = "i_case_collision"
+version = "0.1.0"
+
+[modules]
+Geo = "src/geo.gti"
+geo = "src/geo2.gti"
+
+[targets.app]
+kind = "executable"
+root = "src/main.gti"

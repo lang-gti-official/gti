@@ -1,0 +1,28 @@
+manifest-version = 1
+
+[package]
+name = "i07-config-errors"
+version = "0.1.0"
+
+[build]
+defines = ["FAST"]
+
+[modules]
+backend = "src/backend.gti"
+frontend = "src/frontend.gti"
+
+[targets.shared_flags]
+kind = "executable"
+root = "src/shared_flags.gti"
+
+[targets.include_in_conditional]
+kind = "test"
+root = "src/include_in_conditional.gti"
+
+[targets.import_in_conditional]
+kind = "test"
+root = "src/import_in_conditional.gti"
+
+[targets.error_directive]
+kind = "test"
+root = "src/error_directive.gti"

@@ -1,0 +1,21 @@
+// A28: a reference-returning method on a class field of a range-for element.
+// ICE: range-for element reference, then a reference-returning method on a
+// class-typed field of that element.
+#include <std/vector>
+class Inner {
+  int v;
+public:
+  Inner(int v) : v(v) {}
+  int& ref() { return this.v; }
+};
+struct Named {
+  Inner inner;
+  Named(int v) : inner(Inner(v)) {}
+};
+int main() {
+  mut std::vector<Named> items{};
+  items.push_back(Named(4));
+  mut int total = 0;
+  for (auto& item : items) { total += item.inner.ref(); }
+  return total == 4 ? 0 : 1;
+}

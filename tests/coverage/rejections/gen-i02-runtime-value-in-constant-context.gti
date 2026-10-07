@@ -1,0 +1,21 @@
+// INVALID: runtime values reaching constant contexts — a constexpr binding
+// from a runtime argument, a value-generic argument from a runtime local, a
+// fixed-array extent from a non-constexpr local, and a dependent
+// static_assert over a runtime parameter in a generic function.
+constexpr uint64_t doubled(uint64_t n) { return n * 2; }
+
+uint64_t extent<uint64_t N>() { return N; }
+
+int32_t checked<std::numeric T>(T value) {
+  static_assert(value > 0, "runtime value in assertion");
+  return 1;
+}
+
+int main() {
+  mut uint64_t runtime = 1;
+  runtime += 1;
+  constexpr uint64_t a = doubled(runtime);
+  uint64_t b = extent<runtime>();
+  int32_t buffer[runtime] = {};
+  return int32_t(a + b) + checked(3);
+}

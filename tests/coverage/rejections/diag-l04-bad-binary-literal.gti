@@ -1,0 +1,4 @@
+int main() {
+  int32_t bits = 0b102; //!ERR
+  return bits;
+}

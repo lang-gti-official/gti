@@ -1,0 +1,5 @@
+#include "leaf.gti"
+
+namespace middle {
+  int value() { return leaf::value() + 1; }
+}

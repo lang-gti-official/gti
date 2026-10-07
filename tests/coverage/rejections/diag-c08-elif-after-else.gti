@@ -1,0 +1,12 @@
+#define A
+#if defined(A)
+int value() { return 1; }
+#else
+int value() { return 2; }
+#elif defined(B) //!ERR
+int value() { return 3; }
+#endif
+
+int main() {
+  return value() - 1;
+}

@@ -1,0 +1,37 @@
+import lib;
+import lib.geo;
+import geo;
+
+static_assert(util::limit == 64);
+
+struct Item {
+  int w;
+  Item(int value) : w(value) {}
+  int weight() { return w; }
+};
+
+int main() {
+  mut lib::Accumulator<Item> acc{};
+  Item a{2};
+  Item b{5};
+  acc.add(a);
+  acc.add(b);
+  if (acc.value() != 21) {
+    return 1;
+  }
+  if (lib::point_score(1, 2) != 18) {
+    return 2;
+  }
+  lib::geo::Point p{4, 6};
+  if (lib::geo::weighted(p, lib::geo::Axis::y) != 40) {
+    return 3;
+  }
+  if (util::next(41) != 42) {
+    return 4;
+  }
+  if (app_geo::local_marker() != 5) {
+    return 5;
+  }
+  std::println("p03 dependency modules ok");
+  return 0;
+}

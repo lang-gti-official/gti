@@ -1,0 +1,64 @@
+export module ledger;
+export import "money.gti";
+
+export namespace fin::events {
+  enum class Event {
+    opened,
+    deposit(int64_t cents),
+    closed(int32_t reason),
+  };
+
+  int64_t value_of(Event& event) {
+    switch (event) {
+      case Event::opened:
+        return 0;
+      case Event::deposit(cents):
+        return cents;
+      case Event::closed(reason):
+        return -1;
+    }
+  }
+}
+
+namespace fin {
+  // Private record type; consumers only receive it through exported calls.
+  struct Snapshot {
+    int64_t total;
+    int count;
+    Snapshot(int64_t t, int c) : total(t), count(c) {}
+  };
+
+  int64_t fee() { return 5; }
+
+  export interface Auditor {
+    void observe(int64_t amount) mut;
+  };
+
+  export class Ledger {
+    // Workaround: assigning a class-valued call result into a class field ICEs
+    // (see reproducers/class_call_result_to_field_ice.gti).
+    mut int64_t balance = 0;
+    mut int entries = 0;
+
+  public:
+    Ledger() {}
+    void post(fin::events::Event& event) mut {
+      Cents current{balance};
+      Cents delta{fin::events::value_of(event)};
+      Cents next = current + delta;
+      balance = next.amount;
+      entries = entries + 1;
+    }
+    void audit(mut Auditor& auditor) { auditor.observe(balance - fee()); }
+    Snapshot snapshot() { return Snapshot(balance, entries); }
+  };
+
+  export int64_t snapshot_total(Snapshot& snap) { return snap.total; }
+  export int snapshot_count(Snapshot& snap) { return snap.count; }
+
+  concept has_amount<T> = requires(T& item) { { item.total_amount() } -> int64_t; };
+
+  export int64_t sum<T>(T& a, T& b) requires has_amount<T> {
+    return a.total_amount() + b.total_amount() + fee() - fee();
+  }
+}

@@ -1,0 +1,17 @@
+// INVALID: contextual integer literals in numeric generic bodies are range
+// checked at concrete instance reanalysis: -1 for an unsigned instance and 300
+// for an int8_t instance must be rejected, while int32_t instances are valid.
+bool is_sentinel<std::numeric T>(T value) { return value == -1; }
+
+T bump<std::numeric T>(T value) { return T(value + 300); }
+
+int main() {
+  int32_t wide = 5;
+  uint8_t small = 5;
+  int8_t tiny = 5;
+  bool a = is_sentinel(wide);
+  bool b = is_sentinel(small);
+  int32_t c = bump(wide);
+  int8_t d = bump(tiny);
+  return (a || b) ? 1 : int32_t(c) + int32_t(d);
+}

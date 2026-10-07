@@ -1,0 +1,18 @@
+manifest-version = 1
+
+[package]
+name = "suite"
+version = "1.0.0"
+
+[dependencies]
+core = { path = "packages/core" }
+
+[workspace]
+members = ["packages/core", "packages/tool"]
+
+[targets.suite]
+kind = "executable"
+root = "src/main.gti"
+
+[profiles.release]
+optimization = 3

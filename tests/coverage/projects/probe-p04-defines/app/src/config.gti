@@ -1,0 +1,3 @@
+// A later source #undef deliberately removes a manifest flag.
+#undef VERBOSE
+#define FROM_CONFIG

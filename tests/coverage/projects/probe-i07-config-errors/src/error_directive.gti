@@ -1,0 +1,5 @@
+#if defined(FAST) && target.os != "plan9"
+#error "FAST builds are not supported by this target"
+#endif
+
+int main() { return 0; }

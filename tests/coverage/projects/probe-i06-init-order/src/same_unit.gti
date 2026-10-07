@@ -1,0 +1,8 @@
+// read_later() is order-independent; its body reads 'later', whose step runs
+// after 'early'.
+int early = read_later();
+int later = 5;
+
+int read_later() { return later; }
+
+int main() { return early - 5; }

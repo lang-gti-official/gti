@@ -1,0 +1,19 @@
+concept readable<T> = requires(T& source) { { source.read() } -> int; };
+
+class Session<readable T> {
+  T& source;
+
+public:
+  Session(T& source) : source(source) {}
+  int read() { return this.source.read(); }
+};
+
+struct NoRead {
+  int v = 0;
+};
+
+int main() {
+  NoRead n{};
+  Session<NoRead> s{n}; //!ERR
+  return s.read();
+}

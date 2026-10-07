@@ -1,0 +1,18 @@
+// A57: the same in a method of a generic class.
+// Same silent failure through an ordinary shape: a method-local generic
+// predicate member that walks the class's own container field.
+#include <std/vector>
+class Holder {
+  mut std::vector<int> items;
+public:
+  Holder() : items(std::vector<int>({1, 2, 3})) {}
+  int count_if<Predicate>(mut Predicate keep) {
+    mut int n = 0;
+    for (auto& item : this.items) { if (keep(item)) { n++; } }
+    return n;
+  }
+};
+int main() {
+  Holder h{};
+  return h.count_if([](int& v) -> bool { return v > 1; }) == 2 ? 0 : 1;
+}

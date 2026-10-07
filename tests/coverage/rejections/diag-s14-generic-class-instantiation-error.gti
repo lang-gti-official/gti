@@ -1,0 +1,20 @@
+class Wrapper<T> {
+  T value;
+
+public:
+  Wrapper(T value) : value(value) {}
+  T combined(T other) { return T(this.value + other); } //!ERR
+};
+
+struct Plain {
+  int v = 0;
+};
+
+int main() {
+  Plain p{};
+  Wrapper<Plain> w{p}; //!ERR
+  Plain q{};
+  Plain r = w.combined(q); //!ERR
+  Wrapper<int32_t> ok{1};
+  return ok.combined(2) - 3;
+}

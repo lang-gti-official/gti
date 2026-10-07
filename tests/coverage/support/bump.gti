@@ -1,0 +1,88 @@
+// Shared by m04/m05: a single-threaded bump resource over an inline,
+// 8-byte-aligned fixed array. Bookkeeping lives in a separate field that is
+// mutated through a reviewed raw pointer because the resource protocol only
+// grants a read-only receiver. The resource is immovable: its raw self
+// addresses would dangle after a move.
+#include <std/resource>
+#include <std/memory>
+#include <std/numeric>
+#include <std/panic>
+
+namespace probe {
+// A class, not a struct: taking &this.<struct field> in a constructor ICEs
+// (finding; see red/b2.gti).
+class Ledger {
+public:
+  Ledger() {}
+  mut std::size_t next = 0;
+  mut std::size_t live = 0;
+  mut uint64_t next_id = 1;
+  mut int32_t budget = 0;
+  mut uint64_t released_bytes = 0;
+};
+
+[[no_transfer, no_share]] class Bump {
+  mut uint64_t words[256] = {};
+  mut Ledger ledger{};
+  mut Ledger* book = nullptr;
+  mut uint64_t* base = nullptr;
+  bool verbose;
+public:
+  Bump(int32_t budget, bool verbose) : verbose(verbose) {
+    this.ledger.budget = budget;
+    this.book = &this.ledger;
+    this.base = &this.words[0];
+  }
+  Bump(Bump& other) = delete;
+  Bump(Bump&& other) = delete;
+
+  unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) {
+    std::size_t alignment = request.alignment;
+    if (alignment == std::size_t(0) || alignment > std::size_t(8) ||
+        (alignment & (alignment - std::size_t(1))) != std::size_t(0)) {
+      return unexpected(std::alloc_errc::invalid_alignment);
+    }
+    if (request.bytes == std::size_t(0)) {
+      return std::raw_allocation(nullptr, std::size_t(0), alignment, uint64_t(0));
+    }
+    unsafe {
+      if (this.book->budget <= 0) {
+        return unexpected(std::alloc_errc::resource_exhausted);
+      }
+      std::size_t remainder = this.book->next % alignment;
+      std::size_t start = remainder == std::size_t(0)
+          ? this.book->next : this.book->next + (alignment - remainder);
+      auto end = std::checked_add(start, request.bytes);
+      if (!end || end.value() > std::size_t(2048)) {
+        return unexpected(std::alloc_errc::resource_exhausted);
+      }
+      uint8_t* bytes = std::typed_address<uint8_t>(std::erase_address(this.base));
+      void* selected = std::erase_address(bytes + start);
+      uint64_t id = this.book->next_id;
+      this.book->next_id++;
+      this.book->next = end.value();
+      this.book->live++;
+      this.book->budget--;
+      return std::raw_allocation(selected, request.bytes, alignment, id);
+    }
+  }
+
+  unsafe void release(std::raw_allocation allocation) {
+    if (allocation.address == nullptr) { return; }
+    unsafe {
+      if (this.book->live == std::size_t(0)) { std::panic("bump: release without live region"); }
+      this.book->live--;
+      this.book->released_bytes += allocation.bytes;
+      if (this.verbose) {
+        std::print("release ");
+        std::println(allocation.id);
+      }
+    }
+  }
+
+  std::size_t live() { unsafe { return this.book->live; } }
+  std::size_t used() { unsafe { return this.book->next; } }
+  uint64_t released_bytes() { unsafe { return this.book->released_bytes; } }
+  uint64_t issued() { unsafe { return this.book->next_id - uint64_t(1); } }
+};
+}

@@ -1,0 +1,3 @@
+export module extra;
+
+export int extra_bonus() { return 2; }

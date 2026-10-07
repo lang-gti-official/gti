@@ -1,0 +1,88 @@
+// shared_ptr<Interface> stored in a registry class field, an interface that
+// requires operator() and a comparison operator, dispatch through the shared
+// handle, through a dereferenced reference, and last-owner destruction from
+// a base-typed handle.
+#include <std/format>
+#include <std/memory>
+#include <std/vector>
+
+static mut int32_t drops = 0;
+
+interface Transform {
+  int32_t operator()(int32_t value);
+  bool operator==(int32_t tag);
+  int32_t weight();
+};
+
+class AddN : public Transform {
+  int32_t n;
+public:
+  AddN(int32_t n) : n(n) {}
+  ~AddN() { drops += 1; std::println("drop add {}", this.n); }
+  int32_t operator()(int32_t value) override { return value + this.n; }
+  bool operator==(int32_t tag) override { return tag == 1; }
+  int32_t weight() override { return this.n; }
+};
+
+class MulN : public Transform {
+  int32_t n;
+public:
+  MulN(int32_t n) : n(n) {}
+  ~MulN() { drops += 1; std::println("drop mul {}", this.n); }
+  int32_t operator()(int32_t value) override { return value * this.n; }
+  bool operator==(int32_t tag) override { return tag == 2; }
+  int32_t weight() override { return this.n * 100; }
+};
+
+class Pipeline {
+  mut std::vector<std::shared_ptr<Transform>> stages{};
+public:
+  Pipeline() {}
+  void add(std::shared_ptr<Transform> stage) mut { this.stages.push_back(std::move(stage)); }
+  int32_t run(int32_t input) {
+    mut int32_t value = input;
+    for (auto& stage : this.stages) {
+      value = (*stage)(value);
+    }
+    return value;
+  }
+  int32_t count_tag(int32_t tag) {
+    mut int32_t found = 0;
+    for (auto& stage : this.stages) {
+      if (*stage == tag) { found += 1; }
+    }
+    return found;
+  }
+  std::size_t size() { return this.stages.size(); }
+};
+
+int32_t weigh(Transform& t) { return t.weight(); }
+
+int main() {
+  mut auto add2 = std::make_shared<AddN>(2);
+  auto add2_keep = add2.clone();
+  std::shared_ptr<Transform> add2_erased = std::upcast_shared<Transform, AddN>(std::move(add2));
+  std::shared_ptr<Transform> mul3 = std::upcast_shared<Transform, MulN>(std::make_shared<MulN>(3));
+
+  {
+    mut Pipeline p = Pipeline();
+    p.add(add2_erased.clone());
+    p.add(mul3.clone());
+    p.add(add2_erased.clone());
+    // ((5 + 2) * 3) + 2
+    if (p.run(5) != 23) { return 1; }
+    if (p.count_tag(1) != 2 || p.count_tag(2) != 1) { return 2; }
+    if (add2_erased.use_count() != std::size_t(4)) { return 3; }
+    if (mul3.use_count() != std::size_t(2)) { return 4; }
+    if (weigh(*mul3) + weigh(*add2_keep) != 302) { return 5; }
+    if (drops != 0) { return 6; }
+  }
+  if (add2_erased.use_count() != std::size_t(2)) { return 7; }
+  if (drops != 0) { return 8; }
+  {
+    std::shared_ptr<Transform> last = std::move(mul3);
+    if (last.use_count() != std::size_t(1)) { return 9; }
+  }
+  if (drops != 1) { return 10; }
+  return 0;
+}

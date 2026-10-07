@@ -1,0 +1,17 @@
+interface Source {
+  int read();
+};
+
+int read_any(Source& source) { return source.read(); }
+
+LateSource source_object{};
+int head = read_any(source_object);
+int tail = 3;
+
+class LateSource : public Source {
+public:
+  LateSource() {}
+  int read() override { return tail; }
+};
+
+int main() { return head - 3; }

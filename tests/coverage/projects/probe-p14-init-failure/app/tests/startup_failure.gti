@@ -1,0 +1,6 @@
+import lib;
+
+int main() {
+  std::println("main must not be reached");
+  return 0;
+}

@@ -1,0 +1,112 @@
+// Consuming (&&) builder methods over a vector of unique owners and a
+// vector of labels (optional<T> has no move assignment, so it cannot sit in a
+// reassigned builder): temporary chains, explicit moves with reinitialization in
+// a loop, branch-dependent consumption, and exactly-once part cleanup.
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+mut int g_parts_dropped = 0;
+
+class Part {
+  int weight_;
+
+public:
+  Part(int weight) : weight_(weight) {}
+  ~Part() { g_parts_dropped += 1; }
+  int weight() { return this.weight_; }
+};
+
+class Product {
+  std::string name_;
+  std::vector<std::unique_ptr<Part>> parts_;
+
+public:
+  Product(std::string name, std::vector<std::unique_ptr<Part>> parts)
+      : name_(std::move(name)), parts_(std::move(parts)) {}
+  int weight() {
+    mut int total = 0;
+    for (auto& part : this.parts_) {
+      total += part->weight();
+    }
+    return total;
+  }
+  std::size_t count() { return this.parts_.size(); }
+  std::string_view name() { return this.name_.view(); }
+};
+
+class Builder {
+  mut std::string name_;
+  mut std::vector<std::unique_ptr<Part>> parts_{};
+  mut std::vector<std::string> labels_{};
+
+public:
+  Builder(std::string_view name) : name_(std::string(name)) {}
+  Builder with(int weight) && {
+    this.parts_.push_back(std::make_unique<Part>(weight));
+    return std::move(this);
+  }
+  Builder labelled(std::string_view label) && {
+    this.labels_.push_back(std::string(label));
+    return std::move(this);
+  }
+  Product build() && {
+    for (auto& label : this.labels_) {
+      this.name_.append(":");
+      this.name_.append(label.view());
+    }
+    return Product(std::move(this.name_), std::move(this.parts_));
+  }
+  std::size_t pending() { return this.parts_.size(); }
+};
+
+Product make_default() {
+  Product product = Builder("default").with(7).build();
+  return product;
+}
+
+Product finish(Builder builder, bool label) {
+  if (label) {
+    return std::move(builder).labelled("big").build();
+  }
+  return std::move(builder).build();
+}
+
+int main() {
+  {
+    Product simple = Builder("kit").with(1).with(2).labelled("small").build();
+    if (simple.weight() != 3 || simple.name() != "kit:small") { return 1; }
+  }
+  if (g_parts_dropped != 2) { return 2; }
+
+  mut Builder crate = Builder("crate");
+  for (mut int i = 1; i <= 4; i += 1) {
+    // Workaround: `crate = std::move(crate).with(...)` ICEs (red/g4.gti).
+    Builder next = std::move(crate).with(i * 10);
+    crate = std::move(next);
+  }
+  if (crate.pending() != std::size_t(4)) { return 3; }
+  Product big = finish(std::move(crate), true);
+  if (big.weight() != 100 || big.count() != std::size_t(4) ||
+      big.name() != "crate:big") {
+    return 4;
+  }
+
+  {
+    Builder abandoned = Builder("tmp").with(5).with(6);
+  }
+  if (g_parts_dropped != 4) { return 5; }
+
+  mut Builder reused = Builder("first").with(1);
+  Product first = finish(std::move(reused), false);
+  Builder second_builder = Builder("second").with(2).with(3);
+  reused = std::move(second_builder);
+  Product second = finish(std::move(reused), false);
+  if (first.name() != "first" || second.weight() != 5) { return 6; }
+
+  Product fallback = make_default();
+  if (fallback.weight() != 7) { return 7; }
+  std::println(big.name());
+  std::println("v06 ok");
+  return 0;
+}

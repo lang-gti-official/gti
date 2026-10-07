@@ -1,0 +1,4 @@
+#include "one.gti"
+#include "two.gti"
+
+int main() { return util::helper(0) - 1; }

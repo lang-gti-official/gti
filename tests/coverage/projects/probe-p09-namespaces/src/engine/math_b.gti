@@ -1,0 +1,12 @@
+namespace engine {
+  namespace math {
+    static int helper() { return 2; }
+
+    int add(int a, int b, int c) { return a + b + c; }
+    int from_b() { return helper(); }
+  }
+
+  namespace math::detail {
+    int depth() { return 3; }
+  }
+}

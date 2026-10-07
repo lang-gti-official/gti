@@ -1,0 +1,18 @@
+class Counter {
+  mut int value = 0;
+public:
+  Counter() {}
+  void tick() mut { this.value += 1; }
+  int read() { return this.value; }
+};
+
+int main() {
+  Counter c{};
+  auto g = [](int a, int b) -> int { return a + b; };
+  int r = g(1); //!ERR
+  auto h = [c]() -> int {
+    c.tick(); //!ERR
+    return c.read();
+  };
+  return r + h();
+}

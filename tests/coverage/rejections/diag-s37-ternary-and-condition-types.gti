@@ -1,0 +1,11 @@
+int main() {
+  bool flag = true;
+  int x = flag ? 1 : "a"; //!ERR
+  if (x) { //!ERR
+    return 1;
+  }
+  while (3) { //!ERR
+    return 2;
+  }
+  return 0;
+}

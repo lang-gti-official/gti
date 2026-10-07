@@ -1,0 +1,11 @@
+// Invalid: relocate_to borrows both owners exclusively; relocating a storage
+// into itself is overlapping mutable access, even with count zero.
+#include <std/memory>
+int main() {
+  std::allocator heap{};
+  mut auto attempt = heap.try_storage<int32_t>(std::size_t(2));
+  mut std::storage<int32_t> slots = std::move(attempt).value();
+  slots.construct(std::size_t(0), 1);
+  slots.relocate_to(slots, std::size_t(0));
+  return 0;
+}

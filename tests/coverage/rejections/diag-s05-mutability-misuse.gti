@@ -1,0 +1,17 @@
+class Counter {
+  mut int value = 0;
+
+public:
+  Counter() {}
+  void tick() mut { this.value += 1; }
+  int read() { return this.value; }
+  void sneaky() { this.value = 3; } //!ERR
+};
+
+int main() {
+  int x = 1;
+  x = 2; //!ERR
+  Counter c{};
+  c.tick(); //!ERR
+  return x + c.read();
+}

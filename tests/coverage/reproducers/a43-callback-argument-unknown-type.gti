@@ -1,0 +1,11 @@
+// A43: passing an unsafe function as a native callback reports the internal 'unknown' type
+// instead of saying the function is unsafe.
+[[c_opaque]] struct FileStat;
+using Visitor = (c_string, const FileStat*, int32_t) -> int32_t;
+extern "C" {
+  int32_t ftw(c_string root, Visitor visitor, int32_t depth);
+}
+int32_t visit(c_string path, const FileStat* info, int64_t flag) { return 0; }
+int main() {
+  unsafe { return ftw(".", visit, 1); }
+}

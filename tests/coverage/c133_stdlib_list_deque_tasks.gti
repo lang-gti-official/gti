@@ -1,0 +1,125 @@
+// Linked list and deque of move-only Task objects (unique_ptr payload):
+// positional insert/erase, remove/unique/sort/merge on the list, generic
+// iterator algorithms (find_if, count_if, lower_bound, max_element) over
+// list and deque cursors, a deque sliding window, and FIFO queue draining.
+#include <std/list>
+#include <std/deque>
+#include <std/queue>
+#include <std/memory>
+#include <std/string>
+#include <std/algorithm>
+
+mut int live_tasks = 0;
+
+class Task {
+  std::unique_ptr<int> priority_;
+  std::string name_;
+public:
+  Task(int priority, std::string name)
+      : priority_(std::make_unique<int>(priority)), name_(std::move(name)) {
+    live_tasks++;
+  }
+  // Copyable-argument constructor used for emplacement: emplacing with a
+  // move-only std::string argument ICEs (repro/rD2).
+  Task(int priority, int code)
+      : priority_(std::make_unique<int>(priority)), name_(std::to_string(code)) {
+    live_tasks++;
+  }
+  Task(Task& other) = delete;
+  Task(Task&& other) = default;
+  ~Task() { live_tasks--; }
+  int priority() { return *this.priority_; }
+  std::string& name() { return this.name_; }
+  bool operator==(Task& other) { return this.priority() == other.priority(); }
+  bool operator!=(Task& other) { return this.priority() != other.priority(); }
+  bool operator<(Task& other) { return this.priority() < other.priority(); }
+  bool operator<=(Task& other) { return this.priority() <= other.priority(); }
+  bool operator>(Task& other) { return this.priority() > other.priority(); }
+  bool operator>=(Task& other) { return this.priority() >= other.priority(); }
+};
+
+int checksum(std::list<Task>& tasks) {
+  mut int sum = 0;
+  mut int weight = 1;
+  for (auto& task : tasks) {
+    sum += task.priority() * weight;
+    weight++;
+  }
+  return sum;
+}
+
+int main() {
+  {
+    mut std::list<Task> tasks{};
+    tasks.push_back(Task(5, std::string("e")));
+    tasks.push_front(Task(1, std::string("a")));
+    tasks.push_back(Task(3, std::string("c")));
+    tasks.insert(std::size_t(1), Task(3, std::string("c2")));
+    tasks.insert(tasks.size(), Task(9, std::string("z")));
+    // order: 1 3 5 3 9
+    if (checksum(tasks) != 1 + 6 + 15 + 12 + 45) { return 1; }
+    tasks.erase(std::size_t(2));               // 1 3 3 9
+    if (tasks.unique() != 1) { return 2; }      // 1 3 9
+    Task probe = Task(9, std::string("probe"));
+    if (tasks.remove(probe) != 1) { return 3; } // 1 3
+    tasks.push_back(Task(2, std::string("b")));
+    tasks.sort();                               // 1 2 3
+    mut std::list<Task> later{};
+    later.push_back(Task(0, std::string("zero")));
+    later.push_back(Task(4, std::string("d")));
+    tasks.merge(std::move(later));              // 0 1 2 3 4
+    if (tasks.size() != 5 || tasks.front().priority() != 0 || tasks.back().priority() != 4) { return 4; }
+
+    auto last = tasks.end();
+    auto found = std::find_if(tasks.begin(), tasks.end(),
+                              [](Task& t) -> bool { return t.priority() > 2; });
+    if (!(found != last) || (*found).name() != "c2") { return 5; }
+    std::ptrdiff_t odd = std::count_if(tasks.begin(), tasks.end(),
+                                       [](Task& t) -> bool { return t.priority() % 2 == 1; });
+    if (odd != 2) { return 6; }
+    Task needle = Task(2, std::string("needle"));
+    auto bound = std::lower_bound(tasks.begin(), tasks.end(), needle);
+    if ((*bound).name() != "b") { return 7; }
+    auto top = std::max_element(tasks.begin(), tasks.end());
+    if ((*top).priority() != 4) { return 8; }
+    tasks.reverse();
+    if (tasks.front().priority() != 4) { return 9; }
+  }
+  if (live_tasks != 0) { return 10; }
+
+  {
+    // Sliding window of the last three readings.
+    mut std::deque<Task> window{};
+    mut int maxima = 0;
+    for (mut int reading = 0; reading < 8; reading++) {
+      window.push_back(Task((reading * 5) % 7, std::to_string(reading)));
+      if (window.size() > 3) { window.pop_front(); }
+      auto best = std::max_element(window.begin(), window.end());
+      maxima = maxima * 10 + (*best).priority();
+    }
+    // readings: 0 5 3 1 6 4 2 0 -> window maxima 0 5 5 5 6 6 6 4
+    if (maxima != 5556664 ) { return 11; }
+    window.insert(std::size_t(1), Task(42, std::string("mid")));
+    if (window[std::size_t(1)].priority() != 42 || window.size() != 4) { return 12; }
+    window.erase(std::size_t(0));
+    [[discard]] window.emplace_front(7, 70);
+    std::ptrdiff_t high = std::count_if(window.begin(), window.end(),
+                                        [](Task& t) -> bool { return t.priority() >= 7; });
+    if (high != 2 || window.back().name() != "7") { return 13; }
+  }
+  if (live_tasks != 0) { return 14; }
+
+  {
+    mut std::queue<Task> pending{};
+    pending.push(Task(1, std::string("first")));
+    [[discard]] pending.emplace(2, 2);
+    pending.push(Task(3, std::string("third")));
+    mut std::string drained{};
+    while (!pending.empty()) {
+      drained.append(pending.front().name().view());
+      pending.pop();
+    }
+    if (drained != "first2third") { return 15; }
+  }
+  return live_tasks == 0 ? 0 : 16;
+}

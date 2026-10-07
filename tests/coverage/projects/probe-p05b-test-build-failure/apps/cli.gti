@@ -1,0 +1,19 @@
+#include <std/string>
+#include <std/vector>
+#include "../src/inventory.gti"
+
+int main(int argc, std::vector<std::string> argv) {
+  mut inv::Inventory items{};
+  for (mut int i = 1; i < argc; i = i + 1) {
+    items.add(int(argv[uint64_t(i)].size()));
+  }
+  std::println("cli items");
+  // expects arguments: "ab" "cde" "" -> sizes 2,3,0
+  if (argc != 4) {
+    return 20;
+  }
+  if (items.total() != 5 || items.at(uint64_t(2)) != 0) {
+    return 21;
+  }
+  return 0;
+}

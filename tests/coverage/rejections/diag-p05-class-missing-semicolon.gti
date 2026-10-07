@@ -1,0 +1,10 @@
+class Counter {
+  mut int value = 0;
+public:
+  Counter() {}
+} //!ERR
+
+int main() { //!ERR
+  Counter c{};
+  return 0;
+}
