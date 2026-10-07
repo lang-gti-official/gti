@@ -1,0 +1,8 @@
+// A50: designated construction omitting a field whose default is 'Inner inner{};' is a
+// backend ICE.
+struct Inner { int32_t r = 3; };
+struct Item { int32_t port = 80; Inner inner{}; };
+int main() {
+  Item it = {.port = 1};
+  return it.inner.r - 3;
+}
