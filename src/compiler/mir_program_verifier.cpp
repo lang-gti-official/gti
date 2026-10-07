@@ -1171,7 +1171,10 @@ callableSignatureMatches(const MirCallableSignature &signature,
        !instruction.lambdaTarget) ||
       (signature.lambdaTarget &&
        signature.lambdaTarget == instruction.lambdaTarget &&
-       !instruction.functionTarget);
+       !instruction.functionTarget) ||
+      (signature.nativeCalleeType &&
+       signature.nativeCalleeType == instruction.nativeCalleeType &&
+       !instruction.functionTarget && !instruction.lambdaTarget);
   return sameTarget && signature.selectedCapability &&
          instruction.callableInvocation == signature.selectedCapability &&
          callResultMatches(instruction.info, signature.returnType) &&
@@ -1335,6 +1338,12 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
                           const MirFunctionInstance *caller = nullptr) {
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.nativeCalleeType &&
+          !isMirNativeIndirectCall(program, body, instruction)) {
+        return verificationFailure(body, owner,
+                                   "invalid native indirect call metadata",
+                                   block.id, instruction.id);
+      }
       if (instruction.kind == MirInstructionKind::Move &&
           instruction.operands.size() == 1) {
         const MirPlace *source =
@@ -2429,7 +2438,8 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
           transfersOut(instruction) || preparedOwnershipTransfer;
       if (instruction.kind == MirInstructionKind::Call && transfersOwnership &&
           instruction.intrinsic == IntrinsicKind::None &&
-          !instruction.functionTarget && !instruction.lambdaTarget) {
+          !instruction.functionTarget && !instruction.lambdaTarget &&
+          !instruction.nativeCalleeType) {
         return verificationFailure(
             body, owner, "ordinary call is missing its exact target identity",
             block.id, instruction.id);
@@ -2476,6 +2486,14 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
       }
 
       const MirFunctionInstance *target = nullptr;
+      if (instruction.nativeCalleeType &&
+          !isMirNativeIndirectCall(program, body, instruction)) {
+        return verificationFailure(
+            body, owner,
+            "native indirect call lost its exact signature, ordered callee "
+            "inputs or unsafe contract",
+            block.id, instruction.id);
+      }
       if (instruction.callerLocation &&
           program.failureMetadata().callerSiteFor(
               *instruction.callerLocation) != instruction.callerLocationSite) {
@@ -2762,6 +2780,7 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
       }
       if (instruction.kind == MirInstructionKind::Call &&
           !instruction.functionTarget && !instruction.lambdaTarget &&
+          !instruction.nativeCalleeType &&
           instruction.intrinsic == IntrinsicKind::None &&
           instruction.callableInvocation &&
           instruction.definedFailure.propagation !=
@@ -11316,8 +11335,11 @@ verifyMirProgramContracts(const MirProgram &program) {
            signatureIndex < parameter.signatures.size(); ++signatureIndex) {
         const MirCallableSignature &signature =
             parameter.signatures[signatureIndex];
-        const bool hasTarget = signature.functionTarget.has_value() !=
-                               signature.lambdaTarget.has_value();
+        const bool hasTarget =
+            int(signature.functionTarget.has_value()) +
+                int(signature.lambdaTarget.has_value()) +
+                int(signature.nativeCalleeType.has_value()) ==
+            1;
         const std::string prefix =
             "signature " + std::to_string(signatureIndex) + " ";
         if (!hasTarget) {
@@ -11376,6 +11398,18 @@ verifyMirProgramContracts(const MirProgram &program) {
               target->type != parameter.callableType) {
             rejectCallableContract(prefix +
                                    "does not match an exact lambda target");
+          }
+        } else if (signature.nativeCalleeType) {
+          const auto &type = *signature.nativeCalleeType;
+          const auto parameters = type.nativeFunctionParameterTypes();
+          if (type != parameter.callableType ||
+              !type.hasNativeFunctionShape() ||
+              signature.returnType != *type.nativeFunctionReturnType() ||
+              signature.parameterTypes.size() != parameters.size() ||
+              !std::equal(parameters.begin(), parameters.end(),
+                          signature.parameterTypes.begin())) {
+            rejectCallableContract(prefix +
+                                   "does not match an exact native signature");
           }
         }
         if (*signature.selectedCapability != expected) {

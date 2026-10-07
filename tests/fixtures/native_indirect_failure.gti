@@ -1,0 +1,20 @@
+using Failure = () -> void;
+
+class TargetGuard {
+public:
+  ~TargetGuard() { std::println("target cleanup"); }
+};
+class CallerGuard {
+public:
+  ~CallerGuard() { std::println("caller cleanup"); }
+};
+void fail_inside_callback() {
+  TargetGuard guard{};
+  std::panic("native callback failure");
+}
+int main() {
+  CallerGuard guard{};
+  Failure callback = fail_inside_callback;
+  unsafe { callback(); }
+  return 0;
+}

@@ -158,6 +158,44 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     result.errors.emplace_back(
         "HIR semantic-analysis seal differs from the semantic model");
   }
+  const auto verifyNativeInvocations = [&](const HirBody &body) {
+    for (const auto &value : body.values) {
+      if (!value.nativeCalleeType)
+        continue;
+      const auto &signature = *value.nativeCalleeType;
+      const auto parameters = signature.nativeFunctionParameterTypes();
+      const auto *callee =
+          value.receiver ? body.findValue(*value.receiver) : nullptr;
+      if (value.kind != HirValueKind::Call ||
+          !signature.hasNativeFunctionShape() || !callee ||
+          callee->info.type != signature || value.functionTarget ||
+          value.constructorTarget || value.lambdaTarget ||
+          value.nativeCallbackAdapter || !value.callPlan ||
+          !value.callPlan->receiver ||
+          value.callPlan->receiver->value != *value.receiver ||
+          value.callPlan->receiver->type != signature ||
+          value.callPlan->receiver->kind != HirCallInputKind::Value ||
+          value.unsafeOperation != UnsafeOperationKind::ForeignPointerCall ||
+          value.info.type != *signature.nativeFunctionReturnType() ||
+          value.parameterTypes.size() != parameters.size() ||
+          !std::equal(parameters.begin(), parameters.end(),
+                      value.parameterTypes.begin()) ||
+          value.callPlan->arguments.size() != parameters.size()) {
+        result.errors.emplace_back(
+            "native indirect invocation lost its exact signature and callee "
+            "plan");
+      }
+    }
+  };
+  verifyNativeInvocations(program.module());
+  for (const auto &function : program.functionInstances())
+    verifyNativeInvocations(function.body);
+  for (const auto &constructor : program.constructorInstances())
+    verifyNativeInvocations(constructor.body);
+  for (const auto &destructor : program.destructorInstances())
+    verifyNativeInvocations(destructor.body);
+  for (const auto &lambda : program.lambdaInstances())
+    verifyNativeInvocations(lambda.body);
   for (const auto &instance : program.functionInstances()) {
     const auto *declaration = semantics.findFunction(instance.declaration);
     if (declaration == nullptr ||

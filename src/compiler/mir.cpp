@@ -22,6 +22,120 @@
 
 namespace lang {
 
+bool isMirNativeIndirectCall(const MirProgram &program, const MirBody &body,
+                             const MirInstruction &instruction) {
+  if (!instruction.nativeCalleeType ||
+      !instruction.nativeCalleeType->hasNativeFunctionShape())
+    return false;
+  const SemanticType &signature = *instruction.nativeCalleeType;
+  const auto abiType = [&](const auto &self, const SemanticType &type,
+                           bool result, std::size_t depth) -> bool {
+    if (depth > 256)
+      return false;
+    switch (type.kind) {
+    case SemanticType::Void:
+      return result;
+    case SemanticType::Int8:
+    case SemanticType::Int16:
+    case SemanticType::Int32:
+    case SemanticType::Int64:
+    case SemanticType::UInt8:
+    case SemanticType::UInt16:
+    case SemanticType::UInt32:
+    case SemanticType::UInt64:
+    case SemanticType::Float:
+    case SemanticType::Double:
+    case SemanticType::CString:
+      return true;
+    case SemanticType::StringView:
+      return !result;
+    case SemanticType::RawPointer:
+      if (type.arguments.size() != 1)
+        return false;
+      if (type.arguments.front().kind == SemanticType::Class) {
+        return std::any_of(program.classInstances().begin(),
+                           program.classInstances().end(), [&](const auto &c) {
+                             return c.type == type.arguments.front() &&
+                                    (c.cAbiRecord || c.cOpaqueHandle);
+                           });
+      }
+      return self(self, type.arguments.front(), true, depth + 1);
+    case SemanticType::Class:
+      return std::any_of(program.classInstances().begin(),
+                         program.classInstances().end(), [&](const auto &c) {
+                           return c.type == type && c.cAbiRecord &&
+                                  c.traits.copyable &&
+                                  !c.traits.containsBorrowedState;
+                         });
+    case SemanticType::NativeFunction:
+      if (!type.hasNativeFunctionShape() ||
+          !self(self, *type.nativeFunctionReturnType(), true, depth + 1))
+        return false;
+      return std::all_of(
+          type.nativeFunctionParameterTypes().begin(),
+          type.nativeFunctionParameterTypes().end(),
+          [&](const auto &p) { return self(self, p, false, depth + 1); });
+    default:
+      return false;
+    }
+  };
+  const auto parameters = signature.nativeFunctionParameterTypes();
+  if (!abiType(abiType, signature, false, 0) ||
+      instruction.kind != MirInstructionKind::Call ||
+      instruction.unsafeOperation != UnsafeOperationKind::ForeignPointerCall ||
+      instruction.rawMemoryAccess || instruction.callSite == 0 ||
+      instruction.callInputRole || instruction.destination ||
+      !instruction.receiver || instruction.functionTarget ||
+      instruction.constructorTarget || instruction.lambdaTarget ||
+      instruction.bodyTarget || instruction.nativeCallbackAdapter ||
+      instruction.intrinsic != IntrinsicKind::None ||
+      instruction.dispatch != CallDispatch::Static ||
+      instruction.dispatchOwner != SemanticType::Unknown ||
+      instruction.callableInvocation != CallableInvocationCapability::Read ||
+      instruction.callableBoundary ||
+      !instruction.callableArguments.empty() || instruction.loan ||
+      instruction.borrowOrigin != BorrowOriginKind::None ||
+      !instruction.definedFailure.empty() ||
+      !instruction.localFailureSites.empty() || instruction.neverReturns ||
+      instruction.tracksCaller ||
+      instruction.parameterTypes.size() != parameters.size() ||
+      !std::equal(parameters.begin(), parameters.end(),
+                  instruction.parameterTypes.begin()) ||
+      instruction.operands.size() != parameters.size() ||
+      instruction.info.type != *signature.nativeFunctionReturnType() ||
+      (instruction.info.type == SemanticType::Void
+           ? instruction.result.has_value()
+           : !instruction.result))
+    return false;
+  const auto staged = [&](const MirOperand &operand, MirCallInputRole role,
+                          std::size_t index, const SemanticType &type) -> bool {
+    const auto *value = operand.kind == MirOperandKind::Value
+                            ? body.findValue(operand.value)
+                            : nullptr;
+    if (!value || operand.type != type || value->info.type != type)
+      return false;
+    for (const auto &block : body.blocks)
+      for (const auto &input : block.instructions)
+        if (input.id == value->definition)
+          return input.kind == MirInstructionKind::CallInput &&
+                 input.callSite == instruction.callSite &&
+                 input.callInputRole == role && input.callInputIndex == index &&
+                 input.info.type == type &&
+                 (role != MirCallInputRole::Receiver ||
+                  (input.callInputKind == HirCallInputKind::Value &&
+                   input.operands.size() == 1 &&
+                   input.operands.front().type == type));
+    return false;
+  };
+  if (!staged(*instruction.receiver, MirCallInputRole::Receiver, 0, signature))
+    return false;
+  for (std::size_t index = 0; index < parameters.size(); ++index)
+    if (!staged(instruction.operands[index], MirCallInputRole::Argument, index,
+                parameters[index]))
+      return false;
+  return true;
+}
+
 std::vector<MirPlaceId> mirLoanProtectedSources(const MirBody &body,
                                                 MirLoanId id) {
   const MirLoan *loan = body.findLoan(id);
@@ -7411,6 +7525,24 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
     const bool hasResult = instruction.result.has_value();
     const bool noOperation = instruction.operation == MirOperation::None;
+    if (instruction.nativeCalleeType) {
+      const auto &signature = *instruction.nativeCalleeType;
+      const auto parameters = signature.nativeFunctionParameterTypes();
+      if (!signature.hasNativeFunctionShape() ||
+          instruction.kind != MirInstructionKind::Call ||
+          instruction.unsafeOperation !=
+              UnsafeOperationKind::ForeignPointerCall ||
+          !instruction.receiver || instruction.receiver->type != signature ||
+          instruction.functionTarget || instruction.constructorTarget ||
+          instruction.lambdaTarget || instruction.bodyTarget ||
+          instruction.intrinsic != IntrinsicKind::None ||
+          instruction.callableInvocation != CallableInvocationCapability::Read ||
+          instruction.info.type != *signature.nativeFunctionReturnType() ||
+          instruction.parameterTypes.size() != parameters.size() ||
+          !std::equal(parameters.begin(), parameters.end(),
+                      instruction.parameterTypes.begin()))
+        return false;
+    }
     const bool callable = instruction.kind == MirInstructionKind::Call ||
                           instruction.kind == MirInstructionKind::Construct;
     if (!instruction.borrowFields.empty() &&
@@ -8352,6 +8484,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                !instruction.loan && !instruction.definedFailure.empty() &&
                instruction.info.traits.drop == DropKind::Lexical)) &&
              (instruction.callSite == 0 ||
+              (instruction.nativeCalleeType && instruction.receiver &&
+               !instruction.functionTarget && !instruction.constructorTarget &&
+               !instruction.lambdaTarget) ||
               (instruction.lambdaTarget && !instruction.functionTarget &&
                !instruction.constructorTarget && instruction.receiver &&
                instruction.callableInvocation &&
