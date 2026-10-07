@@ -58,6 +58,9 @@ set_tests_properties(constructor_pack_field_runtime PROPERTIES TIMEOUT 600)
 add_executable(gti_base_constructor_stage_tests base_constructor_stage_tests.cpp)
 target_link_libraries(gti_base_constructor_stage_tests PRIVATE gti_cpp_backend)
 add_test(NAME base_constructor_stage COMMAND gti_base_constructor_stage_tests)
+add_executable(gti_expected_constructor_field_tests expected_constructor_field_tests.cpp)
+target_link_libraries(gti_expected_constructor_field_tests PRIVATE gti_cpp_backend)
+add_test(NAME expected_constructor_field COMMAND gti_expected_constructor_field_tests)
 add_test(NAME base_constructor_stage_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/base_constructor_stage_runtime_test.py"
