@@ -1,5 +1,45 @@
 # Compiler Verification
 
+## Reconciled dormant engine embedding foundation
+
+The PR #102 foundation is reconciled with the native scalar/nested-pointer
+compiler and merged PRs #50/#52. Public library targets remain disabled; no
+wrapper, context runtime or shared artifact is implemented. The shipped SDK
+request/root facts and explicit disabled-library diagnostics advance VERSION
+to 0.382.0. ADR 026 and GTI-S2104 have distinct identities. Library snapshots
+use mir-v92/lowered-program-v12 while ordinary executable serialization retains
+mir-v91/lowered-program-v11 and all current native type/target facts.
+
+Release/Ninja, AppleClang 21/LLVM 22.1.8 on macOS arm64 passes 81 distinct
+selected CTest gates: 63 compiler/driver/MIR/backend/optimizer/native/corpus
+gates, 18 supplemental interface/CLI/registry/diagnostic/LSP gates with one
+overlap, and the relocated installed-toolchain gate. The extended foundation
+regression proves dirty manifest overlays preserve internal feature policy and
+cannot activate the public target. The frozen ABI rejects bool and distinct
+native scalar families even though ordinary C interop now admits them; nested
+pointers are rejected by embedding policy, not obsolete general pointer rules.
+All original assertions, modes and timeouts remain intact.
+
+The emission corpus covers 121 sources and 16,166 bodies; the independent native
+oracle builds/runs all 121 examples at O0/C++20 and O3/C++23, retaining 16,159
+reviewed body identities and identical observations/ownership. All 427 language
+coverage cases pass their unchanged expectations, including 104 explicitly
+unresolved known findings. Twelve external installed SDK consumers pass,
+including the new embedding request through installed compiler headers. The
+relocation gate clears all GTI/DYLD overrides; the active user installation is
+not changed. Source hashes bind retained broad evidence to unchanged production
+inputs; final focused and SDK gates are repeated on the published clean head.
+Pinned clang-format checks 464 first-party files, plus release-version and
+whitespace gates. This is selected macOS evidence, not a full 475-gate rerun or
+Linux/Windows validation.
+
+The concurrent allocator/lifetime campaign's unpublished mir-v92/body-v78 and
+lowered-program-v12 conditional-assertion schema overlaps these version numbers.
+Its owner will advance the combined serialization during reconciliation and
+retain both embedding rows and conditional fields; equal version numbers from
+those separate branches do not imply equal schemas. That unfinished campaign
+is not included in this foundation.
+
 ## Reconciled language coverage corpus
 
 PR #52's complete corpus passes against the optimized Release compiler from
