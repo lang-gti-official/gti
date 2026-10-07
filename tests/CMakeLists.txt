@@ -69,6 +69,11 @@ add_test(NAME base_constructor_stage COMMAND gti_base_constructor_stage_tests)
 add_executable(gti_expected_constructor_field_tests expected_constructor_field_tests.cpp)
 target_link_libraries(gti_expected_constructor_field_tests PRIVATE gti_cpp_backend)
 add_test(NAME expected_constructor_field COMMAND gti_expected_constructor_field_tests)
+add_test(NAME generated_constructor_order_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/generated_constructor_order_runtime_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(generated_constructor_order_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME base_constructor_stage_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/base_constructor_stage_runtime_test.py"

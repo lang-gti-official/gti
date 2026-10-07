@@ -28,7 +28,9 @@ if __name__ == "__main__":
     release_failure = (f"{release.name}:{release_panic_line}: runtime error[GTI-R0017]: "
                        'panic: "package cleanup failed"\n')
     main(names=(fixture.stem, release.stem, "owning_storage_view",
-                "storage_fixed_array_emplacement"), cases={fixture.stem: [
+                "storage_fixed_array_emplacement",
+                "a41-storage-emplace-fixed-array-silent",
+                "a41-vector-emplace-back-fixed-array-silent"), cases={fixture.stem: [
         ((), (0, "30\n20\n10\n90\n30\n20\n13\n", "")),
         (("constructor",), (70, "20\n10\n90\n", constructor_failure)),
         (("duplicate", "slot"), (70, "11\n90\n30\n20\n10\n", duplicate_failure)),
@@ -42,5 +44,10 @@ if __name__ == "__main__":
     ], release.stem: [
         ((), (0, "30\n10\n77\n90\n", "")),
         (("panic",), (70, "30\n10\n90\n", release_failure)),
-    ]}, fixture_paths={"owning_storage_view": fixture.parent.parent.parent /
-                       "examples/114-owning-storage-view.gti"})
+    ]}, fixture_paths={
+        "owning_storage_view": fixture.parent.parent.parent /
+                               "examples/114-owning-storage-view.gti",
+        **{name: fixture.parent.parent / "coverage/reproducers" / f"{name}.gti"
+           for name in ("a41-storage-emplace-fixed-array-silent",
+                        "a41-vector-emplace-back-fixed-array-silent")},
+    })

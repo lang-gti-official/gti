@@ -1,0 +1,32 @@
+#include <std/memory>
+
+struct First { int number = 3; };
+struct Second { int number = 5; };
+
+// The nested alias retains the native primary representation. Each selected
+// generated constructor still has its own exact GTI instance and definition.
+struct Box<T> {
+  using value_type = T;
+  int marker = 7;
+};
+
+class Explicit<T> {
+public:
+  using value_type = T;
+  int marker;
+  Explicit(int value) : marker(value) {}
+};
+
+int main() {
+  std::unique_ptr<First> first{};
+  std::unique_ptr<Second> second{};
+  std::unique_ptr<First> explicit_empty{nullptr};
+  Box<int> box{};
+  Box<bool> other{};
+  Explicit<int> explicit_value{11};
+  Explicit<bool> explicit_other{13};
+  if (first || second || explicit_empty) { return 1; }
+  if (box.marker != 7 || other.marker != 7) { return 2; }
+  if (explicit_value.marker != 11 || explicit_other.marker != 13) { return 3; }
+  return 0;
+}
