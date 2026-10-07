@@ -17,8 +17,8 @@ GENERATED_KINDS = (
     "callable_adapter",
     "lifecycle_cleanup",
     "native_interop_adapter",
-    "concrete_instance_adapter",
     "thread_task_adapter",
+    "concrete_instance_adapter",
 )
 
 
@@ -56,8 +56,13 @@ def main() -> int:
         print(completed.stderr, end="", file=sys.stderr)
         return 1
 
+    lines = completed.stdout.splitlines()
+    if not lines or tuple(lines[0].split("\t")) != ("generated_kinds", *GENERATED_KINDS):
+        print("FAIL: compiled generated-item columns differ from the census schema",
+              file=sys.stderr)
+        return 1
     actual: dict[str, dict[str, object]] = {}
-    for line in completed.stdout.splitlines():
+    for line in lines[1:]:
         fields = line.split("\t")
         if len(fields) != 4 + len(GENERATED_KINDS):
             print(f"FAIL: malformed census row: {line}", file=sys.stderr)

@@ -13,7 +13,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:285: runtime error\\[GTI-R0010\\]: invalid_storage_state in occupied_relocation_destination\\n",
+          "stderr": "<std/memory>:476: runtime error\\[GTI-R0010\\]: invalid_storage_state in occupied_relocation_destination\\n",
           "stdout": "target 1\nsource 1\nsource 0\nouter guard\n"
         },
         {
@@ -21,7 +21,7 @@
             "a"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:285: runtime error\\[GTI-R0010\\]: invalid_storage_state in invalid_relocation_source\\n",
+          "stderr": "<std/memory>:475: runtime error\\[GTI-R0010\\]: invalid_storage_state in invalid_relocation_source\\n",
           "stdout": "source 1\nsource 0\nouter guard\n"
         },
         {
@@ -30,7 +30,7 @@
             "b"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:285: runtime error\\[GTI-R0010\\]: invalid_storage_state in relocation_capacity\\n",
+          "stderr": "<std/memory>:473: runtime error\\[GTI-R0010\\]: invalid_storage_state in relocation_capacity\\n",
           "stdout": "source 2\nsource 1\nsource 0\nouter guard\n"
         }
       ]
@@ -39,7 +39,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:268: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
+          "stderr": "<std/memory>:441: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
           "stdout": "construct 0\ndrop 0\n"
         },
         {
@@ -47,7 +47,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:268: runtime error\\[GTI-R0010\\]: invalid_storage_state in duplicate_construction\\n",
+          "stderr": "<std/memory>:442: runtime error\\[GTI-R0010\\]: invalid_storage_state in duplicate_construction\\n",
           "stdout": "construct 0\ndrop 0\n"
         },
         {
@@ -56,7 +56,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:425: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
+          "stderr": "<std/memory>:807: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
           "stdout": "construct 0\nconstruct 10\ndrop 10\ndrop 0\n"
         },
         {
@@ -66,7 +66,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:275: runtime error\\[GTI-R0010\\]: invalid_storage_state in uninitialized_access\\n",
+          "stderr": "<std/memory>:461: runtime error\\[GTI-R0010\\]: invalid_storage_state in uninitialized_access\\n",
           "stdout": "construct 0\nconstruct 10\nconstruct 20\ndrop 20\ndrop 10\ndrop 0\n"
         }
       ]
@@ -85,7 +85,7 @@
         {
           "exit": 70,
           "stderr": "<std/resource_vector>:87: runtime error\\[GTI-R0017\\]: panic: \"resource_vector\\ could\\ not\\ grow\"\\n",
-          "stdout": "full\ndrop 5\ndrop 4\ndrop 3\ndrop 2\ndrop 1\nrelease 1\ndrop 100\ndrop 200\n"
+          "stdout": "full\ndrop 5\ndrop 4\ndrop 3\ndrop 2\ndrop 1\nrelease 2\nrelease 1\ndrop 100\ndrop 200\n"
         }
       ]
     },
@@ -284,16 +284,16 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:161: runtime error\\[GTI-R0008\\]: empty_owner_access in dereference\\n",
-          "stdout": "tag 3\ntag 2\ntag 1\nrelease 1\ntag 9\n"
+          "stderr": "<std/memory>:194: runtime error\\[GTI-R0008\\]: empty_owner_access in dereference\\n",
+          "stdout": "tag 3\ntag 2\ntag 1\nrelease 2\nrelease 1\ntag 9\n"
         },
         {
           "args": [
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:169: runtime error\\[GTI-R0008\\]: empty_owner_access in member_access\\n",
-          "stdout": "tag 3\ntag 2\ntag 1\nrelease 1\ntag 9\n"
+          "stderr": "<std/memory>:202: runtime error\\[GTI-R0008\\]: empty_owner_access in member_access\\n",
+          "stdout": "tag 3\ntag 2\ntag 1\nrelease 2\nrelease 1\ntag 9\n"
         }
       ]
     },
@@ -1867,7 +1867,7 @@
     "a31-move-on-break-path-then-reinit": {
       "finding": "A31",
       "issue": 76,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a32-optional-emplace-move-only-function": {
       "issue": 77,
@@ -1929,7 +1929,7 @@
     "a39-ctor-address-of-struct-field": {
       "finding": "A39",
       "issue": 82,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a40-c-abi-record-pointer-array-field": {
       "finding": "A40",
@@ -1944,12 +1944,12 @@
     "a41-storage-emplace-fixed-array-silent": {
       "finding": "A41",
       "issue": 84,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a41-vector-emplace-back-fixed-array-silent": {
       "finding": "A41",
       "issue": 84,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a42-c-abi-record-array-from-named-values": {
       "issue": 85,
@@ -1973,7 +1973,7 @@
     },
     "a44-raw-audit-duplicate-warning": {
       "at_most": {
-        "warning[GTI-S2102]": 1
+        "a44-raw-audit-duplicate-warning.gti:15:42: warning[GTI-S2102]": 1
       },
       "flags": [
         "--raw-pointer-audit=warn"
@@ -1981,31 +1981,29 @@
       "outcome": "pass"
     },
     "a45-base-plus-string-field-unsupported": {
-      "code": "GTI-B0003",
       "finding": "A45",
       "issue": 86,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a45-base-state-rollback-unsupported": {
-      "code": "GTI-B0003",
       "finding": "A45",
       "issue": 86,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a45-derived-destructor-explicit-base": {
       "finding": "A45",
       "issue": 86,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a45-derived-destructor-generated-ctor": {
       "finding": "A45",
       "issue": 86,
-      "outcome": "link"
+      "outcome": "pass"
     },
     "a45-literal-base-argument": {
       "finding": "A45",
       "issue": 86,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a46-chained-subscript-compound": {
       "issue": 87,
@@ -2018,17 +2016,17 @@
     "a47-mut-payload-binding-through-mut-ref": {
       "finding": "A47",
       "issue": 88,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a48-switch-on-owning-enum-field": {
       "finding": "A48",
       "issue": 89,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a49-owning-enum-call-result-argument": {
       "finding": "A49",
       "issue": 90,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a50-designated-omitted-brace-default": {
       "finding": "A50",
@@ -2071,12 +2069,12 @@
     "a55-ctor-pack-move-only-field-init": {
       "finding": "A55",
       "issue": 96,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a55-list-emplace-move-only-argument": {
       "finding": "A55",
       "issue": 96,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a56-make-unique-same-type": {
       "finding": "A56",
@@ -2255,7 +2253,7 @@
     "s15-payload-enum-plain-class": {
       "finding": "S15",
       "issue": 103,
-      "outcome": "ice"
+      "outcome": "pass"
     }
   }
 }

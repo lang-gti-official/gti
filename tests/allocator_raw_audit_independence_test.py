@@ -15,9 +15,16 @@ import tempfile
 
 SOURCES = (
     "examples/121-programmable-allocators.gti",
+    "examples/125-manual-object-lifetimes.gti",
+    "examples/126-conditional-thread-capabilities.gti",
+    "examples/128-inline-object-pool.gti",
     "tests/fixtures/arena_placement.gti",
+    "tests/fixtures/object_construction.gti",
+    "tests/fixtures/object_relocation.gti",
     "tests/fixtures/programmable_allocators.gti",
     "tests/fixtures/resource_container_usage.gti",
+    "tests/fixtures/resource_region_contracts.gti",
+    "tests/fixtures/uninitialized_carrier.gti",
 )
 
 

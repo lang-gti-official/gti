@@ -6,9 +6,11 @@ Scope note (2026-10-07): the initial decision below describes the first checked
 typed-storage slice. Its exclusions and private implementation choices are not
 permanent restrictions on GTI's independent systems-language goal. The later
 low-level, optional-audit and programmable-resource revisions supersede the
-corresponding initial boundaries. Further general public lifetime facilities and
-provider-controlled bookkeeping are goals requiring their own contracts and
-validation; this note does not claim they are implemented.
+corresponding initial boundaries. The general object-lifetime and source-storage
+revision below supersedes the private sparse capability and hidden bitmap.
+Historical descriptions in the initial decision record their original scope;
+they are not the current implementation contract or a claim of final campaign
+validation.
 
 ## Context
 
@@ -435,3 +437,64 @@ current client). The implemented contract, its remaining unsafe obligations and
 its structural limits are specified in
 [raw pointers](../language/raw-pointers.md#explicit-resource-binding) and the
 [standard library](../language/standard-library.md#custom-resource-protocol).
+
+## Revision: source-owned process byte-provider policy
+
+The independent first `S-ALLOC-07` slice revises the process resource's aligned
+C++ allocation implementation. Request validation, native-size limits, empty
+requests, descriptor publication and error mapping now live in GTI. Hosted
+POSIX targets acquire bytes with `posix_memalign` and release with `free`;
+Windows uses `_aligned_malloc` and `_aligned_free`. Their pairing is immutable
+target policy, not an inferred property of the address. No object lifetime is
+started by acquiring bytes, and release requires that all live objects have
+already ended.
+
+Small ABI adapters remain justified only for facts/signatures GTI cannot yet
+spell exactly: native `size_t`, POSIX's `void**`, errno constants and reserved
+CRT symbols. They neither validate GTI requests nor own storage/bitmap policy.
+A uniquely named POSIX release forwarder additionally keeps the application's
+ordinary `free` binding usable until compatible C declarations can be shared.
+The subsequent general-lifetime revision below migrates sparse owners, their
+metadata and default typed factories onto that source-owned provider policy.
+
+## Revision: general object lifetimes and source-owned sparse storage
+
+The original sparse capability combined irreducible object-lifetime facts with
+expressible allocation and slot policy. General public `std::uninitialized<T>`,
+`construct_at`, `destroy_at` and `relocate_at`, plus the existing checked owner
+witness, now separate these responsibilities. An unrelated application-defined
+inline owner or pool can use the same facilities; no public container spelling
+grants compiler authority.
+
+The typed inline carrier has no engagement flag and performs no automatic
+payload destruction. Ordinary movement is limited to structurally bitwise-
+relocatable payloads; copying additionally requires copyability. Other carriers
+remain fixed-address, including when empty. Explicit typed relocation transfers
+eligible live payloads between distinct vacant regions with verified generated
+lifecycle semantics, rather than treating owning representation as bytes.
+
+`std::storage<T>` and `resource_storage<T,R>` now implement validation,
+initialization state, construction publication, reverse traversal and relocation
+loops in GTI. Nonempty storage requests object bytes and then a separate region
+of one metadata byte per slot from the same bound resource. Zero capacity
+requests neither. Failed metadata acquisition or descriptor validation releases
+every acquired region before reporting failure. A slot becomes live only after
+construction succeeds; destruction retires its flag before cleanup. A source
+guard resumes reverse traversal after a first failure, preserving its record.
+Elements are destroyed before metadata and object leases release their original
+descriptors, in that order.
+
+This revises the earlier single-region/hidden-process-bitmap implementation and
+makes the two resource requests observable library policy. Region shape checks
+do not establish provenance, real extent, non-overlap, writability or race
+freedom. The one-time unsafe resource binding retains those explicit caller
+obligations. Checked provider/element loans remain mandatory.
+
+The private sparse type, allocation/adoption/access/lifecycle intrinsic family,
+adoption marker and native helper engine are retired. Prefix/optional storage
+remain distinct capabilities with their existing contracts. MIR still owns
+typed lifecycle verification and failure cleanup; the backend implements those
+verified operations. Sparse initialization-set optimization is retired with its
+old intrinsic clients rather than being inferred from new source wrappers.
+This revision records implementation authority, not completion of production,
+cross-platform, installed-consumer or publication gates.

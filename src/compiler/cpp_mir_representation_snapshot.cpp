@@ -971,7 +971,16 @@ void appendLoweredDeclarationRows(const LoweredProgram &program,
     }
     snapshot.data.push_back(
         {.identity = {.kind = CppMirDataKind::EnumDefinition,
-                      .declaration = enumeration->id},
+                      .declaration = enumeration->id,
+                      .ordinal =
+                          enumeration->type.arguments.empty() &&
+                                  enumeration->type.valueArguments.empty()
+                              ? 0
+                              : static_cast<std::size_t>(
+                                    std::find(enums.begin(), enums.end(),
+                                              enumeration) -
+                                    enums.begin()) +
+                                    1},
          .support = CppMirSurfaceSupport::Supported});
   }
 
@@ -1316,9 +1325,10 @@ public:
         .copyAssignment = info->copyAssignment};
   }
 
-  [[nodiscard]] std::optional<RowEnumFacts> enumFacts(EnumId id) const {
+  [[nodiscard]] std::optional<RowEnumFacts>
+  enumFacts(const SemanticType &type) const {
     RowEnumFacts result;
-    const LoweredEnumDeclaration *info = lowered.findEnumDeclaration(id);
+    const LoweredEnumDeclaration *info = lowered.findEnumDeclaration(type);
     if (info == nullptr) {
       return std::nullopt;
     }
@@ -1495,7 +1505,7 @@ struct RowsBuilder {
       // alongside the type row so a boundary that carries the enum can
       // prove its variant inventory.
       if (type.kind == SemanticType::Enum) {
-        addEnum(type.enumId);
+        addEnum(type);
       }
     }
     for (const SemanticType &argument : type.arguments) {
@@ -1509,21 +1519,20 @@ struct RowsBuilder {
     }
   }
 
-  void addEnum(EnumId owner) {
+  void addEnum(const SemanticType &type) {
+    const EnumId owner = type.enumId;
     if (owner == 0 || std::any_of(rows.enums.begin(), rows.enums.end(),
-                                  [owner](const CppMirEnumRepresentation &row) {
-                                    return row.owner == owner;
+                                  [&](const CppMirEnumRepresentation &row) {
+                                    return row.type == type;
                                   })) {
       return;
     }
-    const std::optional<RowEnumFacts> info = facts.enumFacts(owner);
+    const std::optional<RowEnumFacts> info = facts.enumFacts(type);
     if (!info) {
       return;
     }
-    SemanticType type;
-    type.kind = SemanticType::Enum;
-    type.enumId = owner;
     CppMirEnumRepresentation row{.owner = owner,
+                                 .type = type,
                                  .spelling = facts.typeSpelling(standard, type),
                                  .underlyingType = info->underlyingType,
                                  .traits = info->traits,
@@ -1540,12 +1549,13 @@ struct RowsBuilder {
              .fieldTypes = enumerator.fieldTypes,
              .fieldRequiresActiveCleanup =
                  enumerator.fieldRequiresActiveCleanup});
-        for (const SemanticType &field : enumerator.fieldTypes) {
-          addType(field);
-        }
       }
     }
     rows.enums.push_back(std::move(row));
+    for (const RowEnumVariantFacts &enumerator : info->variants) {
+      for (const SemanticType &field : enumerator.fieldTypes)
+        addType(field);
+    }
     addType(type);
     addType(info->underlyingType);
   }
@@ -1579,7 +1589,7 @@ struct RowsBuilder {
           addOperand(operand);
         }
         if (instruction.enumOwner) {
-          addEnum(*instruction.enumOwner);
+          addEnum(mirInstructionEnumType(instruction));
         }
       }
       if (block.terminator.value) {
@@ -1591,7 +1601,7 @@ struct RowsBuilder {
         }
         addType(target.value->type);
         if (target.value->enumOwner != 0) {
-          addEnum(target.value->enumOwner);
+          addEnum(target.value->type);
         }
       }
     }
@@ -1942,7 +1952,7 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
       if (record->kind == SymbolKind::Enumerator &&
           place.type.kind == SemanticType::Enum) {
         const std::optional<RowEnumFacts> enumInfo =
-            facts.enumFacts(place.type.enumId);
+            facts.enumFacts(place.type);
         const std::string enumSpelling =
             facts.typeSpelling(standard, place.type);
         if (!enumInfo || enumInfo->payload || enumSpelling.empty()) {

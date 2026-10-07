@@ -1,0 +1,106 @@
+#include <std/memory>
+#include <std/panic>
+#include <std/string>
+
+namespace application {
+// Each cell owns its policy, not an allocation. The enclosing pool is fixed in
+// place, so even an immovable object's constructor sees its final address.
+class Cell<std::storage_element T> {
+  mut std::uninitialized<T> bytes{};
+  mut bool live = false;
+public:
+  Cell() {}
+  Cell(Cell<T>& other) = delete;
+  Cell(Cell<T>&& other) = delete;
+  bool occupied() { return this.live; }
+  void emplace<Args...>(Args... args) mut {
+    if (this.live) { std::panic("pool cell already occupied"); }
+    unsafe { std::construct_at(this.bytes.data(), args...); }
+    this.live = true;
+  }
+  T& get() {
+    if (!this.live) { std::panic("pool cell is empty"); }
+    unsafe { return std::assume_ref(this.bytes.data(), this.bytes); }
+  }
+  void clear() mut {
+    if (this.live) {
+      this.live = false;
+      unsafe { std::destroy_at(this.bytes.data()); }
+    }
+  }
+  ~Cell() { this.clear(); }
+};
+
+enum class pool_errc { full };
+
+// Two fixed slots are useful for alternating work items. Unlike a growable
+// container this owner never relocates live payloads or allocates slot bytes.
+class TwoSlotPool<std::storage_element T> {
+  mut Cell<T> first{};
+  mut Cell<T> second{};
+public:
+  TwoSlotPool() {}
+  TwoSlotPool(TwoSlotPool<T>& other) = delete;
+  TwoSlotPool(TwoSlotPool<T>&& other) = delete;
+
+  // Arguments are consumed even when the pool is full; no T is constructed on
+  // that path. Constructor failure publishes neither a live cell nor a handle.
+  expected<uint64_t, pool_errc> try_emplace<Args...>(Args... args) mut {
+    if (!this.first.occupied()) {
+      this.first.emplace(args...);
+      return uint64_t(0);
+    }
+    if (!this.second.occupied()) {
+      this.second.emplace(args...);
+      return uint64_t(1);
+    }
+    return unexpected(pool_errc::full);
+  }
+  T& get(uint64_t index) {
+    if (index == uint64_t(0)) { return this.first.get(); }
+    if (index == uint64_t(1)) { return this.second.get(); }
+    std::panic("pool index out of range");
+  }
+  void erase(uint64_t index) mut {
+    if (index == uint64_t(0)) { this.first.clear(); return; }
+    if (index == uint64_t(1)) { this.second.clear(); return; }
+    std::panic("pool index out of range");
+  }
+  // Generated field cleanup visits cells in reverse order. Cell retires its
+  // flag before destruction, so a failing destructor cannot be attempted twice.
+};
+
+class Node {
+  std::string label;
+  mut const int* initial_address = nullptr;
+  int identity;
+public:
+  Node(std::string label, int identity)
+      : label(std::move(label)), identity(identity) {
+    this.initial_address = &this.identity;
+  }
+  Node(Node& other) = delete;
+  Node(Node&& other) = delete;
+  std::string_view name() { return this.label.view(); }
+  int id() { return this.identity; }
+  bool stable() { return this.initial_address == &this.identity; }
+  ~Node() { std::println(this.identity); }
+};
+}
+
+int main() {
+  mut application::TwoSlotPool<application::Node> nodes{};
+  auto first = nodes.try_emplace(std::string("first"), 1).expect("first node");
+  auto second = nodes.try_emplace(std::string("second"), 2).expect("second node");
+  if (nodes.try_emplace(std::string("overflow"), 3)) { return 1; }
+  {
+    application::Node& borrowed = nodes.get(first);
+    // nodes.erase(first) here is rejected while borrowed remains in use.
+    if (borrowed.name() != "first" || borrowed.id() != 1 || !borrowed.stable()) { return 2; }
+  }
+  nodes.erase(first);
+  auto replacement = nodes.try_emplace(std::string("replacement"), 4).expect("reuse vacant cell");
+  if (replacement != first || nodes.get(second).name() != "second") { return 3; }
+  // Prints 1 for explicit erasure, then 2 and 4 for reverse final cleanup.
+  return 0;
+}

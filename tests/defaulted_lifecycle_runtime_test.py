@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -18,28 +19,22 @@ def fail(process: subprocess.CompletedProcess[str]) -> int:
 
 def validate_emission(generated: str, mode: str) -> bool:
     required = (
-        "StructuralValue() = default;",
         "~StructuralValue() noexcept = default;",
-        "StructuralPair() = default;",
         "~StructuralPair() noexcept = default;",
-        "StructuralBase() = default;",
         "~StructuralBase() noexcept = default;",
-        "StructuralDerived() = default;",
         "~StructuralDerived() noexcept = default;",
         "mir_lifetime_slot<::__gti_program::StructuralValue>",
         "mir_lifetime_slot<::__gti_program::StructuralPair>",
         "mir_lifetime_slot<::__gti_program::StructuralDerived>",
         ".construct()",
+        ".construction_address()",
+        ".mark_constructed()",
         ".destroy()",
     )
     forbidden = (
-        "StructuralValue::StructuralValue(",
         "StructuralValue::~StructuralValue(",
-        "StructuralPair::StructuralPair(",
         "StructuralPair::~StructuralPair(",
-        "StructuralBase::StructuralBase(",
         "StructuralBase::~StructuralBase(",
-        "StructuralDerived::StructuralDerived(",
         "StructuralDerived::~StructuralDerived(",
         "destructor-instance ",
     )
@@ -49,8 +44,25 @@ def validate_emission(generated: str, mode: str) -> bool:
         )
         return False
     if any(item in generated for item in forbidden):
-        sys.stderr.write(f"{mode} emitted a source lifecycle body for '= default'\n")
+        sys.stderr.write(f"{mode} emitted a source destructor body for '= default'\n")
         return False
+    # '= default' uses generated GTI constructor schedules for declaration
+    # defaults and base ordering; it does not delegate those semantics to a
+    # native '= default'. Trivial copy/move/destruction stay structural.
+    for name in ("StructuralValue", "StructuralPair", "StructuralBase", "StructuralDerived"):
+        constructor = re.compile(
+            rf"^  {name}::{name}\([^\n]*\n"
+            r"    // GTI verified-MIR body: scalar-cfg-(?:constructor-failure-)?v1 constructor-instance \d+",
+            re.MULTILINE,
+        )
+        if (
+            not constructor.search(generated)
+            or f"{name}() = default;" in generated
+            or f"{name}(const {name} &other) = default;" not in generated
+            or f"{name}({name} &&) = default;" not in generated
+        ):
+            sys.stderr.write(f"{mode} lost {name}'s generated constructor or structural transfer\n")
+            return False
     return True
 
 

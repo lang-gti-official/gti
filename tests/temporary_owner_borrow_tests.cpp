@@ -31,12 +31,50 @@ int main() { return read(produce().get()) + read(Owner().get()) - 6; }
     if (malformed.classInstances().size() == 1) {
       auto &owner = const_cast<lang::MirClassInstance &>(
           malformed.classInstances().front());
+      expect(owner.generatedDefaultRequiresSchedule &&
+                 std::any_of(malformed.constructorInstances().begin(),
+                             malformed.constructorInstances().end(),
+                             [&](const auto &constructor) {
+                               return constructor.owner == owner.id &&
+                                      constructor.generatedDefault;
+                             }),
+             "the field-default owner retains its selected generated schedule");
       owner.defaultConstructor = lang::SpecialMemberStatus::Deleted;
       expect(hasMirIssue(lang::verifyMirProgram(malformed),
-                         "temporary receiver input does not match"),
-             "targetless temporary construction must name an available "
-             "generated default");
+                         "generated constructor lost its exact default "
+                         "initialization schedule"),
+             "selected temporary construction must retain an available "
+             "generated default schedule");
     }
+  }
+
+  const auto targetless = lang::Frontend().analyze("targetless-owner.gti", R"(
+class Owner { public: int get() { return 3; } };
+Owner produce() { return Owner(); }
+int main() { return produce().get() + Owner().get() - 6; }
+)");
+  expect(targetless.canGenerateCode() &&
+             lang::verifyMirProgram(targetless.mir).valid(),
+         "an empty generated owner preserves targetless temporary receivers");
+  if (targetless.canGenerateCode() &&
+      targetless.mir.classInstances().size() == 1) {
+    auto malformed = targetless.mir;
+    auto &owner = const_cast<lang::MirClassInstance &>(
+        malformed.classInstances().front());
+    expect(!owner.generatedDefaultRequiresSchedule &&
+               std::none_of(malformed.constructorInstances().begin(),
+                            malformed.constructorInstances().end(),
+                            [&](const auto &constructor) {
+                              return constructor.owner == owner.id;
+                            }),
+           "the targetless control cannot accidentally gain a selected body");
+    owner.defaultConstructor = lang::SpecialMemberStatus::Deleted;
+    expect(hasMirIssue(lang::verifyMirProgram(malformed),
+                       "temporary receiver input does not match"),
+           "targetless temporary construction must name an available "
+           "generated default");
+  } else {
+    expect(false, "targetless receiver mutation needs exactly one owner");
   }
 
   const auto owned =

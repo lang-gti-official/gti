@@ -1215,8 +1215,7 @@ private:
       }
       if (candidate.kind == Kind::Word && candidate.text == "enum") {
         const Lexeme *next = nextSignificant(lexemes, brace);
-        return next != nullptr && next->kind == Kind::Word &&
-               next->text == "class";
+        return next != nullptr && next->kind == Kind::Word;
       }
     }
     return false;

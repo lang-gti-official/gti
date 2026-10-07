@@ -27,9 +27,9 @@ int32_t fill(std::resource_ref<probe::Bump> first, std::resource_ref<probe::Bump
   for (mut int32_t i = 0; i < 9; i++) {
     cells.emplace_back(std::string("cell"), i);
   }
-  // Growth 4 -> 8 -> 16 released the two earlier regions.
+  // Growth 4 -> 8 -> 16 released the two earlier object/metadata pairs.
   if (cells.size() != std::size_t(9) || cells.capacity() != std::size_t(16)) { return 1; }
-  if (first.get().live() != std::size_t(1)) { return 2; }
+  if (first.get().live() != std::size_t(2)) { return 2; }
   mut int32_t sum = 0;
   for (auto& cell : cells) { sum += cell.value(); }
   if (sum != 36) { return 3; }
@@ -40,7 +40,7 @@ int32_t fill(std::resource_ref<probe::Bump> first, std::resource_ref<probe::Bump
   auto reserved = parked.try_allocate(std::size_t(4));
   if (!reserved) { return 5; }
   mut std::resource_storage<Cell, probe::Bump> staging{first};
-  // The first resource has budget left for exactly one more region.
+  // The first resource has budget left for exactly one more object/metadata pair.
   auto staged = staging.try_allocate(std::size_t(3));
   if (!staged) { return 6; }
   staging.emplace(std::size_t(0), std::string("a"), 100);
@@ -64,8 +64,10 @@ int32_t fill(std::resource_ref<probe::Bump> first, std::resource_ref<probe::Bump
 }
 
 int main() {
-  probe::Bump first{4, false};
-  probe::Bump second{1, false};
+  // Each nonempty storage requests objects and then one live-state byte per slot.
+  // Three growth pairs plus one staging pair, and one parked pair respectively.
+  probe::Bump first{8, false};
+  probe::Bump second{2, false};
   unsafe {
     // Both resources hand out disjoint, aligned regions of their own inline
     // buffers until matching release, and are never reset or moved meanwhile.
@@ -77,8 +79,11 @@ int main() {
   // 15 live cells + 3 parked cells were destroyed; plus 2 earlier drops.
   if (drops != 20) { return 20; }
   if (first.live() != std::size_t(0) || second.live() != std::size_t(0)) { return 21; }
-  if (first.issued() != uint64_t(4) || second.issued() != uint64_t(1)) { return 22; }
-  if (first.released_bytes() == uint64_t(0) || second.released_bytes() == uint64_t(0)) { return 23; }
+  if (first.issued() != uint64_t(8) || second.issued() != uint64_t(2)) { return 22; }
+  // Original descriptors, not alignment gaps, determine released byte counts.
+  uint64_t bytes_per_slot = std::layout_of<Cell>().bytes + uint64_t(1);
+  if (first.released_bytes() != uint64_t(31) * bytes_per_slot ||
+      second.released_bytes() != uint64_t(4) * bytes_per_slot) { return 23; }
   std::println("bump resource ok");
   return 0;
 }

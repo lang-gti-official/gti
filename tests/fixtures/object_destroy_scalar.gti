@@ -1,0 +1,19 @@
+#include <std/memory>
+
+// Native test support supplies one live scalar and releases bytes separately.
+// No GTI automatic owner has a competing cleanup obligation for this object.
+extern "C" {
+  int* lifetime_test_integer(int value);
+  void lifetime_test_release(int* address);
+}
+
+int main() {
+  unsafe {
+    int* address = lifetime_test_integer(42);
+    if (address == nullptr) { return 1; }
+    int observed = *address;
+    std::destroy_at(address);
+    lifetime_test_release(address);
+    return observed - 42;
+  }
+}

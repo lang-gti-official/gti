@@ -11,6 +11,7 @@ if(Python3_Interpreter_FOUND)
     associative_constructor_runtime associative_hash_contracts associative_map
     associative_ownership_runtime borrowing_composition charconv_runtime
     cleanup_bound_borrow_runtime complete_containers composable_io_runtime
+    conditional_capability_runtime
     constructed_callback_argument_runtime constructor_argument_staging_runtime
     constructor_field_publication_runtime constructor_passive_field_rollback_runtime
     consuming_call_assignment_runtime consuming_lambda_runtime consuming_methods_runtime consuming_owned_pointee_runtime
@@ -20,14 +21,15 @@ if(Python3_Interpreter_FOUND)
     expected_class_return_runtime expected_filesystem_prerequisites_runtime expected_passive_publication_runtime
     expected_payload_pair_arguments_runtime expected_payload_pending_cleanup_runtime
     extensible_formatting_runtime fresh_callable_later_argument_failure_runtime
-    generated_base_constructor_runtime generic_algorithm_breadth
+    generated_base_constructor_runtime generated_constructor_order_runtime generic_algorithm_breadth
     generic_callable_adapter_runtime generic_callable_transport_runtime generic_contract_runtime
-    hosted_constructor_identity_runtime
+    generic_enum_instances_runtime hosted_constructor_identity_runtime
     hosted_exit_status_runtime
     http_url_operators immovable_storage_runtime integral_enum_formatting_runtime
     lambda_pack_invocation_runtime nested_borrow_fields nested_guarded_expected_runtime
     native_c_scalar_runtime nested_raw_pointer_runtime
     nested_nominal_result_runtime operator_place_composition_runtime owned_expected_error_runtime
+    object_construction_runtime object_relocation_runtime
     owned_pointee_projection_runtime owned_unexpected_pending_cleanup_runtime
     owning_function_resource_result_runtime owning_function_runtime
     pack_prefix_constructor_failure_runtime private_constructor_placement_runtime
@@ -35,8 +37,12 @@ if(Python3_Interpreter_FOUND)
     restoring_exchange_runtime restoring_exchange_shapes_runtime restoring_indexed_runtime
     retained_owner_member_pack_runtime shared_accessor_range_runtime
     shared_ownership_runtime shared_ownership_threads
+    source_storage_drain_runtime
+    inherited_cleanup_context_runtime
+    cleanup_context_scope_runtime
     storage_final_address_runtime string_operations_runtime string_ordering_runtime
     structural_relocation_runtime temporary_owner_borrow_runtime unordered_map
+    uninitialized_carrier_runtime
     stdlib_surface
   )
   foreach(suite IN LISTS gti_parallel_case_suites)

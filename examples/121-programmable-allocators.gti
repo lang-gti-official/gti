@@ -7,7 +7,7 @@
 namespace engine {
 // An unrelated, application-defined fixed-slot container. It uses only the
 // same public facilities as resource_vector, including for immovable objects.
-class Slots<std::layout_queryable T, std::memory_resource R> {
+class Slots<std::storage_element T, std::memory_resource R> {
   mut std::resource_storage<T, R> values;
 public:
   Slots(std::resource_ref<R> resource, std::size_t capacity)
@@ -48,7 +48,8 @@ int use_arena(std::resource_ref<engine::Arena> resource) {
   names.emplace_back("two");
   names.emplace_back("three");
   names.reserve(std::size_t(16));
-  if (resource.get().live_allocations() != std::size_t(2)) { return 1; }
+  // Each owner retains separate object and live-slot metadata regions.
+  if (resource.get().live_allocations() != std::size_t(4)) { return 1; }
   if (!objects.get(std::size_t(1)).stable()) { return 2; }
 
   auto moved = std::move(objects);

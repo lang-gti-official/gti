@@ -1,0 +1,58 @@
+#include <std/string>
+#include <std/vector>
+
+mut int phase = 0;
+
+class Part {
+  int id;
+public:
+  Part(int id) : id(id) {
+    std::println(id);
+    if (phase == 3 && id == 3) {
+      int zero = 0;
+      int failed = 7 / zero;
+    }
+  }
+  ~Part() { std::println(this.id + 10); }
+};
+
+class Foundation {
+  Part resource;
+public:
+  int value;
+  Foundation(int value) : resource(Part(1)), value(value) {
+    std::println(5);
+    if (phase == 1) {
+      int zero = 0;
+      int failed = 8 / zero;
+    }
+  }
+  ~Foundation() {
+    std::println(15);
+    if (phase == 4) {
+      int zero = 0;
+      int failed = 9 / zero;
+    }
+  }
+};
+
+class Building : public Foundation {
+  Part first;
+  Part second;
+  std::string name;
+public:
+  Building(int value) : Foundation(value), first(Part(2)), second(Part(3)), name(std::string("building")) {
+    std::println(6);
+    if (phase == 2 || phase == 4) {
+      int zero = 0;
+      int failed = 10 / zero;
+    }
+  }
+  ~Building() { std::println(16); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  Building value = Building(50);
+  return value.value - 50;
+}

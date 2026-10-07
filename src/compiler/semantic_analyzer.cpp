@@ -48,6 +48,11 @@ bool SemanticVisitor::requiresActiveCleanupFor(const SemanticType &type) const {
   return impl->requiresActiveCleanupFor(type);
 }
 
+std::optional<EnumTypeInfo>
+SemanticVisitor::enumTypeFor(const SemanticType &type) const {
+  return impl->enumTypeFor(type);
+}
+
 SemanticInstanceAnalysis SemanticVisitor::analyzeFunctionInstance(
     FunctionId functionId, const std::vector<SemanticType> &classTypeArguments,
     const std::vector<CompileTimeValue> &classValueArguments,

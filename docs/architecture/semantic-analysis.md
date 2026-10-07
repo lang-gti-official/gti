@@ -2,6 +2,32 @@
 
 Status: Current implementation.
 
+## Generic payload enum signatures
+
+Nominal registration inventories class and enum identities and their ordinary
+generic binders before resolving defaults and payloads. Demand-resolved class
+and enum defaults share recursion detection and avoid declaration-order-dependent
+type acceptance. Value defaults retain the existing earlier-visible constant
+rule. A concrete enum type retains its
+primary identity and complete canonical arguments; existing substitution
+produces its exact alternative types. Payload admissibility is revalidated
+through aliases after field facts are available. Ownership, cleanup and
+concurrency traits fold actual substituted fields, not generic metadata.
+
+`SemanticModel::enumTypeFor` exposes retained exact signature rows to immutable
+snapshot consumers. Semantic resolution and concrete instance discovery record
+these rows through the existing substitution service; compiler-owned hover and
+completion therefore use the same signatures without implementing generic
+substitution in tooling. Replacing a primary descriptor invalidates its earlier
+signature rows so pre-payload registration cannot leave stale field metadata.
+Request reset clears those rows with the rest of the snapshot-owned catalog.
+
+By-value layout traversal distinguishes exact class and enum instances, so
+repeated use of a generic primary cannot hide a cycle through different
+arguments. Growing class recurrence uses the existing structural nominal-growth
+guard; finite decreasing nesting remains traversable. Owning-indirection
+metadata is not a by-value containment edge.
+
 ## Exact-owner construction
 
 For one completed value of a class's exact owner type, semantic construction
@@ -78,6 +104,8 @@ requested frontend phases for Strict; promotion cannot poison query summaries.
 Audit-only conflicts are excluded from mandatory loan endpoint planning and
 inspect its completed liveness facts only for diagnostics. No checked loan,
 cleanup schedule or native output may depend on audit mode.
+Audit-only field-type queries look up existing declaration identities; they do
+not register unrelated methods or change mandatory MIR symbol/place identities.
 
 The remaining section describes the optional analyzer, not extra mandatory
 conditions for compiling an unsafe implementation.
@@ -353,9 +381,13 @@ constructor selected for the bounded executable generated-default family:
 nongeneric owners/bases, no derived instance fields or destructor, and an
 exact zero-parameter source base constructor. Construction carries ordinary
 constructor-failure propagation; HIR consumes this identity rather than
-reselecting a constructor. A zero identity retains the existing generated
-declaration schedule for other shapes. This fact changes representation of an
-already permitted construction, not source overload availability.
+reselecting a constructor. Independently, `generatedDefaultFieldInitializers`
+selects a concrete generated constructor schedule when the ordinary structural
+default is already available and all instance fields have declaration
+initializers. Those defaults carry constructor failure propagation even without
+a source constructor declaration. HIR preserves each exact initializer and MIR
+owns partial-object rollback. These facts change representation of already
+permitted construction, not source overload availability or omitted-field policy.
 
 ## Analysis Order
 
@@ -363,7 +395,8 @@ already permitted construction, not source overload availability.
 on declaration-wide registration. It currently:
 
 1. registers namespaces, aliases, namespace/class type aliases, enums,
-   concepts, and primary classes;
+   concepts, and primary class/enum generic binders, then resolves nominal
+   defaults against the complete primary identity inventory;
 2. resolves concepts and aliases after primary class identities exist, then
    registers canonical exact class specializations before resolving
    inheritance;

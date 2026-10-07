@@ -256,12 +256,12 @@ void testSemanticAndLoweringRoots() {
   if (lowered.valid()) {
     const std::string serialized =
         lang::LoweredProgramPrinter().print(*lowered.program);
-    expect(serialized.starts_with("lowered-program-v12\n") &&
+    expect(serialized.starts_with("lowered-program-v15\n") &&
                serialized.find("embedding-export symbol=\"game_update_v1\"") !=
                    std::string::npos &&
                lang::MirPrinter()
                    .print(optimized.mir)
-                   .starts_with("mir-v92 valid=1\n"),
+                   .starts_with("mir-v95 valid=1\n"),
            "library-only serialization should retain canonical export facts");
   }
 

@@ -33,9 +33,39 @@ files under `docs/plans/`. The documents under
 [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
-## Active: 2026-10-07 Issue-Closure Campaign
+## Stabilization Reset: 2026-10-08
 
-**Status: partially integrated; final combined verification remains pending.**
+The owner paused new issue-campaign work to finish the existing lifetime/storage
+and payload-enum features, consolidate their handoffs, run the complete suite,
+and release. Concurrency is at most the release owner plus **two other agents
+in total**, with no child agents. Integration and validation have one owner;
+other agents must not launch duplicate full builds or independent releases.
+
+The unfinished-work inventory is:
+
+| Work | Preserved state and release disposition |
+| --- | --- |
+| General object lifetimes, source sparse storage, conditional unsafe capabilities (PR #94) | Implemented and reconciled candidate; the combined full-suite and installed-toolchain release gate remains authoritative. |
+| Source process byte provider (PR #104) | Published implementation is an ancestor of #94; confirm integration before closing its redundant PR. |
+| Generic payload enums (PR #110) | Complete implementation and preflight handoff reconciled into #94; use the shared final validation and one integration, not a second release. |
+| Constructor campaign (PR #125) | Loop reinitialization, owned constructor packs and stable base stages already included in #94. The later computed scalar base-argument extension remains preserved separately; general preparation frames are still proposed. |
+| Other campaign checkpoints (#114, #118, #124, #128) | Published partial-campaign work, not final combined acceptance. Preserve for explicit release-scope selection or the resumed campaign; do not silently claim their open issues fixed. |
+| Operator/borrowed-view relay (PR #127) | Preserved draft with a known failing map-key-view matrix; not ready for integration. |
+| Source string-view rewrite (PR #109) | Proposal/review-first, including separate unpublished Claude edits. Not approved for automatic adoption or required as a release prerequisite. |
+| Release-validation repairs (PRs #131/#132) | Passive-array/payload admission and exact constructor-publication tests, plus inherited failure-cleanup propagation, are consolidated into #94. Validate and integrate once; close these redundant PRs only after their commits reach main. |
+
+The legacy `feature-interactions` edits are already incorporated (or superseded
+by additive improvements). The `issues-30-33` test commit and dirty lowering
+guard have exact patch-equivalent implementations in the candidate. Preserve
+those recovery trees without reapplying them. The detached Claude `gti-base`
+emitter edits contain temporary tracing, not a missing semantic fix; retain them
+as debugging scratch, outside the release. Unrelated primary-checkout edits and
+generated application artifacts remain untouched. No branch/worktree cleanup is
+needed to establish release acceptance.
+
+## Paused: 2026-10-07 Issue-Closure Campaign
+
+**Status: partially integrated; paused by the stabilization reset above.**
 The initial inventory is the 50 open issues #51, #53–#93 (excluding #94),
 #95–#100, #103 and #105. Issue #103 additionally requires resolving every
 one of F10, F14, F16, F17, S01, S02, S04, S06, S09, S12 and S15; closing or
@@ -4159,9 +4189,11 @@ do not expose C++ object layout as GTI semantics.
 
 ### S-ALLOC-06: General Object Lifetimes And Source-Defined Storage
 
-- **State/role:** planned implementation campaign, following completed
-  `S-ALLOC-04/05`. This brief records the owner's accepted direction; the API
-  spellings below are illustrative, not claims of implemented support.
+- **State/role:** implementation consolidated into the PR #94 release candidate,
+  following completed `S-ALLOC-04/05`. Completion requires the combined
+  [release gate](../architecture/verification.md#combined-lifetimestorage-and-payload-enum-release-gate).
+  This brief records the accepted direction; canonical language documentation
+  and source describe the implemented API and its structural bounds.
 - **Outcome:** an application can implement inline typed storage and an
   unrelated pool/container using public GTI facilities, without teaching the
   compiler its type name. Reimplement `std::storage<T>` policy on those same
@@ -4169,6 +4201,196 @@ do not expose C++ object layout as GTI semantics.
 - **Handoff:** continue from the agent's existing memory/lifetime context.
   This is a generalization of the completed work, not a restart of Phase 2.
   Reconcile current source before using historical progress descriptions.
+
+#### Implementation Audit And Accepted Choices (2026-10-07)
+
+The source sparse/resource-owner integration now passes the focused resource
+contract and native allocator matrix, including same-resource metadata failure
+rollback. General multiple borrowed-field constructor admission has independent
+malformed-MIR coverage and an unrelated runtime fixture. Example 128 adds a
+fixed-address inline application pool. The legacy sparse semantic type,
+intrinsics, C++ helpers and optimizer initialized-set model have now been
+removed from the candidate; source slot checks remain conservative barriers.
+General raw construction also consumes exact staged reference inputs, and
+passive fixed-array arguments preserve their exact value type through generic
+emplacement. Focused runtime matrices pass, including the allocator and
+fixed-array regression. This remains an intermediate checkpoint: current-main
+reconciliation, census inventories and the broad acceptance gates below are
+still outstanding.
+
+The baseline is `52f27033`; the initial audit checkpoint did not implement the
+public manual-lifetime APIs below. Phase 2's accepted borrowing,
+unsafe binding and failure contracts remain unchanged.
+
+The owner approved **two separate allocations from the same bound resource**:
+one object region and one live-slot metadata region. Zero capacity requests
+neither. Metadata allocation is source policy, with checked byte extent and
+alignment, and failure returns the object region through its original lease
+before reporting the error. Element cleanup precedes release of either region.
+The initial metadata layout is one byte per slot, matching the existing
+implementation's state granularity without importing its hidden process-heap
+allocation. Changing representation later must preserve the documented
+resource-request contract or be treated as an observable policy change.
+
+For carrier movement, the owner selected a Rust-inspired manual-storage model
+adapted to GTI and delegated exact bounds. The implementation direction is no
+automatic payload destruction and no hidden engagement flag. Ordinary carrier
+movement must preserve potentially uninitialized representation without reading
+it as a live `T`; initially it is available only for structurally bitwise-
+relocatable payloads. Copying additionally requires copyable `T`. Other
+carriers remain fixed-address, including when empty; an initialized movable
+payload can instead use explicit typed relocation. Deleted payload movement
+remains a hard exclusion. This is intentionally narrower than Rust's
+`MaybeUninit` movement: GTI's generated owning relocation is not a license to
+byte-copy its nontrivial backend representation. General owning relocation
+must execute verified lifecycle transfer. Do not add a runtime live flag or
+custom move body to make the raw carrier movable.
+
+Keep the public spelling C++-familiar: typed pointer access, `construct_at`,
+`destroy_at`, explicit `relocate_at`, and existing variadic constructor
+selection. The Rust comparison guides the separation of raw representation,
+live values and unsafe initialization assertions; it does not import Rust
+syntax or override GTI's existing ownership, access and cleanup semantics.
+Do not add C++ placement-new syntax, exceptions or user-defined move hooks
+where the existing GTI call and lifecycle machinery expresses the operation.
+
+The initial source inventory identifies these reuse/retirement boundaries:
+
+| Existing implementation | Campaign action |
+| --- | --- |
+| `semantic_ownership_analysis.cpp` constructor selection and `preserveStorageConstructorParameters`; HIR concrete call inputs | Reuse for raw-address final construction, preserving exact selected constructors and staged owning arguments. |
+| `mir_body_lowering.cpp` prepared-argument transfer, `StorageConstructPreflight`, `elementCleanup`, and failure edges; independent MIR verifier | Generalize typed lifecycle authority; sparse vacancy/bounds checks become source policy before handoff. Raw validity stays an unsafe obligation, not a runtime bitmap or mandatory audit proof. |
+| `cpp_support_preamble.cpp` sparse `storage<T>` capacity/live flags and `try_adopt` heap bitmap | Replace with GTI fields and the two source-owned resource leases. Retire sparse capability representation when parity gates pass. |
+| `StorageConstruct`, `StorageDestroy`, `StorageRelocate`, `StorageShiftRight/Left` and their sparse backend helpers | Replace with general typed lifetime operations plus source loops; remove the subsumed enum/dispatch/failure/representation paths rather than keeping aliases permanently. |
+| `StorageCapacity/Initialized/Read/ReadMut`, `StorageTryAdopt/TryAllocate`, `AllocateStorage` | Migrate observers, validation, allocation publication and checked access into source; use the existing owner-witness bridge for element loans. |
+| Prefix storage, optional storage, unique/shared owners | Preserve as separate current clients: initialized-prefix/NUL policy, active-alternative policy, and allocation/control-block ownership differ from sparse bookkeeping. They must share general lifecycle facts where applicable; wholesale public-policy migration is not claimed. |
+
+`source_storage_drain_runtime` establishes a prerequisite without changing the
+compiler: an ordinary GTI cleanup guard resumes reverse slot traversal after
+the first destructor failure, preserves its record, and stops according to the
+existing secondary-failure contract. It covers immovable owning elements,
+member cleanup, ordinary drain and entry during failure cleanup. The guard's
+marker distinguishes source traversal from the outer storage's fallback drop.
+The guard advances its cursor before attempting destruction; the migrated
+storage must likewise retire its live flag before `destroy_at`. This does not
+yet prove the new raw operation, source metadata allocation or sparse migration.
+All eight standard/optimization/no-elide/sanitizer modes pass on the optimized
+0.379.3 baseline compiler. Carrier movement, raw construction/destruction and
+relocation, metadata rollback, source migration, removal and full acceptance
+gates remain required work.
+
+The next implementation checkpoint adds public unsafe `destroy_at` backed by
+declaration-bound `ObjectDestroy`, reusing exact MIR element cleanup and original
+destructor failure propagation. The optimized `object_lifetime_contract` covers
+scalar and unrelated immovable destructor types, C++20/C++23 O0/O3 emission,
+unsafe/type negatives and forged cleanup/permission/failure metadata. The raw
+scalar runtime test uses a native-created live object with separately released
+bytes and passes C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan. Adjacent object
+layout, storage adoption and optimizer conformance gates pass. This is not yet
+owning-object runtime evidence or a completed public manual-storage feature:
+final-address construction, typed carriers, relocation, source migration,
+examples, full acceptance and release gates remain outstanding.
+
+The construction checkpoint adds public unsafe `construct_at` through
+declaration-bound `ObjectConstruct`, sharing ordinary constructor selection,
+prepared-parameter transfer and verified failure rollback. An unrelated source
+byte owner and slot wrapper exercise owning and immovable payloads, failed
+argument preparation, partial construction, destruction failure, secondary
+failure and slot reuse. The eight-mode runtime matrix passes on the optimized
+compiler. A passive record returned by a fallible field-initializer call also
+required a backend representation fix: stage its result without a semantic
+drop, then publish only on the immediate success edge. No source constructor or
+cleanup is invented for the temporary representation. Typed inline carriers,
+relocation, source sparse migration, runnable campaign examples and the full
+integration gates are still outstanding; this remains an intermediate draft.
+
+The next checkpoint adds the layout-only inline carrier and raw destructive
+relocation. Focused carrier and owning-relocation runtime matrices pass all
+eight standard/optimization/no-elide/sanitizer modes. Static tests reject
+immovable carrier movement, incompatible access and forged capability/lifetime
+facts. Example 125 demonstrates the public inline owner with a source-written
+empty constructor, checked references and owning relocation. The latter exposed
+two overly restrictive backend checks: direct field construction required move
+assignment, and the passive field-initializer proof excluded the layout-only
+carrier's observation-free default construction. The construction-only proof
+and exact private-capability case now admit it without moving its payload or
+admitting arbitrary source constructors. The example joins the carrier's full
+eight-mode runtime matrix and public API inventory. Adjacent constructor tests
+also exposed an invalid `void` field in unused dependent carrier declarations;
+the declaration spelling now preserves generic staging while executable
+instances retain concrete semantic/MIR copy and move eligibility. Combined census
+reconciliation, source sparse migration/retirement, the
+unrelated pool/container example and broad acceptance gates remain outstanding.
+
+The source-policy checkpoint introduces ordinary `sparse_slots<T>` and its
+reverse drain guard in `std/detail/sparse_storage`. Source fields and loops
+perform metadata publication/retirement, checks, final-address construction,
+destruction, relocation and shifts; narrow private boolean checks reuse the
+existing invalid-storage failure families. The candidate runtime matrix passes
+C++20/23 O0/O1/O3, no-elision and ASan/UBSan, including first and secondary
+destructor failures. Checked element loans block mutation and owner movement.
+This helper is not yet wired into public storage: the two source leases,
+allocation rollback and retirement of the old sparse paths remain outstanding.
+
+The owner approved conditional unsafe transfer/share assertions to preserve
+payload-dependent thread capabilities without recognizing a container name.
+The bounded spelling `[[unsafe_transfer(T), unsafe_share(T)]]` names one
+non-pack generic type parameter per assertion. Semantics resolves and
+substitutes that parameter through existing capability analysis; the wrapper
+author still audits all implementation state, access and cleanup. This is a
+general source feature, not an exemption for sparse storage. Conditional-policy
+tests, tooling, a runnable audited-owner example and final integration evidence
+are part of this checkpoint's validation rather than grounds to call the whole
+campaign complete.
+
+Focused conditional-capability contracts and malformed-MIR mutations pass,
+including nested wrappers and Expected payloads. Example 126 passes all eight
+native modes; the LSP test verifies generic-binder navigation, exact invalid
+parameter spans and restoration after unsaved edits. Pinned Tree-sitter passes
+72 corpus cases and all 186 shipped GTI sources. The reviewed 120-example
+census now includes the five private detector declarations/bodies in every
+example and the earlier memory API declarations in memory consumers, with no
+change to existing generated-family counts. Full native corpus, installed
+consumers and final current-main reconciliation remain final campaign gates.
+
+The public-storage integration remains under validation, not complete. Sparse
+policy resides directly in `<std/memory>` so ordinary source-unit visibility
+does not require transitive includes. Both process storage and resource storage
+use separate object and live-slot leases; `storage_element<T>` makes the existing
+no-checked-borrow payload boundary an explicit source constraint. A narrow
+native address-alignment observation preserves defensive provider validation;
+it does not prove provenance or replace the unsafe provider obligations.
+Source sparse runtime/cleanup and native alignment/ABI checks pass. The
+multi-field lifetime identity and constructor-representation gaps are fixed,
+with unrelated guarded-pair runtime and malformed-MIR regressions. The full
+focused resource runtime matrix now passes, including two-allocation rollback
+and original descriptor/release ordering. Legacy sparse compiler paths have
+been retired. Current-main/census reconciliation, optional-audit parity, broad
+production and installed-consumer acceptance remain outstanding; the focused
+results are not a completed-campaign claim.
+
+The current acceptance fixes also close general composition gaps exposed by
+the source owners: moved multi-field carriers retain their exact input loans
+through ordinary generic forwarding, and independent compact borrowed inputs
+retain their own origins when combined. Prefix mutators still reject live
+overlapping loans. Generic primary-body definition checks defer only while
+actual enclosing bindings remain open, then reject missing concrete callees.
+These rules are covered with unrelated application types rather than storage
+name recognition.
+
+Default construction with declaration-field initializers now selects an
+explicit generated constructor schedule. Its class-level obligation survives
+semantics, HIR, MIR and detached LoweredProgram verification, so erasing the
+selected constructor cannot silently restore native field initialization.
+Field publication arms rollback only after successful construction; implicit
+scalar/null/expected initialization uses existing semantic conversion rules.
+This is not the separate omitted-field/default-policy work. Focused generated
+schedule, cleanup, ownership and backend tests are being reconciled with the
+new representation. Raising passive expected publication now passes its
+eight-mode native matrix with representation-only payload staging and no
+premature wrapper construction. The state-bearing base-constructor path remains
+acceptance work; this checkpoint is not ready for integration until those tests
+and the final combined gates pass.
 
 #### Why This Campaign Exists
 
@@ -4388,10 +4610,15 @@ unless requested.
 
 ### S-ALLOC-07: Source-Defined Process Allocation Over Native Byte Providers
 
-- **State/role:** planned follow-on campaign, after the `S-ALLOC-06` public
-  lifetime facilities and sparse-storage migration. The owner delegates the
+- **State/role:** in progress. The owner authorized provider-layer preparation
+  in parallel with `S-ALLOC-06`. This independent slice moves process
+  request validation, native-size/zero handling, target selection and failure
+  mapping into GTI, using POSIX/CRT forwarding adapters. The combined candidate
+  now routes default sparse storage and its metadata through that provider and
+  retires generated sparse allocation. Final acceptance remains coupled to
+  `S-ALLOC-06`; this checkpoint does not complete the campaign. The owner delegates the
   source/compiler/platform split described here. This is not a claim that
-  process allocation already calls libc directly from GTI.
+  every allocation client has migrated or every ABI adapter is removable.
 - **Outcome:** the default typed-storage and process-resource paths acquire
   bytes through source-defined GTI policy and ordinary native bindings, rather
   than specialized C++ allocation policy. Application pools and resource-backed
@@ -5631,6 +5858,21 @@ or owning derived fields, so caller-side destruction of the unpublished
 representation finishes the last base cleanup without crossing their order.
 Base arguments, owning derived fields, declared base/derived destructors, and
 general secondary failure during aggregate cleanup remain separate work.
+
+The constructor-lifecycle issue campaign extends that shared stage to exact
+scalar parameter/literal arguments, owning derived fields, and declared
+base/derived cleanup, with native-prefix and explicit base-drop proofs. The
+five original A45 forms and an unrelated resource-bearing inheritance fixture
+are the focused acceptance inputs. This is not closure of the full base
+initializer goal: `Base(s + 1)` and other checked/effectful argument evaluation
+need a verified pre-native-base MIR preparation runner carrying the selected
+scalar values and original failure record before native base entry. Owning or
+borrowed base arguments additionally need that runner's transfer/loan contracts.
+Historical entry-active declaration-field rollback tokens cannot precede a
+fallible base; declaration-default construction must use the typed constructor
+schedule that arms each field after its successful initializer. The concurrent
+general-object-lifetime work owns that schedule, and the two changes must be
+reconciled and retested together before broader base-construction closure.
 
 The inherited-allocation runtime matrix passes success, base failure, derived
 failure, and exhaustion before base entry across C++20/C++23 O0/O1/O3 plus
@@ -7018,7 +7260,133 @@ consumer, and release refreshes remain outstanding for the full campaign.
   `std::variant` wrapper without making that library type source semantics.
 - **Remaining scope:** Add direct enum lambda capture, consuming payload
   bindings, fixed-array and direct result-alternative transport, generic
-  payload declarations, and deterministic layout in separately proven families.
+  payload declaration completion gates, and deterministic layout in separately proven families.
+  The general generic-declaration campaign is active in
+  `codex/generic-payload-enums`. The candidate retains ordinary semantic binders
+  and exact substituted alternative signatures, including defaults, type/value
+  arguments and a final metadata pack. Concrete construction/matching, HIR
+  discovery, verified lifecycle and detached representation use the complete
+  enum type rather than the primary declaration alone. Forward defaults,
+  alias payload validation and nominal deduction have focused regressions.
+  The original 22-fixture native matrix passes all 176 configurations with
+  19 source-rejection cases; added generic/nongeneric owning-field fixtures
+  pass all 16 native configurations. Exact instance LSP signatures and fresh
+  dependency diagnostics pass the focused protocol gate. Original A47, A48,
+  and A49 reproducers also pass all 24 native configurations. S15 plain-class
+  payload emission and its generic/nongeneric publication fixtures pass focused
+  native checks. Final review repairs cross-nominal default-ordering, exact
+  concrete layout/relocation traversal, snapshot reset and nested executable
+  payload storage identity. Focused declaration/backend/optimizer/raw-audit
+  gates and nested/receiver/sibling native matrices pass. Two valid-source
+  composition gaps remain follow-ups, not new source restrictions: a nested
+  local reborrow while two shared sibling payload bindings remain live reaches
+  a MIR sibling-conflict error
+  ([#121](https://git.internal.howetotech.dev/gti-lang/gti/issues/121)); two
+  fresh class constructors with enum arguments inside one alternative call
+  exceed the current fused emission staging proof
+  ([#122](https://git.internal.howetotech.dev/gti-lang/gti/issues/122)).
+  Preconstructing those class inputs is supported. The expanded 28-fixture
+  native matrix passes all 224 configurations and the 19 source-rejection
+  cases. All 24 broader focused gates pass, with two test-maintenance retries;
+  both complete MIR/Lowered corpus censuses and 12 isolated installed-library
+  consumers also pass. Further backend review repairs alias-driven phantom
+  class-layout discovery while retaining exact enum rows and real payload
+  layouts; synthetic catalog and signed-minimum failure-contract checks gain
+  independent malformed-input rejection cases. All eight post-correction
+  owning gates, the 224 native configurations, refreshed installed consumers
+  and both unchanged corpus censuses pass. The standalone 427-case coverage
+  gate reports two
+  `GTI-S2106` JSON failures (`c137` and `c138`), also reproduced by the optimized
+  pre-enum 0.382.1 compiler under native closed-program compilation; their
+  expected passing outcomes remain unchanged; the reduction is recorded on
+  [the definition-check issue](https://git.internal.howetotech.dev/gti-lang/gti/issues/51#issuecomment-458).
+  Reconciliation with canonical PRs 116 and 115 preserves passive native
+  call-result and class-field publication. The optimized overlap gates pass
+  14/14 and then 10/10 on the resulting main-based tree, including the full
+  224-configuration enum matrix, both corpus censuses and the upstream
+  publication regressions. These are focused integration checks, not a full
+  release-suite claim. The allocator campaign owns the symbolic-primary
+  definition-check repair; its published checkpoint is combined only in the
+  isolated draft, not released or integrated into canonical main.
+  A non-mutating preview identifies the two emitter resolutions: retain the
+  passive-default assignment proof together with the stricter ordinary
+  construction guard, and consistently use the passive-default helper.
+  Subsequent reconciliation with canonical PR126 retains deterministic field
+  identity and exact-owner callable transport; all 12 focused overlap gates
+  pass, including the enum matrix and both censuses. Tree-sitter regeneration
+  has no diff, all 76 corpus cases and 187 shipped sources parse, and
+  highlight/locals/source-text checks pass with the correct rebuilt worktree
+  parser rather than another worktree's shared cached grammar.
+  A subsequent combined-release fixture adds distinct owning enum instances
+  in base, derived and enclosing fields, requiring reverse-order cleanup after
+  a later derived-field construction fails. This 29th fixture is pending the
+  allocator campaign's selected-base-stage implementation; the standalone
+  branch reports the existing located backend-vocabulary rejection. The prior
+  224-configuration evidence does not claim this new integration fixture passed.
+  Draft reconciliation of published allocator checkpoint `514c859e` preserves
+  exact enum identities, assignment-shell proofs and generated constructor
+  schedules. Combined snapshots reserve MIR95/body80/Lowered15; the merged
+  grammar passes all 76 cases. Optimized combined compiler and runtime checks
+  remain pending, together with the allocator's selected-base-stage correction.
+  The optimized combined build subsequently succeeds. Eighteen of 22 focused
+  cross-layer checks pass, including exact enum queries/backend, manual-lifetime
+  and conditional-capability contracts/runtime/LSP, cleanup mutations and
+  symbolic-definition publication. Both formerly failing JSON coverage programs
+  compile natively at O3 and run successfully. Aggregate inventory and stale
+  native-default spelling assertions are repaired without dropping tests:
+  declaration fixtures retain read-only MIR fields and selected generated
+  constructor identities; target fixtures construct/read their selected object.
+  The complete compiler aggregate then passes (39.02 seconds). Base body
+  vocabulary checks and the reviewed corpus census refresh remain outstanding;
+  this is not combined full-release evidence.
+  Published base-stage checkpoint `f832985c` is subsequently reconciled in the
+  isolated draft. The new base/derived/enclosing enum regression passes all
+  eight native configurations (including no-elide and ASan/UBSan), retaining
+  exact `Event<Resource, 1/2/3>` identities and cleanup order `22`, `11`, `9`.
+  Lifecycle vocabulary and the complete native base-constructor matrix pass.
+  The broader base unit fixtures and an old inheritance-spelling assertion
+  still require reconciliation with the allocator agent's next checkpoint;
+  the earlier aggregate pass precedes this newer base-stage integration.
+  The combined 29-fixture matrix first exposes four container clients failing
+  MIR storage verification: new allocator trait helpers queried only a primary
+  enum ID, losing concrete arguments. All three lookup sites now use exact
+  enum types. General conditional-capability tests cover distinct real payload
+  policies and metadata-only parameters; no storage or borrow permission is
+  relaxed. All six focused gates then pass (110.63 seconds), including every
+  one of the 232 native enum configurations and 19 source rejections.
+  Reconciliation with canonical `00cc2c09` and published allocator
+  `9d3c993a` completes the optimized all-target build. An independent
+  integration review preserves identical scoped semantics for both enum
+  spellings and exact concrete identities throughout storage, capabilities,
+  relocation and emission. A test-only preflight lookup is corrected to use
+  the complete enum type. The refreshed enum matrix passes all 232 native
+  configurations and 19 source rejections; declaration, backend, integral
+  enum and LSP gates also pass. All 76 Tree-sitter cases, 191 shipped sources
+  and 486 formatted C/C++ files pass. A fresh isolated installed stage passes
+  all 12 SDK consumers, LSP and project-CLI checks, and example 129 runs at
+  C++23/O3 with library overrides unset. The general preflight gate exposes
+  six constructor/subscript representation assertions requiring review, and
+  installed CLI acceptance exposes an empty-owner constructor specialization
+  ordering failure. These failures remain visible. The two original goals
+  will be delivered together through PR94 only after shared full-suite,
+  corpus/census and installed acceptance; PR110 stays published until remote
+  integration and absence of residual work are confirmed.
+  The six preflight assertions are subsequently updated to the existing typed
+  schedules rather than restoring superseded emission routes: declaration
+  defaults execute in selected constructors without duplicate native field
+  initialization; exact generated construction retains its prepared slot;
+  subscripts evaluate once and use loan-rooted load/arithmetic/assign with
+  checked reference publication and overflow routing. Missing required target
+  representation and erased arithmetic failure-edge mutations remain rejected.
+  The complete optimized preflight gate passes (6.65 seconds). No executable
+  semantics change in this test-maintenance checkpoint. Shared release
+  validation and the empty-owner native ordering correction remain with the
+  combined release owner.
+  Combined full-suite/coverage-corpus
+  validation and upstream release integration remain delivery gates. This
+  campaign is not an `expected` implementation. The owner's spelling
+  amendment makes `class` optional with identical scoped semantics for both
+  declaration forms.
 - **Non-goals:** Implicit conversions, open variants, making `std::variant`
   compiler magic, or treating the separately implemented passive native union
   as a tagged sum or C ABI union.

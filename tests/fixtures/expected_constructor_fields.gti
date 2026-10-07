@@ -1,0 +1,39 @@
+mut int cleaned = 0;
+
+class Payload<T> {
+public:
+  int marker = 1;
+  ~Payload() { cleaned += this.marker; }
+};
+
+class DirectPayload {
+public:
+  int marker;
+  DirectPayload() : marker(7) {}
+  ~DirectPayload() { cleaned += this.marker; }
+};
+
+struct GeneratedFields<T> {
+  expected<Payload<T>, int> success = Payload<T>();
+  expected<int, Payload<T>> error = unexpected(Payload<T>());
+  expected<int, Payload<T>> passive = 1;
+};
+
+struct ExplicitFields {
+  expected<DirectPayload, int> success = DirectPayload();
+  expected<int, DirectPayload> error = unexpected(DirectPayload());
+  expected<int, DirectPayload> passive = 1;
+};
+
+int main() {
+  {
+    GeneratedFields<int> generated{};
+    ExplicitFields explicit_fields{};
+    if (!generated.success || generated.error || !generated.passive) { return 1; }
+    if (!explicit_fields.success || explicit_fields.error || !explicit_fields.passive) { return 2; }
+    if (generated.success.value().marker != 1 || generated.error.error().marker != 1) { return 3; }
+    if (explicit_fields.success.value().marker != 7 || explicit_fields.error.error().marker != 7) { return 4; }
+    if (cleaned != 0) { return 5; }
+  }
+  return cleaned == 16 ? 0 : 6;
+}

@@ -19,8 +19,11 @@ def main():
     body = site("return 17 / zero")
     suffix = site("suffix_failure =")
     memory = source.parents[2] / "stdlib/std/memory.gti"
-    destroy_site = next(i for i, line in enumerate(memory.read_text().splitlines(), 1)
-                        if "gti_internal::storage_destroy(this.data, index);" in line)
+    memory_lines = memory.read_text().splitlines()
+    destroy_start = next(i for i, line in enumerate(memory_lines)
+                         if "void destroy(uint64_t index) mut" in line)
+    destroy_site = next(i + 1 for i in range(destroy_start, len(memory_lines))
+                        if "require_live_storage(this.initialized(index))" in memory_lines[i])
     vector = memory.with_name("vector.gti")
     erase_site = next(i for i, line in enumerate(vector.read_text().splitlines(), 1)
                      if "gti_internal::prefix_storage_erase(this.data, index);" in line)

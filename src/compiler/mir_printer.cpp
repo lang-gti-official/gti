@@ -16,7 +16,8 @@ namespace lang {
 namespace {
 
 template <typename Enum> [[nodiscard]] constexpr auto number(Enum value) {
-  return static_cast<std::underlying_type_t<Enum>>(value);
+  // Byte-backed enum identities must serialize as numbers, never characters.
+  return +static_cast<std::underlying_type_t<Enum>>(value);
 }
 
 [[nodiscard]] constexpr std::string_view
@@ -263,8 +264,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << (program.embeddingPlan() ? "mir-v92" : "mir-v91")
-           << " valid=" << program.valid() << '\n';
+    output << "mir-v95 valid=" << program.valid() << '\n';
     if (const std::optional<MirEmbeddingPlan> &embedding =
             program.embeddingPlan()) {
       output << "program-kind library embedding-abi=" << embedding->abiVersion
@@ -360,7 +360,9 @@ public:
     output << "integral-enums " << program.integralEnums().size() << '\n';
     for (const MirIntegralEnum &enumeration : program.integralEnums()) {
       output << "integral-enum @" << enumeration.declaration
-             << " source-unit=" << enumeration.sourceUnit << " underlying=";
+             << " source-unit=" << enumeration.sourceUnit << " type=";
+      type(enumeration.type);
+      output << " underlying=";
       type(enumeration.underlyingType);
       output << '\n';
     }
@@ -401,6 +403,16 @@ public:
       type(instance.type);
       output << ' ';
       traits(instance.traits);
+      output << " transfer-policy=" << number(instance.transferPolicy)
+             << " share-policy=" << number(instance.sharePolicy);
+      if (instance.transferCondition) {
+        output << " transfer-condition=";
+        type(*instance.transferCondition);
+      }
+      if (instance.shareCondition) {
+        output << " share-condition=";
+        type(*instance.shareCondition);
+      }
       output << " kind=" << number(instance.kind)
              << " compiler-capability=" << number(instance.compilerCapability)
              << " lifecycle-bound-borrow-carrier="
@@ -413,6 +425,8 @@ public:
              << " c-opaque=" << instance.cOpaqueHandle
              << " special-members={default="
              << number(instance.defaultConstructor)
+             << ",generated-default-requires-schedule="
+             << instance.generatedDefaultRequiresSchedule
              << ",copy-constructor=" << number(instance.copyConstructor)
              << ",move-constructor=" << number(instance.moveConstructor)
              << ",copy-assignment=" << number(instance.copyAssignment)
@@ -621,6 +635,7 @@ public:
          program.constructorInstances()) {
       output << "constructor @" << instance.id << " owner=" << instance.owner
              << " constexpr=" << instance.constexprConstructor
+             << " generated-default=" << instance.generatedDefault
              << " type-arguments=[";
       for (std::size_t index = 0; index < instance.typeArguments.size();
            ++index) {
@@ -752,7 +767,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v77\n";
+    output << "mir-body-v80\n";
     body(value, 0);
     return output.str();
   }
