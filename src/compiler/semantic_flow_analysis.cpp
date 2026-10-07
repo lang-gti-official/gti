@@ -245,7 +245,8 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
         if (!worker) {
           worker =
               std::make_unique<Impl>(target, sourceGraph, false, workMetrics,
-                                     sources, rawPointerAudit);
+                                     sources, rawPointerAudit,
+                                     requireFunctionDefinitions);
           worker->catalog = catalog.snapshotForInstanceAnalysis();
           worker->semanticModel = semanticModel;
           worker->valueFlow = valueFlow;
@@ -528,13 +529,13 @@ auto SemanticVisitor::Impl::recordProgramCleanupEffects(
                 requestSession.invalidOrdinaryLayouts.end(),
                 type) != requestSession.invalidOrdinaryLayouts.end())
     return;
+  if (!currentProgramEffectOwner.valid() || !requiresActiveCleanupFor(type)) {
+    return;
+  }
   if (visiting.size() >= 64) {
     diagnostics.push_back(
         makeDiagnostic(DiagnosticId::GenericInstantiationLimit, span,
                        {"cleanup-lifecycle-depth", "64"}));
-    return;
-  }
-  if (!currentProgramEffectOwner.valid() || !requiresActiveCleanupFor(type)) {
     return;
   }
   if (hasOpenProgramCleanupShape(type)) {

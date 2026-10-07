@@ -6,6 +6,54 @@
 #include <utility>
 
 namespace lang {
+SemanticType substituteSemanticType(const SemanticType &type,
+                                    const GenericSubstitution &substitution,
+                                    const SemanticModel *model) {
+  if (type.kind == SemanticType::TypeParameter ||
+      (type.kind == SemanticType::TypePack && !type.concretePack)) {
+    const auto found = substitution.types.find(type.genericParameterId);
+    if (found == substitution.types.end())
+      return type;
+    return model ? model->resolveExactClassSpecialization(found->second)
+                 : found->second;
+  }
+  SemanticType result = type;
+  const auto substituteTypes = [&](auto &types) {
+    for (auto &argument : types)
+      argument = substituteSemanticType(argument, substitution, model);
+  };
+  substituteTypes(result.arguments);
+  if (result.kind == SemanticType::Class ||
+      result.kind == SemanticType::FunctionSignature) {
+    std::vector<SemanticType> expanded;
+    for (SemanticType &argument : result.arguments)
+      SemanticType::appendExpandedArgument(expanded, std::move(argument));
+    result.arguments = std::move(expanded);
+  }
+  substituteTypes(result.lambdaEnclosingClassTypes);
+  substituteTypes(result.lambdaEnclosingFunctionTypes);
+  const auto substituteValues = [&](auto &values) {
+    for (auto &argument : values)
+      argument = substituteCompileTimeValue(argument, substitution.values);
+  };
+  substituteValues(result.valueArguments);
+  substituteValues(result.lambdaEnclosingClassValues);
+  substituteValues(result.lambdaEnclosingFunctionValues);
+  if (result.arrayLengthParameterId != 0) {
+    const auto found = substitution.values.find(result.arrayLengthParameterId);
+    if (found != substitution.values.end()) {
+      if (found->second.kind == CompileTimeValue::UInt64) {
+        result.arrayLength = found->second.value;
+        result.arrayLengthParameterId = 0;
+      } else if (found->second.kind == CompileTimeValue::Parameter) {
+        result.arrayLengthParameterId = found->second.parameterId;
+      }
+    }
+  }
+  return model ? model->resolveExactClassSpecialization(std::move(result))
+               : result;
+}
+
 CompileTimeValue substituteCompileTimeValue(
     const CompileTimeValue &value,
     const std::unordered_map<GenericParameterId, CompileTimeValue>

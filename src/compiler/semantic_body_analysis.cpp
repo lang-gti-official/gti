@@ -518,6 +518,12 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
         }
       } else if (const auto *alias = stmtAs<TypeAliasDecl>(member.get())) {
         validateType(alias->target());
+        if (const TypeAliasInfo *primary =
+                semanticModel.findTypeAlias(*alias)) {
+          TypeAliasInfo concrete = *primary;
+          concrete.type = typeOf(alias->target());
+          semanticModel.record(*alias, std::move(concrete));
+        }
       } else if (const auto *function = stmtAs<FunctionDecl>(member.get());
                  function != nullptr && !function->parameters().empty() &&
                  function->parameters().back().pack) {
@@ -1277,8 +1283,10 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
 
   for (const FieldInfo &field : owner.fields) {
     const SemanticType fieldType = typeOf(field.declaration->type());
-    const bool nominalDefault = fieldType.kind == SemanticType::Class &&
-                                isDefaultInitializable(fieldType, true);
+    const bool nominalDefault =
+        semanticModel.implicitFieldInitializer(*field.declaration) &&
+        fieldType.kind == SemanticType::Class &&
+        isDefaultInitializable(fieldType, true);
     if (!field.declaration->initializer() && !nominalDefault &&
         !initializedFields.contains(field.declaration->name().lexeme)) {
       report(field.declaration->name(),

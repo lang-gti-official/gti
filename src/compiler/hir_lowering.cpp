@@ -233,59 +233,7 @@ private:
   [[nodiscard]] SemanticType
   substitute(const SemanticType &type,
              const GenericSubstitution &substitution) const {
-    if (type.kind == SemanticType::TypeParameter ||
-        (type.kind == SemanticType::TypePack && !type.concretePack)) {
-      const auto found = substitution.types.find(type.genericParameterId);
-      if (found == substitution.types.end()) {
-        return type;
-      }
-      return baseModel == nullptr
-                 ? found->second
-                 : baseModel->resolveExactClassSpecialization(found->second);
-    }
-    SemanticType result = type;
-    for (SemanticType &argument : result.arguments) {
-      argument = substitute(argument, substitution);
-    }
-    if (result.kind == SemanticType::Class ||
-        result.kind == SemanticType::FunctionSignature) {
-      std::vector<SemanticType> expanded;
-      for (SemanticType &argument : result.arguments) {
-        SemanticType::appendExpandedArgument(expanded, std::move(argument));
-      }
-      result.arguments = std::move(expanded);
-    }
-    for (SemanticType &argument : result.lambdaEnclosingClassTypes) {
-      argument = substitute(argument, substitution);
-    }
-    for (SemanticType &argument : result.lambdaEnclosingFunctionTypes) {
-      argument = substitute(argument, substitution);
-    }
-    for (CompileTimeValue &argument : result.valueArguments) {
-      argument = substituteCompileTimeValue(argument, substitution.values);
-    }
-    const auto substituteValues = [&](std::vector<CompileTimeValue> &values) {
-      for (CompileTimeValue &argument : values) {
-        argument = substituteCompileTimeValue(argument, substitution.values);
-      }
-    };
-    substituteValues(result.lambdaEnclosingClassValues);
-    substituteValues(result.lambdaEnclosingFunctionValues);
-    if (result.arrayLengthParameterId != 0) {
-      const auto found =
-          substitution.values.find(result.arrayLengthParameterId);
-      if (found != substitution.values.end() &&
-          found->second.kind == CompileTimeValue::UInt64) {
-        result.arrayLength = found->second.value;
-        result.arrayLengthParameterId = 0;
-      } else if (found != substitution.values.end() &&
-                 found->second.kind == CompileTimeValue::Parameter) {
-        result.arrayLengthParameterId = found->second.parameterId;
-      }
-    }
-    return baseModel == nullptr
-               ? result
-               : baseModel->resolveExactClassSpecialization(std::move(result));
+    return substituteSemanticType(type, substitution, baseModel);
   }
 
   [[nodiscard]] static std::vector<const Expr *>
@@ -1349,6 +1297,18 @@ private:
       instance.copyAssignment = concreteLifecycle->copyAssignment;
       instance.moveAssignment = concreteLifecycle->moveAssignment;
     }
+    std::vector<HirClassTypeAlias> aliases;
+    for (const TypeAliasDecl *source : declaration->typeAliases) {
+      const TypeAliasInfo *alias = model->findTypeAlias(*source);
+      if (alias == nullptr) {
+        lifecycleValid = false;
+        continue;
+      }
+      aliases.push_back(
+          {.declaration = alias->id, .source = source, .type = alias->type});
+      (void)enqueueClass(alias->type);
+    }
+    output.program.classes[index].typeAliases = std::move(aliases);
     std::vector<HirClassField> fields;
     HirBody fieldInitializers;
     fields.reserve(declaration->fields.size());

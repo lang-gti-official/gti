@@ -251,7 +251,15 @@ Dormant library snapshots extend the current executable serialization with
 `mir-v92` and `lowered-program-v12` embedding rows; ordinary snapshots retain
 `mir-v91`/`mir-body-v77` and `lowered-program-v11`.
 
-The deterministic serialization is currently `mir-v91`/`mir-body-v77`.
+Snapshots containing concrete class alias catalogs use `mir-v95`, adding an
+ordered `aliases` row per class with the primary semantic alias declaration
+identity and exact concrete type. Alias records do not change body operations.
+The independent detached declaration verifier rejects omitted, duplicated,
+foreign-owner, and wrongly substituted aliases; body/program verification
+rejects unresolved concrete types and duplicate identities. Ordinary snapshots
+without this catalog retain their applicable existing program/body schema.
+
+The deterministic base serialization is `mir-v91`/`mir-body-v77`.
 The program header retains the selected target's identity, pointer width and
 execution profile. Every serialized type retains its native C primitive
 discriminator separately from its numeric kind; equal-width `long` and

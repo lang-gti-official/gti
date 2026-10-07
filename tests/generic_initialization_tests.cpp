@@ -8,8 +8,10 @@
 namespace {
 int failures = 0;
 void check(std::string_view source, bool valid, std::string_view label,
-           std::string_view code = "GTI-S2068") {
-  auto result = lang::Frontend().analyze("generic-initialization.gti",
+           std::string_view code = "GTI-S2068", bool closed = false) {
+  lang::FrontendOptions options;
+  options.requireEntryPoint = closed;
+  auto result = lang::Frontend(options).analyze("generic-initialization.gti",
                                          std::string(source));
   const bool diagnostic = std::any_of(
       result.diagnostics.begin(), result.diagnostics.end(), [&](const auto &d) {
@@ -132,6 +134,24 @@ int read<T>() { int& bound = later; return bound; }
 int main() { return first; }
 )gti",
         false, "a reference boundary cannot fold away later constexpr storage");
+  check(R"gti(
+int missing();
+int select<uint64_t N>() {
+  if constexpr (N == 0) { return 7; }
+  else { return missing(); }
+}
+int first = select<0>();
+int main() { return first - 7; }
+)gti", true, "closed definition policy ignores discarded generic calls", "GTI-S2106", true);
+  check(R"gti(
+int missing();
+int select<uint64_t N>() {
+  if constexpr (N == 0) { return 7; }
+  else { return missing(); }
+}
+int first = select<1>();
+int main() { return first; }
+)gti", false, "instance effect worker retains closed executable definition policy", "GTI-S2106", true);
   if (failures)
     return 1;
   std::cout << "generic initialization tests passed\n";

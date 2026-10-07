@@ -4055,16 +4055,16 @@ public:
         output << "using " << member->name << " = ";
         SemanticType aliasType = alias->type;
         if (concreteInstance != nullptr) {
-          const LoweredClassDeclaration *primary =
-              loweredProgram.findClassDeclaration(
-                  concreteInstance->type.classId);
-          if (primary == nullptr) {
+          const auto concrete = std::find_if(
+              concreteInstance->typeAliases.begin(),
+              concreteInstance->typeAliases.end(), [&](const auto &fact) {
+                return fact.declaration == member->semanticIdentity;
+              });
+          if (concrete == concreteInstance->typeAliases.end()) {
             throw std::logic_error(
-                "concrete class type alias lost its primary declaration");
+                "concrete class type alias lost its verified exact type");
           }
-          aliasType = substituteLoweredConstantType(
-              aliasType, loweredConstantClassSubstitution(
-                             *primary, concreteInstance->type));
+          aliasType = concrete->type;
         }
         emitSemanticType(aliasType);
         output << ";\n";
