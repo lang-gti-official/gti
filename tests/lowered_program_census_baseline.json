@@ -691,8 +691,8 @@
       }
     },
     "23-direct-initialization.gti": {
-      "declarations": 144,
-      "bodies": 31,
+      "declarations": 156,
+      "bodies": 40,
       "generated_items": 4,
       "generated_kinds": {
         "program_initialization": 0,
@@ -1817,8 +1817,8 @@
     }
   },
   "totals": {
-    "declarations": 51802,
-    "bodies": 16212,
+    "declarations": 51814,
+    "bodies": 16221,
     "generated_items": 3406
   }
 }
