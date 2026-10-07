@@ -23,7 +23,17 @@ def inventory(build):
             shutil.copyfile(path, target)
         result = subprocess.run(["ctest", "--test-dir", str(root), "--show-only=json-v1"],
                                 capture_output=True, text=True, timeout=60, check=True)
-        return json.loads(result.stdout)["tests"]
+        tests = json.loads(result.stdout)["tests"]
+        for test in tests:
+            for prop in test["properties"]:
+                if prop["name"] == "WORKING_DIRECTORY":
+                    directory = pathlib.Path(prop["value"])
+                    # CTest derives an unspecified cwd from its registration
+                    # directory. Restore that default to the real build tree;
+                    # explicit source/build/fixture directories stay unchanged.
+                    if directory.is_relative_to(root):
+                        prop["value"] = str(build / directory.relative_to(root))
+        return tests
 
 
 def verify(tests, repository):
@@ -77,6 +87,7 @@ def verify_cold_ordering():
             'enable_testing()\n'
             'add_test(NAME small_first COMMAND "${CMAKE_COMMAND}" -E true)\n'
             'add_test(NAME small_second COMMAND "${CMAKE_COMMAND}" -E true)\n'
+            f'set_tests_properties(small_second PROPERTIES WORKING_DIRECTORY "{root.as_posix()}")\n'
             'add_test(NAME compound COMMAND "${CMAKE_COMMAND}" -E true)\n'
             'set_tests_properties(compound PROPERTIES PROCESSORS 2 COST 100)\n'
             'add_test(NAME largest COMMAND "${CMAKE_COMMAND}" -E true)\n'
@@ -84,6 +95,14 @@ def verify_cold_ordering():
         build = root / "build"
         subprocess.run(["cmake", "-S", str(root), "-B", str(build), "-G", "Ninja"],
                        capture_output=True, text=True, timeout=30, check=True)
+        first, second = inventory(build), inventory(build)
+        if first != second:
+            raise AssertionError("scratch discovery changes the registered inventory")
+        for test in first:
+            properties = {prop["name"]: prop["value"] for prop in test["properties"]}
+            expected = root if test["name"] == "small_second" else build
+            if properties["WORKING_DIRECTORY"] != str(expected):
+                raise AssertionError("inventory lost the default or explicit working directory")
         result = subprocess.run(["ctest", "--test-dir", str(build), "--parallel", "2"],
                                 capture_output=True, text=True, timeout=30, check=True)
         starts = re.findall(r"Start\s+\d+:\s+(\S+)", result.stdout)

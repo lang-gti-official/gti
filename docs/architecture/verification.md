@@ -3764,6 +3764,8 @@ surface manifest, plus injected compile/output/timeout/observation failures.
 checks registration and worker/processor pairing, and rejects omitted,
 disabled or forged registrations. It queries a scratch copy of registration
 files so nested CTest discovery cannot truncate the active suite's log.
+Discovery restores build-relative default working directories and preserves
+explicit ones, so repeated inventories describe the same execution context.
 
 All registered tests automatically carry `coverage-full`. A deliberately
 partial group of in-process compiler/IR/model contracts carries
