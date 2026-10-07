@@ -33140,6 +33140,27 @@ private:
                  << " rejoins the fused closure chain\n";
           return;
         }
+        const bool publishesCopy =
+            instruction.info.traits.copyable &&
+            std::any_of(
+                facts.body.blocks.begin(), facts.body.blocks.end(),
+                [&](const MirBlock &block) {
+                  return block.terminator.kind == MirTerminatorKind::Return &&
+                         block.terminator.value &&
+                         block.terminator.value->kind ==
+                             MirOperandKind::Value &&
+                         block.terminator.value->value == *instruction.result;
+                });
+        if (publishesCopy) {
+          // This Load is an observable copy publication, not a fused receiver
+          // alias. Retain its SSA value at the verified Load step so return
+          // uses cannot read an elided closure value or re-read mutable state.
+          writeIndent();
+          output << "auto __gti_mir_v_" << *instruction.result << " = ";
+          emitStoragePlaceValue(facts, *source);
+          output << ";\n";
+          return;
+        }
         if (const MirPlace *destination =
                 lambdaValueDestinationSlot(facts.body, *instruction.result)) {
           writeIndent();

@@ -126,6 +126,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   registerNamespaceSymbols(program.declarations(), {});
   collectRootNativeStorageSymbols(program.declarations());
   collectClassMembers(program.declarations(), {});
+  recordClassFieldSymbols();
   validateOrdinaryClassLayouts();
   registerGlobalBorrowStorage(program.declarations(), {});
   resolveInheritedMembers();
