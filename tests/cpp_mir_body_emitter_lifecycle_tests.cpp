@@ -1138,7 +1138,7 @@ int main() {
              artifact.contents.find("Marker{}") != std::string::npos &&
              artifact.contents.find("Component component;") !=
                  std::string::npos &&
-             artifact.contents.find("empty generated default publishes") !=
+             artifact.contents.find("passive generated default publishes") !=
                  std::string::npos &&
              artifact.contents.find("Mode::Ready") != std::string::npos &&
              artifact.contents.find("::__gti_program::baseline") !=

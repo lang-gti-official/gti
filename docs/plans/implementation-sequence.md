@@ -7281,6 +7281,17 @@ consumer, and release refreshes remain outstanding for the full campaign.
   schedules. Combined snapshots reserve MIR95/body80/Lowered15; the merged
   grammar passes all 76 cases. Optimized combined compiler and runtime checks
   remain pending, together with the allocator's selected-base-stage correction.
+  The optimized combined build subsequently succeeds. Eighteen of 22 focused
+  cross-layer checks pass, including exact enum queries/backend, manual-lifetime
+  and conditional-capability contracts/runtime/LSP, cleanup mutations and
+  symbolic-definition publication. Both formerly failing JSON coverage programs
+  compile natively at O3 and run successfully. Aggregate inventory and stale
+  native-default spelling assertions are repaired without dropping tests:
+  declaration fixtures retain read-only MIR fields and selected generated
+  constructor identities; target fixtures construct/read their selected object.
+  The complete compiler aggregate then passes (39.02 seconds). Base body
+  vocabulary checks and the reviewed corpus census refresh remain outstanding;
+  this is not combined full-release evidence.
   Combined full-suite/coverage-corpus
   validation and upstream release integration remain delivery gates. This
   campaign is not an `expected` implementation. The owner's spelling

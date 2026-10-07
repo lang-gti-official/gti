@@ -828,6 +828,11 @@ public:
 
 int open(mut Vault vault) { return vault.reveal(); }
 int read(Reading reading) { return reading.value; }
+int main() {
+  Vault vault{};
+  Reading reading{};
+  return vault.reveal() + reading.total() - 10;
+}
 )";
   auto validTokens = lexer.scan(validSource);
   expect(!lexer.hadError(), "class and struct access syntax should lex");
@@ -841,15 +846,47 @@ int read(Reading reading) { return reading.value; }
   expect(validSemantic.check(validProgram),
          "public members and same-class private access should resolve");
 
-  const std::string generated = emitAnalyzedSource(validSource);
+  const lang::FrontendResult classFrontend = lang::Frontend().analyze(
+      "classes-and-access.gti", validSource, {standardLibraryPrelude()});
+  expect(classFrontend.canGenerateCode(),
+         "access-controlled declaration defaults should retain verified MIR");
+  if (!classFrontend.canGenerateCode())
+    return;
+  const auto *readingDeclaration =
+      findTopLevelClass(classFrontend.program, "Reading");
+  const auto *readingType =
+      readingDeclaration == nullptr
+          ? nullptr
+          : classFrontend.semantics.findClassType(*readingDeclaration);
+  const auto reading = std::find_if(
+      classFrontend.mir.classInstances().begin(),
+      classFrontend.mir.classInstances().end(), [&](const auto &owner) {
+        return readingType != nullptr && owner.declaration == readingType->id;
+      });
+  expect(reading != classFrontend.mir.classInstances().end() &&
+             reading->declaredFields.size() == 2 &&
+             std::all_of(reading->declaredFields.begin(),
+                         reading->declaredFields.end(),
+                         [](const auto &field) {
+                           return field.access == lang::AccessMode::ReadOnly;
+                         }) &&
+             std::any_of(classFrontend.mir.constructorInstances().begin(),
+                         classFrontend.mir.constructorInstances().end(),
+                         [&](const auto &constructor) {
+                           return constructor.owner == reading->id &&
+                                  constructor.generatedDefault &&
+                                  constructor.initializers.size() == 2;
+                         }),
+         "immutable fields retain read-only MIR identity and execute their "
+         "defaults through the selected generated constructor");
+  const std::string generated = gti_test::emitCppText(classFrontend);
   expect(generated.find("class Vault;") != std::string::npos &&
              generated.find("struct Reading;") != std::string::npos &&
              generated.find("class Vault {") != std::string::npos &&
              generated.find("struct Reading {") != std::string::npos &&
              generated.find("std::int32_t __gti_fn_") != std::string::npos &&
              generated.find("_reveal() const;") != std::string::npos &&
-             generated.find("private:\n    std::int32_t hidden = "
-                            "static_cast<std::int32_t>(2)") !=
+             generated.find("private:\n    std::int32_t hidden;") !=
                  std::string::npos &&
              generated.find("= (*this).hidden;") != std::string::npos,
          "emitter should preserve declaration kinds, access labels, and "
@@ -1521,7 +1558,8 @@ int main() {
          "generated default construction should remain explicit at the call "
          "site");
   expect(
-      lifecycleGenerated.find("Origin() = default;") != std::string::npos &&
+      lifecycleGenerated.find("Origin();") != std::string::npos &&
+          lifecycleGenerated.find("Origin::Origin()") != std::string::npos &&
           lifecycleGenerated.find("Counter(const Counter &other) = default;") !=
               std::string::npos &&
           lifecycleGenerated.find("Counter(Counter &&) = default;") !=
