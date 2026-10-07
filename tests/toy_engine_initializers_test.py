@@ -19,7 +19,7 @@ def main():
     fixtures = Path(__file__).resolve().parent / "fixtures"
     positive = fixtures / "toy_engine_initializers.gti"
     fallible = fixtures / "toy_engine_fallible_field_initializer.gti"
-    negative = fixtures / "toy_engine_generated_field_initializer.gti"
+    generated = fixtures / "toy_engine_generated_field_initializer.gti"
     with tempfile.TemporaryDirectory(prefix="gti-toy-engine-initializers-") as directory:
         root = Path(directory)
         for standard in ("c++20", "c++23"):
@@ -32,19 +32,13 @@ def main():
                 run([compiler, fallible, "--std", standard, optimization, "-o", owning])
                 result = run([owning])
                 assert not result.stdout and not result.stderr, result
-                artifact = root / f"unsupported-{standard}-{optimization}.cpp"
-                result = subprocess.run(
-                    list(map(str, [compiler, negative, "--std", standard, optimization,
-                                   "--emit-cpp", "-o", artifact])),
-                    capture_output=True, text=True, timeout=90)
-                assert result.returncode > 0, result
-                assert "error[GTI-B0003]" in result.stderr, result.stderr
-                assert "GTI-B0001" not in result.stderr, result.stderr
-                assert "declaration-time field initializer" in result.stderr, result.stderr
-                assert "initialization method after construction" in result.stderr, result.stderr
-                assert f"{negative}:1:1:" in result.stderr, result.stderr
-                assert not artifact.exists(), artifact
-    print("Toy-engine initializers: twelve runtime cases and six generated-constructor limitation diagnostics passed")
+                implicit = root / f"generated-{standard}-{optimization}"
+                run([compiler, generated, "--std", standard, optimization,
+                     "-o", implicit])
+                result = run([implicit])
+                assert not result.stdout and not result.stderr, result
+    print("Toy-engine initializers: eighteen runtime cases passed, including "
+          "exact generated field construction and reverse cleanup")
 
 
 if __name__ == "__main__":
