@@ -29,6 +29,16 @@ Produce an evidence-based ownership review, not another architecture reference.
 - Is semantic logic leaking into parsing, HIR/MIR repair, codegen, runtime, or
   LSP protocol handling?
 - Is compiler magic being added for behavior ordinary GTI/stdlib can express?
+- Is the motivating client being confused with the language rule? State the
+  rule without its `std::*` spelling and require an unrelated user-defined type
+  to exercise it when the capability is meant to be general.
+- For ownership, borrowing, or callable changes, where are origin place(s),
+  access modes, permitted escape boundaries, loan endpoints, and transfer/drop
+  behavior produced and verified? Reject a parallel nominal path for one view,
+  range, callback, container, or public wrapper.
+- Does the proposal remove or subsume overlapping special cases? If not, is it
+  demonstrably a distinct semantic family rather than another client-specific
+  exception?
 - Is proof or restriction machinery being generalized beyond what the named
   outcome needs? Could a sound bounded slice establish the extension seam
   sooner?
@@ -38,6 +48,18 @@ Produce an evidence-based ownership review, not another architecture reference.
   snapshot or body?
 - Are AST/HIR/MIR boundaries being preserved where they exist, or is a later
   stage compensating for missing earlier facts?
+- For compile-time execution, are semantic authority, const eligibility, phase
+  timing, and the execution engine distinguished? A constant that selects a
+  branch or forms a type cannot simply be deferred until complete program MIR.
+- Does constexpr growth reuse verified body-local MIR operations, places, CFG,
+  selected call targets, typed identity, and source provenance where coherent,
+  or add another permanent AST/bytecode implementation of the same runtime
+  rule? Read the `L-CONST-01` direction in
+  [`docs/plans/implementation-sequence.md`](../../../docs/plans/implementation-sequence.md#l-const-01-remaining-bounded-compile-time-programming)
+  when this applies.
+- Is const eligibility checked structurally over typed operations and effects,
+  with deterministic limits and diagnostics, rather than inferred from an
+  optimizer result, backend representation, or public library name?
 - Does the dependency direction remain frontend -> IR -> backend -> driver,
   with CLI/LSP as adapters?
 - Is the change coupling target/build/runtime policy to language semantics?
@@ -66,7 +88,8 @@ only when the rationale is significant and durable.
 Validate architectural changes with focused structural tests plus the relevant
 matrix in
 [`docs/architecture/verification.md`](../../../docs/architecture/verification.md).
-For implementation work, use the `finish-release` skill after local validation
-to commit and initiate any required version/tag/release path. Do not publish a
-review-only report, and do not wait for asynchronous Gitea CI/CD after a
-successful dispatch.
+For implementation work, use the `agent-workflow` and `finish-release` skills
+after local validation for PR integration, local-main sync and version policy.
+Respect required PR checks; post-merge packaging does not block completion. Do
+not publish a read-only review. Explicit PR-only/local-only instructions
+override integration.
