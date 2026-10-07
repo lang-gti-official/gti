@@ -50,7 +50,7 @@
     "24-static.gti": 28,
     "25-polymorphic-ranges.gti": 41,
     "26-stored-references.gti": 36,
-    "27-copy-move-policies.gti": 34,
+    "27-copy-move-policies.gti": 36,
     "28-callable-parameters.gti": 30,
     "29-callable-predicates.gti": 30,
     "30-callable-forwarding.gti": 27,
@@ -122,5 +122,5 @@
     "98-shared-ownership.gti": 361,
     "99-borrowed-expected.gti": 353
   },
-  "total": 16164
+  "total": 16166
 }

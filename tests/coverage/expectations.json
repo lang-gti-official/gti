@@ -1896,7 +1896,7 @@
     "a31-move-on-break-path-then-reinit": {
       "finding": "A31",
       "issue": 76,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a32-optional-emplace-move-only-function": {
       "finding": "A32",

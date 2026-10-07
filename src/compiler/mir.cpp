@@ -1467,7 +1467,7 @@ void restoreOwnershipPlace(MirOwnershipFlowState &state,
 }
 
 [[nodiscard]] std::vector<MirBlockId>
-ownershipSuccessors(const MirTerminator &terminator) {
+ownershipSuccessors(const MirBody &body, const MirTerminator &terminator) {
   std::vector<MirBlockId> result;
   const auto append = [&](MirBlockId target) {
     if (target != 0 &&
@@ -1480,6 +1480,54 @@ ownershipSuccessors(const MirTerminator &terminator) {
     append(terminator.target);
     break;
   case MirTerminatorKind::Branch:
+    // A literal boolean condition has only one executable successor. Keep
+    // both structural CFG edges for dominance and loan checking, but do not
+    // merge a semantically unreachable loop exit into ownership availability.
+    // This is a typed MIR literal proof, not general constant evaluation.
+    if (terminator.value && terminator.value->type == SemanticType::Bool) {
+      const MirOperand *condition = &*terminator.value;
+      std::unordered_set<MirValueId> visited;
+      while (condition->kind == MirOperandKind::Value &&
+             visited.insert(condition->value).second) {
+        const MirValue *value = body.findValue(condition->value);
+        const MirBlock *block =
+            value == nullptr ? nullptr : body.findBlock(value->definitionBlock);
+        const MirInstruction *definition = nullptr;
+        if (block != nullptr) {
+          const auto found = std::find_if(
+              block->instructions.begin(), block->instructions.end(),
+              [&](const MirInstruction &instruction) {
+                return instruction.id == value->definition &&
+                       instruction.result == condition->value;
+              });
+          if (found != block->instructions.end())
+            definition = &*found;
+        }
+        if (definition == nullptr ||
+            definition->kind != MirInstructionKind::Compute ||
+            definition->info.type != SemanticType::Bool)
+          break;
+        if (definition->operation == MirOperation::Identity &&
+            definition->operands.size() == 1) {
+          condition = &definition->operands.front();
+          continue;
+        }
+        if (definition->operation == MirOperation::Literal &&
+            definition->literal) {
+          if (const bool *literal = std::get_if<bool>(&*definition->literal)) {
+            append(*literal ? terminator.target : terminator.elseTarget);
+            return result;
+          }
+        }
+        break;
+      }
+      if (condition->kind == MirOperandKind::Constant && condition->literal) {
+        if (const bool *literal = std::get_if<bool>(&*condition->literal)) {
+          append(*literal ? terminator.target : terminator.elseTarget);
+          return result;
+        }
+      }
+    }
     append(terminator.target);
     append(terminator.elseTarget);
     break;
@@ -1668,7 +1716,8 @@ verifyMirScalarInitializationFlow(const MirBody &body, std::size_t owner) {
       }
     }
 
-    for (const MirBlockId successor : ownershipSuccessors(block->terminator)) {
+    for (const MirBlockId successor :
+         ownershipSuccessors(body, block->terminator)) {
       if (successor == 0 || successor > body.blocks.size()) {
         continue;
       }
@@ -1724,12 +1773,15 @@ verifyMirScalarInitializationFlow(const MirBody &body, std::size_t owner) {
   std::queue<MirBlockId> pending;
   pending.push(body.entry);
 
+  bool validating = false;
   const auto requireAvailable =
       [&](const MirOwnershipFlowState &state, MirPlaceId placeId,
           const MirBlock &block, const MirInstruction &instruction,
           std::string_view operation,
           bool includeIndirectDescendants =
               false) -> std::optional<MirVerificationResult> {
+    if (!validating)
+      return std::nullopt;
     const std::optional<PlaceKey> place = ownershipPlaceKey(body, placeId);
     if (!place) {
       return std::nullopt;
@@ -1745,211 +1797,232 @@ verifyMirScalarInitializationFlow(const MirBody &body, std::size_t owner) {
     return std::nullopt;
   };
 
-  while (!pending.empty()) {
-    const MirBlockId blockId = pending.front();
-    pending.pop();
-    const MirBlock *block = body.findBlock(blockId);
-    if (block == nullptr || !entryStates[blockId - 1]) {
-      continue;
+  // First solve availability for the complete executable CFG. Checking an
+  // exact semantic before-state while only one predecessor has arrived would
+  // reject a valid Available|Moved join (for example a conditional break).
+  // The second pass validates operations against those stable entry states;
+  // transfers are still derived from MIR operations, never from event.after.
+  for (const bool validationPass : {false, true}) {
+    validating = validationPass;
+    if (validating) {
+      for (const MirBlock &block : body.blocks)
+        if (entryStates[block.id - 1])
+          pending.push(block.id);
     }
-    MirOwnershipFlowState state = *entryStates[blockId - 1];
-
-    for (const MirInstruction &instruction : block->instructions) {
-      if (instruction.ownership &&
-          (!instruction.ownership->place.valid() ||
-           instruction.ownership->place.domain != body.placeDomain)) {
-        return failure(body, owner,
-                       "ownership event has an invalid place domain or key",
-                       block->id, instruction.id);
-      }
-      if (instruction.ownership && !instruction.ownership->reachable) {
+    while (!pending.empty()) {
+      const MirBlockId blockId = pending.front();
+      pending.pop();
+      const MirBlock *block = body.findBlock(blockId);
+      if (block == nullptr || !entryStates[blockId - 1]) {
         continue;
       }
-      const auto checkOperand = [&](const MirOperand &operand)
-          -> std::optional<MirVerificationResult> {
-        switch (operand.kind) {
-        case MirOperandKind::Address:
-        case MirOperandKind::Copy:
-        case MirOperandKind::BorrowRead:
-        case MirOperandKind::BorrowWrite:
-          return requireAvailable(state, operand.place, *block, instruction,
-                                  "place access");
-        case MirOperandKind::Move:
-        case MirOperandKind::Value:
-        case MirOperandKind::Constant:
+      MirOwnershipFlowState state = *entryStates[blockId - 1];
+
+      for (const MirInstruction &instruction : block->instructions) {
+        if (instruction.ownership &&
+            (!instruction.ownership->place.valid() ||
+             instruction.ownership->place.domain != body.placeDomain)) {
+          return failure(body, owner,
+                         "ownership event has an invalid place domain or key",
+                         block->id, instruction.id);
+        }
+        if (instruction.ownership && !instruction.ownership->reachable) {
+          continue;
+        }
+        const auto checkOperand = [&](const MirOperand &operand)
+            -> std::optional<MirVerificationResult> {
+          switch (operand.kind) {
+          case MirOperandKind::Address:
+          case MirOperandKind::Copy:
+          case MirOperandKind::BorrowRead:
+          case MirOperandKind::BorrowWrite:
+            return requireAvailable(state, operand.place, *block, instruction,
+                                    "place access");
+          case MirOperandKind::Move:
+          case MirOperandKind::Value:
+          case MirOperandKind::Constant:
+            return std::nullopt;
+          case MirOperandKind::Loan:
+            return operand.place == 0
+                       ? std::nullopt
+                       : requireAvailable(state, operand.place, *block,
+                                          instruction,
+                                          "reference address source");
+          }
           return std::nullopt;
-        case MirOperandKind::Loan:
-          return operand.place == 0
-                     ? std::nullopt
-                     : requireAvailable(state, operand.place, *block,
-                                        instruction,
-                                        "reference address source");
-        }
-        return std::nullopt;
-      };
-      if (instruction.receiver) {
-        if (std::optional<MirVerificationResult> invalid =
-                checkOperand(*instruction.receiver)) {
-          return std::move(*invalid);
-        }
-      }
-      for (const MirOperand &operand : instruction.operands) {
-        if (std::optional<MirVerificationResult> invalid =
-                checkOperand(operand)) {
-          return std::move(*invalid);
-        }
-      }
-
-      const bool retainedReceiver =
-          instruction.kind == MirInstructionKind::CallInput &&
-          instruction.callInputKind == HirCallInputKind::RetainedReceiver;
-      if ((instruction.kind == MirInstructionKind::Move || retainedReceiver) &&
-          !instruction.operands.empty()) {
-        const MirPlaceId source =
-            retainedReceiver && instruction.retainedOwnerPlace
-                ? *instruction.retainedOwnerPlace
-                : instruction.operands.front().place;
-        const std::optional<PlaceKey> place = ownershipPlaceKey(body, source);
-        if (!place) {
-          continue;
-        }
-        if (hasDynamicIndex(*place)) {
-          return failure(body, owner,
-                         "move uses a dynamic-index place without an alias "
-                         "proof",
-                         block->id, instruction.id);
-        }
-        if (std::optional<MirVerificationResult> invalid = requireAvailable(
-                state, source, *block, instruction, "move", true)) {
-          return std::move(*invalid);
-        }
-        if (!instruction.ownership ||
-            instruction.ownership->kind !=
-                (retainedReceiver ? OwnershipEventKind::ConsumeReceiver
-                                  : OwnershipEventKind::Move) ||
-            instruction.ownership->place != *place ||
-            instruction.ownership->before != OwnershipStateSet::Available ||
-            instruction.ownership->after != OwnershipStateSet::Moved) {
-          return failure(body, owner,
-                         "move does not preserve its semantic ownership "
-                         "event and place identity",
-                         block->id, instruction.id);
-        }
-        setOwnershipState(state, *place, OwnershipStateSet::Moved);
-        continue;
-      }
-
-      if (instruction.destination) {
-        const std::optional<PlaceKey> destination =
-            ownershipPlaceKey(body, *instruction.destination);
-        if (!destination) {
-          continue;
-        }
-        if (instruction.kind == MirInstructionKind::Initialize) {
-          const MirPlace *destinationPlace =
-              body.findPlace(*instruction.destination);
-          // Lexical-drop bindings always spell their scope end as a Drop, so
-          // an Initialize must only ever see storage the flow model already
-          // proved uninitialized. Trivially dropped bindings deliberately
-          // leave scope without any MIR instruction: a block-scoped local
-          // that was moved (or conditionally moved) still carries Moved
-          // state across a loop back edge even though its lifetime ended at
-          // the closing brace. Their re-initialization at the declaration is
-          // the implicit scope end, so it may begin from any prior state.
-          if (tracksOwnershipRoot(trackedRoots, *destination) &&
-              destinationPlace != nullptr &&
-              destinationPlace->root == MirPlaceRootKind::Binding &&
-              destinationPlace->projections.empty() &&
-              !destinationPlace->initiallyAvailable &&
-              destinationPlace->traits.drop == DropKind::Lexical &&
-              !ownershipStateAt(state, *destination)
-                   .definitely(OwnershipState::Uninitialized)) {
-            return failure(body, owner,
-                           "initialization targets a place whose lifetime is "
-                           "already active",
-                           block->id, instruction.id);
-          }
-          restoreOwnershipPlace(state, *destination);
-        } else if (instruction.kind == MirInstructionKind::Drop) {
-          if (tracksOwnershipRoot(trackedRoots, *destination) &&
-              ownershipStateAt(state, *destination)
-                  .contains(OwnershipState::Uninitialized)) {
-            return failure(body, owner,
-                           "drop requires a definitely active place lifetime",
-                           block->id, instruction.id);
-          }
-          restoreOwnershipPlace(state, *destination);
-          if (tracksOwnershipRoot(trackedRoots, *destination)) {
-            setOwnershipState(state, *destination,
-                              OwnershipStateSet::Uninitialized);
-          }
-        } else if (instruction.kind == MirInstructionKind::Assign &&
-                   instruction.operation == MirOperation::Assign) {
-          if (!tracksOwnershipRoot(trackedRoots, *destination)) {
-            continue;
-          }
-          const bool indexedOwnershipPlace = std::any_of(
-              destination->projections.begin(), destination->projections.end(),
-              [](const PlaceProjection &projection) {
-                return projection.kind == PlaceProjectionKind::ConstantIndex ||
-                       projection.kind == PlaceProjectionKind::DynamicIndex;
-              });
-          if (indexedOwnershipPlace && !instruction.ownership) {
-            return failure(body, owner,
-                           "assignment does not preserve its semantic "
-                           "reinitialization event and place identity",
-                           block->id, instruction.id);
-          }
-          if (!instruction.ownership) {
-            continue;
-          }
-          if (instruction.ownership->kind != OwnershipEventKind::Reinitialize ||
-              instruction.ownership->place != *destination ||
-              instruction.ownership->before !=
-                  ownershipStateAt(state, *destination) ||
-              instruction.ownership->after != OwnershipStateSet::Available) {
-            return failure(body, owner,
-                           "assignment ownership event disagrees with its "
-                           "destination place",
-                           block->id, instruction.id);
-          }
-          const MirOwnershipPlaceState *unavailableAncestor =
-              unavailableOwnershipState(state, *destination);
-          if (unavailableAncestor != nullptr) {
-            const PlaceRelationResult relation =
-                placeRelation(unavailableAncestor->place, *destination);
-            if (!relation.compatibleDomain ||
-                relation.relation == PlaceRelation::LeftStrictPrefix ||
-                relation.relation == PlaceRelation::MayAlias) {
-              return failure(body, owner,
-                             "assignment cannot prove that its destination "
-                             "is independent of unavailable storage",
-                             block->id, instruction.id);
-            }
-          }
-          restoreOwnershipPlace(state, *destination);
-        } else if (instruction.kind == MirInstructionKind::Assign ||
-                   instruction.kind == MirInstructionKind::Modify) {
+        };
+        if (instruction.receiver) {
           if (std::optional<MirVerificationResult> invalid =
-                  requireAvailable(state, *instruction.destination, *block,
-                                   instruction, "mutation")) {
+                  checkOperand(*instruction.receiver)) {
             return std::move(*invalid);
           }
         }
-      }
-    }
+        for (const MirOperand &operand : instruction.operands) {
+          if (std::optional<MirVerificationResult> invalid =
+                  checkOperand(operand)) {
+            return std::move(*invalid);
+          }
+        }
 
-    for (const MirBlockId successor : ownershipSuccessors(block->terminator)) {
-      if (successor == 0 || successor > body.blocks.size()) {
-        continue;
+        const bool retainedReceiver =
+            instruction.kind == MirInstructionKind::CallInput &&
+            instruction.callInputKind == HirCallInputKind::RetainedReceiver;
+        if ((instruction.kind == MirInstructionKind::Move ||
+             retainedReceiver) &&
+            !instruction.operands.empty()) {
+          const MirPlaceId source =
+              retainedReceiver && instruction.retainedOwnerPlace
+                  ? *instruction.retainedOwnerPlace
+                  : instruction.operands.front().place;
+          const std::optional<PlaceKey> place = ownershipPlaceKey(body, source);
+          if (!place) {
+            continue;
+          }
+          if (hasDynamicIndex(*place)) {
+            return failure(body, owner,
+                           "move uses a dynamic-index place without an alias "
+                           "proof",
+                           block->id, instruction.id);
+          }
+          if (std::optional<MirVerificationResult> invalid = requireAvailable(
+                  state, source, *block, instruction, "move", true)) {
+            return std::move(*invalid);
+          }
+          if (!instruction.ownership ||
+              instruction.ownership->kind !=
+                  (retainedReceiver ? OwnershipEventKind::ConsumeReceiver
+                                    : OwnershipEventKind::Move) ||
+              instruction.ownership->place != *place ||
+              instruction.ownership->before != OwnershipStateSet::Available ||
+              instruction.ownership->after != OwnershipStateSet::Moved) {
+            return failure(body, owner,
+                           "move does not preserve its semantic ownership "
+                           "event and place identity",
+                           block->id, instruction.id);
+          }
+          setOwnershipState(state, *place, OwnershipStateSet::Moved);
+          continue;
+        }
+
+        if (instruction.destination) {
+          const std::optional<PlaceKey> destination =
+              ownershipPlaceKey(body, *instruction.destination);
+          if (!destination) {
+            continue;
+          }
+          if (instruction.kind == MirInstructionKind::Initialize) {
+            const MirPlace *destinationPlace =
+                body.findPlace(*instruction.destination);
+            // Lexical-drop bindings always spell their scope end as a Drop, so
+            // an Initialize must only ever see storage the flow model already
+            // proved uninitialized. Trivially dropped bindings deliberately
+            // leave scope without any MIR instruction: a block-scoped local
+            // that was moved (or conditionally moved) still carries Moved
+            // state across a loop back edge even though its lifetime ended at
+            // the closing brace. Their re-initialization at the declaration is
+            // the implicit scope end, so it may begin from any prior state.
+            if (validating && tracksOwnershipRoot(trackedRoots, *destination) &&
+                destinationPlace != nullptr &&
+                destinationPlace->root == MirPlaceRootKind::Binding &&
+                destinationPlace->projections.empty() &&
+                !destinationPlace->initiallyAvailable &&
+                destinationPlace->traits.drop == DropKind::Lexical &&
+                !ownershipStateAt(state, *destination)
+                     .definitely(OwnershipState::Uninitialized)) {
+              return failure(body, owner,
+                             "initialization targets a place whose lifetime is "
+                             "already active",
+                             block->id, instruction.id);
+            }
+            restoreOwnershipPlace(state, *destination);
+          } else if (instruction.kind == MirInstructionKind::Drop) {
+            if (validating && tracksOwnershipRoot(trackedRoots, *destination) &&
+                ownershipStateAt(state, *destination)
+                    .contains(OwnershipState::Uninitialized)) {
+              return failure(body, owner,
+                             "drop requires a definitely active place lifetime",
+                             block->id, instruction.id);
+            }
+            restoreOwnershipPlace(state, *destination);
+            if (tracksOwnershipRoot(trackedRoots, *destination)) {
+              setOwnershipState(state, *destination,
+                                OwnershipStateSet::Uninitialized);
+            }
+          } else if (instruction.kind == MirInstructionKind::Assign &&
+                     instruction.operation == MirOperation::Assign) {
+            if (!tracksOwnershipRoot(trackedRoots, *destination)) {
+              continue;
+            }
+            const bool indexedOwnershipPlace = std::any_of(
+                destination->projections.begin(),
+                destination->projections.end(),
+                [](const PlaceProjection &projection) {
+                  return projection.kind ==
+                             PlaceProjectionKind::ConstantIndex ||
+                         projection.kind == PlaceProjectionKind::DynamicIndex;
+                });
+            if (indexedOwnershipPlace && !instruction.ownership) {
+              return failure(body, owner,
+                             "assignment does not preserve its semantic "
+                             "reinitialization event and place identity",
+                             block->id, instruction.id);
+            }
+            if (!instruction.ownership) {
+              continue;
+            }
+            if (validating && (instruction.ownership->kind !=
+                                   OwnershipEventKind::Reinitialize ||
+                               instruction.ownership->place != *destination ||
+                               instruction.ownership->before !=
+                                   ownershipStateAt(state, *destination) ||
+                               instruction.ownership->after !=
+                                   OwnershipStateSet::Available)) {
+              return failure(body, owner,
+                             "assignment ownership event disagrees with its "
+                             "destination place",
+                             block->id, instruction.id);
+            }
+            const MirOwnershipPlaceState *unavailableAncestor =
+                unavailableOwnershipState(state, *destination);
+            if (validating && unavailableAncestor != nullptr) {
+              const PlaceRelationResult relation =
+                  placeRelation(unavailableAncestor->place, *destination);
+              if (!relation.compatibleDomain ||
+                  relation.relation == PlaceRelation::LeftStrictPrefix ||
+                  relation.relation == PlaceRelation::MayAlias) {
+                return failure(body, owner,
+                               "assignment cannot prove that its destination "
+                               "is independent of unavailable storage",
+                               block->id, instruction.id);
+              }
+            }
+            restoreOwnershipPlace(state, *destination);
+          } else if (instruction.kind == MirInstructionKind::Assign ||
+                     instruction.kind == MirInstructionKind::Modify) {
+            if (std::optional<MirVerificationResult> invalid =
+                    requireAvailable(state, *instruction.destination, *block,
+                                     instruction, "mutation")) {
+              return std::move(*invalid);
+            }
+          }
+        }
       }
-      std::optional<MirOwnershipFlowState> &incoming =
-          entryStates[successor - 1];
-      const MirOwnershipFlowState merged =
-          incoming ? joinOwnershipState(*incoming, state) : state;
-      if (!incoming || !sameOwnershipState(*incoming, merged)) {
-        incoming = merged;
-        pending.push(successor);
+
+      if (validating)
+        continue;
+      for (const MirBlockId successor :
+           ownershipSuccessors(body, block->terminator)) {
+        if (successor == 0 || successor > body.blocks.size()) {
+          continue;
+        }
+        std::optional<MirOwnershipFlowState> &incoming =
+            entryStates[successor - 1];
+        const MirOwnershipFlowState merged =
+            incoming ? joinOwnershipState(*incoming, state) : state;
+        if (!incoming || !sameOwnershipState(*incoming, merged)) {
+          incoming = merged;
+          pending.push(successor);
+        }
       }
     }
   }
