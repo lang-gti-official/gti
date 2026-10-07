@@ -1,0 +1,3 @@
+int selected_status() { return -1; }
+int status = selected_status();
+int main() { return status; }

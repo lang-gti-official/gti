@@ -420,7 +420,9 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
 
   SemanticVisitor semantic(options.target, &result.sourceGraph,
                            options.toolingOccurrences, options.workMetrics,
-                           &result.sources, options.rawPointerAudit);
+                           &result.sources, options.rawPointerAudit,
+                           options.requireEntryPoint ||
+                               options.program.kind == ProgramKind::Library);
   if (options.workMetrics != nullptr) {
     for (const SourceUnitId unitId : result.sourceGraph.compilationOrder()) {
       if (const SourceUnit *unit = result.sourceGraph.findUnit(unitId)) {
