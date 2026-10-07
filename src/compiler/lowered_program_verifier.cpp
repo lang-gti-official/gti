@@ -314,8 +314,9 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
   case LoweredDeclarationKind::TypeAlias: {
     const auto *payload =
         std::get_if<LoweredTypeAliasDeclaration>(&declaration.payload);
-    if (payload == nullptr || declaration.name.empty() ||
-        payload->qualifiedName.empty() || !resolvedType(payload->type)) {
+    if (payload == nullptr || declaration.semanticIdentity == 0 ||
+        declaration.name.empty() || payload->qualifiedName.empty() ||
+        !resolvedType(payload->type)) {
       return invalid("type alias lacks a resolved type identity");
     }
     break;
@@ -694,6 +695,7 @@ verifyLoweredProgram(const LoweredProgram &program) {
   std::unordered_map<LoweredDeclarationId, std::size_t> nextOrdinal;
   std::unordered_map<ClassId, LoweredDeclarationId> classDeclarations;
   std::unordered_map<EnumId, LoweredDeclarationId> enumDeclarations;
+  std::unordered_map<TypeAliasId, LoweredDeclarationId> aliasDeclarations;
   std::unordered_map<FunctionId, LoweredDeclarationId> functionDeclarations;
   std::unordered_map<ConstructorId, LoweredDeclarationId>
       constructorDeclarations;
@@ -730,6 +732,10 @@ verifyLoweredProgram(const LoweredProgram &program) {
     if (const auto *payload =
             std::get_if<LoweredClassDeclaration>(&declaration.payload)) {
       recordIdentity(classDeclarations, payload->id, "class");
+    } else if (std::holds_alternative<LoweredTypeAliasDeclaration>(
+                   declaration.payload)) {
+      recordIdentity(aliasDeclarations, declaration.semanticIdentity,
+                     "type alias");
     } else if (const auto *payload =
                    std::get_if<LoweredEnumDeclaration>(&declaration.payload)) {
       recordIdentity(enumDeclarations, payload->id, "enum");
