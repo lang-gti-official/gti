@@ -147,7 +147,10 @@ than mixed into the active queue.
 - [Dependency-ordered implementation sequence](plans/implementation-sequence.md)
   — the sole prompt-sized work queue, prerequisites, status, and exit gates;
   retains the completed runtime-performance campaign baseline and owns the
-  resumed queue
+  resumed queue, including the
+  [general object-lifetime and source-defined storage brief](plans/implementation-sequence.md#s-alloc-06-general-object-lifetimes-and-source-defined-storage)
+  and its follow-on
+  [source-defined process allocation phase](plans/implementation-sequence.md#s-alloc-07-source-defined-process-allocation-over-native-byte-providers)
 - [Systems-readiness roadmap](plans/roadmap-to-1.0.md) — capability outcomes
   and the soft, revisable path to a full-featured 1.0
 - [Language restriction ledger](plans/language-alignment.md) — current
