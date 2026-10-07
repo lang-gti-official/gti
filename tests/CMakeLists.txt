@@ -63,6 +63,9 @@ add_test(NAME base_constructor_stage_runtime
                  "${PROJECT_SOURCE_DIR}/tests/base_constructor_stage_runtime_test.py"
                  "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
 set_tests_properties(base_constructor_stage_runtime PROPERTIES TIMEOUT 600)
+add_executable(gti_operator_place_composition_tests operator_place_composition_tests.cpp)
+target_link_libraries(gti_operator_place_composition_tests PRIVATE gti_cpp_backend)
+add_test(NAME operator_place_composition_pipeline COMMAND gti_operator_place_composition_tests)
 add_executable(gti_ephemeral_carrier_mir_tests ephemeral_carrier_mir_tests.cpp)
 add_executable(gti_resource_memory_runtime_tests resource_memory_runtime_tests.cpp)
 target_link_libraries(gti_resource_memory_runtime_tests PRIVATE gti_runtime)
@@ -2072,6 +2075,21 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(subscript_store_read_order_runtime
                        PROPERTIES TIMEOUT 300)
+  add_test(NAME operator_place_composition_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/operator_place_composition_runtime_test.py"
+      "$<TARGET_FILE:gti>")
+  set_tests_properties(operator_place_composition_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME operator_place_failure_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/operator_place_failure_runtime_test.py"
+      "$<TARGET_FILE:gti>")
+  set_tests_properties(operator_place_failure_runtime PROPERTIES TIMEOUT 180)
+  add_test(NAME operator_place_composition_lsp
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/operator_place_composition_lsp_test.py"
+      "$<TARGET_FILE:gti_lsp>")
+  set_tests_properties(operator_place_composition_lsp PROPERTIES TIMEOUT 60)
   add_test(
     NAME owner_tied_reference_argument_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -2203,6 +2221,11 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/function_items.gti"
   )
   set_tests_properties(function_item_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME generic_contract_runtime
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/generic_contract_runtime_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(generic_contract_runtime PROPERTIES TIMEOUT 300)
   add_test(
     NAME function_signature_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -3146,6 +3169,11 @@ if(Python3_Interpreter_FOUND)
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/unsafe_function_lsp_test.py"
                    "$<TARGET_FILE:gti_lsp>")
+    add_test(NAME diagnostic_recovery_lsp
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${PROJECT_SOURCE_DIR}/tests/diagnostic_recovery_lsp_test.py"
+                     "$<TARGET_FILE:gti_lsp>")
+    set_tests_properties(diagnostic_recovery_lsp PROPERTIES TIMEOUT 60)
     add_test(NAME runtime_object_layout_lsp
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/runtime_object_layout_lsp_test.py"
@@ -3161,6 +3189,14 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME cthread_lsp
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/cthread_lsp_test.py"
+                     "$<TARGET_FILE:gti_lsp>")
+    add_test(NAME generic_advisory_lsp
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${PROJECT_SOURCE_DIR}/tests/generic_advisory_lsp_test.py"
+                     "$<TARGET_FILE:gti_lsp>")
+    add_test(NAME generic_contract_lsp
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${PROJECT_SOURCE_DIR}/tests/generic_contract_lsp_test.py"
                      "$<TARGET_FILE:gti_lsp>")
     add_test(
       NAME source_text_lsp

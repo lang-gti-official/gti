@@ -577,7 +577,10 @@ private:
               "Expect ']]' after declaration attributes.");
       consume(TokenKind::RIGHT_BRACKET,
               "Expect ']]' after declaration attributes.");
-      bool functionAttributeList = !functionAttributes.empty();
+      // Attribute spelling is semantic policy. A typed declaration identifies
+      // the function-attribute context even when every attribute is unknown.
+      bool functionAttributeList =
+          !functionAttributes.empty() || isTypedDeclaration();
       for (const FunctionAttribute &attribute : attributes) {
         if (parsedNativeFunctionAttribute &&
             attribute.name.lexeme != "discardable") {
@@ -1953,13 +1956,33 @@ private:
     const NestingGuard conditional(conditionalDepth);
     Token directive = previous();
     std::vector<ConditionalBranch> branches;
+    const auto recoverCondition = [&](const Token &branchDirective) {
+      try {
+        return compileCondition(branchDirective);
+      } catch (const ParseError &) {
+        // Keep this opener alive while recovering its failed condition. The
+        // branch collector, not outer declaration recovery, owns #endif.
+        try {
+          synchronize(context != ItemContext::Declaration,
+                      context == ItemContext::Block,
+                      context == ItemContext::Declaration,
+                      context == ItemContext::ClassMember);
+        } catch (const ConditionalBoundary &) {
+          missingTokenError = false;
+        }
+        CompileCondition invalid;
+        invalid.token = branchDirective;
+        invalid.resolved = false;
+        return invalid;
+      }
+    };
     branches.push_back(
-        {compileCondition(directive), conditionalItems(context)});
+        {recoverCondition(directive), conditionalItems(context)});
 
     while (match({TokenKind::HASH_ELIF})) {
       Token branchDirective = previous();
       branches.push_back(
-          {compileCondition(branchDirective), conditionalItems(context)});
+          {recoverCondition(branchDirective), conditionalItems(context)});
     }
     if (match({TokenKind::HASH_ELSE})) {
       branches.push_back({std::nullopt, conditionalItems(context)});

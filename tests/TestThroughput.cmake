@@ -21,12 +21,13 @@ if(Python3_Interpreter_FOUND)
     expected_payload_pair_arguments_runtime expected_payload_pending_cleanup_runtime
     extensible_formatting_runtime fresh_callable_later_argument_failure_runtime
     generated_base_constructor_runtime generic_algorithm_breadth
-    generic_callable_adapter_runtime generic_callable_transport_runtime hosted_constructor_identity_runtime
+    generic_callable_adapter_runtime generic_callable_transport_runtime generic_contract_runtime
+    hosted_constructor_identity_runtime
     hosted_exit_status_runtime
     http_url_operators immovable_storage_runtime integral_enum_formatting_runtime
     lambda_pack_invocation_runtime nested_borrow_fields nested_guarded_expected_runtime
     native_c_scalar_runtime nested_raw_pointer_runtime
-    nested_nominal_result_runtime owned_expected_error_runtime
+    nested_nominal_result_runtime operator_place_composition_runtime owned_expected_error_runtime
     owned_pointee_projection_runtime owned_unexpected_pending_cleanup_runtime
     owning_function_resource_result_runtime owning_function_runtime
     pack_prefix_constructor_failure_runtime private_constructor_placement_runtime
