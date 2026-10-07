@@ -466,6 +466,11 @@ explicit write to a `mut` field through a mutable union value inside `unsafe`.
 
 Fixed arrays require complete initialization. Empty braces value-initialize all
 elements; a non-empty initializer supplies exactly one value per element.
+Representable signed integer literals, including a parenthesized single unary
+`+` or `-`, receive the exact element type. Passive records and unions can be
+copied from named values into arrays under their ordinary copyability rules;
+this does not introduce extra default-constructor calls. Union member accesses
+still require `unsafe`.
 
 Inside an ordinary named function, method, or constructor call, the same brace
 syntax may initialize one exact by-value fixed-array parameter. It is a
