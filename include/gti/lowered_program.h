@@ -228,6 +228,7 @@ struct LoweredClassDeclaration {
   std::optional<SemanticType> transferCondition;
   std::optional<SemanticType> shareCondition;
   SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
+  bool generatedDefaultRequiresSchedule = false;
   SpecialMemberStatus copyConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus moveConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus copyAssignment = SpecialMemberStatus::Deleted;

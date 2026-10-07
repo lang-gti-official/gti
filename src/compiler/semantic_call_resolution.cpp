@@ -6387,6 +6387,30 @@ auto SemanticVisitor::Impl::requireFunctionDefinition(
       function.record().pureVirtual) {
     return;
   }
+  // A generic primary is a checked declaration, not yet an executable body.
+  // Concrete reanalysis selects exact specializations and constexpr branches
+  // before enforcing closure. Inspect the enclosing formal bindings, not the
+  // callee's signature or just the class's analysis mode: a generic method can
+  // still have open formals inside an already-concrete class context.
+  const bool openTypes = std::any_of(
+      typeParameterScopes.begin(), typeParameterScopes.end(),
+      [](const auto &scope) {
+        return std::any_of(scope.begin(), scope.end(), [](const auto &binding) {
+          const auto &type = binding.second;
+          return type.kind == SemanticType::TypeParameter ||
+                 (type.kind == SemanticType::TypePack && !type.concretePack);
+        });
+      });
+  const bool openValues = std::any_of(
+      valueParameterScopes.begin(), valueParameterScopes.end(),
+      [](const auto &scope) {
+        return std::any_of(scope.begin(), scope.end(), [](const auto &binding) {
+          return binding.second.kind == CompileTimeValue::Parameter;
+        });
+      });
+  if (openTypes || openValues) {
+    return;
+  }
   Diagnostic diagnostic =
       makeDiagnostic(DiagnosticId::MissingFunctionDefinition, location,
                      {function.record().qualifiedName});

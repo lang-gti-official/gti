@@ -132,14 +132,49 @@ completing branches; the panic arm cannot initialize a result slot or add a
 fictional success value. Existing cleanup obligations own receiver/error and
 message-storage cleanup after the panic record has been captured.
 
-When an owner has no generated-default construction route, each concrete source
-constructor selects its omitted declaration field defaults into its own HIR
-body. Explicit initializers override defaults; the combined schedule remains
+Each concrete source constructor selects its omitted declaration field defaults
+into its own HIR body. Explicit initializers override defaults; the combined schedule remains
 base-first and field-declaration-ordered. Each selected initializer has a distinct
 full-expression before constructor body statements. The declaration initializer
 catalog remains available, but is not a second execution site for these owners.
-Most owners with generated default construction retain the existing declaration
-schedule. A bounded generated-derived family now has explicit body-local
+Generated defaults with declaration-initialized fields also receive a concrete,
+source-free constructor instance. Its zero declaration identity is not a
+fabricated AST constructor: semantics selects the declaration defaults through
+`ClassLifecycleInfo::generatedDefaultFieldInitializers`, HIR lowers their exact
+concrete expressions in field order, and MIR owns publication, failure edges and
+rollback. Verification checks each selected expression against the original
+field declaration and rejects missing, reordered or substituted defaults. This
+does not add implicit initialization for fields without a declaration default.
+Selected defaults retain existing scalar initialization conversions through one
+semantic compatibility rule; literal-dependent narrowing is still selected in
+semantics, never reevaluated by an IR verifier. Owning/passive `expected` field
+initialization selects the exact success or error alternative. MIR publishes
+the destination wrapper as a distinct typed lifetime using the same
+`TransferOut`/`Initialize` protocol as local initialization, with rollback for
+the complete field type rather than its input payload. A passive selected
+alternative still receives the field's exact variant cleanup schedule; this
+does not extend borrowed-success conversion rules.
+The generated identity survives in MIR and is checked against the detached
+constructor catalog, so a backend cannot infer or erase it from parameter arity.
+Concrete class rows independently retain the semantic obligation to use a
+generated schedule, even when no default construction of that specialization
+is selected. Removing a constructor row and its call target therefore cannot
+turn the operation into native default construction. Unused defaults need not
+be instantiated merely to prove that obligation. Detached declaration metadata
+and optimization replay retain the same immutable fact.
+Final-address object construction and prefix emplacement propagate the same
+selected generated constructor failure while preserving their own preflight
+checks and publication rules.
+
+Selected initializer source values retain their resolved expression types;
+the field target type need not be identical when semantic initialization
+permits a conversion. HIR checks the existing context-free scalar, null, or
+selected expected-alternative conversion rather than retagging the source
+value. Literal-dependent range decisions remain in semantic contextual typing.
+Owning expected initialization preserves the payload and completed wrapper as
+distinct lifetime identities for MIR transfer and rollback.
+
+The existing bounded generated-derived family also has explicit body-local
 execution: a nongeneric derived class with no instance fields or destructor,
 whose nongeneric state-bearing base selects an exact zero-parameter source
 constructor. `ClassLifecycleInfo::generatedDefaultBaseConstructor` supplies the
@@ -148,7 +183,9 @@ semantic selection. HIR discovers that base and records a source-free
 one exact base initializer. It does not fabricate an AST constructor. HIR
 verification binds the empty generated body, concrete owner/base identity and
 constructor target to semantics, and rejects erasure of the target/failure
-propagation together. Other generated shapes keep their existing route.
+propagation together. Empty generated defaults and other unselected shapes keep
+their existing route. Once every selected constructor owns a declaration default,
+the backend emits no duplicate native in-class initializer for that field.
 
 Struct designated construction is resolved in semantics to a compiler-owned,
 full-field construction declaration that is not a source-callable overload.

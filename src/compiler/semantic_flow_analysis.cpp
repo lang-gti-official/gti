@@ -1677,6 +1677,23 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
                              .end = span.end,
                              .line = span.line});
   };
+  const auto selectedConstructor = [&] {
+    const auto *construction = semanticModel.findConstruction(expr);
+    if (construction == nullptr ||
+        construction->kind != ConstructorKind::Ordinary ||
+        construction->constructedType.kind != SemanticType::Class)
+      return false;
+    if (!construction->generatedDefault)
+      return construction->constructor != 0;
+    const auto *owner = classInfo(construction->constructedType);
+    const auto *lifecycle =
+        owner == nullptr || owner->declaration == nullptr
+            ? nullptr
+            : semanticModel.findClassLifecycle(*owner->declaration);
+    return lifecycle != nullptr &&
+           (lifecycle->generatedDefaultBaseConstructor != 0 ||
+            lifecycle->generatedDefaultFieldInitializers);
+  };
 
   if (const ResolvedOperatorInfo *resolved = semanticModel.findOperator(expr)) {
     const bool assignmentExpression =
@@ -1693,22 +1710,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
     return operation;
   }
 
-  if (const ResolvedConstructionInfo *construction =
-          semanticModel.findConstruction(expr);
-      construction != nullptr &&
-      construction->kind == ConstructorKind::Ordinary &&
-      construction->constructedType.kind == SemanticType::Class &&
-      ((construction->constructor != 0 && !construction->generatedDefault) ||
-       (construction->generatedDefault &&
-        [&] {
-          const auto *owner = classInfo(construction->constructedType);
-          const auto *lifecycle =
-              owner == nullptr || owner->declaration == nullptr
-                  ? nullptr
-                  : semanticModel.findClassLifecycle(*owner->declaration);
-          return lifecycle != nullptr &&
-                 lifecycle->generatedDefaultBaseConstructor != 0;
-        }())) &&
+  if (selectedConstructor() &&
       (callResolution == nullptr ||
        callResolution->intrinsic == IntrinsicKind::None)) {
     operation.propagation = FailurePropagationKind::Constructor;
@@ -1797,10 +1799,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::ObjectConstruct:
           // Raw validity is the unsafe caller's obligation. Only the selected
           // GTI constructor may fail; there is no allocation or slot preflight.
-          if (const auto *construction = semanticModel.findConstruction(expr);
-              construction != nullptr &&
-              construction->kind == ConstructorKind::Ordinary &&
-              construction->constructor != 0 && !construction->generatedDefault)
+          if (selectedConstructor())
             operation.propagation = FailurePropagationKind::Constructor;
           break;
         case IntrinsicKind::AllocatePrefixStorage:
@@ -1816,12 +1815,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
                             DefinedFailureDetail::ElementConstruction);
           // MIR checks capacity while prepared parameters are still owned by
           // the caller, then transfers them into this exact final-slot ctor.
-          if (const auto *construction = semanticModel.findConstruction(expr);
-              construction != nullptr &&
-              construction->kind == ConstructorKind::Ordinary &&
-              construction->constructor != 0 &&
-              construction->constructedType.kind == SemanticType::Class &&
-              !construction->generatedDefault) {
+          if (selectedConstructor()) {
             operation.propagation = FailurePropagationKind::Constructor;
           }
           break;
@@ -10459,7 +10453,7 @@ auto SemanticVisitor::Impl::isOwnershipAssignable(
     const SemanticType &target, const SemanticType &value,
     const ExprPtr &expression) const -> bool {
   if (target.kind == SemanticType::UniqueOwner &&
-      value == SemanticType::NullPtr) {
+      target.acceptsNullInitialization() && value == SemanticType::NullPtr) {
     return true;
   }
   if (!isAssignable(target, value, expression.get())) {
@@ -10516,24 +10510,12 @@ auto SemanticVisitor::Impl::isAssignable(SemanticType target,
   if (target == SemanticType::Unknown || value == SemanticType::Unknown) {
     return true;
   }
-  if (target == SemanticType::Double &&
-      (isInteger(value) || value == SemanticType::Float)) {
-    return true;
-  }
-  if (target == SemanticType::Float && isInteger(value)) {
-    return true;
-  }
-  if (target == SemanticType::CString && value == SemanticType::NullPtr) {
-    return true;
-  }
-  if (target.kind == SemanticType::NativeFunction &&
-      value == SemanticType::NullPtr) {
+  if (target.kind != SemanticType::UniqueOwner &&
+      (isImplicitScalarInitializationConversion(target, value) ||
+       isImplicitExpectedInitializationConversion(target, value))) {
     return true;
   }
   if (target.kind == SemanticType::RawPointer) {
-    if (value == SemanticType::NullPtr) {
-      return true;
-    }
     if (value.kind != SemanticType::RawPointer ||
         target.arguments.size() != 1 || value.arguments.size() != 1 ||
         target.arguments.front() != value.arguments.front()) {

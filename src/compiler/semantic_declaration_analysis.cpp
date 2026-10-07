@@ -6130,6 +6130,10 @@ auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
             .declaredDestructor = owner.destructor,
             .defaultConstructor = defaultStatus,
             .generatedDefaultBaseConstructor = generatedBaseConstructor,
+            .generatedDefaultFieldInitializers =
+                defaultStatus == SpecialMemberStatus::Generated &&
+                owner.kind != ClassKind::Union && !owner.fields.empty() &&
+                fieldsHaveDeclarationInitializers(owner),
             .copyConstructor = copyStatus,
             .moveConstructor = moveStatus,
             .copyAssignment = traits.copyAssignable

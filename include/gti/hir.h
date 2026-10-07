@@ -465,6 +465,7 @@ struct HirClassInstance {
   std::optional<CAbiRecordLayout> cAbiLayout;
   std::optional<UnionLayout> unionLayout;
   SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
+  bool generatedDefaultRequiresSchedule = false;
   SpecialMemberStatus copyConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus moveConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus copyAssignment = SpecialMemberStatus::Deleted;
@@ -588,7 +589,8 @@ struct HirConstructorInstance {
   SourceUnitId sourceUnit = 0;
   ConstructorId declaration = 0;
   const ConstructorDecl *source = nullptr;
-  // Structural default construction with an explicit, selected base schedule.
+  // Structural default construction with an explicit, selected base or
+  // declaration-field initializer schedule.
   // Such instances have no source constructor declaration.
   bool generatedDefault = false;
   bool constexprConstructor = false;

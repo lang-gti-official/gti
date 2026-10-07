@@ -264,7 +264,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v93 valid=" << program.valid() << '\n';
+    output << "mir-v94 valid=" << program.valid() << '\n';
     if (const std::optional<MirEmbeddingPlan> &embedding =
             program.embeddingPlan()) {
       output << "program-kind library embedding-abi=" << embedding->abiVersion
@@ -423,6 +423,8 @@ public:
              << " c-opaque=" << instance.cOpaqueHandle
              << " special-members={default="
              << number(instance.defaultConstructor)
+             << ",generated-default-requires-schedule="
+             << instance.generatedDefaultRequiresSchedule
              << ",copy-constructor=" << number(instance.copyConstructor)
              << ",move-constructor=" << number(instance.moveConstructor)
              << ",copy-assignment=" << number(instance.copyAssignment)
@@ -631,6 +633,7 @@ public:
          program.constructorInstances()) {
       output << "constructor @" << instance.id << " owner=" << instance.owner
              << " constexpr=" << instance.constexprConstructor
+             << " generated-default=" << instance.generatedDefault
              << " type-arguments=[";
       for (std::size_t index = 0; index < instance.typeArguments.size();
            ++index) {
