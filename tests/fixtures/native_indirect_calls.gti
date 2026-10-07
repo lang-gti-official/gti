@@ -28,6 +28,10 @@ int32_t invoke_generic<F>(F callback, int32_t value) {
   unsafe { return callback(value); }
 }
 
+int32_t invoke_pack<F, Args...>(F callback, Args... values) {
+  unsafe { return callback(values...); }
+}
+
 int main() {
   unsafe {
     clear_trace();
@@ -48,6 +52,7 @@ int main() {
     Factory factory = obtain_factory();
     Unary increment = factory();
     if (invoke_generic(increment, 41) != 42) { return 8; }
+    if (invoke_pack(table.combine, 4, 2) != 42) { return 12; }
 
     mut int32_t value = 0;
     table.write(&value, 99);

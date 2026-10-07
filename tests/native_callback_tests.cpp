@@ -307,6 +307,14 @@ using Transform = (int32_t) -> int32_t;
 extern "C" { Transform obtain_transform(); }
 int main() { unsafe { return obtain_transform()(7); } }
 )"},
+      {"generic-native-invoke.gti", R"(
+using Transform = (int32_t) -> int32_t;
+extern "C" { Transform obtain_transform(); }
+int32_t invoke<F>(F callback, int32_t value) {
+  unsafe { return callback(value); }
+}
+int main() { unsafe { return invoke(obtain_transform(), 7); } }
+)"},
   };
   for (const auto &[name, source] : invocations) {
     const lang::FrontendResult invoked = analyze(name, source);
@@ -380,7 +388,7 @@ int main() {
         expect(lang::isMirNativeIndirectCall(frontend.mir, function.body,
                                              instruction),
                "native call must satisfy the shared exact MIR contract");
-        for (int mutation = 0; mutation < 7; ++mutation) {
+        for (int mutation = 0; mutation < 10; ++mutation) {
           auto forged = frontend.mir;
           auto &functions =
               const_cast<std::vector<lang::MirFunctionInstance> &>(
@@ -413,6 +421,16 @@ int main() {
                   break;
                 case 6:
                   changed.receiver->type = lang::SemanticType::Int32;
+                  break;
+                case 7:
+                  changed.callSite = 0;
+                  break;
+                case 8:
+                  changed.definedFailure.propagation =
+                      lang::FailurePropagationKind::Callable;
+                  break;
+                case 9:
+                  changed.operands[0] = *changed.receiver;
                   break;
                 }
               }
@@ -475,6 +493,18 @@ int main() { Callback callback = add_one; return 0; }
          "thread attachment and synchronization contract exists");
 }
 
+void testConcreteFailureOverlay() {
+  const auto ordinary = analyze("generic-gti-callable.gti", R"(
+int32_t identity(int32_t value) { return value; }
+int32_t invoke<F>(F callback, int32_t value) { return callback(value); }
+int main() { return invoke(identity, 0); }
+)");
+  expect(ordinary.canGenerateCode() &&
+             lang::verifyMirProgram(ordinary.mir).valid(),
+         "ordinary GTI callable specialization must retain its selected "
+         "function failure contract beside native specialization");
+}
+
 void testFormatterSurface() {
   const std::string source = "using Factory=()->(int32_t,c_string)->int32_t;\n";
   const std::string first = lang::Formatter().format(source);
@@ -493,6 +523,7 @@ int main() {
   testNativeCallableGroundwork();
   testNativeIndirectVerificationAndQueries();
   testExecutionProfileBoundary();
+  testConcreteFailureOverlay();
   testFormatterSurface();
   if (failures != 0) {
     std::cerr << failures << " native callback test(s) failed\n";

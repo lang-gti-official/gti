@@ -1683,14 +1683,19 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
               receiverInput->callInputKind == HirCallInputKind::MoveValue))));
       const bool exactLambdaCallable =
           lambdaTarget != nullptr && !instruction.functionTarget;
-      const bool exactCallableTarget =
-          exactFunctionCallable != exactLambdaCallable;
+      const bool exactNativeCallable =
+          isMirNativeIndirectCall(program, body, instruction);
+      const bool exactCallableTarget = int(exactFunctionCallable) +
+                                           int(exactLambdaCallable) +
+                                           int(exactNativeCallable) ==
+                                       1;
 
       if (instruction.callableInvocation.has_value() != exactCallableTarget) {
         return verificationFailure(
             body, owner,
             "callable invocation capability does not match an "
-            "exact lambda, call operator, or consuming receiver target",
+            "exact lambda, native signature, call operator, or consuming "
+            "receiver target",
             block.id, instruction.id);
       }
       if (instruction.callableInvocation) {

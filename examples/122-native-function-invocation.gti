@@ -9,17 +9,20 @@ int32_t increment(int32_t value) { return value + 1; }
 Transform choose_transform() { return increment; }
 
 class Pipeline {
-  Transform transform;
+  Transform transform = nullptr;
 public:
   Pipeline(Transform selected) : transform(selected) {}
-  unsafe int32_t apply(int32_t value) { return this.transform(value); }
+  unsafe int32_t apply(int32_t value) {
+    unsafe { return this.transform(value); }
+  }
 };
 
 int main() {
   Transform absent = nullptr;
   if (absent != nullptr) { return 1; }
   Factory factory = choose_transform;
-  Pipeline pipeline{increment};
+  Transform selected = increment;
+  Pipeline pipeline{selected};
   unsafe {
     Transform selected = factory();
     if (selected == nullptr) { return 2; }

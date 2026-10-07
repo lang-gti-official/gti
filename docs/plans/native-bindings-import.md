@@ -416,20 +416,19 @@ The current compiler already provides the important foundation:
 - HIR/MIR retain adapter rows, and the verified production backend emits their
   C ABI thunks. They describe C calling an eligible GTI body, not GTI calling
   an arbitrary foreign address.
-- `visitCallExpr` has no native-function invocation family. `ResolvedCallInfo`
-  and downstream calls normally identify selected GTI declarations or other
-  existing callable families. A callback value cannot legitimately manufacture
-  a static GTI declaration target from its signature alone.
+- Native invocation now has a distinct semantic/HIR/MIR signature identity,
+  ordered callee value and verified production emission. A callback value does
+  not manufacture a static GTI declaration target from its signature alone.
 - `externCDeclaration` admits only bodyless functions. The native reader warns
   about `CXCursor_VarDecl` and does not retain a foreign-storage declaration;
   there is no compiler external-global storage identity today.
 
-`native_callback_pipeline` now checks exact field/parameter/result transport
-without an invented GTI adapter, and frontend rejection of local, field and
-call-result invocation plus scalar/const/callback foreign variables. Those
-negatives preserve the current executable-authority boundary, not a permanent
-language prohibition. Replace them with the positive invocation/storage
-contracts when the respective verified production paths are implemented.
+`native_callback_pipeline` checks exact field/parameter/result transport and
+local, field, call-result and concrete generic invocation without an invented
+GTI adapter. Missing unsafe, signature mismatch and forged MIR remain rejected.
+Scalar/const/callback foreign-variable declarations remain frontend negatives
+until C-08B establishes the external-storage identity; those negatives are not
+a permanent language prohibition.
 
 ### C-08A: Call native function-pointer values
 

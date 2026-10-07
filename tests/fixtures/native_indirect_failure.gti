@@ -1,3 +1,5 @@
+#include <std/panic>
+
 using Failure = () -> void;
 
 class TargetGuard {

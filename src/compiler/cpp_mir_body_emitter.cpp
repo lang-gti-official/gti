@@ -4541,6 +4541,9 @@ stagedClassResultForResult(const MirBody &body, MirValueId stagedId) {
   const bool directCallableCall = definition != nullptr &&
                                   callableValueInvocation(*definition) &&
                                   definition->result == valueId;
+  const bool directNativeCall =
+      definition != nullptr && definition->kind == MirInstructionKind::Call &&
+      definition->nativeCalleeType && definition->result == valueId;
   const bool directDefaultConstruction =
       definition != nullptr && definition->kind == MirInstructionKind::Call &&
       definition->result && *definition->result == valueId &&
@@ -4560,8 +4563,9 @@ stagedClassResultForResult(const MirBody &body, MirValueId stagedId) {
       expectedOwnedClassExtractionDestination(body, valueId);
   const StagedClassResult staged = stagedClassResultForSource(body, valueId);
   if (!directConstruct && !directMove && !directCopy && !directFunctionCall &&
-      !directCallableCall && !directDefaultConstruction && !restoringExchange &&
-      ownedExpectedExtraction == nullptr && staged.producer != definition) {
+      !directCallableCall && !directNativeCall && !directDefaultConstruction &&
+      !restoringExchange && ownedExpectedExtraction == nullptr &&
+      staged.producer != definition) {
     return nullptr;
   }
   if (ownedExpectedExtraction != nullptr) {
@@ -48012,7 +48016,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               const bool functionItemReady =
                   operand.type.hasFunctionItemShape() &&
                   valueOperand(operand) && typeRow(operand.type);
-              if (!lambdaReady && !classReady && !functionItemReady) {
+              const bool nativeReady = operand.type.hasNativeFunctionShape() &&
+                                       valueOperand(operand) &&
+                                       typeRow(operand.type);
+              if (!lambdaReady && !classReady && !functionItemReady &&
+                  !nativeReady) {
                 callableArgumentsReady = false;
                 break;
               }

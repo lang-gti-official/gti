@@ -92,7 +92,6 @@ bool isMirNativeIndirectCall(const MirProgram &program, const MirBody &body,
       instruction.dispatch != CallDispatch::Static ||
       instruction.dispatchOwner != SemanticType::Unknown ||
       instruction.callableInvocation != CallableInvocationCapability::Read ||
-      instruction.callableBoundary ||
       !instruction.callableArguments.empty() || instruction.loan ||
       instruction.borrowOrigin != BorrowOriginKind::None ||
       !instruction.definedFailure.empty() ||
@@ -7536,7 +7535,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           instruction.functionTarget || instruction.constructorTarget ||
           instruction.lambdaTarget || instruction.bodyTarget ||
           instruction.intrinsic != IntrinsicKind::None ||
-          instruction.callableInvocation != CallableInvocationCapability::Read ||
+          instruction.callableInvocation !=
+              CallableInvocationCapability::Read ||
           instruction.info.type != *signature.nativeFunctionReturnType() ||
           instruction.parameterTypes.size() != parameters.size() ||
           !std::equal(parameters.begin(), parameters.end(),
