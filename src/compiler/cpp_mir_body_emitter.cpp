@@ -4005,6 +4005,9 @@ struct StagedClassResult {
 [[nodiscard]] bool invokePairedInstruction(const MirBody &body,
                                            MirInstructionId id);
 
+[[nodiscard]] const MirBlock *
+invokeProducerBlock(const MirBody &body, const MirInstruction &producer);
+
 [[nodiscard]] bool invokeSuccessActivates(const MirBody &body,
                                           const MirInstruction &producer,
                                           MirDropObligationId obligation) {
@@ -6659,6 +6662,69 @@ struct OwnedUnexpectedValue {
   explicit operator bool() const { return wrapper != nullptr; }
 };
 
+// Body-local storage/transfer facts shared by the Expected producer proofs.
+// This does not establish declaration authority: the constructor Initialize
+// gate below additionally checks the exact owner field and initializer row.
+[[nodiscard]] const MirPlace *
+expectedConstructorFieldDestination(const MirBody &body,
+                                    const MirInstruction &initialize) {
+  const auto *field = initialize.destination
+                          ? body.findPlace(*initialize.destination)
+                          : nullptr;
+  if (body.kind != MirBodyKind::Constructor ||
+      initialize.kind != MirInstructionKind::Initialize ||
+      initialize.constructorInitializer == 0 || initialize.result ||
+      initialize.receiver || initialize.loan ||
+      !initialize.definedFailure.empty() ||
+      !initialize.localFailureSites.empty() ||
+      initialize.operands.size() != 1 ||
+      initialize.operands.front().kind != MirOperandKind::Value || !field ||
+      field->root != MirPlaceRootKind::This || field->initiallyAvailable ||
+      field->projections.size() != 1 ||
+      field->projections.front().kind != MirProjectionKind::Field ||
+      field->type.kind != SemanticType::Expected ||
+      field->type.arguments.size() != 2 ||
+      field->traits.containsBorrowedState ||
+      initialize.info.type != field->type)
+    return nullptr;
+  const auto &input = initialize.operands.front();
+  const auto *value = body.findValue(input.value);
+  if (!value || value->info.type != input.type ||
+      value->info.traits.containsBorrowedState ||
+      !(input.type == field->type.arguments.front() ||
+        (input.type.kind == SemanticType::Unexpected &&
+         input.type.arguments ==
+             std::vector<SemanticType>{field->type.arguments.back()})))
+    return nullptr;
+  const MirDropObligation *target = nullptr;
+  for (const auto &drop : body.dropObligations) {
+    if (drop.place != field->id)
+      continue;
+    if (target || drop.kind != MirDropObligationKind::ConstructionRollback ||
+        drop.initiallyActive || drop.dropType.type != field->type)
+      return nullptr;
+    target = &drop;
+  }
+  const auto *source = uniqueValueDrop(body, input.value, input.type);
+  if (!target || initialize.lifecycle.size() != (source ? 2u : 1u))
+    return nullptr;
+  if (source) {
+    const auto &transfer = initialize.lifecycle.front();
+    if (transfer.kind != MirLifecycleEventKind::TransferOut ||
+        transfer.source != source->id || transfer.target ||
+        transfer.conditional || transfer.failureCleanup)
+      return nullptr;
+  } else if (value->info.traits.drop != DropKind::Trivial) {
+    return nullptr;
+  }
+  const auto &activation = initialize.lifecycle.back();
+  return activation.kind == MirLifecycleEventKind::Initialize &&
+                 activation.source == 0 && activation.target == target->id &&
+                 !activation.conditional && !activation.failureCleanup
+             ? field
+             : nullptr;
+}
+
 // An owning Unexpected is a real MIR value: constructing the error activates
 // its drop, wrapping it transfers that drop into the wrapper, and Return or
 // an Expected Initialize consumes it. Keep both storage identities
@@ -6759,7 +6825,8 @@ struct OwnedUnexpectedValue {
       body.returnType.arguments.back() == value->info.type.arguments.front();
   const bool joinPublication =
       initialize && join &&
-      (expectedConditionalSlot(body, *join) || bindingPublication) &&
+      (expectedConditionalSlot(body, *join) || bindingPublication ||
+       expectedConstructorFieldDestination(body, *initialize) == join) &&
       initialize->kind == MirInstructionKind::Initialize &&
       !initialize->result && !initialize->receiver &&
       initialize->info.type == join->type &&
@@ -15527,16 +15594,36 @@ expectedPayloadInitialize(const MirProgram &program, const MirBody &body,
       failureConstructorBoundaryEligible(program, *constructor) &&
       definition->definedFailure.propagation ==
           FailurePropagationKind::Constructor;
+  const auto *constructedOwner =
+      constructor ? program.findClassInstance(constructor->owner) : nullptr;
+  const bool plainConstruction =
+      definition && value && constructor && constructedOwner &&
+      constructedOwner->type == value->info.type &&
+      definition->kind == MirInstructionKind::Construct &&
+      definition->constructorKind == ConstructorKind::Ordinary &&
+      constructor->definitionKind == MirDefinitionKind::Source &&
+      !constructor->mayRaiseDefinedFailure &&
+      constructor->parameterTypes.empty() && definition->operands.empty() &&
+      definition->parameterTypes.empty() && !definition->functionTarget &&
+      !definition->receiver && !definition->destination &&
+      !definition->lambdaTarget && !definition->bodyTarget &&
+      !definition->callableInvocation &&
+      definition->callableArguments.empty() &&
+      definition->definedFailure.empty() &&
+      definition->localFailureSites.empty() && !definition->successResultDrop &&
+      !definition->successResultDestination;
   const MirDropObligation *valueDrop =
       value == nullptr ? nullptr
                        : uniqueValueDrop(body, valueId, value->info.type);
   if (value == nullptr || value->info.type.kind != SemanticType::Class ||
       value->info.traits.drop != DropKind::Lexical || definition == nullptr ||
-      (!sourceCall && !sourceConstruction && !sourceLambda) ||
+      (!sourceCall && !sourceConstruction && !sourceLambda &&
+       !plainConstruction) ||
       definition->result != valueId ||
-      definition->intrinsic != IntrinsicKind::None ||
-      !invokePairedInstruction(body, definition->id) || valueDrop == nullptr ||
-      definition->successResultDrop != valueDrop->id ||
+      definition->intrinsic != IntrinsicKind::None || valueDrop == nullptr ||
+      (!plainConstruction &&
+       (!invokePairedInstruction(body, definition->id) ||
+        definition->successResultDrop != valueDrop->id)) ||
       (!mirTypeMoveIsDefinedFailureFree(program, value->info.type) &&
        !lifecycleGuardedGeneratedMoveIsDefinedFailureFree(program,
                                                           value->info.type))) {
@@ -15556,12 +15643,26 @@ expectedPayloadInitialize(const MirProgram &program, const MirBody &body,
                                     : nullptr;
   const bool conditionalDestination =
       destination != nullptr && expectedConditionalSlot(body, *destination);
+  const bool fieldDestination =
+      initialize && destination &&
+      expectedConstructorFieldDestination(body, *initialize) == destination;
+  if (plainConstruction) {
+    if (!fieldDestination || invokePairedInstruction(body, definition->id) ||
+        definition->lifecycle.size() != 1)
+      return nullptr;
+    const auto &event = definition->lifecycle.front();
+    if (event.kind != MirLifecycleEventKind::Initialize || event.source ||
+        event.target != valueDrop->id || event.conditional ||
+        event.failureCleanup)
+      return nullptr;
+  }
   const MirDropObligation *bindingDrop = nullptr;
   if (destination != nullptr) {
     for (const MirDropObligation &drop : body.dropObligations) {
-      if (drop.kind != (conditionalDestination
-                            ? MirDropObligationKind::Value
-                            : MirDropObligationKind::Binding) ||
+      if (drop.kind !=
+              (fieldDestination ? MirDropObligationKind::ConstructionRollback
+               : conditionalDestination ? MirDropObligationKind::Value
+                                        : MirDropObligationKind::Binding) ||
           drop.place != destination->id) {
         continue;
       }
@@ -15578,9 +15679,9 @@ expectedPayloadInitialize(const MirProgram &program, const MirBody &body,
       initialize->operands.front().kind != MirOperandKind::Value ||
       initialize->operands.front().value != valueId ||
       initialize->operands.front().type != value->info.type ||
-      (!conditionalDestination &&
+      (!conditionalDestination && !fieldDestination &&
        destination->root != MirPlaceRootKind::Binding) ||
-      !destination->projections.empty() ||
+      (!fieldDestination && !destination->projections.empty()) ||
       destination->type.kind != SemanticType::Expected ||
       destination->type.arguments.size() != 2 ||
       destination->type.arguments.front() != value->info.type ||
@@ -15599,6 +15700,146 @@ expectedPayloadInitialize(const MirProgram &program, const MirBody &body,
                  !activate.conditional && !activate.failureCleanup
              ? initialize
              : nullptr;
+}
+
+// Complete field-publication proof. MIR's typed transfer and rollback are the
+// authority; this adds only the exact representation preconditions for
+// replacing the private empty Expected shell. It never admits assignment to a
+// live field.
+[[nodiscard]] const MirPlace *
+expectedConstructorFieldPublication(const MirProgram &program,
+                                    const MirBody &body,
+                                    const MirInstruction &initialize) {
+  const auto *field = expectedConstructorFieldDestination(body, initialize);
+  if (!field || !failureConstructorEmptyDefaultFieldType(
+                    program, field->type, EmptyFieldUse::Construction))
+    return nullptr;
+  const MirConstructorInstance *constructor = nullptr;
+  for (const auto &candidate : program.constructorInstances())
+    if (&candidate.body == &body) {
+      if (constructor)
+        return nullptr;
+      constructor = &candidate;
+    }
+  const auto *owner =
+      constructor ? program.findClassInstance(constructor->owner) : nullptr;
+  if (!owner ||
+      initialize.constructorInitializer > constructor->initializers.size())
+    return nullptr;
+  const auto &selected =
+      constructor->initializers[initialize.constructorInitializer - 1];
+  const auto declaration = std::find_if(
+      owner->declaredFields.begin(), owner->declaredFields.end(),
+      [&](const auto &candidate) {
+        return candidate.symbol == field->projections.front().field;
+      });
+  const auto &input = initialize.operands.front();
+  const auto *value = body.findValue(input.value);
+  const auto *producer =
+      value ? findInstruction(body, value->definition) : nullptr;
+  if (declaration == owner->declaredFields.end() ||
+      declaration->type != field->type ||
+      selected.kind != ConstructorInitializerTargetKind::Field ||
+      selected.field != declaration->symbol ||
+      selected.targetType != field->type || selected.storesReference ||
+      selected.ownedParameter || selected.constructorTarget ||
+      selected.generatedDefault || !producer || producer->hirValue == 0 ||
+      initialize.hirValue != producer->hirValue ||
+      selected.arguments != std::vector<HirValueId>{producer->hirValue})
+    return nullptr;
+  const auto *fieldDrop =
+      body.findDropObligation(initialize.lifecycle.back().target);
+  if (!fieldDrop || fieldDrop->dropType.requiresActiveCleanup !=
+                        declaration->requiresActiveCleanup)
+    return nullptr;
+  const auto expression =
+      std::find_if(body.fullExpressions.begin(), body.fullExpressions.end(),
+                   [&](const auto &candidate) {
+                     return candidate.constructorInitializer ==
+                            initialize.constructorInitializer;
+                   });
+  if (expression == body.fullExpressions.end() ||
+      expression->roots != selected.arguments)
+    return nullptr;
+  if (const auto *source = uniqueValueDrop(body, input.value, input.type);
+      source && source->fullExpression != expression->id)
+    return nullptr;
+  const auto uses = nonRootRecordUses(body, input.value);
+  if (uses.size() != 1 ||
+      uses.front().kind != MirValueUseKind::InstructionOperand ||
+      uses.front().instruction != initialize.id || uses.front().operandIndex)
+    return nullptr;
+  const auto *produced = body.findBlock(value->definitionBlock);
+  const auto *published = body.findBlock(uses.front().block);
+  if (!produced || !published || published->activeFailure ||
+      published->failureParameter)
+    return nullptr;
+  bool adjacent = false;
+  if (const auto *invoke = invokeProducerBlock(body, *producer)) {
+    adjacent = invoke->terminator.target == published->id &&
+               invoke->terminator.targetArguments.empty() &&
+               !published->instructions.empty() &&
+               &published->instructions.front() == &initialize;
+  } else if (produced == published) {
+    const auto position = std::find_if(
+        produced->instructions.begin(), produced->instructions.end(),
+        [&](const auto &item) { return &item == producer; });
+    adjacent = position != produced->instructions.end() &&
+               std::next(position) != produced->instructions.end() &&
+               &*std::next(position) == &initialize;
+  }
+  if (!adjacent)
+    return nullptr;
+  if (input.type.kind == SemanticType::Class) {
+    const auto *drop = uniqueValueDrop(body, input.value, input.type);
+    return drop && !drop->initiallyActive &&
+                   (invokeSuccessActivates(body, *producer, drop->id) ||
+                    (producer->kind == MirInstructionKind::Construct &&
+                     producer->definedFailure.empty() &&
+                     !invokePairedInstruction(body, producer->id))) &&
+                   expectedPayloadInitialize(program, body, input.value) ==
+                       &initialize
+               ? field
+               : nullptr;
+  }
+  if (input.type.kind == SemanticType::Unexpected) {
+    const auto owned = ownedUnexpectedValue(body, input.value);
+    return owned.publication == &initialize &&
+                   (mirTypeMoveIsDefinedFailureFree(program,
+                                                    owned.payload->type) ||
+                    lifecycleGuardedGeneratedMoveIsDefinedFailureFree(
+                        program, owned.payload->type))
+               ? field
+               : nullptr;
+  }
+  const auto representation = expectedTypeRepresentation(input.type);
+  return value->info.traits.drop == DropKind::Trivial &&
+                 (representation == CppMirTypeRepresentationKind::Scalar ||
+                  representation == CppMirTypeRepresentationKind::Enum ||
+                  representation == CppMirTypeRepresentationKind::StringView)
+             ? field
+             : nullptr;
+}
+
+// The failure-free staging writer is intentionally narrower than the general
+// checked payload proof: it constructs one exact zero-argument payload object
+// at this instruction, whose sole adjacent consumer publishes the proven field.
+[[nodiscard]] bool
+plainExpectedConstructorFieldPayload(const MirProgram &program,
+                                     const MirBody &body,
+                                     const MirInstruction &construct) {
+  if (construct.kind != MirInstructionKind::Construct || !construct.result ||
+      !construct.constructorTarget || !construct.operands.empty() ||
+      !construct.parameterTypes.empty() || !construct.definedFailure.empty() ||
+      !construct.localFailureSites.empty() ||
+      invokePairedInstruction(body, construct.id))
+    return false;
+  const auto *publication =
+      expectedPayloadInitialize(program, body, *construct.result);
+  const auto *value = body.findValue(*construct.result);
+  return publication && value && value->definition == construct.id &&
+         publication->operands.front().value == *construct.result &&
+         expectedConstructorFieldPublication(program, body, *publication);
 }
 
 struct ExpectedDefaultPayloadInitialization {
@@ -32170,6 +32411,36 @@ private:
     if (instruction.kind == MirInstructionKind::Initialize &&
         instruction.destination) {
       const MirPlace *slot = facts.body.findPlace(*instruction.destination);
+      if (const auto *field = expectedConstructorFieldPublication(
+              program, facts.body, instruction)) {
+        const auto &input = instruction.operands.front();
+        const auto ownedError =
+            input.type.kind == SemanticType::Unexpected
+                ? ownedUnexpectedValue(facts.body, input.value)
+                : OwnedUnexpectedValue{};
+        const auto destination = destinationSpelling(facts, field->id);
+        output << "std::destroy_at(std::addressof(" << destination << "));\n";
+        writeIndent();
+        output << "::gti_internal::backend::construct_representation_at("
+                  "std::addressof("
+               << destination << "), ";
+        if (ownedError) {
+          output << "__gti_mir_p_"
+                 << canonicalSlotPlaceId(facts.body, *ownedError.slot)
+                 << ".take()";
+        } else if (input.type.kind == SemanticType::Class) {
+          output << "std::move(__gti_mir_v_" << input.value << ".get())";
+        } else {
+          emitOperand(input);
+        }
+        output << "); // GTI MIR Expected field publication\n";
+        if (input.type.kind == SemanticType::Class) {
+          writeIndent();
+          output << "__gti_mir_v_" << input.value
+                 << ".destroy(); // end transferred payload representation\n";
+        }
+        return;
+      }
       if (slot != nullptr && instruction.operands.size() == 1 &&
           instruction.operands.front().kind == MirOperandKind::Value) {
         if (const MirInstruction *extract = inlinePayloadClassExtract(
@@ -33111,6 +33382,11 @@ private:
               ? ownedUnexpectedValue(facts.body, input.value)
               : OwnedUnexpectedValue{};
       if (destination != nullptr &&
+          // A constructor field is an already-declared private empty shell,
+          // not a local lifetime slot. Its exact publication writer below
+          // replaces that shell while preserving the field rollback identity.
+          !expectedConstructorFieldPublication(program, facts.body,
+                                               instruction) &&
           (expectedConditionalSlot(facts.body, *destination) ||
            (input.kind == MirOperandKind::Value &&
             expectedInitializationFromUnexpected(facts.body, input.value) ==
@@ -33991,6 +34267,18 @@ private:
     }
     if (instruction.kind == MirInstructionKind::Construct &&
         instruction.result) {
+      if (plainExpectedConstructorFieldPayload(program, facts.body,
+                                               instruction)) {
+        // Preserve execution at Construct. The matching Initialize replaces
+        // only its unpublished field shell and retires this moved-from slot.
+        // As for an owning Unexpected payload, the factory keeps source
+        // constructor access checking in the original lexical context.
+        output << "__gti_mir_v_" << *instruction.result
+               << ".construct_from([&]() { return ";
+        emitClassConstructionExpression(facts, instruction);
+        output << "; });\n";
+        return;
+      }
       if (expectedDefaultPayloadInitialization(program, facts.body,
                                                *instruction.result)
               .producer == &instruction) {
@@ -46398,6 +46686,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       case MirInstructionKind::Lifecycle:
         continue;
       case MirInstructionKind::Construct: {
+        if (plainExpectedConstructorFieldPayload(program_, body, instruction) &&
+            typeRow(instruction.info.type))
+          continue;
         if (instruction.result &&
             expectedDefaultPayloadInitialization(program_, body,
                                                  *instruction.result)
@@ -47694,6 +47985,19 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
         }
         const MirPlace *destination = body.findPlace(*instruction.destination);
+        if (destination && destination->root == MirPlaceRootKind::This &&
+            destination->type.kind == SemanticType::Expected &&
+            instruction.operands.front().type != destination->type) {
+          // A typed alternative cannot use ordinary assignment into a native
+          // default value: it replaces only the exact private constructor
+          // shell.
+          if (!failureForm ||
+              !expectedConstructorFieldPublication(program_, body,
+                                                   instruction) ||
+              !valueOperand(instruction.operands.front()))
+            return false;
+          continue;
+        }
         if (destination != nullptr &&
             destination->root == MirPlaceRootKind::This &&
             destination->projections.size() == 1 &&
