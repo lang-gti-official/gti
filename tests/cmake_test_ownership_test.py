@@ -130,7 +130,7 @@ def main() -> None:
             )
             names = [test["name"] for test in json.loads(result.stdout)["tests"]]
             expected_names = ["structural_relocation_lsp", "extensible_formatting_lsp",
-                              "integral_enum_lsp"] if enabled == "ON" else []
+                              "integral_enum_lsp", "generic_enum_lsp"] if enabled == "ON" else []
             if names != expected_names:
                 fail(f"LSP {enabled}: incorrect optional test inventory {names}")
 

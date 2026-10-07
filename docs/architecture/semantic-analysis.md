@@ -104,6 +104,8 @@ requested frontend phases for Strict; promotion cannot poison query summaries.
 Audit-only conflicts are excluded from mandatory loan endpoint planning and
 inspect its completed liveness facts only for diagnostics. No checked loan,
 cleanup schedule or native output may depend on audit mode.
+Audit-only field-type queries look up existing declaration identities; they do
+not register unrelated methods or change mandatory MIR symbol/place identities.
 
 The remaining section describes the optional analyzer, not extra mandatory
 conditions for compiling an unsafe implementation.

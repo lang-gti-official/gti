@@ -84,6 +84,10 @@ hiding their diagnostics. `strict` runs the same analysis and promotes its
 findings to errors for CI. It is an audit policy, not a different runtime mode
 or a soundness certificate; warning suppression cannot hide strict errors.
 Project profiles may set `raw-pointer-audit` to `"off"`, `"warn"` or `"strict"`.
+Findings can originate in included generic library bodies as well as application
+source. In particular, source-defined allocation and relocation can exceed the
+bounded provenance summaries. Warn retains those advisory findings; Strict
+promotes them too, rather than silently exempting the standard library.
 
 Findings distinguish observed contradictions (`GTI-S2101`), possible lifetime
 or alias violations (`GTI-S2102`), and incomplete analysis (`GTI-S2103`). A

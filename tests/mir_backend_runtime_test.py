@@ -89,10 +89,10 @@ def main() -> int:
                         "// GTI verified-MIR body: native-boundary-v1 "
                         "function-instance"
                     )
-                    # Seven declaration-bound prelude operations (including
-                    # panic and the two container checks) and two native stdout
-                    # declarations each retain their verified boundary.
-                    != 9
+                    # Twelve declaration-bound prelude operations (including
+                    # the five source-storage state/relocation checks) and two
+                    # native stdout declarations retain verified boundaries.
+                    != 14
                 ):
                     sys.stderr.write(
                         "generated C++ lost the verified prelude initializer, "

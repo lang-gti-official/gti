@@ -10,7 +10,19 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testConstructedPrvalueCheckedFieldReplacement",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testNonFailingOwningDeclarationInitializer",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testGeneratedDeclarationFailureRollback",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testGeneratedDefaultScheduleObligation",
       "suite": "lifecycle"
     },
     {
@@ -278,7 +290,7 @@
       "suite": "lifecycle"
     },
     {
-      "name": "testContainedOwningStringFieldConstructor",
+      "name": "testGeneratedOwningStringFieldConstructor",
       "suite": "lifecycle"
     },
     {
@@ -327,6 +339,10 @@
     },
     {
       "name": "testDefaultConstructionPreparedParameterStaging",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testCheckedPassiveExpectedConstruction",
       "suite": "lifecycle"
     },
     {
