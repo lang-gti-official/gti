@@ -1,0 +1,95 @@
+// Move-only records inside a vector inside an optional class field:
+// emplace, push through value(), mutable range over a field projection,
+// std::exchange to take the field out, and reset.
+#include <std/memory>
+#include <std/optional>
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+class Item {
+  std::string name_;
+  mut std::unique_ptr<int> weight_;
+
+public:
+  Item(std::string_view name, int weight)
+      : name_(std::string(name)), weight_(std::make_unique<int>(weight)) {}
+  int weight() { return *this.weight_; }
+  std::string_view name() { return this.name_.view(); }
+  // Workaround for the *owner = *owner + n MIR ICE (see red/b2.gti).
+  void add(int amount) mut {
+    int now = *this.weight_;
+    *this.weight_ = now + amount;
+  }
+};
+
+class Bag {
+  mut std::optional<std::vector<Item>> items_{};
+
+public:
+  Bag() {}
+  bool is_open() { return this.items_.has_value(); }
+  void put(Item item) mut {
+    if (!this.items_.has_value()) {
+      [[discard]] this.items_.emplace();
+    }
+    this.items_.value().push_back(std::move(item));
+  }
+  int total() {
+    if (!this.items_) { return -1; }
+    mut int sum = 0;
+    for (auto& item : this.items_.value()) {
+      sum += item.weight();
+    }
+    return sum;
+  }
+  void grow_all(int amount) mut {
+    if (!this.items_.has_value()) { return; }
+    for (mut auto& item : this.items_.value()) {
+      item.add(amount);
+    }
+  }
+  std::size_t count() {
+    if (!this.items_) { return std::size_t(0); }
+    return this.items_->size();
+  }
+  std::optional<std::vector<Item>> take() mut {
+    return std::exchange(this.items_, std::optional<std::vector<Item>>());
+  }
+};
+
+int main() {
+  mut Bag bag{};
+  if (bag.is_open() || bag.total() != -1) { return 1; }
+  bag.put(Item("rope", 3));
+  Item lamp{"lamp", 5};
+  bag.put(std::move(lamp));
+  for (mut int i = 0; i < 3; i += 1) {
+    bag.put(Item("coin", i + 1));
+  }
+  if (bag.count() != std::size_t(5) || bag.total() != 14) { return 2; }
+  bag.grow_all(2);
+  if (bag.total() != 24) { return 3; }
+
+  mut auto taken = bag.take();
+  if (bag.is_open() || bag.count() != std::size_t(0) || !taken.has_value()) {
+    return 4;
+  }
+  if (taken->size() != std::size_t(5)) { return 5; }
+  {
+    std::vector<Item>& items = taken.value();
+    if (items[std::size_t(0)].name() != "rope") { return 6; }
+    if (items[std::size_t(1)].weight() != 7) { return 7; }
+    std::println(items[std::size_t(4)].name());
+  }
+  taken.value()[std::size_t(2)].add(100);
+  if (taken.value()[std::size_t(2)].weight() != 103) { return 8; }
+  taken.reset();
+  if (taken.has_value()) { return 9; }
+
+  // The bag is reusable after its field was exchanged out.
+  bag.put(Item("map", 1));
+  if (bag.count() != std::size_t(1) || bag.total() != 1) { return 10; }
+  std::println("v01 ok");
+  return 0;
+}

@@ -1,0 +1,84 @@
+// std::shared_ptr held by move-only services stored in a vector:
+// explicit clone(), std::clone of a vector whose elements define clone(),
+// use_count snapshots, reset/swap/null handles, pop_back/clear releasing,
+// and exactly-once release of the shared object.
+#include <std/memory>
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+mut int g_configs_released = 0;
+
+class Config {
+  std::string name_;
+  int level_;
+
+public:
+  Config(std::string_view name, int level)
+      : name_(std::string(name)), level_(level) {}
+  ~Config() { g_configs_released += 1; }
+  int level() { return this.level_; }
+  std::string_view name() { return this.name_.view(); }
+};
+
+class Service {
+  std::shared_ptr<Config> config_;
+  int id_;
+
+public:
+  Service(std::shared_ptr<Config> config, int id)
+      : config_(std::move(config)), id_(id) {}
+  int score() { return this.config_->level() * 10 + this.id_; }
+  std::size_t sharers() { return this.config_.use_count(); }
+  Service clone() { return Service(this.config_.clone(), this.id_); }
+};
+
+int total_score(std::vector<Service>& services) {
+  mut int total = 0;
+  for (auto& service : services) {
+    total += service.score();
+  }
+  return total;
+}
+
+int main() {
+  mut std::shared_ptr<Config> shared = std::make_shared<Config>("prod", 3);
+  mut std::vector<Service> services{};
+  for (mut int i = 0; i < 4; i += 1) {
+    services.push_back(Service(shared.clone(), i));
+  }
+  if (shared.use_count() != std::size_t(5)) { return 1; }
+  if (total_score(services) != 126) { return 2; }
+
+  {
+    std::vector<Service> copies = std::clone(services);
+    if (shared.use_count() != std::size_t(9)) { return 3; }
+    if (total_score(copies) != 126) { return 4; }
+    mut std::vector<std::shared_ptr<Config>> handles{};
+    handles.push_back(shared.clone());
+    std::vector<std::shared_ptr<Config>> handle_copies = std::clone(handles);
+    if (shared.use_count() != std::size_t(11)) { return 5; }
+    if (handle_copies[std::size_t(0)]->name() != "prod") { return 6; }
+  }
+  if (shared.use_count() != std::size_t(5)) { return 7; }
+
+  services.pop_back();
+  if (shared.use_count() != std::size_t(4)) { return 8; }
+
+  mut std::shared_ptr<Config> other = std::make_shared<Config>("dev", 1);
+  shared.swap(other);
+  if (shared->name() != "dev" || other.use_count() != std::size_t(4)) {
+    return 9;
+  }
+  shared.reset();
+  if (shared || g_configs_released != 1) { return 10; }
+  other = nullptr;
+  if (other != nullptr || g_configs_released != 1) { return 11; }
+  if (services[std::size_t(0)].sharers() != std::size_t(3)) { return 12; }
+
+  services.clear();
+  if (g_configs_released != 2) { return 13; }
+  std::println(g_configs_released);
+  std::println("v07 ok");
+  return 0;
+}

@@ -77,7 +77,6 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   contextualInitializerExpression = nullptr;
   contextualOperatorIntegerType.reset();
   contextualCallableResult.reset();
-  contextualNativeOutPointerType.reset();
   currentReceiverMutability = ReceiverMutability::ReadOnly;
   suppressedProjectedPlaceReads.clear();
   constructorDepth = 0;
@@ -1853,7 +1852,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   validateRuntimeBinding(stmt);
   const bool enclosingPackTypeReference = allowPackTypeReference;
   allowPackTypeReference = true;
-  validateType(stmt.returnType(), stmt.nativeCArray().has_value());
+  validateType(stmt.returnType());
   allowPackTypeReference = enclosingPackTypeReference;
   const bool methodDeclaration = currentClass && functionDepth == 0;
   const bool polymorphic =
@@ -1938,7 +1937,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   for (const Parameter &parameter : stmt.parameters()) {
     const bool enclosingParameterPackTypeReference = allowPackTypeReference;
     allowPackTypeReference = true;
-    validateType(parameter.type, stmt.hasCLinkage());
+    validateType(parameter.type);
     allowPackTypeReference = enclosingParameterPackTypeReference;
     if (!intrinsicDeclaration) {
       validateReferencePlacement(parameter.type, true, "function parameter",
@@ -4234,6 +4233,21 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       analyzeContextualCallArguments(expr.arguments());
   std::vector<SemanticType> &argumentTypes = argumentAnalysis.types;
 
+  if (calleeType.kind == SemanticType::NativeFunction) {
+    if (argumentAnalysis.hasDeferred()) {
+      const auto parameters = calleeType.nativeFunctionParameterTypes();
+      if (!finishContextualCallArguments(
+              std::vector<SemanticType>(parameters.begin(), parameters.end()),
+              expr.arguments(), argumentAnalysis, expr.paren(),
+              "Native function pointer")) {
+        currentType = SemanticType::Unknown;
+        return;
+      }
+    }
+    analyzeNativeIndirectCall(expr, calleeType, argumentTypes);
+    return;
+  }
+
   if (calleeType.kind == SemanticType::Lambda) {
     if (argumentAnalysis.hasDeferred()) {
       std::vector<SemanticType> parameters(
@@ -4289,8 +4303,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     if (std::any_of(expr.arguments().begin(), expr.arguments().end(),
                     [&](const ExprPtr &argument) {
                       return isContextualArrayArgument(argument) ||
-                             isContextualNativeFunctionArgument(argument) ||
-                             isContextualNativeOutPointerArgument(argument);
+                             isContextualNativeFunctionArgument(argument);
                     })) {
       report(expr.paren(),
              "Contextual brace arguments are not yet available through "
@@ -6317,8 +6330,6 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   const Expr *enclosingInitializerExpression = contextualInitializerExpression;
   const std::optional<ContextualCallableResult> enclosingCallableResult =
       contextualCallableResult;
-  const std::optional<SemanticType> enclosingNativeOutPointerType =
-      contextualNativeOutPointerType;
   scopes.clear();
   scopes.push_back(std::move(captureScope));
   currentReturnType = returnType;
@@ -6329,7 +6340,6 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   contextualInitializerType.reset();
   contextualInitializerExpression = nullptr;
   contextualCallableResult.reset();
-  contextualNativeOutPointerType.reset();
   loopDepth = 0;
   switchDepth = 0;
   constructorDepth = 0;
@@ -6380,7 +6390,6 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   contextualInitializerType = enclosingInitializerType;
   contextualInitializerExpression = enclosingInitializerExpression;
   contextualCallableResult = enclosingCallableResult;
-  contextualNativeOutPointerType = enclosingNativeOutPointerType;
   analyzingCallCallee = enclosingAnalyzingCallCallee;
   loanFlow = std::move(enclosingLoanFlow);
   valueControlFlow = std::move(enclosingValueControlFlow);
@@ -6568,13 +6577,10 @@ auto SemanticVisitor::Impl::directLayoutExtentErrorToken(
   }
 
   SemanticType element = baseTypeOf(type, currentNamespace);
-  if (type.pointer) {
+  for (const auto &pointer : type.pointers) {
     element = SemanticType::rawPointerTo(
         std::move(element),
-        type.pointeeConst ? AccessMode::ReadOnly : AccessMode::Mutable);
-  }
-  if (type.outerPointer) {
-    element = SemanticType::rawPointerTo(std::move(element));
+        pointer.pointeeConst ? AccessMode::ReadOnly : AccessMode::Mutable);
   }
   LayoutEvaluation accumulated = evaluateLayout(element);
   if (!accumulated) {
@@ -7615,22 +7621,6 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
                                 : AccessMode::ReadOnly);
     if (info->access == AccessMode::Mutable) {
       recordMutableBindingUse(expr.right());
-    }
-    if (addressType.arguments.front().kind == SemanticType::RawPointer &&
-        (!contextualNativeOutPointerType ||
-         *contextualNativeOutPointerType != addressType ||
-         !isCAbiOpaqueHandleOutPointer(addressType))) {
-      report(expr.oper(),
-             contextualNativeOutPointerType
-                 ? "An opaque C handle out argument requires the address "
-                   "of a mutable handle-pointer binding with the exact "
-                   "parameter type."
-                 : "Pointer-to-pointer values are available only as the "
-                   "direct argument to an exact opaque C handle out "
-                   "parameter.",
-             "GTI-S2056");
-      currentType = SemanticType::Unknown;
-      return;
     }
     // Forming an inert address does not assert pointee validity. Operand
     // evaluation above retains its own access, bounds and unsafe checks.

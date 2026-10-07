@@ -1,0 +1,69 @@
+// A generic LRU cache class over unordered_map<K, V> plus list<K> recency:
+// generic-class fields of library containers, constrained K (hashable,
+// equality-comparable, copyable), move-only V (std::string), borrowed
+// lookups returning receiver-tied V&, eviction with list::remove/pop_back,
+// and range-for over a dependent field inside a generic-class method.
+#include <std/unordered_map>
+#include <std/list>
+#include <std/string>
+#include <std/functional>
+
+class LruCache<std::integral K, std::movable V> {
+  mut std::unordered_map<K, V> entries;
+  mut std::list<K> recency;
+  std::size_t capacity;
+  mut std::size_t evictions;
+public:
+  LruCache(std::size_t capacity)
+      requires std::read_callable<std::hash<K>, K, std::size_t> &&
+               std::read_binary_callable<std::equal_to<K>, K, K, bool>
+      : entries(std::unordered_map<K, V>()), recency(std::list<K>()),
+        capacity(capacity), evictions(0) {}
+  std::size_t size() { return this.entries.size(); }
+  std::size_t evicted() { return this.evictions; }
+  bool contains(K key) { return this.entries.contains(key); }
+  void touch(K key) mut {
+    [[discard]] this.recency.remove(key);
+    this.recency.push_front(key);
+  }
+  void put(K key, V value) mut {
+    if (!this.entries.contains(key) && this.entries.size() == this.capacity) {
+      K oldest = this.recency.back();
+      this.recency.pop_back();
+      [[discard]] this.entries.erase(oldest);
+      this.evictions++;
+    }
+    [[discard]] this.entries.insert_or_assign(key, std::move(value));
+    this.touch(key);
+  }
+  V& peek(K key) { return this.entries.at(key); }
+  K most_recent() { return this.recency.front(); }
+  K sum_keys() {
+    mut K total = K(0);
+    for (auto& key : this.recency) { total = total + key; }
+    return total;
+  }
+};
+
+int main() {
+  mut LruCache<int, std::string> cache = LruCache<int, std::string>(std::size_t(3));
+  cache.put(1, std::string("one"));
+  cache.put(2, std::string("two"));
+  cache.put(3, std::string("three"));
+  if (cache.size() != 3 || cache.most_recent() != 3) { return 1; }
+  cache.touch(1);                         // recency: 1 3 2
+  cache.put(4, std::string("four"));      // evicts 2
+  if (cache.contains(2) || !cache.contains(1) || cache.evicted() != 1) { return 2; }
+  if (cache.peek(1) != "one" || cache.peek(4) != "four") { return 3; }
+  cache.put(3, std::string("THREE"));     // update, no eviction; recency 3 4 1
+  if (cache.evicted() != 1 || cache.peek(3) != "THREE") { return 4; }
+  cache.put(5, std::string("five"));      // evicts 1
+  if (cache.contains(1) || cache.sum_keys() != 3 + 4 + 5) { return 5; }
+
+  mut LruCache<uint64_t, std::string> wide = LruCache<uint64_t, std::string>(std::size_t(1));
+  wide.put(uint64_t(10), std::string("a"));
+  wide.put(uint64_t(20), std::string("b"));
+  if (wide.size() != 1 || wide.sum_keys() != uint64_t(20) || wide.evicted() != 1) { return 6; }
+  std::println(cache.peek(5));
+  return 0;
+}

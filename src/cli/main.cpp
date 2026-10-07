@@ -2571,7 +2571,7 @@ int buildProjectPlan(
                   plan.optimization(), plan.cppStandard(),
                   plan.packageSources(), plan.configurationFlags(), {},
                   plan.warnings(), plan.debugInfo(), plan.packageWarnings(),
-                  plan.rawPointerAudit()),
+                  plan.rawPointerAudit(), plan.programRequest()),
               toolchain, plan.generatedSource(), plan.output(), cppCompiler,
               nativeInputs, plan.keepCpp(), true, options.verbose,
               lang::driver::ManagedOutputPolicy{
@@ -2900,7 +2900,8 @@ int runProject(const ProjectOptions &options, const char *driver) {
                 plan.entry(), toolchain.standardLibrary, plan.target(),
                 plan.optimization(), plan.cppStandard(), plan.packageSources(),
                 plan.configurationFlags(), {}, plan.warnings(), false,
-                plan.packageWarnings(), plan.rawPointerAudit()),
+                plan.packageWarnings(), plan.rawPointerAudit(),
+                plan.programRequest()),
             progress.observer());
     progress.suspend();
     if (!compilation.succeeded()) {
@@ -2943,7 +2944,8 @@ int runProject(const ProjectOptions &options, const char *driver) {
             plan.entry(), toolchain.standardLibrary, plan.target(),
             plan.optimization(), plan.cppStandard(), plan.packageSources(),
             plan.configurationFlags(), {}, plan.warnings(), false,
-            plan.packageWarnings(), plan.rawPointerAudit())
+            plan.packageWarnings(), plan.rawPointerAudit(),
+            plan.programRequest())
             .forExecutable(),
         progress.observer());
     progress.suspend();

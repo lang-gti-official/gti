@@ -1,0 +1,4 @@
+int main() {
+  uint64_t huge = 18446744073709551616; //!ERR
+  return huge == uint64_t(0) ? 0 : 1;
+}

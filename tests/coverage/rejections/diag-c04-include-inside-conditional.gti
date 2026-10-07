@@ -1,0 +1,8 @@
+#define WANT_MEMORY
+#ifdef WANT_MEMORY
+#include <std/memory> //!ERR
+#endif
+
+int main() {
+  return 0;
+}

@@ -1,0 +1,8 @@
+// A33: GTI-S2096 'never used mutably' on an overloaded dereference store; the quick fix
+// breaks the build (GTI-S2002).
+#include <std/memory>
+int main() {
+  mut std::unique_ptr<int> p = std::make_unique<int>(3);
+  *p = 103;
+  return *p == 103 ? 0 : 1;
+}

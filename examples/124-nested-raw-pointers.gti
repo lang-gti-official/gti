@@ -1,0 +1,48 @@
+// Raw pointer-slot addresses are ordinary values, not contextual C arguments.
+// Formation/copying is inert; reading or replacing a slot remains unsafe.
+extern "C" {
+  c_long strtol(c_string text, c_char** end, c_int base);
+}
+
+using EndSlot = c_char**;
+
+EndSlot forward(EndSlot slot) { return slot; }
+
+EndSlot unwrap(c_char*** slot) {
+  unsafe { return *slot; }
+}
+
+void replace(EndSlot slot, c_char* value) {
+  unsafe { *slot = value; }
+}
+
+struct Cursor {
+  mut c_char* end = nullptr;
+};
+
+int main() {
+  mut Cursor cursor{};
+  EndSlot saved = forward(&cursor.end);
+  mut EndSlot another = saved;
+  c_char*** nested = &another;
+  c_char* const* readonly_slot = saved;
+
+  unsafe {
+    c_long number = strtol("42_tail", unwrap(nested), c_int(10));
+    if (number != c_long(42) || *cursor.end != c_char(95)) { return 1; }
+    if (*readonly_slot != cursor.end) { return 2; }
+  }
+
+  // Pointer arrays contain real adjacent native pointer slots. Both GTI raw
+  // indexing and a foreign out parameter can replace their individual values.
+  mut c_char* ends[2] = {};
+  EndSlot slots = &ends[0];
+  unsafe {
+    slots[0] = cursor.end;
+    c_long number = strtol("42_tail", slots + 1, c_int(10));
+    if (number != c_long(42) || ends[0] != ends[1]) { return 3; }
+  }
+  replace(saved, nullptr);
+  if (cursor.end != nullptr) { return 4; }
+  return 0;
+}

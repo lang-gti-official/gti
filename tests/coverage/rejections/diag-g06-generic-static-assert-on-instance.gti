@@ -1,0 +1,13 @@
+class Fixed<T, uint64_t N> {
+  static_assert(N > 0); //!ERR
+  T values[N] = {};
+public:
+  Fixed() {}
+  uint64_t size() { return N; }
+};
+
+int main() {
+  Fixed<int32_t, 4> ok{};
+  Fixed<int32_t, 0> bad{}; //!ERR
+  return int32_t(ok.size()) - 4;
+}

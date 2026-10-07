@@ -1,0 +1,97 @@
+// Move-only owners across control flow: conditional moves with
+// reinitialization inside loops, break right after a move, switch arms that
+// consume, do/while, early returns dropping live owners, std::exchange and
+// std::swap on vector elements, and exactly-once destruction accounting.
+#include <std/memory>
+#include <std/utility>
+#include <std/vector>
+
+mut int g_dropped = 0;
+
+class Slot {
+  int id_;
+
+public:
+  Slot(int id) : id_(id) {}
+  ~Slot() { g_dropped += 1; }
+  int id() { return this.id_; }
+};
+
+enum class Mode { keep, store, discard };
+
+int sink(std::unique_ptr<Slot> slot) { return slot->id(); }
+
+int early(bool bail) {
+  std::unique_ptr<Slot> a = std::make_unique<Slot>(1);
+  std::unique_ptr<Slot> b = std::make_unique<Slot>(2);
+  if (bail) {
+    return sink(std::move(a));
+  }
+  return a->id() + b->id();
+}
+
+int main() {
+  mut std::vector<std::unique_ptr<Slot>> stored{};
+  mut std::unique_ptr<Slot> current = std::make_unique<Slot>(0);
+  for (mut int i = 1; i <= 6; i += 1) {
+    if (i % 2 == 0) {
+      stored.push_back(std::move(current));
+      current = std::make_unique<Slot>(i);
+    } else {
+      current = std::make_unique<Slot>(i * 10);
+    }
+  }
+  // stored = [10, 30, 50]; replacement dropped slots 0, 2 and 4.
+  if (stored.size() != std::size_t(3) || current->id() != 6) { return 1; }
+  if (g_dropped != 3) { return 2; }
+
+  mut std::unique_ptr<Slot> last = std::make_unique<Slot>(100);
+  mut int consumed = 0;
+  while (true) {
+    consumed += sink(std::move(last));
+    // Workaround: reinitializing only after the loop ICEs (red/j8.gti).
+    last = std::make_unique<Slot>(101);
+    break;
+  }
+  if (consumed != 100 || g_dropped != 4) { return 3; }
+
+  Mode modes[3] = {Mode::keep, Mode::store, Mode::discard};
+  for (auto& mode : modes) {
+    mut std::unique_ptr<Slot> item = std::make_unique<Slot>(200);
+    switch (mode) {
+      case Mode::keep:
+        break;
+      case Mode::store:
+        stored.push_back(std::move(item));
+        item = std::make_unique<Slot>(201);
+        break;
+      case Mode::discard:
+        item.reset();
+        break;
+    }
+  }
+  // keep: 200 dropped at scope end; store: 201 dropped; discard: reset.
+  if (stored.size() != std::size_t(4) || g_dropped != 7) { return 4; }
+
+  mut int spins = 0;
+  do {
+    std::unique_ptr<Slot> temp = std::make_unique<Slot>(300 + spins);
+    spins += 1;
+  } while (spins < 3);
+  if (g_dropped != 10) { return 5; }
+
+  if (early(true) != 1 || g_dropped != 12) { return 6; }
+  if (early(false) != 3 || g_dropped != 14) { return 7; }
+
+  std::unique_ptr<Slot> replacement = std::make_unique<Slot>(400);
+  std::unique_ptr<Slot> old = std::exchange(stored[std::size_t(0)],
+                                            std::move(replacement));
+  if (old->id() != 10 || stored[std::size_t(0)]->id() != 400) { return 8; }
+  std::swap(stored[std::size_t(1)], current);
+  if (current->id() != 30 || stored[std::size_t(1)]->id() != 6) { return 9; }
+  stored.erase(std::size_t(2));
+  if (stored.size() != std::size_t(3) || g_dropped != 15) { return 10; }
+  std::println(stored[std::size_t(2)]->id());
+  std::println("v13 ok");
+  return 0;
+}

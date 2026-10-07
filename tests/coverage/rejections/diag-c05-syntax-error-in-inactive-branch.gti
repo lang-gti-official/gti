@@ -1,0 +1,13 @@
+#ifdef NEVER_DEFINED_FLAG
+int value() {
+  return 1 + ; //!ERR
+}
+#else
+int value() {
+  return 1;
+}
+#endif
+
+int main() {
+  return value() - 1;
+}

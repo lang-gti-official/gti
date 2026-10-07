@@ -1,0 +1,12 @@
+// A51: the same with a method call emits C++ that does not compile (deleted constructor).
+struct Range {
+  int32_t lo;
+  int32_t hi;
+  Range(int32_t lo, int32_t hi) : lo(lo), hi(hi) {}
+  int32_t width() { return this.hi - this.lo; }
+};
+int main() {
+  Range pairs[2] = {Range(0, 1), Range(5, 8)};
+  auto [first, second] = pairs;
+  return first.width() + second.width() - 4;
+}

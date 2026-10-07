@@ -28,6 +28,7 @@ FrontendResult analyze(const CompilationRequest &request,
                           .requireEntryPoint = request.requiresEntryPoint(),
                           .progress = progress};
   options.rawPointerAudit = request.rawPointerAudit();
+  options.program = request.program();
   FrontendResult result = Frontend(options).analyzeLoaded(
       request.entry(), std::move(inputs.sourceGraph), std::move(inputs.sources),
       std::move(inputs.diagnostics), inputs.sourceValid);
@@ -242,7 +243,7 @@ CompilationRequest::CompilationRequest(
     ConfigurationFlags configurationFlags,
     OptimizationOutputRequest optimizationOutputs, WarningPolicy warnings,
     bool debugInfo, PackageWarningPolicy packageWarnings,
-    RawPointerAuditMode rawPointerAudit)
+    RawPointerAuditMode rawPointerAudit, ProgramRequest program)
     : entryPath(std::move(entry)),
       standardLibraryLayout(std::move(standardLibrary)),
       targetInfo(std::move(target)), optimizationLevel(optimization),
@@ -250,7 +251,7 @@ CompilationRequest::CompilationRequest(
       packageSourceRootSet(std::move(packageSourceRoots)),
       configuredFlags(std::move(configurationFlags)),
       requestedOptimizationOutputs(optimizationOutputs),
-      warningPolicy(std::move(warnings)),
+      requestedProgram(std::move(program)), warningPolicy(std::move(warnings)),
       packageWarningPolicy(std::move(packageWarnings)),
       sourceDebugInfo(debugInfo), rawPointerAuditMode(rawPointerAudit) {
   normalizeConfigurationFlags(configuredFlags);
@@ -292,6 +293,10 @@ CompilationRequest::optimizationOutputs() const {
   return requestedOptimizationOutputs;
 }
 
+const ProgramRequest &CompilationRequest::program() const {
+  return requestedProgram;
+}
+
 const WarningPolicy &CompilationRequest::warnings() const {
   return warningPolicy;
 }
@@ -306,7 +311,7 @@ bool CompilationRequest::requiresEntryPoint() const {
 
 CompilationRequest CompilationRequest::forExecutable() const {
   CompilationRequest result = *this;
-  result.entryPointRequired = true;
+  result.entryPointRequired = requestedProgram.kind == ProgramKind::Executable;
   return result;
 }
 

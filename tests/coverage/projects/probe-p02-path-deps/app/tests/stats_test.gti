@@ -1,0 +1,10 @@
+#include <m/stats>
+#include <std/vector>
+
+int main() {
+  mut std::vector<int> empty{};
+  if (mid::stats::doubled_sum(empty) != 0) {
+    return 1;
+  }
+  return mid::stats::start == 50 ? 0 : 2;
+}

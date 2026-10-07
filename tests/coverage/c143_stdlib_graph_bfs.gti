@@ -1,0 +1,106 @@
+// Breadth-first search over a string-keyed graph: map<string, vector<string>>
+// adjacency built through get_or_insert, deque<string> frontier,
+// unordered_set<string> visited, unordered_map<string, string> parents, path
+// reconstruction through forward_list push_front, and forward_list
+// sort/unique/remove/merge/reverse on owning strings.
+#include <std/map>
+#include <std/unordered_map>
+#include <std/unordered_set>
+#include <std/deque>
+#include <std/forward_list>
+#include <std/vector>
+#include <std/string>
+
+void connect(mut std::map<std::string, std::vector<std::string>>& graph,
+             std::string_view from, std::string_view to) {
+  {
+    mut std::vector<std::string>& forward = graph.get_or_insert(std::string(from));
+    forward.push_back(std::string(to));
+  }
+  mut std::vector<std::string>& backward = graph.get_or_insert(std::string(to));
+  backward.push_back(std::string(from));
+}
+
+int main() {
+  mut std::map<std::string, std::vector<std::string>> graph{};
+  connect(graph, "home", "park");
+  connect(graph, "home", "shop");
+  connect(graph, "park", "lake");
+  connect(graph, "shop", "school");
+  connect(graph, "school", "lake");
+  connect(graph, "lake", "hill");
+  connect(graph, "island", "pier");
+  if (graph.size() != 8) { return 1; }
+  // Workaround: borrowing `graph.at(...)` from the mutable owner and then
+  // referencing its elements ICEs in MIR (repro/rH2); freeze it first.
+  std::map<std::string, std::vector<std::string>> frozen = std::move(graph);
+
+  std::string start{"home"};
+  std::string goal{"hill"};
+  mut std::deque<std::string> frontier{};
+  mut std::unordered_set<std::string> visited{};
+  mut std::unordered_map<std::string, std::string> parent{};
+  frontier.push_back(start.clone());
+  [[discard]] visited.insert(start.clone());
+  mut bool found = false;
+  while (!frontier.empty() && !found) {
+    std::string current = frontier.front().clone();
+    frontier.pop_front();
+    std::vector<std::string>& neighbours = frozen.at(current);
+    for (mut std::size_t i = 0; i < neighbours.size(); i++) {
+      std::string& next = neighbours[i];
+      if (visited.contains(next)) { continue; }
+      [[discard]] visited.insert(next.clone());
+      [[discard]] parent.insert(next.clone(), current.clone());
+      if (next == goal) { found = true; break; }
+      frontier.push_back(next.clone());
+    }
+  }
+  if (!found) { return 2; }
+
+  // Walk parents back; push_front yields the path in forward order.
+  mut std::forward_list<std::string> path{};
+  path.push_front(goal.clone());
+  mut std::string cursor = goal.clone();
+  while (cursor != start) {
+    std::string previous = parent.at(cursor).clone();
+    path.push_front(previous.clone());
+    cursor = std::move(previous);
+  }
+  mut std::string rendered{};
+  mut int hops = 0;
+  while (!path.empty()) {
+    rendered.append(path.front().view());
+    path.pop_front();
+    if (!path.empty()) { rendered.append(" > "); hops++; }
+  }
+  std::println(rendered);
+  if (rendered != "home > park > lake > hill" || hops != 3) { return 3; }
+  std::string island{"island"};
+  if (visited.contains(island) || visited.size() != 6) { return 4; }
+
+  // forward_list algorithms on owning strings.
+  mut std::forward_list<std::string> words{};
+  words.push_front(std::string("pear"));
+  words.push_front(std::string("fig"));
+  words.push_front(std::string("pear"));
+  words.push_front(std::string("apple"));
+  words.push_front(std::string("fig"));
+  words.sort();                       // apple fig fig pear pear
+  if (words.unique() != 2) { return 5; }   // apple fig pear
+  std::string fig{"fig"};
+  if (words.remove(fig) != 1) { return 6; }  // apple pear
+  mut std::forward_list<std::string> more{};
+  more.push_front(std::string("zucchini"));
+  more.push_front(std::string("banana"));
+  words.merge(std::move(more));       // apple banana pear zucchini
+  words.reverse();
+  mut std::string order{};
+  while (!words.empty()) {
+    order.append(words.front().view());
+    order.push_back(',');
+    words.pop_front();
+  }
+  if (order != "zucchini,pear,banana,apple,") { return 7; }
+  return 0;
+}

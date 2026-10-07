@@ -153,6 +153,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
 
   bool valid = verifyFailureMetadata(failureMetadata).valid();
   result.program.executionProfile_ = source.executionProfile();
+  result.program.programKind_ = source.programKind();
+  result.program.target_ = source.analysisSeal().target;
   result.program.failureMetadata_ = failureMetadata;
   for (const HirEnum &enumeration : source.enumDeclarations()) {
     if (!enumeration.payload) {
@@ -286,7 +288,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
              .requiredCapability = signature.requiredCapability,
              .selectedCapability = signature.selectedCapability,
              .functionTarget = signature.functionTarget,
-             .lambdaTarget = signature.lambdaTarget});
+             .lambdaTarget = signature.lambdaTarget,
+             .nativeCalleeType = signature.nativeCalleeType});
       }
       lowered.forwardings.reserve(parameter.forwardings.size());
       for (const HirCallableForwarding &forwarding : parameter.forwardings) {
@@ -352,6 +355,34 @@ MirLowerer::lowerProgram(const HirProgram &source,
              instance.returnType, {}, definedFailureEffects, valid,
              implicitZeroReturn, nullptr, &instance, nullptr, nullptr, nullptr,
              nullptr, compilerTrustedSourceUnit(source, instance.sourceUnit))});
+  }
+
+  if (const std::optional<HirEmbeddingPlan> &sourcePlan =
+          source.embeddingPlan()) {
+    MirEmbeddingPlan plan{.abiVersion = sourcePlan->abiVersion};
+    plan.exports.reserve(sourcePlan->exports.size());
+    for (const HirEmbeddingExport &selected : sourcePlan->exports) {
+      const MirFunctionInstance *function =
+          result.program.findFunctionInstance(selected.function);
+      if (function == nullptr ||
+          function->declaration != selected.semanticFunction ||
+          function->returnType != selected.returnType ||
+          function->parameterTypes != selected.parameterTypes) {
+        valid = false;
+        continue;
+      }
+      plan.exports.push_back({.declaration = selected.semanticFunction,
+                              .function = selected.function,
+                              .qualifiedName = selected.qualifiedName,
+                              .symbol = selected.symbol,
+                              .returnType = selected.returnType,
+                              .parameterTypes = selected.parameterTypes,
+                              .requestSource = selected.requestSource});
+    }
+    if (plan.exports.size() != sourcePlan->exports.size()) {
+      valid = false;
+    }
+    result.program.embeddingPlan_ = std::move(plan);
   }
 
   result.program.nativeCallbacks.reserve(

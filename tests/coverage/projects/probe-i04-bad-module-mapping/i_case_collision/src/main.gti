@@ -1,0 +1,2 @@
+import geo;
+int main() { return area2() - 4; }

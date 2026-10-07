@@ -1,0 +1,11 @@
+export module frontend;
+#include "shared.gti"
+import backend;
+
+#ifdef BACKEND_LOCAL
+#error "a module-local flag escaped an imported module"
+#endif
+
+namespace engine {
+  export int frontend_speed() { return backend_speed() + shared::mode(); }
+}

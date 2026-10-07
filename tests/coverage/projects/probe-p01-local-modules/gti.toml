@@ -1,0 +1,14 @@
+manifest-version = 1
+
+[package]
+name = "p01-local-modules"
+version = "0.1.0"
+
+[modules]
+main = "src/api/facade.gti"
+shapes = "src/api/shapes.gti"
+util = "interfaces/util.gti"
+
+[targets.p01]
+kind = "executable"
+root = "src/main.gti"

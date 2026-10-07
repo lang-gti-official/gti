@@ -1,0 +1,20 @@
+// INVALID: the owner is moved on the break path of a loop and read after it.
+class Own {
+  int v;
+public:
+  Own(int v) : v(v) {}
+  Own(Own& o) = delete;
+  Own(Own&& o) = default;
+  int get() { return this.v; }
+};
+void sink(Own p) {}
+int main() {
+  mut Own last = Own(1);
+  for (mut int i = 0; i < 3; i += 1) {
+    if (i == 1) {
+      sink(std::move(last));
+      break;
+    }
+  }
+  return last.get();
+}

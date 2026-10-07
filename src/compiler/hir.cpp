@@ -57,6 +57,7 @@ hashCompileTimeValues(const std::vector<CompileTimeValue> &values,
 // Covers every field the defaulted SemanticType equality compares.
 std::uint64_t hashSemanticType(const SemanticType &type, std::uint64_t seed) {
   std::uint64_t result = combine(seed, static_cast<std::uint64_t>(type.kind));
+  result = combine(result, static_cast<std::uint64_t>(type.nativeCScalar));
   result = hashSemanticTypes(type.arguments, result);
   result = hashCompileTimeValues(type.valueArguments, result);
   result = combine(result, type.classId);

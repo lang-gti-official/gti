@@ -1,0 +1,15 @@
+// A58: the same through std::map elements.
+#include <std/map>
+#include <std/memory>
+class Box {
+public:
+  int v;
+  Box(int v) : v(v) {}
+};
+int main() {
+  mut std::map<int, std::unique_ptr<Box>> m{};
+  [[discard]] m.insert(1, std::make_unique<Box>(2));
+  mut int n = 0;
+  for (auto& e : m) { Box& b = *e.second; n += b.v; }
+  return n == 2 ? 0 : 1;
+}

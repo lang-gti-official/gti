@@ -1,0 +1,9 @@
+class Box<T { //!ERR
+  T value;
+public:
+  Box(T value) : value(value) {}
+};
+
+int main() {
+  return 0;
+}

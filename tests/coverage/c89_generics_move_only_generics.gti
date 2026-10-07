@@ -1,0 +1,74 @@
+// Generic code over move-only types: constrained containers of unique owners,
+// generic transfer helpers, generic classes holding move-only values with
+// cleanup counting, and generic functions taking/returning move-only T.
+#include <std/memory>
+#include <std/vector>
+
+mut int32_t live_tokens = 0;
+mut int32_t dropped_tokens = 0;
+
+class Token {
+  int32_t id;
+
+public:
+  Token(int32_t id) : id(id) { live_tokens++; }
+  Token(Token&) = delete;
+  Token(Token&&) = default;
+  ~Token() { dropped_tokens++; }
+  int32_t value() { return this.id; }
+};
+
+class Slot<std::move_constructible T> {
+  mut std::vector<T> items;
+
+public:
+  Slot() : items(std::vector<T>()) {}
+  void put(T item) mut { this.items.push_back(std::move(item)); }
+  std::size_t size() { return this.items.size(); }
+  T& peek(std::size_t index) { return this.items[index]; }
+};
+
+T pass_through<std::movable T>(T value) { return std::move(value); }
+
+std::size_t fill<std::move_constructible T>(mut Slot<T>& slot, T first, T second) {
+  slot.put(std::move(first));
+  slot.put(std::move(second));
+  return slot.size();
+}
+
+int32_t sum_tokens(Slot<Token>& slot) {
+  mut int32_t total = 0;
+  for (mut std::size_t i = 0; i < slot.size(); i++) { total += slot.peek(i).value(); }
+  return total;
+}
+
+int32_t sum_boxes(Slot<std::unique_ptr<Token>>& slot) {
+  mut int32_t total = 0;
+  for (mut std::size_t i = 0; i < slot.size(); i++) { total += slot.peek(i)->value(); }
+  return total;
+}
+
+int main() {
+  {
+    mut Slot<Token> tokens = Slot<Token>();
+    std::size_t n = fill(tokens, Token(4), Token(5));
+    Token moved = pass_through(Token(6));
+    tokens.put(std::move(moved));
+    if (n != std::size_t(2) || tokens.size() != std::size_t(3)) { return 1; }
+    if (sum_tokens(tokens) != 15) { return 2; }
+
+    mut Slot<std::unique_ptr<Token>> boxes = Slot<std::unique_ptr<Token>>();
+    std::unique_ptr<Token> one = std::make_unique<Token>(10);
+    std::unique_ptr<Token> relayed = pass_through(std::move(one));
+    std::size_t m = fill(boxes, std::move(relayed), std::make_unique<Token>(20));
+    if (m != std::size_t(2)) { return 3; }
+    if (sum_boxes(boxes) != 30) { return 4; }
+  }
+  std::println(live_tokens);
+  std::println(dropped_tokens);
+  // Five tokens were constructed; every one must be destroyed exactly once
+  // after scope exit: moved-from shells skip the cleanup body.
+  if (live_tokens != 5) { return 5; }
+  if (dropped_tokens != 5) { return 6; }
+  return 0;
+}

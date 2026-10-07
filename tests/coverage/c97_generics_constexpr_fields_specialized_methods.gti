@@ -1,0 +1,71 @@
+// constexpr static fields of a non-generic class feeding value-generic
+// arguments and array extents, a disjunctive structural concept whose
+// branches share one member requirement, and a generic method declared on
+// an exact specialization.
+struct Limits {
+  static constexpr uint64_t slots = 6;
+  static constexpr int32_t scale = 3;
+};
+
+class Pool<uint64_t N> {
+  mut int32_t used[N];
+
+public:
+  Pool() : used({}) {}
+  uint64_t capacity() { return N; }
+};
+
+concept has_id<T> = requires(T& value) { { value.id() } -> int32_t; };
+concept tagged<T> =
+    (has_id<T> && requires(T& value) { { value.tag() } -> int32_t; }) ||
+    (has_id<T> && requires(T& value) { { value.label() } -> int32_t; });
+
+struct WithTag {
+  int32_t id() { return 1; }
+  int32_t tag() { return 10; }
+};
+
+struct WithLabel {
+  int32_t id() { return 2; }
+  int32_t label() { return 20; }
+};
+
+int32_t id_of<T>(T& value) requires tagged<T> {
+  // Only the fact common to both alternatives (`id()`) is usable here.
+  return value.id();
+}
+
+namespace conv {
+class codec<T> {
+public:
+  int32_t bits() { return 0; }
+};
+}
+
+class conv::codec<WithTag> {
+public:
+  int32_t bits() { return 7; }
+  U widen<std::numeric U>(U base) { return U(base * U(2)); }
+};
+
+int main() {
+  constexpr uint64_t slots = Limits::slots;
+  Pool<slots> pool = Pool<slots>();
+  if (pool.capacity() != 6) { return 1; }
+  int32_t table[slots] = {};
+  if (table.size() != 6) { return 2; }
+  if (Limits::scale * 2 != 6) { return 3; }
+
+  WithTag a{};
+  WithLabel b{};
+  if (id_of(a) + id_of(b) != 3) { return 4; }
+
+  conv::codec<WithTag> c{};
+  if (c.bits() != 7) { return 5; }
+  if (c.widen(int64_t(21)) != 42) { return 6; }
+  if (c.widen(1.5d) != 3.0d) { return 7; }
+  conv::codec<WithLabel> d{};
+  if (d.bits() != 0) { return 8; }
+  std::println(c.widen(int64_t(21)));
+  return 0;
+}

@@ -1,0 +1,28 @@
+manifest-version = 1
+
+[package]
+name = "i06-init-order"
+version = "0.1.0"
+
+[modules]
+config = "src/config.gti"
+
+[targets.same_unit]
+kind = "executable"
+root = "src/same_unit.gti"
+
+[targets.generic_cross_unit]
+kind = "test"
+root = "src/generic_cross_unit.gti"
+
+[targets.static_field_forward]
+kind = "test"
+root = "src/static_field_forward.gti"
+
+[targets.module_forward]
+kind = "test"
+root = "src/module_forward.gti"
+
+[targets.interface_dispatch]
+kind = "test"
+root = "src/interface_dispatch.gti"

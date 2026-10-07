@@ -401,15 +401,23 @@ identity and from a future native ABI identity.
 
 ### Target
 
-The supported target kinds are `executable` and `test`. Each has exactly one
+The released target kinds are `executable` and `test`. Each has exactly one
 entry `.gti` source and therefore one existing whole-program source graph. A
 test target differs in project intent and command selection, not in language
 semantics or native representation.
 
-The manifest schema may reserve `library`, but implementation must not claim
-native libraries until the compiler defines their exported surface, linkage,
-lifecycle ABI, generic-instantiation ownership, and cross-package visibility.
-Source dependencies can arrive before compiled-library targets.
+The driver now retains a dormant, non-default `library`/`shared` target and its
+manifest-selected export request through project, cache, and compiler facts.
+Released manifest loading still rejects that target with `GTI-B2000`, and no
+shared object or wrapper is generated, so current releases must not claim
+native libraries. Activation remains the shared, host-embedded gameplay-module
+campaign in
+[`implementation-sequence.md`](implementation-sequence.md#engine-embedding-delivery-campaign).
+It activates `kind = "library"` only together with explicit `linkage =
+"shared"`, manifest-selected generated C exports, contained lifecycle/failure,
+and a dynamically loaded host gate. It does not add separately compiled GTI
+dependencies or a stable ABI for ordinary GTI values. Source dependencies can
+arrive before compiled-library targets.
 
 ### Profile
 

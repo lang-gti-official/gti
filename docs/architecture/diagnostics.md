@@ -751,6 +751,21 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   result and ordinary argument-binding shape. Suggest a uniquely named function
   or an explicitly typed lambda selecting the intended overload; do not offer a cast, address-of, or automatic
   lambda fix-it because those change identity, ABI, or ownership intent.
+- `GTI-S2104` owns the dormant engine-embedding export boundary. Point at the
+  manifest request span (or the selected source declaration for a forbidden
+  `main`) and distinguish an empty selection, malformed/exact-name miss,
+  overload set, ineligible declaration kind, excluded ABI type, duplicate
+  function, duplicate/reserved C symbol, hosted entry, and process-lifetime
+  callback adapter. Relate exact candidate declarations where useful. Suggest
+  the bounded ADR 026 scalar/passive-record/opaque-pointer family, but do not
+  offer a source fix-it: changing the host ABI, selected declaration, or
+  exported symbol requires user intent.
+- `GTI-B2000` owns the dormant engine-embedding manifest boundary. It rejects
+  a released `kind = "library"` target before artifact planning, and under the
+  internal feature policy it owns the bounded `shared` linkage and non-empty
+  export-table rules. Point at the exact manifest kind, linkage, or exports
+  value. Do not suggest an undocumented feature switch: activation is gated
+  on the complete wrapper, runtime, publication, and dynamic-host evidence.
 - `GTI-S2061` owns a namespace global or static field whose resolved concrete
   type requires active cleanup while GTI has no global/static shutdown plan.
   Point at the binding name, attach the first exact declared-cleanup, base, or

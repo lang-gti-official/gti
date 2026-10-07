@@ -1,0 +1,14 @@
+// INVALID: override changes receiver mutability of the interface contract.
+interface Counter {
+  int32_t next();
+};
+class Up : public Counter {
+  mut int32_t n = 0;
+public:
+  Up() {}
+  int32_t next() mut override { this.n += 1; return this.n; }
+};
+int main() {
+  mut Up u = Up();
+  return u.next() - 1;
+}

@@ -1,0 +1,17 @@
+// INVALID: payload-enum switch omits an alternative and has no default.
+enum class Message {
+  quit,
+  move(int32_t x, int32_t y),
+  write(std::string_view text),
+};
+int32_t handle(Message m) {
+  switch (m) {
+  case Message::quit:
+    return 0;
+  case Message::move(x, y):
+    return x + y;
+  }
+}
+int main() {
+  return handle(Message::quit);
+}

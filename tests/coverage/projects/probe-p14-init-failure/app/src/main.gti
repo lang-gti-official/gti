@@ -1,0 +1,6 @@
+import lib;
+
+int main() {
+  std::println("main reached");
+  return limits::headroom == 2147483646 ? 0 : 1;
+}

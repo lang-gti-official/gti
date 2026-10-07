@@ -1,0 +1,27 @@
+import plugins;
+#include "builtin.gti"
+
+int main() {
+  mut plugins::Registry registry{};
+  app::install(registry);
+  if (registry.size() != uint64_t(2)) {
+    return 1;
+  }
+  // (20 * 2) + 2
+  if (registry.run_all(20) != 42) {
+    return 2;
+  }
+  auto doubled = registry.run_named("double", 21);
+  if (!doubled || doubled.value() != 42) {
+    return 3;
+  }
+  auto missing = registry.run_named("absent", 1);
+  if (missing || missing.error() != plugins::LookupError::missing) {
+    return 4;
+  }
+  if (registry.total_runs() != 3) {
+    return 5;
+  }
+  std::println("p18 plugin registry ok");
+  return 0;
+}

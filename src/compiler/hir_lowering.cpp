@@ -91,6 +91,7 @@ public:
       return std::move(output);
     }
     seedDeclarations(source.declarations(), std::nullopt);
+    lowerEmbeddingPlan();
     lowerProgramInitializationPlan();
     lowerHostedProgramEntryPlan();
     finalizeLifetimes(output.program.moduleBody, *baseModel, false);
@@ -136,6 +137,7 @@ private:
     baseModel = &semantics;
     output = {};
     output.program.executionProfile_ = target.executionProfile;
+    output.program.programKind_ = baseModel->programKind();
     output.program.semanticAnalysisSeal = baseModel->analysisSeal();
     constantClosure = false;
     constantFunctions.clear();
@@ -309,6 +311,12 @@ private:
     const ClassTypeInfo *declaration =
         baseModel->findClassType(resolvedType.classId);
     if (declaration == nullptr || declaration->declaration == nullptr) {
+      return std::nullopt;
+    }
+    // These trusted declarations establish primitive identities in semantics;
+    // they have no nominal class representation or executable lifecycle.
+    if (declaration->compilerCapability ==
+        CompilerCapabilityTypeKind::NativeCScalar) {
       return std::nullopt;
     }
     const ClassLifecycleInfo *lifecycle =
@@ -807,6 +815,39 @@ private:
       // plan after declaration seeding. Its order is not the combined AST
       // visitation order, and class statics share the module body with globals.
     }
+  }
+
+  void lowerEmbeddingPlan() {
+    const std::optional<SemanticEmbeddingPlan> &semanticPlan =
+        baseModel->embeddingPlan();
+    if (!semanticPlan) {
+      output.program.embeddingPlan_.reset();
+      return;
+    }
+    HirEmbeddingPlan plan{.abiVersion = semanticPlan->abiVersion};
+    plan.exports.reserve(semanticPlan->exports.size());
+    for (const SemanticEmbeddingExport &selected : semanticPlan->exports) {
+      const FunctionInfo *function = baseModel->findFunction(selected.function);
+      const std::optional<std::size_t> existing =
+          function == nullptr
+              ? std::nullopt
+              : instanceIndex.findFunction(function->id, {}, {}, {}, {});
+      if (function == nullptr || !existing) {
+        lifecycleValid = false;
+        continue;
+      }
+      plan.exports.push_back({.semanticFunction = selected.function,
+                              .function = *existing,
+                              .qualifiedName = selected.qualifiedName,
+                              .symbol = selected.symbol,
+                              .returnType = selected.returnType,
+                              .parameterTypes = selected.parameterTypes,
+                              .requestSource = selected.requestSource});
+    }
+    if (plan.exports.size() != semanticPlan->exports.size()) {
+      lifecycleValid = false;
+    }
+    output.program.embeddingPlan_ = std::move(plan);
   }
 
   void lowerProgramInitializationPlan() {
@@ -1516,8 +1557,9 @@ private:
           } else if (const ResolvedCallInfo *resolved =
                          model->findCall(*signature.source);
                      resolved != nullptr &&
-                     model->typeOf(*signature.source->callee())
-                         .hasFunctionItemShape()) {
+                     (resolved->nativeCalleeType ||
+                      model->typeOf(*signature.source->callee())
+                          .hasFunctionItemShape())) {
             concrete.returnType = resolved->returnType;
             concrete.parameterTypes = resolved->parameterTypes;
             concrete.selectedCapability = CallableInvocationCapability::Read;
@@ -1530,6 +1572,7 @@ private:
           if (value != body.values.end()) {
             concrete.functionTarget = value->functionTarget;
             concrete.lambdaTarget = value->lambdaTarget;
+            concrete.nativeCalleeType = value->nativeCalleeType;
           }
         }
         lowered.signatures.emplace_back(std::move(concrete));
@@ -4845,6 +4888,10 @@ private:
     }
     if (const auto *call = exprAs<Call>(raw)) {
       if (const ResolvedCallInfo *resolved = model.findCall(*call)) {
+        value.nativeCalleeType = resolved->nativeCalleeType;
+        value.callableBoundary = resolved->callableBoundary;
+        if (value.nativeCalleeType)
+          value.callableInvocation = CallableInvocationCapability::Read;
         value.intrinsic = resolved->intrinsic;
         if ((value.intrinsic == IntrinsicKind::ObjectSize ||
              value.intrinsic == IntrinsicKind::ObjectAlignment) &&
@@ -5346,6 +5393,29 @@ private:
           plan.arguments = *plannedArguments;
           value.callPlan = std::move(plan);
         }
+      }
+    }
+    if (value.nativeCalleeType && !value.operands.empty()) {
+      value.receiver = value.operands.front();
+      const std::vector<HirValueId> arguments(value.operands.begin() + 1,
+                                              value.operands.end());
+      const bool expandsPack =
+          std::any_of(arguments.begin(), arguments.end(), [&](HirValueId id) {
+            const HirValue *argument = body.findValue(id);
+            return argument && argument->kind == HirValueKind::PackExpansion;
+          });
+      if (expandsPack) {
+        // MIR's shared pack schedule stages this value receiver before
+        // expanding the concrete trailing argument pack.
+      } else if (auto planned = orderedArguments(
+                     arguments, value.parameterTypes, body, arguments.size())) {
+        value.callPlan = HirCallPlan{
+            .receiver = HirCallReceiver{.value = *value.receiver,
+                                        .kind = HirCallInputKind::Value,
+                                        .type = *value.nativeCalleeType},
+            .arguments = std::move(*planned)};
+      } else {
+        lifecycleValid = false;
       }
     }
     if (value.lambdaTarget && value.receiver && !value.callPlan) {

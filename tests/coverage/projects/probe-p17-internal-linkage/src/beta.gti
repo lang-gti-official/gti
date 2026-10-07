@@ -1,0 +1,15 @@
+static mut int count = 10;
+static int bump() {
+  count = count + 10;
+  return count;
+}
+
+namespace stats {
+  static mut int hits = 200;
+}
+
+int beta_bump() { return bump(); }
+int beta_hits() {
+  stats::hits = stats::hits + 2;
+  return stats::hits;
+}

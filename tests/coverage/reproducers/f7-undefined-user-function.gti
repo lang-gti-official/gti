@@ -1,0 +1,4 @@
+// F7 root cause: a GTI-linkage function that is declared but never defined
+// passes every phase and fails only at the native link.
+int32_t helper(int32_t value);
+int main() { return helper(3) == 3 ? 0 : 1; }

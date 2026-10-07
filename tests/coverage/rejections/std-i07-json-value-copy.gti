@@ -1,0 +1,9 @@
+// INVALID: std::json::value is a move-only owner; implicit copying and using
+// a moved-from document must both be rejected.
+#include <std/json>
+int main() {
+  mut auto document = std::json::value::object();
+  std::json::value copy = document;
+  std::json::value moved = std::move(document);
+  return int(document.size() + copy.size() + moved.size());
+}

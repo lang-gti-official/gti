@@ -1,0 +1,10 @@
+// A02: a test whose main returns its failure count. 256 failures are
+// reported by `gti test` as "Passed" because the native exit status keeps
+// only the low eight bits of main's int result.
+int main() {
+  mut int failures = 0;
+  for (mut int index = 0; index < 256; index++) {
+    failures++;
+  }
+  return failures;
+}

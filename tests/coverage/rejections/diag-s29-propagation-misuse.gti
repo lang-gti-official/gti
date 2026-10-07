@@ -1,0 +1,15 @@
+int plain() { return 3; }
+
+expected<int, std::string_view> wrap() {
+  int v = ?plain(); //!ERR
+  return v;
+}
+
+int compute() {
+  int w = ?wrap(); //!ERR
+  return w;
+}
+
+int main() {
+  return compute();
+}

@@ -1,0 +1,15 @@
+// A13: --emit-mir output varies between identical runs (field symbol IDs swap).
+class Pair {
+  mut int first = 0;
+  mut int second = 1;
+
+public:
+  mut int& a() mut { return this.first; }
+  mut int& b() mut { return this.second; }
+};
+
+int main() {
+  mut Pair p = Pair();
+  [[discard]] p.a();
+  return 0;
+}

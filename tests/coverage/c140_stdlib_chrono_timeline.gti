@@ -1,0 +1,87 @@
+// Chrono: constexpr nanoseconds and time-point decomposition (including
+// pre-epoch floor division), checked elapsed_since with overflow reported as
+// clock_errc::out_of_range, a comparator sorting system time points in a
+// vector, and real monotonic/system clock reads with ordering checks.
+#include <std/chrono>
+#include <std/vector>
+#include <std/algorithm>
+#include <std/string>
+
+constexpr int64_t billion = 1000000000;
+
+constexpr int64_t seconds_of(int64_t raw) {
+  std::chrono::system_time_point point =
+      std::chrono::system_time_point(std::chrono::nanoseconds(raw));
+  return point.unix_seconds();
+}
+
+constexpr int32_t fraction_of(int64_t raw) {
+  std::chrono::system_time_point point =
+      std::chrono::system_time_point(std::chrono::nanoseconds(raw));
+  return point.subsecond_nanoseconds();
+}
+
+static_assert(seconds_of(int64_t(-1)) == -1, "pre-epoch floors");
+static_assert(fraction_of(int64_t(-1)) == 999999999, "fraction is non-negative");
+static_assert(seconds_of(billion * 3 + 5) == 3, "positive truncation");
+static_assert(fraction_of(-billion) == 0, "exact negative second");
+
+class Earliest {
+public:
+  bool operator()(std::chrono::system_time_point& left,
+                  std::chrono::system_time_point& right) {
+    return left.before(right);
+  }
+};
+
+int main() {
+  std::chrono::system_time_point epoch = std::chrono::system_time_point(std::chrono::nanoseconds(int64_t(0)));
+  std::chrono::system_time_point before_epoch =
+      std::chrono::system_time_point(std::chrono::nanoseconds(-billion * 90 - 1));
+  if (before_epoch.unix_seconds() != -91 || before_epoch.subsecond_nanoseconds() != 999999999) { return 1; }
+  if (!before_epoch.before(epoch) || !epoch.after(before_epoch) || epoch.equals(before_epoch)) { return 2; }
+
+  auto gap = epoch.elapsed_since(before_epoch);
+  if (!gap || gap.value().count() != billion * 90 + 1) { return 3; }
+  auto negative = before_epoch.elapsed_since(epoch);
+  if (!negative || negative.value().count() != -(billion * 90 + 1)) { return 4; }
+
+  int64_t min_value = int64_t(-9223372036854775807) - int64_t(1);
+  std::chrono::system_time_point far_past = std::chrono::system_time_point(std::chrono::nanoseconds(min_value));
+  std::chrono::system_time_point far_future =
+      std::chrono::system_time_point(std::chrono::nanoseconds(int64_t(9223372036854775807)));
+  auto overflow = far_future.elapsed_since(far_past);
+  if (overflow || overflow.error() != std::chrono::clock_errc::out_of_range) { return 5; }
+  if (far_past.unix_seconds() != -9223372037 || far_past.subsecond_nanoseconds() != 145224192) { return 6; }
+
+  // Sort a timeline of events with a comparator over time points.
+  mut std::vector<std::chrono::system_time_point> timeline{};
+  int64_t offsets[5] = {30, -5, 12, 0, -40};
+  for (mut std::size_t i = 0; i < 5; i++) {
+    timeline.push_back(std::chrono::system_time_point(std::chrono::nanoseconds(offsets[i] * billion)));
+  }
+  std::sort(timeline, Earliest());
+  mut std::string rendered{};
+  for (auto& point : timeline) {
+    rendered.append(std::to_string(point.unix_seconds()).view());
+    rendered.push_back(' ');
+  }
+  std::println(rendered);
+  if (rendered != "-40 -5 0 12 30 ") { return 7; }
+
+  // Real clocks: steady readings never go backwards; wall time is after 2020.
+  auto first = std::chrono::steady_clock::now();
+  mut int64_t spin = 0;
+  for (mut int i = 0; i < 100000; i++) { spin += int64_t(i % 7); }
+  auto second = std::chrono::steady_clock::now();
+  if (!first || !second || spin != 299995) { return 8; }
+  auto elapsed = second.value().elapsed_since(first.value());
+  if (!elapsed || elapsed.value().count() < 0 || second.value().before(first.value())) { return 9; }
+  auto wall = std::chrono::system_clock::now();
+  if (!wall || wall.value().unix_seconds() < int64_t(1577836800)) { return 10; }
+  int32_t fraction = wall.value().subsecond_nanoseconds();
+  if (fraction < 0 || fraction >= 1000000000) { return 11; }
+  std::chrono::nanoseconds origin = first.value().time_since_origin();
+  if (origin.count() > second.value().time_since_origin().count()) { return 12; }
+  return 0;
+}

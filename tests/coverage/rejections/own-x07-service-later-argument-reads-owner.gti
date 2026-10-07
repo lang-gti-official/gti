@@ -1,0 +1,29 @@
+// INVALID: an immediate exclusive service receiver keeps its owner borrowed
+// through the full expression, so a later argument cannot read the owner.
+class Ledger {
+  mut int total_ = 0;
+public:
+  Ledger() {}
+  void add(int amount) mut { this.total_ += amount; }
+  int total() { return this.total_; }
+};
+
+class Writer {
+  mut Ledger& ledger_;
+public:
+  Writer(mut Ledger& ledger) : ledger_(ledger) {}
+  int record(int amount) mut { this.ledger_.add(amount); return this.ledger_.total(); }
+};
+
+class Api {
+  mut Ledger ledger_{};
+public:
+  Api() {}
+  Writer writer() mut { return Writer(this.ledger_); }
+  int total() { return this.ledger_.total(); }
+};
+
+int main() {
+  mut Api api{};
+  return api.writer().record(api.total());
+}

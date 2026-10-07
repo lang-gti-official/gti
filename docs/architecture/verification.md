@@ -1,5 +1,114 @@
 # Compiler Verification
 
+## Reconciled dormant engine embedding foundation
+
+The PR #102 foundation is reconciled with the native scalar/nested-pointer
+compiler and merged PRs #50/#52. Public library targets remain disabled; no
+wrapper, context runtime or shared artifact is implemented. The shipped SDK
+request/root facts and explicit disabled-library diagnostics advance VERSION
+to 0.382.0. ADR 026 and GTI-S2104 have distinct identities. Library snapshots
+use mir-v92/lowered-program-v12 while ordinary executable serialization retains
+mir-v91/lowered-program-v11 and all current native type/target facts.
+
+Release/Ninja, AppleClang 21/LLVM 22.1.8 on macOS arm64 passes 81 distinct
+selected CTest gates: 63 compiler/driver/MIR/backend/optimizer/native/corpus
+gates, 18 supplemental interface/CLI/registry/diagnostic/LSP gates with one
+overlap, and the relocated installed-toolchain gate. The extended foundation
+regression proves dirty manifest overlays preserve internal feature policy and
+cannot activate the public target. The frozen ABI rejects bool and distinct
+native scalar families even though ordinary C interop now admits them; nested
+pointers are rejected by embedding policy, not obsolete general pointer rules.
+All original assertions, modes and timeouts remain intact.
+
+The emission corpus covers 121 sources and 16,166 bodies; the independent native
+oracle builds/runs all 121 examples at O0/C++20 and O3/C++23, retaining 16,159
+reviewed body identities and identical observations/ownership. All 427 language
+coverage cases pass their unchanged expectations, including 104 explicitly
+unresolved known findings. Twelve external installed SDK consumers pass,
+including the new embedding request through installed compiler headers. The
+relocation gate clears all GTI/DYLD overrides; the active user installation is
+not changed. Source hashes bind retained broad evidence to unchanged production
+inputs; final focused and SDK gates are repeated on the published clean head.
+Pinned clang-format checks 464 first-party files, plus release-version and
+whitespace gates. This is selected macOS evidence, not a full 475-gate rerun or
+Linux/Windows validation.
+
+The concurrent allocator/lifetime campaign's unpublished mir-v92/body-v78 and
+lowered-program-v12 conditional-assertion schema overlaps these version numbers.
+Its owner will advance the combined serialization during reconciliation and
+retain both embedding rows and conditional fields; equal version numbers from
+those separate branches do not imply equal schemas. That unfinished campaign
+is not included in this foundation.
+
+## Reconciled language coverage corpus
+
+PR #52's complete corpus passes against the optimized Release compiler from
+main after native scalar/nested-pointer integration and PR #50's test-throughput
+changes: 427 programs, comprising 185 successes, 138 correct rejections and
+104 strict known-finding observations. The older baseline's expectations remain
+valid without changing or skipping cases. Known findings are not correctness
+passes: their unresolved outcomes remain explicit, issue-linked debt, and a
+changed outcome fails the gate. This is macOS arm64 evidence, not cross-platform
+execution or resolution of the reported defects. Its CTest registration reserves
+two processors for the two case workers and remains in the complete coverage
+census.
+
+## Native scalar, recursive pointer and callable integration
+
+The combined candidate uses a Release compiler on macOS arm64 with LLVM
+22.1.8. Focused scalar checks cover six selected target profiles, including
+native callback signatures and forged scalar identity in callee metadata.
+Native-header, native-record, bindgen, raw-pointer and callback pipeline gates
+pass. The callback runtime matrix passes seven C++20/C++23 optimization and
+sanitizer configurations; both recursive-pointer runtime matrices pass eight.
+Independent C fixtures exercise immediate slot writeback, retained slots,
+repeated aliases, native pointer arrays and callbacks with C scalar arguments.
+
+The nested-pointer LSP gate checks per-layer qualifier hover, native call
+navigation, unsaved invalid-to-valid recovery, UTF-16 diagnostic locations,
+formatted-source reanalysis and idempotence. Tree-sitter passes all 73 corpus
+cases, highlight/locals/rainbow queries and all 186 shipped sources.
+
+All 85 selected compiler, backend, MIR, optimizer, native ABI, pointer and
+corpus gates are accounted for as passing. The first run passed 82; the three
+remaining gates passed after correcting test-only bookkeeping: example 124
+has 29 unique bodies, a helper-local constant is not a template default, and
+the function-item identity decoder must consume the added native-scalar field.
+Production compiler sources were unchanged between that run and the reruns.
+The complete CLI, project workflow and LSP protocol gates also pass after
+updating importer-spelling expectations and replacing obsolete bool-rejection
+fixtures with the still-rejected GTI `char`. Formatting checks all 457
+first-party C/C++ files. This is selected local evidence, not a full registered
+suite, Linux/Windows execution or active installed-toolchain validation.
+
+The unrelated existing passive native-record forwarding/discard failure is
+tracked in [issue 105](https://git.internal.howetotech.dev/gti-lang/gti/issues/105);
+it reproduces on the independent 0.380.0 callback release too.
+
+## Native function-pointer invocation
+
+The C-08A candidate uses an optimized Release/Ninja compiler on macOS arm64,
+AppleClang and LLVM 22.1.8. `native_callback_pipeline` checks semantic selection,
+HIR/MIR, generic specialization, exact call signatures, conservative foreign
+effects, ten forged MIR variants, compiler-owned hover/signature/definition
+queries, and existing callback formatting/thread-entry boundaries.
+
+`native_indirect_runtime` independently compiles a C17 fixture and executes
+local, field and returned callbacks, nested factory results, nullable transport,
+callee-before-argument mutation, raw-address writeback, counted text, passive
+record arguments/results, fixed and trailing-pack generic forwarding, and a
+GTI counted-text adapter. C++20/C++23 O0/O1/O3 plus O1 ASan/UBSan all pass with
+elision disabled. The failure fixture verifies target cleanup followed by the
+existing terminating callback firewall, without running caller cleanup.
+Example 122 passes the same matrix. Its reviewed inventory adds 29 MIR bodies
+and 142 LoweredProgram declarations, 29 bodies and three generated items after
+the native-scalar prelude reconciliation.
+
+Foreign variables and broader foreign-thread entry are not introduced. This is
+local candidate evidence, not Linux/Windows execution or installed-consumer
+validation. The native-scalar/nested-pointer composition is covered by the
+combined evidence above.
+
 ## Optional raw audit and combined reconciliation
 
 The 2026-10-06 candidate separates mandatory language checking from optional
@@ -664,6 +773,11 @@ parallel-child output. Its POSIX pseudo-terminal probe holds a native compiler
 process open until elapsed progress arrives, then releases a deliberate native
 failure and verifies live row cleanup and unchanged stdout. It explicitly
 proves the output was visible before the native process exited.
+
+The native-detail assertion accepts the intended elapsed-time suffix and
+rejects explicit backend/tool labels. Pure positive and negative cases keep
+this distinction deterministic: a slow build's `(1.46s)` must not be mistaken
+for the retired `(c++)` label, while labels such as `cpp` or `clang++` still fail.
 
 The existing colour parity and exact parallel replay tests use
 `--progress=never` when comparing byte-identical text; the progress-specific
@@ -2667,6 +2781,8 @@ upstream code.
 | `native_header_c_cpp_oracle` | generated C17/C++20/C++23 declarations and real calls, including mutation of a GTI handle binding through an exact C `OpaqueHandle**` out parameter at O0/O3 |
 | `native_record_c_oracle` | generated record layout and by-value/one-level-pointer calls against an independently compiled C translation unit at O0/O3 and C++20/C++23, including record copy initialization, direct parameter/local/native-call returns, passive scalar argument shapes, and repeated result-slot publication |
 | `native_callback_pipeline` | named callback syntax and exact conversion, null state, passive-record/C-boundary admission, HIR/MIR adapter identity and containment, formatter, diagnostics, generated thunk/header shape, and malformed-adapter rejection |
+| `embedding_header_c17_oracle` / `embedding_header_cpp20_oracle` | Frozen embedding ABI v1 status ordinals, exact 64-bit record sizes/offsets, descriptor/context/wrapper prototypes, and representative opaque-handle/passive-record projection in both C17 and C++20 |
+| `embedding_foundation` | Dormant shared-library manifest gating and immutable project/cache facts; exact export selection, symbol and signature rejection matrix, declaration/request-order independence, semantic/HIR/MIR/lowered root identity, failure metadata closure, optimizer preservation, and forged-plan rejection without publishing an incomplete artifact |
 | `glfw_3_4_c_oracle` | exact 124-function GLFW 3.4 inventory, all five records and callback/Vulkan types, generated C17/C++20/C++23 header checks, linked representative calls at O0/O3, and failing-callback containment |
 | `defined_integer_arithmetic` | APInt boundary behavior, public overload validity, exact integer and checked-result constexpr constants, HIR/MIR intrinsic identity, effects, diagnostics, and backend helper selection |
 | `defined_integer_runtime` | example 46 at O0/O3 under C++20/C++23 with exact wrapping, saturation, checked success, and checked error results |
@@ -2707,6 +2823,7 @@ upstream code.
 | `returned_class_field_runtime` | free-function and method class results can be projected directly in initializers and larger expressions at O0/O3 under C++20/C++23 |
 | `global_class_storage_runtime` | runtime-initialized cleanup-free global class storage uses one shared lifetime-slot representation across declarations, module initialization, and exact member reads/writes at O0/O3 under C++20/C++23 |
 | `reference_parameter_range_runtime` | single, nested, and triple read-only traversal through a class reference parameter use shared MIR referent carriers; public-derived arguments bind to base/interface references; direct concrete virtual calls cover local, global, field, generic, returned-bound, and ordinary-base receivers; failure-capable descendants retain the status ABI; and the matrix runs at O0/O3 under C++20/C++23 |
+| `carrier_shell_references` / `shared_accessor_range_runtime` | borrowed-success carrier to reference accessor to read-only element traversal, reduced from Tea's JSON decoder and repeated with an unrelated application owner and noncopyable elements; exact retained call-result identity, nested iteration, continue/break/return and failure cleanup; forged local/access metadata and premature range retirement rejected; owner invalidation and escaping-local negatives; C++20/C++23 O0/O1/O3, disabled elision and ASan/UBSan |
 | `compiler_pipeline` / `mutable_range_runtime` / `cli_workflow` / `lsp_protocol` range coverage | L-RANGE-01 read-only and L-RANGE-02 mutable fixed-array/`std::vector`/owned-temporary plans; exact exclusive parent and iteration child loans; nested/empty/break/continue/return flow; invalidation, overlap, escape, immutable-owner, and missing-`begin_mut()` rejection; exact normal/failure cleanup; C++20/C++23 O0/O3 runtime parity; `GTI-S2083` publication/clearing; and incomplete-source recovery |
 | `compiler_ownership` / `generic_algorithm_cluster` complete-range coverage | L-RANGE-04 exact `input_range`, `range_of`, `mutable_range_of`, `sized_range`, range predicate/operation relationships; application-defined nominal and fixed-array instantiation; concrete HIR protocol/strategy replacement; checked fixed-array index arithmetic after symbolic-operator suppression; missing endpoints, wrong referent, missing mutable endpoint, wrong size result, and callable mismatch rejection; C++20/C++23 O0/O3 runtime parity |
 | `compiler_pipeline` / `mutable_stored_dependency_runtime` / `nested_borrow_fields` / `nested_borrow_fields_lsp` / `lsp_protocol` stored-carrier coverage | read-only copy construction with shared owner dependency and independent shells; mutable one-origin construction, conditional return, move relay, exclusive child reborrow, early cleanup, and owner reactivation; exact single-path nominal nesting; assignment, mutable-copy, multiple-path, global storage, and ambiguous-origin rejection; exact carrier/stored-referent relay; `GTI-S2045`/`GTI-S2085` publication; and direct MIR mutations of ancestry, field paths, double retirement, return provenance, entry dependency, payload type, and runtime referent place |
@@ -3066,17 +3183,24 @@ example graph.
 ## Language coverage corpus
 
 `tests/coverage/` holds a breadth sweep of ordinary GTI programs chosen to
-combine syntax and stdlib surface. The fixed c01–c30 tranche is registered as
-`language_coverage_fixed_corpus`; run that exact release gate directly with
-`tests/coverage/run_coverage.sh build/gti <output> --fixed-baseline`. The full
-65-program audit runs with `tests/coverage/run_coverage.sh build/gti` and
-deliberately retains unresolved findings, so it is not a green CTest
-expectation yet.
+combine syntax and stdlib surface, a reproducer for every audit finding,
+must-reject programs under `rejections/`, and multi-step projects under
+`projects/` (modules, path dependencies, defines, workspaces, test targets, and
+initialization order). `language_coverage_corpus` gates all four through
+`tests/coverage/gate.py <gti> <output>` against
+`tests/coverage/expectations.json`. A program may list runtime `cases` with
+arguments, exact stdout, and a stderr pattern, so defined-failure reports and
+cleanup order are checked rather than only the exit status.
 
-The runner separately classifies an ICE (`GTI-B0001`), link failure,
-diagnostic rejection, silent compiler failure, and runtime failure so no class
-can be mistaken for another. `tests/coverage/FINDINGS.md` records the fixed
-F1–F6 reductions and the unresolved F7–F20 audit. Programs here must be valid
+The gate separately classifies pass, runtime failure, ICE (`GTI-B0001`),
+backend and link failure, silent compiler failure, hang, crash, a diagnostic at
+the synthetic `<source>` location, and located rejection, so no class can be
+mistaken for another. Corpus programs must pass unless listed. A listed known
+finding records the outcome its defect produces today and names its finding
+and issue; the gate fails when that outcome changes, so a failing test stays in
+place without hiding either a regression or an unrecorded fix. A must-reject
+program states the diagnostic code it expects. `tests/coverage/FINDINGS.md`
+records every finding and its current status. Corpus programs must be valid
 GTI — a failure is a compiler finding, not a corpus expectation to edit away.
 
 For exact qualified class specializations, `compiler_pipeline` owns qualified
@@ -3660,6 +3784,90 @@ are unchanged. Its C++20/O0 and C++23/O3 executions retain the same cleanup
 observations.
 
 ## Development And Completion Cadence
+
+### Bounded case workers and development selections
+
+The standard-library surface harness and all clients of the shared callable
+runtime matrix support bounded case workers. `GTI_TEST_CASE_JOBS` is a CMake
+cache setting (default `2`), not a compiler or installed CLI option. CTest
+reserves that many `PROCESSORS` for each participating suite and supplies the
+matching environment value. Increase the outer CTest budget independently;
+do not give each test the entire host's CPU count. Existing suite names,
+timeouts, fixture sets, optimization/standard/elision/sanitizer modes, expected
+diagnostics and native observations are unchanged. Full CI and release commands
+continue to run every registered test without filtering.
+
+Compound suites also carry a conservative CTest `COST` hint based on their
+unchanged suite timeout, with a minimum of one. This is an
+ordering hint, not a measured duration: fresh trees otherwise assign unknown
+tests zero cost and can keep filling slots with smaller one-worker tests while
+large matrices wait for a sufficient reservation. CTest schedules higher-cost
+work first. Actual test timings remain visible; the hint does not raise a
+timeout, change worker accounting, or remove any check.
+
+For the callable matrix, only compilation runs concurrently. Native executions
+remain on the parent thread in the original mode/fixture/argument order, with
+the same working directory and input. This preserves fixtures that reuse files
+between modes. Each standard-library case already owns an isolated working
+directory; its complete sequence of compilations and observations can run in
+parallel with other cases. Workers do not cache passing results or artifacts.
+Every planned case is submitted once, observed once, and any compile, timeout,
+execution, or observation failure fails the suite. An empty or duplicate plan
+is rejected. Case-level progress and a complete-count/timing summary identify
+long work inside a suite instead of hiding it behind one CTest entry.
+
+Standalone harnesses retain serial defaults and accept `--jobs N`; existing
+`--fixture`/`--mode` development filters remain partial evidence. `--jobs 1`
+provides the serial reference without changing the assertion matrix. The
+`test_case_jobs` gate checks exact serial/parallel compile arguments, all eight
+modes, sanitizer environment, stdin, native execution ordering and the whole
+surface manifest, plus injected compile/output/timeout/observation failures.
+`test_throughput_registration` independently finds every shared-harness client,
+checks registration and worker/processor pairing, and rejects omitted,
+disabled or forged registrations. It queries a scratch copy of registration
+files so nested CTest discovery cannot truncate the active suite's log.
+Discovery restores build-relative default working directories and preserves
+explicit ones, so repeated inventories describe the same execution context.
+
+All registered tests automatically carry `coverage-full`. A deliberately
+partial group of in-process compiler/IR/model contracts carries
+`feedback-fast`; `lsp`, `end-to-end`, and `bounded-case-workers` are additional
+selection labels. Labels do not disable tests or change default execution.
+
+```sh
+ctest --test-dir build --parallel 4 --output-on-failure -L feedback-fast
+ctest --test-dir build --parallel 4 --output-on-failure -L coverage-full
+python3 tests/owning_function_runtime_test.py build/gti --jobs 1
+```
+
+On a 12-core host with sufficient memory, a larger accounted allocation can
+shorten long-suite tails while still letting three four-worker suites share
+the machine. Reconfigure the same Ninja tree rather than launching multiple
+uncoordinated CTest runs:
+
+```sh
+cmake -S . -B build -DGTI_TEST_CASE_JOBS=4
+cmake --build build --parallel 12
+ctest --test-dir build --parallel 12 --output-on-failure
+```
+
+The per-suite default remains two for smaller hosts. Higher values are a
+resource choice, not permission to change timeouts or assert fewer outcomes.
+If other builds share the host, reduce the outer budget or rerun a timed-out
+gate unchanged under a controlled load; never convert the failure to a pass.
+
+Local samples on 2026-10-07 use one Release compiler binary with AppleClang 21
+and system LLVM 22.1.8 on a 12-core/32-GiB macOS arm64 host. The unchanged
+eight-mode contextual-numeric suite took 10.78 seconds serially and 5.37 seconds
+with two workers. All 143 standard-library cases took 926.46 seconds serially
+and 649.47 seconds with two workers (about 30% less wall time), with identical
+completed-case censuses and no removed configurations or observations. These
+are single-run samples, not CI thresholds or a claim that whole-release time
+halves; the parallel stdlib sample also shared the host with another build.
+
+Fast feedback is not a complete feature/release claim. The full completion,
+installed-consumer, platform, sanitizer and packaging obligations below remain
+in force. This scheduling change does not replace them with a smaller suite.
 
 `source_debug_info` exercises opt-in statement mappings, escaped paths,
 multi-line expansion resets, C++20/C++23 emission, native execution, project

@@ -1,0 +1,14 @@
+// INVALID: a std::string_view of a local std::string escapes the function.
+#include <std/string>
+
+std::string_view greeting(std::string_view who) {
+  mut std::string text = std::string("hello ");
+  text.append(who);
+  std::string_view view = text.view();
+  return view;
+}
+
+int main() {
+  std::println(greeting("world"));
+  return 0;
+}

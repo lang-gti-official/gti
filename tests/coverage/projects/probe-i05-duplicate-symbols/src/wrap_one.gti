@@ -1,0 +1,3 @@
+#include "one.gti"
+
+int via_one() { return util::helper(0); }

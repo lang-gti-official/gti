@@ -1,0 +1,4 @@
+import lib;
+
+// extra_bonus comes from lib's ordinary (non-re-exported) import.
+int main() { return extra_bonus() - 2; }

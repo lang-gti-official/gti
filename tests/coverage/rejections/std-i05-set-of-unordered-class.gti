@@ -1,0 +1,12 @@
+// INVALID: std::set requires a totally ordered key (or an explicit comparator).
+#include <std/set>
+class Widget {
+  int id;
+public:
+  Widget(int id) : id(id) {}
+};
+int main() {
+  mut std::set<Widget> widgets{};
+  [[discard]] widgets.insert(Widget(1));
+  return int(widgets.size());
+}

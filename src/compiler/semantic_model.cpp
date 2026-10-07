@@ -474,6 +474,18 @@ SemanticModel::hostedProgramEntryPlan() const {
                                                 : hostedProgramEntry;
 }
 
+ProgramKind SemanticModel::programKind() const { return programKind_; }
+
+const std::optional<SemanticEmbeddingPlan> &
+SemanticModel::embeddingPlan() const {
+  return embeddingPlan_;
+}
+
+bool SemanticModel::hasNativeFunctionConversions() const {
+  return !nativeFunctionConversions.empty() ||
+         (base != nullptr && base->hasNativeFunctionConversions());
+}
+
 bool SemanticModel::isProgramConstantSubstitution(
     const Expr &expression) const {
   return programConstantSubstitutions.contains(&expression) ||
@@ -1300,6 +1312,8 @@ void SemanticModel::clear() {
   callerLocations.clear();
   programInitialization = {};
   hostedProgramEntry.reset();
+  programKind_ = ProgramKind::Executable;
+  embeddingPlan_.reset();
   programConstantSubstitutions.clear();
   places.clear();
   ownershipEvents.clear();
@@ -1381,6 +1395,13 @@ void SemanticModel::setHostedProgramEntryPlan(
   hostedProgramEntry = std::move(plan);
 }
 
+void SemanticModel::setProgramKind(ProgramKind kind) { programKind_ = kind; }
+
+void SemanticModel::setEmbeddingPlan(
+    std::optional<SemanticEmbeddingPlan> plan) {
+  embeddingPlan_ = std::move(plan);
+}
+
 void SemanticModel::recordProgramConstantSubstitution(const Expr &expression) {
   programConstantSubstitutions.insert(&expression);
 }
@@ -1399,6 +1420,8 @@ void SemanticModel::beginInstanceDelta(const SemanticModel &baseModel) {
   clear();
   executionProfile_ = baseModel.executionProfile();
   placeSnapshot_ = baseModel.placeSnapshot();
+  programKind_ = baseModel.programKind();
+  embeddingPlan_ = baseModel.embeddingPlan();
   base = &baseModel;
   semanticDatabase.beginInstanceDelta(baseModel.semanticDatabase);
 }
@@ -1467,7 +1490,11 @@ void SemanticModel::record(const Expr &expression, ExpressionInfo info) {
 
 void SemanticModel::recordDefinedFailure(const Expr &expression,
                                          DefinedFailureOperation operation) {
-  if (operation.empty()) {
+  // A concrete reanalysis can prove that a deferred generic operation has no
+  // GTI failure channel. Preserve that explicit empty fact in the overlay;
+  // erasing it would expose the base model's deferred propagation again.
+  if (operation.empty() &&
+      (base == nullptr || base->findDefinedFailure(expression) == nullptr)) {
     definedFailures.erase(&expression);
     return;
   }

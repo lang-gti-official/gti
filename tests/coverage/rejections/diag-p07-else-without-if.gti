@@ -1,0 +1,7 @@
+int main() {
+  int x = 3;
+  else { //!ERR
+    return 1;
+  }
+  return x - 3;
+}

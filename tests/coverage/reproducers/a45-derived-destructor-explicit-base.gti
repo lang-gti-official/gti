@@ -1,0 +1,14 @@
+// A45: a derived destructor with an explicit base initializer is a backend ICE.
+class Base {
+public:
+  Base() { std::println(1); }
+};
+class Middle : public Base {
+public:
+  Middle() : Base() {}
+  ~Middle() { std::println(-2); }
+};
+int main() {
+  Middle d = Middle();
+  return 0;
+}

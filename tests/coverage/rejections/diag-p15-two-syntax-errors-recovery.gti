@@ -1,0 +1,17 @@
+int first() {
+  int a = (1 + 2; //!ERR
+  return a;
+}
+
+int second() {
+  int b = 4 + ; //!ERR
+  return b;
+}
+
+int third() {
+  return 3 //!ERR
+}
+
+int main() {
+  return first() + second() + third();
+}

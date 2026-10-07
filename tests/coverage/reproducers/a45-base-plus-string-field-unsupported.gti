@@ -1,0 +1,16 @@
+// A45: any derived class with a std::string field hits the same GTI-B0003.
+#include <std/string>
+class Base {
+public:
+  int32_t x;
+  Base(int32_t x) : x(x) {}
+};
+class Derived : public Base {
+public:
+  std::string name;
+  Derived(int32_t v) : Base(v), name(std::string()) {}
+};
+int main() {
+  Derived d = Derived(1);
+  return d.x - 1;
+}

@@ -1,0 +1,43 @@
+// Valid (failure path): wrong-state access on the recoverable allocation
+// channel. value() on an invalid-alignment error and error() on a success are
+// GTI-R0009 failures sited at the observer call; storage already holding live
+// elements, a unique_ptr and an arena are all cleaned before the report.
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Item {
+  int32_t id;
+public:
+  Item(int32_t id) : id(id) {}
+  Item(Item& other) = delete;
+  Item(Item&& other) = default;
+  ~Item() {
+    std::print("item ");
+    std::println(this.id);
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  std::allocator heap{};
+  mut auto good = heap.try_storage<Item>(std::size_t(2));
+  mut std::storage<Item> slots = std::move(good).value();
+  slots.emplace(std::size_t(0), 1);
+  slots.emplace(std::size_t(1), 2);
+  std::unique_ptr<Item> boxed = std::make_unique<Item>(3);
+  mut auto arena_attempt = std::try_make_arena<Item>(std::size_t(1));
+  mut std::arena<Item> frame = std::move(arena_attempt).value();
+  [[discard]] frame.try_insert(Item(4));
+  mut auto bad = heap.try_storage<Item>(std::size_t(2), std::alignment(std::size_t(3)));
+  if (bad.has_value()) { return 1; }
+  if (bad.error() != std::alloc_errc::invalid_alignment) { return 2; }
+  if (argc == 1) {
+    std::storage<Item> never = std::move(bad).value(); // value-site
+  }
+  mut auto fine = heap.try_storage<Item>(std::size_t(1), std::alignment(std::size_t(128)));
+  if (argc == 2) {
+    std::alloc_errc wrong = fine.error(); // error-site
+  }
+  std::println("unreachable");
+  return 3;
+}

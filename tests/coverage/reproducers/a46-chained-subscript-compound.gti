@@ -1,0 +1,18 @@
+// A46: 'g[i][j] += v' through chained user subscripts is a backend ICE.
+class Row {
+  mut int32_t cells[4] = {};
+public:
+  Row() {}
+  mut int32_t& operator[](std::size_t c) mut { return this.cells[c]; }
+};
+class Grid {
+  mut Row rows[3] = {};
+public:
+  Grid() {}
+  mut Row& operator[](std::size_t r) mut { return this.rows[r]; }
+};
+int main() {
+  mut Grid g = Grid();
+  g[std::size_t(0)][std::size_t(3)] += 7;
+  return 0;
+}

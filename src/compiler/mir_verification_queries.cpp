@@ -164,10 +164,12 @@ bool objectLayoutQuery(const MirProgram &program,
     case SemanticType::Double:
     case SemanticType::Bool:
     case SemanticType::Char:
-      return type == SemanticType(type.kind);
+      return type == SemanticType(type.kind) ||
+             (type.nativeCScalar != NativeCScalarKind::None &&
+              type == SemanticType::nativeCScalarType(type.nativeCScalar,
+                                                      program.target()));
     case SemanticType::RawPointer:
       return type.arguments.size() == 1 &&
-             type.arguments.front().kind != SemanticType::RawPointer &&
              type.arguments.front().kind != SemanticType::TypeParameter &&
              type.arguments.front().kind != SemanticType::Unknown;
     case SemanticType::Enum:
@@ -215,8 +217,6 @@ bool rawPointerConversion(const MirInstruction &instruction) {
   return source.kind == SemanticType::RawPointer &&
          target.kind == SemanticType::RawPointer &&
          source.arguments.size() == 1 && target.arguments.size() == 1 &&
-         source.arguments.front().kind != SemanticType::RawPointer &&
-         target.arguments.front().kind != SemanticType::RawPointer &&
          (source.pointerAccess == AccessMode::Mutable ||
           target.pointerAccess == AccessMode::ReadOnly) &&
          (source.arguments.front() == target.arguments.front() ||

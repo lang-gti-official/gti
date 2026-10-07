@@ -1,0 +1,91 @@
+// Word frequency: tokenize with find/substr, count in an unordered_map with
+// owning-string keys via get_or_insert, move results into a vector of a
+// move-only record, then comparator sort (count desc, word asc).
+#include <std/unordered_map>
+#include <std/string>
+#include <std/vector>
+#include <std/algorithm>
+
+class WordCount {
+public:
+  std::string word;
+  int count;
+  WordCount(std::string word, int count) : word(std::move(word)), count(count) {}
+  WordCount(WordCount& other) = delete;
+  WordCount(WordCount&& other) = default;
+};
+
+class ByFrequency {
+public:
+  bool operator()(WordCount& left, WordCount& right) {
+    if (left.count != right.count) { return left.count > right.count; }
+    return left.word < right.word;
+  }
+};
+
+bool is_letter(char c) {
+  uint8_t code = uint8_t(c);
+  return (code >= uint8_t(97) && code <= uint8_t(122)) ||
+         (code >= uint8_t(65) && code <= uint8_t(90));
+}
+
+// Lowercase ASCII copy of one token.
+std::string normalized(std::string& token) {
+  mut std::string result{};
+  for (mut std::size_t i = 0; i < token.size(); i++) {
+    char c = token[i];
+    uint8_t code = uint8_t(c);
+    if (code >= uint8_t(65) && code <= uint8_t(90)) {
+      result.push_back(char(uint8_t(code + uint8_t(32))));
+    } else {
+      result.push_back(c);
+    }
+  }
+  return result;
+}
+
+int main() {
+  std::string text{"The cat and the hat. The CAT sat; a hat, a cat, and THE end"};
+  mut std::unordered_map<std::string, int> counts{};
+  mut std::size_t position = 0;
+  while (position < text.size()) {
+    while (position < text.size() && !is_letter(text[position])) { position++; }
+    mut std::size_t end = position;
+    while (end < text.size() && is_letter(text[end])) { end++; }
+    if (end > position) {
+      std::string token = text.substr(position, end - position);
+      std::string key = normalized(token);
+      mut int& slot = counts.get_or_insert(std::move(key));
+      slot += 1;
+    }
+    position = end;
+  }
+  if (counts.size() != 7) { return 1; }
+  std::string the{"the"};
+  if (counts.at(the) != 4) { return 2; }
+
+  mut std::vector<WordCount> ranked{};
+  for (auto& entry : counts) {
+    ranked.push_back(WordCount(entry.first.clone(), entry.second));
+  }
+  std::sort(ranked, ByFrequency());
+  mut std::string summary{};
+  for (mut std::size_t i = 0; i < 4; i++) {
+    WordCount& item = ranked[i];
+    summary.append(item.word.view());
+    summary.push_back('=');
+    summary.append(std::to_string(item.count).view());
+    summary.push_back(' ');
+  }
+  std::println(summary);
+  if (summary != "the=4 cat=3 a=2 and=2 ") { return 3; }
+
+  // Erase the stop words and confirm the rest survive.
+  std::string a{"a"};
+  std::string and_word{"and"};
+  if (counts.erase(a) != 1 || counts.erase(and_word) != 1 || counts.erase(a) != 0) { return 4; }
+  mut int remaining = 0;
+  for (auto& entry : counts) { remaining += entry.second; }
+  if (remaining != 4 + 3 + 2 + 1 + 1) { return 5; }
+  return 0;
+}

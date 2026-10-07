@@ -76,7 +76,8 @@ public:
                       RuntimeProfile runtimeProfile = RuntimeProfile::None,
                       ToolchainSelectionPolicy toolchainPolicy =
                           ToolchainSelectionPolicy::HostTools,
-                      ProjectToolchainOverrides toolchainOverrides = {});
+                      ProjectToolchainOverrides toolchainOverrides = {},
+                      ManifestFeaturePolicy manifestFeatures = {});
 
   [[nodiscard]] const std::filesystem::path &startDirectory() const;
   [[nodiscard]] const std::optional<std::string> &targetName() const;
@@ -88,6 +89,7 @@ public:
   [[nodiscard]] RuntimeProfile runtimeProfile() const;
   [[nodiscard]] ToolchainSelectionPolicy toolchainPolicy() const;
   [[nodiscard]] const ProjectToolchainOverrides &toolchainOverrides() const;
+  [[nodiscard]] ManifestFeaturePolicy manifestFeatures() const;
 
 private:
   std::filesystem::path discoveryStart;
@@ -100,6 +102,7 @@ private:
   RuntimeProfile selectedRuntimeProfile;
   ToolchainSelectionPolicy selectedToolchainPolicy;
   ProjectToolchainOverrides nativeToolchainOverrides;
+  ManifestFeaturePolicy enabledManifestFeatures;
 };
 
 // One resolved bindgen import carried by a build plan: every value the
@@ -157,7 +160,9 @@ public:
       std::vector<BuildScriptPlan> buildScripts = {},
       ResolvedProjectToolchain toolchain = {}, bool debugInfo = false,
       PackageWarningPolicy packageWarnings = {},
-      RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off);
+      RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
+      ProjectTargetLinkage targetLinkage = ProjectTargetLinkage::None,
+      std::vector<ProjectExport> exports = {});
 
   [[nodiscard]] const std::filesystem::path &manifestPath() const;
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
@@ -166,6 +171,9 @@ public:
   [[nodiscard]] const std::string &packageVersion() const;
   [[nodiscard]] const std::string &targetName() const;
   [[nodiscard]] ProjectTargetKind targetKind() const;
+  [[nodiscard]] ProjectTargetLinkage targetLinkage() const;
+  [[nodiscard]] const std::vector<ProjectExport> &exports() const;
+  [[nodiscard]] ProgramRequest programRequest() const;
   [[nodiscard]] const std::string &profileName() const;
   [[nodiscard]] const std::filesystem::path &entry() const;
   [[nodiscard]] const std::filesystem::path &output() const;
@@ -194,6 +202,7 @@ private:
   std::string projectPackageVersion;
   std::string projectTargetName;
   ProjectTargetKind projectTargetKind;
+  ProjectTargetLinkage projectTargetLinkage;
   std::string buildProfileName;
   std::filesystem::path entryPath;
   std::filesystem::path outputPath;
@@ -211,6 +220,7 @@ private:
   std::vector<BindgenImportPlan> resolvedBindgenImports;
   std::vector<BuildScriptPlan> resolvedBuildScripts;
   ResolvedProjectToolchain resolvedToolchain;
+  std::vector<ProjectExport> resolvedExports;
   bool sourceDebugInfo = false;
   RawPointerAuditMode rawPointerAuditMode = RawPointerAuditMode::Off;
 };
@@ -385,7 +395,7 @@ resolveProjectBuild(const ProjectBuildRequest &request);
 [[nodiscard]] ProjectTestResolutionResult
 resolveProjectTests(const ProjectBuildRequest &request);
 
-// Resolves one build plan for every declared executable and test target of
+// Resolves one build plan for every enabled declared target of
 // the selected package, in the manifest's deterministic target-name order.
 // The request must not name a single target.
 [[nodiscard]] ProjectTargetSetResolutionResult
@@ -395,7 +405,8 @@ resolveAllProjectTargets(const ProjectBuildRequest &request);
 resolveProjectMetadata(const std::filesystem::path &startDirectory,
                        TargetInfo target,
                        std::optional<std::string> packageName = std::nullopt,
-                       RuntimeProfile runtimeProfile = RuntimeProfile::None);
+                       RuntimeProfile runtimeProfile = RuntimeProfile::None,
+                       ManifestFeaturePolicy manifestFeatures = {});
 
 [[nodiscard]] ProjectCleanResult
 cleanProject(const std::filesystem::path &startDirectory);

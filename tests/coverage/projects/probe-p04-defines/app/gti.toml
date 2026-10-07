@@ -1,0 +1,15 @@
+manifest-version = 1
+
+[package]
+name = "app"
+version = "0.1.0"
+
+[build]
+defines = ["VERBOSE", "FEATURE_A", "FEATURE_A"]
+
+[dependencies]
+dep = { path = "../dep" }
+
+[targets.app]
+kind = "executable"
+root = "src/main.gti"

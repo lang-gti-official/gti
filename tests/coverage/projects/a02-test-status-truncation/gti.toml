@@ -1,0 +1,9 @@
+manifest-version = 1
+
+[package]
+name = "a02-test-status-truncation"
+version = "0.1.0"
+
+[targets.counts-failures]
+kind = "test"
+root = "tests/counts_failures.gti"

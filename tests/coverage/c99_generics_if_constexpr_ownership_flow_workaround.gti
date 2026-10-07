@@ -1,0 +1,60 @@
+// Branch-dependent ownership flow under `if constexpr`: a move-only owner is
+// consumed only in some instances, a generic class destructor selects its
+// cleanup by a value parameter, and the discarded branch would be invalid
+// for that instance.
+#include <std/memory>
+#include <std/string>
+
+mut int32_t cleanup_log = 0;
+
+int32_t consume_maybe<uint64_t Mode>(std::unique_ptr<int32_t> owner) {
+  // Workaround: no local declarations inside the dependent branches.
+  mut int32_t seen = 0;
+  if constexpr (Mode == 0) {
+    return *owner;
+  } else {
+    seen = *owner + 1;
+  }
+  std::unique_ptr<int32_t> later = std::move(owner);
+  return seen + *later;
+}
+
+std::string pick_text<uint64_t Mode>(mut std::string first, std::string second) {
+  if constexpr (Mode == 0) {
+    return first;
+  } else if constexpr (Mode == 1) {
+    return second;
+  } else {
+    first.append(second.view());
+    return first;
+  }
+}
+
+class Guard<uint64_t Weight> {
+public:
+  Guard() {}
+  ~Guard() {
+    if constexpr (Weight == 0) {
+      cleanup_log += 1;
+    } else {
+      cleanup_log += int32_t(Weight) * 10;
+    }
+  }
+};
+
+int main() {
+  if (consume_maybe<0>(std::make_unique<int32_t>(7)) != 7) { return 1; }
+  if (consume_maybe<1>(std::make_unique<int32_t>(7)) != 15) { return 2; }
+
+  if (pick_text<0>(std::string("a"), std::string("b")) != "a") { return 3; }
+  if (pick_text<1>(std::string("a"), std::string("b")) != "b") { return 4; }
+  if (pick_text<2>(std::string("a"), std::string("b")) != "ab") { return 5; }
+
+  {
+    Guard<0> light{};
+    Guard<3> heavy{};
+  }
+  std::println(cleanup_log);
+  if (cleanup_log != 31) { return 6; }
+  return 0;
+}

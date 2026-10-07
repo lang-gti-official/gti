@@ -1,0 +1,11 @@
+#include <std/vector>
+
+namespace mid::detail {
+  int accumulate(std::vector<int>& values) {
+    mut int total = 0;
+    for (int value : values) {
+      total = total + value;
+    }
+    return total;
+  }
+}

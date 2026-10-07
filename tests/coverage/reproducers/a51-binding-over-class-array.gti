@@ -1,0 +1,11 @@
+// A51: a structured binding over a fixed array of class elements is a backend ICE.
+struct Range {
+  int32_t lo;
+  int32_t hi;
+  Range(int32_t lo, int32_t hi) : lo(lo), hi(hi) {}
+};
+int main() {
+  Range pairs[2] = {Range(0, 1), Range(5, 8)};
+  auto [first, second] = pairs;
+  return first.hi + second.lo - 6;
+}

@@ -102,6 +102,9 @@ public:
 
   bool check(const Expr &expr);
 
+  bool applyProgramRequest(const Program &program,
+                           const ProgramRequest &request);
+
   [[nodiscard]] bool hadError() const;
 
   [[nodiscard]] const std::vector<SemanticDiagnostic> &errors() const;
@@ -997,6 +1000,7 @@ private:
     bool compilerPrivate = false;
     CompilerCapabilityTypeKind compilerCapability =
         CompilerCapabilityTypeKind::None;
+    NativeCScalarKind nativeCScalar = NativeCScalarKind::None;
   };
 
   struct ExactClassSpecialization {
@@ -1901,6 +1905,9 @@ private:
   void analyzeLambdaCall(const Call &call, const SemanticType &calleeType,
                          const std::vector<SemanticType> &argumentTypes);
 
+  void
+  analyzeNativeIndirectCall(const Call &call, const SemanticType &calleeType,
+                            const std::vector<SemanticType> &argumentTypes);
   void analyzeFunctionItemCall(const Call &call, const SemanticType &calleeType,
                                const std::vector<SemanticType> &argumentTypes);
 
@@ -2356,9 +2363,6 @@ private:
   isContextualNativeFunctionArgument(const ExprPtr &expression) const;
 
   [[nodiscard]] bool
-  isContextualNativeOutPointerArgument(const ExprPtr &expression) const;
-
-  [[nodiscard]] bool
   isContextualCallableResultArgument(const ExprPtr &expression) const;
 
   [[nodiscard]] ContextualCallArguments
@@ -2492,8 +2496,7 @@ private:
 
   void validateArrayExtent(const ArrayExtentExprPtr &extent);
 
-  void validateType(const TypeRef &type, bool allowNativeCOuterPointer = false,
-                    bool allowNativeFunctionType = false);
+  void validateType(const TypeRef &type, bool allowNativeFunctionType = false);
 
   [[nodiscard]] CompilerCapabilityTypeKind
   compilerCapabilityType(const TypeRef &type,
@@ -2740,15 +2743,10 @@ private:
   [[nodiscard]] bool isCAbiRawPointer(const SemanticType &type) const;
 
   [[nodiscard]] bool
-  isCAbiOpaqueHandleOutPointer(const SemanticType &type) const;
-
-  [[nodiscard]] bool
   nativeFunctionBoundaryTypeAllowed(const SemanticType &type,
                                     bool returnPosition) const;
 
   [[nodiscard]] bool isCAbiNativeFunction(const SemanticType &type) const;
-
-  [[nodiscard]] bool isCAbiArrayReturnPointer(const SemanticType &type) const;
 
   void validateNativeCArrayAttribute(const FunctionDecl &function,
                                      const SemanticType &returnType);
@@ -3349,11 +3347,11 @@ private:
   numericConversionMayFail(const SemanticType &source,
                            const SemanticType &target);
 
-  [[nodiscard]] static SemanticType
+  [[nodiscard]] SemanticType
   compoundIntermediateType(TokenKind operation, const SemanticType &target,
                            const SemanticType &right,
                            const Expr *leftExpression,
-                           const Expr *rightExpression);
+                           const Expr *rightExpression) const;
 
   void addCompoundConversionFailure(DefinedFailureOperation &operation,
                                     TokenKind token, const SemanticType &target,
@@ -4018,8 +4016,8 @@ private:
 
   [[nodiscard]] static SemanticType promotedInteger(SemanticType type);
 
-  [[nodiscard]] static SemanticType widerInteger(SemanticType left,
-                                                 SemanticType right);
+  [[nodiscard]] SemanticType widerInteger(SemanticType left,
+                                          SemanticType right) const;
 
   [[nodiscard]] static bool canConvertToUnsigned(SemanticType originalType,
                                                  const Expr *expression,
@@ -4029,10 +4027,10 @@ private:
 
   [[nodiscard]] static bool isExpectedVoid(const SemanticType &type);
 
-  [[nodiscard]] static SemanticType numericResult(SemanticType left,
-                                                  SemanticType right,
-                                                  const Expr *leftExpression,
-                                                  const Expr *rightExpression);
+  [[nodiscard]] SemanticType numericResult(SemanticType left,
+                                           SemanticType right,
+                                           const Expr *leftExpression,
+                                           const Expr *rightExpression) const;
 
   [[nodiscard]] bool isOwnershipAssignable(const SemanticType &target,
                                            const SemanticType &value,
@@ -4351,7 +4349,6 @@ private:
     const Expr *contextualInitializerExpression = nullptr;
     std::optional<SemanticType> contextualOperatorIntegerType;
     std::optional<ContextualCallableResult> contextualCallableResult;
-    std::optional<SemanticType> contextualNativeOutPointerType;
     ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
     std::size_t constructorDepth = 0;
     std::size_t destructorDepth = 0;
@@ -4527,8 +4524,6 @@ private:
       requestSession.contextualOperatorIntegerType;
   std::optional<ContextualCallableResult> &contextualCallableResult =
       requestSession.contextualCallableResult;
-  std::optional<SemanticType> &contextualNativeOutPointerType =
-      requestSession.contextualNativeOutPointerType;
   ReceiverMutability &currentReceiverMutability =
       requestSession.currentReceiverMutability;
   std::size_t &constructorDepth = requestSession.constructorDepth;
