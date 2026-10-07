@@ -520,6 +520,31 @@ int main() {
 }
 """, 70, "2\n1\n9\n"),
     }
+    cases["base-derived-enum-field-rollback"] = (OWNING + """
+class Failing {
+public:
+  Failing() {
+    int32_t zero = 0;
+    int32_t checked = int32_t(1) / zero;
+  }
+};
+class Foundation {
+  Event<Resource, 1> base_event;
+public:
+  Foundation() : base_event(Event<Resource, 1>::item(Resource(11))) {}
+};
+class Derived : public Foundation {
+  Event<Resource, 2> derived_event;
+  Failing last;
+public:
+  Derived() : Foundation(), derived_event(Event<Resource, 2>::item(Resource(22))), last(Failing()) {}
+};
+int main() {
+  Event<Resource, 3> outer = Event<Resource, 3>::item(Resource(9));
+  Derived value = Derived();
+  return 0;
+}
+""", 70, "22\n11\n9\n")
     example = pathlib.Path(__file__).resolve().parents[1] / "examples/129-generic-payload-enums.gti"
     cases["application-example"] = (example.read_text(), 0, "hello\nidle\n0\n")
     return cases
