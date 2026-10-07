@@ -8745,6 +8745,25 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
     expectedUseCount += place.root == MirPlaceRootKind::Value ? 1 : 0;
     for (const MirPlaceProjection &projection : place.projections) {
+      if (projection.kind == MirProjectionKind::Index && projection.index &&
+          projection.constantIndex) {
+        const auto *value = body.findValue(projection.index);
+        const auto *block =
+            value ? body.findBlock(value->definitionBlock) : nullptr;
+        if (block)
+          for (const auto &definition : block->instructions) {
+            if (definition.id != value->definition ||
+                definition.operation != MirOperation::Literal ||
+                !definition.literal)
+              continue;
+            const auto *unsignedIndex =
+                std::get_if<std::uint64_t>(&*definition.literal);
+            if (unsignedIndex && *unsignedIndex != *projection.constantIndex)
+              return failure(body, owner,
+                             "constant array projection disagrees with its "
+                             "literal index value");
+          }
+      }
       if ((projection.kind == MirProjectionKind::Base &&
            (body.kind != MirBodyKind::Constructor ||
             place.root != MirPlaceRootKind::This ||
