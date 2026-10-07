@@ -4166,10 +4166,14 @@ unless requested.
 
 ### S-ALLOC-07: Source-Defined Process Allocation Over Native Byte Providers
 
-- **State/role:** planned follow-on campaign, after the `S-ALLOC-06` public
-  lifetime facilities and sparse-storage migration. The owner delegates the
+- **State/role:** in progress. The owner authorized provider-layer preparation
+  in parallel with `S-ALLOC-06`. This independent slice moves process
+  request validation, native-size/zero handling, target selection and failure
+  mapping into GTI, using POSIX/CRT forwarding adapters. Default sparse routing,
+  metadata policy and retirement of generated storage allocation still depend
+  on `S-ALLOC-06`; this checkpoint does not complete the campaign. The owner delegates the
   source/compiler/platform split described here. This is not a claim that
-  process allocation already calls libc directly from GTI.
+  every allocation client has migrated or every ABI adapter is removable.
 - **Outcome:** the default typed-storage and process-resource paths acquire
   bytes through source-defined GTI policy and ordinary native bindings, rather
   than specialized C++ allocation policy. Application pools and resource-backed

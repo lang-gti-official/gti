@@ -435,3 +435,22 @@ current client). The implemented contract, its remaining unsafe obligations and
 its structural limits are specified in
 [raw pointers](../language/raw-pointers.md#explicit-resource-binding) and the
 [standard library](../language/standard-library.md#custom-resource-protocol).
+
+## Revision: source-owned process byte-provider policy
+
+The independent first `S-ALLOC-07` slice revises the process resource's aligned
+C++ allocation implementation. Request validation, native-size limits, empty
+requests, descriptor publication and error mapping now live in GTI. Hosted
+POSIX targets acquire bytes with `posix_memalign` and release with `free`;
+Windows uses `_aligned_malloc` and `_aligned_free`. Their pairing is immutable
+target policy, not an inferred property of the address. No object lifetime is
+started by acquiring bytes, and release requires that all live objects have
+already ended.
+
+Small ABI adapters remain justified only for facts/signatures GTI cannot yet
+spell exactly: native `size_t`, POSIX's `void**`, errno constants and reserved
+CRT symbols. They neither validate GTI requests nor own storage/bitmap policy.
+A uniquely named POSIX release forwarder additionally keeps the application's
+ordinary `free` binding usable until compatible C declarations can be shared.
+The full campaign still requires the `S-ALLOC-06` source-defined sparse owner,
+its same-resource metadata allocation and migration of default typed factories.

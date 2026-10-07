@@ -1,0 +1,60 @@
+#include <std/memory>
+
+namespace packets {
+extern "C" {
+  uint64_t packet_native_size_max();
+  void* packet_malloc(uint64_t bytes);
+  void free(void* address);
+  uint64_t packet_fill_checksum(void* address, uint64_t bytes);
+}
+
+mut int releases = 0;
+
+// This owner contains bytes, not live GTI objects. A typed container must use
+// the separate object-lifetime facilities before treating its region as T.
+class Region {
+  void* address = nullptr;
+  uint64_t bytes;
+  Region(void* address, uint64_t bytes) : address(address), bytes(bytes) {}
+public:
+  Region(Region& other) = delete;
+  Region(Region&& other) = default;
+  static expected<Region, std::alloc_errc> create(uint64_t bytes) {
+    if (bytes > packet_native_size_max()) {
+      return unexpected(std::alloc_errc::size_overflow);
+    }
+    if (bytes == uint64_t(0)) { return Region(nullptr, bytes); }
+    unsafe {
+      void* address = packet_malloc(bytes);
+      if (address == nullptr) {
+        return unexpected(std::alloc_errc::resource_exhausted);
+      }
+      return Region(address, bytes);
+    }
+  }
+  uint64_t fill_checksum() mut {
+    // The owner retains the exact writable extent through the non-retaining
+    // native call. No checked reference or ownership crosses the C boundary.
+    unsafe { return packet_fill_checksum(this.address, this.bytes); }
+  }
+  ~Region() {
+    if (this.address != nullptr) {
+      unsafe { free(this.address); }
+      releases++;
+    }
+  }
+};
+}
+
+int main() {
+  {
+    auto first = packets::Region::create(uint64_t(16)).expect("packet allocation");
+    mut auto moved = std::move(first);
+    if (moved.fill_checksum() != uint64_t(120)) { return 1; }
+    mut auto empty = packets::Region::create(uint64_t(0)).expect("empty packet");
+    if (empty.fill_checksum() != uint64_t(0)) { return 2; }
+    if (packets::releases != 0) { return 3; }
+  }
+  if (packets::releases != 1) { return 4; }
+  return 0;
+}

@@ -31,9 +31,13 @@ replacing a provider must preserve matching release, extent, alignment and
 failure contracts. An erased address alone establishes neither initialization
 nor checked ownership.
 
-The current process resource calls a C ABI implemented with aligned C++
-allocation. That host implementation is replaceable without changing GTI
-semantics. Typed region adoption remains private, and its slot bitmap currently
+The process resource now validates alignment and native-size limits, handles
+zero-size requests, selects its target provider and maps failures in GTI source.
+POSIX uses `posix_memalign`/`free`; Windows uses the matching CRT
+`_aligned_malloc`/`_aligned_free` family. Narrow forwarding adapters still bridge
+the currently unsupported native `size_t`, POSIX `void**` and reserved CRT symbol
+spellings; they contain no GTI allocation policy. Typed region adoption remains
+private, and its slot bitmap currently
 uses the process heap. General public lifecycle facilities and provider-controlled
 bookkeeping are explicit extension goals, not claims of current support and not
 operations made inherently private by C++ generation.
@@ -312,9 +316,41 @@ bitmap, and publishes only on success. It never frees the external region.
 Source-defined resource leases must retain region release authority until the
 ordinary MIR element cleanup and bitmap destruction finish. This is not a
 second construction/destruction engine, nor proof of an allocator algorithm.
-The narrow `gti_rt_memory_allocate_v1`/`gti_rt_memory_release_v1` C ABI supplies
-nonthrowing aligned process allocation for those source-defined policies;
-zero bytes allocate nothing and invalid alignment is a recoverable status.
+`process_resource` supplies nonthrowing aligned process allocation through
+ordinary target-selected C declarations. Its GTI body checks nonzero
+power-of-two alignment, native `size_t` conversion and zero size before byte
+acquisition. POSIX alignment is raised to the actual native pointer size;
+the published descriptor retains the requested alignment. Error constants
+come from the target's headers, not hard-coded errno numbers. Windows validates
+before calling the CRT, avoiding its invalid-parameter handler for rejected
+requests. Empty release performs no native call. No GTI object is constructed
+or destroyed by the byte provider.
+
+The old `gti_rt_memory_allocate_v1`/`gti_rt_memory_release_v1` pair has no remaining
+repository consumer and is retired rather than retaining a second validation
+policy. The replacement native ABI in `<gti/memory.h>` exposes only target facts
+and forwarding operations with documented caller preconditions. Native `size_t`
+is not GTI's `std::size_t = uint64_t`; adapters perform that conversion only after
+source validation. POSIX's unsupported `void**` stays local to its adapter.
+CRT leading-underscore symbols are inaccessible through the current native-name
+rules, so Windows release also uses a forwarding adapter. Remove these adapters
+when general exact native scalar/output-pointer/symbol binding support can
+express their signatures. `free(void*)` is expressible directly, but the stdlib
+uses a uniquely named forwarding release adapter: the current C ABI rejects
+compatible duplicate symbol declarations, and a hidden private `free` declaration
+would otherwise prevent applications from declaring their own libc binding.
+Canonical reusable native declarations are the removal prerequisite for this
+last forwarding seam. The independent libc-region example uses ordinary `free`.
+
+This is the first independent `S-ALLOC-07` slice, not completion of sparse
+storage migration. Remaining generated-program allocations include sparse slot
+regions and live metadata, prefix storage (vectors/strings), unique-owner
+construction and shared-owner/control-block representations in the generated
+support code. These retain their current allocation families until their own
+source/lifecycle migration is validated. Native HTTP/filesystem/thread handles
+also allocate host implementation objects behind their existing C ABI. Compiler
+host allocations such as emission-plan `std::make_unique` are not GTI-program
+allocations and are outside this migration.
 
 `std::arena<T>`, `std::pool<T>`, `std::try_make_arena`, and
 `std::try_make_pool` are the first bounded allocation-policy clients. They are

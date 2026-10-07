@@ -157,6 +157,7 @@ is a teaching helper, not a production server.
 | `119-runtime-object-layout.gti` | runtime size/alignment descriptors for owning, immovable and nested ordinary types without constructing an object |
 | `120-immovable-storage.gti` | fixed-address owning objects, moving their storage handle, checked access and destruction without element movement |
 | `121-programmable-allocators.gti` | an application-defined arena choosing aligned placement in one backing region, one unsafe resource binding, and safe allocator-aware `resource_vector` and fixed-slot containers sharing it |
+| `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run
 

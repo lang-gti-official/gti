@@ -1,44 +1,41 @@
 #include "gti/memory.h"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
-#include <new>
+#if defined(_WIN32)
+#include <malloc.h>
+#endif
 
-extern "C" void *gti_rt_memory_allocate_v1(std::uint64_t bytes,
-                                           std::uint64_t alignment,
-                                           std::int32_t *status) {
-  // A null out-parameter is a caller contract violation, but don't touch it.
-  if (status == nullptr)
-    return nullptr;
-  *status = 0;
-  if (alignment == 0 || (alignment & (alignment - 1)) != 0) {
-    *status = 1;
-    return nullptr;
-  }
-  if (bytes > (std::numeric_limits<std::size_t>::max)() ||
-      alignment > (std::numeric_limits<std::size_t>::max)()) {
-    *status = 2;
-    return nullptr;
-  }
-  if (bytes == 0)
-    return nullptr;
-  const auto effective = static_cast<std::size_t>(
-      alignment < alignof(std::max_align_t) ? alignof(std::max_align_t)
-                                            : alignment);
-  void *address = ::operator new(static_cast<std::size_t>(bytes),
-                                 std::align_val_t(effective), std::nothrow);
-  if (!address)
-    *status = 3;
+static_assert(sizeof(std::size_t) <= sizeof(std::uint64_t));
+extern "C" std::uint64_t gti_rt_native_size_max_v1() {
+  return (std::numeric_limits<std::size_t>::max)();
+}
+
+#if defined(_WIN32)
+extern "C" void *gti_rt_aligned_malloc_v1(std::uint64_t bytes,
+                                          std::uint64_t alignment) {
+  return _aligned_malloc(static_cast<std::size_t>(bytes),
+                         static_cast<std::size_t>(alignment));
+}
+extern "C" void gti_rt_aligned_free_v1(void *address) {
+  _aligned_free(address);
+}
+#else
+extern "C" std::uint64_t gti_rt_posix_pointer_size_v1() {
+  return sizeof(void *);
+}
+extern "C" std::int32_t gti_rt_posix_enomem_v1() { return ENOMEM; }
+extern "C" std::int32_t gti_rt_posix_einval_v1() { return EINVAL; }
+extern "C" void *gti_rt_posix_memalign_v1(std::uint64_t bytes,
+                                          std::uint64_t alignment,
+                                          std::int32_t *status) {
+  void *address = nullptr;
+  *status = posix_memalign(&address, static_cast<std::size_t>(alignment),
+                           static_cast<std::size_t>(bytes));
   return address;
 }
-
-extern "C" void gti_rt_memory_release_v1(void *address,
-                                         std::uint64_t alignment) {
-  if (!address)
-    return;
-  const auto effective = static_cast<std::size_t>(
-      alignment < alignof(std::max_align_t) ? alignof(std::max_align_t)
-                                            : alignment);
-  ::operator delete(address, std::align_val_t(effective));
-}
+extern "C" void gti_rt_posix_free_v1(void *address) { std::free(address); }
+#endif
