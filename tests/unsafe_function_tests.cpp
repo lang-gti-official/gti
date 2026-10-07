@@ -446,6 +446,43 @@ int main() {
 }
 
 void testUnsafeMembersAndRequirements() {
+  for (const bool arguments : {false, true}) {
+    const std::string query =
+        arguments
+            ? "requires(T& x, int input) { unsafe { x.read(input) } -> int; }"
+            : "requires(T& x) { unsafe { x.read() } -> int; }";
+    const auto invalid =
+        analyze("struct Missing {};\nconcept readable<T> = " + query +
+                ";\n"
+                "void use<T>(T& x) requires readable<T> {}\n"
+                "int main() { Missing value{}; use(value); return 0; }\n");
+    const auto diagnostic =
+        std::find_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                     [](const auto &d) { return d.code == "GTI-S2029"; });
+    expect(!invalid.canGenerateCode() &&
+               diagnostic != invalid.diagnostics.end(),
+           "missing unsafe-required member fails at concept viability");
+    if (diagnostic != invalid.diagnostics.end()) {
+      expect(
+          std::any_of(diagnostic->hints.begin(), diagnostic->hints.end(),
+                      [](const auto &hint) {
+                        return hint.find("safe or unsafe") != std::string::npos;
+                      }) &&
+              std::none_of(diagnostic->hints.begin(), diagnostic->hints.end(),
+                           [](const auto &hint) {
+                             return hint.find("public, safe") !=
+                                    std::string::npos;
+                           }) &&
+              diagnostic->fixes.empty(),
+          "unsafe requirement advice does not demand an unsound safe wrapper");
+      expect(std::any_of(diagnostic->related.begin(), diagnostic->related.end(),
+                         [](const auto &note) {
+                           return note.message.find("unsafe { read(") !=
+                                  std::string::npos;
+                         }),
+             "required signature note preserves the unsafe effect");
+    }
+  }
   const std::string source = R"(
 concept reads<T> = requires(T& x) { { x.read() } -> int; };
 concept unsafe_reads<T> = requires(T& x) { unsafe { x.read() } -> int; };
