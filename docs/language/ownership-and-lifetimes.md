@@ -534,6 +534,18 @@ write authority. Ordinary retained references, symbol-rooted globals, and
 calls outside this compiler-generated store schedule do not gain two-phase
 behavior.
 
+For a nested target, the reservation includes its exact unretained mutable
+call-result receiver ancestry. This lets `grid[i][j] = grid[k][l] + delta`
+complete read-only RHS access without making the intermediate row exclusive
+too soon. Each selected target accessor still runs once, target-first. The
+terminal activation requires overlapping RHS loans to end, activates the
+whole chain, and commits through the exact terminal referent. Normal and
+failure cleanup retire children before their receiver ancestors. Retained,
+escaping, stored-dependency and uncertain receiver loans are not converted
+into reservations. In a dereference-store RHS, read-only operator access is
+preferred under the same rule as subscript-store RHS access; an explicit
+mutable-reference context is not downgraded.
+
 The ordered ordinary-call and constructor schedules implement this rule:
 `inspect(tree.append(node), tree.lookup(index))` may complete the append before
 the lookup creates its loan, including when append reallocates owned storage.

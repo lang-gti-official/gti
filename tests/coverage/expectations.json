@@ -1854,14 +1854,12 @@
       "outcome": "ice"
     },
     "a26-overloaded-deref-store-reads-owner": {
-      "finding": "A26",
       "issue": 71,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a27-compound-assign-overloaded-deref": {
-      "finding": "A27",
       "issue": 72,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a28-map-range-for-key-view": {
       "finding": "A28",
@@ -2041,14 +2039,12 @@
       "outcome": "ice"
     },
     "a46-chained-subscript-compound": {
-      "finding": "A46",
       "issue": 87,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a46-chained-subscript-self-read": {
-      "finding": "A46",
       "issue": 87,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a47-mut-payload-binding-through-mut-ref": {
       "finding": "A47",
