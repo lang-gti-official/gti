@@ -46,6 +46,11 @@
       "issue": 53,
       "outcome": "ice"
     },
+    "a01-field-assign-from-call-result-method": {
+      "finding": "A01",
+      "issue": 53,
+      "outcome": "ice"
+    },
     "a03-generic-call-in-global-initializer": {
       "code": "GTI-S2068",
       "finding": "A03",
@@ -198,42 +203,52 @@
     },
     "a25-expected-ref-relay-wrong-referent": {
       "finding": "A25",
+      "issue": 70,
       "outcome": "runtime"
     },
     "a25-ref-return-from-expected-value": {
       "finding": "A25",
+      "issue": 70,
       "outcome": "ice"
     },
     "a26-overloaded-deref-store-reads-owner": {
       "finding": "A26",
+      "issue": 71,
       "outcome": "ice"
     },
     "a27-compound-assign-overloaded-deref": {
       "finding": "A27",
+      "issue": 72,
       "outcome": "ice"
     },
     "a28-range-element-field-overloaded-operator": {
       "finding": "A28",
+      "issue": 73,
       "outcome": "ice"
     },
     "a29-method-on-returned-string-view": {
       "finding": "A29",
+      "issue": 74,
       "outcome": "ice"
     },
     "a30-assign-consuming-call-result": {
       "finding": "A30",
+      "issue": 75,
       "outcome": "ice"
     },
     "a31-move-on-break-path-then-reinit": {
       "finding": "A31",
+      "issue": 76,
       "outcome": "ice"
     },
     "a32-optional-emplace-move-only-function": {
       "finding": "A32",
+      "issue": 77,
       "outcome": "ice"
     },
     "a32-vector-push-back-move-only-function": {
       "finding": "A32",
+      "issue": 77,
       "outcome": "backend"
     },
     "a33-unnecessary-mut-deref-store": {
@@ -241,11 +256,13 @@
       "forbid": [
         "warning[GTI-S2096]"
       ],
+      "issue": 66,
       "outcome": "bad-diagnostic"
     },
     "a34-view-relay-through-subscript": {
       "code": "GTI-S2045",
       "finding": "A34",
+      "issue": 78,
       "outcome": "rejected"
     },
     "a35-expected-ref-field-stale-message": {
@@ -253,59 +270,73 @@
       "forbid": [
         "may contain only one stored-reference dependency"
       ],
+      "issue": 68,
       "outcome": "bad-diagnostic"
     },
     "a36-unique-ptr-member-init-nullptr": {
       "code": "GTI-S2003",
       "finding": "A36",
+      "issue": 79,
       "outcome": "rejected"
     },
     "a37-libc-qsort-link-name-conflict": {
       "finding": "A37",
+      "issue": 80,
       "outcome": "backend"
     },
     "a37-libc-strlen-prototype-conflict": {
       "finding": "A37",
+      "issue": 80,
       "outcome": "backend"
     },
     "a38-return-call-value-class": {
       "finding": "A38",
+      "issue": 81,
       "outcome": "ice"
     },
     "a38-return-expected-value-class": {
       "finding": "A38",
+      "issue": 81,
       "outcome": "ice"
     },
     "a39-ctor-address-of-struct-field": {
       "finding": "A39",
+      "issue": 82,
       "outcome": "ice"
     },
     "a40-c-abi-record-pointer-array-field": {
       "finding": "A40",
+      "issue": 83,
       "outcome": "ice"
     },
     "a40-raw-pointer-fixed-array-field-index": {
       "finding": "A40",
+      "issue": 83,
       "outcome": "ice"
     },
     "a41-storage-emplace-fixed-array-silent": {
       "finding": "A41",
+      "issue": 84,
       "outcome": "silent"
     },
     "a41-vector-emplace-back-fixed-array-silent": {
       "finding": "A41",
+      "issue": 84,
       "outcome": "silent"
     },
     "a42-c-abi-record-array-from-named-values": {
       "finding": "A42",
+      "issue": 85,
       "outcome": "ice"
     },
     "a42-struct-array-from-named-values": {
       "finding": "A42",
+      "issue": 85,
       "outcome": "ice"
     },
     "a42-struct-array-two-named-values": {
       "finding": "A42",
+      "issue": 85,
       "outcome": "ice"
     },
     "a43-callback-argument-unknown-type": {
@@ -313,6 +344,7 @@
       "forbid": [
         "type 'unknown'"
       ],
+      "issue": 68,
       "outcome": "bad-diagnostic"
     },
     "a44-raw-audit-duplicate-warning": {
@@ -323,6 +355,93 @@
       "flags": [
         "--raw-pointer-audit=warn"
       ],
+      "issue": 68,
+      "outcome": "bad-diagnostic"
+    },
+    "a45-base-plus-string-field-unsupported": {
+      "code": "GTI-B0003",
+      "finding": "A45",
+      "issue": 86,
+      "outcome": "rejected"
+    },
+    "a45-base-state-rollback-unsupported": {
+      "code": "GTI-B0003",
+      "finding": "A45",
+      "issue": 86,
+      "outcome": "rejected"
+    },
+    "a45-derived-destructor-explicit-base": {
+      "finding": "A45",
+      "issue": 86,
+      "outcome": "ice"
+    },
+    "a45-derived-destructor-generated-ctor": {
+      "finding": "A45",
+      "issue": 86,
+      "outcome": "link"
+    },
+    "a45-literal-base-argument": {
+      "finding": "A45",
+      "issue": 86,
+      "outcome": "ice"
+    },
+    "a46-chained-subscript-compound": {
+      "finding": "A46",
+      "issue": 87,
+      "outcome": "ice"
+    },
+    "a46-chained-subscript-self-read": {
+      "finding": "A46",
+      "issue": 87,
+      "outcome": "ice"
+    },
+    "a47-mut-payload-binding-through-mut-ref": {
+      "finding": "A47",
+      "issue": 88,
+      "outcome": "ice"
+    },
+    "a48-switch-on-owning-enum-field": {
+      "finding": "A48",
+      "issue": 89,
+      "outcome": "ice"
+    },
+    "a49-owning-enum-call-result-argument": {
+      "finding": "A49",
+      "issue": 90,
+      "outcome": "ice"
+    },
+    "a50-designated-omitted-brace-default": {
+      "finding": "A50",
+      "issue": 91,
+      "outcome": "ice"
+    },
+    "a51-binding-over-class-array": {
+      "finding": "A51",
+      "issue": 92,
+      "outcome": "ice"
+    },
+    "a51-binding-over-class-array-invalid-cpp": {
+      "finding": "A51",
+      "issue": 92,
+      "outcome": "backend"
+    },
+    "a52-struct-with-union-array": {
+      "finding": "A52",
+      "issue": 93,
+      "outcome": "ice"
+    },
+    "a52-union-array": {
+      "finding": "A52",
+      "issue": 93,
+      "outcome": "ice"
+    },
+    "a53-operator-temporary-ref-diagnostic": {
+      "code": "GTI-S2022",
+      "finding": "A53",
+      "forbid": [
+        "convert the operand explicitly"
+      ],
+      "issue": 69,
       "outcome": "bad-diagnostic"
     },
     "f1-generic-range-for-silent": {
