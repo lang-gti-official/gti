@@ -1,5 +1,29 @@
 # Compiler Verification
 
+## Combined lifetime/storage and payload-enum release gate
+
+PR #94 is the single integration point for the S-ALLOC-06/07 and generic
+payload-enum candidates. The 2026-10-08 stabilization reset preserves unfinished
+issue-campaign branches separately; they are not prerequisites of this release.
+Earlier checkpoints below are historical evidence, not substitutes for testing
+the combined revision.
+
+Final acceptance requires an optimized full build and unfiltered CTest run,
+including both complete MIR corpus oracles, the language coverage corpus,
+standard-library surface, editor and native matrices. Run the pinned formatter
+and Tree-sitter corpus/query/shipped-source checks, then stage the same toolchain
+and rebuild all installed-library consumers. Execute examples 125, 126, 128,
+129 and the unrelated libc region provider with the staged toolchain and no
+source-tree library overrides. Record exact revision, toolchain, results and
+platform limitations in the integration PR; a focused pass is not release
+acceptance.
+
+The cleanup regression gates additionally require that an inherited primary
+failure stops callee-local cleanup immediately on a second failure, including
+managed task destruction. They retain exact output and both failure identities.
+Native scope probes independently check earliest-primary preservation,
+thread isolation, scope restoration and rejection of forged managed envelopes.
+
 ## Consolidated lifetime and enum acceptance checkpoint
 
 The optimized macOS arm64 Release/Ninja candidate at `17787a0c` passes the full
