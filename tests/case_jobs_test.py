@@ -90,6 +90,22 @@ class CaseJobsTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "case census"):
                     self.run_cases([("a", 1), ("b", 2)], lambda value: value, 2)
 
+    def test_exit_and_interrupt_are_not_successes(self):
+        def exit_case(value):
+            raise SystemExit(0)
+
+        def interrupt_case(value):
+            raise KeyboardInterrupt()
+
+        for jobs in (1, 2):
+            with self.assertRaisesRegex(RuntimeError, "SystemExit"):
+                self.run_cases([("a", 1), ("b", 2)], exit_case, jobs)
+            with self.assertRaisesRegex(RuntimeError, "SystemExit"):
+                self.run_cases([("a", 1), ("b", 2)], lambda value: value,
+                               jobs, exit_case)
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_cases([("a", 1), ("b", 2)], interrupt_case, jobs)
+
     def test_serial_preserves_work_observation_interleaving(self):
         visits = []
         self.run_cases([("a", 0), ("b", 1)],

@@ -43,7 +43,10 @@ def run_cases(cases, work, jobs=1, observe=None):
             if observe is not None:
                 observe(value)
             results.append((key, value))
-        except Exception as error:
+        except (Exception, SystemExit) as error:
+            # A case exiting successfully is not a successfully observed case.
+            # In particular SystemExit(0) must not terminate the suite with a
+            # zero status before the completion census can be checked.
             failures.append(f"{key}: {type(error).__name__}: {error}")
             print(f"FAIL {key}", flush=True)
         else:
