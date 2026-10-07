@@ -273,6 +273,13 @@ from lambdas, methods, generic functions, `unsafe` functions, declarations
 without bodies, or inexact overloads. In an exact callback context, one non-generic
 namespace-scope GTI function with a body may convert to the alias:
 
+Direct adaptation of a bodyless `extern "C"` function item is not in that
+conversion family and reports `GTI-S2076`. A C function may instead return a
+value of the exact named native function-pointer type; GTI can transport and
+invoke that address under the native invocation contract below. Private C++
+declaration isolation does not change this eligibility boundary, the address
+transported by C, or public bridge-header/export symbol names.
+
 ```gti
 void report_error(int32_t code, c_string message) {}
 

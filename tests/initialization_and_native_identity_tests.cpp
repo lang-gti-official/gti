@@ -106,5 +106,10 @@ int main() { return 0; }
   rejected("extern \"C\" { [[link_name(\"__gti_c_fn_1\")]] int32_t call(); } "
            "int main() { return 0; }",
            "GTI-S2054");
+  rejected(R"gti(
+using Native = (int32_t) -> int32_t;
+extern "C" { int32_t native(int32_t); }
+int main() { Native callback = native; return 0; }
+)gti", "GTI-S2076");
   return failures ? 1 : 0;
 }
