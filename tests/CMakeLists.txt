@@ -563,6 +563,14 @@ add_test(NAME bindgen_pipeline COMMAND gti_bindgen_tests)
 add_executable("gti_native_record_tests" "${PROJECT_SOURCE_DIR}/tests/native_record_tests.cpp")
 target_link_libraries("gti_native_record_tests" PRIVATE gti_cpp_backend)
 add_test(NAME native_record_pipeline COMMAND gti_native_record_tests)
+add_executable(gti_call_result_publication_tests call_result_publication_tests.cpp)
+target_link_libraries(gti_call_result_publication_tests PRIVATE gti_cpp_backend)
+add_test(NAME call_result_publication COMMAND gti_call_result_publication_tests)
+add_test(NAME call_result_publication_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/call_result_publication_runtime_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(call_result_publication_runtime PROPERTIES TIMEOUT 240)
 
 add_executable("gti_native_header_tests" "${PROJECT_SOURCE_DIR}/tests/native_header_tests.cpp")
 target_link_libraries("gti_native_header_tests" PRIVATE gti_cpp_backend)

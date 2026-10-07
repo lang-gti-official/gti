@@ -22105,24 +22105,23 @@ nativeExpectedValueOrResult(const MirProgram &program, const MirBody &body,
   return nullptr;
 }
 
-struct PassiveCAbiCallAssignmentResult {
+struct PassiveCAbiCallValueResult {
   const MirInstruction *call = nullptr;
   const MirInstruction *assignment = nullptr;
   const MirPlace *destination = nullptr;
+  const MirBlock *returnBlock = nullptr;
+  bool discarded = false;
 
-  [[nodiscard]] explicit operator bool() const {
-    return call != nullptr && assignment != nullptr && destination != nullptr;
-  }
+  [[nodiscard]] explicit operator bool() const { return call != nullptr; }
 };
 
-// A passive native record returned by a failure-free call and consumed by the
-// immediately following bare assignment has an ordinary value-semantic C++
-// temporary. Unlike an owning class value, the `[[c_abi]]` contract proves
-// trivial transport and no cleanup identity, so this exact schedule may use a
-// typed local between the call and assignment.
-[[nodiscard]] PassiveCAbiCallAssignmentResult
-passiveCAbiCallAssignmentResult(const MirProgram &program, const MirBody &body,
-                                MirValueId valueId) {
+// A passive native result has no result cleanup identity. Its exact consumer
+// may be a bare assignment, an unchanged return following only passive cleanup,
+// or discard. Keep production at the Call rather than inventing construction
+// policy or moving foreign effects to a later source boundary.
+[[nodiscard]] PassiveCAbiCallValueResult
+passiveCAbiCallValueResult(const MirProgram &program, const MirBody &body,
+                           MirValueId valueId) {
   const MirValue *value = body.findValue(valueId);
   const MirInstruction *call =
       value == nullptr ? nullptr : findInstruction(body, value->definition);
@@ -22137,16 +22136,17 @@ passiveCAbiCallAssignmentResult(const MirProgram &program, const MirBody &body,
       value->info.traits.drop != DropKind::Trivial ||
       value->info.traits.containsBorrowedState || call == nullptr ||
       call->kind != MirInstructionKind::Call || !call->result ||
-      *call->result != valueId || call->destination ||
-      (call->receiver && !native) || call->constructorTarget ||
-      call->lambdaTarget || call->bodyTarget ||
+      *call->result != valueId || call->info.type != value->info.type ||
+      call->destination || (call->receiver && !native) ||
+      call->constructorTarget || call->lambdaTarget || call->bodyTarget ||
       (call->callableInvocation && !native) ||
-      call->intrinsic != IntrinsicKind::None ||
-      !call->localFailureSites.empty() ||
+      call->intrinsic != IntrinsicKind::None || call->successResultDrop ||
+      call->successResultDestination || !call->localFailureSites.empty() ||
       !call->definedFailure.localOrigins.empty() ||
       call->definedFailure.propagation != FailurePropagationKind::None ||
       (!native &&
        (target == nullptr || target->returnType != value->info.type ||
+        target->parameterTypes != call->parameterTypes ||
         !((target->linkage == LanguageLinkage::C) ||
           (target->linkage == LanguageLinkage::Gti &&
            target->definitionKind == MirDefinitionKind::Source &&
@@ -22154,7 +22154,21 @@ passiveCAbiCallAssignmentResult(const MirProgram &program, const MirBody &body,
     return {};
   }
 
+  if (std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+                  [&](const MirDropObligation &drop) {
+                    return drop.generatedValue == valueId;
+                  })) {
+    return {};
+  }
   const std::vector<MirValueUse> uses = nonRootRecordUses(body, valueId);
+  if (uses.empty()) {
+    return {.call = call, .discarded = true};
+  }
+  if (body.returnType == value->info.type) {
+    if (const auto *returned = passiveResultReturnBlock(body, *value, *call)) {
+      return {.call = call, .returnBlock = returned};
+    }
+  }
   if (uses.size() != 1 ||
       uses.front().kind != MirValueUseKind::InstructionOperand ||
       uses.front().operandIndex != 0) {
@@ -27521,7 +27535,12 @@ public:
           // function's uninitialized result storage.
           continue;
         }
-        if (passiveCAbiCallAssignmentResult(program, facts.body, value.id)) {
+        if (const auto passive =
+                passiveCAbiCallValueResult(program, facts.body, value.id)) {
+          if (passive.returnBlock != nullptr &&
+              (failureForm || indirectResultForm ||
+               returnCallDefinition(facts.body, value.id) == passive.call))
+            continue;
           const CppMirTypeRepresentation *row =
               representationTypeRow(representations, value.info.type);
           if (row == nullptr || row->spelling.empty() ||
@@ -31243,9 +31262,8 @@ private:
           output << "__gti_mir_v_" << staged.value->id << ".destroy();\n";
           return;
         }
-        const PassiveCAbiCallAssignmentResult passive =
-            passiveCAbiCallAssignmentResult(program, facts.body,
-                                            instruction.operands.front().value);
+        const PassiveCAbiCallValueResult passive = passiveCAbiCallValueResult(
+            program, facts.body, instruction.operands.front().value);
         if (passive.assignment == &instruction &&
             passive.destination != nullptr) {
           const CppMirTypeRepresentation *row =
@@ -36805,6 +36823,10 @@ private:
             ? classSsaLifetimeSlot(program, representations, facts.body,
                                    *instruction.result)
             : ClassSsaLifetimeSlot{};
+    const PassiveCAbiCallValueResult passiveResult =
+        instruction.result ? passiveCAbiCallValueResult(program, facts.body,
+                                                        *instruction.result)
+                           : PassiveCAbiCallValueResult{};
     const bool stagedAssignment =
         assignmentResult.producer == &instruction &&
         assignmentResult.consumerKind == ClassSsaSlotConsumerKind::Assignment;
@@ -36823,7 +36845,9 @@ private:
       const bool directReturn =
           instruction.result && (failureForm || indirectResultForm) &&
           facts.body.returnType == target->returnType &&
-          returnCallDefinition(facts.body, *instruction.result) == &instruction;
+          (returnCallDefinition(facts.body, *instruction.result) ==
+               &instruction ||
+           passiveResult.returnBlock != nullptr);
       const bool staged = expectedPayloadResult.producer == &instruction ||
                           stagedAssignment || stagedArrayResult;
       if (!instruction.result) {
@@ -36875,11 +36899,24 @@ private:
       return;
     }
     const bool nativeIndirectReturn =
-        indirectResultForm && instruction.result &&
-        returnCallDefinition(facts.body, *instruction.result) == &instruction;
+        instruction.result &&
+        ((indirectResultForm &&
+          returnCallDefinition(facts.body, *instruction.result) ==
+              &instruction) ||
+         ((failureForm || indirectResultForm) &&
+          passiveResult.returnBlock != nullptr));
+    const bool passiveLocalResult =
+        passiveResult &&
+        (passiveResult.returnBlock == nullptr ||
+         (!failureForm && !indirectResultForm &&
+          returnCallDefinition(facts.body, *instruction.result) !=
+              &instruction));
     if (nativeIndirectReturn) {
       output << "::gti_internal::backend::construct_representation_at("
                 "__gti_mir_out_result, ";
+    } else if (passiveLocalResult) {
+      output << "::gti_internal::backend::assign_representation(__gti_mir_v_"
+             << *instruction.result << ", ";
     } else if (pairedResultLoan != nullptr) {
       // A reference-returning contained callee publishes its result
       // through the paired loan pointer: the referent binds by address,
@@ -36943,7 +36980,7 @@ private:
     if (pairedResultLoan != nullptr) {
       output << ')';
     }
-    if (nativeIndirectReturn)
+    if (nativeIndirectReturn || passiveLocalResult)
       output << ')';
     output << (classResultDestination != nullptr ||
                        expectedPayloadResult.producer == &instruction ||
@@ -37824,7 +37861,10 @@ private:
               terminator.value->kind == MirOperandKind::Value
                   ? returnCallDefinition(facts.body, terminator.value->value)
                   : nullptr;
-          if (indirectCall && indirectResultForm) {
+          const auto passiveCall = passiveCAbiCallValueResult(
+              program, facts.body, terminator.value->value);
+          if ((indirectCall && indirectResultForm) ||
+              passiveCall.returnBlock == &block) {
             output
                 << "// byte-preserving result published at its source call\n";
           } else if (freshPayload.returnBlock == &block) {
@@ -44375,7 +44415,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           expectedClassMovePropagation(body, value.id)) {
         continue;
       }
-      if (passiveCAbiCallAssignmentResult(program_, body, value.id)) {
+      if (passiveCAbiCallValueResult(program_, body, value.id)) {
         const CppMirTypeRepresentation *row =
             representationTypeRow(representations_, value.info.type);
         if (row == nullptr || row->spelling.empty() ||
@@ -47820,8 +47860,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 nullptr &&
             classValuePublicationSlot(body, *instruction.result) == nullptr &&
             !constructorFieldResultSlot(program_, body, *instruction.result) &&
-            !passiveCAbiCallAssignmentResult(program_, body,
-                                             *instruction.result) &&
+            !passiveCAbiCallValueResult(program_, body, *instruction.result) &&
             classSsaLifetimeSlot(program_, representations_, body,
                                  *instruction.result)
                     .consumerKind != ClassSsaSlotConsumerKind::Assignment &&
@@ -49577,6 +49616,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               nullptr &&
           placementDirectReturnCall(program_, representations_, body,
                                     block.terminator.value->value) == nullptr &&
+          passiveCAbiCallValueResult(program_, body,
+                                     block.terminator.value->value)
+                  .returnBlock != &block &&
           !expectedPayloadReturnSlot(program_, representations_, body,
                                      block.terminator.value->value) &&
           !(returnedClassSlot.returnBlock == &block &&

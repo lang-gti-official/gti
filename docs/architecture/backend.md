@@ -183,6 +183,15 @@ owns source bounds checks, place identity and array initialization/cleanup.
 Checked references to raw pointers remain outside the current language slice;
 the backend must not alias a native `T*` slot as a `raw_address<T>&`.
 
+Failure-free passive C-compatible call results share one consumer proof for
+bare assignment, discard, and unchanged return. The exact record/type/signature
+must agree, no result cleanup obligation may be invented, and return permits
+only the existing passive cleanup tail. A return writes caller-provided result
+storage at its Call; discard still executes the foreign call. Assignment and
+discard use byte-preserving representation transfer rather than native
+memberwise pointer reads. Neither source default construction nor owning-result
+transport is inferred from this passive representation rule.
+
 Pointer-bearing passive C-compatible records use byte-preserving construction
 and assignment internally. Verified source calls snapshot value arguments
 before passing them by internal reference; result publication uses a typed
