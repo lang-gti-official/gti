@@ -11267,12 +11267,24 @@ public:
   Immovable(Immovable&& other) = delete;
 };
 int read<T>(T value) requires std::copyable<Immovable> && boxed_int<Box<Immovable>> { return 0; }
-int main() { return 0; }
+int main() { return read(1); }
 )");
   expect(!closed.canGenerateCode() &&
              hasDiagnosticCode(closed.diagnostics, "GTI-S2029"),
-         "an asserted clause fact cannot replace actual admission of a closed "
-         "noncopyable class");
+         "concrete viability cannot replace a closed class's actual lifecycle "
+         "capabilities");
+  // Primitive capabilities are complete even during declaration registration;
+  // unlike the later-resolved class lifecycle above, this isolates formation
+  // of a closed compound argument inside the provisional clause scope.
+  const auto closedPrimitive = analyze(R"(
+class IntegerBox<std::integral T> { public: int get() { return 0; } };
+int read<T>(T value) requires std::integral<bool> && boxed_int<IntegerBox<bool>> { return 0; }
+int main() { return 0; }
+)");
+  expect(!closedPrimitive.canGenerateCode() &&
+             hasDiagnosticCode(closedPrimitive.diagnostics, "GTI-S2029"),
+         "a false closed primitive assertion cannot admit another closed "
+         "argument type");
 }
 
 constexpr NamedTest kTests[] = {
