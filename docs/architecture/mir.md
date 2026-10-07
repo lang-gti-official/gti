@@ -256,6 +256,11 @@ dependency survives through full-expression destruction of owned fields.
 Independent verification rejects missing dependencies, changed permissions,
 forged shell authority and owner-loan retirement before cleanup. Shared-only
 and mixed carriers use one schedule rather than a separate passive exception.
+Borrowed-result operators keep their ordinary value receiver stage. When their
+result protects the receiver's own storage, lowering and independent verification
+select the exact producer-owned temporary and its full-expression drop, retaining
+the external stored dependency separately. An exact stored-field return instead
+selects that external referent; the two sources are not interchangeable.
 The prefix-construction capacity check and its exact append identity are
 serialized for deterministic evidence and independent replay.
 The new loan contract separates a physical carrier reference from its inherited
@@ -1049,6 +1054,19 @@ verification checks the selected operand/dependency ancestry and access, while
 program verification independently substitutes its typed field path, including
 projections beneath the stored reference. Lowering preserves the typed path
 prefixes and publishes returned call-result loans before child-first retirement.
+Finishing a derived view does not retire an external-owner loan still retained
+by another live physical-shell alias. Child-first endpoint selection accounts
+for both parent reborrows and stored dependencies; independent verification
+rejects ending either kind of authority before its dependents.
+
+Targetless generated move construction preserves the source carrier's complete
+dependency set: origin places, permissions, ancestry and destination field
+paths. Its reference-shaped special-member formal does not describe an ordinary
+borrowing call. MIR explicitly transfers the already-moved SSA obligation into
+the new result. Retiring the original lifecycle-bound loan requires that exact
+source/result handoff and unchanged dependency set; a same-typed construction
+alone is insufficient. Native reference members preserve their bindings rather
+than moving the referents.
 
 The bounded mutable-carrier extension reuses this explicit loan vocabulary
 rather than adding backend-only lifetime inference. A mutable parameter or
@@ -2243,6 +2261,16 @@ projection-free reference-typed formal place, matching source place, non-
 widened access, and an immediately following `EndBorrow` of the forwarded loan
 — and continues to reject every other parentless `Borrow` from a `Loan`
 operand. No body may record a loan that is at once `entry` and `Return`.
+
+A local read-only alias can retain that same parameter authority while its
+runtime address denotes an accessor's subobject rather than the parameter
+itself. Such a return also carries the exact dereferenced alias place in the
+`Loan` operand. Verification follows unique, dominating reference
+initializations back to the same parameter dereference or a verified
+call-result address, preserving type, access and stored dependencies throughout.
+Without an explicit runtime place, only the exact parameter referent type is
+valid. Carrier membership or a same-typed unrelated alias cannot substitute
+for this executable address evidence.
 
 `MirRangeIteration` owns the bounded range exceptions. It names the exact
 owner/range/iterator/sentinel bindings, strategy, access mode, parent range

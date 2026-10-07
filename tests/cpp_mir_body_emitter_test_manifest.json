@@ -2,6 +2,10 @@
   "schema_version": 1,
   "tests": [
     {
+      "name": "testGeneratedMoveReferenceBindings",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testPreparedConstructorReplacement",
       "suite": "lifecycle"
     },

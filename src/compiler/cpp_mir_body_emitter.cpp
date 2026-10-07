@@ -13964,6 +13964,7 @@ struct GeneratedSpecialMemberConstruction {
   const MirPlace *destination = nullptr;
   const MirInstruction *initialize = nullptr;
   bool moved = false;
+  bool retiresSource = false;
 };
 
 // A generated copy/move has no source constructor body to reopen. This is the
@@ -14031,8 +14032,9 @@ generatedSpecialMemberConstruction(const MirProgram &program,
     }
     source = movedPlaceChainSource(body, operand.value, construct);
     // An active-cleanup xvalue owns a real value-rooted staging slot. Keep
-    // that slot (and its later moved-from drop) instead of erasing the Move
-    // as the cleanup-free chain above does.
+    // that slot instead of erasing the Move as the cleanup-free chain does.
+    // An exact TransferOut below retires its disarmed native shell after
+    // publication; older schedules retain a separately recorded source Drop.
     if (source == nullptr) {
       stagedMoveDrop = uniqueValueLifetimeDrop(body, operand.value, classType);
       const MirValue *stagedValue = body.findValue(operand.value);
@@ -14071,6 +14073,17 @@ generatedSpecialMemberConstruction(const MirProgram &program,
       !source->projections.empty() || source->type != classType) {
     return std::nullopt;
   }
+  const auto *constructedDrop =
+      uniqueValueLifetimeDrop(body, *construct.result, classType);
+  const bool retiresSource =
+      moved && stagedMoveDrop && constructedDrop &&
+      construct.lifecycle.size() == 2 &&
+      construct.lifecycle.front() ==
+          MirLifecycleEvent{.kind = MirLifecycleEventKind::TransferOut,
+                            .source = stagedMoveDrop->id} &&
+      construct.lifecycle.back() ==
+          MirLifecycleEvent{.kind = MirLifecycleEventKind::Initialize,
+                            .target = constructedDrop->id};
 
   // A receiver temporary is constructed at this MIR instruction, not fused
   // with a later lexical Initialize. Its exact slot and full-expression drop
@@ -14082,7 +14095,7 @@ generatedSpecialMemberConstruction(const MirProgram &program,
       return std::nullopt;
     }
     return GeneratedSpecialMemberConstruction{source, temporary.slot, nullptr,
-                                              moved};
+                                              moved, retiresSource};
   }
 
   const std::vector<MirValueUse> uses =
@@ -14118,10 +14131,39 @@ generatedSpecialMemberConstruction(const MirProgram &program,
   for (const MirBlock &block : body.blocks) {
     for (std::size_t index = 0; index + 1 < block.instructions.size();
          ++index) {
-      if (block.instructions[index].id == construct.id &&
-          block.instructions[index + 1].id == initialize->id) {
+      if (block.instructions[index].id != construct.id)
+        continue;
+      if (block.instructions[index + 1].id == initialize->id)
         adjacent = true;
-      }
+      // Retiring the consumed stored loan is provenance-only. It can sit
+      // between this failure-free construction and its publication only for
+      // the exact source carrier and an unchanged complete dependency set.
+      if (!retiresSource || !construct.loan ||
+          index + 2 >= block.instructions.size() ||
+          block.instructions[index + 2].id != initialize->id)
+        continue;
+      const auto &end = block.instructions[index + 1];
+      const auto *oldLoan = end.loan ? body.findLoan(*end.loan) : nullptr;
+      const auto *newLoan = body.findLoan(*construct.loan);
+      const auto *move = definitionFor(body, operand);
+      const auto *movedSource =
+          move && move->operands.size() == 1
+              ? body.findPlace(move->operands.front().place)
+              : nullptr;
+      adjacent =
+          end.kind == MirInstructionKind::EndBorrow && oldLoan && newLoan &&
+          oldLoan != newLoan && oldLoan->kind == MirLoanKind::Stored &&
+          newLoan->kind == MirLoanKind::Stored && oldLoan->lifecycleBound &&
+          newLoan->lifecycleBound && oldLoan->source == newLoan->source &&
+          oldLoan->access == newLoan->access &&
+          oldLoan->parent == newLoan->parent &&
+          oldLoan->storedDependency == newLoan->storedDependency &&
+          oldLoan->designatedFields == newLoan->designatedFields &&
+          oldLoan->additionalDependencies == newLoan->additionalDependencies &&
+          movedSource && movedSource->root == MirPlaceRootKind::Binding &&
+          movedSource->projections.empty() &&
+          mir_detail::bindingReceivedStoredLoan(body, movedSource->binding,
+                                                oldLoan->id);
     }
   }
   if (!adjacent) {
@@ -14163,12 +14205,13 @@ generatedSpecialMemberConstruction(const MirProgram &program,
       activation.source == 0 && activation.target == bindingDrop->id &&
       !activation.conditional && !activation.failureCleanup;
   const bool reparentedActivation =
-      resultDrop != nullptr && construct.lifecycle.size() == 1 &&
-      construct.lifecycle.front().kind == MirLifecycleEventKind::Initialize &&
-      construct.lifecycle.front().source == 0 &&
-      construct.lifecycle.front().target == resultDrop->id &&
-      !construct.lifecycle.front().conditional &&
-      !construct.lifecycle.front().failureCleanup &&
+      resultDrop != nullptr &&
+      (construct.lifecycle.size() == 1 || retiresSource) &&
+      construct.lifecycle.back().kind == MirLifecycleEventKind::Initialize &&
+      construct.lifecycle.back().source == 0 &&
+      construct.lifecycle.back().target == resultDrop->id &&
+      !construct.lifecycle.back().conditional &&
+      !construct.lifecycle.back().failureCleanup &&
       activation.kind == MirLifecycleEventKind::Reparent &&
       activation.source == resultDrop->id &&
       activation.target == bindingDrop->id && !activation.conditional &&
@@ -14185,8 +14228,8 @@ generatedSpecialMemberConstruction(const MirProgram &program,
               event.target != resultDrop->id) {
             continue;
           }
-          const bool constructActivation = &instruction == &construct &&
-                                           event == construct.lifecycle.front();
+          const bool constructActivation =
+              &instruction == &construct && event == construct.lifecycle.back();
           const bool publication =
               &instruction == initialize && event == activation;
           if (!constructActivation && !publication) {
@@ -14229,7 +14272,7 @@ generatedSpecialMemberConstruction(const MirProgram &program,
   }
 
   return GeneratedSpecialMemberConstruction{source, destination, initialize,
-                                            moved};
+                                            moved, retiresSource};
 }
 
 struct GeneratedSpecialMemberMoveStage {
@@ -14239,7 +14282,8 @@ struct GeneratedSpecialMemberMoveStage {
 
 // Locate the active-cleanup Move that feeds the exact generated move
 // construction above. The Move materializes its own value slot; the generated
-// Construct then consumes that slot and preserves the MIR's moved-from drop.
+// Construct then consumes that slot, with either an exact TransferOut or the
+// MIR's separately scheduled moved-from Drop retiring its native shell.
 [[nodiscard]] GeneratedSpecialMemberMoveStage
 generatedSpecialMemberMoveStage(const MirProgram &program, const MirBody &body,
                                 const MirInstruction &move) {
@@ -26025,6 +26069,36 @@ provenanceOnlyReceiverPlace(const MirProgram &program,
   for (const auto &loan : body.loans) {
     if (!loan.protectsSource(place.id) || loan.kind == MirLoanKind::Stored)
       continue;
+    if (loan.kind == MirLoanKind::Return) {
+      if (returnLoanErasedByConstruct(body, loan) ||
+          returnLoanErasedByClassSsaSlot(program, representations, body,
+                                         loan) ||
+          storedValueReturnLoanProducer(body, loan) != nullptr)
+        continue;
+      // Returning an accessor's pointer copies that pointer. Its independently
+      // checked origin path is not a second runtime read of private storage.
+      std::size_t transfers = 0;
+      bool pointerOnly = true;
+      for (const auto &block : body.blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != MirInstructionKind::Borrow ||
+              instruction.loan != loan.id)
+            continue;
+          ++transfers;
+          const auto *retained = instruction.operands.size() == 1
+                                     ? &instruction.operands.front()
+                                     : nullptr;
+          const auto *source =
+              retained != nullptr ? body.findLoan(retained->loan) : nullptr;
+          pointerOnly =
+              pointerOnly && retained != nullptr &&
+              retained->kind == MirOperandKind::Loan && retained->place == 0 &&
+              source != nullptr &&
+              loanHasCppPointerCarrier(program, representations, body, *source);
+        }
+      if (pointerOnly && transfers == 1)
+        continue;
+    }
     if (loan.kind != MirLoanKind::CallResult || loan.entry ||
         !loanHasCppPointerCarrier(program, representations, body, loan))
       return false;
@@ -26044,9 +26118,9 @@ provenanceOnlyReceiverPlace(const MirProgram &program,
 // provenance checked by borrow flow, while its place is the exact runtime
 // address source. Keeping the latter in MIR avoids reconstructing a source
 // expression from loan parents or carrier order in a backend.
-[[nodiscard]] const MirPlace *
-referenceBindingAddressPlace(const MirProgram &program, const MirBody &body,
-                             const MirInstruction &initialize) {
+[[nodiscard]] const MirPlace *referenceBindingAddressPlace(
+    const MirProgram &program, const CppMirBodyEmissionMap &representations,
+    const MirBody &body, const MirInstruction &initialize) {
   if (initialize.kind != MirInstructionKind::Initialize ||
       !initialize.destination || initialize.operands.size() != 1 ||
       initialize.operands.front().kind != MirOperandKind::Loan ||
@@ -26065,6 +26139,12 @@ referenceBindingAddressPlace(const MirProgram &program, const MirBody &body,
       retained == nullptr || address->type != source.type ||
       loanCarriedByBinding(body, destination->binding) != retained) {
     return nullptr;
+  }
+  if (address->root == MirPlaceRootKind::Loan) {
+    const auto *addressLoan = body.findLoan(address->loan);
+    if (addressLoan == nullptr ||
+        !loanHasCppPointerCarrier(program, representations, body, *addressLoan))
+      return nullptr;
   }
   const SemanticType &referent = destination->type.arguments.front();
   if (source.type != referent) {
@@ -31381,8 +31461,8 @@ private:
           slot->type.kind == SemanticType::Reference &&
           instruction.operands.size() == 1 &&
           instruction.operands.front().kind == MirOperandKind::Loan) {
-        const MirPlace *address =
-            referenceBindingAddressPlace(program, facts.body, instruction);
+        const MirPlace *address = referenceBindingAddressPlace(
+            program, representations, facts.body, instruction);
         if (address == nullptr) {
           throw std::logic_error(
               "verified reference binding lost its address place");
@@ -31488,6 +31568,13 @@ private:
               output << ')';
             }
             output << ");\n";
+            if (special->retiresSource) {
+              writeIndent();
+              output
+                  << "__gti_mir_p_"
+                  << canonicalSlotPlaceId(facts.body, *special->source)
+                  << ".destroy(); // GTI MIR generated-move source transfer\n";
+            }
             return;
           }
         }
@@ -33202,6 +33289,12 @@ private:
           }
         }
         output << ");\n";
+        if (special && special->retiresSource) {
+          writeIndent();
+          output << "__gti_mir_p_"
+                 << canonicalSlotPlaceId(facts.body, *special->source)
+                 << ".destroy(); // GTI MIR generated-move source transfer\n";
+        }
         return;
       }
       const ClassSsaLifetimeSlot constructionSlot = classSsaLifetimeSlot(
@@ -46553,8 +46646,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             destination->root == MirPlaceRootKind::Binding &&
             destination->projections.empty() &&
             destination->type.kind == SemanticType::Reference) {
-          if (referenceBindingAddressPlace(program_, body, instruction) ==
-              nullptr) {
+          if (referenceBindingAddressPlace(program_, representations_, body,
+                                           instruction) == nullptr) {
             return false;
           }
           continue;

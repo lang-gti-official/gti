@@ -68,6 +68,8 @@ int main() {
   mut engine::Arena arena{std::size_t(8192), std::size_t(256)};
   unsafe {
     // The only unsafe caller step acknowledges the provider's contract.
+    // Arena supplies aligned, writable, disjoint regions until matching release;
+    // no independent raw reset or concurrent use may invalidate live regions.
     // The complete container/storage workload above is ordinary safe code.
     auto resource = std::bind_resource(arena);
     int status = use_arena(resource);

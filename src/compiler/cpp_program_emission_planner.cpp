@@ -3152,7 +3152,8 @@ public:
       const LoweredDeclaration &classRow,
       const LoweredClassDeclaration &declaration,
       const std::vector<const LoweredDeclaration *> &fields,
-      const std::set<std::string> &byteFields = {}) {
+      const std::set<std::string> &byteFields,
+      const std::set<std::string> &referenceFields) {
     writeIndent();
     output << classRow.name << '(' << classRow.name << " &&other) noexcept : ";
     bool separator = false;
@@ -3171,6 +3172,10 @@ public:
       output << field->name;
       if (byteFields.contains(field->name))
         output << "{}";
+      else if (referenceFields.contains(field->name))
+        // Move the binding, not the object it designates. std::move on a
+        // native reference member casts its referent to an rvalue instead.
+        output << "(other." << field->name << ')';
       else
         output << "(std::move(other." << field->name << "))";
       separator = true;
@@ -3262,6 +3267,7 @@ public:
     // Ordinary containing classes have their own fieldwise special members;
     // owning fields must never be copied wholesale merely for containing one.
     std::set<std::string> byteFields;
+    std::set<std::string> referenceFields;
     for (const auto *field : fields) {
       const auto &storage = std::get<LoweredStorageDeclaration>(field->payload);
       SemanticType type = storage.type;
@@ -3270,6 +3276,8 @@ public:
           if (concrete.symbol == storage.symbol)
             type = concrete.type;
       }
+      if (type.kind == SemanticType::Reference)
+        referenceFields.insert(field->name);
       SemanticType element = type;
       while (element.kind == SemanticType::Array &&
              element.arguments.size() == 1)
@@ -3422,7 +3430,8 @@ public:
     if ((declaration.requiresActiveDropState || incompletePointeeCarrier ||
          !byteFields.empty()) &&
         declaration.moveConstructor == SpecialMemberStatus::Generated) {
-      emitLoweredMoveConstructor(classRow, declaration, fields, byteFields);
+      emitLoweredMoveConstructor(classRow, declaration, fields, byteFields,
+                                 referenceFields);
     } else {
       writeIndent();
       output << classRow.name << '(' << classRow.name << " &&)";

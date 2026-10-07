@@ -2,6 +2,167 @@
 
 namespace {
 
+void testGeneratedMoveReferenceBindings() {
+  const auto frontend =
+      analyzeWithStandardLibrary("generated-move-reference-bindings.gti", R"(
+class Payload {
+  int value = 9;
+public:
+  ~Payload() {}
+};
+class BoundMove {
+  mut int& target;
+  int& source;
+  Payload payload{};
+public:
+  BoundMove(mut int& target, int& source) : target(target), source(source) {}
+  ~BoundMove() { this.target += this.source; }
+};
+int main() {
+  mut int target = 0;
+  int source = 3;
+  {
+    BoundMove original{target, source};
+    BoundMove moved{std::move(original)};
+  }
+  return target - 3;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "cleanup-owning movement with mutable and readonly reference fields "
+         "must verify");
+  if (!frontend.canGenerateCode())
+    return;
+
+  bool checked = false;
+  for (const auto &owner : frontend.hir.classInstances()) {
+    if (!owner.source || owner.source->name().lexeme != "BoundMove")
+      continue;
+    const auto *concrete = frontend.mir.findClassInstance(owner.id);
+    expect(
+        concrete &&
+            concrete->moveConstructor == lang::SpecialMemberStatus::Generated &&
+            concrete->copyConstructor == lang::SpecialMemberStatus::Deleted &&
+            concrete->moveAssignment == lang::SpecialMemberStatus::Deleted,
+        "binding transport must preserve frontend movement, noncopyability "
+        "and the prohibition on reference reseating");
+    checked = true;
+  }
+  expect(checked, "the generated reference-binding owner must be concrete");
+
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  bool checkedTransfer = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Construct ||
+            instruction.constructorTarget ||
+            instruction.constructorKind != lang::ConstructorKind::Move ||
+            !instruction.loan)
+          continue;
+        const auto *loan = function.body.findLoan(*instruction.loan);
+        expect(
+            loan && loan->access == lang::AccessMode::Mutable &&
+                loan->designatedFields.size() == 1 &&
+                loan->additionalDependencies.size() == 1 &&
+                loan->additionalDependencies.front().access ==
+                    lang::AccessMode::ReadOnly &&
+                loan->additionalDependencies.front().designatedFields.size() ==
+                    1,
+            "generated construction preserves independent mutable and "
+            "readonly owners with their exact destination fields");
+        if (!loan || loan->additionalDependencies.size() != 1)
+          continue;
+        for (unsigned mutation = 0; mutation < 3; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          auto *changedLoan =
+              const_cast<lang::MirLoan *>(changed->body.findLoan(loan->id));
+          if (mutation == 0)
+            changedLoan->additionalDependencies.clear();
+          else if (mutation == 1)
+            changedLoan->additionalDependencies.front().access =
+                lang::AccessMode::Mutable;
+          else
+            changedLoan->additionalDependencies.front().designatedFields =
+                changedLoan->designatedFields;
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "generated movement cannot lose an owner, increase a "
+                 "borrow's permission or merge its destination field");
+          const lang::CppMirBodyEmitter invalid(malformed, map);
+          expect(!invalid.supportsFailureBodyText(
+                     {lang::MirBodyKind::Function, function.id}),
+                 "native construction admission must reject a forged "
+                 "stored-dependency handoff");
+        }
+        const lang::MirInstruction *input = nullptr;
+        for (const auto &inputBlock : function.body.blocks)
+          for (const auto &candidate : inputBlock.instructions)
+            if (!instruction.operands.empty() &&
+                candidate.result == instruction.operands.front().value)
+              input = &candidate;
+        expect(input && input->kind == lang::MirInstructionKind::Move &&
+                   input->lifecycle.size() == 1 &&
+                   instruction.lifecycle.size() == 2,
+               "generated construction must transfer the exact moved SSA "
+               "obligation into its own result");
+        if (input && input->lifecycle.size() == 1 &&
+            instruction.lifecycle.size() == 2) {
+          for (unsigned mutation = 0; mutation < 3; ++mutation) {
+            auto malformed = frontend.mir;
+            auto *changed = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            for (auto &changedBlock : changed->body.blocks)
+              for (auto &candidate : changedBlock.instructions) {
+                if (candidate.id != instruction.id)
+                  continue;
+                if (mutation == 0)
+                  candidate.lifecycle.erase(candidate.lifecycle.begin());
+                else if (mutation == 1)
+                  candidate.lifecycle.front().source =
+                      input->lifecycle.front().source;
+                else
+                  candidate.constructorKind = lang::ConstructorKind::Copy;
+              }
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "generated move handoff cannot omit its source transfer, "
+                   "retire a different same-typed obligation or become copy");
+            const lang::CppMirBodyEmitter invalid(malformed, map);
+            expect(!invalid.supportsFailureBodyText(
+                       {lang::MirBodyKind::Function, function.id}),
+                   "native construction admission must require the exact "
+                   "source-to-result lifecycle schedule");
+          }
+        }
+        checkedTransfer = true;
+      }
+    }
+  }
+  expect(checkedTransfer, "fixture must exercise generated borrowed movement");
+
+  const auto artifact = gti_test::emitCpp(frontend);
+  const auto contains = [&](std::string_view text) {
+    return artifact.contents.find(text) != std::string::npos;
+  };
+  expect(contains("target(other.target)") && contains("source(other.source)") &&
+             contains("payload(std::move(other.payload))"),
+         "generated movement must preserve both reference identities while "
+         "moving the owned field");
+  expect(!contains("target(std::move(other.target))") &&
+             !contains("source(std::move(other.source))") &&
+             !contains("target = std::move(other.target)") &&
+             !contains("source = std::move(other.source)"),
+         "generated lifecycle code must not move or assign through referents");
+  expect(contains("BoundMove &operator=(BoundMove &&) = delete;"),
+         "reference-carrying assignment must remain deleted in native code");
+  const std::string retirement = "GTI MIR generated-move source transfer";
+  expect(contains(retirement) && artifact.contents.find(retirement) ==
+                                     artifact.contents.rfind(retirement),
+         "the native moved-from SSA shell must retire exactly once after "
+         "publication, without inventing another GTI cleanup");
+}
+
 void testPassiveRecordComposition() {
   for (const std::string name :
        {"passive_expected_records", "passive_callable_records",
@@ -8215,7 +8376,9 @@ void testProvenanceOnlyReceiverFields() {
       }
     }
   }
-  expect(checked == 1, "fixture must contain one private nested call origin");
+  expect(
+      checked == 2,
+      "fixture must contain both observed and returned private call origins");
   expect(!gti_test::emitCpp(frontend).contents.empty(),
          "private provenance must reach production emission");
 }
@@ -9635,6 +9798,7 @@ int32_t main() { return cleanup_t().value - 7; }
 }
 
 constexpr NamedTest kTests[] = {
+    {"testGeneratedMoveReferenceBindings", testGeneratedMoveReferenceBindings},
     {"testPreparedConstructorReplacement", testPreparedConstructorReplacement},
     {"testNonFailingOwningDeclarationInitializer",
      testNonFailingOwningDeclarationInitializer},

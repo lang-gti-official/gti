@@ -555,6 +555,187 @@ int main() {
   expect(hasChild, "MIR retains shared aliases under their exclusive parent");
 }
 
+void checkMappedChildThroughCarrierReference() {
+  const std::string program = R"gti(
+class ReadView {
+  int& value;
+public:
+  ReadView(int& source) : value(source) {}
+  int read() { return this.value; }
+};
+class WriteView {
+  mut int& storage;
+public:
+  WriteView(mut int& source) : storage(source) {}
+  ReadView inspect() { return ReadView(this.storage); }
+  void set(int next) mut { mut int& slot = this.storage; slot = next; }
+};
+int inspect_reference(mut WriteView& writer) {
+  ReadView reader = writer.inspect();
+  ReadView copy = reader;
+  int sum = copy.read() + reader.read();
+  writer.set(9);
+  return sum - 8;
+}
+int main() {
+  mut int owner = 4;
+  { mut WriteView writer{owner};
+    int result = inspect_reference(writer);
+    if (result != 0) { return result; }
+  }
+  return owner == 9 ? 0 : 1;
+}
+)gti";
+  const auto frontend = lang::Frontend().analyze(
+      "mapped-carrier-reference-child.gti", program, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "a mapped shared adapter retains the selected external owner through "
+         "a mutable carrier reference");
+  bool checked = false;
+  for (const auto &function : frontend.hir.functionInstances()) {
+    if (function.source == nullptr ||
+        function.source->name().lexeme != "inspect_reference")
+      continue;
+    for (const auto &child : function.body.loans) {
+      if (child.kind != lang::SemanticLoanKind::StoredValue ||
+          child.parent == 0 || child.carriers.size() != 2)
+        continue;
+      const auto parent =
+          std::find_if(function.body.loans.begin(), function.body.loans.end(),
+                       [&](const auto &candidate) {
+                         return candidate.semanticLoan == child.parent;
+                       });
+      expect(parent != function.body.loans.end() &&
+                 parent->kind == lang::SemanticLoanKind::StoredValue &&
+                 parent->access == lang::AccessMode::Mutable &&
+                 child.storedDependency == 0 &&
+                 child.designatedFields.size() == 1 &&
+                 child.place.projections.size() == 1 &&
+                 child.place.projections.front().kind ==
+                     lang::PlaceProjectionKind::Field &&
+                 parent->designatedFields ==
+                     std::vector<lang::SymbolId>{
+                         child.place.projections.front().field} &&
+                 child.designatedFields != parent->designatedFields,
+             "shared aliases preserve distinct source and result fields "
+             "without duplicating their parent as a shell dependency");
+      checked = true;
+    }
+  }
+  expect(checked, "the mapped adapter and its copy share one exact child loan");
+  bool checkedMir = false;
+  bool checkedShellEndpoint = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto alias =
+        std::find_if(function.body.loans.begin(), function.body.loans.end(),
+                     [](const auto &loan) {
+                       return loan.entry && loan.storedDependency != 0;
+                     });
+    if (alias == function.body.loans.end())
+      continue;
+    const auto child =
+        std::find_if(function.body.loans.begin(), function.body.loans.end(),
+                     [&](const auto &loan) {
+                       return loan.kind == lang::MirLoanKind::Stored &&
+                              !loan.entry &&
+                              loan.parent == alias->storedDependency &&
+                              loan.carriers.size() == 2;
+                     });
+    if (child == function.body.loans.end())
+      continue;
+    checkedMir = true;
+    expect(lang::verifyMirBody(function.body, function.id).valid(),
+           "finishing a mapped child preserves its independently live input "
+           "shell and external-owner loan");
+    for (const auto &block : function.body.blocks) {
+      const auto shellEnd = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const auto &instruction) {
+            return instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                   instruction.loan == alias->id;
+          });
+      const auto ownerEnd = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const auto &instruction) {
+            return instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                   instruction.loan == alias->storedDependency;
+          });
+      if (shellEnd == block.instructions.end() ||
+          ownerEnd == block.instructions.end())
+        continue;
+      expect(shellEnd < ownerEnd,
+             "the input shell ends before its retained external owner");
+      auto premature = function.body;
+      auto &instructions = premature.blocks[block.id - 1].instructions;
+      std::swap(instructions[shellEnd - block.instructions.begin()].loan,
+                instructions[ownerEnd - block.instructions.begin()].loan);
+      const auto rejected = lang::verifyMirBody(premature, function.id);
+      expect(std::any_of(rejected.errors.begin(), rejected.errors.end(),
+                         [](const auto &error) {
+                           return error.message.find(
+                                      "ended before its carrier-shell loan") !=
+                                  std::string::npos;
+                         }),
+             "MIR independently rejects premature external-owner retirement");
+      checkedShellEndpoint = true;
+      break;
+    }
+    auto detached = function.body;
+    detached.loans[alias->id - 1].storedDependency = 0;
+    expect(!lang::verifyMirBody(detached, function.id).valid(),
+           "a mapped carrier result requires the selected alias's exact "
+           "external parent, not just an overlapping source");
+    auto wrongDestination = function.body;
+    wrongDestination.loans[child->id - 1].designatedFields =
+        function.body.loans[child->parent - 1].designatedFields;
+    expect(!lang::verifyMirBody(wrongDestination, function.id).valid(),
+           "a mapped carrier result cannot publish the input field as its "
+           "destination field");
+    auto wrongAccess = function.body;
+    wrongAccess.loans[child->id - 1].access = lang::AccessMode::Mutable;
+    expect(!lang::verifyMirBody(wrongAccess, function.id).valid(),
+           "a mapped shared result cannot acquire exclusive access");
+    auto missingSourceField = function.body;
+    bool removedSourceField = false;
+    for (auto &block : missingSourceField.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.loan == child->id &&
+            instruction.borrowFields.size() == 1) {
+          instruction.borrowFields.front().sourceFields.clear();
+          removedSourceField = true;
+        }
+    expect(removedSourceField &&
+               !lang::verifyMirBody(missingSourceField, function.id).valid(),
+           "an alias dependency alone cannot replace the selected field map");
+  }
+  expect(checkedMir, "the mapped carrier result exercises MIR parent proofs");
+  expect(checkedShellEndpoint,
+         "the input shell and its external owner have verified endpoints");
+  for (const auto *mutation :
+       {"writer.set(99);",
+        "mut WriteView& sibling = writer; sibling.set(99);"}) {
+    auto invalid = program;
+    invalid.insert(invalid.find("  int sum ="), std::string(mutation) + "\n");
+    const auto rejected = lang::Frontend().analyze(
+        "mapped-carrier-reference-conflict.gti", invalid,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!rejected.semanticValid &&
+               std::any_of(rejected.diagnostics.begin(),
+                           rejected.diagnostics.end(),
+                           [](const auto &diagnostic) {
+                             return diagnostic.code == "GTI-S2017";
+                           }) &&
+               std::none_of(rejected.diagnostics.begin(),
+                            rejected.diagnostics.end(),
+                            [](const auto &diagnostic) {
+                              return diagnostic.code == "GTI-B0001";
+                            }),
+           "a shared result suspends parent access, including a sibling alias, "
+           "until both shared aliases finish");
+  }
+}
+
 void checkNestedCarrierAccess() {
   const std::string program = R"gti(
 class CellView {
@@ -1048,9 +1229,101 @@ void checkProtectedEscapeAnalysis() {
          "abstract formal source");
 }
 
+void checkAbstractCarrierAliasResult() {
+  const auto frontend = lang::Frontend().analyze(
+      "abstract-carrier-alias-result.gti", R"gti(
+class SelectedWindow {
+  int& selected_value;
+public:
+  SelectedWindow(int& source) : selected_value(source) {}
+  int read() { return this.selected_value; }
+};
+class Window {
+  int& value;
+public:
+  Window(int& source) : value(source) {}
+  SelectedWindow select() { return SelectedWindow(this.value); }
+  int read() { return this.value; }
+};
+int inspect(Window input) {
+  Window& alias = input;
+  SelectedWindow selected = alias.select();
+  return selected.read();
+}
+int main() { int owner = 7; return inspect(Window(owner)) - 7; }
+)gti",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      frontend.canGenerateCode(),
+      "mapped results through entry carrier aliases preserve external owner");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return;
+  }
+  bool checked = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Call ||
+            instruction.borrowFields.size() != 1 || !instruction.loan ||
+            instruction.info.type.kind != lang::SemanticType::Class)
+          continue;
+        const auto *result = function.body.findLoan(*instruction.loan);
+        const auto alias = std::find_if(
+            function.body.loans.begin(), function.body.loans.end(),
+            [&](const auto &loan) {
+              const auto *dependency =
+                  function.body.findLoan(loan.storedDependency);
+              return loan.kind == lang::MirLoanKind::Local && dependency &&
+                     dependency->entry &&
+                     dependency->kind == lang::MirLoanKind::Stored && result &&
+                     result->source == dependency->source;
+            });
+        if (alias == function.body.loans.end())
+          continue;
+        auto wrongSource = frontend.mir;
+        auto &body = const_cast<lang::MirFunctionInstance *>(
+                         wrongSource.findFunctionInstance(function.id))
+                         ->body;
+        // The runtime alias shell is not the entry's external referent.
+        // A verifier must not accept the new abstract-source path by simply
+        // dropping either side of the caller's exact field contract.
+        const auto shell = std::find_if(
+            body.places.begin(), body.places.end(), [&](const auto &place) {
+              return place.root == lang::MirPlaceRootKind::Binding &&
+                     !alias->carriers.empty() &&
+                     place.binding == alias->carriers.front() &&
+                     place.projections.empty();
+            });
+        expect(shell != body.places.end(),
+               "carrier alias has a physical shell");
+        if (shell == body.places.end())
+          continue;
+        body.loans[result->id - 1].source = shell->id;
+        expect(!lang::verifyMirProgram(wrongSource).valid(),
+               "mapped alias result cannot substitute its carrier shell");
+        auto wrongPath = frontend.mir;
+        auto &pathBody = const_cast<lang::MirFunctionInstance *>(
+                             wrongPath.findFunctionInstance(function.id))
+                             ->body;
+        pathBody.loans[result->id - 1].designatedFields =
+            instruction.borrowFields.front().sourceFields;
+        expect(!lang::verifyMirProgram(wrongPath).valid(),
+               "mapped alias result cannot substitute its input field for its "
+               "destination field");
+        checked = true;
+      }
+    }
+  }
+  expect(checked,
+         "unrelated user carrier exercises abstract entry alias proof");
+}
+
 } // namespace
 
 int main() {
+  checkAbstractCarrierAliasResult();
   checkProjectedOwningMemberRetainedResults();
   checkOwningElementSlice();
   checkOwningAccessorAdapters();
@@ -1058,6 +1331,7 @@ int main() {
   checkIoConceptDiagnostics();
   checkLocalReferences();
   checkSharedChildOfExclusiveCarrier();
+  checkMappedChildThroughCarrierReference();
   checkNestedCarrierAccess();
   checkReadOnlyConstructorDependencies();
   const auto span = lang::Frontend().analyze(
@@ -1077,19 +1351,28 @@ int main() {
   }
   bool checkedStoredDependency = false;
   for (const auto &function : span.mir.functionInstances()) {
+    const auto *source = span.hir.findFunctionInstance(function.id);
+    if (source == nullptr)
+      continue;
     for (const auto &loan : function.body.loans) {
-      if (loan.kind != lang::MirLoanKind::Stored || loan.parent == 0 ||
-          loan.storedDependency == 0)
+      const bool retainsIterator = std::any_of(
+          source->body.statements.begin(), source->body.statements.end(),
+          [&](const auto &statement) {
+            return statement.rangeIteration &&
+                   std::find(loan.carriers.begin(), loan.carriers.end(),
+                             statement.rangeIteration->iterator) !=
+                       loan.carriers.end();
+          });
+      if (!retainsIterator || loan.parent == 0 || loan.storedDependency == 0)
         continue;
       auto missingDependency = function.body;
       missingDependency.loans[loan.id - 1].storedDependency = 0;
-      expect(
-          !lang::verifyMirBody(missingDependency, function.id).valid(),
-          "derived stored iterator must preserve its parent's external owner");
+      expect(!lang::verifyMirBody(missingDependency, function.id).valid(),
+             "the retained range iterator must preserve its external owner");
       auto missingParent = function.body;
       missingParent.loans[loan.id - 1].parent = 0;
       expect(!lang::verifyMirBody(missingParent, function.id).valid(),
-             "derived stored iterator must preserve the borrowed receiver "
+             "the retained range iterator must preserve the borrowed receiver "
              "lifetime");
       checkedStoredDependency = true;
     }

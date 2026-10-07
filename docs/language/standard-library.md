@@ -789,13 +789,13 @@ See [structural relocation](ownership-and-lifetimes.md#structural-relocation).
 ADR 022 defines its provenance and comparison with other systems-language
 models.
 
-### Custom resource protocol (in progress)
+### Custom resource protocol
 
-`<std/resource>` contains the source-defined Phase 2 protocol. Its checked
-owner/container integration is not yet a completed, fully validated allocation
-surface; [S-ALLOC-05](../plans/implementation-sequence.md#s-alloc-05-programmable-allocators-and-safe-container-integration)
-tracks the remaining work. It is separate from the process-backed
-`std::allocator`/`std::storage<T>` API above.
+`<std/resource>` provides source-defined programmable allocation and checked
+typed ownership. It is separate from the process-backed
+`std::allocator`/`std::storage<T>` API above; ordinary default allocation does
+not require a resource binding. Resource types are selected by generic type
+arguments, without runtime type erasure or allocator-propagation traits.
 
 `memory_resource<R>` requires read-only `allocate(layout)` and
 `release(raw_allocation)` calls under an explicit unsafe requirement.
@@ -818,6 +818,38 @@ reverse field cleanup destroys elements first, then the resource lease returns
 the original descriptor. These checks do not establish provenance, actual
 extent, non-overlap, writability or race freedom.
 
+`resource_storage<T,R>` owns sparse element lifetimes in one provider-selected
+region. `try_allocate` is recoverable; `emplace` constructs directly at the final
+address, `get`/`get_mut` borrow initialized elements, and `destroy` ends one
+element lifetime without returning the region. `clear` destroys live elements;
+`release` destroys them and returns the original descriptor to the original
+resource. Moving the owner transfers this release obligation without moving
+elements, so deleted element movement is compatible with fixed-address storage.
+`relocate_to` and `try_reserve_prefix` instead require movable, structurally
+relocatable elements. The latter checks that exactly the claimed prefix is
+initialized and preserves the old allocation and elements on allocation failure.
+Constructor failure retains its original defined-failure identity and rollback;
+it is not converted into an allocation error.
+
+`<std/resource_vector>` supplies `resource_vector<T,R>`, a contiguous move-only
+container over that storage. It supports `size`, `capacity`, `empty`, indexed
+read-only/mutable access, `front`, `back`, read-only range iteration, `pop_back`,
+`clear` and `release`. `try_reserve`, `try_push_back` and `try_emplace_back`
+report allocation errors; their plain counterparts panic on allocation failure.
+An insertion argument is consumed even when growth fails, but existing elements
+remain unchanged. Growable elements must be movable, structurally relocatable
+and layout-queryable; use fixed-address storage for immovable types.
+
+Each owner retains a shared checked provider borrow through its cleanup, even
+when empty. Multiple owners may coexist. Safe provider reset requires exclusive
+access and cannot occur while those owners remain live. Element references and
+iterators additionally borrow the physical storage owner, preventing conflicting
+growth, release or movement until their last use. Moving an unborrowed owner
+preserves its binding; assignment between resource owners/containers is not
+supported. Explicit `relocate_to` may transfer elements between distinct
+resources of the same `R` type, but each region is still released through its
+own binding. There is no implicit rebinding, shared ownership or reference count.
+
 `process_resource` is a source wrapper over a narrow aligned raw allocation
 runtime interface, with distinct invalid-alignment, size-overflow and
 resource-exhaustion results. Direct `allocate` and `release` remain unsafe;
@@ -832,9 +864,14 @@ typed adoption also needs its liveness bitmap. Suballocations use checked
 padding/extent arithmetic, remain disjoint while live, and are reclaimed for
 reuse only by reset after all releases. Its read-only methods mutate separately
 owned bookkeeping through reviewed unsafe pointers; read-only receiver access
-does not supply synchronization. Raw allocate/release placement tests are
-supplementary evidence, not evidence that the unfinished safe owner/container
-integration has passed.
+does not supply synchronization. Runnable
+[`examples/121-programmable-allocators.gti`](../../examples/121-programmable-allocators.gti)
+uses that arena for simultaneous string-vector and immovable-object allocations,
+including an unrelated application-defined `engine::Slots` container. Examples
+117–120 separately demonstrate unsafe member contracts, cleanup-bound guards,
+runtime object layout and final-address immovable storage. The acceptance gates
+and host/platform evidence are recorded in
+[verification](../architecture/verification.md#programmable-allocation-and-cleanup-bound-resource-leases).
 
 ### Existing typed container policies
 

@@ -251,8 +251,10 @@ void checkDifferentBodiesFailClosed() {
 }
 
 void checkDestructorCannotConsumeFieldAgain() {
-  const auto frontend =
-      analyzeWithStandardLibrary("retained-destructor-reuse.gti", R"gti(
+  for (const auto *body : {"[[discard]] std::move(this.callable)();",
+                           "[[discard]] std::move(callable)();",
+                           "Callback again = std::move(this.callable);"}) {
+    const std::string program = R"gti(
 class Callback {
 public:
   ~Callback() {}
@@ -262,7 +264,8 @@ class Owner {
   mut Callback callable;
 public:
   Owner(Callback callable) : callable(std::move(callable)) {}
-  ~Owner() { std::move(this.callable)(); }
+  ~Owner() { )gti" + std::string(body) +
+                                R"gti( }
   int operator()() && { return std::move(this.callable)(); }
 };
 int main() {
@@ -270,16 +273,56 @@ int main() {
   Owner owner{std::move(callback)};
   return std::move(owner)();
 }
+)gti";
+    const auto frontend =
+        analyzeWithStandardLibrary("retained-destructor-reuse.gti", program);
+    const auto fieldStart = program.find("callable", program.find("~Owner()"));
+    expect(!frontend.canGenerateCode() &&
+               std::any_of(frontend.diagnostics.begin(),
+                           frontend.diagnostics.end(),
+                           [&](const auto &diagnostic) {
+                             return diagnostic.code == "GTI-S2018" &&
+                                    diagnostic.message.find("partially move") !=
+                                        std::string::npos &&
+                                    diagnostic.phase ==
+                                        lang::DiagnosticPhase::Semantics &&
+                                    diagnostic.severity ==
+                                        lang::DiagnosticSeverity::Error &&
+                                    diagnostic.primary.source ==
+                                        std::filesystem::absolute(
+                                            "retained-destructor-reuse.gti")
+                                            .string() &&
+                                    diagnostic.primary.start == fieldStart &&
+                                    diagnostic.primary.end == fieldStart + 8 &&
+                                    diagnostic.fixes.empty();
+                           }) &&
+               std::none_of(frontend.diagnostics.begin(),
+                            frontend.diagnostics.end(),
+                            [](const auto &diagnostic) {
+                              return diagnostic.code == "GTI-S2009" ||
+                                     diagnostic.code == "GTI-B0001";
+                            }),
+           "a destructor cannot acquire a second consuming field invocation");
+  }
+  const auto local =
+      analyzeWithStandardLibrary("destructor-local-move.gti", R"gti(
+class Callback {
+public:
+  ~Callback() {}
+  int operator()() && { return 1; }
+};
+class Owner {
+public:
+  ~Owner() {
+    Callback local{};
+    [[discard]] std::move(local)();
+  }
+};
+int main() { Owner owner{}; return 0; }
 )gti");
-  expect(!frontend.canGenerateCode() &&
-             std::any_of(frontend.diagnostics.begin(),
-                         frontend.diagnostics.end(),
-                         [](const auto &diagnostic) {
-                           return diagnostic.code == "GTI-S2018" &&
-                                  diagnostic.message.find("partially move") !=
-                                      std::string::npos;
-                         }),
-         "a destructor cannot acquire a second consuming field invocation");
+  expect(local.canGenerateCode(),
+         "destructor receiver protection must not prevent consuming a fresh "
+         "local owner");
 }
 } // namespace
 

@@ -3707,10 +3707,10 @@ do not expose C++ object layout as GTI semantics.
 
 - **State/role:** active Phase 2; prerequisite audit complete and statically
   borrowed lease direction approved on 2026-10-06 through the user's delegated
-  design review. The resource protocol below is approved; prerequisites are
-  under implementation, not the complete allocator/container outcome.
-  Complete the whole allocator/container outcome;
-  a counting adapter or another process-allocation wrapper is not completion.
+  design review. The public protocol, real arena, fixed-address owner and
+  growable container are implemented with focused native evidence. Broad
+  compiler reconciliation and final integration remain in progress; a counting
+  adapter or another process-allocation wrapper is not completion.
 - **Outcome:** an engine-defined arena obtains one backing region, chooses
   differently sized/aligned subregions, and simultaneously supplies owning
   objects, a substantial growable container and an unrelated application-defined
@@ -3728,7 +3728,7 @@ do not expose C++ object layout as GTI semantics.
   adoption, the public resource/lease API, real arena placement, fixed-address
   immovable ownership and allocator-aware containers remained to implement at
   that checkpoint.
-- **Storage prerequisite (in progress):** private external-region adoption
+- **Storage prerequisite (implemented):** private external-region adoption
   now carries explicit unsafe permission, an exact mutable destination and a
   writable address/extent/alignment contract through MIR verification and
   backend admission. Its fallible slot-bitmap allocation does not take over
@@ -3736,8 +3736,8 @@ do not expose C++ object layout as GTI semantics.
   elements through final-address emplacement; completed-value insertion and
   relocation retain their capability constraints. Example 120 and native
   cleanup fixtures pass the eight-mode C++20/C++23, no-elide and sanitizer
-  matrix. These primitives do not yet constitute a public resource API or
-  allocator/container acceptance.
+  matrix. The public resource clients below build on these primitives;
+  primitive-only evidence is not allocator/container acceptance.
 - **Starting evidence (2026-10-06):** inspected main `db6622a3`, including the
   optional-audit revision. `storage<std::movable T>` and its factories still
   restrict immovable elements; the private sparse storage representation obtains

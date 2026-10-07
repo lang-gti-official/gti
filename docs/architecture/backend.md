@@ -1139,6 +1139,12 @@ uses the class lifecycle row's `Generated` status to spell the structural
 operation. A policy declaration never becomes an empty C++ body: semantic
 analysis has already decided structural availability, and the lifecycle status
 remains the backend authority for that result.
+Generated native moves preserve reference-field bindings and move ordinary
+value fields. Applying native `std::move` to a reference field would move its
+referent instead of transferring the binding, so the lowered resolved field
+type selects direct binding initialization. Semantic lifecycle facts still
+decide whether copying, movement and assignment are available; this does not
+introduce reference reseating.
 
 A generated default constructor of a non-generic class with no declared
 instance fields or destructor has a selected HIR constructor instance when
@@ -1958,13 +1964,16 @@ A resolved nominal `operator()` uses the same exact class-result placement
 proof as another function-target call, both for argument preparation and local
 binding initialization. Callable receiver capability remains independently
 verified; no public wrapper name participates in this classification.
-Receiver field paths that exist only as Stored or CallResult provenance are
-not eagerly evaluated into native lvalue aliases. Exact field/type rows remain
-part of admission, and CallResult provenance requires one admitted executable
-call to materialize its pointer. Instruction operands and destinations, return
-or edge arguments, drop obligations, range carriers, other loan families and
-array bases prevent this erasure. Thus a public accessor can preserve a private
-nested origin without generating a source-level private field access in its
+Receiver field paths used only as Stored or CallResult provenance are not
+eagerly evaluated into native lvalue aliases. Exact field/type rows remain part
+of admission, and CallResult provenance requires one admitted executable call
+to materialize its pointer. A Return loan can share that provenance without
+evaluating it again when the return is independently erased into its class
+value, or its sole transfer copies an existing checked pointer carrier without
+an address-place operand. Instruction operands and destinations, return or edge
+arguments that actually use the place, drop obligations, range carriers, other
+loan families and array bases prevent this erasure. Thus a public accessor can
+preserve a private nested origin without generating a source-level private field access in its
 caller; actual field reads and writes keep their normal representation.
 For concrete, non-template owners and members, generated callable ADL adapters
 are friend declarations inside the class, with inline forwarding definitions

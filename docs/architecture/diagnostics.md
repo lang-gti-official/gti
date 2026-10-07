@@ -421,6 +421,12 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   returned expression, with a hint to return the object by value or choose
   longer-lived storage. It offers no ownership-changing fix-it. A by-value
   carrier parameter keeps its existing, more specific `GTI-S2085` rule below.
+  The same physical-origin check applies to inline fields returned by ordinary
+  operators and accessors, including through reference aliases and relay calls.
+  A temporary or local carrier's external owner does not extend that carrier's
+  storage lifetime. Exact stored-field mappings may instead return the external
+  referent. Ordinary member calls on ineligible temporary receivers retain
+  their earlier `GTI-S2081` diagnostic.
   Compiler and LSP tests cover the exact UTF-16 span and diagnostic clearing.
   For a later call argument that mutates an earlier operand's retained loan,
   point at the mutating argument's callable token, relate the earlier borrowing
@@ -461,6 +467,10 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   or move construction is unavailable, and suggest explicit ownership transfer
   when applicable. Do not attach a fix-it: moving the value versus preserving
   it with an explicit allocating copy requires programmer intent.
+  A destructor's attempted receiver-field move uses the same code at the
+  field token and explains that field cleanup belongs to the enclosing object.
+  Explicit and implicit `this` paths share this rule; separately owned locals
+  remain movable. No fix-it changes cleanup ownership.
 - `GTI-S2003` retains an ordinary assignment mismatch when a move-only type
   cannot be copied through a dereference. Dereference writes use the same
   copy/move-assignment policy as binding, field, and subscript writes; point at
