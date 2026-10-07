@@ -1,0 +1,18 @@
+int bounded<uint64_t N>() {
+  if constexpr (N == 0) {
+    return 0;
+  } else {
+    return 1 + bounded<N - 1>();
+  }
+}
+
+int exact<T>(T value, int count) {
+  if (count == 0) {
+    return 0;
+  }
+  return 1 + exact(value, count - 1);
+}
+
+int main() {
+  return bounded<62>() + exact(1, 200) - 262;
+}

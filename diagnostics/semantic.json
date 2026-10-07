@@ -97,5 +97,14 @@
     "group": "raw-pointer-incomplete",
     "format": "{0}",
     "arguments": 1
+  },
+  {
+    "id": "GenericInstantiationLimit",
+    "code": "GTI-S2105",
+    "phase": "Semantics",
+    "severity": "Error",
+    "group": "generic-instantiation",
+    "format": "Generic instantiation exceeded the compiler's {0} limit ({1}).",
+    "arguments": 2
   }
 ]

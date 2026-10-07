@@ -1051,6 +1051,9 @@ auto SemanticVisitor::Impl::firstConstraintFailure(
     const std::vector<GenericParameterInfo> &parameters,
     const std::vector<SemanticType> &arguments) const
     -> std::optional<ConstraintFailure> {
+  if (deferringTypeAliasConstraints) {
+    return std::nullopt;
+  }
   std::size_t argumentIndex = 0;
   for (const GenericParameterInfo &parameter : parameters) {
     if (parameter.value) {

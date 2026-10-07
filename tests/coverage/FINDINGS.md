@@ -90,9 +90,9 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | --- | --- |
 | Silent miscompile | A25: an `expected<T&, E>` relay returns the parameter, not the referent |
 | Runtime-semantics or tooling result | A02: `gti test` passes a test whose `main` returns 256; A13: nondeterministic `--emit-mir` |
-| Compiler hang or silent failure | A06: unbounded polymorphic recursion; A41 and A57: compile fails with no diagnostic |
+| Compiler hang or silent failure | A41: compile fails with no diagnostic |
 | ICE or invalid generated C++ on valid code | A01, A14–A17, A26–A32, A37–A40, A42, A45–A52, A55, A56, A58, A59 |
-| Valid code rejected | A03, A18, A19, A23, A34, A36, A54 |
+| Valid code rejected | A03, A18, A19, A23, A34, A36 |
 | Specification gap | A04: a dependency's own `[build] defines` is ignored |
 | Diagnostic quality | A05, A07–A12, A20–A22, A24, A33, A35, A43, A44, A53, A60, A61 |
 
@@ -103,7 +103,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A03 | [#55](https://git.internal.howetotech.dev/gti-lang/gti/issues/55) Program-wide initializer proof rejects any generic call (GTI-S2068) | rejected | `reproducers/a03-generic-call-in-global-initializer` |
 | A04 | [#56](https://git.internal.howetotech.dev/gti-lang/gti/issues/56) A dependency's own [build] defines are silently ignored | wrong-result | `projects/a04-dependency-defines` |
 | A05 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Diagnostics suggest invalid fixes and misdescribe explicit generic arguments | bad-diagnostic | `reproducers/a05-string-view-help-suggests-invalid-form` |
-| A06 | [#57](https://git.internal.howetotech.dev/gti-lang/gti/issues/57) Compiler hangs on unbounded polymorphic generic recursion | hang | `reproducers/a06-polymorphic-recursion-hang` |
+| A06 | [#57](https://git.internal.howetotech.dev/gti-lang/gti/issues/57) Resolved: unbounded polymorphic recursion is resource-bounded | rejected (GTI-S2105) | `reproducers/a06-polymorphic-recursion-hang` |
 | A07 | [#58](https://git.internal.howetotech.dev/gti-lang/gti/issues/58) Unknown function attribute is misparsed as a class attribute (GTI-P0001 instead of GTI-S2099) | rejected | `rejections/diag-p10-unknown-attribute`<br>`reproducers/a07-unknown-function-attribute` |
 | A08 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a08-unknown-type-cascade` |
 | A09 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a09-bad-if-condition-cascade` |
@@ -151,10 +151,10 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A51 | [#92](https://git.internal.howetotech.dev/gti-lang/gti/issues/92) Structured binding over a fixed array of class elements: ICE, or invalid C++ emitted | backend, ice | `reproducers/a51-binding-over-class-array`<br>`reproducers/a51-binding-over-class-array-invalid-cpp` |
 | A52 | [#93](https://git.internal.howetotech.dev/gti-lang/gti/issues/93) ICE: fixed arrays of passive unions, or of structs with a union field | ice | `reproducers/a52-struct-with-union-array`<br>`reproducers/a52-union-array` |
 | A53 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Diagnostics suggest invalid fixes and misdescribe explicit generic arguments | bad-diagnostic | `reproducers/a53-operator-temporary-ref-diagnostic` |
-| A54 | [#95](https://git.internal.howetotech.dev/gti-lang/gti/issues/95) Type alias of a constrained generic over a class type is rejected ('unknown class') | rejected | `reproducers/a54-alias-constrained-generic-class-argument`<br>`reproducers/a54-alias-constrained-generic-user-class` |
+| A54 | [#95](https://git.internal.howetotech.dev/gti-lang/gti/issues/95) Resolved: alias constraints inspect completed class facts | pass | `reproducers/a54-alias-constrained-generic-class-argument`<br>`reproducers/a54-alias-constrained-generic-user-class` |
 | A55 | [#96](https://git.internal.howetotech.dev/gti-lang/gti/issues/96) C++ backend ICE: list/deque/queue emplacement forwarding a move-only constructor argument | ice | `reproducers/a55-ctor-pack-move-only-field-init`<br>`reproducers/a55-list-emplace-move-only-argument` |
 | A56 | [#97](https://git.internal.howetotech.dev/gti-lang/gti/issues/97) C++ backend ICE: std::make_unique<T>(T value) | ice | `reproducers/a56-make-unique-same-type`<br>`reproducers/a56-make-unique-string-from-string` |
-| A57 | [#98](https://git.internal.howetotech.dev/gti-lang/gti/issues/98) Silent compile failure: range-for over a non-dependent range inside a generic function or method | silent | `reproducers/a57-generic-member-field-range-for-silent`<br>`reproducers/a57-generic-nondependent-range-for-silent` |
+| A57 | [#98](https://git.internal.howetotech.dev/gti-lang/gti/issues/98) Resolved: non-dependent generic ranges preserve instance-local loans | pass | `reproducers/a57-generic-member-field-range-for-silent`<br>`reproducers/a57-generic-nondependent-range-for-silent` |
 | A58 | [#99](https://git.internal.howetotech.dev/gti-lang/gti/issues/99) MIR ICE: reference to a unique_ptr field's pointee reached through a local reference | ice | `reproducers/a58-map-unique-ptr-value-deref`<br>`reproducers/a58-ref-to-owner-field-pointee-via-local-ref` |
 | A59 | [#100](https://git.internal.howetotech.dev/gti-lang/gti/issues/100) MIR ICE: read-only reference into an element of a mutable nested container | ice | `reproducers/a59-map-at-then-element-ref`<br>`reproducers/a59-readonly-ref-into-mut-nested-container` |
 | A60 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Diagnostics suggest invalid fixes and misdescribe explicit generic arguments | bad-diagnostic | `reproducers/a60-println-format-missing-include` |
@@ -170,6 +170,9 @@ gated, because they report rather than assert.
 
 | Finding | Resolution |
 | --- | --- |
+| A06 | Canonical HIR discovery stops at 64 new-instance levels or 16,384 distinct instances with located GTI-S2105; exact recursion and finite chains through the boundary remain valid. The original growing Box recursion rejects in about 4.5 seconds on the optimized macOS arm64 build, within its unchanged 20-second gate limit. |
+| A54 | Alias identities remain available during registration; target constraints are obligatorily rechecked after complete class/member/lifecycle publication, including unused aliases. |
+| A57 | Non-dependent range types remain exact, while numeric loan IDs are compared within the correct concrete reanalysis domain. Access/loan/carrier/protocol mutations remain rejected. Every silent invalid-HIR result now produces a located internal diagnostic. |
 | F1 | HIR verification now compares concrete generic range facts and stable loan provenance rather than declaration-level types and per-analysis loan IDs. |
 | F2 | Already fixed on the integration base by exact generic callable-reference lowering. |
 | F3 | MIR full-expression verification distinguishes a loop's next dynamic evaluation from two reachable markers in one evaluation. |
