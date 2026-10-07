@@ -2,7 +2,9 @@
 """Native support scopes retain earliest records and restore across handoff."""
 
 from pathlib import Path
+import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -90,7 +92,9 @@ def main():
     for mutation in ("code", "site", "message", "descriptor", "third", "body"):
         result = subprocess.run([thread_probe, mutation], capture_output=True,
                                 text=True, timeout=30)
-        assert result.returncode not in (0, 1, 70), (mutation, result)
+        expected = (3, 0xC0000409, 0xC0000409 - (1 << 32)) if os.name == "nt" else (
+            -signal.SIGABRT,)
+        assert result.returncode in expected, (mutation, result)
     print("Cleanup context: four native scope restoration/isolation cases and "
           "exact/forged managed envelope cases passed")
 
