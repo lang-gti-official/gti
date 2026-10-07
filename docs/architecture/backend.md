@@ -582,9 +582,9 @@ and explicit construction use the same pending-result destination. Failure
 cleanup calls a fallible result's exact status cleanup recipe before native
 teardown; an infallible result uses native teardown directly. A wrapped
 `expected` value cleans its payload before tearing down the envelope.
-Storage handles keep their initialized result in an SSA carrier until the
-successful Return; rollback drains that carrier on the explicit MIR failure
-edge. This does not admit arbitrary executable work or reinitialization
+Private prefix-storage handles keep their initialized result in an SSA carrier
+until the successful Return; rollback drains that carrier on the explicit MIR
+failure edge. This does not admit arbitrary executable work or reinitialization
 between a class result's construction and Return.
 
 When the result is the class payload of an `expected` return, cleanup may
@@ -676,16 +676,18 @@ MIR, never as a backend analysis result. When all local overflow outcomes for a
 checked add, subtract, multiply, or negate are discharged, the C++ backend may
 emit the direct arithmetic representation. When all local outcomes for an
 admitted fixed-array read are discharged, it may emit a direct indexed read.
-For a private sparse-storage read or mutable read, it may select the
-backend-private unchecked helper only when both the exact bounds and
-initialized-slot outcomes are discharged. A fully discharged `Invoke` follows
-its verified success edge; any retained local or callee failure keeps the
-checked representation and failure transfer.
+An admitted prefix-storage read may select its backend-private unchecked
+helper only when its exact bounds outcome is discharged. A fully discharged
+`Invoke` follows its verified success edge; any retained local or callee failure
+keeps the checked representation and failure transfer.
 
 These choices inspect only MIR operation identities and exact discharge
 metadata. They do not recognize `std` wrappers, source declaration names, or
-generated C++ shape. Prefix storage and every unsupported operation remain on
-their checked backend route.
+generated C++ shape. Unsupported operations remain on their checked backend
+route. Sparse storage is ordinary source code: its slot-state guards and
+general object-lifetime calls do not acquire an unchecked sparse helper or an
+initialized-slot discharge from the public container's identity. The retired
+sparse-state optimizer pass and proof family have no backend equivalent.
 
 For a scalar block parameter, the C++ MIR body emitter owns one backend-private
 edge slot. Every `Goto`, `Branch`, `Invoke`, or `Switch` predecessor
@@ -1987,7 +1989,7 @@ a direct namespace call; MIR has already scheduled callee-expression effects.
 
 ### Defined Failure
 
-Private typed-storage results use a default-empty native handle at a
+Private prefix-storage results use a default-empty native handle at a
 status-returning call boundary. A successful MIR Return moves the exact handle
 through the out-parameter; it is not copied or default-constructed as an element
 value. If destination replacement later fails, the activated result's MIR Drop
@@ -1998,6 +2000,14 @@ when the receiver has its exact unique staged borrow and matching owner and
 mutability; result activation, input transfers, replacement, and shell cleanup
 retain the same proof as a free-function result. Container swaps are ordinary
 clients of these representations, not backend-recognized operations.
+
+Source-defined sparse owners use the ordinary class-result and field-cleanup
+representations. Their two region leases, live-slot metadata and reverse
+cleanup loops are emitted from verified MIR; there is no native sparse-storage
+handle, adoption primitive or hidden live-slot bitmap. The backend lowers
+general object construction, destruction and relocation using the selected
+constructor and exact cleanup recipe carried by MIR. It does not reconstruct
+the source owner's initialization state or release policy.
 
 MIR carries canonical failure metadata, detector sites, failure edges, cleanup
 schedules, propagation, and publication behavior. The C++ backend materializes

@@ -7,16 +7,22 @@
 
 namespace lang::mir_detail {
 
+// Concrete complete object representation, independent of any lifetime action.
+[[nodiscard]] bool completeObjectType(const MirProgram &program,
+                                      const SemanticType &type);
+
 // Runtime representation queries have no runtime input and cannot acquire
 // ownership or borrow authority merely by naming a type.
 [[nodiscard]] bool objectLayoutQuery(const MirProgram &program,
                                      const MirInstruction &instruction);
-
-// External region adoption requires an explicit unsafe marker. It transfers
-// slot lifetime authority, never release authority for the external region.
-[[nodiscard]] const MirPlace *
-storageAdoptionDestination(const MirBody &body,
-                           const MirInstruction &instruction);
+// Exact raw-address lifetime end. Cleanup/failure recipes are independently
+// derived by the program verifier; this query checks the operation's shape.
+[[nodiscard]] bool objectDestroy(const MirProgram &program,
+                                 const MirInstruction &instruction);
+[[nodiscard]] bool objectConstruct(const MirProgram &program,
+                                   const MirInstruction &instruction);
+[[nodiscard]] bool objectRelocate(const MirProgram &program,
+                                  const MirInstruction &instruction);
 
 // Inert, const-preserving typed/erased address conversion; never a borrow or
 // an assertion that the pointee is initialized, aligned, live or writable.

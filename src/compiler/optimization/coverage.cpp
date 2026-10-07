@@ -144,8 +144,12 @@ MirOptimizationCoverage optimizationCoverage(MirOperation operation) {
 
 MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   switch (intrinsic) {
-  case IntrinsicKind::StorageTryAdopt:
-    return barrier("raw region adoption and recoverable metadata allocation");
+  case IntrinsicKind::ObjectDestroy:
+    return barrier("unsafe object lifetime end and typed cleanup");
+  case IntrinsicKind::ObjectConstruct:
+    return barrier("unsafe final-address construction and ownership handoff");
+  case IntrinsicKind::ObjectRelocate:
+    return barrier("unsafe destructive relocation and raw ownership transfer");
   case IntrinsicKind::ObjectSize:
   case IntrinsicKind::ObjectAlignment:
     return supported("pure target-dependent representation query; scalar "
@@ -159,11 +163,6 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::NumericAliasConversion:
   case IntrinsicKind::RawPointerConversion:
   case IntrinsicKind::EnumUnderlyingValue:
-  case IntrinsicKind::AllocateStorage:
-  case IntrinsicKind::StorageConstruct:
-  case IntrinsicKind::StorageRead:
-  case IntrinsicKind::StorageReadMut:
-  case IntrinsicKind::StorageDestroy:
   case IntrinsicKind::StorageBoundsCheck:
   case IntrinsicKind::AllocatePrefixStorage:
   case IntrinsicKind::PrefixStorageAppend:
@@ -184,12 +183,6 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::UniqueOwnerIsNull:
   case IntrinsicKind::UniqueOwnerSwap:
   case IntrinsicKind::UniqueOwnerUpcast:
-  case IntrinsicKind::StorageTryAllocate:
-  case IntrinsicKind::StorageCapacity:
-  case IntrinsicKind::StorageInitialized:
-  case IntrinsicKind::StorageRelocate:
-  case IntrinsicKind::StorageShiftRight:
-  case IntrinsicKind::StorageShiftLeft:
   case IntrinsicKind::IntegerWrappingAdd:
   case IntrinsicKind::IntegerWrappingSubtract:
   case IntrinsicKind::IntegerWrappingMultiply:
@@ -259,6 +252,11 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::MutexLockFailure:
   case IntrinsicKind::RequireKey:
   case IntrinsicKind::RequireContainerArgument:
+  case IntrinsicKind::RequireVacantStorage:
+  case IntrinsicKind::RequireLiveStorage:
+  case IntrinsicKind::RequireRelocationCapacity:
+  case IntrinsicKind::RequireRelocationSource:
+  case IntrinsicKind::RequireRelocationDestination:
     return barrier("defined failure without a discharge proof family");
   case IntrinsicKind::Panic:
     return barrier("explicit terminal failure with bounded message capture");
@@ -377,8 +375,8 @@ MirOptimizationCoverage optimizationCoverage(DefinedFailureCode code) {
   case DefinedFailureCode::IntegerOverflow:
   case DefinedFailureCode::ModuloByZero:
   case DefinedFailureCode::IndexOutOfBounds:
-  case DefinedFailureCode::InvalidStorageState:
     return supported("bounded safety discharge; exact origin/outcome replay");
+  case DefinedFailureCode::InvalidStorageState:
   case DefinedFailureCode::DivisionByZero:
   case DefinedFailureCode::NegativeShiftCount:
   case DefinedFailureCode::ShiftCountOutOfRange:
@@ -517,7 +515,7 @@ MirOptimizationCoverage optimizationCoverage(UnsafeOperationKind kind) {
   case UnsafeOperationKind::PointerArithmetic:
   case UnsafeOperationKind::ForeignPointerCall:
   case UnsafeOperationKind::DeclaredUnsafeCall:
-  case UnsafeOperationKind::StorageAdoption:
+  case UnsafeOperationKind::ObjectLifetime:
     return barrier("unsafe/raw-memory alias and escape boundary");
   }
   return {};
@@ -574,7 +572,6 @@ MirOptimizationCoverage optimizationCoverage(MirTransformProofKind kind) {
   case MirTransformProofKind::DeadUnusedComputation:
   case MirTransformProofKind::ScalarPromotion:
   case MirTransformProofKind::BoundsRange:
-  case MirTransformProofKind::StorageInitialization:
   case MirTransformProofKind::ArithmeticRange:
   case MirTransformProofKind::ExactReceiver:
     return supported(
@@ -588,7 +585,6 @@ MirOptimizationCoverage optimizationCoverage(MirTransformProofKind kind) {
 MirOptimizationCoverage optimizationCoverage(MirSafetyCheckFamily kind) {
   switch (kind) {
   case MirSafetyCheckFamily::Bounds:
-  case MirSafetyCheckFamily::StorageState:
   case MirSafetyCheckFamily::ArithmeticOverflow:
   case MirSafetyCheckFamily::ArithmeticDomain:
     return supported("safety proof/replay and per-family report census");

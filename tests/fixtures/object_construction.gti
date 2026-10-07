@@ -1,0 +1,91 @@
+#include <std/resource>
+#include <std/memory>
+#include <std/panic>
+#include <std/string>
+#include <std/vector>
+
+// This unrelated source-defined byte owner controls release independently of
+// object lifetime. A stateless process provider may release its own family of
+// allocations through another instance; no resource lease is forged here.
+class TestRegion {
+  std::raw_allocation allocation;
+  static std::raw_allocation allocate(std::layout request) {
+    std::process_resource provider{};
+    unsafe { return provider.allocate(request).expect("test region allocation"); }
+  }
+public:
+  TestRegion(std::layout request) : allocation(TestRegion::allocate(request)) {}
+  TestRegion(TestRegion& other) = delete;
+  TestRegion(TestRegion&& other) = default;
+  void* address() { return this.allocation.address; }
+  ~TestRegion() {
+    std::process_resource provider{};
+    unsafe { provider.release(this.allocation); }
+    std::println(900);
+  }
+};
+
+class TestSlot<std::layout_queryable T> {
+  TestRegion region;
+  mut bool live = false;
+public:
+  TestSlot() : region(TestRegion(std::layout_of<T>())) {}
+  TestSlot(TestSlot<T>& other) = delete;
+  TestSlot(TestSlot<T>&& other) = delete;
+  void construct<Args...>(Args... args) mut {
+    if (this.live) { std::panic("test slot occupied"); }
+    unsafe {
+      std::construct_at(std::typed_address<T>(this.region.address()), args...);
+    }
+    this.live = true;
+  }
+  void clear() mut {
+    if (this.live) {
+      this.live = false;
+      unsafe { std::destroy_at(std::typed_address<T>(this.region.address())); }
+    }
+  }
+  ~TestSlot() { this.clear(); }
+};
+
+class Piece {
+  int id;
+public:
+  Piece(int id) : id(id) {}
+  Piece(Piece& other) = delete;
+  Piece(Piece&& other) = default;
+  ~Piece() { std::println(this.id); }
+};
+
+class Anchor {
+  Piece first;
+  Piece second;
+  int divisor;
+public:
+  Anchor(Piece first, int constructor_divisor, int destructor_divisor)
+      : first(std::move(first)), second(Piece(20 / constructor_divisor)),
+        divisor(destructor_divisor) {}
+  Anchor(Anchor& other) = delete;
+  Anchor(Anchor&& other) = delete;
+  ~Anchor() {
+    std::println(7);
+    int checked = 1 / this.divisor;
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut TestSlot<Anchor> slot{};
+  int constructor_divisor = argc == 2 ? 0 : 1;
+  int destructor_divisor = argc == 3 || argc == 6 ? 0 : 1;
+  int argument_divisor = argc == 4 ? 0 : 1;
+  slot.construct(Piece(10), constructor_divisor / argument_divisor,
+                 destructor_divisor);
+  if (argc >= 5) {
+    int zero = 0;
+    int checked = 1 / zero;
+  }
+  slot.clear();
+  // Reuse the same vacant address and let the source owner perform final drop.
+  slot.construct(Piece(11), 1, 1);
+  return 0;
+}

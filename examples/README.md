@@ -61,7 +61,7 @@ is a teaching helper, not a production server.
 | `12-fixed-arrays.gti` | bounded arrays, signed contextual literals, named passive records, passive unions, indexing, and size |
 | `13-ownership.gti` | non-null borrows, unique allocation, moves, and cleanup |
 | `14-operators.gti` | restricted member operators for safe wrappers |
-| `15-variadic-generics.gti` | confined type packs and explicit forwarding |
+| `15-variadic-generics.gti` | confined type packs, explicit forwarding, and exact passive fixed-array arguments |
 | `16-move-generics.gti` | ownership-aware concrete generic instances |
 | `17-standard-array.gti` | standard imports and source-defined `std::array<T, N>` |
 | `18-lambdas.gti` | typed lambdas with explicit immutable value captures |
@@ -167,7 +167,11 @@ is a teaching helper, not a production server.
 | `120-immovable-storage.gti` | fixed-address owning objects, moving their storage handle, checked access and destruction without element movement |
 | `121-programmable-allocators.gti` | an application-defined arena choosing aligned placement in one backing region, one unsafe resource binding, and safe allocator-aware `resource_vector` and fixed-slot containers sharing it |
 | `122-native-function-invocation.gti` | exact native function-pointer invocation from locals, fields and returned factories under lexical unsafe, with nullable transport |
+| `125-manual-object-lifetimes.gti` | source-defined inline ownership, immovable final-address construction, checked access and explicit owning relocation |
+| `126-conditional-thread-capabilities.gti` | audited source cleanup with payload-conditional transfer/share assertions, retaining thread-affine payload restrictions |
+| `128-inline-object-pool.gti` | an application-defined two-slot pool using public manual-lifetime facilities, immovable owning objects, recoverable capacity failure and checked access |
 | `129-generic-payload-enums.gti` | exact generic messages with default/value arguments, owning inbox transport, borrowed payload patterns and optional `class` spelling |
+| `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run
 
@@ -467,6 +471,21 @@ while any allocation from it remains live.
 ./build/gti examples/121-programmable-allocators.gti -o /tmp/gti-allocators
 /tmp/gti-allocators
 ```
+
+## Manual object lifetimes
+
+[`125-manual-object-lifetimes.gti`](125-manual-object-lifetimes.gti) builds a source-defined inline owner around
+`std::uninitialized<T>`, constructs an immovable object at its final address,
+returns checked owner-bound references, and explicitly relocates an owning
+string between fixed carriers. Raw validity stays inside the owner's `unsafe`
+implementation; ordinary callers use checked methods.
+
+[`128-inline-object-pool.gti`](128-inline-object-pool.gti) applies the same
+facilities to an unrelated fixed-address, two-slot application pool. It owns
+slot bytes inline, returns a recoverable error when full, reuses erased slots,
+and relies on ordinary reverse field cleanup. Its immovable nodes own strings;
+the compiler does not recognize the pool or cell names. A slot index is not a
+generation-checked handle: after erasure and reuse it names the replacement.
 
 ## Complete projects
 

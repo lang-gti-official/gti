@@ -1016,7 +1016,8 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         binding.name == "atomic_scalar";
     const bool trustedMemoryConstraint =
         isMemoryLibraryUnit(conceptInfo.sourceUnit) &&
-        binding.name == "object_layout";
+        (binding.name == "object_layout" ||
+         binding.name == "independent_object");
     const bool trustedIteratorConstraint =
         isIteratorLibraryUnit(conceptInfo.sourceUnit) &&
         (binding.name == "input_iterator" || binding.name == "sentinel_for" ||
@@ -1969,7 +1970,9 @@ auto SemanticVisitor::Impl::validateConcreteEnumPayloads(
 }
 
 auto SemanticVisitor::Impl::registerClassAttributes(
-    const ClassDecl &declaration) -> CapabilityPolicyRegistration {
+    const ClassDecl &declaration,
+    const std::vector<GenericParameterInfo> &parameters)
+    -> CapabilityPolicyRegistration {
   CapabilityPolicyRegistration result;
   const bool interface = declaration.kind() == ClassKind::Interface;
   const auto reportInvalid = [&](const Token &attribute, std::string message) {
@@ -1980,7 +1983,10 @@ auto SemanticVisitor::Impl::registerClassAttributes(
                     "requirements."
                   : "Classes and structs may use [[no_transfer]], "
                     "[[no_share]], "
-                    "[[unsafe_transfer]], and [[unsafe_share]]; a passive "
+                    "[[unsafe_transfer]], and [[unsafe_share]], optionally "
+                    "conditioning an unsafe assertion on a type parameter "
+                    "with [[unsafe_transfer(T)]] or [[unsafe_share(T)]]; a "
+                    "passive "
                     "struct may instead opt into [[c_abi]], while an "
                     "incomplete native handle uses [[c_opaque]].");
     diagnostics.emplace_back(std::move(diagnostic));
@@ -2006,7 +2012,48 @@ auto SemanticVisitor::Impl::registerClassAttributes(
     stored = policy;
   };
 
-  for (const Token &attribute : declaration.attributes()) {
+  for (const ClassAttribute &syntax : declaration.attributes()) {
+    const Token &attribute = syntax.name;
+    if (syntax.capabilityParameter) {
+      const Token &parameter = *syntax.capabilityParameter;
+      if (interface || (attribute.lexeme != "unsafe_transfer" &&
+                        attribute.lexeme != "unsafe_share")) {
+        reportInvalid(
+            attribute,
+            "Conditional unsafe assertions apply only to classes and structs.");
+        continue;
+      }
+      const auto found =
+          std::find_if(parameters.begin(), parameters.end(),
+                       [&](const GenericParameterInfo &candidate) {
+                         return candidate.name.lexeme == parameter.lexeme;
+                       });
+      if (found == parameters.end() || found->value || found->pack) {
+        reportInvalid(
+            parameter,
+            "A conditional unsafe assertion must name one non-pack type "
+            "parameter of this declaration.");
+        continue;
+      }
+      const bool transfer = attribute.lexeme == "unsafe_transfer";
+      const bool duplicate = transfer ? result.transferSource.has_value()
+                                      : result.shareSource.has_value();
+      setPolicy(attribute, transfer,
+                ConcurrencyCapabilityPolicy::UnsafeConditional);
+      if (!duplicate) {
+        (transfer ? result.transferCondition : result.shareCondition) =
+            SemanticType::typeParameter(found->id);
+      }
+      semanticModel.recordOccurrence(
+          {.sourceUnit = currentSourceUnit,
+           .span = tokenSpan(parameter),
+           .kind = SemanticOccurrenceKind::Symbol,
+           .symbol = symbolForDeclaration(found->name),
+           .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
+           .name = parameter.lexeme,
+           .type = SemanticType::typeParameter(found->id)});
+      continue;
+    }
     if (attribute.lexeme == "c_abi") {
       if (result.cAbiSource) {
         Diagnostic diagnostic = makeDiagnostic(
@@ -2414,8 +2461,8 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
           compilerCapability = CompilerCapabilityTypeKind::UniqueOwner;
         } else if (classDecl->name().lexeme == "shared_owner") {
           compilerCapability = CompilerCapabilityTypeKind::SharedOwner;
-        } else if (classDecl->name().lexeme == "storage") {
-          compilerCapability = CompilerCapabilityTypeKind::Storage;
+        } else if (classDecl->name().lexeme == "uninitialized_storage") {
+          compilerCapability = CompilerCapabilityTypeKind::UninitializedStorage;
         }
       } else if (trustedPreludeCapabilityScope &&
                  classDecl->genericParameters().size() == 1 &&
@@ -2472,14 +2519,15 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       }
       CapabilityPolicyRegistration capabilityPolicies;
       if (classDecl->kind() == ClassKind::Union) {
-        for (const Token &attribute : classDecl->attributes()) {
-          report(attribute,
+        for (const ClassAttribute &attribute : classDecl->attributes()) {
+          report(attribute.name,
                  "Unions do not accept class capability or native-record "
                  "attributes.",
                  "GTI-S2066");
         }
       } else {
-        capabilityPolicies = registerClassAttributes(*classDecl);
+        capabilityPolicies =
+            registerClassAttributes(*classDecl, genericParameters);
       }
       classes.push_back(ClassInfo{
           .id = id,
@@ -2498,6 +2546,8 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
           .sharePolicy = capabilityPolicies.share,
           .transferPolicySource = capabilityPolicies.transferSource,
           .sharePolicySource = capabilityPolicies.shareSource,
+          .transferCondition = capabilityPolicies.transferCondition,
+          .shareCondition = capabilityPolicies.shareCondition,
           .compilerPrivate =
               compilerPrivateDeclaration(currentSourceUnit, scope),
           .compilerCapability = compilerCapability,
@@ -5674,8 +5724,6 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
         case IntrinsicKind::Move:
         case IntrinsicKind::UniqueOwnerBorrow:
         case IntrinsicKind::UniqueOwnerBorrowMut:
-        case IntrinsicKind::StorageRead:
-        case IntrinsicKind::StorageReadMut:
         case IntrinsicKind::PrefixStorageRead:
         case IntrinsicKind::PrefixStorageReadMut:
         case IntrinsicKind::OptionalStorageRead:
@@ -6260,6 +6308,10 @@ auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
             .declaredDestructor = owner.destructor,
             .defaultConstructor = defaultStatus,
             .generatedDefaultBaseConstructor = generatedBaseConstructor,
+            .generatedDefaultFieldInitializers =
+                defaultStatus == SpecialMemberStatus::Generated &&
+                owner.kind != ClassKind::Union && !owner.fields.empty() &&
+                fieldsHaveDeclarationInitializers(owner),
             .copyConstructor = copyStatus,
             .moveConstructor = moveStatus,
             .copyAssignment = traits.copyAssignable
@@ -7184,6 +7236,8 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
             .traits = typeTraits(openClassType(owner.id)),
             .transferPolicy = owner.transferPolicy,
             .sharePolicy = owner.sharePolicy,
+            .transferCondition = owner.transferCondition,
+            .shareCondition = owner.shareCondition,
             .compilerPrivate = owner.compilerPrivate,
             .compilerCapability = owner.compilerCapability});
   }

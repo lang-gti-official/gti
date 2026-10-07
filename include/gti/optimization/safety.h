@@ -101,8 +101,6 @@ mirSafetyTransformProof(MirSafetyCheckFamily family) {
   switch (family) {
   case MirSafetyCheckFamily::Bounds:
     return MirTransformProofKind::BoundsRange;
-  case MirSafetyCheckFamily::StorageState:
-    return MirTransformProofKind::StorageInitialization;
   case MirSafetyCheckFamily::ArithmeticOverflow:
   case MirSafetyCheckFamily::ArithmeticDomain:
     return MirTransformProofKind::ArithmeticRange;

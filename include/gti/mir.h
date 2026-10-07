@@ -97,7 +97,6 @@ enum class MirTransformProofKind {
   DeadUnusedComputation,
   ScalarPromotion,
   BoundsRange,
-  StorageInitialization,
   ArithmeticRange,
   ExactReceiver,
   Count,
@@ -105,7 +104,6 @@ enum class MirTransformProofKind {
 
 enum class MirSafetyCheckFamily : std::uint8_t {
   Bounds,
-  StorageState,
   ArithmeticOverflow,
   ArithmeticDomain,
   Count,
@@ -116,8 +114,6 @@ mirSafetyCheckFamilyName(MirSafetyCheckFamily family) {
   switch (family) {
   case MirSafetyCheckFamily::Bounds:
     return "bounds";
-  case MirSafetyCheckFamily::StorageState:
-    return "storage-state";
   case MirSafetyCheckFamily::ArithmeticOverflow:
     return "arithmetic-overflow";
   case MirSafetyCheckFamily::ArithmeticDomain:
@@ -408,9 +404,10 @@ enum class MirDropObligationKind {
   Value,
   PreparedParameter,
   // A completed constructor subobject transferred into `this`. Explicit
-  // constructor stages arm it through their stage-completing Initialize;
-  // completed in-class initializers enter the constructor body already active
-  // through the owning class's verified field-initializer schedule. Every
+  // constructor stages arm it through their stage-completing Initialize or
+  // Reparent. Declaration-field defaults executed by the selected constructor
+  // follow that same rule; defaults completed by a separate verified field
+  // initializer schedule enter the constructor body already active. Every
   // defined-failure edge drains the active set in reverse construction order,
   // and normal completion retires it by transfer to the caller.
   // Compiler-generated: it has no HIR obligation or full-expression identity.
@@ -1196,6 +1193,12 @@ struct MirClassInstance {
   ClassId declaration = 0;
   SemanticType type = SemanticType::Unknown;
   SemanticTypeTraits traits;
+  ConcurrencyCapabilityPolicy transferPolicy =
+      ConcurrencyCapabilityPolicy::Structural;
+  ConcurrencyCapabilityPolicy sharePolicy =
+      ConcurrencyCapabilityPolicy::Structural;
+  std::optional<SemanticType> transferCondition;
+  std::optional<SemanticType> shareCondition;
   CompilerCapabilityTypeKind compilerCapability =
       CompilerCapabilityTypeKind::None;
   bool lifecycleBoundBorrowCarrier = false;
@@ -1210,6 +1213,7 @@ struct MirClassInstance {
   std::optional<MirCAbiRecordLayout> cAbiLayout;
   std::optional<MirUnionLayout> unionLayout;
   SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
+  bool generatedDefaultRequiresSchedule = false;
   SpecialMemberStatus copyConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus moveConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus copyAssignment = SpecialMemberStatus::Deleted;
@@ -1379,6 +1383,7 @@ struct MirConstructorInstance {
   HirConstructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
   bool constexprConstructor = false;
+  bool generatedDefault = false;
   // Constructor-local generic arguments are part of the concrete instance
   // identity just as owner arguments are part of the class instance. Keep
   // them explicit in MIR so verification and later phases never have to

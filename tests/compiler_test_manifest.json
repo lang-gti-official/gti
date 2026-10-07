@@ -394,7 +394,11 @@
       "suite": "ownership"
     },
     {
-      "name": "testCompilerPrivateStorage",
+      "name": "testSourceDefinedStorage",
+      "suite": "ownership"
+    },
+    {
+      "name": "testFixedArrayPackForwarding",
       "suite": "ownership"
     },
     {

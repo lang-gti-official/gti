@@ -282,6 +282,20 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           "HIR function unsafe contract differs from its semantic declaration");
     }
   }
+  for (const auto &instance : program.classInstances()) {
+    const auto *lifecycle = instance.source != nullptr
+                                ? semantics.findClassLifecycle(*instance.source)
+                                : nullptr;
+    const bool requiresSchedule =
+        lifecycle != nullptr &&
+        (lifecycle->generatedDefaultFieldInitializers ||
+         lifecycle->generatedDefaultBaseConstructor != 0);
+    if (instance.generatedDefaultRequiresSchedule != requiresSchedule ||
+        (requiresSchedule &&
+         instance.defaultConstructor != SpecialMemberStatus::Generated))
+      result.errors.emplace_back(
+          "HIR generated-default obligation differs from semantics");
+  }
   for (const auto &instance : program.constructorInstances()) {
     if ((instance.declaration == 0) != instance.generatedDefault ||
         (instance.source == nullptr) != instance.generatedDefault)
@@ -296,6 +310,89 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     const auto *lifecycle = owner != nullptr && owner->source != nullptr
                                 ? semantics.findClassLifecycle(*owner->source)
                                 : nullptr;
+    if (lifecycle != nullptr && lifecycle->generatedDefaultFieldInitializers) {
+      bool exact =
+          instance.parameterTypes.empty() &&
+          instance.parameterBindings.empty() &&
+          instance.typeArguments.empty() && instance.valueArguments.empty() &&
+          instance.body.statements.empty() && instance.body.roots.empty() &&
+          lifecycle->defaultConstructor == SpecialMemberStatus::Generated;
+      std::size_t position = 0;
+      const auto base = std::find_if(owner->bases.begin(), owner->bases.end(),
+                                     [](const HirBaseInstance &candidate) {
+                                       return !candidate.interface;
+                                     });
+      if (base != owner->bases.end()) {
+        const auto *initializer = instance.initializers.empty()
+                                      ? nullptr
+                                      : &instance.initializers.front();
+        const auto *target =
+            initializer != nullptr && initializer->constructorTarget
+                ? program.findConstructorInstance(
+                      *initializer->constructorTarget)
+                : nullptr;
+        const auto *selected = target != nullptr && target->source != nullptr
+                                   ? semantics.findConstructor(*target->source)
+                                   : nullptr;
+        exact &= initializer != nullptr &&
+                 initializer->kind == ConstructorInitializerTargetKind::Base &&
+                 initializer->source == nullptr &&
+                 initializer->targetType == base->type &&
+                 initializer->base == base->instance &&
+                 initializer->field == 0 &&
+                 initializer->explicitArgumentCount == 0 &&
+                 !initializer->storesReference && !initializer->ownedParameter;
+        if (initializer != nullptr && target != nullptr)
+          exact &=
+              target->owner == base->instance &&
+              (target->generatedDefault ||
+               (selected != nullptr && selected->requiredParameterCount == 0));
+        else if (initializer != nullptr)
+          exact &=
+              initializer->generatedDefault && initializer->arguments.empty();
+        ++position;
+      }
+      std::vector<HirValueId> selectedValues;
+      for (const auto &initializer : instance.initializers)
+        selectedValues.insert(selectedValues.end(),
+                              initializer.arguments.begin(),
+                              initializer.arguments.end());
+      exact &= selectedValues == instance.initializerValues &&
+               instance.initializers.size() == position + owner->fields.size();
+      for (const auto &field : owner->fields) {
+        const auto *initializer = position < instance.initializers.size()
+                                      ? &instance.initializers[position]
+                                      : nullptr;
+        const auto *value =
+            initializer != nullptr && initializer->arguments.size() == 1
+                ? instance.body.findValue(initializer->arguments.front())
+                : nullptr;
+        exact &= field.declaration != nullptr &&
+                 field.declaration->initializer() != nullptr &&
+                 initializer != nullptr &&
+                 initializer->kind == ConstructorInitializerTargetKind::Field &&
+                 initializer->source == nullptr &&
+                 initializer->field == field.info.symbol &&
+                 initializer->targetType == field.info.type &&
+                 initializer->explicitArgumentCount == 1 &&
+                 !initializer->base && !initializer->constructorTarget &&
+                 !initializer->generatedDefault &&
+                 !initializer->storesReference &&
+                 !initializer->ownedParameter && value != nullptr &&
+                 value->source == field.declaration->initializer().get() &&
+                 (value->info.type == field.info.type ||
+                  isImplicitScalarInitializationConversion(field.info.type,
+                                                           value->info.type) ||
+                  isImplicitExpectedInitializationConversion(field.info.type,
+                                                             value->info.type));
+        ++position;
+      }
+      if (!exact)
+        result.errors.emplace_back(
+            "generated constructor differs from its selected declaration "
+            "initializers");
+      continue;
+    }
     const auto *initializer = instance.initializers.size() == 1
                                   ? &instance.initializers.front()
                                   : nullptr;
@@ -356,7 +453,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
               ? semantics.findClassLifecycle(*type->declaration)
               : nullptr;
       if (lifecycle == nullptr ||
-          lifecycle->generatedDefaultBaseConstructor == 0)
+          (lifecycle->generatedDefaultBaseConstructor == 0 &&
+           !lifecycle->generatedDefaultFieldInitializers))
         continue;
       const auto *target =
           value.constructorTarget
@@ -367,11 +465,51 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                   target->owner <= program.classInstances().size()
               ? &program.classInstances()[target->owner - 1]
               : nullptr;
+      const bool inPlace =
+          value.intrinsic == IntrinsicKind::ObjectConstruct ||
+          value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+          value.intrinsic == IntrinsicKind::PrefixStorageInsert ||
+          value.intrinsic == IntrinsicKind::OptionalStorageConstruct;
+      bool exactResult = owner != nullptr && value.info.type == owner->type &&
+                         value.intrinsic == IntrinsicKind::None;
+      if (inPlace && owner != nullptr && !value.parameterTypes.empty()) {
+        const auto &storage = value.parameterTypes.front();
+        const auto *storageOwner =
+            storage.kind == SemanticType::Class
+                ? semantics.findClassType(storage.classId)
+                : nullptr;
+        exactResult =
+            value.info.type == SemanticType::Void &&
+            storage.arguments.size() == 1 &&
+            storage.arguments.front() == owner->type &&
+            (value.intrinsic == IntrinsicKind::ObjectConstruct
+                 ? storage.kind == SemanticType::RawPointer
+             : value.intrinsic == IntrinsicKind::OptionalStorageConstruct
+                 ? storageOwner != nullptr &&
+                       storageOwner->compilerCapability ==
+                           CompilerCapabilityTypeKind::OptionalStorage
+                 : storage.kind == SemanticType::PrefixStorage);
+      }
+      const auto propagation =
+          value.intrinsic == IntrinsicKind::PrefixStorageInsert ||
+                  value.intrinsic == IntrinsicKind::OptionalStorageConstruct
+              ? FailurePropagationKind::None
+              : FailurePropagationKind::Constructor;
+      // Concrete reanalysis owns generic argument substitution. The base
+      // semantic record may still be the primary's C<T>; retain its exact
+      // declaration identity and validate the concrete value/storage-to-owner
+      // relationship instead of comparing C<T> with C<int>.
+      const bool exactOwner =
+          owner != nullptr &&
+          (containsUnresolvedGeneric(construction->constructedType)
+               ? owner->type.kind == SemanticType::Class &&
+                     owner->type.classId ==
+                         construction->constructedType.classId &&
+                     !containsUnresolvedGeneric(owner->type)
+               : owner->type == construction->constructedType);
       if (target == nullptr || !target->generatedDefault || owner == nullptr ||
-          owner->type != construction->constructedType ||
-          value.info.type != owner->type ||
-          value.definedFailure.propagation !=
-              FailurePropagationKind::Constructor)
+          !exactOwner || !exactResult ||
+          value.definedFailure.propagation != propagation)
         result.errors.emplace_back("generated construction value lost its "
                                    "selected constructor and failure edge");
     }
@@ -1396,7 +1534,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                     ? semantics.findClassLifecycle(*owner->source)
                     : nullptr;
             return lifecycle != nullptr &&
-                           lifecycle->generatedDefaultBaseConstructor != 0
+                           (lifecycle->generatedDefaultBaseConstructor != 0 ||
+                            lifecycle->generatedDefaultFieldInitializers)
                        ? target != nullptr && target->generatedDefault &&
                              targetOwner == owner
                        : !value.constructorTarget;

@@ -1575,6 +1575,78 @@ int main() {
          "generic destructor uses a carrier-reference accessor");
 }
 
+void checkSharedOriginFieldIdentities() {
+  const auto control = analyze("two guarded fields sharing one origin", R"gti(
+class Handle {
+  Resource& resource;
+public:
+  Handle(Resource& resource) : resource(resource) {}
+  int read() { return this.resource.value; }
+};
+class Retained {
+  Handle handle;
+public:
+  Retained(Handle handle) : handle(handle) {}
+  ~Retained() { observed = this.handle.read(); }
+};
+class Pair {
+  Retained first;
+  Retained second;
+public:
+  Pair(Handle handle) : first(Retained(handle)), second(Retained(handle)) {}
+};
+void use(Handle handle) { Pair pair{handle}; }
+int main() { Resource resource{}; use(Handle(resource)); return 0; }
+)gti");
+  if (!control)
+    return;
+  bool checked = false;
+  for (const auto &function : control->functionInstances()) {
+    const BodyKey key{lang::MirBodyKind::Function, function.id};
+    for (const auto &loan : function.body.loans) {
+      if (loan.entry || !loan.lifecycleBound || loan.parent == 0 ||
+          loan.designatedFields.empty() ||
+          loan.additionalDependencies.size() != 1)
+        continue;
+      checked = true;
+      expect(loan.source == loan.additionalDependencies.front().source &&
+                 loan.designatedFields !=
+                     loan.additionalDependencies.front().designatedFields,
+             "same referent retains two distinct nested field identities");
+      auto missing = *control;
+      body(missing, key).loans[loan.id - 1].additionalDependencies.clear();
+      rejected(std::move(missing), "second field dependency cannot disappear");
+      auto collapsed = *control;
+      body(collapsed, key)
+          .loans[loan.id - 1]
+          .additionalDependencies.front()
+          .designatedFields = loan.designatedFields;
+      rejected(std::move(collapsed),
+               "same-owner fields cannot collapse to one path");
+      const auto end = loanEnd(function.body, loan.id);
+      bool early = false;
+      if (end)
+        for (const auto &block : function.body.blocks)
+          for (const auto &drop : block.instructions)
+            if (!early && drop.kind == lang::MirInstructionKind::Drop &&
+                drop.destination) {
+              const auto *place = function.body.findPlace(*drop.destination);
+              if (place == nullptr ||
+                  std::find(loan.carriers.begin(), loan.carriers.end(),
+                            place->binding) == loan.carriers.end())
+                continue;
+              auto released = *control;
+              early = moveBefore(body(released, key), *end, drop.id);
+              expect(early, "guarded pair has a reachable owner drop");
+              rejected(std::move(released),
+                       "shared-origin loan cannot end before both guards drop");
+            }
+      expect(early, "shared-origin mutation exercises early release");
+    }
+  }
+  expect(checked, "shared-origin mutation exercises multi-field publication");
+}
+
 } // namespace
 
 int main() {
@@ -1654,6 +1726,7 @@ int main() {
   checkRangeOverCleanupOwner();
   checkExternalReceiverAdapterReturn();
   checkFactoryCarrierAndDestructor();
+  checkSharedOriginFieldIdentities();
   if (failures == 0)
     std::cout << mutations << " cleanup-bound proof mutations rejected\n";
   return failures == 0 ? 0 : 1;

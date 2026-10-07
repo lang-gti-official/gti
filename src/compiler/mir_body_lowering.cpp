@@ -232,6 +232,7 @@ public:
                initializer.targetType == SemanticType::Bool ||
                initializer.targetType == SemanticType::Char ||
                initializer.targetType.kind == SemanticType::RawPointer ||
+               initializer.targetType.kind == SemanticType::Expected ||
                initializer.targetType.kind == SemanticType::Array ||
                initializer.targetType.kind == SemanticType::Class ||
                (initializer.targetType.kind == SemanticType::Enum &&
@@ -244,7 +245,8 @@ public:
                             }))) &&
               (field->info.traits.drop == DropKind::Trivial ||
                ((initializer.targetType.kind == SemanticType::Class ||
-                 initializer.targetType.kind == SemanticType::Array) &&
+                 initializer.targetType.kind == SemanticType::Array ||
+                 initializer.targetType.kind == SemanticType::Expected) &&
                 !field->requiresActiveCleanup)) &&
               (!field->info.traits.containsBorrowedState ||
                (constructor != nullptr &&
@@ -254,8 +256,12 @@ public:
               constructorRollbackStageEligible(initializer)
                   ? dropObligationForValue(initializer.arguments.front())
                   : 0;
+          const auto expectedFieldDrop =
+              expectedFieldInitializationDrop(initializer);
           const bool explicitOwningFieldStage =
-              owningStageSource != 0 && temporaryIsActive(owningStageSource);
+              (owningStageSource != 0 &&
+               temporaryIsActive(owningStageSource)) ||
+              (expectedFieldDrop && expectedFieldDrop->requiresActiveCleanup);
           // A lexical aggregate temporary can already carry a transfer token
           // even when its fields require no active cleanup. Its owning stage
           // is the sole publication; never initialize the same field twice.
@@ -305,8 +311,9 @@ public:
                  .constructionOrder = rollback,
                  .kind = MirDropObligationKind::ConstructionRollback,
                  .place = destination,
-                 .dropType = sourceDrop == nullptr ? MirDropType{}
-                                                   : sourceDrop->dropType});
+                 .dropType = expectedFieldDrop       ? *expectedFieldDrop
+                             : sourceDrop == nullptr ? MirDropType{}
+                                                     : sourceDrop->dropType});
             MirInstruction initialize{
                 .kind = MirInstructionKind::Initialize,
                 .hirValue = initializer.arguments.front(),
@@ -317,9 +324,15 @@ public:
                          .category = ValueCategory::Place,
                          .access = AccessMode::Mutable,
                          .traits = field->info.traits}};
-            appendReparentOrTypedTransfer(initialize, owningStageSource,
-                                          rollback);
-            (void)removeTemporary(owningStageSource);
+            if (temporaryIsActive(owningStageSource)) {
+              appendReparentOrTypedTransfer(initialize, owningStageSource,
+                                            rollback);
+              (void)removeTemporary(owningStageSource);
+            } else {
+              appendLifecycle(initialize,
+                              {.kind = MirLifecycleEventKind::Initialize,
+                               .target = rollback});
+            }
             (void)appendInstruction(std::move(initialize));
             constructorRollback.push_back(rollback);
           }
@@ -639,8 +652,10 @@ private:
       return false;
     }
     const HirValue *argument = findValue(initializer.arguments.front());
-    if (argument == nullptr || !argument->dropObligation ||
-        argument->info.type != initializer.targetType) {
+    if (argument == nullptr ||
+        ((!argument->dropObligation ||
+          argument->info.type != initializer.targetType) &&
+         !expectedFieldInitializationDrop(initializer))) {
       return false;
     }
     const auto owner = std::find_if(program.classInstances().begin(),
@@ -658,7 +673,26 @@ private:
                      });
     return field != owner->fields.end() &&
            field->info.type == initializer.targetType &&
-           field->info.traits == argument->info.traits;
+           (field->info.traits == argument->info.traits ||
+            expectedFieldInitializationDrop(initializer).has_value());
+  }
+
+  [[nodiscard]] std::optional<MirDropType> expectedFieldInitializationDrop(
+      const HirConstructorInitializer &initializer) const {
+    if (initializer.kind != ConstructorInitializerTargetKind::Field ||
+        initializer.targetType.kind != SemanticType::Expected ||
+        initializer.arguments.size() != 1 || initializer.storesReference ||
+        initializer.constructorTarget || initializer.generatedDefault ||
+        resolvedTraits(initializer.targetType).containsBorrowedState)
+      return std::nullopt;
+    const auto *argument = findValue(initializer.arguments.front());
+    if (argument == nullptr || argument->info.traits.containsBorrowedState ||
+        (argument->info.type != initializer.targetType &&
+         !isImplicitExpectedInitializationConversion(initializer.targetType,
+                                                     argument->info.type)))
+      return std::nullopt;
+    std::unordered_set<HirClassInstanceId> visiting;
+    return uniqueCleanupType(initializer.targetType, visiting);
   }
 
   [[nodiscard]] FailurePropagationKind normalizedCallPropagation(
@@ -832,7 +866,6 @@ private:
       return result;
     }
     if ((type.kind == SemanticType::UniqueOwner ||
-         type.kind == SemanticType::Storage ||
          type.kind == SemanticType::PrefixStorage) &&
         type.arguments.size() == 1) {
       const auto &value = type.arguments.front();
@@ -851,8 +884,7 @@ private:
                         }))) {
         return MirDropType{.type = type, .requiresActiveCleanup = true};
       }
-      if (type.kind == SemanticType::Storage ||
-          type.kind == SemanticType::PrefixStorage) {
+      if (type.kind == SemanticType::PrefixStorage) {
         auto element = uniqueCleanupType(value, visiting);
         if (!element)
           return std::nullopt;
@@ -2234,10 +2266,10 @@ private:
     }
     if (inheritSourceMetadata && instruction.hirValue != 0) {
       if (const HirValue *source = findValue(instruction.hirValue)) {
-        // Region adoption is one explicit call, not an assertion by its
-        // surrounding full-expression/lifecycle bookkeeping markers.
+        // Object lifetime manipulation is one explicit call, not an assertion
+        // by its surrounding full-expression/lifecycle bookkeeping markers.
         if (source->unsafeOperation != UnsafeOperationKind::None &&
-            (source->unsafeOperation != UnsafeOperationKind::StorageAdoption ||
+            (source->unsafeOperation != UnsafeOperationKind::ObjectLifetime ||
              instruction.kind == MirInstructionKind::Call)) {
           instruction.unsafeOperation = source->unsafeOperation;
         }
@@ -4298,7 +4330,10 @@ private:
       return 0;
     MirPlace projected = *origin;
     projected.id = 0;
-    projected.key.reset();
+    // Preserve the semantic overlap identity while adding executable typed
+    // projections. Reference-field dereference is transparent in that key;
+    // losing it makes two mapped fields sharing an entry owner impossible to
+    // reconcile with their semantic dependencies at local publication.
     const auto intern = [&]() {
       projected.traits = resolvedTraits(projected.type);
       for (const auto &place : output.places)
@@ -4308,8 +4343,11 @@ private:
             place.value == projected.value &&
             place.temporary == projected.temporary &&
             place.projections == projected.projections &&
-            place.type == projected.type)
+            place.type == projected.type) {
+          if (projected.key && !place.key)
+            output.places[place.id - 1].key = projected.key;
           return place.id;
+        }
       return appendPlace(projected);
     };
     const auto dereference = [&] {
@@ -4340,6 +4378,9 @@ private:
         return 0;
       projected.projections.push_back(
           {.kind = MirProjectionKind::Field, .field = field});
+      if (projected.key)
+        projected.key->projections.push_back(
+            {.kind = PlaceProjectionKind::Field, .field = field});
       projected.type = member->info.type;
       dereference();
       // Keep the typed prefix as well as the final referent. Independent
@@ -4399,7 +4440,8 @@ private:
     const auto *retained =
         receiver ? output.findLoan(loanForValue(*receiver)) : nullptr;
     if (retained != nullptr && retained->kind == MirLoanKind::Local &&
-        retained->storedDependency == 0)
+        (retained->storedDependency == 0 ||
+         (receiver && isRangeIteratorValue(*receiver))))
       return false; // An opaque range cursor carries its checked range loan.
     return source != nullptr && source->info.traits.containsBorrowedState;
   }
@@ -4531,6 +4573,9 @@ private:
             value.info.traits.copyable &&
             loan->additionalDependencies.empty() &&
             loan->designatedFields == mapping.sourceFields)
+          // Compactness belongs to this selected input dependency, not the
+          // number of fields in the result. Composing several such inputs
+          // must preserve each opaque entry identity independently.
           return loan->source;
         if (loan->entry && loan->kind == MirLoanKind::Stored)
           return projectBorrowFields(loan->source, mapping.sourceFields);
@@ -4950,8 +4995,8 @@ private:
                                 ? FailurePropagationKind::VirtualCall
                                 : FailurePropagationKind::DirectCall;
     }
-    if ((value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-         value.intrinsic == IntrinsicKind::StorageConstruct) &&
+    if ((value.intrinsic == IntrinsicKind::ObjectConstruct ||
+         value.intrinsic == IntrinsicKind::PrefixStorageAppend) &&
         failure.propagation == FailurePropagationKind::Constructor &&
         value.constructorTarget) {
       // Semantics selected this constructor protocol from its exact signature.
@@ -5169,13 +5214,10 @@ private:
         const auto enclosingFailure = beginPreparedArgumentFailure(
             argument.value, argument.kind, argument.parameterType);
         MirOperand sourceArgument =
-            (value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-             value.intrinsic == IntrinsicKind::StorageConstruct) &&
+            value.intrinsic == IntrinsicKind::PrefixStorageAppend &&
                     argument.parameterIndex == 0 &&
                     argument.kind == HirCallInputKind::MutableBorrow &&
-                    (argument.parameterType.kind ==
-                         SemanticType::PrefixStorage ||
-                     argument.parameterType.kind == SemanticType::Storage)
+                    argument.parameterType.kind == SemanticType::PrefixStorage
                 ? receiverOperand(argument.value, AccessMode::Mutable)
             : argument.kind == HirCallInputKind::ReadTemporaryBorrow
                 ? temporaryBorrowOperand(argument.value, AccessMode::ReadOnly,
@@ -5238,6 +5280,24 @@ private:
           return parameter.hasFunctionItemShape()
                      ? std::optional{HirCallInputKind::Value}
                      : std::nullopt;
+        case SemanticType::Array: {
+          const SemanticType *leaf = &parameter;
+          while (leaf->kind == SemanticType::Array) {
+            if (leaf->arguments.size() != 1 || leaf->arrayLength == 0 ||
+                leaf->arrayLengthParameterId != 0)
+              return std::nullopt;
+            leaf = &leaf->arguments.front();
+          }
+          // Match HIR's passive by-value array plan. The semantic traits and
+          // concrete leaf lifecycle remain authoritative; no array decay or
+          // borrowed/owning element transfer is synthesized here.
+          const auto cleanup = preparedParameterDropType(*leaf);
+          if (input.info.type != parameter || !input.info.traits.copyable ||
+              input.info.traits.containsBorrowedState ||
+              (cleanup && cleanup->requiresActiveCleanup))
+            return std::nullopt;
+          return HirCallInputKind::Value;
+        }
         case SemanticType::Class:
           if (input.info.category == ValueCategory::Place &&
               input.info.traits.copyable) {
@@ -5282,12 +5342,10 @@ private:
           const bool mutableStorageInput =
               index == 0 && input->info.category == ValueCategory::Place &&
               input->info.type == parameter &&
-              (value.intrinsic == IntrinsicKind::StorageConstruct ||
-               value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+              (value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
                value.intrinsic == IntrinsicKind::PrefixStorageInsert ||
                value.intrinsic == IntrinsicKind::OptionalStorageConstruct) &&
-              (parameter.kind == SemanticType::Storage ||
-               parameter.kind == SemanticType::PrefixStorage ||
+              (parameter.kind == SemanticType::PrefixStorage ||
                parameter.kind == SemanticType::Class);
           const std::optional<HirCallInputKind> kind =
               mutableStorageInput
@@ -5803,7 +5861,7 @@ private:
         scopes.back().loans.push_back(loan);
       }
     }
-    if ((value.intrinsic == IntrinsicKind::StorageDestroy ||
+    if ((value.intrinsic == IntrinsicKind::ObjectDestroy ||
          value.intrinsic == IntrinsicKind::PrefixStoragePop ||
          value.intrinsic == IntrinsicKind::PrefixStorageErase ||
          value.intrinsic == IntrinsicKind::OptionalStorageReset) &&
@@ -5848,14 +5906,12 @@ private:
       call.definedFailure.propagation = normalizedConstructorPropagation(
           FailurePropagationKind::Constructor, value.constructorTarget);
     }
-    if ((value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-         value.intrinsic == IntrinsicKind::StorageConstruct) &&
+    if (value.intrinsic == IntrinsicKind::PrefixStorageAppend &&
         value.definedFailure.propagation ==
             FailurePropagationKind::Constructor &&
         value.constructorTarget &&
         value.constructorKind == ConstructorKind::Ordinary) {
-      const std::size_t preflightOperands =
-          value.intrinsic == IntrinsicKind::StorageConstruct ? 2 : 1;
+      const std::size_t preflightOperands = 1;
       if (call.operands.size() < preflightOperands || call.callSite == 0) {
         valid = false;
         return;
@@ -5864,17 +5920,9 @@ private:
       for (auto &origin : call.definedFailure.localOrigins) {
         DefinedFailureOrigin check = origin;
         const auto isPreflightOutcome = [](DefinedFailureOutcome outcome) {
-          return outcome ==
-                     DefinedFailureOutcome{
-                         DefinedFailureCode::InvalidStorageState,
-                         DefinedFailureDetail::RelocationCapacity} ||
-                 outcome ==
-                     DefinedFailureOutcome{
-                         DefinedFailureCode::IndexOutOfBounds,
-                         DefinedFailureDetail::PrivateStorage} ||
-                 outcome == DefinedFailureOutcome{
+          return outcome == DefinedFailureOutcome{
                                 DefinedFailureCode::InvalidStorageState,
-                                DefinedFailureDetail::DuplicateConstruction};
+                                DefinedFailureDetail::RelocationCapacity};
         };
         std::erase_if(check.outcomes, [&](DefinedFailureOutcome outcome) {
           return !isPreflightOutcome(outcome);
@@ -5957,6 +6005,34 @@ private:
       (void)appendInstruction(
           {.kind = MirInstructionKind::EndBorrow, .loan = loan});
       removeLoanFromState(loan, scopes, bindingLoans);
+      // HIR can also end this consumed capability at the enclosing statement.
+      // The call has already emitted its exact executable endpoint; remember
+      // only that statement's acknowledgement rather than accepting arbitrary
+      // inactive loans (or emitting a second EndBorrow).
+      const auto expression = std::find_if(
+          source.fullExpressions.begin(), source.fullExpressions.end(),
+          [&](const auto &candidate) {
+            return candidate.id == value.fullExpression;
+          });
+      if (expression != source.fullExpressions.end() &&
+          expression->statement != 0) {
+        HirStatementId endpoint = expression->statement;
+        const HirStatement *owner = findStatement(endpoint);
+        const bool endsHere =
+            owner != nullptr &&
+            std::any_of(owner->endedLoans.begin(), owner->endedLoans.end(),
+                        [&](SemanticLoanId semantic) {
+                          const auto found = semanticLoans.find(semantic);
+                          return found != semanticLoans.end() &&
+                                 found->second == loan;
+                        });
+        if (!endsHere) {
+          const auto enclosing = enclosingTransferredLoanEndpoints.find(loan);
+          if (enclosing != enclosingTransferredLoanEndpoints.end())
+            endpoint = enclosing->second;
+        }
+        callTransferredLoanEndpoints.insert_or_assign(loan, endpoint);
+      }
     }
     if (allocation != 0) {
       // appendInstruction leaves us on the construction-success continuation.
@@ -6950,6 +7026,12 @@ private:
         continue;
       }
       if (!loanIsActive(scopes, loan)) {
+        const auto transferred = callTransferredLoanEndpoints.find(loan);
+        if (transferred != callTransferredLoanEndpoints.end() &&
+            transferred->second == statement) {
+          callTransferredLoanEndpoints.erase(transferred);
+          continue;
+        }
         valid = false;
         continue;
       }
@@ -6997,6 +7079,19 @@ private:
     endSemanticLoans(statement.endedLoans, statement.id);
   }
 
+  [[nodiscard]] static std::unordered_map<MirLoanId, HirStatementId>
+  intersectTransferredLoanEndpoints(
+      std::unordered_map<MirLoanId, HirStatementId> left,
+      const std::unordered_map<MirLoanId, HirStatementId> &right) {
+    // An executable endpoint is acknowledged at a join only when every
+    // normally reaching predecessor carries the same exact HIR endpoint.
+    std::erase_if(left, [&](const auto &entry) {
+      const auto found = right.find(entry.first);
+      return found == right.end() || found->second != entry.second;
+    });
+    return left;
+  }
+
   void emitLogical(const HirValue &value) {
     if (value.operands.size() != 2 || !value.operation ||
         (*value.operation != TokenKind::AND &&
@@ -7019,6 +7114,7 @@ private:
                .elseTarget = conjunction ? shortCircuitBlock : rightBlock});
 
     const std::vector<Scope> incomingScopes = scopes;
+    const auto incomingTransferEndpoints = callTransferredLoanEndpoints;
     current = shortCircuitBlock;
     scopes = incomingScopes;
     temporaryDrops = leftTemporaryDrops;
@@ -7040,6 +7136,7 @@ private:
     current = rightBlock;
     scopes = incomingScopes;
     temporaryDrops = leftTemporaryDrops;
+    callTransferredLoanEndpoints = incomingTransferEndpoints;
     const MirOperand right = conditionOperand(value.operands[1]);
     (void)appendInstruction(
         {.kind = MirInstructionKind::Initialize,
@@ -7056,6 +7153,8 @@ private:
     const auto rightScopes = scopes;
 
     current = mergeBlock;
+    callTransferredLoanEndpoints = intersectTransferredLoanEndpoints(
+        incomingTransferEndpoints, callTransferredLoanEndpoints);
     scopes = incomingScopes;
     temporaryDrops =
         mergeTemporaryDrops(shortCircuitTemporaryDrops, rightTemporaryDrops);
@@ -7114,6 +7213,7 @@ private:
 
     const std::vector<Scope> incomingScopes = scopes;
     const std::vector<TemporaryDrop> incomingTemporaryDrops = temporaryDrops;
+    const auto incomingTransferEndpoints = callTransferredLoanEndpoints;
     const bool hasResult = value.info.type.kind != SemanticType::Void;
     const bool borrowedResult =
         hasResult && value.info.category == ValueCategory::Place;
@@ -7140,6 +7240,7 @@ private:
       current = block;
       scopes = incomingScopes;
       temporaryDrops = incomingTemporaryDrops;
+      callTransferredLoanEndpoints = incomingTransferEndpoints;
       const HirValue *armValue = findValue(arm);
       if (armValue == nullptr) {
         valid = false;
@@ -7203,17 +7304,26 @@ private:
     bool elseCompletes = false;
     thenTemporaryDrops = emitArm(thenBlock, value.operands[1], thenCompletes);
     const auto thenScopes = scopes;
+    const auto thenTransferEndpoints = callTransferredLoanEndpoints;
     elseTemporaryDrops = emitArm(elseBlock, value.operands[2], elseCompletes);
     const auto elseScopes = scopes;
+    const auto elseTransferEndpoints = callTransferredLoanEndpoints;
 
     current = mergeBlock;
     scopes = incomingScopes;
     if (!thenCompletes && !elseCompletes) {
+      callTransferredLoanEndpoints = incomingTransferEndpoints;
       temporaryDrops = incomingTemporaryDrops;
       terminate({.kind = MirTerminatorKind::Unreachable});
       emittedValues.insert(value.id);
       return;
     }
+    callTransferredLoanEndpoints =
+        thenCompletes && elseCompletes
+            ? intersectTransferredLoanEndpoints(thenTransferEndpoints,
+                                                elseTransferEndpoints)
+        : thenCompletes ? thenTransferEndpoints
+                        : elseTransferEndpoints;
     temporaryDrops =
         thenCompletes && elseCompletes
             ? mergeTemporaryDrops(thenTemporaryDrops, elseTemporaryDrops)
@@ -9370,6 +9480,19 @@ private:
         dropObligationForBinding(*statement.binding);
     const MirDropObligationId sourceObligation =
         statement.value ? dropObligationForValue(*statement.value) : 0;
+    std::optional<MirDropType> expectedFieldDrop;
+    if (output.kind == MirBodyKind::FieldInitializers && binding != nullptr &&
+        binding->info.type.kind == SemanticType::Expected && statement.value &&
+        !binding->info.traits.containsBorrowedState) {
+      const auto *value = findValue(*statement.value);
+      if (value != nullptr && !value->info.traits.containsBorrowedState &&
+          (value->info.type == binding->info.type ||
+           isImplicitExpectedInitializationConversion(binding->info.type,
+                                                      value->info.type))) {
+        std::unordered_set<HirClassInstanceId> visiting;
+        expectedFieldDrop = uniqueCleanupType(binding->info.type, visiting);
+      }
+    }
     if (target != 0) {
       if (temporaryIsActive(sourceObligation)) {
         appendReparentOrTypedTransfer(initialize, sourceObligation, target);
@@ -9378,8 +9501,10 @@ private:
         appendLifecycle(initialize, {.kind = MirLifecycleEventKind::Initialize,
                                      .target = target});
       }
-    } else if (temporaryIsActive(sourceObligation) &&
-               output.kind == MirBodyKind::FieldInitializers) {
+    } else if (output.kind == MirBodyKind::FieldInitializers &&
+               (temporaryIsActive(sourceObligation) ||
+                (expectedFieldDrop &&
+                 expectedFieldDrop->requiresActiveCleanup))) {
       // A completed per-instance field arms rollback exactly like a
       // constructor stage: the object under construction owns it from
       // normal completion, and any later defined-failure edge in this body
@@ -9387,7 +9512,8 @@ private:
       const MirPlace *destinationPlace = output.findPlace(destination);
       const MirDropObligation *sourceDrop =
           output.findDropObligation(sourceObligation);
-      if (destinationPlace != nullptr && sourceDrop != nullptr &&
+      if (destinationPlace != nullptr &&
+          (sourceDrop != nullptr || expectedFieldDrop) &&
           destinationPlace->root == MirPlaceRootKind::Binding &&
           destinationPlace->binding != 0 &&
           destinationPlace->projections.empty()) {
@@ -9397,9 +9523,16 @@ private:
              .constructionOrder = rollback,
              .kind = MirDropObligationKind::ConstructionRollback,
              .place = destination,
-             .dropType = sourceDrop->dropType});
-        appendReparentOrTypedTransfer(initialize, sourceObligation, rollback);
-        (void)removeTemporary(sourceObligation);
+             .dropType = expectedFieldDrop ? *expectedFieldDrop
+                                           : sourceDrop->dropType});
+        if (temporaryIsActive(sourceObligation)) {
+          appendReparentOrTypedTransfer(initialize, sourceObligation, rollback);
+          (void)removeTemporary(sourceObligation);
+        } else {
+          appendLifecycle(
+              initialize,
+              {.kind = MirLifecycleEventKind::Initialize, .target = rollback});
+        }
         constructorRollback.push_back(rollback);
       } else {
         appendLifecycle(initialize, {.kind = MirLifecycleEventKind::TransferOut,
@@ -9506,6 +9639,16 @@ private:
   }
 
   void lowerIf(const HirStatement &statement) {
+    const auto outerTransferEndpoints = enclosingTransferredLoanEndpoints;
+    // HIR, not branch lowering, chooses the semantic endpoint. Register its
+    // exact identity while lowering nested branches; this grants no endpoint
+    // acknowledgement until a call actually emits EndBorrow on that path.
+    for (const SemanticLoanId semantic : statement.endedLoans) {
+      const auto found = semanticLoans.find(semantic);
+      if (found != semanticLoans.end() && loanIsActive(scopes, found->second))
+        enclosingTransferredLoanEndpoints.insert_or_assign(found->second,
+                                                           statement.id);
+    }
     const std::vector<Scope> conditionScopes = scopes;
     const std::vector<TemporaryDrop> conditionTemporaryDrops = temporaryDrops;
     const MirOperand condition = statement.condition
@@ -9527,6 +9670,7 @@ private:
     const std::vector<TemporaryDrop> incomingTemporaryDrops = temporaryDrops;
     const std::unordered_map<HirBindingId, MirLoanId> incomingBindingLoans =
         bindingLoans;
+    const auto incomingTransferEndpoints = callTransferredLoanEndpoints;
     current = thenBlock;
     scopes = incomingScopes;
     temporaryDrops = incomingTemporaryDrops;
@@ -9538,6 +9682,7 @@ private:
     const std::vector<TemporaryDrop> thenTemporaryDrops = temporaryDrops;
     const std::unordered_map<HirBindingId, MirLoanId> thenBindingLoans =
         projectOuterBindingLoans(incomingBindingLoans, bindingLoans);
+    const auto thenTransferEndpoints = callTransferredLoanEndpoints;
     if (thenFallsThrough) {
       terminate({.kind = MirTerminatorKind::Goto, .target = mergeBlock});
     }
@@ -9546,6 +9691,7 @@ private:
     scopes = incomingScopes;
     temporaryDrops = incomingTemporaryDrops;
     bindingLoans = incomingBindingLoans;
+    callTransferredLoanEndpoints = incomingTransferEndpoints;
     endSemanticLoans(statement.elseEntryEndedLoans, statement.id);
     lowerScopedStatement(statement.elseBranch);
     const bool elseFallsThrough = !terminated();
@@ -9553,6 +9699,7 @@ private:
     const std::vector<TemporaryDrop> elseTemporaryDrops = temporaryDrops;
     const std::unordered_map<HirBindingId, MirLoanId> elseBindingLoans =
         projectOuterBindingLoans(incomingBindingLoans, bindingLoans);
+    const auto elseTransferEndpoints = callTransferredLoanEndpoints;
     if (elseFallsThrough) {
       terminate({.kind = MirTerminatorKind::Goto, .target = mergeBlock});
     }
@@ -9567,23 +9714,30 @@ private:
       scopes = thenScopes;
       temporaryDrops = thenTemporaryDrops;
       bindingLoans = thenBindingLoans;
+      callTransferredLoanEndpoints = intersectTransferredLoanEndpoints(
+          thenTransferEndpoints, elseTransferEndpoints);
     } else if (thenFallsThrough) {
       scopes = thenScopes;
       temporaryDrops = thenTemporaryDrops;
       bindingLoans = thenBindingLoans;
+      callTransferredLoanEndpoints = thenTransferEndpoints;
     } else if (elseFallsThrough) {
       scopes = elseScopes;
       temporaryDrops = elseTemporaryDrops;
       bindingLoans = elseBindingLoans;
+      callTransferredLoanEndpoints = elseTransferEndpoints;
     } else {
       scopes = incomingScopes;
       temporaryDrops = incomingTemporaryDrops;
       bindingLoans = incomingBindingLoans;
+      callTransferredLoanEndpoints = incomingTransferEndpoints;
+      enclosingTransferredLoanEndpoints = outerTransferEndpoints;
       terminate({.kind = MirTerminatorKind::Unreachable,
                  .hirStatement = statement.id});
       return;
     }
     endSemanticLoans(statement);
+    enclosingTransferredLoanEndpoints = outerTransferEndpoints;
   }
 
   void lowerWhile(const HirStatement &statement) {
@@ -9613,6 +9767,7 @@ private:
     const std::vector<TemporaryDrop> loopTemporaryDrops = temporaryDrops;
     const std::unordered_map<HirBindingId, MirLoanId> loopBindingLoans =
         bindingLoans;
+    const auto loopTransferEndpoints = callTransferredLoanEndpoints;
     std::vector<Scope> exitScopes = loopScopes;
     std::unordered_map<HirBindingId, MirLoanId> exitBindingLoans =
         loopBindingLoans;
@@ -9636,6 +9791,7 @@ private:
     scopes = loopScopes;
     temporaryDrops = loopTemporaryDrops;
     bindingLoans = loopBindingLoans;
+    callTransferredLoanEndpoints = loopTransferEndpoints;
     lowerScopedStatement(statement.body);
     if (!terminated()) {
       if (temporaryDrops != loopTemporaryDrops) {
@@ -9649,6 +9805,8 @@ private:
     scopes = std::move(exitScopes);
     temporaryDrops = loopTemporaryDrops;
     bindingLoans = std::move(exitBindingLoans);
+    // A possibly unexecuted loop cannot contribute a transfer proof at exit.
+    callTransferredLoanEndpoints = loopTransferEndpoints;
   }
 
   void lowerDoWhile(const HirStatement &statement) {
@@ -9663,6 +9821,7 @@ private:
     const std::vector<TemporaryDrop> loopTemporaryDrops = temporaryDrops;
     const std::unordered_map<HirBindingId, MirLoanId> loopBindingLoans =
         bindingLoans;
+    const auto loopTransferEndpoints = callTransferredLoanEndpoints;
     std::vector<Scope> exitScopes = loopScopes;
     std::unordered_map<HirBindingId, MirLoanId> exitBindingLoans =
         loopBindingLoans;
@@ -9691,6 +9850,7 @@ private:
     scopes = loopScopes;
     temporaryDrops = loopTemporaryDrops;
     bindingLoans = loopBindingLoans;
+    callTransferredLoanEndpoints = loopTransferEndpoints;
     const std::vector<Scope> conditionScopes = scopes;
     const std::vector<TemporaryDrop> conditionTemporaryDrops = temporaryDrops;
     const MirOperand condition = statement.condition
@@ -9718,6 +9878,7 @@ private:
     scopes = std::move(exitScopes);
     temporaryDrops = loopTemporaryDrops;
     bindingLoans = std::move(exitBindingLoans);
+    callTransferredLoanEndpoints = loopTransferEndpoints;
   }
 
   void lowerFor(const HirStatement &statement) {
@@ -9757,6 +9918,7 @@ private:
     const std::vector<TemporaryDrop> loopTemporaryDrops = temporaryDrops;
     const std::unordered_map<HirBindingId, MirLoanId> loopBindingLoans =
         bindingLoans;
+    const auto loopTransferEndpoints = callTransferredLoanEndpoints;
     std::vector<Scope> cleanupScopes = loopScopes;
     std::unordered_map<HirBindingId, MirLoanId> cleanupBindingLoans =
         loopBindingLoans;
@@ -9780,6 +9942,7 @@ private:
     scopes = loopScopes;
     temporaryDrops = loopTemporaryDrops;
     bindingLoans = loopBindingLoans;
+    callTransferredLoanEndpoints = loopTransferEndpoints;
     lowerScopedStatement(statement.body);
     if (!terminated()) {
       if (temporaryDrops != loopTemporaryDrops) {
@@ -9792,6 +9955,7 @@ private:
     scopes = loopScopes;
     temporaryDrops = loopTemporaryDrops;
     bindingLoans = loopBindingLoans;
+    callTransferredLoanEndpoints = loopTransferEndpoints;
     if (statement.increment) {
       const std::vector<Scope> incrementScopes = scopes;
       const std::vector<TemporaryDrop> incrementTemporaryDrops = temporaryDrops;
@@ -9811,6 +9975,7 @@ private:
     scopes = std::move(cleanupScopes);
     temporaryDrops = loopTemporaryDrops;
     bindingLoans = std::move(cleanupBindingLoans);
+    callTransferredLoanEndpoints = loopTransferEndpoints;
     emitScope(scopes.back());
     terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
     scopes.pop_back();
@@ -9974,6 +10139,7 @@ private:
     const std::vector<TemporaryDrop> switchTemporaryDrops = temporaryDrops;
     const std::unordered_map<HirBindingId, MirLoanId> switchBindingLoans =
         bindingLoans;
+    const auto switchTransferEndpoints = callTransferredLoanEndpoints;
     std::vector<Scope> exitScopes = switchScopes;
     std::unordered_map<HirBindingId, MirLoanId> exitBindingLoans =
         switchBindingLoans;
@@ -10026,6 +10192,7 @@ private:
       scopes = switchScopes;
       temporaryDrops = switchTemporaryDrops;
       bindingLoans = switchBindingLoans;
+      callTransferredLoanEndpoints = switchTransferEndpoints;
       scopes.push_back({});
       endSemanticLoans(statement.switchArms[armIndex].entryEndedLoans,
                        statement.id);
@@ -10080,6 +10247,7 @@ private:
     scopes = std::move(exitScopes);
     temporaryDrops = switchTemporaryDrops;
     bindingLoans = std::move(exitBindingLoans);
+    callTransferredLoanEndpoints = switchTransferEndpoints;
   }
 
   void lowerReturn(const HirStatement &statement) {
@@ -10672,6 +10840,9 @@ private:
   std::unordered_map<HirBindingId, MirLoanId> bindingLoans;
   std::unordered_map<MirPlaceId, MirLoanId> packEntryLoans;
   std::unordered_map<SemanticLoanId, MirLoanId> semanticLoans;
+  std::unordered_map<MirLoanId, HirStatementId> callTransferredLoanEndpoints;
+  std::unordered_map<MirLoanId, HirStatementId>
+      enclosingTransferredLoanEndpoints;
   std::unordered_map<SemanticLoanId, MirPlaceId> semanticLoanPlaces;
   std::unordered_set<HirValueId> emittedValues;
   std::vector<Scope> scopes;

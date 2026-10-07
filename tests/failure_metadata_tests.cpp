@@ -255,7 +255,7 @@ int main() {
 
   const std::string snapshot = lang::MirPrinter().print(frontend.mir);
   const bool validSnapshot =
-      snapshot.starts_with("mir-v93 ") &&
+      snapshot.starts_with("mir-v95 ") &&
       snapshot.find("failure-metadata artifact=" +
                     metadata.artifactIdentity().hex()) != std::string::npos &&
       snapshot.find("failure-site @1 source=8:main.gti") != std::string::npos &&
@@ -2998,7 +2998,6 @@ void testRecursiveCleanupContracts() {
     const auto walk = [&](const auto &self,
                           const lang::SemanticType &type) -> void {
       if ((type.kind == lang::SemanticType::UniqueOwner ||
-           type.kind == lang::SemanticType::Storage ||
            type.kind == lang::SemanticType::PrefixStorage) &&
           type.arguments.size() == 1) {
         self(self, type.arguments.front());
@@ -3108,7 +3107,7 @@ void testCollectionCleanupContracts() {
     printDiagnostics(frontend);
     return;
   }
-  bool checkedStorage = false;
+  bool checkedObjectCleanup = false;
   bool checkedPrefix = false;
   bool checkedDestroy = false;
   bool checkedPop = false;
@@ -3126,7 +3125,7 @@ void testCollectionCleanupContracts() {
         const bool pop =
             instruction.intrinsic == lang::IntrinsicKind::PrefixStoragePop;
         const bool destroy =
-            instruction.intrinsic == lang::IntrinsicKind::StorageDestroy;
+            instruction.intrinsic == lang::IntrinsicKind::ObjectDestroy;
         const bool erase =
             instruction.intrinsic == lang::IntrinsicKind::PrefixStorageErase;
         if (erase && instruction.elementCleanup->classInstance &&
@@ -3165,6 +3164,30 @@ void testCollectionCleanupContracts() {
         checkedPop |= pop;
         checkedDestroy |= destroy;
         checkedErase |= erase;
+        if (destroy) {
+          const auto &pointer = instruction.operands.front().type;
+          expect(pointer.kind == lang::SemanticType::RawPointer &&
+                     pointer.arguments.size() == 1 &&
+                     instruction.elementCleanup ==
+                         lang::mirUniqueCleanupType(
+                             frontend.mir, pointer.arguments.front()) &&
+                     instruction.unsafeOperation ==
+                         lang::UnsafeOperationKind::ObjectLifetime &&
+                     instruction.localFailureSites.empty() &&
+                     instruction.definedFailure.localOrigins.empty(),
+                 "source sparse cleanup uses the exact general payload recipe "
+                 "and propagates the original destructor failure");
+          const auto &producer = body.blocks[b];
+          const auto *record =
+              body.findFailureRecord(producer.terminator.failureRecord);
+          expect(
+              producer.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                  producer.terminator.invokeInstruction == instruction.id &&
+                  record != nullptr &&
+                  record->producerInstruction == instruction.id,
+              "source destruction retains its failure record and cleanup edge");
+          checkedObjectCleanup = true;
+        }
         expect(instruction.definedFailure.propagation ==
                    lang::FailurePropagationKind::Destructor,
                "removal retains source-destructor propagation independently of "
@@ -3185,7 +3208,7 @@ void testCollectionCleanupContracts() {
             changed.definedFailure.propagation =
                 lang::FailurePropagationKind::None;
           else
-            changed.intrinsic = lang::IntrinsicKind::StorageRelocate;
+            changed.intrinsic = lang::IntrinsicKind::ObjectRelocate;
           expect(!lang::verifyMirProgram(forged).valid(),
                  "missing, forged, inactive or misplaced removal "
                  "recipes/effects must fail verification");
@@ -3195,9 +3218,8 @@ void testCollectionCleanupContracts() {
     for (const auto &drop : body.dropObligations) {
       const auto inspect = [&](const auto &self, const lang::MirDropType &step,
                                std::vector<std::size_t> path) -> void {
-        const bool storage = step.type.kind == lang::SemanticType::Storage;
         const bool prefix = step.type.kind == lang::SemanticType::PrefixStorage;
-        if (((storage && !checkedStorage) || (prefix && !checkedPrefix)) &&
+        if (prefix && !checkedPrefix &&
             lang::mirDropMayRaiseDefinedFailure(frontend.mir, step)) {
           expect(
               step.aggregate.size() == 1 &&
@@ -3205,10 +3227,7 @@ void testCollectionCleanupContracts() {
                   !step.aggregate.front().uniqueOwnerBase &&
                   step.aggregate.front().uniqueOwnerField == 0,
               "a live-element loop must retain one exact unprojected recipe");
-          if (storage)
-            checkedStorage = true;
-          if (prefix)
-            checkedPrefix = true;
+          checkedPrefix = true;
           for (int mutation = 0; mutation < 5; ++mutation) {
             auto forged = frontend.mir;
             auto *changed = &lang::findMirBody(forged, address)
@@ -3241,8 +3260,9 @@ void testCollectionCleanupContracts() {
     }
   }
   expect(
-      checkedStorage && checkedPrefix,
-      "both sparse storage and live-prefix cleanup require verifier coverage");
+      checkedObjectCleanup && checkedPrefix,
+      "both source-defined sparse destruction and live-prefix cleanup require "
+      "verifier coverage");
   expect(checkedDestroy && checkedPop && checkedErase && checkedRelocation,
          "slot destruction, prefix pop/erase and generated relocation require "
          "verifier coverage");

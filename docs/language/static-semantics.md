@@ -250,6 +250,15 @@ an empty expansion. It does not pass a pack object as one lambda argument.
 Declaration-wide symbolic packs defer target publication until that check.
 Nominal operator overloads compare the expanded arguments in exact order;
 this does not expand operands of non-call operators or add implicit conversions.
+
+Concrete fixed-array values also retain their exact element type and every
+extent through by-value parameter-pack forwarding and constructor emplacement.
+The implemented array staging family is copyable, contains no tracked borrowed
+state, and requires no active element cleanup. Each forwarded array is a value
+snapshot: it does not decay to a pointer, acquire an implicit reference, or erase
+an element lifetime dependency. Fixed-array arguments before a final pack follow
+the same rule. Owning or borrow-carrying array transport is not enabled by this
+passive-array staging rule.
 Read-only reference elements forward to the same exact read-only reference
 parameter type. They are not copied, moved, or given callee cleanup obligations;
 the ordinary caller-side borrow rules apply for the invocation. Mutable

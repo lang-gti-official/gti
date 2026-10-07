@@ -1,0 +1,64 @@
+#include <std/resource>
+#include <std/memory>
+
+extern "C" {
+  void provider_test_mode(int32_t mode);
+  int32_t provider_test_calls();
+  int32_t provider_test_releases();
+  void free(void* address);
+  int32_t provider_test_region(void* address, uint64_t bytes, uint64_t alignment);
+}
+
+int main() {
+  std::process_resource provider{};
+  unsafe {
+    // The standard library must not reserve an application's libc binding.
+    free(nullptr);
+    provider_test_mode(0);
+    auto bad_zero = provider.allocate(std::layout(uint64_t(0), uint64_t(0)));
+    auto bad_three = provider.allocate(std::layout(uint64_t(16), uint64_t(3)));
+    if (bad_zero || bad_zero.error() != std::alloc_errc::invalid_alignment) { return 1; }
+    if (bad_three || bad_three.error() != std::alloc_errc::invalid_alignment) { return 2; }
+    if (provider_test_calls() != 0) { return 3; }
+
+    // The injected native limit exercises conversion overflow without requiring
+    // an unsupported 32-bit GTI target or a dangerously large host allocation.
+    provider_test_mode(1);
+    auto too_big = provider.allocate(std::layout(uint64_t(4096), uint64_t(8)));
+    auto too_aligned = provider.allocate(std::layout(uint64_t(0), uint64_t(8192)));
+    if (too_big || too_big.error() != std::alloc_errc::size_overflow) { return 4; }
+    if (too_aligned || too_aligned.error() != std::alloc_errc::size_overflow) { return 5; }
+    if (provider_test_calls() != 0) { return 6; }
+
+    auto empty = provider.allocate(std::layout(uint64_t(0), uint64_t(64))).expect("empty allocation");
+    if (empty.address != nullptr || empty.bytes != 0 || empty.alignment != 64 || empty.id != 0) { return 7; }
+    provider.release(empty);
+    if (provider_test_calls() != 0 || provider_test_releases() != 0) { return 8; }
+
+    provider_test_mode(0);
+    auto first = provider.allocate(std::layout(uint64_t(13), uint64_t(1))).expect("first region");
+    auto second = provider.allocate(std::layout(uint64_t(31), uint64_t(4096))).expect("second region");
+    if (first.address == second.address || first.alignment != 1 || second.alignment != 4096) { return 9; }
+    if (provider_test_region(first.address, first.bytes, first.alignment) != 0 ||
+        provider_test_region(second.address, second.bytes, second.alignment) != 0) { return 10; }
+    provider.release(first);
+    provider.release(second);
+    if (provider_test_calls() != 2 || provider_test_releases() != 2) { return 11; }
+
+    provider_test_mode(2);
+    auto exhausted = provider.allocate(std::layout(uint64_t(16), uint64_t(8)));
+    if (exhausted || exhausted.error() != std::alloc_errc::resource_exhausted) { return 12; }
+#if target.os != "windows"
+    provider_test_mode(3);
+    auto invalid = provider.allocate(std::layout(uint64_t(16), uint64_t(8)));
+    if (invalid || invalid.error() != std::alloc_errc::invalid_alignment) { return 13; }
+    provider_test_mode(4);
+    auto other = provider.allocate(std::layout(uint64_t(16), uint64_t(8)));
+    if (other || other.error() != std::alloc_errc::invalid_region) { return 14; }
+#endif
+    provider_test_mode(5);
+    auto null_success = provider.allocate(std::layout(uint64_t(16), uint64_t(8)));
+    if (null_success || null_success.error() != std::alloc_errc::resource_exhausted) { return 15; }
+  }
+  return 0;
+}

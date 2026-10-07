@@ -148,6 +148,13 @@ written `::` path. Tree-sitter accepts the alias as a class member and supplies
 the syntax-level type-definition capture while semantic tokens retain the exact
 class-versus-namespace meaning.
 
+Conditional unsafe class capability assertions use the same generic-parameter
+symbol as their declaration. Navigation, references and rename therefore cover
+the attribute argument without protocol-side name matching. Class hover labels
+the policy as conditional instead of suggesting an unconditional assertion;
+invalid, misplaced and conflicting policies publish the shared `GTI-S2059`
+diagnostic. Neither CLI nor LSP offers a fix that accepts an unsafe promise.
+
 Function-declaration and selected-call signatures retain `[[noreturn]]`,
 `[[track_caller]]`, `[[discardable]]`, explicit `[[borrowed_from(owner)]]` / `[[borrowed_from(this)]]`,
 and `unsafe` from the resolved `FunctionInfo`. The borrow-origin parameter name

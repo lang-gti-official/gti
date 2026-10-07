@@ -17,6 +17,11 @@ a replacement body or offer an automatic foreign-linkage edit. Pure virtual
 contracts, registered runtime bindings and compiler intrinsics retain their
 separate definition policies. Fragment analysis can still resolve declarations
 without claiming executable closure.
+Generic primary bodies defer this closure requirement while their enclosing
+type or value formals remain unresolved. Concrete reanalysis checks the selected
+specialization and active `if constexpr` branch; an instantiated body still
+rejects every selected missing definition, even for a nondependent call. A
+concrete class context does not resolve a generic method's own open formals.
 
 ## Terminal colour
 
@@ -467,14 +472,17 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   for unsupported storage and escape; mutation or movement of their source
   owner while live remains `GTI-S2017`.
 - `GTI-S2019` owns invalid payloads of declaration-bound private storage.
-  Sparse and prefix storage reject borrowed-state elements even when empty;
+  Prefix storage rejects borrowed-state elements even when empty;
   optional storage additionally requires move construction and excludes void,
   references and raw-pointer payloads. This boundary does not require move
   assignment. Point at the concrete payload type, or retain the precise user
   instantiation as related information when the private field is instantiated
   from library source. Name the concrete payload and explain that this storage
   does not retain external-owner dependencies. No fix-it chooses a different
-  ownership model. Invalid storage must not reach `GTI-B0001`.
+  ownership model. Source-defined sparse storage instead expresses its payload
+  boundary through the ordinary `storage_element<T>` constraint and receives
+  `GTI-S2029` on an unsupported application. Invalid storage must not reach
+  `GTI-B0001`.
 - `GTI-S2018` owns an unavailable copy, move, or ownership transfer at a
   by-value argument. When constructor search finds one accessible candidate
   whose parameter types match and rejects it only because the written value

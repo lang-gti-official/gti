@@ -462,10 +462,19 @@ module.exports = grammar({
     class_attribute_list: ($) =>
       seq(
         "[[",
-        field("attribute", $.identifier),
-        repeat(seq(",", field("attribute", $.identifier))),
+        $._class_attribute,
+        repeat(seq(",", $._class_attribute)),
         "]]",
       ),
+
+    _class_attribute: ($) => seq(
+      field("attribute", $.identifier),
+      optional(seq(
+        "(",
+        field("capability_parameter", $.identifier),
+        ")",
+      )),
+    ),
 
     native_c_array_attribute: ($) =>
       seq(

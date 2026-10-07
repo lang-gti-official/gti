@@ -1,0 +1,12 @@
+manifest-version = 1
+
+[package]
+name = "libc-region-provider"
+version = "0.1.0"
+
+[package.native]
+cpp-sources = ["native/bytes.cpp"]
+
+[targets.libc-region-provider]
+kind = "executable"
+root = "src/main.gti"

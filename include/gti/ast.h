@@ -434,6 +434,13 @@ struct FunctionAttribute {
   std::optional<Token> argument;
 };
 
+struct ClassAttribute {
+  Token name;
+  // A conditional unsafe assertion names one non-pack type parameter of
+  // this declaration. Semantics resolves the binder; this is not an expression.
+  std::optional<Token> capabilityParameter;
+};
+
 struct NativeLinkNameAttribute {
   Token attribute;
   Token symbol;
@@ -1777,8 +1784,9 @@ private:
 
 class ClassDecl final : public StmtOfKind<StmtKind::ClassDecl> {
 public:
-  ClassDecl(std::vector<Token> attributes, Token keyword, ClassKind kind,
-            Token name, std::optional<TypeRef> exactSpecialization,
+  ClassDecl(std::vector<ClassAttribute> attributes, Token keyword,
+            ClassKind kind, Token name,
+            std::optional<TypeRef> exactSpecialization,
             std::vector<GenericParameter> genericParameters,
             std::vector<BaseSpecifier> bases, StmtList members,
             bool forwardDeclaration = false,
@@ -1795,7 +1803,7 @@ public:
     visitor.visitClassDecl(*this);
   }
 
-  [[nodiscard]] const std::vector<Token> &attributes() const {
+  [[nodiscard]] const std::vector<ClassAttribute> &attributes() const {
     return attributes_;
   }
   [[nodiscard]] const Token &keyword() const { return keyword_; }
@@ -1825,7 +1833,7 @@ public:
   }
 
 private:
-  std::vector<Token> attributes_;
+  std::vector<ClassAttribute> attributes_;
   Token keyword_;
   ClassKind kind_;
   Token name_;
