@@ -2974,6 +2974,11 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   add_test(
+    NAME cli_hardlink_fixture
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/cli_hardlink_fixture_test.py"
+  )
+  add_test(
     NAME cli_color
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/cli_color_test.py"
             "$<TARGET_FILE:gti>"
