@@ -1949,6 +1949,15 @@ private:
     const auto *failedLoan = failedProducer && failedProducer->loan
                                  ? output.findLoan(*failedProducer->loan)
                                  : nullptr;
+    if (failedLoan && failedProducer->kind == MirInstructionKind::Borrow &&
+        !containsLoan(failureEndedLoans, failedLoan->id)) {
+      // Checked place formation publishes no reference on failure. Retire its
+      // provisional verifier capability before draining receiver ancestors or
+      // callee locals; the runtime pointer is never read on this edge.
+      (void)appendInstruction(
+          {.kind = MirInstructionKind::EndBorrow, .loan = failedLoan->id});
+      failureEndedLoans.push_back(failedLoan->id);
+    }
     if (failedLoan && failedLoan->lifecycleBound && !failedLoan->entry &&
         !failedLoan->escapes && failedProducer->result &&
         failedLoan->producedBy == failedProducer->hirValue &&
@@ -4056,6 +4065,37 @@ private:
            assignmentOperation(*value.operation) == MirOperation::Assign;
   }
 
+  [[nodiscard]] bool stableReservationOrigin(MirPlaceId id) const {
+    std::unordered_set<MirPlaceId> visited;
+    while (visited.insert(id).second) {
+      const auto *place = output.findPlace(id);
+      if (place == nullptr)
+        return false;
+      MirLoanId through =
+          place->root == MirPlaceRootKind::Loan ? place->loan : 0;
+      if (place->root == MirPlaceRootKind::Binding &&
+          !place->projections.empty() &&
+          place->projections.front().kind == MirProjectionKind::Dereference) {
+        const auto found = bindingLoans.find(place->binding);
+        if (found != bindingLoans.end())
+          through = found->second;
+      }
+      if (through != 0) {
+        const auto *loan = output.findLoan(through);
+        if (loan == nullptr)
+          return false;
+        if (loan->source != id) {
+          id = loan->source;
+          continue;
+        }
+      }
+      return place->root != MirPlaceRootKind::Symbol &&
+             place->root != MirPlaceRootKind::Temporary &&
+             place->root != MirPlaceRootKind::Value;
+    }
+    return false;
+  }
+
   [[nodiscard]] static MirOperation
   orderedCompoundArithmetic(MirOperation assignment) {
     switch (assignment) {
@@ -5720,9 +5760,8 @@ private:
             parent = found->second;
         }
       }
-      const MirPlace *originPlace = output.findPlace(origin);
-      const bool twoPhase = reserveBorrowResult && originPlace != nullptr &&
-                            originPlace->root != MirPlaceRootKind::Symbol;
+      const bool twoPhase =
+          reserveBorrowResult && stableReservationOrigin(origin);
       const MirLoanId loan = createLoan(kind, origin, value.borrowAccess,
                                         value.id, 0, 0, parent, twoPhase);
       if (shellContract != nullptr) {
@@ -7526,7 +7565,11 @@ private:
         value.info.traits.drop != DropKind::Trivial ||
         value.info.traits.containsBorrowedState || value.ownership ||
         value.unsafeOperation != UnsafeOperationKind::None ||
-        value.definedFailure.propagation != FailurePropagationKind::None) {
+        (value.definedFailure.propagation != FailurePropagationKind::None &&
+         !((value.kind == HirValueKind::IndexSet ||
+            value.kind == HirValueKind::DereferenceSet) &&
+           value.functionTarget &&
+           value.borrowOrigin != BorrowOriginKind::None))) {
       return std::nullopt;
     }
 
