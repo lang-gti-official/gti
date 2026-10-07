@@ -1,5 +1,18 @@
 # Compiler Verification
 
+## Reconciled language coverage corpus
+
+PR #52's complete corpus passes against the optimized Release compiler from
+main after native scalar/nested-pointer integration and PR #50's test-throughput
+changes: 427 programs, comprising 185 successes, 138 correct rejections and
+104 strict known-finding observations. The older baseline's expectations remain
+valid without changing or skipping cases. Known findings are not correctness
+passes: their unresolved outcomes remain explicit, issue-linked debt, and a
+changed outcome fails the gate. This is macOS arm64 evidence, not cross-platform
+execution or resolution of the reported defects. Its CTest registration reserves
+two processors for the two case workers and remains in the complete coverage
+census.
+
 ## Native scalar, recursive pointer and callable integration
 
 The combined candidate uses a Release compiler on macOS arm64 with LLVM
