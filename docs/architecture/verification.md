@@ -284,16 +284,21 @@ not evidence that every source call/container transport route is closed.
 
 ## Programmable allocation and cleanup-bound resource leases
 
-Phase 2 remains in progress; the following gates define its evidence, not an
-assertion that the combined outcome has passed. `S-ALLOC-05` in the
-implementation sequence records the current acceptance status.
+Phase 2 (`S-ALLOC-05`) completed on 2026-10-07. The gates below are its
+acceptance evidence, and the completion record below states what passed.
 
 `resource_protocol_contract` covers the one-time unsafe binding, structural
 provider signatures, final-address immovable elements, owner movement,
 recoverable allocation, growth, and rejection of owner invalidation while an
-element reference or an explicitly retained iterator remains live. Safe resource
-reset, escaping a local provider, forged bindings, and assignment between retained resources have negative
-controls. `resource_memory_runtime` independently checks the process-memory
+element reference or an explicitly retained iterator remains live. Negative
+controls cover safe resource reset (directly, beneath a live growable
+container, and through a shared binding), moving a bound provider, escaping a
+local provider, forged bindings, assignment between retained resources, element
+references against growth and mutable access, element escape, and immovable
+elements in growable or relocating paths. `resource_protocol_lsp` checks the
+same unsafe-call and borrow-conflict diagnostics, navigation to the library
+declarations and member completion through the language server.
+`resource_memory_runtime` independently checks the process-memory
 size/alignment/status boundary. `storage_adoption_contract` and runtime object-layout
 gates own the compiler-private placement contract and its malformed-MIR cases.
 
@@ -326,9 +331,26 @@ destruction before matching resource release. Region-contract controls check
 retained over-alignment and defensive descriptor rejection with exactly-once
 release; they do not dereference invalid memory or claim containment of an
 allocator that violates its unsafe obligations. The arena chooses its own
-subregions; a counting adapter alone is not acceptance. All eight native modes,
-the relevant LSP/grammar/example gates, and the full production CTest and
-installed-consumer checks are required before completion.
+subregions; a counting adapter alone is not acceptance. The client-usage
+fixture adds owners stored in classes, mutable container parameters, owning and
+unique elements, the process resource, recoverable exhaustion, counted cleanup
+across growth, destruction independent of region release and relocation between
+distinct resource instances. The vector rollback fixture checks that a failing
+`try_emplace_back` constructor keeps its original failure, and the counting
+adapter checks that a failed push consumes its argument without disturbing the
+container. `allocator_raw_audit_independence` compiles the allocator programs
+with raw-pointer auditing off and in warn mode and requires identical C++.
+
+Completion record: on macOS arm64 with the optimized Release compiler, LLVM
+22.1.8 and AppleClang, all 460 registered gates pass in one full run, including
+the eight-mode allocator matrix above. An isolated `gti_toolchain` install
+passes all eleven external SDK consumers, example 121 and the client fixture at
+C++20/O0 and C++23/O3 with `GTI_STDLIB_PATH` cleared, the resource LSP gate,
+and the raw-audit policy harness in `--installed` mode. Tree-sitter's 72 corpus
+cases, highlight/locals/rainbow checks, 183 shipped sources and pinned
+regeneration pass, as do formatting of all 453 first-party C/C++ sources and
+deterministic API documentation generation. Linux and Windows execution and
+bundled-LLVM release packaging are not claimed.
 
 ## Source package registry bootstrap
 
