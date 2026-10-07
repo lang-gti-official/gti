@@ -104,6 +104,13 @@ if(GTI_PLATFORM MATCHES "^linux-")
   endif()
 endif()
 
+# macOS archives must come from the runtime-closure install step, never from
+# an older system-LLVM stage with absolute Homebrew dependency paths.
+if(GTI_PLATFORM MATCHES "^darwin-" AND
+   NOT EXISTS "${GTI_STAGE_DIR}/share/gti/host-runtime.json")
+  message(FATAL_ERROR "Release staging is missing the verified macOS runtime manifest")
+endif()
+
 # Stamp the build identity into the staged toolchain before archiving. On the
 # nightly channel VERSION does not change between builds, so this is the only
 # fact an installed toolchain can compare to decide whether it is current.
