@@ -2,15 +2,16 @@
 
 ## C-TIME-03: HTTP/JSON representation-admission latency (2026-10-07)
 
-Status: bounded compiler improvement; paired emission measurements complete,
-regression validation and integration in progress.
+Status: bounded compiler improvement; paired emission measurements and complete
+selected regression validation passed. Integration uses the agent-workflow PR
+lifecycle.
 
 The client is the edit/build loop for `examples/93-http-json-client.gti`, a
 real source-defined HTTP/JSON consumer rather than a padded synthetic program.
 The investigation measures GTI compiling GTI, not the host build of GTI itself.
 Both measured executables are Release/Ninja, AppleClang 21 with LLVM 22.1.8 on
 macOS arm64. The baseline is clean `52f27033`; the candidate is that same
-source plus the 28-line production change in `cpp_mir_body_emitter.cpp`.
+source plus the bounded production change in `cpp_mir_body_emitter.cpp`.
 The candidate was built before its checkpoint commit, so it is a recorded
 working-tree experiment, not exact-commit build provenance.
 
@@ -76,6 +77,27 @@ subscript-boundary regression checks ordinary and unresolved function targets
 alongside the genuinely selected mutable accessor. Existing lifecycle
 corruption and native runtime gates cover the applicable exact proofs; no
 assertion or timeout is weakened.
+
+### Integrity validation
+
+The fresh Release build passes 58 distinct relevant CTest gates: the selected
+57-gate compiler/MIR/backend/optimizer/stdlib/runtime/differential set and the
+independent `compile_time_harness`. The original concurrent 57-gate run passed
+55 and timed out in `optimizer_mutable_call_runtime` and `stdlib_surface`.
+Both subsequently passed complete serial reruns with their original timeouts
+and inputs unchanged (224.11 s and 786.45 s respectively). The standard-library
+gate covers all 143 cases; no modes or cases were skipped. Recorded owning
+source hashes bind those reruns to the same tested implementation.
+
+The emitter corpus and independent MIR/native corpus oracle pass; the latter
+reviews 118 runnable examples and 16,070 bodies across two endpoint
+configurations. Focused tests retain malformed representation/lifecycle
+rejection and native temporary-borrow behavior. All 453 registered C++ files
+pass the pinned clang-format 22 check, and release-version and whitespace checks
+pass. This is proportionate selected validation, not a claim that every
+repository test or every host platform was rerun. Evidence is macOS arm64;
+other host platforms remain CI/platform validation boundaries. `VERSION` stays
+unchanged because this preserves externally observable semantics and output.
 
 An additional O2 MIR-text comparison is not byte-identical: internal field
 symbol numbers vary. Repeating the **same baseline executable** reproduces
