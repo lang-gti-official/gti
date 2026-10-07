@@ -7,6 +7,7 @@
 #include "gti/mir.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
+#include "gti/program_request.h"
 #include "gti/progress.h"
 #include "gti/source_graph.h"
 #include "gti/standard_library.h"
@@ -89,7 +90,8 @@ public:
       OptimizationOutputRequest optimizationOutputs = {},
       WarningPolicy warningPolicy = {}, bool debugInfo = false,
       PackageWarningPolicy packageWarnings = {},
-      RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off);
+      RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
+      ProgramRequest program = {});
 
   [[nodiscard]] const std::filesystem::path &entry() const;
   [[nodiscard]] const StandardLibraryLayout &standardLibrary() const;
@@ -101,6 +103,7 @@ public:
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
   [[nodiscard]] const OptimizationOutputRequest &optimizationOutputs() const;
+  [[nodiscard]] const ProgramRequest &program() const;
   [[nodiscard]] const WarningPolicy &warnings() const;
   [[nodiscard]] const PackageWarningPolicy &packageWarnings() const;
   [[nodiscard]] bool requiresEntryPoint() const;
@@ -115,6 +118,7 @@ private:
   std::vector<PackageSourceRoot> packageSourceRootSet;
   ConfigurationFlags configuredFlags;
   OptimizationOutputRequest requestedOptimizationOutputs;
+  ProgramRequest requestedProgram;
   WarningPolicy warningPolicy;
   PackageWarningPolicy packageWarningPolicy;
   bool entryPointRequired = false;

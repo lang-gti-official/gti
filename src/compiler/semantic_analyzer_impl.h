@@ -102,6 +102,9 @@ public:
 
   bool check(const Expr &expr);
 
+  bool applyProgramRequest(const Program &program,
+                           const ProgramRequest &request);
+
   [[nodiscard]] bool hadError() const;
 
   [[nodiscard]] const std::vector<SemanticDiagnostic> &errors() const;

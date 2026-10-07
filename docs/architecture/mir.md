@@ -236,6 +236,21 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
+It also copies the artifact program kind and a pointer-free
+`MirEmbeddingPlan`. Each canonical row names the exact source
+`MirFunctionInstance`, semantic declaration, signature, public symbol, and
+request span selected by HIR. Program verification requires a non-empty ABI-v1
+plan for a library, no plan for an executable, strict symbol order, unique
+function roots, source definitions with GTI linkage, and no hosted startup or
+process-lifetime callback adapter. Optimization coherence treats the entire
+plan as immutable non-body policy. `LoweredProgramBuilder` exact-compares the
+semantic/HIR/MIR chain and copies the rows into `LoweredEmbeddingPlan`, where
+future wrapper and header backends can consume one sealed source of truth.
+
+Dormant library snapshots extend the current executable serialization with
+`mir-v92` and `lowered-program-v12` embedding rows; ordinary snapshots retain
+`mir-v91`/`mir-body-v77` and `lowered-program-v11`.
+
 The deterministic serialization is currently `mir-v91`/`mir-body-v77`.
 The program header retains the selected target's identity, pointer width and
 execution profile. Every serialized type retains its native C primitive
