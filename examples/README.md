@@ -58,7 +58,7 @@ is a teaching helper, not a production server.
 | `09-target-selection.gti` | compile-time host selection and active `#error` guards |
 | `10-modules/main.gti` | loading another GTI source file with `#include` |
 | `11-overloads.gti` | exact overloads and explicit numeric conversions |
-| `12-fixed-arrays.gti` | bounded value arrays, initialization, indexing, and size |
+| `12-fixed-arrays.gti` | bounded arrays, signed contextual literals, named passive records, passive unions, indexing, and size |
 | `13-ownership.gti` | non-null borrows, unique allocation, moves, and cleanup |
 | `14-operators.gti` | restricted member operators for safe wrappers |
 | `15-variadic-generics.gti` | confined type packs and explicit forwarding |

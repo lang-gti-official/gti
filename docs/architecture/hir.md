@@ -20,6 +20,12 @@ access to that accessor's private storage.
 `HirLowerer` in `include/gti/hir.h` consumes the checked `Program`, target, and
 `SemanticVisitor`/`SemanticModel`. It produces `HirProgram` plus diagnostics.
 Concrete generic validity is obtained through semantic instance reanalysis.
+Every reanalyzed body has its own loan-number domain, including a range whose
+types do not depend on generic parameters. Plan verification retains exact
+non-dependent range types and selected protocol operations, compares loan
+relationships across primary/instance domains, and independently checks the
+actual body-local loans, access modes, source bindings and carriers. Numeric
+loan equality with an unrelated primary analysis is not a provenance proof.
 Successfully checked static assertions are skipped entirely: they are semantic
 obligations, not HIR declarations or executable values.
 
@@ -278,6 +284,19 @@ Lowering seeds non-generic declarations and then drains growing worklists.
 Processing a field, call, operator, constructor, destructor, lambda, return, or
 parameter type can discover another concrete instance. A fixed pass over the
 initial declarations is therefore incorrect.
+
+Canonical discovery is bounded to 64 new-instance levels along one request
+chain and 16,384 distinct generic class/function/constructor/destructor instances per
+HIR request (ordinary or staged constant closure). Reusing an exact instance
+does not consume another discovery level. The bounds are deterministic compiler
+resource limits, not a proof that polymorphic recursion terminates: a runtime
+condition does not stop concrete body discovery. Exceeding a bound reports
+`GTI-S2105` at the requesting source, relates the declaration, and stops the
+worklist before reanalyzing deeper bodies. The inventory includes generic-owner
+members and empty-pack generic declarations; ordinary declaration roots do not
+consume it. Ancestry remains intact when generic discovery reaches a new
+nongeneric instance, rather than resetting at a bridge. Ordered depth/provenance bookkeeping
+belongs to discovery, never to instance identity or backend representation.
 
 Declaration seeding also closes over nondependent type components in generic
 function and constructor signatures, fields, and bases. A concrete return such

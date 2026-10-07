@@ -742,6 +742,15 @@ add_test(NAME abstract_generic_failure_contract COMMAND gti_abstract_generic_fai
 add_executable(gti_retained_generic_lifecycle_tests retained_generic_lifecycle_tests.cpp)
 target_link_libraries(gti_retained_generic_lifecycle_tests PRIVATE gti_cpp_backend)
 add_test(NAME retained_generic_lifecycle COMMAND gti_retained_generic_lifecycle_tests)
+add_executable(gti_generic_discovery_tests generic_discovery_tests.cpp)
+target_link_libraries(gti_generic_discovery_tests PRIVATE gti_compiler)
+add_test(NAME generic_discovery COMMAND gti_generic_discovery_tests)
+set_tests_properties(generic_discovery PROPERTIES TIMEOUT 60)
+add_test(NAME generic_discovery_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/generic_discovery_runtime_test.py"
+          "$<TARGET_FILE:gti>")
+set_tests_properties(generic_discovery_runtime PROPERTIES TIMEOUT 240)
 
 add_executable(gti_owned_pointee_projection_tests owned_pointee_projection_tests.cpp)
 target_link_libraries(gti_owned_pointee_projection_tests PRIVATE gti_cpp_backend)
@@ -756,6 +765,19 @@ add_test(NAME optional_empty_prefix COMMAND gti_optional_empty_prefix_tests)
 add_executable(gti_field_array_empty_state_tests field_array_empty_state_tests.cpp)
 target_link_libraries(gti_field_array_empty_state_tests PRIVATE gti_cpp_backend)
 add_test(NAME field_array_empty_state COMMAND gti_field_array_empty_state_tests)
+add_executable(gti_passive_fixed_array_tests passive_fixed_array_tests.cpp)
+target_link_libraries(gti_passive_fixed_array_tests PRIVATE gti_cpp_backend)
+add_test(NAME passive_fixed_array_values COMMAND gti_passive_fixed_array_tests)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME passive_fixed_array_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/passive_fixed_array_runtime_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(passive_fixed_array_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME coverage_native_fixture_policy
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/coverage/native_fixture_policy_test.py")
+endif()
 add_executable(gti_expected_payload_pending_cleanup_tests
                expected_payload_pending_cleanup_tests.cpp)
 target_link_libraries(gti_expected_payload_pending_cleanup_tests PRIVATE gti_cpp_backend)

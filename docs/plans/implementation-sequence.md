@@ -35,7 +35,7 @@ input, not a second implementation queue.
 
 ## Active: 2026-10-07 Issue-Closure Campaign
 
-**Status: implementation in isolated branches; not yet integrated or broadly verified.**
+**Status: partially integrated; final combined verification remains pending.**
 The initial inventory is the 50 open issues #51, #53–#93 (excluding #94),
 #95–#100, #103 and #105. Issue #103 additionally requires resolving every
 one of F10, F14, F16, F17, S01, S02, S04, S06, S09, S12 and S15; closing or
@@ -45,12 +45,12 @@ Initial non-overlapping batches:
 
 | Owner | Issues | Integration state |
 | --- | --- | --- |
-| Aggregate-array worker | #63, #85, #93 | `codex/aggregate-array-issues`; focused checks pending |
-| Generic-instance worker | #57, #95, #98 | `codex/generic-issue-batch-one`; focused checks pending |
+| Aggregate-array worker | #63, #85, #93 | PR #106; focused checks passed, reconciliation in progress |
+| Generic-instance worker | #57, #95, #98 | merged PR #107 at `5f5f370c`; five focused gates passed, issues closed |
 | Main (no subagents) | #58, #68, #69 | `codex/diagnostics-58-68-69`; claimed with direct owner authorization |
-| General-lifetime owner, on existing PR #94 | #84 | claimed; #70 replay requested, not claimed resolved |
+| General-lifetime owner, on existing PR #94 | #84 | focused eight-mode checks passed; #70 replay still fails, remains unclaimed |
 | Payload-enum owner | #88, #89, #90; #103/S15 overlap | offered; claim pending |
-| Coordinator, driver/entry closure | #54, #56, #51 | `codex/issue-campaign-driver`; #54/#56 focused checks passed, #51 validation in progress |
+| Coordinator, driver/entry closure | #54, #56, #51 | merged PR #108 at `1e3aa289`; eight focused gates passed, issues closed |
 
 Unassigned issues remain open. Every completed batch must retain source-located
 negative coverage and actual runtime/cleanup evidence where relevant, using a
