@@ -415,8 +415,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         !instance.body.dropObligations.empty() ||
         !instance.body.values.empty() || !instance.body.statements.empty() ||
         !instance.body.roots.empty() || !owner->fields.empty() ||
-        owner->destructor || !owner->type.arguments.empty() ||
-        !owner->type.valueArguments.empty() ||
+        !owner->type.arguments.empty() || !owner->type.valueArguments.empty() ||
         lifecycle->defaultConstructor != SpecialMemberStatus::Generated ||
         target == nullptr ||
         lifecycle->generatedDefaultBaseConstructor != target->declaration ||

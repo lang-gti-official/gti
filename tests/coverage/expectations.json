@@ -1896,7 +1896,7 @@
     "a31-move-on-break-path-then-reinit": {
       "finding": "A31",
       "issue": 76,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a32-optional-emplace-move-only-function": {
       "finding": "A32",
@@ -2014,31 +2014,29 @@
       "outcome": "bad-diagnostic"
     },
     "a45-base-plus-string-field-unsupported": {
-      "code": "GTI-B0003",
       "finding": "A45",
       "issue": 86,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a45-base-state-rollback-unsupported": {
-      "code": "GTI-B0003",
       "finding": "A45",
       "issue": 86,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a45-derived-destructor-explicit-base": {
       "finding": "A45",
       "issue": 86,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a45-derived-destructor-generated-ctor": {
       "finding": "A45",
       "issue": 86,
-      "outcome": "link"
+      "outcome": "pass"
     },
     "a45-literal-base-argument": {
       "finding": "A45",
       "issue": 86,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a46-chained-subscript-compound": {
       "finding": "A46",
@@ -2106,12 +2104,12 @@
     "a55-ctor-pack-move-only-field-init": {
       "finding": "A55",
       "issue": 96,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a55-list-emplace-move-only-argument": {
       "finding": "A55",
       "issue": 96,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a56-make-unique-same-type": {
       "finding": "A56",

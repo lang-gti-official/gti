@@ -6106,8 +6106,7 @@ auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
             SpecialMemberSpecifierKind::Deleted;
     ConstructorId generatedBaseConstructor = 0;
     if (defaultStatus == SpecialMemberStatus::Generated &&
-        owner.fields.empty() && !owner.destructor &&
-        owner.genericParameters.empty()) {
+        owner.fields.empty() && owner.genericParameters.empty()) {
       if (const auto *base = concreteBase(owner);
           base != nullptr && base->type.arguments.empty() &&
           base->type.valueArguments.empty()) {

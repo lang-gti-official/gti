@@ -51,7 +51,7 @@ is a teaching helper, not a production server.
 | `02-control-flow.gti` | conditions, `for`, `while`, `break`, and `continue` |
 | `03-functions.gti` | typed parameters, return values, and calls |
 | `04-integers.gti` | fixed-width integers, arithmetic, and bitwise operators |
-| `05-objects.gti` | structs, classes, constructors, access, and mutable methods |
+| `05-objects.gti` | structs, classes, constructors, state-bearing bases, declared cleanup, access, and mutable methods |
 | `06-namespaces.gti` | nested namespace shorthand, qualification, and aliases |
 | `07-generics.gti` | type generics, exact inference, and class value parameters |
 | `08-expected.gti` | explicit recoverable errors and `?` propagation with `expected<T, E>` |
@@ -73,7 +73,7 @@ is a teaching helper, not a production server.
 | `24-static.gti` | source-local storage and type-owned class members |
 | `25-polymorphic-ranges.gti` | generic interfaces, virtual operators, iterator protocols, and range-based `for` |
 | `26-stored-references.gti` | owner-tied source iterators with tracked stored-reference lifetime |
-| `27-copy-move-policies.gti` | explicit structural default construction/destruction and defaulted or deleted copy/move policy |
+| `27-copy-move-policies.gti` | explicit structural default construction/destruction, copy/move policy, and reinitialization after a consuming loop break |
 | `28-callable-parameters.gti` | confined generic operations with lambdas and function objects |
 | `29-callable-predicates.gti` | exact bool predicate results from confined generic callables |
 | `30-callable-forwarding.gti` | proven confined callable forwarding through generic helper layers |
@@ -133,7 +133,7 @@ is a teaching helper, not a production server.
 | `86-owning-callbacks.gti` | retained lambda callbacks, `std::function`, cloning/replacement, mutable state, move-only captures, and one-shot invocation |
 | `87-associative-containers.gti` | ordered and hashed dictionaries, nested borrowed insertion results, moves, and owner reactivation |
 | `88-consuming-builders.gti` | consuming builder methods and explicit receiver movement |
-| `89-library-workflow.gti` | numeric option parsing, string editing, filesystem queries, and owning work queues/history/sets |
+| `89-library-workflow.gti` | numeric option parsing, string editing, filesystem queries, owning work queues/history/sets, and emplacement with a move-only constructor argument |
 | `90-generic-algorithms.gti` | search, mutation, replacement, and filtered copying |
 | `91-json-documents.gti` | parsing, typed access, missing versus null, builders, array traversal, and deep cloning |
 | `92-json-codecs.gti` | exact codec specialization, owned application values, arrays, and JSON Pointer errors |
