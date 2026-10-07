@@ -1,4 +1,4 @@
-# ADR 023: Versioned Engine Embedding ABI
+# ADR 026: Versioned Engine Embedding ABI
 
 Status: Accepted
 

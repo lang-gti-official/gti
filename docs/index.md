@@ -125,10 +125,6 @@ while canonical language documents continue to describe actual support.
   — adopts the direct `std::allocator`/`std::storage<T>` boundary, typed
   provenance and slot lifetimes, recoverable allocation, alignment and
   zero-size rules, and the arena/pool composition boundary.
-- [026: Versioned engine embedding ABI](decisions/026-versioned-engine-embedding-abi.md)
-  — fixes the generated C wrapper, descriptor, context, status, lifecycle,
-  signature, symbol, and unload contract without exposing ordinary GTI or
-  generated C++ layout as an engine ABI.
 - [023: Bounded implicit return movement](decisions/023-implicit-return-movement.md)
   — moves one exact whole noncopyable local or by-value parameter at return
   while preserving copyable returns and explicit movement elsewhere.
@@ -138,6 +134,10 @@ while canonical language documents continue to describe actual support.
 - [025: Backend-independent source package registry](decisions/025-source-package-registry.md)
   — logical identities, shared SemVer, exact integrity locks and explicit
   acquisition/publication over the official Gitea storage backend.
+- [026: Versioned engine embedding ABI](decisions/026-versioned-engine-embedding-abi.md)
+  — fixes the generated C wrapper, descriptor, context, status, lifecycle,
+  signature, symbol, and unload contract without exposing ordinary GTI or
+  generated C++ layout as an engine ABI.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.
