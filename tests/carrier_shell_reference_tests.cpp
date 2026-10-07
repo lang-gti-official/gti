@@ -1320,9 +1320,117 @@ int main() { int owner = 7; return inspect(Window(owner)) - 7; }
          "unrelated user carrier exercises abstract entry alias proof");
 }
 
+void checkSharedAccessorRange() {
+  const auto fixture = standardLibraryRoot().parent_path() /
+                       "tests/fixtures/shared_accessor_range.gti";
+  const auto frontend = lang::Frontend().analyze(fixture, std::nullopt,
+                                                 {standardLibraryPrelude()}, {},
+                                                 {standardLibraryRoot()});
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "read-only traversal through a borrowed carrier retains the exact "
+         "iterator result");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return;
+  }
+  bool checked = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &range : function.body.rangeIterations) {
+      const auto *element = function.body.findLoan(range.elementLoan);
+      const auto *parent = function.body.findLoan(range.rangeLoan);
+      if (!element || !parent || element->parent != parent->id ||
+          parent->kind != lang::MirLoanKind::Stored)
+        continue;
+      expect(element->kind == lang::MirLoanKind::CallResult &&
+                 element->access == lang::AccessMode::ReadOnly &&
+                 !element->entry && !element->escapes &&
+                 !element->carriers.empty(),
+             "shared range element keeps the address-producing call loan");
+      for (int mutation = 0; mutation < 3; ++mutation) {
+        auto invalid = frontend.mir;
+        auto &body = const_cast<lang::MirFunctionInstance *>(
+                         invalid.findFunctionInstance(function.id))
+                         ->body;
+        auto &changed = body.loans[element->id - 1];
+        if (mutation == 0)
+          changed.kind = lang::MirLoanKind::Local;
+        else if (mutation == 1)
+          changed.access = lang::AccessMode::Mutable;
+        else {
+          // Ending the range immediately after dereference must not revoke
+          // the authority still required by the live returned element.
+          lang::MirInstructionId last = 0;
+          for (const auto &block : body.blocks)
+            for (const auto &instruction : block.instructions)
+              last = std::max(last, instruction.id);
+          bool inserted = false;
+          for (auto &block : body.blocks) {
+            for (auto it = block.instructions.begin();
+                 it != block.instructions.end(); ++it) {
+              if (it->loan == element->id &&
+                  it->kind == lang::MirInstructionKind::Call) {
+                block.instructions.insert(
+                    it + 1, {.id = last + 1,
+                             .kind = lang::MirInstructionKind::EndBorrow,
+                             .loan = parent->id});
+                inserted = true;
+                break;
+              }
+            }
+            if (inserted)
+              break;
+          }
+          expect(inserted, "range element has an exact call producer");
+        }
+        expect(!lang::verifyMirProgram(invalid).valid(),
+               "shared range rejects forged kind/access or early "
+               "parent retirement: " +
+                   std::to_string(mutation));
+      }
+      checked = true;
+      break;
+    }
+    if (checked)
+      break;
+  }
+  expect(checked, "borrowed accessor range exercises a stored shared parent");
+
+  std::ifstream input(fixture);
+  const std::string source((std::istreambuf_iterator<char>(input)), {});
+  const auto prefix = source.substr(0, source.find("int main("));
+  for (const auto &operation :
+       {"owner.clear();", "auto moved = std::move(owner);"}) {
+    const auto invalid = lang::Frontend().analyze(
+        "shared-accessor-invalidation.gti",
+        prefix +
+            "int main() { mut Bag owner{}; auto borrowed = lookup(owner); "
+            "for (auto& item : borrowed.value().elements()) { " +
+            operation + " return item.read(); } return 0; }",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(invalid.syntaxValid && !invalid.semanticValid &&
+               hasDiagnosticCode(invalid.diagnostics, "GTI-S2017") &&
+               !hasDiagnosticCode(invalid.diagnostics, "GTI-B0001"),
+           "retained shared element still prevents owner mutation/movement");
+  }
+  const auto escape = lang::Frontend().analyze(
+      "shared-accessor-escape.gti",
+      prefix +
+          "Item& escape() { Bag owner{}; auto borrowed = lookup(owner); "
+          "for (auto& item : borrowed.value().elements()) { return item; } "
+          "return owner.elements()[std::size_t(0)]; } int main() { return 0; }",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(escape.syntaxValid && !escape.semanticValid &&
+             hasDiagnosticCode(escape.diagnostics, "GTI-S2017") &&
+             !hasDiagnosticCode(escape.diagnostics, "GTI-B0001"),
+         "a returned range element cannot outlive its local owner");
+}
+
 } // namespace
 
 int main() {
+  checkSharedAccessorRange();
   checkAbstractCarrierAliasResult();
   checkProjectedOwningMemberRetainedResults();
   checkOwningElementSlice();
