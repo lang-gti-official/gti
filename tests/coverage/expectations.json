@@ -1931,20 +1931,16 @@
       "outcome": "bad-diagnostic"
     },
     "a36-unique-ptr-member-init-nullptr": {
-      "code": "GTI-S2003",
-      "finding": "A36",
       "issue": 79,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a37-libc-qsort-link-name-conflict": {
-      "finding": "A37",
       "issue": 80,
-      "outcome": "backend"
+      "outcome": "pass"
     },
     "a37-libc-strlen-prototype-conflict": {
-      "finding": "A37",
       "issue": 80,
-      "outcome": "backend"
+      "outcome": "pass"
     },
     "a38-return-call-value-class": {
       "finding": "A38",
@@ -2272,9 +2268,9 @@
       "outcome": "pass"
     },
     "s09-uninitialized-mut-scalar": {
-      "finding": "S09",
+      "code": "GTI-S2000",
       "issue": 103,
-      "outcome": "ice"
+      "outcome": "rejected"
     },
     "s10-ctor-by-value-copy": {
       "outcome": "pass"

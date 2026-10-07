@@ -1998,6 +1998,17 @@ does not call the legacy terminal `owner_access` helper, and a missing failure
 edge or plain-body representation is rejected rather than bypassing caller
 cleanup. No public smart-pointer name is recognized.
 
+C-linkage declarations use the deterministic private C++ spelling
+`__gti_c_fn_<FunctionId>`, independently of the semantic external symbol.
+The declaration writer retains the exact native signature and binds that
+private identifier through an object-format link label. Darwin labels include
+the ABI's leading underscore; GNU-compatible ELF/COFF labels retain the symbol
+directly. Native MSVC uses a COFF alternative-name directive. Typed MIR calls,
+indirect-function values and hosted C-thread boundaries consume the same sealed
+private declaration identity. Runtime definitions, native bridge headers and
+embedding export symbols are not renamed. This is representation isolation,
+not a libc-name exception or a type conversion.
+
 Each native callback item produces one typed `extern "C" noexcept` thunk. A
 non-failing target is called directly. A failure-capable target uses its
 verified failure sibling and forwards the original record to the runtime

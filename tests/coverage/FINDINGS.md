@@ -146,8 +146,8 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A33 | [#66](https://git.internal.howetotech.dev/gti-lang/gti/issues/66) Advisory warnings decided from one generic instance are wrong (GTI-S2096, GTI-S2095) | bad-diagnostic | `reproducers/a33-unnecessary-mut-deref-store` |
 | A34 | [#78](https://git.internal.howetotech.dev/gti-lang/gti/issues/78) string_view relayed through a receiver-tied subscript is rejected (GTI-S2045) | rejected | `reproducers/a34-view-relay-through-subscript` |
 | A35 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a35-expected-ref-field-stale-message` |
-| A36 | [#79](https://git.internal.howetotech.dev/gti-lang/gti/issues/79) unique_ptr member-initializer ': child_(nullptr)' is rejected while '= nullptr' is accepted | rejected | `reproducers/a36-unique-ptr-member-init-nullptr` |
-| A37 | [#80](https://git.internal.howetotech.dev/gti-lang/gti/issues/80) Binding libc functions whose C prototypes use size_t fails in native C++ compilation | backend | `reproducers/a37-libc-qsort-link-name-conflict`<br>`reproducers/a37-libc-strlen-prototype-conflict` |
+| A36 | [#79](https://git.internal.howetotech.dev/gti-lang/gti/issues/79) Resolved: nominal fields use the same exact nullptr construction as declared bindings | pass | `reproducers/a36-unique-ptr-member-init-nullptr`, `initialization_and_native_identity`, `constructor_null_native_runtime` |
+| A37 | [#80](https://git.internal.howetotech.dev/gti-lang/gti/issues/80) Resolved: private native declaration identity retains the exact external C symbol without support-header prototype collision | pass | `reproducers/a37-libc-qsort-link-name-conflict`<br>`reproducers/a37-libc-strlen-prototype-conflict`, `initialization_and_native_identity`, `constructor_null_native_runtime` |
 | A38 | [#81](https://git.internal.howetotech.dev/gti-lang/gti/issues/81) Checked class payload extraction publishes the exact return result, preserving wrong-state detection and unpublished-result cleanup | pass | `reproducers/a38-return-call-value-class`<br>`reproducers/a38-return-expected-value-class` |
 | A39 | [#82](https://git.internal.howetotech.dev/gti-lang/gti/issues/82) C++ backend ICE: taking the address of a struct-typed field inside a constructor body | ice | `reproducers/a39-ctor-address-of-struct-field` |
 | A40 | [#83](https://git.internal.howetotech.dev/gti-lang/gti/issues/83) C++ backend ICE: indexing a fixed-array field through a raw pointer | ice | `reproducers/a40-c-abi-record-pointer-array-field`<br>`reproducers/a40-raw-pointer-fixed-array-field-index` |
@@ -478,6 +478,26 @@ through `expected` does so from methods — `FILE::write`, `FILE::read_some`,
 `FILE::seek`, `FILE::tell` — so none of them can be used with `?`.
 
 Corpus program: `c33_file_io`.
+
+## Issue #103 campaign status
+
+All eleven findings remain individually tracked. The umbrella is not resolved
+by completing only a subset; focused checks do not replace the final combined
+verification.
+
+| Finding | Current campaign status |
+| --- | --- |
+| F10 | Reproduces; direct call-result assignment needs general typed destination syntax/places. Main123's projected assignment repair is a separate prerequisite. |
+| F14 | Reproduces; nested generic callable-result arguments need coherent exact signature inference, not a brace diagnostic or guessed result type. |
+| F16 | Reproduces; canonical iterator comparison still rejects the temporary sentinel. |
+| F17 | Reproduces; unnamed-parameter related spans need declaration-owned anchors. |
+| S01 | Reproduces; grouped class construction is outside the current production representation proof. |
+| S02 | Reproduces; class-valued conditional publication is outside the current production representation proof. |
+| S04 | Reproduces; bodyless unnamed formals leave a noncanonical declaration body. |
+| S06 | Reproduces; unnamed constexpr formal lacks its diagnostic anchor. |
+| S09 | Resolved in focused source checks: initializer-less ordinary mutable locals report located GTI-S2000 before MIR/backend. Program-storage and field policies remain separate. |
+| S12 | Documented rounding policy still reproduces; owner policy decision pending before changing implicit conversions. |
+| S15 | Reproduces on canonical main; PR110's enum lifecycle prerequisite must be integrated/revalidated rather than duplicated. |
 
 ## F10 — Assignment through a method returning `mut T&` is rejected by the parser
 
@@ -1013,6 +1033,13 @@ Unsupported architectures and operating systems *are* rejected properly, so
 the parser validates the first two fields and then discards the rest.
 
 ## S09 — ICE: an uninitialized `mut` scalar local
+
+Resolved: ordinary local values require an explicit initializer independently
+of mutability. `GTI-S2000` points at the binding and prevents invalid local
+storage from reaching MIR/backend. Pointer, reference, array and enum-specific
+diagnostics and field/program-storage policies are unchanged. Focused controls
+also reject a later assignment as a substitute for initialization and accept
+an explicitly initialized mutable scalar.
 
 `reproducers/s09-uninitialized-mut-scalar.gti`
 

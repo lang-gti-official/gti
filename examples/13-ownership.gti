@@ -15,12 +15,23 @@ public:
 
 int inspect(Widget& widget) { return widget.read(); }
 
+class Node {
+  std::unique_ptr<Widget> child;
+
+public:
+  // Initialize the field directly to its empty owner state.
+  Node() : child(nullptr) {}
+  bool empty() { return !this.child; }
+};
+
 std::unique_ptr<Widget> create_widget(int value) {
   std::unique_ptr<Widget> widget = std::make_unique<Widget>(value);
   return std::move(widget);
 }
 
 int main() {
+  Node empty_node{};
+  if (!empty_node.empty()) { return 2; }
   mut std::unique_ptr<Widget> widget = create_widget(4);
   widget->increment();
 

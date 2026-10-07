@@ -75,7 +75,7 @@ cppConcreteClassTypeSpelling(const LoweredProgram &program,
 
 // The exact unqualified name `CppEmitter` writes for a function declaration:
 // comparison/assignment operator source spellings, runtime-binding and
-// C-linkage passthrough names, the reserved `__gti_entry` hosted entry name,
+// C-linkage private names, the reserved `__gti_entry` hosted entry name,
 // virtual-method source names, and the `__gti_fn_<id>_<name>` spelling for
 // ordinary GTI functions.
 [[nodiscard]] std::string

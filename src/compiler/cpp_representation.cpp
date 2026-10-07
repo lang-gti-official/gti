@@ -1171,8 +1171,11 @@ std::string cppFunctionSpelling(const LoweredFunctionDeclaration &function,
     return std::string(sourceName);
   }
   if (function.linkage == LanguageLinkage::C) {
-    return function.externalSymbol.empty() ? std::string(sourceName)
-                                           : function.externalSymbol;
+    // C++ declaration identity is distinct from the semantic link identity.
+    // This prevents support-header prototypes from capturing an accepted GTI
+    // declaration; the declaration writer binds this private name to the exact
+    // unchanged external symbol.
+    return "__gti_c_fn_" + std::to_string(function.id);
   }
   if (function.entryKind != ProgramEntryKind::None &&
       function.returnType == SemanticType::Int32) {

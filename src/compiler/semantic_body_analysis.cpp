@@ -1103,7 +1103,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
       valueType = field == nullptr
                       ? analyze(initializer.arguments.front())
                       : analyzeInitializer(initializer.arguments.front(),
-                                           initializerTarget);
+                                           initializerTarget, true);
     }
     analyzingConstructorInitializer = enclosingConstructorInitializer;
     if (field != nullptr && initializer.arguments.size() == 1 &&
@@ -3260,6 +3260,8 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
              "GTI-S2036");
     } else if (!field && !stmt.isMutable()) {
       report(stmt.name(), "Immutable variable must have an initializer.");
+    } else if (!field && functionDepth != 0) {
+      report(stmt.name(), "Local variable must have an initializer.");
     }
   }
   if (stmt.initializer()) {

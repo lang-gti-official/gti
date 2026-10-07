@@ -326,12 +326,17 @@ destruction. Calls never convert `unique_ptr<Derived>` to `unique_ptr<Base>`
 implicitly.
 
 One bounded target-typed rule applies to an explicitly declared class or
-struct binding: when its initializer is exactly `nullptr`, the destination may
+struct binding, including a field's constructor initializer: when its initializer is exactly `nullptr`, the destination may
 select one accessible constructor whose sole parameter is exactly
 `nullptr_t`. The same conversion is not considered for function arguments,
 constructor arguments, or returns. Assignment does not use this construction
 rule; a class assignment from `nullptr` requires an exact member
 `operator=(nullptr_t)`.
+
+Ordinary local value bindings require an explicit initializer even when they
+are mutable. GTI does not admit deferred, potentially uninitialized local
+scalar storage; use an explicit initial value. Field construction and the
+separate program-storage initialization plan retain their own rules.
 
 Value-assignment contexts, including initialization, assignment, and return,
 accept an integer literal when its mathematical value fits the destination.
