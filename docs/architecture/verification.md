@@ -1,5 +1,29 @@
 # Compiler Verification
 
+## Source-defined process byte provider (S-ALLOC-07 checkpoint)
+
+The independent provider checkpoint moves request validation and failure policy
+into GTI without changing compiler semantics or sparse storage. The focused
+`process_resource_policy` matrix covers C++20/C++23 at O0/O1/O3, no-elide and
+ASan/UBSan. Its injected native ABI proves rejected and zero requests never
+acquire bytes, validates native-size overflow without dangerous huge requests,
+checks POSIX normalization, native error/null translation, distinct simultaneous
+regions, original descriptors and exactly-once matching release. An application
+`free` declaration coexists with the private provider. Actual byte acquisition
+also runs through the native implementation and a moved raw owner. The separate
+`libc-region-provider` project supplies an unrelated malloc-backed byte owner in
+all eight configurations; its ordinary GTI source owns zero/failure and cleanup
+policy. Off/Warn produce byte-identical provider C++.
+
+`process_provider_target_contract` analyzes and emits the provider for macOS,
+Linux and Windows targets, requiring only the corresponding POSIX/CRT adapter
+family. `resource_memory_runtime` checks actual target facts, writable aligned
+extents and matching native release. The C ABI header smoke fixes the exact
+fixed-width adapter signatures. These are local macOS arm64 tests with optimized
+compiler libraries, not evidence of native Windows/Linux execution. Native CI,
+installed consumers, production gates and the sparse metadata/default-factory
+migration remain required before the full S-ALLOC-07 campaign is complete.
+
 ## Optional raw audit and combined reconciliation
 
 The 2026-10-06 candidate separates mandatory language checking from optional

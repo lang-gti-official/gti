@@ -34,6 +34,9 @@ add_executable(gti_ephemeral_carrier_mir_tests ephemeral_carrier_mir_tests.cpp)
 add_executable(gti_resource_memory_runtime_tests resource_memory_runtime_tests.cpp)
 target_link_libraries(gti_resource_memory_runtime_tests PRIVATE gti_runtime)
 add_test(NAME resource_memory_runtime COMMAND gti_resource_memory_runtime_tests)
+add_executable(gti_process_provider_target_tests process_provider_target_tests.cpp)
+target_link_libraries(gti_process_provider_target_tests PRIVATE gti_compiler gti_cpp_backend)
+add_test(NAME process_provider_target_contract COMMAND gti_process_provider_target_tests)
 add_executable(gti_storage_adoption_tests storage_adoption_tests.cpp)
 target_link_libraries(gti_storage_adoption_tests PRIVATE gti_compiler gti_cpp_backend)
 add_test(NAME storage_adoption_contract COMMAND gti_storage_adoption_tests)
@@ -290,6 +293,11 @@ target_link_libraries(gti_cleanup_bound_backend_mutation_tests PRIVATE gti_cpp_b
 add_test(NAME cleanup_bound_backend_mutations
          COMMAND gti_cleanup_bound_backend_mutation_tests)
 if(Python3_Interpreter_FOUND)
+  add_test(NAME process_resource_policy
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/process_resource_policy_test.py"
+                   $<TARGET_FILE:gti>)
+  set_tests_properties(process_resource_policy PROPERTIES TIMEOUT 300)
   add_test(NAME cleanup_bound_borrow_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/cleanup_bound_borrow_runtime_test.py" $<TARGET_FILE:gti>)
   set_tests_properties(cleanup_bound_borrow_runtime PROPERTIES TIMEOUT 300)

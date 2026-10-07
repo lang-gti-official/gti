@@ -481,8 +481,8 @@
       }
     },
     "121-programmable-allocators.gti": {
-      "declarations": 1194,
-      "bodies": 556,
+      "declarations": 1199,
+      "bodies": 560,
       "generated_items": 116,
       "generated_kinds": {
         "program_initialization": 0,
@@ -1802,8 +1802,8 @@
     }
   },
   "totals": {
-    "declarations": 49635,
-    "bodies": 17223,
+    "declarations": 49640,
+    "bodies": 17227,
     "generated_items": 3483
   }
 }

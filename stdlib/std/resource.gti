@@ -6,10 +6,22 @@ namespace gti_internal {
 enum class resource_binding { trusted };
 namespace runtime {
 extern "C" {
-void* gti_rt_memory_allocate_v1(uint64_t bytes, uint64_t alignment,
-                              int32_t* status);
-void gti_rt_memory_release_v1(void* address, uint64_t alignment);
+uint64_t gti_rt_native_size_max_v1();
 }
+#if target.os == "windows"
+extern "C" {
+void* gti_rt_aligned_malloc_v1(uint64_t bytes, uint64_t alignment);
+void gti_rt_aligned_free_v1(void* address);
+}
+#else
+extern "C" {
+uint64_t gti_rt_posix_pointer_size_v1();
+int32_t gti_rt_posix_enomem_v1();
+int32_t gti_rt_posix_einval_v1();
+void* gti_rt_posix_memalign_v1(uint64_t bytes, uint64_t alignment, int32_t* status);
+void gti_rt_posix_free_v1(void* address);
+}
+#endif
 }
 }
 
@@ -65,21 +77,48 @@ class process_resource {
 public:
   process_resource() {}
   unsafe expected<raw_allocation, alloc_errc> allocate(layout request) {
-    mut int32_t status = 0;
+    if (request.alignment == size_t(0) or
+        (request.alignment & (request.alignment - size_t(1))) != size_t(0)) {
+      return unexpected(alloc_errc::invalid_alignment);
+    }
+    size_t maximum = gti_internal::runtime::gti_rt_native_size_max_v1();
+    if (request.bytes > maximum or request.alignment > maximum) {
+      return unexpected(alloc_errc::size_overflow);
+    }
+    if (request.bytes == size_t(0)) {
+      return raw_allocation(nullptr, request.bytes, request.alignment, uint64_t(0));
+    }
     unsafe {
-      void* address = gti_internal::runtime::gti_rt_memory_allocate_v1(
-          request.bytes, request.alignment, &status);
-      if (status == 1) { return unexpected(alloc_errc::invalid_alignment); }
-      if (status == 2) { return unexpected(alloc_errc::size_overflow); }
-      if (status == 3) { return unexpected(alloc_errc::resource_exhausted); }
+#if target.os == "windows"
+      void* address = gti_internal::runtime::gti_rt_aligned_malloc_v1(
+          request.bytes, request.alignment);
+#else
+      mut size_t selected = request.alignment;
+      size_t native_minimum = gti_internal::runtime::gti_rt_posix_pointer_size_v1();
+      if (selected < native_minimum) { selected = native_minimum; }
+      mut int32_t status = 0;
+      void* address = gti_internal::runtime::gti_rt_posix_memalign_v1(
+          request.bytes, selected, &status);
+      if (status == gti_internal::runtime::gti_rt_posix_einval_v1()) {
+        return unexpected(alloc_errc::invalid_alignment);
+      }
+      if (status == gti_internal::runtime::gti_rt_posix_enomem_v1()) {
+        return unexpected(alloc_errc::resource_exhausted);
+      }
       if (status != 0) { return unexpected(alloc_errc::invalid_region); }
+#endif
+      if (address == nullptr) { return unexpected(alloc_errc::resource_exhausted); }
       return raw_allocation(address, request.bytes, request.alignment, uint64_t(0));
     }
   }
   unsafe void release(raw_allocation allocation) {
+    if (allocation.address == nullptr) { return; }
     unsafe {
-      gti_internal::runtime::gti_rt_memory_release_v1(allocation.address,
-                                                   allocation.alignment);
+#if target.os == "windows"
+      gti_internal::runtime::gti_rt_aligned_free_v1(allocation.address);
+#else
+      gti_internal::runtime::gti_rt_posix_free_v1(allocation.address);
+#endif
     }
   }
 };
