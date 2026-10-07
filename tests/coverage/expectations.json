@@ -1979,12 +1979,12 @@
     "a41-storage-emplace-fixed-array-silent": {
       "finding": "A41",
       "issue": 84,
-      "outcome": "silent"
+      "outcome": "ice"
     },
     "a41-vector-emplace-back-fixed-array-silent": {
       "finding": "A41",
       "issue": 84,
-      "outcome": "silent"
+      "outcome": "ice"
     },
     "a42-c-abi-record-array-from-named-values": {
       "finding": "A42",

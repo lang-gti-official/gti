@@ -90,7 +90,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | --- | --- |
 | Silent miscompile | A25: an `expected<T&, E>` relay returns the parameter, not the referent |
 | Runtime-semantics or tooling result | A02: `gti test` passes a test whose `main` returns 256; A13: nondeterministic `--emit-mir` |
-| Compiler hang or silent failure | A41: compile fails with no diagnostic |
+| Compiler hang or silent failure | A06 and A57 resolved; A41 now reports a located internal failure but its forwarding defect remains unresolved |
 | ICE or invalid generated C++ on valid code | A01, A14–A17, A26–A32, A37–A40, A42, A45–A52, A55, A56, A58, A59 |
 | Valid code rejected | A03, A18, A19, A23, A34, A36 |
 | Specification gap | A04: a dependency's own `[build] defines` is ignored |
@@ -138,7 +138,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A38 | [#81](https://git.internal.howetotech.dev/gti-lang/gti/issues/81) C++ backend ICE: returning a class extracted from expected directly in a return statement | ice | `reproducers/a38-return-call-value-class`<br>`reproducers/a38-return-expected-value-class` |
 | A39 | [#82](https://git.internal.howetotech.dev/gti-lang/gti/issues/82) C++ backend ICE: taking the address of a struct-typed field inside a constructor body | ice | `reproducers/a39-ctor-address-of-struct-field` |
 | A40 | [#83](https://git.internal.howetotech.dev/gti-lang/gti/issues/83) C++ backend ICE: indexing a fixed-array field through a raw pointer | ice | `reproducers/a40-c-abi-record-pointer-array-field`<br>`reproducers/a40-raw-pointer-fixed-array-field-index` |
-| A41 | [#84](https://git.internal.howetotech.dev/gti-lang/gti/issues/84) Silent compile failure: fixed-array argument passed through storage::emplace or vector::emplace_back | silent | `reproducers/a41-storage-emplace-fixed-array-silent`<br>`reproducers/a41-vector-emplace-back-fixed-array-silent` |
+| A41 | [#84](https://git.internal.howetotech.dev/gti-lang/gti/issues/84) Unresolved fixed-array forwarding through storage::emplace or vector::emplace_back; invalid HIR is now diagnosed | ice (located GTI-B0001, no longer silent) | `reproducers/a41-storage-emplace-fixed-array-silent`<br>`reproducers/a41-vector-emplace-back-fixed-array-silent` |
 | A42 | [#85](https://git.internal.howetotech.dev/gti-lang/gti/issues/85) ICE: fixed array of a passive struct or [[c_abi]] record initialized from named values | ice | `reproducers/a42-c-abi-record-array-from-named-values`<br>`reproducers/a42-struct-array-from-named-values`<br>`reproducers/a42-struct-array-two-named-values` |
 | A43 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a43-callback-argument-unknown-type` |
 | A44 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a44-raw-audit-duplicate-warning` |
