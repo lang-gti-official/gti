@@ -327,19 +327,15 @@
       "contains": [
         "Failed counts-failures"
       ],
-      "exit": "nonzero",
-      "finding": "A02",
-      "issue": 54,
-      "outcome": "wrong-result"
+      "exit": 1,
+      "outcome": "pass"
     },
     "a04-dependency-defines": {
       "command": [
         "run"
       ],
       "exit": 0,
-      "finding": "A04",
-      "issue": 56,
-      "outcome": "wrong-result"
+      "outcome": "pass"
     },
     "probe-i01-import-cycle": {
       "steps": [
@@ -1715,9 +1711,8 @@
       "outcome": "bad-diagnostic"
     },
     "a06-polymorphic-recursion-hang": {
-      "finding": "A06",
-      "issue": 57,
-      "outcome": "hang",
+      "code": "GTI-S2105",
+      "outcome": "rejected",
       "timeout": 20
     },
     "a07-unknown-function-attribute": {
@@ -1794,9 +1789,8 @@
       "outcome": "backend"
     },
     "a17-narrow-negative-array-literal": {
-      "finding": "A17",
       "issue": 63,
-      "outcome": "backend"
+      "outcome": "pass"
     },
     "a18-function-item-pack-invoke": {
       "code": "GTI-S2090",
@@ -1980,27 +1974,25 @@
     "a41-storage-emplace-fixed-array-silent": {
       "finding": "A41",
       "issue": 84,
-      "outcome": "silent"
+      "outcome": "ice"
     },
     "a41-vector-emplace-back-fixed-array-silent": {
       "finding": "A41",
       "issue": 84,
-      "outcome": "silent"
+      "outcome": "ice"
     },
     "a42-c-abi-record-array-from-named-values": {
-      "finding": "A42",
       "issue": 85,
-      "outcome": "ice"
+      "native_sources": ["native/passive_records.c"],
+      "outcome": "pass"
     },
     "a42-struct-array-from-named-values": {
-      "finding": "A42",
       "issue": 85,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a42-struct-array-two-named-values": {
-      "finding": "A42",
       "issue": 85,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a43-callback-argument-unknown-type": {
       "finding": "A43",
@@ -2089,14 +2081,12 @@
       "outcome": "backend"
     },
     "a52-struct-with-union-array": {
-      "finding": "A52",
       "issue": 93,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a52-union-array": {
-      "finding": "A52",
       "issue": 93,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a53-operator-temporary-ref-diagnostic": {
       "code": "GTI-S2022",
@@ -2108,16 +2098,10 @@
       "outcome": "bad-diagnostic"
     },
     "a54-alias-constrained-generic-class-argument": {
-      "code": "GTI-S2029",
-      "finding": "A54",
-      "issue": 95,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a54-alias-constrained-generic-user-class": {
-      "code": "GTI-S2029",
-      "finding": "A54",
-      "issue": 95,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a55-ctor-pack-move-only-field-init": {
       "finding": "A55",
@@ -2140,14 +2124,10 @@
       "outcome": "ice"
     },
     "a57-generic-member-field-range-for-silent": {
-      "finding": "A57",
-      "issue": 98,
-      "outcome": "silent"
+      "outcome": "pass"
     },
     "a57-generic-nondependent-range-for-silent": {
-      "finding": "A57",
-      "issue": 98,
-      "outcome": "silent"
+      "outcome": "pass"
     },
     "a58-map-unique-ptr-value-deref": {
       "finding": "A58",
@@ -2238,22 +2218,19 @@
       "outcome": "pass"
     },
     "f7-declaration-only-weak-ptr": {
-      "finding": "F7",
-      "issue": 51,
-      "outcome": "link"
+      "code": "GTI-S2106",
+      "outcome": "rejected"
     },
     "f7-json-decode-without-codec": {
-      "finding": "F7",
-      "issue": 51,
-      "outcome": "ice"
+      "code": "GTI-S2106",
+      "outcome": "rejected"
     },
     "f7-scaffold-operation-link-error": {
       "outcome": "pass"
     },
     "f7-undefined-user-function": {
-      "finding": "F7",
-      "issue": 51,
-      "outcome": "link"
+      "code": "GTI-S2106",
+      "outcome": "rejected"
     },
     "f8-view-from-returned-owner": {
       "outcome": "pass"

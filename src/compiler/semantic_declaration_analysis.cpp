@@ -793,6 +793,9 @@ auto SemanticVisitor::Impl::registerTypeAliases(const StmtList &statements,
 }
 
 auto SemanticVisitor::Impl::resolveTypeAliases() -> void {
+  // Alias identities are needed by member/signature registration. Structural
+  // constraints, however, require the completed member/lifecycle inventory.
+  deferringTypeAliasConstraints = true;
   for (RegisteredTypeAlias &alias : typeAliases) {
     if (alias.ownerDeclaration == nullptr) {
       continue;
@@ -838,6 +841,34 @@ auto SemanticVisitor::Impl::resolveTypeAliases() -> void {
                        alias.compilerPrivate);
     }
   }
+  deferringTypeAliasConstraints = false;
+}
+
+auto SemanticVisitor::Impl::validateTypeAliasConstraints() -> void {
+  const SourceUnitId enclosingUnit = currentSourceUnit;
+  const auto enclosingNamespace = currentNamespace;
+  const auto enclosingClass = currentClass;
+  for (const RegisteredTypeAlias &alias : typeAliases) {
+    if (alias.resolution != TypeAliasResolution::Resolved) {
+      continue;
+    }
+    currentSourceUnit = alias.sourceUnit;
+    currentNamespace = alias.lookupScope;
+    currentClass = alias.ownerClass == 0
+                       ? std::nullopt
+                       : std::optional<ClassId>(alias.ownerClass);
+    if (currentClass) {
+      beginTypeParameterScope(classInfo(*currentClass).genericParameters);
+    }
+    validateType(alias.declaration->target(),
+                 alias.declaration->target().isNativeFunction());
+    if (currentClass) {
+      endTypeParameterScope();
+    }
+  }
+  currentSourceUnit = enclosingUnit;
+  currentNamespace = enclosingNamespace;
+  currentClass = enclosingClass;
 }
 
 auto SemanticVisitor::Impl::registerConcepts(const StmtList &statements,

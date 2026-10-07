@@ -794,6 +794,15 @@ add_test(NAME abstract_generic_failure_contract COMMAND gti_abstract_generic_fai
 add_executable(gti_retained_generic_lifecycle_tests retained_generic_lifecycle_tests.cpp)
 target_link_libraries(gti_retained_generic_lifecycle_tests PRIVATE gti_cpp_backend)
 add_test(NAME retained_generic_lifecycle COMMAND gti_retained_generic_lifecycle_tests)
+add_executable(gti_generic_discovery_tests generic_discovery_tests.cpp)
+target_link_libraries(gti_generic_discovery_tests PRIVATE gti_compiler)
+add_test(NAME generic_discovery COMMAND gti_generic_discovery_tests)
+set_tests_properties(generic_discovery PROPERTIES TIMEOUT 60)
+add_test(NAME generic_discovery_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/generic_discovery_runtime_test.py"
+          "$<TARGET_FILE:gti>")
+set_tests_properties(generic_discovery_runtime PROPERTIES TIMEOUT 240)
 
 add_executable(gti_owned_pointee_projection_tests owned_pointee_projection_tests.cpp)
 target_link_libraries(gti_owned_pointee_projection_tests PRIVATE gti_cpp_backend)
@@ -808,6 +817,19 @@ add_test(NAME optional_empty_prefix COMMAND gti_optional_empty_prefix_tests)
 add_executable(gti_field_array_empty_state_tests field_array_empty_state_tests.cpp)
 target_link_libraries(gti_field_array_empty_state_tests PRIVATE gti_cpp_backend)
 add_test(NAME field_array_empty_state COMMAND gti_field_array_empty_state_tests)
+add_executable(gti_passive_fixed_array_tests passive_fixed_array_tests.cpp)
+target_link_libraries(gti_passive_fixed_array_tests PRIVATE gti_cpp_backend)
+add_test(NAME passive_fixed_array_values COMMAND gti_passive_fixed_array_tests)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME passive_fixed_array_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/passive_fixed_array_runtime_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(passive_fixed_array_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME coverage_native_fixture_policy
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/coverage/native_fixture_policy_test.py")
+endif()
 add_executable(gti_expected_payload_pending_cleanup_tests
                expected_payload_pending_cleanup_tests.cpp)
 target_link_libraries(gti_expected_payload_pending_cleanup_tests PRIVATE gti_cpp_backend)
@@ -2328,6 +2350,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(hosted_constructor_identity_runtime PROPERTIES TIMEOUT 600)
   add_test(
+    NAME hosted_exit_status_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/hosted_exit_status_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(hosted_exit_status_runtime PROPERTIES TIMEOUT 480)
+  add_test(
     NAME discarded_nominal_result_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/discarded_nominal_result_test.py"
@@ -2551,6 +2580,13 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_lsp>"
     )
     set_tests_properties(executable_entry_cli_lsp PROPERTIES TIMEOUT 180)
+    add_test(
+      NAME missing_definition_cli_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/missing_definition_test.py"
+              "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(missing_definition_cli_lsp PROPERTIES TIMEOUT 180)
   endif()
     add_test(
       NAME owner_tied_by_value_argument_runtime

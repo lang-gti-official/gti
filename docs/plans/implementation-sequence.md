@@ -33,6 +33,35 @@ files under `docs/plans/`. The documents under
 [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
+## Active: 2026-10-07 Issue-Closure Campaign
+
+**Status: partially integrated; final combined verification remains pending.**
+The initial inventory is the 50 open issues #51, #53–#93 (excluding #94),
+#95–#100, #103 and #105. Issue #103 additionally requires resolving every
+one of F10, F14, F16, F17, S01, S02, S04, S06, S09, S12 and S15; closing or
+splitting the umbrella does not satisfy those outcomes.
+
+Initial non-overlapping batches:
+
+| Owner | Issues | Integration state |
+| --- | --- | --- |
+| Aggregate-array worker | #63, #85, #93 | PR #106; focused checks passed, reconciliation in progress |
+| Generic-instance worker | #57, #95, #98 | merged PR #107 at `5f5f370c`; five focused gates passed, issues closed |
+| Main (no subagents) | #58, #68, #69 | `codex/diagnostics-58-68-69`; claimed with direct owner authorization |
+| General-lifetime owner, on existing PR #94 | #84 | focused eight-mode checks passed; #70 replay still fails, remains unclaimed |
+| Payload-enum owner | #88, #89, #90; #103/S15 overlap | offered; claim pending |
+| Coordinator, driver/entry closure | #54, #56, #51 | merged PR #108 at `1e3aa289`; eight focused gates passed, issues closed |
+
+Unassigned issues remain open. Every completed batch must retain source-located
+negative coverage and actual runtime/cleanup evidence where relevant, using a
+host-optimized compiler. Strict audit expectations change only when the actual
+finding is fixed. Publish checkpoints and PRs, reconcile each against canonical
+main, and integrate in coordinator order through required PR checks. Full
+verification is deferred until the combined campaign, rather than repeated
+per issue; failed final gates require fixes, not weaker expectations. Completion
+requires all original issue outcomes resolved and closed, all integration on
+primary local main, and final broad evidence against that combined tree.
+
 ## Completed: Unsafe Declaration Keyword Migration
 
 **Status: implemented and locally validated for the 0.374.0 candidate.** Low-level APIs express

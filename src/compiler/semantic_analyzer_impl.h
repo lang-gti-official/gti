@@ -82,10 +82,12 @@ public:
   explicit Impl(TargetInfo target, const SourceGraph *sourceGraph,
                 bool toolingOccurrences, FrontendWorkMetrics *workMetrics,
                 const SourceManager *sources,
-                RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off)
+                RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
+                bool requireFunctionDefinitions = false)
       : target(std::move(target)), sourceGraph(sourceGraph), sources(sources),
         toolingOccurrences(toolingOccurrences), workMetrics(workMetrics),
-        rawPointerAudit(rawPointerAudit) {
+        rawPointerAudit(rawPointerAudit),
+        requireFunctionDefinitions(requireFunctionDefinitions) {
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
   }
 
@@ -2251,6 +2253,9 @@ private:
                      std::vector<CallableArgumentBoundary> callableArguments,
                      CallReceiverMode receiverMode);
 
+  void requireFunctionDefinition(const CallableCandidate &function,
+                                 const Token &location);
+
   [[nodiscard]] static SemanticType
   callExpressionType(const SemanticType &returnType);
 
@@ -2879,6 +2884,7 @@ private:
                          const ClassDecl *owner, AccessModifier access);
 
   void resolveTypeAliases();
+  void validateTypeAliasConstraints();
 
   void registerConcepts(const StmtList &statements,
                         std::vector<std::string> scope);
@@ -4311,6 +4317,7 @@ private:
     bool currentStaticMemberFunction = false;
     bool allowPackTypeReference = false;
     bool resolvingGenericTypeDefault = false;
+    bool deferringTypeAliasConstraints = false;
     LoanFlowState loanFlow;
     bool instanceClassContextActive = false;
     bool instanceAnalysisActive = false;
@@ -4479,6 +4486,8 @@ private:
   bool &allowPackTypeReference = requestSession.allowPackTypeReference;
   bool &resolvingGenericTypeDefault =
       requestSession.resolvingGenericTypeDefault;
+  bool &deferringTypeAliasConstraints =
+      requestSession.deferringTypeAliasConstraints;
   LoanFlowState &loanFlow = requestSession.loanFlow;
   std::vector<ValueControlFlowContext> &valueControlFlow =
       requestSession.valueFlow.controlFlow;
@@ -4535,6 +4544,9 @@ private:
   bool toolingOccurrences = true;
   FrontendWorkMetrics *workMetrics = nullptr;
   RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
+  // Fragment analysis may resolve declarations without publishing executable
+  // code. Closed executable/library requests need every actual GTI call target.
+  bool requireFunctionDefinitions = false;
 };
 
 } // namespace lang
