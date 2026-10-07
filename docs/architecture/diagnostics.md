@@ -9,6 +9,15 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
+`GTI-S2106` rejects a selected ordinary GTI call without a source definition
+in a closed executable/library request, before native code generation. The
+call token is primary and its bodyless declaration is related. Semantic
+resolution preserves the selected signature for recovery; it does not guess
+a replacement body or offer an automatic foreign-linkage edit. Pure virtual
+contracts, registered runtime bindings and compiler intrinsics retain their
+separate definition policies. Fragment analysis can still resolve declarations
+without claiming executable closure.
+
 ## Terminal colour
 
 The CLI accepts `--color=auto|always|never` (also `--color <mode>`), before a

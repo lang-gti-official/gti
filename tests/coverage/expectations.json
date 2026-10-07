@@ -327,19 +327,15 @@
       "contains": [
         "Failed counts-failures"
       ],
-      "exit": "nonzero",
-      "finding": "A02",
-      "issue": 54,
-      "outcome": "wrong-result"
+      "exit": 1,
+      "outcome": "pass"
     },
     "a04-dependency-defines": {
       "command": [
         "run"
       ],
       "exit": 0,
-      "finding": "A04",
-      "issue": 56,
-      "outcome": "wrong-result"
+      "outcome": "pass"
     },
     "probe-i01-import-cycle": {
       "steps": [
@@ -2233,22 +2229,19 @@
       "outcome": "pass"
     },
     "f7-declaration-only-weak-ptr": {
-      "finding": "F7",
-      "issue": 51,
-      "outcome": "link"
+      "code": "GTI-S2106",
+      "outcome": "rejected"
     },
     "f7-json-decode-without-codec": {
-      "finding": "F7",
-      "issue": 51,
-      "outcome": "ice"
+      "code": "GTI-S2106",
+      "outcome": "rejected"
     },
     "f7-scaffold-operation-link-error": {
       "outcome": "pass"
     },
     "f7-undefined-user-function": {
-      "finding": "F7",
-      "issue": 51,
-      "outcome": "link"
+      "code": "GTI-S2106",
+      "outcome": "rejected"
     },
     "f8-view-from-returned-owner": {
       "outcome": "pass"

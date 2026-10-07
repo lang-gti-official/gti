@@ -533,6 +533,93 @@ void testConfigurationFlagManifest() {
          "identifiers");
 }
 
+void testDependencyConfigurationFlags() {
+  TemporaryDirectory temporary;
+  const auto root = temporary.root();
+  const auto app = root / "app";
+  const std::string prefix =
+      "manifest-version = 1\n[package]\nversion = \"1.0.0\"\nname = ";
+  const auto package = [&](std::string_view name, std::string_view tail) {
+    return prefix + "\"" + std::string(name) + "\"\n" + std::string(tail);
+  };
+  expect(writeFile(root / "src/main.gti", "int main() { return 0; }\n") &&
+             writeFile(app / "src/main.gti", "int main() { return 0; }\n") &&
+             writeFile(root / "other/src/main.gti",
+                       "int main() { return 0; }\n") &&
+             writeFile(root / "left/src/api.gti", "namespace left {}\n") &&
+             writeFile(root / "right/src/api.gti", "namespace right {}\n") &&
+             writeFile(root / "leaf/src/api.gti", "namespace leaf {}\n"),
+         "dependency configuration sources should be writable");
+  expect(
+      writeFile(
+          root / "gti.toml",
+          package(
+              "workspace_root",
+              "[build]\ndefines = [\"ROOT_ONLY\"]\n"
+              "[targets.root]\nkind = \"executable\"\nroot = \"src/main.gti\"\n"
+              "[workspace]\nmembers = [\"app\", \"other\"]\n")) &&
+          writeFile(app / "gti.toml",
+                    package("app",
+                            "[build]\ndefines = [\"APP\", \"COMMON\"]\n"
+                            "[dependencies]\nleft = { path = \"../left\" }\n"
+                            "right = { path = \"../right\" }\n"
+                            "[targets.app]\nkind = \"executable\"\nroot = "
+                            "\"src/main.gti\"\n")) &&
+          writeFile(root / "other/gti.toml",
+                    package("other",
+                            "[build]\ndefines = [\"UNRELATED\"]\n"
+                            "[targets.other]\nkind = \"executable\"\nroot = "
+                            "\"src/main.gti\"\n")) &&
+          writeFile(
+              root / "left/gti.toml",
+              package("left",
+                      "[build]\ndefines = [\"LEFT\", \"COMMON\"]\n"
+                      "[dependencies]\nleaf = { path = \"../leaf\" }\n")) &&
+          writeFile(
+              root / "right/gti.toml",
+              package("right",
+                      "[build]\ndefines = [\"RIGHT\"]\n"
+                      "[dependencies]\nleaf = { path = \"../leaf\" }\n")) &&
+          writeFile(
+              root / "leaf/gti.toml",
+              package("leaf", "[build]\ndefines = [\"LEAF\", \"COMMON\"]\n")),
+      "dependency configuration manifests should be writable");
+  const auto facts = lang::driver::resolveProjectFacts(app);
+  const lang::ConfigurationFlags expected{"APP", "COMMON", "LEAF", "LEFT",
+                                          "RIGHT"};
+  expect(facts.succeeded() && facts.facts &&
+             facts.facts->configurationFlags() == expected,
+         "configuration flags must include transitive/diamond dependencies "
+         "once, without workspace-root or unrelated-member flags");
+  lang::driver::ProjectBuildOverrides overrides;
+  overrides.configurationFlags = {"CLI", "COMMON"};
+  const auto build =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          app, std::nullopt, "dev", lang::TargetInfo::host(), overrides));
+  expect(build.succeeded() && build.plan &&
+             build.plan->configurationFlags() ==
+                 lang::ConfigurationFlags(
+                     {"APP", "CLI", "COMMON", "LEAF", "LEFT", "RIGHT"}),
+         "build configuration must share dependency facts and merge CLI flags");
+  const auto rootFacts =
+      lang::driver::resolveProjectFacts(root, "workspace_root");
+  expect(rootFacts.succeeded() && rootFacts.facts &&
+             rootFacts.facts->configurationFlags() ==
+                 lang::ConfigurationFlags({"ROOT_ONLY"}),
+         "selecting another workspace package must recompute its own closure");
+  expect(writeFile(
+             root / "leaf/gti.toml",
+             package("leaf", "[build]\ndefines = [\"UPDATED\", \"COMMON\"]\n")),
+         "dependency configuration mutation should be writable");
+  const auto changed =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          app, std::nullopt, "dev", lang::TargetInfo::host(), overrides));
+  expect(changed.succeeded() && changed.plan && build.plan &&
+             changed.plan->projectModelIdentity() !=
+                 build.plan->projectModelIdentity(),
+         "changing a dependency's flag set must invalidate build identity");
+}
+
 void testTargetSelectionDiagnostics() {
   TemporaryDirectory temporary;
   expect(writeFile(temporary.root() / "src/alpha.gti",
@@ -3309,6 +3396,7 @@ int main(int argc, char *argv[]) {
   testDiscoveryParsingAndResolution();
   testManifestDiagnostics();
   testConfigurationFlagManifest();
+  testDependencyConfigurationFlags();
   testTargetSelectionDiagnostics();
   testTestTargetResolution();
   testNativeManifestResolution();
