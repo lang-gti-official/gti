@@ -1,0 +1,12 @@
+// INVALID: a mutable reference into an optional payload is used after the
+// optional is reset.
+#include <std/memory>
+#include <std/optional>
+
+int main() {
+  mut std::optional<std::unique_ptr<int>> slot{std::make_unique<int>(1)};
+  mut std::unique_ptr<int>& owner = slot.value();
+  slot.reset();
+  owner = std::make_unique<int>(2);
+  return 0;
+}

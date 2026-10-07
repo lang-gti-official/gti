@@ -21,14 +21,18 @@ Every program is compiled with the GTI compiler under test and classified:
 
 `expectations.json` states the expected outcome of each program. Corpus
 programs default to `pass`; reproducers, rejections and projects must be
-listed. A project is a directory under `projects/` with a `gti.toml`; it is
-copied to the output directory and its `command` (for example `["test"]`) is
-run there, comparing the process `exit` (an integer or "nonzero") and the
-strings in `contains`. Any entry may list `forbid` strings that must not appear
+listed. A project is a directory under `projects/`; it is copied to the output
+directory and each of its `steps` runs there in order. A step gives a
+`command` (for example `["test"]`), an optional `cwd` inside the copy, and
+compares the process `exit` (an integer or "nonzero"), the strings in
+`contains`, and an optional `pattern` regular expression. A single step may be
+written directly in the entry. Any entry may list `forbid` strings that must not appear
 in the compiler output (for example a misleading help text), `at_most` limits
 on how often a text may appear (for example a duplicated error), and a compile
 `timeout` in seconds (for example for a known hang), and extra compiler
-`flags`.
+`flags`. A program may instead list `cases`, each running the built program
+with `args` and comparing its `exit`, exact `stdout`, and a `stderr` regular
+expression; this checks defined runtime failure reports and cleanup order.
 
 An entry without `finding` describes correct behavior. An entry with
 `finding` is a known, unresolved defect: it records the outcome the defect
@@ -54,7 +58,7 @@ GROUPS = {
     "programs": (ROOT, "c*.gti"),
     "reproducers": (ROOT / "reproducers", "*.gti"),
     "rejections": (ROOT / "rejections", "*.gti"),
-    "projects": (ROOT / "projects", "*/gti.toml"),
+    "projects": (ROOT / "projects", "*"),
 }
 OUTCOMES = {"pass", "runtime", "ice", "backend", "link", "silent", "hang",
             "crash", "bad-location", "bad-diagnostic", "rejected", "wrong-result",
@@ -99,29 +103,37 @@ def classify_determinism(gti: Path, source: Path, output: Path, expectation: dic
 
 
 def classify_project(gti: Path, project: Path, output: Path, expectation: dict) -> tuple[str, str]:
-    """Run one project command in a scratch copy and compare status and output."""
+    """Run a project's steps in a scratch copy and compare status and output."""
     if output.exists():
         shutil.rmtree(output)
     shutil.copytree(project, output, ignore=shutil.ignore_patterns("build", "gti.lock"))
-    command = [str(gti), *expectation["command"], *COMMON_FLAGS]
-    try:
-        ran = subprocess.run(command, cwd=output, capture_output=True, text=True,
-                             timeout=COMPILE_SECONDS + RUN_SECONDS)
-    except subprocess.TimeoutExpired:
-        return "hang", "project command exceeded its time limit"
-    text = ran.stdout + ran.stderr
-    (output / "gate.log").write_text(text, encoding="utf-8")
-    if "GTI-B0001" in text:
-        return "ice", " ".join(sorted(set(CODE.findall(text))))
-    problem = diagnostic_problem(text, expectation)
-    if problem:
-        return "bad-diagnostic", problem
-    expected_exit = expectation.get("exit", 0)
-    status_ok = (ran.returncode != 0) if expected_exit == "nonzero" else ran.returncode == expected_exit
-    missing = [item for item in expectation.get("contains", []) if item not in text]
-    if status_ok and not missing:
-        return "pass", ""
-    return "wrong-result", f"exit {ran.returncode}" + (f", missing {missing}" if missing else "")
+    steps = expectation.get("steps", [expectation])
+    log = []
+    for index, step in enumerate(steps):
+        subcommand, *rest = step["command"]
+        # Presentation flags must precede any "--" program-argument separator.
+        command = [str(gti), subcommand, *COMMON_FLAGS, *rest]
+        try:
+            ran = subprocess.run(command, cwd=output / step.get("cwd", "."), capture_output=True,
+                                 text=True, timeout=COMPILE_SECONDS + RUN_SECONDS)
+        except subprocess.TimeoutExpired:
+            return "hang", f"step {index} exceeded its time limit"
+        text = ran.stdout + ran.stderr
+        log.append(f"$ {' '.join(step['command'])}\n{text}")
+        (output / "gate.log").write_text("\n".join(log), encoding="utf-8")
+        if "GTI-B0001" in text:
+            return "ice", f"step {index}: " + " ".join(sorted(set(CODE.findall(text))))
+        problem = diagnostic_problem(text, step)
+        if problem:
+            return "bad-diagnostic", f"step {index}: {problem}"
+        expected_exit = step.get("exit", 0)
+        status_ok = (ran.returncode != 0) if expected_exit == "nonzero" else ran.returncode == expected_exit
+        missing = [item for item in step.get("contains", []) if item not in text]
+        if "pattern" in step and not re.search(step["pattern"], text, re.MULTILINE):
+            missing.append(step["pattern"])
+        if not status_ok or missing:
+            return "wrong-result", f"step {index}: exit {ran.returncode}" + (f", missing {missing}" if missing else "")
+    return "pass", ""
 
 
 def classify(gti: Path, source: Path, output: Path, expectation: dict) -> tuple[str, str]:
@@ -131,7 +143,7 @@ def classify(gti: Path, source: Path, output: Path, expectation: dict) -> tuple[
     expected_exit = expectation.get("exit", 0)
     compile_seconds = expectation.get("timeout", COMPILE_SECONDS)
     command = [str(gti)]
-    if "@coverage-profile: concurrent" in source.read_text(encoding="utf-8"):
+    if b"@coverage-profile: concurrent" in source.read_bytes():
         command += ["--execution-profile", "concurrent"]
     command += [str(source), "-o", str(output), *COMMON_FLAGS,
                 *expectation.get("flags", [])]
@@ -147,14 +159,20 @@ def classify(gti: Path, source: Path, output: Path, expectation: dict) -> tuple[
     if problem:
         return "bad-diagnostic", " ".join(codes + [problem])
     if compiled.returncode == 0:
-        try:
-            ran = subprocess.run([str(output)], capture_output=True, text=True,
-                                 timeout=RUN_SECONDS)
-        except subprocess.TimeoutExpired:
-            return "hang", f"program exceeded {RUN_SECONDS}s"
-        if ran.returncode == expected_exit:
-            return "pass", ""
-        return "runtime", f"exit {ran.returncode}, expected {expected_exit}"
+        cases = expectation.get("cases", [{"exit": expected_exit}])
+        for index, case in enumerate(cases):
+            try:
+                ran = subprocess.run([str(output), *case.get("args", [])], capture_output=True,
+                                     text=True, timeout=RUN_SECONDS)
+            except subprocess.TimeoutExpired:
+                return "hang", f"case {index} exceeded {RUN_SECONDS}s"
+            if ran.returncode != case.get("exit", 0):
+                return "runtime", f"case {index}: exit {ran.returncode}, expected {case.get('exit', 0)}"
+            if "stdout" in case and ran.stdout != case["stdout"]:
+                return "runtime", f"case {index}: stdout {ran.stdout!r}"
+            if "stderr" in case and not re.fullmatch(case["stderr"], ran.stderr, re.DOTALL):
+                return "runtime", f"case {index}: stderr {ran.stderr!r}"
+        return "pass", ""
     if compiled.returncode < 0:
         return "crash", f"compiler signal {-compiled.returncode}"
     if "GTI-B0001" in codes:
@@ -206,7 +224,8 @@ def main() -> int:
         listed = dict(expectations.get(group, {}))
         for source in sorted(directory.glob(pattern)):
             if group == "projects":
-                source = source.parent
+                if not source.is_dir():
+                    continue
                 name = source.name
             else:
                 name = source.stem

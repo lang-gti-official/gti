@@ -1,0 +1,37 @@
+// INVALID: a type lacking the required zero-argument read-only member is used
+// with a constrained function and a structurally constrained generic class.
+concept shaped<T> = requires(T& value) { { value.area() } -> int32_t; };
+
+struct Square {
+  int32_t edge = 2;
+  int32_t area() { return this.edge * this.edge; }
+};
+
+struct Mutating {
+  mut int32_t n = 0;
+  int32_t area() mut { this.n++; return this.n; }
+};
+
+struct WrongResult {
+  int64_t area() { return 1; }
+};
+
+int32_t area_of<T>(T& value) requires shaped<T> { return value.area(); }
+
+class Frame<shaped T> {
+  T& inner;
+public:
+  Frame(T& inner) : inner(inner) {}
+  int32_t size() { return this.inner.area(); }
+};
+
+int main() {
+  Square ok{};
+  Mutating bad_receiver{};
+  WrongResult bad_result{};
+  int32_t a = area_of(ok);
+  int32_t b = area_of(bad_receiver);
+  int32_t c = area_of(bad_result);
+  Frame<WrongResult> f{bad_result};
+  return a + b + c;
+}

@@ -1,0 +1,21 @@
+#include "alpha.gti"
+#include "beta.gti"
+
+static int bump() { return 1000; }
+
+int main() {
+  if (alpha_bump() != 1 || alpha_bump() != 2) {
+    return 1;
+  }
+  if (beta_bump() != 20 || beta_bump() != 30) {
+    return 2;
+  }
+  if (alpha_hits() != 101 || beta_hits() != 202 || alpha_hits() != 102) {
+    return 3;
+  }
+  if (bump() != 1000) {
+    return 4;
+  }
+  std::println("p17 internal linkage ok");
+  return 0;
+}

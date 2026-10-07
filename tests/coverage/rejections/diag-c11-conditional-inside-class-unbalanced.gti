@@ -1,0 +1,13 @@
+#define WIDE
+class Sample {
+#ifdef WIDE
+  mut int64_t value = 0;
+public:
+  Sample() {}
+}; //!ERR
+#endif
+
+int main() { //!ERR
+  Sample s{};
+  return 0;
+}

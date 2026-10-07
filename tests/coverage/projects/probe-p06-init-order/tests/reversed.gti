@@ -1,0 +1,8 @@
+#include "../src/b.gti"
+#include "../src/c.gti"
+#include "../src/log.gti"
+
+int main() {
+  // b's dependency a first, then b (7, 2), then c (3, 4, 5).
+  return trace::sequence == 172345 ? 0 : 1;
+}

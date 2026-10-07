@@ -1,0 +1,44 @@
+// Valid (failure path): plain resource_vector growth on an exhausted resource
+// panics. Before the report, live elements must be destroyed in reverse order,
+// THEN their region returned to the resource (elements before release), then
+// the remaining locals. The consumed push_back argument is dropped first.
+#include <std/resource_vector>
+#include <std/resource>
+#include <std/memory>
+#include <std/string>
+#include "support/bump.gti"
+
+class Loud {
+  int32_t id;
+public:
+  Loud(int32_t id) : id(id) {}
+  Loud(Loud& other) = delete;
+  Loud(Loud&& other) = default;
+  ~Loud() {
+    std::print("drop ");
+    std::println(this.id);
+  }
+};
+
+void grow(std::resource_ref<probe::Bump> resource) {
+  Loud before{100};
+  mut std::resource_vector<Loud, probe::Bump> items{resource};
+  items.emplace_back(1);
+  items.emplace_back(2);
+  items.emplace_back(3);
+  items.emplace_back(4);
+  std::println("full");
+  items.push_back(Loud(5));
+  std::println("unreachable");
+}
+
+int main() {
+  probe::Bump resource{1, true};
+  Loud outer{200};
+  unsafe {
+    // One aligned inline region, never reset or moved while bound.
+    std::resource_ref<probe::Bump> bound = std::bind_resource(resource);
+    grow(bound);
+  }
+  return 1;
+}

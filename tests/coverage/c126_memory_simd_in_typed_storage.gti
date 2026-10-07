@@ -1,0 +1,82 @@
+// Valid: SIMD values as elements of typed storage, pool and arena, moved by
+// relocate_to between allocations, and stored as fields of an owning class
+// whose objects live at fixed slots. Lane math must be unchanged by
+// relocation and by allocation-owner movement.
+#include <std/simd>
+#include <std/memory>
+#include <std/string>
+
+class Body {
+  std::string name;
+  mut std::simd<float, 4> position;
+  std::simd<float, 4> velocity;
+public:
+  Body(std::string name, float speed)
+      : name(std::move(name)), position(std::simd<float, 4>()), velocity(std::simd<float, 4>(speed)) {}
+  Body(Body& other) = delete;
+  Body(Body&& other) = default;
+  void step(std::simd<float, 4>& dt) mut {
+    std::simd<float, 4> delta = this.velocity * dt;
+    this.position += delta;
+  }
+  float travelled() { return this.position.reduce(); }
+};
+
+int main() {
+  // 1. pool of bodies stepped in place.
+  mut auto made = std::try_make_pool<Body>(std::size_t(3));
+  if (!made) { return 1; }
+  mut std::pool<Body> bodies = std::move(made).value();
+  auto a = bodies.try_insert(Body(std::string("a"), float(1.0)));
+  auto b = bodies.try_insert(Body(std::string("b"), float(2.0)));
+  if (!a || !b) { return 2; }
+  std::simd<float, 4> dt{float(0.5)};
+  for (mut int32_t i = 0; i < 4; i++) {
+    bodies.get_mut(a.value()).step(dt);
+    bodies.get_mut(b.value()).step(dt);
+  }
+  if (bodies.get(a.value()).travelled() != float(8.0)) { return 3; }
+  if (bodies.get(b.value()).travelled() != float(16.0)) { return 4; }
+  std::pool<Body> moved_pool = std::move(bodies);
+  if (moved_pool.get(b.value()).travelled() != float(16.0)) { return 5; }
+
+  // 2. Raw lane vectors in storage, relocated to an over-aligned allocation.
+  std::allocator heap{};
+  mut auto first = heap.try_storage<std::simd<double, 3>>(std::size_t(2));
+  mut auto second = heap.try_storage<std::simd<double, 3>>(std::size_t(2), std::alignment(std::size_t(64)));
+  if (!first || !second) { return 6; }
+  mut std::storage<std::simd<double, 3>> lanes = std::move(first).value();
+  mut std::storage<std::simd<double, 3>> wide = std::move(second).value();
+  double seed[3] = {1.0, -0.0, 3.0};
+  // emplace(index, seed) with the fixed array forwarded through the pack is a
+  // silent compile failure (finding; red/s7.gti), so construct a value first.
+  std::simd<double, 3> initial{seed};
+  lanes.construct(std::size_t(0), initial);
+  lanes.emplace(std::size_t(1), double(2.0));
+  lanes.relocate_to(wide, std::size_t(2));
+  if (lanes.initialized(std::size_t(0))) { return 7; }
+  std::simd<double, 3> sum = wide.get(std::size_t(0)) + wide.get(std::size_t(1));
+  if (sum.reduce() != double(10.0)) { return 8; }
+  std::simd<double, 3> one{double(1.0)};
+  std::simd<double, 3> inverse = one / wide.get(std::size_t(0));
+  // 1 / -0.0 keeps its sign through storage and relocation.
+  if (inverse[std::size_t(1)] >= double(0.0)) { return 9; }
+  mut std::simd<double, 3>& edit = wide.get_mut(std::size_t(1));
+  edit.set(std::size_t(2), double(-2.0));
+  std::simd<double, 3> zero{};
+  std::simd_mask<3> negative = wide.get(std::size_t(1)).less(zero);
+  if (negative.count() != std::size_t(1)) { return 10; }
+
+  // 3. Masks in an arena.
+  mut auto made_arena = std::try_make_arena<std::simd_mask<4>>(std::size_t(2));
+  if (!made_arena) { return 11; }
+  mut std::arena<std::simd_mask<4>> masks = std::move(made_arena).value();
+  std::simd<float, 4> threshold{float(10.0)};
+  std::simd<float, 4> sample{float(12.0)};
+  auto slot = masks.try_insert(sample.greater(threshold));
+  if (!slot || !masks.get(slot.value()).all_of()) { return 12; }
+  std::layout simd_layout = std::layout_of<std::simd<float, 8>>();
+  if (simd_layout.bytes < std::size_t(32)) { return 13; }
+  std::println("simd storage ok");
+  return 0;
+}

@@ -1,0 +1,7 @@
+#include "../src/inventory.gti"
+
+int main() {
+  inv::Inventory items{};
+  // Out-of-bounds read: a defined runtime failure (status 70).
+  return items.at(uint64_t(4));
+}

@@ -1,0 +1,9 @@
+std::string_view label() { return "x"; }
+
+int compute() {
+  return label(); //!ERR
+}
+
+int main() {
+  return compute();
+}

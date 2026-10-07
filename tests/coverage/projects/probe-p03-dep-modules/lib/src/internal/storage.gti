@@ -1,0 +1,4 @@
+// Legacy include used privately by an interface.
+namespace lib::internal {
+  int stored_twice(int value) { return value * 2; }
+}

@@ -1,0 +1,6 @@
+import frontend;
+#define MAIN_LOCAL
+// shared.gti was loaded inside the modules without MAIN_LOCAL.
+#include "shared.gti"
+
+int main() { return engine::frontend_speed() - 102; }

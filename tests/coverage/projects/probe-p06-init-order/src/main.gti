@@ -1,0 +1,23 @@
+#include "c.gti"
+#include "b.gti"
+#include "log.gti"
+#include "a.gti"
+
+int main_value = trace::record(6);
+
+int main() {
+  std::println("sequence");
+  if (trace::sequence != 1345726) {
+    return 1;
+  }
+  if (a_value != 1 || b_value != 2 || c_value != 3 || main_value != 6) {
+    return 2;
+  }
+  if (Registry::first != 4 || c_after != 6 || b_copy != 41) {
+    return 3;
+  }
+  if (b_hidden_value() != 7 || Registry::count() != 0) {
+    return 4;
+  }
+  return 0;
+}

@@ -1,0 +1,7 @@
+#include <mid/stats>
+
+int main() {
+  // Naming the transitive type is not allowed; using auto is.
+  base::core::Box box = mid::stats::boxed(3);
+  return box.value - 3;
+}

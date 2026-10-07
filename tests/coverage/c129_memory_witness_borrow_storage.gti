@@ -1,0 +1,61 @@
+// Valid: raw addresses of typed-storage elements re-enter checked code through
+// owner-witness borrowing (std::assume_ref / assume_mut and a user-defined
+// [[borrowed_from]] helper). The witness is the storage owner; after the
+// borrowed reference's last use the owner can be mutated again. Erased
+// addresses survive a round trip and compare equal to the slot address.
+#include <std/memory>
+#include <std/string>
+
+class Account {
+  std::string owner;
+  mut int64_t balance;
+public:
+  Account(std::string owner, int64_t balance) : owner(std::move(owner)), balance(balance) {}
+  Account(Account& other) = delete;
+  Account(Account&& other) = delete;
+  int64_t funds() { return this.balance; }
+  void deposit(int64_t amount) mut { this.balance += amount; }
+  std::string_view name() { return this.owner.view(); }
+};
+
+// Caller: address must name a live Account owned by `slots`.
+[[borrowed_from(slots)]]
+unsafe Account& account_at(const Account* address, std::storage<Account>& slots) {
+  unsafe { return *address; }
+}
+
+int main() {
+  std::allocator heap{};
+  mut auto made = heap.try_storage<Account>(std::size_t(3));
+  if (!made) { return 1; }
+  mut std::storage<Account> slots = std::move(made).value();
+  slots.emplace(std::size_t(0), std::string("ada"), int64_t(100));
+  slots.emplace(std::size_t(2), std::string("bob"), int64_t(50));
+
+  const Account* first = &slots.get(std::size_t(0));
+  const void* erased = std::erase_address(first);
+  Account* writable = &slots.get_mut(std::size_t(2));
+  unsafe {
+    Account& seen = account_at(std::typed_address<Account>(erased), slots);
+    if (seen.funds() != 100 || seen.name() != "ada") { return 2; }
+    mut Account& edit = std::assume_mut(writable, slots);
+    edit.deposit(int64_t(25));
+    Account& again = std::assume_ref(writable, slots);
+    if (again.funds() != 75) { return 3; }
+  }
+  // Borrows ended above; mutate the owner again.
+  slots.destroy(std::size_t(0));
+  slots.emplace(std::size_t(0), std::string("cy"), int64_t(1));
+  const Account* replaced = &slots.get(std::size_t(0));
+  // The final slot address is stable across destroy/emplace and owner moves.
+  if (replaced != first) { return 4; }
+  mut std::storage<Account> moved = std::move(slots);
+  const Account* after_move = &moved.get(std::size_t(2));
+  if (std::erase_address(after_move) != std::erase_address(writable)) { return 5; }
+  unsafe {
+    if (account_at(after_move, moved).funds() != 75) { return 6; }
+  }
+  moved.release();
+  std::println("witness borrow ok");
+  return 0;
+}

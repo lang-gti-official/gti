@@ -1,0 +1,12 @@
+struct Point {
+  int x = 0;
+  Point(int x) : x(x) {}
+};
+
+int main() {
+  Point a = Point(1);
+  Point b = Point(2);
+  Point c = a + b; //!ERR
+  bool same = a == b; //!ERR
+  return c.x;
+}

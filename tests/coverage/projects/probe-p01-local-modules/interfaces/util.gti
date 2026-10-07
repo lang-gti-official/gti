@@ -1,0 +1,16 @@
+// Interface outside source-root, registered through the manifest.
+export module util;
+
+namespace util {
+  int base() { return 3; }
+  export int factor() { return base() - 1; }
+  export int clamp(int value, int low, int high) {
+    if (value < low) {
+      return low;
+    }
+    if (value > high) {
+      return high;
+    }
+    return value;
+  }
+}

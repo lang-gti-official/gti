@@ -1,0 +1,90 @@
+// Valid: unsafe member functions of a GENERIC class (read-only, mut and
+// consuming receivers, plus unsafe static and unsafe constexpr helpers) over
+// raw pointer arithmetic: +, -, +=, -=, ++, --, negative indexing, pointer
+// difference, and erase/typed address round trips with const qualification.
+#include <std/memory>
+#include <std/string>
+
+concept raw_readable<C, T> = requires(C& cursor, int64_t offset) {
+  unsafe { cursor.peek(offset) } -> T;
+};
+
+unsafe constexpr int64_t stride_of(int64_t lanes) { return lanes * 2; }
+
+class Cursor<T> {
+  mut T* at = nullptr;
+  T* start = nullptr;
+  int64_t length;
+public:
+  Cursor(T* start, int64_t length) : at(start), start(start), length(length) {}
+
+  // Caller: start + offset must stay inside the original array.
+  unsafe T peek(int64_t offset) { unsafe { return this.at[offset]; } }
+  unsafe void poke(int64_t offset, T value) { unsafe { *(this.at + offset) = value; } }
+  unsafe void advance(int64_t count) mut { unsafe { this.at += count; } }
+  unsafe void retreat(int64_t count) mut { unsafe { this.at -= count; } }
+  unsafe void step() mut { unsafe { this.at++; } }
+  unsafe void back() mut { unsafe { --this.at; } }
+  int64_t position() { unsafe { return this.at - this.start; } }
+  // Consuming receiver: hands back an erased address and ends the cursor.
+  unsafe const void* finish() && {
+    unsafe { return std::erase_address(this.at); }
+  }
+};
+
+// Static members of generic classes are not supported yet (GTI-S2039), so the
+// unsafe static helper lives on a non-generic struct.
+struct RawOps {
+  unsafe static int64_t first_of(const int64_t* address) { unsafe { return address[0]; } }
+};
+
+unsafe T sum_window<C, std::numeric T>(C& cursor, int64_t width) requires raw_readable<C, T> {
+  mut T total = T(0);
+  for (mut int64_t i = 0; i < width; i++) {
+    unsafe { total += cursor.peek(i); }
+  }
+  return total;
+}
+
+int main() {
+  mut int64_t values[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+  unsafe {
+    mut Cursor<int64_t> cursor{&values[0], int64_t(8)};
+    cursor.advance(stride_of(int64_t(2)));            // at index 4
+    if (cursor.position() != 4) { return 1; }
+    if (cursor.peek(int64_t(-1)) != 4 || cursor.peek(int64_t(3)) != 8) { return 2; }
+    cursor.poke(int64_t(-4), int64_t(10));                     // values[0] = 10
+    cursor.retreat(int64_t(1));                       // index 3
+    cursor.step();                           // index 4
+    cursor.step();                           // index 5
+    cursor.back();                           // index 4
+    if (cursor.position() != 4) { return 3; }
+    int64_t window = sum_window<Cursor<int64_t>, int64_t>(cursor, int64_t(3));
+    if (window != 5 + 6 + 7) { return 4; }
+    // A lambda inside unsafe starts a fresh safety context.
+    auto reread = [](const int64_t* address) -> int64_t {
+      unsafe { return RawOps::first_of(address); }
+    };
+    if (reread(&values[0]) != 10) { return 5; }
+    const void* erased = std::move(cursor).finish();
+    const int64_t* restored = std::typed_address<int64_t>(erased);
+    const int64_t* origin = &values[0];
+    if (restored - origin != 4) { return 6; }
+    if (*(restored - 4) != 10 || restored[-2] != 3) { return 7; }
+    int64_t* writable = &values[7];
+    mut int64_t* walker = writable;
+    while (walker != &values[0]) {
+      walker--;
+      *walker += 1;
+    }
+  }
+  if (values[0] != 11 || values[6] != 8 || values[7] != 8) { return 8; }
+  mut float lanes[4] = {0.5, 1.5, 2.5, 3.5};
+  unsafe {
+    mut Cursor<float> fc{&lanes[0], int64_t(4)};
+    fc.poke(int64_t(3), float(9.0));
+    if (sum_window<Cursor<float>, float>(fc, int64_t(4)) != float(13.5)) { return 9; }
+  }
+  std::println("unsafe cursor ok");
+  return 0;
+}

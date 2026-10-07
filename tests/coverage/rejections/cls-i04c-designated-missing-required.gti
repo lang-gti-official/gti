@@ -1,0 +1,6 @@
+// INVALID: omitted field has no declaration initializer.
+struct Endpoint { int32_t port; int32_t retries = 3; };
+int main() {
+  Endpoint e = {.retries = 1};
+  return e.retries - 1;
+}

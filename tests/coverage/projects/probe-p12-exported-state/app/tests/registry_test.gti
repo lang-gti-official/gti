@@ -1,0 +1,11 @@
+import counter;
+
+int main() {
+  mut int accepted = 0;
+  for (mut int i = 0; i < 5; i++) {
+    if (counter::Registry::add()) {
+      accepted++;
+    }
+  }
+  return accepted == counter::Registry::capacity && counter::total == 13 ? 0 : 1;
+}

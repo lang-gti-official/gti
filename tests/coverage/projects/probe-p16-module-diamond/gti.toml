@@ -1,0 +1,15 @@
+manifest-version = 1
+
+[package]
+name = "p16-module-diamond"
+version = "0.1.0"
+
+[modules]
+core = "src/mods/core.gti"
+left = "src/mods/left.gti"
+right = "src/mods/right.gti"
+top = "src/mods/top.gti"
+
+[targets.p16]
+kind = "executable"
+root = "src/main.gti"

@@ -1,0 +1,20 @@
+#include "a.gti"
+#include "log.gti"
+
+#define OFF
+#undef OFF
+
+int c_value = trace::record(3);
+
+class Registry {
+public:
+  static int first = trace::record(4);
+  static mut int hits = 0;
+  static int count() { return hits; }
+};
+
+#ifdef OFF
+int c_never = trace::record(9);
+#endif
+
+int c_after = trace::record(5) + a_value;

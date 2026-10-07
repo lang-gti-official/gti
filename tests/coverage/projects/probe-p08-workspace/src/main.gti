@@ -1,0 +1,20 @@
+import core;
+#include <std/vector>
+
+class Tripler : public core::Scorer {
+public:
+  Tripler() {}
+  int score(int value) override { return value * 3; }
+};
+
+int main() {
+  mut std::vector<int> values{};
+  values.push_back(5);
+  values.push_back(9);
+  Tripler tripler{};
+  if (core::apply_all(tripler, values) != 42) {
+    return 1;
+  }
+  std::println("suite ok");
+  return 0;
+}

@@ -1,0 +1,3 @@
+#include "sub/middle.gti"
+
+int main() { return middle::value() + leaf::value() - 15; }

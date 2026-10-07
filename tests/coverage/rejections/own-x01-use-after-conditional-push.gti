@@ -1,0 +1,23 @@
+// INVALID: a move-only record is pushed into a vector on some loop
+// iterations and then read after the loop (maybe-moved use).
+#include <std/string>
+#include <std/vector>
+
+class Entry {
+  std::string name_;
+public:
+  Entry(std::string_view name) : name_(std::string(name)) {}
+  std::string_view name() { return this.name_.view(); }
+};
+
+int main() {
+  mut std::vector<Entry> entries{};
+  Entry pending{"pending"};
+  for (mut int i = 0; i < 3; i += 1) {
+    if (i == 2) {
+      entries.push_back(std::move(pending));
+    }
+  }
+  std::println(pending.name());
+  return 0;
+}

@@ -1,0 +1,52 @@
+// Valid: a GTI free function becomes a native callback that libc's ftw(3)
+// invokes repeatedly on the same thread. The callback receives a pointer to
+// an opaque native record ([[c_opaque]] struct stat) it may compare but never
+// dereference, and a c_string it never inspects. Callbacks capture no state,
+// so they communicate through globals. A nonzero callback result stops the
+// walk and is returned by ftw.
+#include <std/filesystem>
+#include <std/string>
+
+[[c_opaque]] struct FileStat;
+using Visitor = (c_string, const FileStat*, int32_t) -> int32_t;
+
+extern "C" {
+  int32_t ftw(c_string root, Visitor visitor, int32_t depth);
+}
+
+mut int32_t directories = 0;
+mut int32_t others = 0;
+mut int32_t non_null_stats = 0;
+mut int32_t stop_after = 1000;
+
+int32_t count_entry(c_string path, const FileStat* info, int32_t flag) {
+  if (info != nullptr) { non_null_stats += 1; }
+  if (path == nullptr) { return 99; }
+  if (flag == 1) { directories += 1; } else { others += 1; }
+  stop_after -= 1;
+  return stop_after == 0 ? 7 : 0;
+}
+
+int main() {
+  std::filesystem::path root{"ftw_probe_tree"};
+  std::filesystem::path leaf{"ftw_probe_tree/a/b/c"};
+  [[discard]] std::filesystem::remove_all(root);
+  auto made = std::filesystem::create_directories(leaf);
+  if (!made || !made.value()) { return 1; }
+  std::string text = root.string();
+  mut int32_t walked = 0;
+  unsafe {
+    // ftw borrows the NUL-terminated path only for the call; the callback has
+    // process lifetime and touches only GTI globals on this thread.
+    walked = ftw(text.c_string(), count_entry, 4);
+  }
+  if (walked != 0 || directories != 4 || others != 0 || non_null_stats != 4) { return 2; }
+  stop_after = 2;
+  mut int32_t stopped = 0;
+  unsafe { stopped = ftw(text.c_string(), count_entry, 4); }
+  if (stopped != 7 || directories != 6) { return 3; }
+  auto removed = std::filesystem::remove_all(root);
+  if (!removed || removed.value() != uint64_t(4)) { return 4; }
+  std::println("ftw callback ok");
+  return 0;
+}

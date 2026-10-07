@@ -1,0 +1,5 @@
+namespace reader {
+  concept has_value<T> = requires(T& item) { { item.get() } -> int; };
+
+  int read<T>(T& item) requires has_value<T> { return item.get(); }
+}
