@@ -1353,9 +1353,7 @@
       "outcome": "rejected"
     },
     "diag-p10-unknown-attribute": {
-      "code": "GTI-P0001",
-      "finding": "A07",
-      "issue": 58,
+      "code": "GTI-S2099",
       "outcome": "rejected"
     },
     "diag-p11-unclosed-attribute": {
@@ -1721,28 +1719,22 @@
       "timeout": 20
     },
     "a07-unknown-function-attribute": {
-      "code": "GTI-P0001",
-      "finding": "A07",
-      "issue": 58,
+      "code": "GTI-S2099",
       "outcome": "rejected"
     },
     "a08-unknown-type-cascade": {
       "code": "GTI-S2000",
-      "finding": "A08",
       "forbid": [
         "of type 'unknown'"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a09-bad-if-condition-cascade": {
       "code": "GTI-P0003",
-      "finding": "A09",
       "forbid": [
         "without a matching '#if'"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a10-payload-arity-cascade": {
       "code": "GTI-S2067",

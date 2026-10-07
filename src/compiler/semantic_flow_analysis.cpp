@@ -9962,8 +9962,8 @@ auto SemanticVisitor::Impl::analyzeBinaryOperands(const Binary &expression)
 auto SemanticVisitor::Impl::requireNumeric(SemanticType left,
                                            SemanticType right,
                                            const Token &token) -> void {
-  if ((left != SemanticType::Unknown && !isNumeric(left)) ||
-      (right != SemanticType::Unknown && !isNumeric(right))) {
+  if (left != SemanticType::Unknown && right != SemanticType::Unknown &&
+      (!isNumeric(left) || !isNumeric(right))) {
     report(token,
            "Operator '" + token.lexeme +
                "' requires numeric operands but found '" + typeSpelling(left) +
@@ -9975,8 +9975,8 @@ auto SemanticVisitor::Impl::requireNumeric(SemanticType left,
 auto SemanticVisitor::Impl::requireOrdered(SemanticType left,
                                            SemanticType right,
                                            const Token &token) -> void {
-  if ((left != SemanticType::Unknown && !isOrdered(left)) ||
-      (right != SemanticType::Unknown && !isOrdered(right))) {
+  if (left != SemanticType::Unknown && right != SemanticType::Unknown &&
+      (!isOrdered(left) || !isOrdered(right))) {
     report(token,
            "Operator '" + token.lexeme +
                "' requires ordered operands but found '" + typeSpelling(left) +
@@ -9988,8 +9988,8 @@ auto SemanticVisitor::Impl::requireOrdered(SemanticType left,
 auto SemanticVisitor::Impl::requireInteger(SemanticType left,
                                            SemanticType right,
                                            const Token &token) -> void {
-  if ((left != SemanticType::Unknown && !isIntegral(left)) ||
-      (right != SemanticType::Unknown && !isIntegral(right))) {
+  if (left != SemanticType::Unknown && right != SemanticType::Unknown &&
+      (!isIntegral(left) || !isIntegral(right))) {
     report(token,
            "Operator '" + token.lexeme +
                "' requires integer operands but found '" + typeSpelling(left) +

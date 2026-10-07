@@ -2423,7 +2423,67 @@ private:
          "mutable-reference semantics");
 }
 
+void testUnknownFunctionAttributeClassification() {
+  const std::string source =
+      "[[noretrun]]\nvoid stop() {}\nint main() { return 0; }\n";
+  const auto result = lang::Frontend().analyze("unknown-attribute.gti", source);
+  expect(!result.canGenerateCode() && result.diagnostics.size() == 1,
+         "an unknown function attribute should have one owning diagnostic");
+  if (result.diagnostics.size() != 1) {
+    return;
+  }
+  const auto &diagnostic = result.diagnostics.front();
+  expect(diagnostic.code == "GTI-S2099" &&
+             diagnostic.phase == lang::DiagnosticPhase::Semantics &&
+             diagnostic.severity == lang::DiagnosticSeverity::Error &&
+             diagnostic.message.find("Unknown GTI function attribute 'noretrun'") !=
+                 std::string::npos &&
+             diagnostic.primary.source ==
+                 std::filesystem::absolute("unknown-attribute.gti").string() &&
+             diagnostic.primary.start == 2 && diagnostic.primary.end == 10 &&
+             diagnostic.primary.line == 1,
+         "attribute classification should retain its semantic code and exact span");
+  expect(findTopLevelFunction(result.program, "main") != nullptr,
+         "an unknown attribute must preserve following declarations");
+  const auto known = lang::Frontend().analyze(
+      "known-attribute.gti", "[[discardable]] int compute() { return 4; }");
+  expect(known.canGenerateCode(), "recognized function attributes remain valid");
+  const auto classAttribute = lang::Frontend().analyze(
+      "class-attribute.gti", "[[not_an_attribute]] struct Record {}; ");
+  expect(!classAttribute.canGenerateCode() &&
+             !hasDiagnostic(classAttribute.diagnostics,
+                            "Unknown GTI function attribute"),
+         "class attributes retain their owning class validation");
+}
+
+void testUnknownTypeCascadeSuppression() {
+  const auto result = lang::Frontend().analyze("unknown-cascade.gti", R"(
+int main() {
+  Missing value{};
+  auto result = missing + "text";
+  int independent = "text";
+  return 0;
+}
+)");
+  expect(!result.canGenerateCode(), "unknown operands must remain rejected");
+  expect(hasDiagnostic(result.diagnostics, "Unknown type 'Missing'") &&
+             hasDiagnostic(result.diagnostics, "Undefined name 'missing'") &&
+             hasDiagnostic(result.diagnostics, "Cannot initialize 'independent'"),
+         "poison recovery retains lookup errors and independent type errors");
+  expect(!hasDiagnostic(result.diagnostics, "of type 'unknown'") &&
+             !hasDiagnostic(result.diagnostics, "and 'unknown'"),
+         "poison types must not create initializer or operator cascades");
+  const auto numeric = lang::Frontend().analyze(
+      "numeric-mismatch.gti", "int main() { return 1 + true; }");
+  expect(!numeric.canGenerateCode() &&
+             hasDiagnostic(numeric.diagnostics, "requires numeric operands"),
+         "known operand mismatches retain their diagnostic");
+}
+
 constexpr NamedTest kTests[] = {
+    {"testUnknownTypeCascadeSuppression", testUnknownTypeCascadeSuppression},
+    {"testUnknownFunctionAttributeClassification",
+     testUnknownFunctionAttributeClassification},
     {"testSemanticVisitorRequestReuse", testSemanticVisitorRequestReuse},
     {"testSemanticDiagnostics", testSemanticDiagnostics},
     {"testOwnershipAndMissingIncludeDiagnostics",
