@@ -19,7 +19,8 @@ does not restate it. Put durable rules in `AGENTS.md`, not here.
   complete, and its permanent rule remains: new executable features extend
   verified MIR rather than adding an AST/HIR-only backend path.
 - `AGENTS.md` sections that older Claude guidance did not reflect:
-  **Implementation Task Lifecycle**, **Release Channels And VERSION**,
+  **Language Direction**, **Implementation Task Lifecycle**,
+  **Release Channels And VERSION**,
   **General Semantics Before Client Exceptions**, and **Constexpr Evolution**.
 
 ## Task Lifecycle

@@ -24,10 +24,18 @@ not change syntax or semantics. A row describes the current
 boundary, why that boundary exists, its readiness role, and the plan owner or
 dependency chain authorized to change it.
 
-GTI is not source-compatible C++. Its target remains a C++-familiar systems
-language with explicit ownership, deterministic cleanup, predictable
-performance, and native interoperation without inheriting C++ lookup,
+GTI is an independent systems language pursuing full practical usability,
+excellent safety and strong C++ syntax familiarity. It is not a C++ wrapper or
+source-compatible C++. Its goals include explicit ownership, deterministic
+cleanup, predictable performance, and native interoperation without inheriting C++ lookup,
 conversion, lifetime, preprocessing, or undefined-behaviour defaults.
+
+Treat each current restriction as evidence to assess, not an automatic future
+limit. Reassess historical assumptions against current facilities and name the
+general capability, prerequisite and acceptance outcome needed to extend them.
+Retain intentional safety contracts and justify source/compiler boundaries per
+operation. A compiler-private implementation or an earlier deferral does not
+by itself settle the future language design.
 
 ## Ledger Vocabulary
 
@@ -36,7 +44,7 @@ Every entry has one primary class:
 | Class | Meaning |
 | --- | --- |
 | **safety/simplicity** | The restriction is an intentional rule that removes an unsafe, ambiguous, or disproportionately complex feature. |
-| **proof** | The desired construct needs ownership, place, lifetime, initialization, or cleanup facts the compiler cannot yet prove. |
+| **proof** | A construct offered as safe needs ownership, place, lifetime, initialization, or cleanup facts not yet represented or verified. Explicit unsafe obligations must be distinguished from facts the language promises to prove. |
 | **lowering** | The meaning can be stated, but HIR/MIR, the backend, runtime, or tooling does not yet represent it completely. |
 | **library** | The core language can support the facility, but public source-defined policy or a narrow host capability is missing. |
 | **choice** | GTI must first adopt a semantic, ABI, compatibility, or policy decision. |

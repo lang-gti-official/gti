@@ -1,7 +1,32 @@
 # GTI Repository Guidance
 
-GTI is an experimental, statically typed systems language with C++-familiar
-syntax, explicit ownership, deterministic cleanup, and a native C++ backend.
+GTI is an independent, experimental, statically typed systems language with
+strong C++ syntax familiarity, explicit ownership, and deterministic cleanup.
+Its goal is a fully usable systems language with excellent safety and sound
+architecture. The reference compiler currently generates native code through
+C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
+
+## Language Direction
+
+- Design general GTI facilities that let applications and libraries implement
+  systems abstractions in ordinary source. Prefer source-defined public policy
+  wherever its invariants can be expressed, while retaining compiler/runtime
+  mechanisms for layout, object lifetime, checked ownership, target operations,
+  or other facts that source cannot establish. Justify that split per operation;
+  source-defined does not mean removing necessary compiler support.
+- Keep C++ spelling and familiarity strong when they fit coherent GTI semantics.
+  Neither C++ compatibility nor generated C++ behavior is the acceptance rule.
+  Safe guarantees and explicit unsafe obligations belong to GTI itself.
+- Earlier assumptions, bounded slices, private capabilities, and deferred work
+  may have been appropriate for an earlier language. Reassess their rationale
+  against current capabilities and the systems-language goal. Record an explicit
+  revision when a decision changes; historical restrictions are not permanent
+  requirements merely because they were once accepted.
+- Describe remaining work as goals with named prerequisites, current evidence,
+  and acceptance criteria. Missing support calls for implementing or scheduling
+  the prerequisite, rather than treating it as a reason to abandon the outcome.
+  Preserve honest implementation status and mandatory safety/verification rules;
+  goal-oriented planning does not authorize unvalidated behavior or bypasses.
 
 ## Start Here
 

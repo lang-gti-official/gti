@@ -19,6 +19,25 @@ advanced without demonstrating what new program a GTI user could write.
 
 ## Decision
 
+GTI is an independent language pursuing full systems-programming usability,
+excellent safety, strong C++ syntax familiarity, and sound architecture. It is
+not a C++ wrapper. The reference compiler's current C++ backend implements GTI's
+language rules; neither C++ source behavior nor native helper choices define them.
+
+Public library policy should be written in ordinary GTI over general facilities
+wherever the language can express its invariants. Compiler/runtime support is
+appropriate for representation queries, object-lifetime operations, checked
+ownership and other mechanisms requiring that authority. Each boundary needs a
+specific rationale; a current private capability is not proof that its entire
+API or surrounding allocation policy must remain private forever.
+
+Earlier assumptions may have changed as GTI grew. Reassess historical decisions,
+bounded slices and deferred work against the current language and named systems
+outcomes. Preserve their rationale and evidence, but explicitly revise or
+supersede decisions that no longer fit. C++ familiarity, safety and phase
+authority guide those revisions; former wrapper goals and implementation limits
+are not permanent semantic constraints.
+
 GTI will schedule compiler work around coherent, user-facing outcomes. A
 substantial language or compiler change must name the program, library API, or
 workflow it unlocks and should deliver the smallest useful vertical slice
@@ -29,7 +48,7 @@ Safety and architecture remain constraints on that work, not competing goals.
 Exact semantic authority, explicit ownership, deterministic cleanup, defined
 failure, phase boundaries, and rejection before backend entry remain accepted
 rules. Infrastructure-only work is justified when it fixes a correctness
-blocker or is the nearest prerequisite of a named outcome. Proof machinery is
+defect or is the nearest prerequisite of a named outcome. Proof machinery is
 not an outcome by itself.
 
 `1.0` is a soft, revisable readiness goal rather than a feature cutoff, scope
@@ -42,6 +61,13 @@ published and must not be used to defer a capability essential to systems
 readiness.
 
 The planning vocabulary is therefore:
+
+Remaining work is expressed as goals with current status, named prerequisites
+and acceptance evidence. A missing capability is work to implement or schedule,
+not a reason to abandon the supported systems outcome. Use `planned`, `ready`,
+`active` and `done` to distinguish progress, and record unmet prerequisites
+explicitly. Do not replace dependency information with a claim that everything
+is ready, or deliver a feature before its safety and verification criteria pass.
 
 | Role | Meaning |
 | --- | --- |

@@ -3,6 +3,18 @@
 Canonical GTI knowledge lives here. Source code and tests remain authoritative
 for the current implementation when a document is stale or ambiguous.
 
+GTI is an independent systems language with strong C++ syntax familiarity,
+excellent safety as a design goal, and source-defined public library policy over
+general language facilities. The reference C++ backend implements GTI semantics;
+it does not define them. [ADR 012](decisions/012-outcome-first-systems-readiness.md)
+records this direction and the goal-oriented planning policy.
+
+Read historical decisions and bounded implementation slices in their original
+scope. Their assumptions may need explicit revision as the language grows;
+neither an old restriction nor a current backend limitation automatically defines
+the future language. Plans name goals, prerequisites and acceptance evidence,
+while canonical language documents continue to describe actual support.
+
 ## Compiler Architecture
 
 - [Overview](architecture/overview.md) — pipeline, ownership boundaries, and

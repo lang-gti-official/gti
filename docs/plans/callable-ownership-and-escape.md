@@ -715,7 +715,7 @@ not add or promise:
 - native callbacks outside the separately accepted C ABI/runtime boundary.
 
 The original owning type-erasure exclusion is superseded by L-CALL-02; it is
-not a remaining wrapper blocker. Custom copy/move constructor bodies,
+not an unmet wrapper prerequisite. Custom copy/move constructor bodies,
 implicit signature conversions, general typed brace expressions, allocator
 customization, and small-buffer optimization are likewise not requirements of
 the agreed callback API. Existing language restrictions still apply; named
