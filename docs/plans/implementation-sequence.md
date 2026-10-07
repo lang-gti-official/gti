@@ -4040,11 +4040,18 @@ The next checkpoint adds the layout-only inline carrier and raw destructive
 relocation. Focused carrier and owning-relocation runtime matrices pass all
 eight standard/optimization/no-elide/sanitizer modes. Static tests reject
 immovable carrier movement, incompatible access and forged capability/lifetime
-facts. Example 122 demonstrates the public inline owner with generated default
-construction, checked references and owning relocation. A source-written empty
-generic constructor around fixed-address storage still exposes a backend
-admission gap and needs closure before campaign completion. Example inventory
-and combined census reconciliation, source sparse migration/retirement, the
+facts. Example 122 demonstrates the public inline owner with a source-written
+empty constructor, checked references and owning relocation. The latter exposed
+two overly restrictive backend checks: direct field construction required move
+assignment, and the passive field-initializer proof excluded the layout-only
+carrier's observation-free default construction. The construction-only proof
+and exact private-capability case now admit it without moving its payload or
+admitting arbitrary source constructors. The example joins the carrier's full
+eight-mode runtime matrix and public API inventory. Adjacent constructor tests
+also exposed an invalid `void` field in unused dependent carrier declarations;
+the declaration spelling now preserves generic staging while executable
+instances retain concrete semantic/MIR copy and move eligibility. Combined census
+reconciliation, source sparse migration/retirement, the
 unrelated pool/container example and broad acceptance gates remain outstanding.
 
 #### Why This Campaign Exists

@@ -845,6 +845,15 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
         CompilerCapabilityTypeKind::UninitializedStorage) {
       if (type.arguments.size() != 1)
         return "void";
+      // A retained source template has no concrete lifecycle instance yet.
+      // Match semantic generic staging rather than emitting an invalid void
+      // field. These native operations grant no GTI permission: concrete
+      // reanalysis and MIR verification establish carrier copy/move bounds
+      // before any executable instance exists. Concrete spellings below use
+      // those exact verified traits, never native C++ type traits.
+      if (type.arguments.front().kind == SemanticType::TypeParameter)
+        return "::gti_internal::backend::uninitialized_storage<" +
+               spell(type.arguments.front()) + ", true, true>";
       const auto instance =
           std::find_if(program.mir().classInstances().begin(),
                        program.mir().classInstances().end(),

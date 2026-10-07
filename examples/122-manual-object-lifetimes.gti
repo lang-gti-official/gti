@@ -8,7 +8,7 @@ class InlineSlot<std::layout_queryable T> {
   mut std::uninitialized<T> bytes{};
   mut bool live = false;
 public:
-  InlineSlot() = default;
+  InlineSlot() {}
   InlineSlot(InlineSlot<T>& other) = delete;
   InlineSlot(InlineSlot<T>&& other) = delete;
 

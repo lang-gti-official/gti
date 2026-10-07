@@ -36,9 +36,15 @@ public:
   Stationary(Stationary& other) = delete;
   Stationary(Stationary&& other) = delete;
 };
+class Holder<std::layout_queryable T> {
+  mut std::uninitialized<T> bytes{};
+public:
+  Holder() {}
+};
 )";
   const auto valid = analyze(prefix + R"(
 int main() {
+  Holder<Stationary> holder{};
   std::uninitialized<Stationary> vacant{};
   std::uninitialized<Plain> first{};
   auto second = first;
@@ -92,7 +98,11 @@ int main() {
     }
   }
   for (const auto *body :
-       {"int main() { std::uninitialized<Stationary> a{}; auto b = "
+       {"int main() { Holder<Stationary> a{}; auto b = std::move(a); "
+        "return 0; }",
+        "int main() { Holder<std::string> a{}; auto b = std::move(a); "
+        "return 0; }",
+        "int main() { std::uninitialized<Stationary> a{}; auto b = "
         "std::move(a); return 0; }",
         "int main() { std::uninitialized<Stationary> a{}; auto b = a; return "
         "0; }",

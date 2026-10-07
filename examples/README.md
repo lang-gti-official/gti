@@ -157,6 +157,7 @@ is a teaching helper, not a production server.
 | `119-runtime-object-layout.gti` | runtime size/alignment descriptors for owning, immovable and nested ordinary types without constructing an object |
 | `120-immovable-storage.gti` | fixed-address owning objects, moving their storage handle, checked access and destruction without element movement |
 | `121-programmable-allocators.gti` | an application-defined arena choosing aligned placement in one backing region, one unsafe resource binding, and safe allocator-aware `resource_vector` and fixed-slot containers sharing it |
+| `122-manual-object-lifetimes.gti` | source-defined inline ownership, immovable final-address construction, checked access and explicit owning relocation |
 
 ## Build and run
 
@@ -457,13 +458,15 @@ while any allocation from it remains live.
 /tmp/gti-allocators
 ```
 
-## Complete projects
+## Manual object lifetimes
 
-`122-manual-object-lifetimes.gti` builds a source-defined inline owner around
+[`122-manual-object-lifetimes.gti`](122-manual-object-lifetimes.gti) builds a source-defined inline owner around
 `std::uninitialized<T>`, constructs an immovable object at its final address,
 returns checked owner-bound references, and explicitly relocates an owning
 string between fixed carriers. Raw validity stays inside the owner's `unsafe`
 implementation; ordinary callers use checked methods.
+
+## Complete projects
 
 [`transit-planner/`](transit-planner/README.md) is a multi-file manifest project
 that loads an external graph, runs Dijkstra's shortest-path algorithm, validates
