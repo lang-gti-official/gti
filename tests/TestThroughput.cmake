@@ -22,6 +22,7 @@ if(Python3_Interpreter_FOUND)
     extensible_formatting_runtime fresh_callable_later_argument_failure_runtime
     generated_base_constructor_runtime generic_algorithm_breadth
     generic_callable_adapter_runtime hosted_constructor_identity_runtime
+    hosted_exit_status_runtime
     http_url_operators immovable_storage_runtime integral_enum_formatting_runtime
     lambda_pack_invocation_runtime nested_borrow_fields nested_guarded_expected_runtime
     native_c_scalar_runtime nested_raw_pointer_runtime
