@@ -10819,6 +10819,38 @@ bool constructorRollbackCovered(const MirConstructorInstance &constructor,
       case MirInstructionKind::Construct: {
         const auto *nested =
             uniqueClassInstanceForType(program, instruction.info.type);
+        if (nested != nullptr &&
+            nested->compilerCapability ==
+                CompilerCapabilityTypeKind::UninitializedStorage) {
+          // This layout-only carrier creates bytes, not a live payload. Keep
+          // its observation-free construction proof distinct from recursively
+          // checking an ordinary class's declaration defaults below.
+          if (instruction.kind != MirInstructionKind::Construct ||
+              nested->defaultConstructor != SpecialMemberStatus::Generated ||
+              nested->requiresActiveCleanup || !instruction.result ||
+              instruction.destination || instruction.receiver ||
+              instruction.constructorTarget || instruction.functionTarget ||
+              instruction.bodyTarget || instruction.lambdaTarget ||
+              instruction.callableInvocation ||
+              !instruction.callableArguments.empty() ||
+              instruction.constructorKind != ConstructorKind::Ordinary ||
+              instruction.intrinsic != IntrinsicKind::None ||
+              instruction.operation != MirOperation::None ||
+              instruction.info.category != ValueCategory::Value ||
+              instruction.info.traits.drop != DropKind::Trivial ||
+              instruction.info.traits.containsBorrowedState ||
+              !instruction.operands.empty() ||
+              !instruction.parameterTypes.empty() ||
+              !instruction.lifecycle.empty() || instruction.ownership ||
+              instruction.preparedParameterDrop ||
+              instruction.successResultDrop ||
+              instruction.successResultDestination ||
+              instruction.fullExpressionEnd != 0 ||
+              instruction.earlyExitFullExpressionEnd ||
+              instruction.cleanupBoundaryEnd != 0)
+            return false;
+          break;
+        }
         if (!instruction.result || instruction.destination ||
             instruction.receiver || instruction.functionTarget ||
             instruction.constructorTarget || instruction.lambdaTarget ||
@@ -10847,42 +10879,6 @@ bool constructorRollbackCovered(const MirConstructorInstance &constructor,
       }
       case MirInstructionKind::Lifecycle:
         break;
-      case MirInstructionKind::Construct: {
-        // The layout-only carrier creates bytes, not a live payload. Its
-        // verified generated default construction is observation-free even
-        // when that payload is immovable. No ordinary source constructor is
-        // admitted by this capability-specific representation proof.
-        const auto *owner =
-            uniqueClassInstanceForType(program, instruction.info.type);
-        if (owner == nullptr ||
-            owner->compilerCapability !=
-                CompilerCapabilityTypeKind::UninitializedStorage ||
-            owner->defaultConstructor != SpecialMemberStatus::Generated ||
-            owner->requiresActiveCleanup || !instruction.result ||
-            instruction.destination || instruction.receiver ||
-            instruction.constructorTarget || instruction.functionTarget ||
-            instruction.bodyTarget || instruction.lambdaTarget ||
-            instruction.callableInvocation ||
-            !instruction.callableArguments.empty() ||
-            instruction.constructorKind != ConstructorKind::Ordinary ||
-            instruction.intrinsic != IntrinsicKind::None ||
-            instruction.operation != MirOperation::None ||
-            instruction.info.category != ValueCategory::Value ||
-            instruction.info.traits.drop != DropKind::Trivial ||
-            instruction.info.traits.containsBorrowedState ||
-            !instruction.operands.empty() ||
-            !instruction.parameterTypes.empty() ||
-            !instruction.lifecycle.empty() || instruction.ownership ||
-            instruction.preparedParameterDrop ||
-            instruction.successResultDrop ||
-            instruction.successResultDestination ||
-            instruction.fullExpressionEnd != 0 ||
-            instruction.earlyExitFullExpressionEnd ||
-            instruction.cleanupBoundaryEnd != 0) {
-          return false;
-        }
-        break;
-      }
       case MirInstructionKind::Compute: {
         const bool literal =
             instruction.operation == MirOperation::Literal ||
