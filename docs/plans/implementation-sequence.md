@@ -7047,8 +7047,11 @@ consumer, and release refreshes remain outstanding for the full campaign.
   native matrix passes all 224 configurations and the 19 source-rejection
   cases. All 24 broader focused gates pass, with two test-maintenance retries;
   both complete MIR/Lowered corpus censuses and 12 isolated installed-library
-  consumers also pass. Combined full-suite/coverage-corpus validation and
-  upstream release integration remain delivery gates. This
+  consumers also pass. The standalone 427-case coverage gate reports two
+  `GTI-S2106` JSON failures (`c137` and `c138`), also reproduced by the optimized
+  pre-enum 0.382.1 compiler under native closed-program compilation; their
+  expected passing outcomes remain unchanged. Combined full-suite/coverage-corpus
+  validation and upstream release integration remain delivery gates. This
   campaign is not an `expected` implementation. The owner's spelling
   amendment makes `class` optional with identical scoped semantics for both
   declaration forms.
