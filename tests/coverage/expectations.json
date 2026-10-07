@@ -1844,14 +1844,12 @@
       "outcome": "bad-diagnostic"
     },
     "a25-expected-ref-relay-wrong-referent": {
-      "finding": "A25",
       "issue": 70,
-      "outcome": "runtime"
+      "outcome": "pass"
     },
     "a25-ref-return-from-expected-value": {
-      "finding": "A25",
       "issue": 70,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a26-overloaded-deref-store-reads-owner": {
       "finding": "A26",

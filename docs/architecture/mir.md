@@ -1150,6 +1150,25 @@ that success through its one exact designated reference path; the Return
 operand retains both the external owner loan and the separately verified
 runtime field/dereference place, never the carrier shell's address.
 
+Plain and fallible reference returns share the exact runtime-alias selection
+for a reference parameter's entry loan. If a local alias stores an accessor's
+different address, the Return operand names that alias's dereference place,
+not the entry parameter's address. Verification follows its unique dominating
+reference initialization, including a checked reference extraction from a
+fallible carrier whose external owner matches the parameter. Matching types or
+carrier membership alone do not establish the address. Parameter publication
+of a referent cannot fall back to the weaker complete-carrier transfer rule;
+forwarding an entire carrier still preserves its existing runtime value.
+
+Checked reference extraction verifies the external owner through either a
+named carrier or its fresh SSA producer, following explicit copy/move
+transport. A cleanup-free fresh carrier can use its native SSA representation;
+the checked extraction publishes its pointer into the CallResult loan. Scalar
+and nominal observations read that pointer rather than an unassigned parallel
+SSA object. Wrong-state failure still precedes any referent access, with normal
+Invoke and deterministic cleanup. No referent is copied or consumed by these
+reference publications.
+
 Version 50 adds a bounded two-phase mutable loan for source-defined plain
 subscript and dereference stores rooted in a local, parameter, receiver, or
 existing loan. The target call produces a non-escaping `CallResult` loan in the

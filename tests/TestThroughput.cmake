@@ -9,7 +9,7 @@ if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
     abstract_generic_failure_contract_runtime
     associative_constructor_runtime associative_hash_contracts associative_map
-    associative_ownership_runtime borrowing_composition charconv_runtime
+    associative_ownership_runtime borrow_origin_runtime borrowing_composition charconv_runtime
     cleanup_bound_borrow_runtime complete_containers composable_io_runtime
     constructed_callback_argument_runtime constructor_argument_staging_runtime
     constructor_field_publication_runtime constructor_passive_field_rollback_runtime
