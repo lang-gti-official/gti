@@ -1789,9 +1789,8 @@
       "outcome": "backend"
     },
     "a17-narrow-negative-array-literal": {
-      "finding": "A17",
       "issue": 63,
-      "outcome": "backend"
+      "outcome": "pass"
     },
     "a18-function-item-pack-invoke": {
       "code": "GTI-S2090",
@@ -1983,19 +1982,17 @@
       "outcome": "ice"
     },
     "a42-c-abi-record-array-from-named-values": {
-      "finding": "A42",
       "issue": 85,
-      "outcome": "ice"
+      "native_sources": ["native/passive_records.c"],
+      "outcome": "pass"
     },
     "a42-struct-array-from-named-values": {
-      "finding": "A42",
       "issue": 85,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a42-struct-array-two-named-values": {
-      "finding": "A42",
       "issue": 85,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a43-callback-argument-unknown-type": {
       "finding": "A43",
@@ -2084,14 +2081,12 @@
       "outcome": "backend"
     },
     "a52-struct-with-union-array": {
-      "finding": "A52",
       "issue": 93,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a52-union-array": {
-      "finding": "A52",
       "issue": 93,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a53-operator-temporary-ref-diagnostic": {
       "code": "GTI-S2022",
