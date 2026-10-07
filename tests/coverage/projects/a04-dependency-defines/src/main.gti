@@ -1,0 +1,5 @@
+// A04: the dependency declares DEP_FLAG in its own [build] defines, but its
+// unit is analyzed as if the flag were undefined.
+#include <flagged/feature>
+
+int main() { return flagged::feature_enabled ? 0 : 1; }

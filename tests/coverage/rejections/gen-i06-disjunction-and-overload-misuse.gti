@@ -1,0 +1,22 @@
+// INVALID: a disjunction body using an integral-only operation, two generic
+// overloads distinguished only by constraints (ambiguous at the call), and a
+// generic function used as a function-item value.
+concept scalar<T> = std::integral<T> || std::floating_point<T>;
+
+T remainder<T>(T a, T b) requires scalar<T> {
+  return T(a % b);
+}
+
+int32_t classify<std::integral T>(T value) { return 1; }
+int32_t classify<std::signed_numeric T>(T value) { return 2; }
+
+T identity<T>(T value) { return value; }
+
+int32_t apply<F>(F f, int32_t v) { return f(v); }
+
+int main() {
+  int32_t r = remainder(7, 3);
+  int32_t c = classify(5);
+  int32_t a = apply(identity, 4);
+  return r + c + a;
+}

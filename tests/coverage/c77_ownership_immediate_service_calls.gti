@@ -1,0 +1,118 @@
+// Immediate borrowed service calls (0.361): fresh carriers from member
+// factories and free factories used as one receiver, in loop conditions,
+// call arguments, compound assignments, `?` propagation, owned string
+// results, nested through an application field, and interleaved with direct
+// owner access between full expressions.
+#include <std/string>
+#include <std/vector>
+
+enum class auth_errc { locked };
+
+class Ledger {
+  mut std::vector<int> entries_{};
+
+public:
+  Ledger() {}
+  void add(int amount) mut { this.entries_.push_back(amount); }
+  int total() {
+    mut int sum = 0;
+    for (auto& entry : this.entries_) { sum += entry; }
+    return sum;
+  }
+  std::size_t count() { return this.entries_.size(); }
+};
+
+class Writer {
+  mut Ledger& ledger_;
+  int scale_;
+
+public:
+  Writer(mut Ledger& ledger, int scale) : ledger_(ledger), scale_(scale) {}
+  int record(int amount) mut {
+    this.ledger_.add(amount * this.scale_);
+    return this.ledger_.total();
+  }
+  expected<int, auth_errc> guarded(int amount, bool locked) mut {
+    if (locked) { return unexpected(auth_errc::locked); }
+    this.ledger_.add(amount);
+    return this.ledger_.total();
+  }
+};
+
+class Reader {
+  Ledger& ledger_;
+  std::string prefix_;
+
+public:
+  Reader(Ledger& ledger) : ledger_(ledger), prefix_(std::string("n=")) {}
+  std::size_t count() { return this.ledger_.count(); }
+  std::string describe() {
+    mut std::string text = this.prefix_.clone();
+    std::string number = std::to_string(this.ledger_.total());
+    text.append(number.view());
+    return text;
+  }
+};
+
+class Api {
+  mut Ledger ledger_{};
+
+public:
+  Api() {}
+  Writer writer(int scale) mut { return Writer(this.ledger_, scale); }
+  Reader reader() { return Reader(this.ledger_); }
+};
+
+Writer open_writer(mut Ledger& ledger) { return Writer(ledger, 1); }
+
+class App {
+  mut Api api_{};
+
+public:
+  App() {}
+  int deposit(int amount) mut { return this.api_.writer(2).record(amount); }
+  std::string report() { return this.api_.reader().describe(); }
+};
+
+int twice(int value) { return value * 2; }
+
+expected<int, auth_errc> transfer(mut Api& api, int amount, bool locked) {
+  int after = ?api.writer(1).guarded(amount, locked);
+  return after + 0;
+}
+
+int main() {
+  mut Api api{};
+  if (api.writer(3).record(2) != 6) { return 1; }
+  mut int calls = 0;
+  while (api.reader().count() < std::size_t(4)) {
+    calls += 1;
+    [[discard]] api.writer(1).record(calls);
+  }
+  // 6 + 1 + 2 + 3
+  if (calls != 3 || api.reader().describe() != "n=12") { return 2; }
+  if (twice(api.writer(1).record(1)) != 26) { return 3; }
+  mut int running = 0;
+  running += api.writer(1).record(2);
+  running += api.writer(1).record(3);
+  if (running != 15 + 18) { return 4; }
+
+  auto ok = transfer(api, 2, false);
+  auto locked = transfer(api, 2, true);
+  if (!ok || ok.value() != 20) { return 5; }
+  if (locked || locked.error() != auth_errc::locked) { return 6; }
+
+  mut Ledger local{};
+  if (open_writer(local).record(5) != 5) { return 7; }
+  local.add(1);
+  if (open_writer(local).record(1) != 7) { return 8; }
+
+  mut App app{};
+  [[discard]] app.deposit(4);
+  [[discard]] app.deposit(1);
+  std::string report = app.report();
+  if (report != "n=10") { return 9; }
+  std::println(report);
+  std::println("v11 ok");
+  return 0;
+}

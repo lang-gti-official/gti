@@ -1,0 +1,22 @@
+#define USE_B
+#ifndef USE_B
+int value() {
+  int a = 1;
+  int b = 2;
+  int c = 3;
+  int d = 4;
+  int e = 5;
+  return a + b + c + d + e;
+}
+#elif defined(USE_B)
+int value() {
+  int a = "text"; //!ERR
+  return a;
+}
+#else
+int value() { return 0; }
+#endif
+
+int main() {
+  return value();
+}

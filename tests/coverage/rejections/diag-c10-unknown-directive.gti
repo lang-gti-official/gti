@@ -1,0 +1,4 @@
+#pragma once //!ERR
+int main() {
+  return 0;
+}

@@ -1,0 +1,31 @@
+import plugins;
+#include <std/memory>
+#include <std/string>
+
+namespace app {
+  class Doubler : public plugins::Plugin {
+    mut int calls = 0;
+
+  public:
+    Doubler() {}
+    int run(int input) mut override {
+      this.calls++;
+      return input * 2;
+    }
+    std::string name() override { return std::string("double"); }
+  };
+
+  class Adder : public plugins::Plugin {
+    int amount;
+
+  public:
+    Adder(int a) : amount(a) {}
+    int run(int input) mut override { return input + this.amount; }
+    std::string name() override { return std::string("add"); }
+  };
+
+  void install(mut plugins::Registry& registry) {
+    registry.add(std::upcast_unique<plugins::Plugin, Doubler>(std::make_unique<Doubler>()));
+    registry.add(std::upcast_unique<plugins::Plugin, Adder>(std::make_unique<Adder>(2)));
+  }
+}

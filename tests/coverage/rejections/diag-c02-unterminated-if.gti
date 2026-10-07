@@ -1,0 +1,7 @@
+#define FAST
+#ifdef FAST //!ERR
+int value() { return 1; }
+
+int main() {
+  return value() - 1;
+}

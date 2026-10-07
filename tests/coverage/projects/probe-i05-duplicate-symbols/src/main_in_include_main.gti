@@ -1,0 +1,3 @@
+#include "has_main.gti"
+
+int run() { return helper_value(); }

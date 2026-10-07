@@ -1,0 +1,15 @@
+// A39: taking the address of a struct-typed field in a constructor body is a backend ICE.
+struct Ledger { mut int32_t n = 0; };
+class Buf {
+  mut Ledger ledger{};
+  mut Ledger* book = nullptr;
+public:
+  Buf() {
+    this.book = &this.ledger;
+  }
+  int32_t n() { unsafe { return this.book->n; } }
+};
+int main() {
+  Buf b{};
+  return b.n();
+}

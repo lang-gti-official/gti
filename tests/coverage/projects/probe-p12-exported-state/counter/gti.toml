@@ -1,0 +1,11 @@
+manifest-version = 1
+
+[package]
+name = "counter"
+version = "0.1.0"
+
+[build]
+defines = ["DEP_FLAG"]
+
+[modules]
+main = "src/counter_api.gti"

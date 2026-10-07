@@ -1,0 +1,13 @@
+// A45: a derived class with only a destructor fails to link: Base::Base() is undefined.
+class Base {
+public:
+  Base() { std::println(1); }
+};
+class Middle : public Base {
+public:
+  ~Middle() { std::println(2); }
+};
+int main() {
+  Middle d = Middle();
+  return 0;
+}

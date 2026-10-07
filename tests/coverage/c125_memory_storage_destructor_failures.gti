@@ -1,0 +1,56 @@
+// Valid (failure path): destructors that fail while typed storage cleans up.
+//  argc 1: checked overflow, then an element destructor panics during failure
+//          cleanup -> GTI-R0014 emergency envelope; remaining cleanup skipped.
+//  argc 2: release() hits a failing destructor on the normal path -> that
+//          panic is the primary failure; remaining slots and locals are still
+//          destroyed exactly once.
+//  argc 3: pool.erase of a failing element; arena and other owners cleaned.
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+#include <std/panic>
+
+mut bool armed = false;
+
+class Fragile {
+  int32_t id;
+public:
+  Fragile(int32_t id) : id(id) {}
+  Fragile(Fragile& other) = delete;
+  Fragile(Fragile&& other) = default;
+  ~Fragile() {
+    if (armed && this.id == 2) {
+      std::panic("fragile {} failed", this.id); // destructor-site
+    }
+    std::print("drop ");
+    std::println(this.id);
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Fragile outer{9};
+  std::allocator heap{};
+  mut auto attempt = heap.try_storage<Fragile>(std::size_t(3));
+  mut std::storage<Fragile> slots = std::move(attempt).value();
+  slots.emplace(std::size_t(0), 1);
+  slots.emplace(std::size_t(1), 2);
+  slots.emplace(std::size_t(2), 3);
+  armed = true;
+  if (argc == 1) {
+    mut int32_t value = 2147483600;
+    value += 100; // overflow-site
+  }
+  if (argc == 2) {
+    slots.release();
+  }
+  if (argc == 3) {
+    mut auto made = std::try_make_pool<Fragile>(std::size_t(2));
+    mut std::pool<Fragile> pool = std::move(made).value();
+    [[discard]] pool.try_insert(Fragile(7));
+    mut auto two = pool.try_insert(Fragile(2));
+    pool.erase(two.value());
+  }
+  std::println("unreachable");
+  armed = false;
+  return 1;
+}

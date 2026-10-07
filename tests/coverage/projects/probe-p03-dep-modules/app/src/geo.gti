@@ -1,0 +1,7 @@
+// The app's own package-local 'geo' module; lib's 'import geo;' must still
+// resolve to lib's interface.
+export module geo;
+
+namespace app_geo {
+  export int local_marker() { return 5; }
+}

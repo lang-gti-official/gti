@@ -1,0 +1,23 @@
+// INVALID: a consuming (&&) method is invoked twice on the same named value,
+// and `this` is used after `std::move(this)` inside a consuming method.
+#include <std/string>
+
+class Builder {
+  mut std::string text_;
+public:
+  Builder() : text_(std::string("")) {}
+  Builder add(std::string_view part) && {
+    this.text_.append(part);
+    Builder moved = std::move(this);
+    this.text_.append("!");
+    return moved;
+  }
+  std::string build() && { return std::move(this.text_); }
+};
+
+int main() {
+  Builder builder{};
+  std::string first = std::move(builder).build();
+  std::string second = std::move(builder).build();
+  return first == second ? 0 : 1;
+}

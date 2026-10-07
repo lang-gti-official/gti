@@ -1,0 +1,5 @@
+#ifdef FAST
+import backend;
+#endif
+
+int main() { return engine::backend_speed() - 101; }

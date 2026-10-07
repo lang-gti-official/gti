@@ -1,0 +1,16 @@
+export module main;
+export import util;
+import extra;
+
+namespace lib {
+  struct Secret {
+    int value;
+    Secret(int v) : value(v) {}
+  };
+
+  int internal_helper() { return 40; }
+
+  export int answer() { return internal_helper() + extra_bonus(); }
+  int answer(int scale) { return scale * 42; }
+  export Secret make_secret() { return Secret(42); }
+}

@@ -1,0 +1,11 @@
+// INVALID: a retained lookup iterator protects the map; erasing while it is
+// still used later must be rejected by the borrow rules.
+#include <std/map>
+int main() {
+  mut std::map<int, int> table{};
+  [[discard]] table.insert(1, 10);
+  int key = 1;
+  auto found = table.find(key);
+  [[discard]] table.erase(key);
+  return (*found).second;
+}

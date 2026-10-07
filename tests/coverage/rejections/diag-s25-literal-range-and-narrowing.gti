@@ -1,0 +1,7 @@
+int main() {
+  int8_t small = 300; //!ERR
+  int64_t wide = 5;
+  int32_t narrow = wide; //!ERR
+  uint32_t neg = -1; //!ERR
+  return small + narrow;
+}

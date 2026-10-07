@@ -1,0 +1,18 @@
+// A28: an overloaded operator on a field of a range-for element is a backend ICE.
+struct Inner {
+  int v;
+  Inner(int v) : v(v) {}
+  int& operator*() { return this.v; }
+};
+struct Holder {
+  Inner p;
+  Holder(int v) : p(Inner(v)) {}
+};
+int main() {
+  Holder arr[2] = {Holder(4), Holder(5)};
+  mut int sum = 0;
+  for (auto& h : arr) {
+    sum += *h.p;
+  }
+  return sum == 9 ? 0 : 1;
+}

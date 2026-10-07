@@ -1,0 +1,105 @@
+// WORKAROUND variant of v05 (compound and self-referencing assignments go
+// through a named mut Row& instead of a chained subscript).
+// Chained user-defined subscripts (Grid[r] -> Row&, Row[c] -> int32_t&),
+// plain and compound assignment through both levels, a two-argument
+// operator(), read-only vs mutable subscript overload selection, and a
+// subscript reached through a class field and a mutable reference parameter.
+#include <std/format>
+#include <std/vector>
+
+class Row {
+  mut int32_t cells[4] = {};
+public:
+  Row() {}
+  int32_t& operator[](std::size_t c) { return this.cells[c]; }
+  mut int32_t& operator[](std::size_t c) mut { return this.cells[c]; }
+  int32_t sum() {
+    mut int32_t s = 0;
+    for (auto& v : this.cells) { s += v; }
+    return s;
+  }
+};
+
+class Grid {
+  mut Row rows[3] = {};
+public:
+  Grid() {}
+  Row& operator[](std::size_t r) { return this.rows[r]; }
+  mut Row& operator[](std::size_t r) mut { return this.rows[r]; }
+  int32_t operator()(std::size_t r, std::size_t c) { return this.rows[r][c]; }
+  int32_t total() {
+    mut int32_t t = 0;
+    for (auto& row : this.rows) { t += row.sum(); }
+    return t;
+  }
+};
+
+class Board {
+public:
+  mut Grid grid = Grid();
+  mut int32_t moves = 0;
+  Board() {}
+  void place(std::size_t r, std::size_t c, int32_t v) mut {
+    this.grid[r][c] = v;
+    this.moves += 1;
+  }
+};
+
+void fill_diagonal(mut Grid& g, int32_t v) {
+  for (mut std::size_t i = 0; i < std::size_t(3); i++) {
+    g[i][i] = v;
+  }
+}
+
+int32_t read_only_peek(Grid& g) { return g[std::size_t(2)][std::size_t(3)]; }
+
+int main() {
+  mut Grid g = Grid();
+  fill_diagonal(g, 5);
+  if (g.total() != 15) { return 1; }
+
+  g[std::size_t(0)][std::size_t(3)] = 7;
+  {
+    mut Row& r0 = g[std::size_t(0)];
+    r0[std::size_t(3)] += 3;
+  }
+  {
+    mut Row& r1 = g[std::size_t(1)];
+    r1[std::size_t(1)] *= 4;
+  }
+  {
+    mut Row& r2 = g[std::size_t(2)];
+    r2[std::size_t(3)] -= 2;
+  }
+  if (g(std::size_t(0), std::size_t(3)) != 10) { return 2; }
+  if (g(std::size_t(1), std::size_t(1)) != 20) { return 3; }
+  if (read_only_peek(g) != -2) { return 4; }
+  // 5 + 20 + 5 + 10 - 2
+  if (g.total() != 38) { return 5; }
+
+  // read through a self-referencing right-hand side
+  int32_t combined = g[std::size_t(0)][std::size_t(3)] + g[std::size_t(1)][std::size_t(1)];
+  g[std::size_t(2)][std::size_t(0)] = combined;
+  if (g(std::size_t(2), std::size_t(0)) != 30) { return 6; }
+
+  mut Board b = Board();
+  b.place(std::size_t(1), std::size_t(2), 9);
+  {
+    mut Row& brow = b.grid[std::size_t(1)];
+    brow[std::size_t(2)] += 1;
+  }
+  b.place(std::size_t(0), std::size_t(0), 1);
+  if (b.grid(std::size_t(1), std::size_t(2)) != 10 || b.moves != 2) { return 7; }
+  if (b.grid.total() != 11) { return 8; }
+
+  // vector of grids: operator[] of vector, then two user subscripts
+  mut std::vector<Grid> grids{};
+  grids.push_back(Grid());
+  grids.push_back(Grid());
+  grids[std::size_t(1)][std::size_t(2)][std::size_t(1)] = 42;
+  if (grids[std::size_t(1)](std::size_t(2), std::size_t(1)) != 42) { return 9; }
+  if (grids[std::size_t(0)].total() != 0) { return 10; }
+
+  std::println("grid total {} board {}", g.total(), b.grid.total());
+  return 0;
+}

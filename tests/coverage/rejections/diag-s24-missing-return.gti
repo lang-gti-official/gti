@@ -1,0 +1,9 @@
+int sign(int v) {
+  if (v > 0) {
+    return 1;
+  }
+} //!ERR
+
+int main() { //!ERR
+  return sign(1) - 1;
+}

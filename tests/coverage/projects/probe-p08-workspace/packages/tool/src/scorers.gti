@@ -1,0 +1,9 @@
+import core;
+
+namespace tool {
+  class Squarer : public core::Scorer {
+  public:
+    Squarer() {}
+    int score(int value) override { return value * value; }
+  };
+}

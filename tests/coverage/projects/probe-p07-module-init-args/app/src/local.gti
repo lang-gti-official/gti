@@ -1,0 +1,3 @@
+#include <tracelib/log>
+
+int local_init = trace::record(3);

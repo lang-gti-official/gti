@@ -1,0 +1,22 @@
+import counter;
+
+int observed = counter::total * 2;
+
+int main() {
+  if (observed != 20 || counter::fixed != 15) {
+    return 1;
+  }
+  if (!counter::Registry::add() || !counter::Registry::add()) {
+    return 2;
+  }
+  counter::total = counter::total + 100;
+  if (counter::total != 112 || counter::Registry::registered != 2) {
+    return 3;
+  }
+  if (counter::dep_flag_seen()) {
+    std::println("dependency [build] defines applied");
+  } else {
+    std::println("dependency [build] defines not applied");
+  }
+  return 0;
+}

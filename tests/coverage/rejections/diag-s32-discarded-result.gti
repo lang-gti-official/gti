@@ -1,0 +1,6 @@
+int calculate() { return 42; }
+
+int main() {
+  calculate(); //!ERR
+  return 0;
+}

@@ -1,0 +1,102 @@
+// Owning callbacks stored in fields and vectors: move_only_function with
+// move-only captures (unique_ptr, string), std::function with copyable
+// captures cloned as a vector, a mutable-reference callback field, and a
+// one-shot && callback invoked from a consuming method via std::move(field).
+#include <std/functional>
+#include <std/memory>
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+class EventBus {
+  mut std::vector<std::move_only_function<int(int)>> handlers_{};
+  mut std::function<void(mut int&)> on_total_{};
+
+public:
+  EventBus() {}
+  void subscribe<Handler>(Handler handler) mut {
+    // Workaround: push_back(move_only_function(...)) fails native C++
+    // compilation (see red/i1.gti); construct the element in place instead.
+    [[discard]] this.handlers_.emplace_back(std::move(handler));
+  }
+  void on_total<Callback>(Callback callback) mut
+    requires std::copy_constructible<Callback> {
+    this.on_total_.replace(std::move(callback));
+  }
+  int publish(int event) {
+    mut int total = 0;
+    for (auto& handler : this.handlers_) {
+      total += handler(event);
+    }
+    if (!this.on_total_.empty()) {
+      this.on_total_(total);
+    }
+    return total;
+  }
+  std::size_t size() { return this.handlers_.size(); }
+};
+
+class Job {
+  std::string name_;
+  mut std::move_only_function<std::string() &&> finisher_;
+
+public:
+  Job(std::string_view name, std::move_only_function<std::string() &&> finisher)
+      : name_(std::string(name)), finisher_(std::move(finisher)) {}
+  std::string finish() && {
+    mut std::string result = std::move(this.finisher_)();
+    result.append("@");
+    result.append(this.name_.view());
+    return result;
+  }
+};
+
+std::function<int(int)> make_scaler(int factor) {
+  return std::function<int(int)>([factor](int value) -> int {
+    return value * factor;
+  });
+}
+
+int main() {
+  mut EventBus bus{};
+  auto base = std::make_unique<int>(100);
+  bus.subscribe([owned = std::move(base)](int event) -> int {
+    return *owned + event;
+  });
+  std::string tag = std::string("tag");
+  bus.subscribe([label = std::move(tag)](int event) -> int {
+    return int(label.size()) * event;
+  });
+  int bias = 7;
+  bus.subscribe([bias](int event) -> int { return bias - event; });
+  if (bus.size() != std::size_t(3)) { return 1; }
+  // (100 + 2) + (3 * 2) + (7 - 2)
+  if (bus.publish(2) != 113) { return 2; }
+
+  bus.on_total([](mut int& total) -> void { total += 1000; });
+  // on_total_ receives the running total by mutable reference.
+  if (bus.publish(1) != 101 + 3 + 6 + 1000) { return 3; }
+
+  mut std::vector<std::function<int(int)>> scalers{};
+  for (mut int factor = 1; factor <= 3; factor += 1) {
+    scalers.push_back(make_scaler(factor));
+  }
+  std::vector<std::function<int(int)>> copies = std::clone(scalers);
+  scalers.clear();
+  mut int scaled = 0;
+  for (auto& scaler : copies) {
+    scaled += scaler(10);
+  }
+  if (scaled != 60) { return 4; }
+
+  auto payload = std::make_unique<int>(42);
+  Job job{"build", std::move_only_function<std::string() &&>(
+                       [owned = std::move(payload)]() -> std::string {
+                         return std::to_string(*owned);
+                       })};
+  std::string finished = std::move(job).finish();
+  if (finished != "42@build") { return 5; }
+  std::println(finished);
+  std::println("v09 ok");
+  return 0;
+}

@@ -1,0 +1,71 @@
+// constexpr operators on a generic record, generic constexpr functions used
+// both in constant contexts (scalar instances) and at runtime with an owning
+// type, std::array/std::min/std::clamp in constant expressions, and a
+// constexpr generic factory.
+#include <std/algorithm>
+#include <std/array>
+#include <std/string>
+
+struct Vec2<std::numeric T> {
+  T x;
+  T y;
+  constexpr Vec2(T x, T y) : x(x), y(y) {}
+  constexpr Vec2<T> operator+(Vec2<T>& other) { return Vec2<T>(T(this.x + other.x), T(this.y + other.y)); }
+  constexpr bool operator==(Vec2<T>& other) { return this.x == other.x && this.y == other.y; }
+  constexpr T operator[](uint64_t index) {
+    if (index == 0) { return this.x; }
+    return this.y;
+  }
+  constexpr T dot(Vec2<T>& other) { return T(this.x * other.x + this.y * other.y); }
+};
+
+constexpr Vec2<T> make_diag<std::numeric T>(T value) { return Vec2<T>(value, value); }
+
+constexpr T pick<T>(bool first, T a, T b) {
+  if (first) { return a; }
+  return b;
+}
+
+constexpr int32_t sum_table<uint64_t N>(std::array<int32_t, N>& table) {
+  mut int32_t total = 0;
+  for (mut std::size_t i = 0; i < table.size(); i++) { total += table[i]; }
+  return total;
+}
+
+constexpr Vec2<int32_t> origin = Vec2<int32_t>(0, 0);
+constexpr Vec2<int32_t> unit = make_diag(1);
+constexpr Vec2<int32_t> moved = origin + unit;
+constexpr Vec2<int64_t> wide = make_diag(int64_t(2000000000));
+constexpr std::array<int32_t, 4> weights = std::array<int32_t, 4>({3, 1, 4, 1});
+
+static_assert(moved == unit);
+static_assert(moved[uint64_t(1)] == 1 && wide.dot(wide) == 8000000000000000000);
+static_assert(pick(false, 10, 20) == 20);
+static_assert(sum_table<4>(weights) == 9);
+static_assert(std::min(4, 9) == 4 && std::clamp(15, 0, 10) == 10);
+
+int main() {
+  constexpr int32_t total = sum_table<4>(weights);
+  int32_t buffer[total] = {};
+  if (buffer.size() != 9) { return 1; }
+
+  // Runtime instances of the same declarations, including an owning type.
+  std::string chosen = pick(true, std::string("left"), std::string("right"));
+  if (chosen != "left") { return 2; }
+
+  mut int32_t runtime_x = 5;
+  runtime_x += 1;
+  Vec2<int32_t> a = Vec2<int32_t>(runtime_x, 2);
+  Vec2<int32_t> b = make_diag(3);
+  Vec2<int32_t> c = a + b;
+  if (c[uint64_t(0)] != 9 || c[uint64_t(1)] != 5) { return 3; }
+  Vec2<int32_t> expected_c = Vec2<int32_t>(9, 5);
+  if (!(c == expected_c)) { return 4; }
+  if (a.dot(b) != 24) { return 5; }
+
+  Vec2<double> half = make_diag(0.5d);
+  Vec2<double> one = half + half;
+  if (one[uint64_t(0)] != 1.0d) { return 6; }
+  std::println(c.dot(c));
+  return 0;
+}

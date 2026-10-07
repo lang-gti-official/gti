@@ -1,0 +1,12 @@
+manifest-version = 1
+
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+lib = { path = "../lib" }
+
+[targets.app]
+kind = "executable"
+root = "src/main.gti"

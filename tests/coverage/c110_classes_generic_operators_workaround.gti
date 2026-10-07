@@ -1,0 +1,83 @@
+// WORKAROUND variant of v12 (operator result named before field assignment).
+// Generic value class with arithmetic/comparison/compound operators and a
+// class-scoped alias, instantiated for int32_t and double; generic algorithms
+// constrained by std::addable / std::vector_space applied to it; alias of a
+// specialization used to qualify the class-scoped alias.
+#include <std/format>
+#include <std/vector>
+
+class Vec2<std::numeric T> {
+public:
+  using value_type = T;
+  value_type x;
+  value_type y;
+  Vec2(value_type x, value_type y) : x(x), y(y) {}
+  Vec2<T> operator+(Vec2<T> o) { return Vec2<T>(this.x + o.x, this.y + o.y); }
+  Vec2<T> operator-(Vec2<T> o) { return Vec2<T>(this.x - o.x, this.y - o.y); }
+  Vec2<T> operator-() { return Vec2<T>(T(0) - this.x, T(0) - this.y); }
+  Vec2<T> operator*(T s) { return Vec2<T>(this.x * s, this.y * s); }
+  bool operator==(Vec2<T> o) { return this.x == o.x && this.y == o.y; }
+  bool operator<(Vec2<T> o) { return this.x * this.x + this.y * this.y < o.dot(o); }
+  value_type dot(Vec2<T> o) { return this.x * o.x + this.y * o.y; }
+};
+
+class Accum<std::numeric T> {
+  mut Vec2<T> total;
+  mut int32_t n = 0;
+public:
+  Accum() : total(Vec2<T>(T(0), T(0))) {}
+  void operator+=(Vec2<T> v) mut {
+    Vec2<T> next = this.total + v; // WORKAROUND: `this.total = this.total + v;` ICEs
+    this.total = next;
+    this.n += 1;
+  }
+  Vec2<T> sum() { return this.total; }
+  int32_t count() { return this.n; }
+};
+
+V sum_all<V>(std::vector<V>& items, V zero) requires std::addable<V> && std::copyable<V> {
+  mut V acc = zero;
+  for (mut std::size_t i = 0; i < items.size(); i++) {
+    acc = acc + items[i];
+  }
+  return acc;
+}
+
+V reflect_scale<V, S>(V v, S k) requires std::vector_space<V, S> {
+  V scaled = v * k;
+  return -scaled + v - v;
+}
+
+using IVec = Vec2<int32_t>;
+using DVec = Vec2<double>;
+
+int main() {
+  IVec a = IVec(1, 2);
+  IVec b = IVec(3, 4);
+  IVec c = a + b - a * 2 + -b;
+  if (!(c == IVec(-1, -2))) { return 1; }
+  if (!(a < b) || b < a) { return 2; }
+  IVec::value_type d = a.dot(b);
+  if (d != 11) { return 3; }
+
+  mut std::vector<IVec> pts{};
+  pts.push_back(IVec(1, 1));
+  pts.push_back(IVec(2, 3));
+  pts.push_back(IVec(-5, 10));
+  IVec total = sum_all(pts, IVec(0, 0));
+  if (!(total == IVec(-2, 14))) { return 4; }
+
+  IVec r = reflect_scale(IVec(2, -3), 3);
+  if (r.x != -6 || r.y != 9) { return 5; }
+
+  mut Accum<double> acc = Accum<double>();
+  acc += DVec(0.5d, 1.0d);
+  acc += DVec(1.5d, -3.0d);
+  DVec s = acc.sum();
+  if (acc.count() != 2 || s.x != 2.0d || s.y != -2.0d) { return 6; }
+  DVec::value_type dd = s.dot(DVec(1.0d, 1.0d));
+  if (dd != 0.0d) { return 7; }
+
+  std::println("generic ops {} {} {}", c.x, total.y, r.y);
+  return 0;
+}

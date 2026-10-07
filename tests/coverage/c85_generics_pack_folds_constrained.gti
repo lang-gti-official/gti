@@ -1,0 +1,84 @@
+// Comma-pack folds over constrained packs feeding a constrained element
+// target, mixed with fixed leading parameters, pack forwarding through two
+// levels, empty packs, a class-owned pack, and a method binding it.
+#include <std/string>
+
+struct Tally {
+  mut int64_t sum = 0;
+  mut int32_t count = 0;
+  mut int32_t negatives = 0;
+};
+
+void add_one<std::numeric T>(mut Tally& tally, T& value) {
+  tally.sum += int64_t(value);
+  tally.count++;
+  if (value < 0) { tally.negatives++; }
+}
+
+Tally tally_all<std::numeric Values...>(Values... values) {
+  mut Tally tally{};
+  (add_one(tally, values), ...);
+  return tally;
+}
+
+Tally tally_forward<std::numeric Values...>(Values... values) {
+  return tally_all(values...);
+}
+
+Tally tally_with_seed<std::numeric First, std::numeric Rest...>(First first, Rest... rest) {
+  mut Tally tally = tally_forward(rest...);
+  add_one(tally, first);
+  return tally;
+}
+
+void append_text<T>(mut std::string& out, T& value) {
+  out.push_back('#');
+}
+
+int32_t mark_all<Args...>(mut std::string& out, Args... args) {
+  (append_text(out, args), ...);
+  return int32_t(out.size());
+}
+
+class Recorder<Args...> {
+  mut int32_t calls = 0;
+
+public:
+  Recorder() {}
+  int32_t record(Args... args) mut {
+    this.calls++;
+    mut std::string marks = std::string("");
+    return mark_all(marks, args...) + this.calls * 100;
+  }
+};
+
+int main() {
+  Tally a = tally_all(int8_t(-5), uint16_t(70), int64_t(1000000000000), 3);
+  std::println(a.sum);
+  if (a.sum != 1000000000068) { return 1; }
+  if (a.count != 4 || a.negatives != 1) { return 2; }
+
+  Tally empty = tally_all();
+  if (empty.count != 0 || empty.sum != 0) { return 3; }
+
+  Tally seeded = tally_with_seed(-1, int16_t(-2), uint8_t(3));
+  if (seeded.count != 3 || seeded.sum != 0 || seeded.negatives != 2) { return 4; }
+
+  Tally only_seed = tally_with_seed(uint32_t(9));
+  if (only_seed.count != 1 || only_seed.sum != 9) { return 5; }
+
+  mut std::string text = std::string("");
+  int32_t marked = mark_all(text, std::string("owned"), true, 2.5d, 'c');
+  std::println(text);
+  if (marked != 4) { return 6; }
+
+  mut Recorder<int32_t, std::string, bool> recorder = Recorder<int32_t, std::string, bool>();
+  int32_t first = recorder.record(1, std::string("x"), false);
+  int32_t second = recorder.record(2, std::string("y"), true);
+  std::println(second);
+  if (first != 103 || second != 203) { return 7; }
+
+  mut Recorder<> silent = Recorder<>();
+  if (silent.record() != 100) { return 8; }
+  return 0;
+}

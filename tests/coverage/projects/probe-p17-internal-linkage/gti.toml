@@ -1,0 +1,9 @@
+manifest-version = 1
+
+[package]
+name = "p17-internal-linkage"
+version = "0.1.0"
+
+[targets.p17]
+kind = "executable"
+root = "src/main.gti"

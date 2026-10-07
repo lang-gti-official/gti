@@ -1,0 +1,38 @@
+// INVALID: dependent static assertions failing for one concrete instance,
+// checked overflow during constexpr evaluation, a constexpr loop exceeding
+// the step budget, and value-generic recursion exceeding the call depth.
+class Packet<uint64_t Capacity> {
+  static_assert(Capacity > 0, "a packet needs storage");
+public:
+  uint64_t capacity() { return Capacity; }
+};
+
+int32_t only_small<T>() {
+  static_assert(sizeof(T) <= 4, "only small types");
+  return 1;
+}
+
+constexpr int32_t square(int32_t v) { return v * v; }
+
+constexpr uint64_t spin(uint64_t n) {
+  mut uint64_t total = 0;
+  for (mut uint64_t i = 0; i < n; i++) { total += i; }
+  return total;
+}
+
+constexpr uint64_t depth<uint64_t N>() {
+  if constexpr (N == 0) { return 0; }
+  else { return depth<N - 1>() + 1; }
+}
+
+constexpr int32_t overflow = square(50000);
+constexpr uint64_t too_long = spin(uint64_t(100000));
+constexpr uint64_t too_deep = depth<200>();
+
+int main() {
+  Packet<4> ok{};
+  Packet<0> empty{};
+  int32_t a = only_small<int32_t>();
+  int32_t b = only_small<int64_t>();
+  return int32_t(ok.capacity() + empty.capacity()) + a + b;
+}

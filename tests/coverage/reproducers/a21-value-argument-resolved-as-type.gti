@@ -1,0 +1,7 @@
+// A21: a bare identifier explicit value argument is resolved as a type.
+uint64_t extent<uint64_t N>() { return N; }
+
+int main() {
+  uint64_t runtime = 4;
+  return int32_t(extent<runtime>());
+}

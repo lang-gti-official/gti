@@ -1,0 +1,14 @@
+// INVALID: two exact operator+ candidates for a named operand.
+class V {
+public:
+  int32_t x;
+  V(int32_t x) : x(x) {}
+  V operator+(V o) { return V(this.x + o.x); }
+  V operator+(V& o) { return V(this.x + o.x + 100); }
+};
+int main() {
+  V a = V(1);
+  V b = V(2);
+  V c = a + b;
+  return c.x - 3;
+}

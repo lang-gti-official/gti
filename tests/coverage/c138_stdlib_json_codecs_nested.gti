@@ -1,0 +1,161 @@
+// Nested JSON codecs: codec<Order> decodes a vector<LineItem> by invoking
+// codec<LineItem> per element with error::prepend_path, handles an optional
+// field with a default, encodes back through the nested codec, round-trips
+// through decode_array, and indexes the decoded move-only orders in a map.
+#include <std/json>
+#include <std/string>
+#include <std/vector>
+#include <std/map>
+#include <std/format>
+#include <std/utility>
+
+class LineItem {
+public:
+  std::string sku;
+  uint64_t quantity;
+  int64_t cents;
+  LineItem(std::string sku, uint64_t quantity, int64_t cents)
+      : sku(std::move(sku)), quantity(quantity), cents(cents) {}
+  LineItem(LineItem& other) = delete;
+  LineItem(LineItem&& other) = default;
+};
+
+class Order {
+public:
+  uint64_t id;
+  std::string customer;
+  bool rush;
+  std::vector<LineItem> items;
+  Order(uint64_t id, std::string customer, bool rush, std::vector<LineItem> items)
+      : id(id), customer(std::move(customer)), rush(rush), items(std::move(items)) {}
+  Order(Order& other) = delete;
+  Order(Order&& other) = default;
+  int64_t total() {
+    mut int64_t sum = 0;
+    for (mut std::size_t i = 0; i < this.items.size(); i++) {
+      LineItem& item = this.items[i];
+      sum += int64_t(item.quantity) * item.cents;
+    }
+    return sum;
+  }
+};
+
+class std::json::codec<LineItem> {
+public:
+  expected<LineItem, std::json::error> decode(std::json::value& input) {
+    mut auto sku = input.get_string("sku");
+    if (!sku) { return unexpected(std::move(sku).error()); }
+    auto quantity = input.get_uint64("qty");
+    if (!quantity) { return unexpected(std::move(quantity).error()); }
+    auto cents = input.get_int64("cents");
+    if (!cents) { return unexpected(std::move(cents).error()); }
+    std::string owned = std::move(sku).value();
+    return LineItem(std::move(owned), quantity.value(), cents.value());
+  }
+  expected<std::json::value, std::json::error> encode(LineItem& input) {
+    mut auto out = std::json::value::object();
+    auto sku = out.set("sku", input.sku.view());
+    if (!sku) { return unexpected(std::move(sku).error()); }
+    auto quantity = out.set("qty", input.quantity);
+    if (!quantity) { return unexpected(std::move(quantity).error()); }
+    auto cents = out.set("cents", input.cents);
+    if (!cents) { return unexpected(std::move(cents).error()); }
+    return std::move(out);
+  }
+};
+
+class std::json::codec<Order> {
+public:
+  expected<Order, std::json::error> decode(std::json::value& input) {
+    auto id = input.get_uint64("id");
+    if (!id) { return unexpected(std::move(id).error()); }
+    mut auto customer = input.get_string("customer");
+    if (!customer) { return unexpected(std::move(customer).error()); }
+    // Optional field: absent means false; present-but-wrong is an error.
+    mut bool rush = false;
+    if (input.contains("rush")) {
+      auto flag = input.get_boolean("rush");
+      if (!flag) { return unexpected(std::move(flag).error()); }
+      rush = flag.value();
+    }
+    if (!input.contains("items") || !input.at("items").is_array()) {
+      return unexpected(std::json::error(std::json::errc::type_mismatch));
+    }
+    std::json::value& list = input.at("items");
+    mut std::vector<LineItem> items{};
+    std::json::codec<LineItem> nested{};
+    for (mut std::size_t index = 0; index < list.size(); index++) {
+      mut auto decoded = nested.decode(list.at(index));
+      if (!decoded) {
+        mut std::json::error failure = std::move(decoded).error();
+        std::string prefix = std::format("/items/{}", index);
+        failure.prepend_path(prefix.view());
+        return unexpected(std::move(failure));
+      }
+      items.push_back(std::move(decoded).value());
+    }
+    std::string owned = std::move(customer).value();
+    return Order(id.value(), std::move(owned), rush, std::move(items));
+  }
+  expected<std::json::value, std::json::error> encode(Order& input) {
+    mut auto out = std::json::value::object();
+    auto id = out.set("id", input.id);
+    auto customer = out.set("customer", input.customer.view());
+    auto rush = out.set("rush", input.rush);
+    if (!id || !customer || !rush) { return unexpected(std::json::error(std::json::errc::type_mismatch)); }
+    mut auto list = std::json::value::array();
+    std::json::codec<LineItem> nested{};
+    for (mut std::size_t i = 0; i < input.items.size(); i++) {
+      mut auto encoded = nested.encode(input.items[i]);
+      if (!encoded) { return unexpected(std::move(encoded).error()); }
+      auto pushed = list.push(std::move(encoded).value());
+      if (!pushed) { return unexpected(std::move(pushed).error()); }
+    }
+    auto stored = out.set("items", std::move(list));
+    if (!stored) { return unexpected(std::move(stored).error()); }
+    return std::move(out);
+  }
+};
+
+int main() {
+  std::string_view source =
+      "[{\"id\":7,\"customer\":\"ana\",\"items\":[{\"sku\":\"A1\",\"qty\":2,\"cents\":250},{\"sku\":\"B2\",\"qty\":1,\"cents\":-100}]},{\"id\":3,\"customer\":\"bo\",\"rush\":true,\"items\":[]}]";
+  mut auto orders = std::json::decode_array<Order>(source);
+  if (!orders) { std::println(orders.error().description()); return 1; }
+  mut std::vector<Order> list = std::move(orders).value();
+  if (list.size() != 2 || list[std::size_t(0)].total() != 400 || !list[std::size_t(1)].rush) { return 2; }
+
+  // Round trip one order through encode -> stringify -> decode.
+  auto encoded = std::json::encode<Order>(list[std::size_t(0)]);
+  if (!encoded) { return 3; }
+  std::string text = std::json::stringify(encoded.value());
+  std::println(text);
+  if (text != "{\"id\":7,\"customer\":\"ana\",\"rush\":false,\"items\":[{\"sku\":\"A1\",\"qty\":2,\"cents\":250},{\"sku\":\"B2\",\"qty\":1,\"cents\":-100}]}") { return 4; }
+  auto again = std::json::decode<Order>(text.view());
+  if (!again || again.value().items.size() != 2 || again.value().total() != 400) { return 5; }
+
+  // Index by id in an ordered map, moving the owners out of the vector.
+  mut std::map<uint64_t, Order> by_id{};
+  while (!list.empty()) {
+    std::size_t last = list.size() - 1;
+    // Elements cannot be partially moved out; exchange with a placeholder.
+    Order taken = std::exchange(list[last], Order(uint64_t(0), std::string(), false, std::vector<LineItem>()));
+    list.pop_back();
+    uint64_t key = taken.id;
+    [[discard]] by_id.insert(key, std::move(taken));
+  }
+  mut std::string ids{};
+  for (auto& entry : by_id) { ids.append(std::to_string(entry.first).view()); ids.push_back(','); }
+  if (ids != "3,7,") { return 6; }
+
+  // Nested failure paths: element index, then items index, then field.
+  auto bad = std::json::decode_array<Order>(
+      "[{\"id\":1,\"customer\":\"x\",\"items\":[]},{\"id\":2,\"customer\":\"y\",\"items\":[{\"sku\":\"Q\",\"qty\":-1,\"cents\":5}]}]");
+  if (bad) { return 7; }
+  std::println(bad.error().path());
+  if (bad.error().path() != "/1/items/0/qty" || bad.error().code() != std::json::errc::number_out_of_range) { return 8; }
+  auto wrong_rush = std::json::decode<Order>("{\"id\":1,\"customer\":\"x\",\"rush\":1,\"items\":[]}");
+  if (wrong_rush || wrong_rush.error().code() != std::json::errc::type_mismatch ||
+      wrong_rush.error().path() != "/rush") { return 9; }
+  return 0;
+}

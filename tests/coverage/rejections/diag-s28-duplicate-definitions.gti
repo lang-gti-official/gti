@@ -1,0 +1,13 @@
+int helper() { return 1; }
+int helper() { return 2; } //!ERR
+
+struct Pair {
+  int a = 0;
+  int a = 1; //!ERR
+};
+
+int main() {
+  int x = 1;
+  int x = 2; //!ERR
+  return x + helper();
+}

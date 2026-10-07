@@ -1,0 +1,9 @@
+// A52: an array of a struct with a union field is misclassified as cleanup-owning.
+union Payload { mut int32_t i; mut float f; };
+struct Value {
+  Payload data{};
+};
+int main() {
+  Value arr[2] = {};
+  unsafe { return arr[1].data.i; }
+}

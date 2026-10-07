@@ -1,0 +1,49 @@
+// Valid (failure path): empty-owner access (GTI-R0008) for both `*` and `->`
+// on a reset unique_ptr, while a resource_vector of owning strings and a
+// typed storage are live. Cleanup must destroy the elements, return the
+// resource region (printed by the verbose bump resource), then the outer
+// guard -- all before the report.
+#include <std/resource_vector>
+#include <std/resource>
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+#include "support/bump.gti"
+
+class Tag {
+  int32_t id;
+public:
+  Tag(int32_t id) : id(id) {}
+  Tag(Tag& other) = delete;
+  Tag(Tag&& other) = default;
+  ~Tag() {
+    std::print("tag ");
+    std::println(this.id);
+  }
+  int32_t value() { return this.id; }
+};
+
+int32_t work(std::resource_ref<probe::Bump> resource, int32_t mode) {
+  mut std::resource_vector<Tag, probe::Bump> tags{resource};
+  tags.emplace_back(1);
+  tags.emplace_back(2);
+  mut std::unique_ptr<Tag> boxed = std::make_unique<Tag>(3);
+  boxed.reset();
+  if (mode == 1) {
+    Tag& gone = *boxed; // deref-site
+    return gone.value();
+  }
+  return boxed->value(); // arrow-site
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Tag outer{9};
+  probe::Bump bump{2, true};
+  unsafe {
+    // Inline aligned regions, never reset or moved while bound.
+    std::resource_ref<probe::Bump> bound = std::bind_resource(bump);
+    int32_t status = work(bound, argc);
+    std::println("unreachable");
+    return status;
+  }
+}

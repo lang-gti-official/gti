@@ -1,0 +1,88 @@
+// Exact qualified specializations selected after generic substitution, through
+// aliases, with value-argument keys, and inside a constrained generic class.
+#include <std/vector>
+
+namespace codec {
+class traits<T> {
+public:
+  int32_t width() { return 0; }
+  bool fixed() { return false; }
+};
+
+struct slots<uint64_t N> {
+  uint64_t capacity() { return N; }
+};
+}
+
+class Pixel {
+public:
+  Pixel() {}
+};
+
+using Sample = int16_t;
+
+class codec::traits<Pixel> {
+public:
+  int32_t width() { return 32; }
+  bool fixed() { return true; }
+};
+
+class codec::traits<Sample> {
+public:
+  int32_t width() { return 16; }
+  bool fixed() { return true; }
+};
+
+struct codec::slots<0> {
+  uint64_t capacity() { return 999; }
+};
+
+int32_t width_of<T>() {
+  codec::traits<T> t{};
+  return t.width();
+}
+
+uint64_t capacity_of<uint64_t N>() {
+  codec::slots<N> s{};
+  return s.capacity();
+}
+
+class Stream<std::copyable T> {
+  mut std::vector<T> items;
+
+public:
+  Stream() : items(std::vector<T>()) {}
+  void push(T item) mut { this.items.push_back(item); }
+  int32_t bits() {
+    codec::traits<T> t{};
+    return t.width() * int32_t(this.items.size());
+  }
+  bool fixed_width() {
+    codec::traits<T> t{};
+    return t.fixed();
+  }
+};
+
+int main() {
+  if (width_of<Pixel>() != 32) { return 1; }
+  if (width_of<int16_t>() != 16) { return 2; }
+  if (width_of<Sample>() != 16) { return 3; }
+  if (width_of<int32_t>() != 0) { return 4; }
+  if (width_of<std::vector<Pixel>>() != 0) { return 5; }
+
+  if (capacity_of<0>() != 999) { return 6; }
+  if (capacity_of<1 - 1>() != 999) { return 7; }
+  if (capacity_of<7>() != 7) { return 8; }
+
+  mut Stream<int16_t> samples = Stream<int16_t>();
+  samples.push(int16_t(1));
+  samples.push(int16_t(2));
+  samples.push(int16_t(3));
+  std::println(samples.bits());
+  if (samples.bits() != 48 || !samples.fixed_width()) { return 9; }
+
+  mut Stream<uint8_t> bytes = Stream<uint8_t>();
+  bytes.push(uint8_t(1));
+  if (bytes.bits() != 0 || bytes.fixed_width()) { return 10; }
+  return 0;
+}

@@ -1,0 +1,4 @@
+int main() {
+  int café = 1; //!ERR
+  return café;
+}
