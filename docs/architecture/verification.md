@@ -3829,6 +3829,41 @@ observations.
 
 ## Development And Completion Cadence
 
+### Generic contract and advisory regression gates
+
+`testDependentRequiresArgumentAdmission` in the declarations partition checks
+complete-clause dependent compound admission, reversed conjunction order,
+common disjunction facts, missing/branch-local facts, unknown types, and
+concrete rejection. `function_item_semantic_ir` also covers deduced value
+packs, exact/ambiguous overloads, open forwarding, access boundaries, verified
+HIR/MIR, target mutation, and production representation preflight.
+`generic_contract_runtime` runs the pack fixture, A19, and updated examples 33
+and 80 through the unchanged eight-mode native matrix.
+
+`testGenericAdvisorySoundness` and `generic_advisory_lsp` cover A20/A24/A33,
+unresolved callable arguments, an unrelated mutable operator receiver,
+declaration-independent warnings, exact safe edits, UTF-16 positions, current
+versions and stale-fix rejection. `generic_contract_lsp` checks contextual
+function hover/definition, dependent-clause publication and error recovery.
+Focused passes do not replace the campaign's combined full-suite acceptance.
+
+The PR117 refresh retains the integrated constructor/lambda transport, physical
+field identities and diagnostic recovery from canonical `a23c66a`. Its owning
+declarations and diagnostics partitions, native contract/advisory matrices,
+LSP and focused integration controls are rerun with an optimized Release/Ninja
+compiler. The older contextual-array negative expected an argument-order
+message where the compiler now resolves a written type in a value slot; that
+expectation follows the correct GTI-S2026 value-kind diagnostic and additionally
+requires its exact three-byte written-argument span. No invalid program is
+admitted, source assertion removed, mode omitted, or warning policy relaxed.
+
+The reviewed example inventory adds five bodies to example 33 (the Box field
+and static initializer bodies, constructor, observer and constrained reader),
+and two to example 80 (the pack client and target). Their observed declaration
+increments are seven and two, and generated-item increments are three and one.
+Only those example entries and corresponding totals change; the complete
+corpus census/oracle must still be run by the combined acceptance campaign.
+
 ### Bounded case workers and development selections
 
 The standard-library surface harness and all clients of the shared callable

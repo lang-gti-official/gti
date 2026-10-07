@@ -70,6 +70,10 @@
       "suite": "frontend"
     },
     {
+      "name": "testDependentRequiresArgumentAdmission",
+      "suite": "declarations"
+    },
+    {
       "name": "testStructuralClassConstraints",
       "suite": "declarations"
     },
@@ -596,6 +600,10 @@
     {
       "name": "testCompileTimeConditionals",
       "suite": "constexpr"
+    },
+    {
+      "name": "testGenericAdvisorySoundness",
+      "suite": "diagnostics"
     },
     {
       "name": "testSemanticVisitorRequestReuse",
