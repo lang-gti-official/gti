@@ -12232,6 +12232,7 @@ verifyMirProgramContracts(const MirProgram &program) {
               : nullptr;
       const bool selectedConstructor =
           target != nullptr && base != nullptr && target->owner == base->id &&
+          target->generatedDefault == initializer.generatedDefault &&
           target->parameterTypes.size() == initializer.arguments.size() &&
           std::all_of(
               target->parameterTypes.begin(), target->parameterTypes.end(),

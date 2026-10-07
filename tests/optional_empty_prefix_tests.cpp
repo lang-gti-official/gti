@@ -109,12 +109,18 @@ void checkActiveStorage() {
                 lang::CompilerCapabilityTypeKind::OptionalStorage)
           continue;
         ++checked;
+        expect(lang::cppMirFailureConstructorEmptyStateEligible(
+                   frontend.mir, constructor.owner) &&
+                   lang::cppMirFailureConstructorEmptyFieldsEligible(
+                       frontend.mir, constructor.owner),
+               "the selected private constructor establishes both empty "
+               "state and empty-field witnesses");
         expect(lang::cppMirConstructedFieldInitializerBindings(frontend.mir,
                                                                constructor)
                    .empty(),
                "active storage keeps its MIR lifecycle, not the passive prefix "
                "route");
-        for (int mutation = 0; mutation != 4; ++mutation) {
+        for (int mutation = 0; mutation != 6; ++mutation) {
           auto malformed = frontend.mir;
           auto *changed = const_cast<lang::MirConstructorInstance *>(
               malformed.findConstructorInstance(constructor.id));
@@ -137,14 +143,21 @@ void checkActiveStorage() {
           } else {
             auto *empty = const_cast<lang::MirConstructorInstance *>(
                 malformed.findConstructorInstance(target->id));
-            empty->body.blocks.front().terminator.kind =
-                lang::MirTerminatorKind::Unreachable;
-            expect(!lang::cppMirFailureConstructorEmptyStateEligible(
-                       malformed, constructor.owner) &&
-                       !lang::cppMirFailureConstructorEmptyFieldsEligible(
-                           malformed, constructor.owner),
-                   "optional empty-state helpers retain the selected private "
-                   "constructor Return proof");
+            if (mutation == 3)
+              empty->body.blocks.front().terminator.kind =
+                  lang::MirTerminatorKind::Unreachable;
+            else if (mutation == 4)
+              empty->body.blocks.front().terminator.value = 1;
+            else
+              empty->borrowOrigin = lang::BorrowOriginKind::Parameter;
+            expect(
+                !lang::cppMirFailureConstructorEmptyStateEligible(
+                    malformed, constructor.owner) &&
+                    !lang::cppMirFailureConstructorEmptyFieldsEligible(
+                        malformed, constructor.owner),
+                "optional empty-state helpers retain the selected private "
+                "constructor's void Return and nonborrowed proof (mutation " +
+                    std::to_string(mutation) + ")");
           }
           expect(!lang::CppMirBodyEmitter(malformed, rows)
                       .supportsFailureBodyText(

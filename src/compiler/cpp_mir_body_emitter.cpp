@@ -22032,6 +22032,17 @@ bool cppMirFailureConstructorEmptyStateTypeEligible(const MirProgram &program,
 bool cppMirFailureConstructorEmptyFieldsEligible(
     const MirProgram &program, HirClassInstanceId instanceId) {
   const MirClassInstance *instance = program.findClassInstance(instanceId);
+  // Do not bypass a selected private empty-constructor witness through the
+  // general fields-only aggregate fallback. The sealed slot's shape alone
+  // cannot prove that its selected constructor establishes the empty state.
+  if (instance != nullptr &&
+      std::any_of(instance->declaredFields.begin(),
+                  instance->declaredFields.end(),
+                  [&](const MirClassFieldInfo &field) {
+                    return optionalStorageType(program, field.type);
+                  })) {
+    return optionalStorageOwnerEmptyState(program, *instance);
+  }
   return instance != nullptr &&
          (failureConstructorEmptyStateConstructible(program, *instance) ||
           optionalStorageOwnerEmptyState(program, *instance) ||

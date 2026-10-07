@@ -3298,6 +3298,9 @@ int main() { auto fields = Fields(); auto caller = Caller(); return 0; }
     return;
   }
   std::size_t transfers = 0;
+  std::size_t explicitConstructorTransfers = 0;
+  std::size_t generatedConstructorTransfers = 0;
+  std::size_t fieldInitializerTransfers = 0;
   for (const auto address : lang::enumerateMirBodyAddresses(frontend.mir)) {
     if (address.kind != lang::MirBodyKind::Constructor &&
         address.kind != lang::MirBodyKind::FieldInitializers)
@@ -3316,6 +3319,14 @@ int main() { auto fields = Fields(); auto caller = Caller(); return 0; }
               source->kind != lang::MirDropObligationKind::PreparedParameter)
             continue;
           ++transfers;
+          if (address.kind == lang::MirBodyKind::FieldInitializers) {
+            ++fieldInitializerTransfers;
+          } else if (frontend.mir.findConstructorInstance(address.owner)
+                         ->generatedDefault) {
+            ++generatedConstructorTransfers;
+          } else {
+            ++explicitConstructorTransfers;
+          }
           expect(
               lang::mirBodyRoutesFailureEdges(body) &&
                   !body.failureRecords.empty() &&
@@ -3363,9 +3374,11 @@ int main() { auto fields = Fields(); auto caller = Caller(); return 0; }
       }
     }
   }
-  expect(
-      transfers == 4,
-      "fixture must hand off constructor and field-initializer string owners");
+  expect(transfers == 6 && explicitConstructorTransfers == 2 &&
+             generatedConstructorTransfers == 2 &&
+             fieldInitializerTransfers == 2,
+         "fixture must hand off exactly two string owners in each explicit "
+         "constructor, generated constructor and field-initializer schedule");
 }
 
 void testBaseInitializationContracts() {
