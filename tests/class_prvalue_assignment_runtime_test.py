@@ -7,6 +7,22 @@ import sys
 import tempfile
 
 
+INCOMING_CLEANUP_CHECK = (
+    r"::gti_internal::backend::mir_check_incoming_cleanup_failure_v1\("
+    r"__gti_mir_failure_record, "
+    r"&::gti_internal::backend::__gti_failure_artifact_descriptor_v1\);"
+)
+
+
+def cleanup_scope(block: str) -> str:
+    ordinal = re.escape(block.removeprefix("__gti_mir_bb_"))
+    return (
+        r"::gti_internal::backend::mir_failure_cleanup_scope_v1 "
+        r"__gti_mir_cleanup_context_" + ordinal + r"\(__gti_mir_failure_record, "
+        r"&::gti_internal::backend::__gti_failure_artifact_descriptor_v1\);\s*"
+    )
+
+
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, text=True, capture_output=True, check=False)
 
@@ -142,23 +158,30 @@ def main() -> int:
                 # Bind both to the exact replacement branch and block labels,
                 # rather than mistaking textual count for execution count.
                 labels = re.findall(r"(__gti_mir_bb_\d+): \{", "\n".join(lines[:index]))
-                guarded = re.search(
+                guarded_pattern = re.compile(
                     r"if \((__gti_mir_replacement_success_\d+)\) \{\s*"
                     r"goto (" + re.escape(labels[-1]) + r");\s*\} else \{\s*"
-                    r"goto (__gti_mir_bb_\d+);",
-                    body,
+                    + INCOMING_CLEANUP_CHECK + r"\s*goto (__gti_mir_bb_\d+);"
                 ) if labels else None
+                guarded = guarded_pattern.search(body) if guarded_pattern else None
                 expected_drops = 1
                 if guarded is not None:
-                    rollback = re.search(
+                    rollback_pattern = re.compile(
                         re.escape(guarded.group(3)) + r": \{\s*"
+                        + cleanup_scope(guarded.group(3)) +
                         r"// GTI MIR failure-record \d+ cleanup\s*"
                         r"__gti_mir_drop_success_\d+ = " + re.escape(slot)
-                        + r"\.destroy_with_failure\(",
-                        body,
+                        + r"\.destroy_with_failure\("
                     )
+                    rollback = rollback_pattern.search(body)
                     if rollback is None:
                         sys.stderr.write(f"missing rollback of {slot}\n")
+                        return 1
+                    missing_guard = re.sub(INCOMING_CLEANUP_CHECK, "", guarded.group(0), count=1)
+                    missing_scope = re.sub(cleanup_scope(guarded.group(3)), "", rollback.group(0), count=1)
+                    if (guarded_pattern.search(missing_guard) is not None or
+                            rollback_pattern.search(missing_scope) is not None):
+                        sys.stderr.write("replacement proof accepts missing inherited-cleanup protection\n")
                         return 1
                     expected_drops = 2
                 destructions = re.findall(
