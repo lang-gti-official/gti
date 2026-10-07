@@ -105,9 +105,12 @@ int main() {
       expectedFields.push_back(field.symbol);
     expect(
         published == expectedFields &&
-            emitter.supportsFailureBodyText(
-                {.kind = lang::MirBodyKind::Constructor,
-                 .owner = constructor.id}),
+            (emitter.supportsBodyText({.kind = lang::MirBodyKind::Constructor,
+                                       .owner = constructor.id}) ||
+             (constructor.mayRaiseDefinedFailure &&
+              emitter.supportsFailureBodyText(
+                  {.kind = lang::MirBodyKind::Constructor,
+                   .owner = constructor.id}))),
         "constructor MIR publishes each exact field once in declaration order");
   }
   expect(constructorSchedules == 2,
@@ -139,7 +142,7 @@ int main() {
                  std::string::npos &&
              artifact.contents.find("payload_t empty;") != std::string::npos &&
              artifact.contents.find("(*this).converted") != std::string::npos &&
-             artifact.contents.find("numeric_cast<std::int8_t>") !=
+             artifact.contents.find("mir_checked_convert_v1<std::int8_t>") !=
                  std::string::npos &&
              artifact.contents.find("(*this).empty = std::move(") !=
                  std::string::npos &&
@@ -233,7 +236,10 @@ int main() {
           !lang::verifyMirProgram(wrongConstructorPayload).valid() &&
           !lang::CppMirBodyEmitter(wrongConstructorPayload, map)
                .supportsFailureBodyText({.kind = lang::MirBodyKind::Constructor,
-                                         .owner = changedConstructor->id}),
+                                         .owner = changedConstructor->id}) &&
+          !lang::CppMirBodyEmitter(wrongConstructorPayload, map)
+               .supportsBodyText({.kind = lang::MirBodyKind::Constructor,
+                                  .owner = changedConstructor->id}),
       "selected constructor payload operand drift must fail closed");
 
   lang::MirProgram missingPublication = frontend.mir;
@@ -337,9 +343,13 @@ int main() {
         for (const auto &instruction : block.instructions)
           sawLogicalNot |=
               instruction.operation == lang::MirOperation::LogicalNot;
-      expect(logicalNotEmitter.supportsFailureBodyText(
+      expect(logicalNotEmitter.supportsBodyText(
                  {.kind = lang::MirBodyKind::Constructor,
-                  .owner = constructor.id}),
+                  .owner = constructor.id}) ||
+                 (constructor.mayRaiseDefinedFailure &&
+                  logicalNotEmitter.supportsFailureBodyText(
+                      {.kind = lang::MirBodyKind::Constructor,
+                       .owner = constructor.id})),
              "general constructor MIR supports LogicalNot field execution");
     }
     expect(schedule.supported && schedule.fields.size() == 1 &&
