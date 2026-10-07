@@ -65,7 +65,56 @@ int main() {
            "completion recovery invented missing entry");
   }
   options.completionOffset.reset();
+  const std::string undefinedSource =
+      "int helper(int value);\nint main() { return helper(7); }\n";
+  const auto undefined = lang::Frontend(options).analyze(path, undefinedSource);
+  expect(!undefined.semanticValid && undefined.diagnostics.size() == 1,
+         "closed executable must reject a called declaration without a body");
+  const auto &missingDefinition = undefined.diagnostics.front();
+  expect(missingDefinition.code == "GTI-S2106" &&
+             missingDefinition.phase == lang::DiagnosticPhase::Semantics &&
+             missingDefinition.primary.source ==
+                 std::filesystem::weakly_canonical(path).string() &&
+             missingDefinition.primary.start ==
+                 undefinedSource.rfind("helper") &&
+             missingDefinition.primary.end ==
+                 undefinedSource.rfind("helper") + 6 &&
+             missingDefinition.related.size() == 1 &&
+             missingDefinition.related.front().span.start ==
+                 undefinedSource.find("helper") &&
+             missingDefinition.fixes.empty() &&
+             missingDefinition.hints.size() == 1,
+         "missing definition diagnostic must locate the call and declaration");
+  const auto unused = lang::Frontend(options).analyze(
+      path, "int helper(int value);\nint main() { return 0; }\n");
+  expect(unused.semanticValid, "unused bodyless declarations remain valid");
+  const auto missingMethod = lang::Frontend(options).analyze(
+      path, "class Box { public: Box() {} int read(); };\n"
+            "int main() { Box value{}; return value.read(); }\n");
+  expect(!missingMethod.semanticValid &&
+             missingMethod.diagnostics.size() == 1 &&
+             missingMethod.diagnostics.front().code == "GTI-S2106",
+         "ordinary bodyless methods require the same definition check");
+  const auto missingOperator = lang::Frontend(options).analyze(
+      path, "class Box { public: Box() {} int operator+(int other); };\n"
+            "int main() { Box value{}; return value + 1; }\n");
+  expect(!missingOperator.semanticValid &&
+             missingOperator.diagnostics.size() == 1 &&
+             missingOperator.diagnostics.front().code == "GTI-S2106",
+         "overloaded operators require definitions just like explicit calls");
+  const auto foreign = lang::Frontend(options).analyze(
+      path, "extern \"C\" { int32_t native(int32_t value); }\n"
+            "int main() { return native(7); }\n");
+  expect(foreign.semanticValid, "foreign declarations do not need GTI bodies");
+  const auto defined = lang::Frontend(options).analyze(
+      path, "int main() { return helper(7); }\n"
+            "int helper(int value) { return value; }\n");
+  expect(defined.semanticValid,
+         "later definitions must resolve before use checking");
   options.requireEntryPoint = false;
+  const auto fragment = lang::Frontend(options).analyze(path, undefinedSource);
+  expect(fragment.semanticValid,
+         "fragment analysis may resolve signatures without executable closure");
   const auto library = lang::Frontend(options).analyze(path, source);
   expect(library.semanticValid && library.diagnostics.empty(),
          "ordinary library rejected");

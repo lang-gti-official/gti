@@ -8128,6 +8128,14 @@ public:
           "lowered hosted startup lost its exact entry declaration");
     }
     const bool failure = entry->mayRaiseDefinedFailure;
+    // ReturnEntry maps the full GTI int result to a portable process status
+    // only after the verified entry call and invocation cleanup. Never let a
+    // host's truncation turn a nonzero GTI result into a successful exit.
+    const auto emitEntryStatus = [&]() {
+      writeIndent();
+      output << "return (__gti_result >= 0 && __gti_result <= 255) "
+                "? __gti_result : 1;\n";
+    };
     const auto emitCThreadBoundary = [&](bool begin) {
       const auto targetId = begin ? hosted->cThreadBegin : hosted->cThreadEnd;
       if (targetId == 0) {
@@ -8174,8 +8182,7 @@ public:
         output << "(&__gti_result, &__gti_failure_record)) {\n";
         ++indentation;
         emitCThreadBoundary(false);
-        writeIndent();
-        output << "return __gti_result;\n";
+        emitEntryStatus();
         --indentation;
         writeIndent();
         output << "}\n";
@@ -8199,9 +8206,15 @@ public:
             "lowered no-argument entry has no failure-free startup schedule");
       }
       if (!moduleRuntimeEmission && !mir.requiresCThreadRuntime()) {
-        output << "\nint main() { return ";
+        output << "\nint main() {\n";
+        ++indentation;
+        writeIndent();
+        output << "const auto __gti_result = ";
         emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration);
-        output << "(); }\n";
+        output << "();\n";
+        emitEntryStatus();
+        --indentation;
+        output << "}\n";
         return;
       }
       output << "\nint main() {\n";
@@ -8231,8 +8244,7 @@ public:
       emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration);
       output << "();\n";
       emitCThreadBoundary(false);
-      writeIndent();
-      output << "return __gti_result;\n";
+      emitEntryStatus();
       --indentation;
       output << "}\n";
       return;
@@ -8365,8 +8377,7 @@ public:
                 "&__gti_result, &__gti_failure_record)) {\n";
       ++indentation;
       emitCThreadBoundary(false);
-      writeIndent();
-      output << "return __gti_result;\n";
+      emitEntryStatus();
       --indentation;
       writeIndent();
       output << "}\n";
@@ -8385,8 +8396,7 @@ public:
       emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration);
       output << "(__gti_stabilized_argc, std::move(__gti_arguments));\n";
       emitCThreadBoundary(false);
-      writeIndent();
-      output << "return __gti_result;\n";
+      emitEntryStatus();
     }
     --indentation;
     output << "}\n";

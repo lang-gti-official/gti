@@ -1,0 +1,10 @@
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() { std::println("cleanup"); }
+};
+
+int main() {
+  Cleanup cleanup{};
+  return 256;
+}

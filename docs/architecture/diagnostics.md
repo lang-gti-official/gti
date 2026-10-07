@@ -9,6 +9,15 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
+`GTI-S2106` rejects a selected ordinary GTI call without a source definition
+in a closed executable/library request, before native code generation. The
+call token is primary and its bodyless declaration is related. Semantic
+resolution preserves the selected signature for recovery; it does not guess
+a replacement body or offer an automatic foreign-linkage edit. Pure virtual
+contracts, registered runtime bindings and compiler intrinsics retain their
+separate definition policies. Fragment analysis can still resolve declarations
+without claiming executable closure.
+
 ## Terminal colour
 
 The CLI accepts `--color=auto|always|never` (also `--color <mode>`), before a
@@ -78,6 +87,14 @@ body-local field-expression identities, but does not republish the class-owned
 records. Concrete constructor-body errors remain independently published with
 their own instantiation sites; no message-based deduplication hides distinct
 diagnostics or notes.
+
+`GTI-S2105` reports deterministic concrete-instance discovery exhaustion (64
+new-instance levels or 16,384 distinct generic instances in one HIR request). It anchors
+the requesting source, relates the declaration and explains that runtime
+branches do not bound generic instantiation. There is no safe automatic edit.
+An invalid HIR result with no earlier error always produces a located
+`GTI-B0001`, including up to five plan-verifier details when available; the
+frontend cannot silently return a failed compilation.
 
 `WarningPolicy` is the immutable driver-boundary filter for compiler warning
 groups. Direct compilation accepts repeatable `-Wno-<group>` (or
