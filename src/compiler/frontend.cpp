@@ -488,6 +488,25 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   result.hirValid = hir.valid();
   result.hir = std::move(hir.program);
   append(result.diagnostics, hir.diagnostics);
+  if (!result.hirValid && !hasErrorDiagnostics(result.diagnostics)) {
+    const SourceUnit *entry =
+        result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
+    std::string message =
+        "Internal compiler error: failed to construct valid HIR.";
+    const auto verification =
+        verifyHirProgramPlans(semantic.model(), result.hir);
+    constexpr std::size_t maximumReportedDetails = 5;
+    for (std::size_t index = 0;
+         index < verification.errors.size() && index < maximumReportedDetails;
+         ++index) {
+      message += " " + verification.errors[index] + ".";
+    }
+    result.diagnostics.push_back(makeDiagnostic(
+        "GTI-B0001", DiagnosticPhase::Backend,
+        SourceSpan{entry == nullptr ? entryPath.string() : entry->path.string(),
+                   0, 0, 1},
+        std::move(message)));
+  }
   // HIR instance reanalysis is the last reader of the semantic visitor;
   // move the model into the result instead of deep-copying it.
   result.semantics = semantic.takeModel();

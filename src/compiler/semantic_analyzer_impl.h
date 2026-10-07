@@ -2896,6 +2896,7 @@ private:
                          const ClassDecl *owner, AccessModifier access);
 
   void resolveTypeAliases();
+  void validateTypeAliasConstraints();
 
   void registerConcepts(const StmtList &statements,
                         std::vector<std::string> scope);
@@ -4327,6 +4328,7 @@ private:
     bool currentStaticMemberFunction = false;
     bool allowPackTypeReference = false;
     bool resolvingGenericTypeDefault = false;
+    bool deferringTypeAliasConstraints = false;
     LoanFlowState loanFlow;
     bool instanceClassContextActive = false;
     bool instanceAnalysisActive = false;
@@ -4495,6 +4497,8 @@ private:
   bool &allowPackTypeReference = requestSession.allowPackTypeReference;
   bool &resolvingGenericTypeDefault =
       requestSession.resolvingGenericTypeDefault;
+  bool &deferringTypeAliasConstraints =
+      requestSession.deferringTypeAliasConstraints;
   LoanFlowState &loanFlow = requestSession.loanFlow;
   std::vector<ValueControlFlowContext> &valueControlFlow =
       requestSession.valueFlow.controlFlow;

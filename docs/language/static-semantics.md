@@ -288,6 +288,22 @@ C++ `using Base::member` exposure, constructor inheritance, and access
 reshaping are not part of this declaration form. Native callback aliases remain
 namespace-only under the native C interoperation contract.
 
+Aliases preserve exact type identity during registration, but constraints on
+their target applications are checked only after class members and lifecycle
+facts are complete. This applies to unused aliases too; aliases cannot bypass
+the target generic's constraints. A class argument therefore has the same
+constraint meaning in an alias and in an ordinary declaration.
+
+Concrete generic discovery has deterministic compilation-resource bounds: 64
+new-instance levels in a request chain and 16,384 distinct generic class, function,
+constructor and destructor instances per HIR request (including generic-owner
+members and empty packs, not ordinary declaration roots). Exact recursion reuses
+one instance. Type- or value-changing recursion must terminate within those
+bounds through a selected compile-time branch or exact specialization; a
+runtime `if` does not prevent instantiation of the other branch. Exceeding a
+bound is diagnosed as `GTI-S2105`, not a hang or backend failure. These are
+compiler resource bounds rather than a termination proof for generic programs.
+
 Class members follow their declared access and the default associated with
 `class` or `struct`. `interface` members are public contracts. Namespace
 `static` declarations have source-unit internal linkage. Type-owned static

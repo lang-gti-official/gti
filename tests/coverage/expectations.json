@@ -1711,9 +1711,8 @@
       "outcome": "bad-diagnostic"
     },
     "a06-polymorphic-recursion-hang": {
-      "finding": "A06",
-      "issue": 57,
-      "outcome": "hang",
+      "code": "GTI-S2105",
+      "outcome": "rejected",
       "timeout": 20
     },
     "a07-unknown-function-attribute": {
@@ -1975,12 +1974,12 @@
     "a41-storage-emplace-fixed-array-silent": {
       "finding": "A41",
       "issue": 84,
-      "outcome": "silent"
+      "outcome": "ice"
     },
     "a41-vector-emplace-back-fixed-array-silent": {
       "finding": "A41",
       "issue": 84,
-      "outcome": "silent"
+      "outcome": "ice"
     },
     "a42-c-abi-record-array-from-named-values": {
       "issue": 85,
@@ -2099,16 +2098,10 @@
       "outcome": "bad-diagnostic"
     },
     "a54-alias-constrained-generic-class-argument": {
-      "code": "GTI-S2029",
-      "finding": "A54",
-      "issue": 95,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a54-alias-constrained-generic-user-class": {
-      "code": "GTI-S2029",
-      "finding": "A54",
-      "issue": 95,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a55-ctor-pack-move-only-field-init": {
       "finding": "A55",
@@ -2131,14 +2124,10 @@
       "outcome": "ice"
     },
     "a57-generic-member-field-range-for-silent": {
-      "finding": "A57",
-      "issue": 98,
-      "outcome": "silent"
+      "outcome": "pass"
     },
     "a57-generic-nondependent-range-for-silent": {
-      "finding": "A57",
-      "issue": 98,
-      "outcome": "silent"
+      "outcome": "pass"
     },
     "a58-map-unique-ptr-value-deref": {
       "finding": "A58",
