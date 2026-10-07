@@ -32,6 +32,11 @@ int32_t invoke_pack<F, Args...>(F callback, Args... values) {
   unsafe { return callback(values...); }
 }
 
+int32_t gti_view_length(std::string_view value) {
+  if (value == "hello") { return 5; }
+  return 0;
+}
+
 int main() {
   unsafe {
     clear_trace();
@@ -63,6 +68,8 @@ int main() {
     if (point.x != 5 || point.y != 8) { return 10; }
     ViewLength length = obtain_view_length();
     if (length("hello") != 5) { return 11; }
+    ViewLength adapted = gti_view_length;
+    if (adapted("hello") != 5) { return 13; }
   }
   return 0;
 }

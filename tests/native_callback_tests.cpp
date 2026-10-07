@@ -2,6 +2,7 @@
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/language_queries.h"
+#include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
 #include "gti/native_header.h"
 #include "gti/optimizer.h"
@@ -388,6 +389,12 @@ int main() {
         expect(lang::isMirNativeIndirectCall(frontend.mir, function.body,
                                              instruction),
                "native call must satisfy the shared exact MIR contract");
+        const auto effect = lang::effects(frontend.mir, instruction);
+        expect(!effect.speculatable && !effect.removableWhenUnused &&
+                   !effect.reorderable && effect.readsUnknownMemory &&
+                   effect.writesUnknownMemory,
+               "native address invocation must retain conservative foreign "
+               "effects rather than a guessed GTI body summary");
         for (int mutation = 0; mutation < 10; ++mutation) {
           auto forged = frontend.mir;
           auto &functions =
