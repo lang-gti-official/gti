@@ -383,6 +383,10 @@ add_test(NAME carrier_reference_runtime
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/carrier_reference_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(carrier_reference_runtime PROPERTIES TIMEOUT 180)
+add_test(NAME shared_accessor_range_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/shared_accessor_range_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(shared_accessor_range_runtime PROPERTIES TIMEOUT 240)
 
 add_test(
   NAME semantic_header_boundary

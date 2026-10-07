@@ -1071,6 +1071,14 @@ Finishing a derived view does not retire an external-owner loan still retained
 by another live physical-shell alias. Child-first endpoint selection accounts
 for both parent reborrows and stored dependencies; independent verification
 rejects ending either kind of authority before its dependents.
+Read-only structural range elements retain the exact iterator dereference
+`CallResult` chain when it terminates at the semantic range loan, including
+a range reached through a borrowed-success carrier and reference accessor.
+They do not retire that chain and replace it with a `Local` loan against the
+coarser shared range. The selected returned address and child-first lifetime
+therefore survive through each iteration's last use, break, continue, return
+and defined-failure cleanup. Mutable iteration retains its existing direct
+exclusive parent/element contract; no shared access is widened.
 
 Targetless generated move construction preserves the source carrier's complete
 dependency set: origin places, permissions, ancestry and destination field
