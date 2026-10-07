@@ -13,7 +13,7 @@ class ExplicitDerived : public Base {
 public:
   ExplicitDerived() : Base() {}
 };
-class GeneratedDerived : public Base {};
+class GeneratedDerived : public Base { int tag = 9; };
 int main() {
   ExplicitDerived explicit_value{};
   GeneratedDerived generated_value{};
@@ -103,27 +103,45 @@ int main() { Derived value{}; return 0; }
                            return instruction.kind ==
                                   lang::MirInstructionKind::InitializeBase;
                          });
-        if (base == block.instructions.end() || !base->definedFailure.empty())
+        if (base == block.instructions.end())
           continue;
-        const auto call = std::find_if(
-            base + 1, block.instructions.end(), [](const auto &instruction) {
-              return instruction.kind == lang::MirInstructionKind::Call &&
-                     instruction.functionTarget &&
-                     instruction.definedFailure.empty();
-            });
-        if (call == block.instructions.end())
+        const lang::MirBlock *callBlock = nullptr;
+        const lang::MirInstruction *call = nullptr;
+        for (const auto &candidateBlock : constructor.body.blocks)
+          for (const auto &instruction : candidateBlock.instructions)
+            if (instruction.kind == lang::MirInstructionKind::Call &&
+                instruction.functionTarget &&
+                instruction.definedFailure.empty()) {
+              expect(call == nullptr,
+                     "the fixture has exactly one field argument call");
+              callBlock = &candidateBlock;
+              call = &instruction;
+            }
+        if (call == nullptr || callBlock == nullptr)
           continue;
         auto malformed = frontend.mir;
         auto *changed = const_cast<lang::MirConstructorInstance *>(
             malformed.findConstructorInstance(constructor.id));
-        auto &instructions = changed->body.blocks[block.id - 1].instructions;
-        const auto baseIndex = base - block.instructions.begin();
-        const auto callIndex = call - block.instructions.begin();
         // Preserve SSA identity, operands, final field publication and every
-        // cleanup token; only move the observable argument evaluation.
-        std::rotate(instructions.begin() + baseIndex,
-                    instructions.begin() + callIndex,
-                    instructions.begin() + callIndex + 1);
+        // cleanup token; only move the observable argument evaluation. A
+        // fallible base places the original call in its success block.
+        auto &source = changed->body.blocks[callBlock->id - 1].instructions;
+        const auto original = std::find_if(
+            source.begin(), source.end(),
+            [&](const auto &candidate) { return candidate.id == call->id; });
+        auto lifted = *original;
+        source.erase(original);
+        auto &destination = changed->body.blocks[block.id - 1].instructions;
+        const auto beforeBase = std::find_if(
+            destination.begin(), destination.end(),
+            [&](const auto &candidate) { return candidate.id == base->id; });
+        destination.insert(beforeBase, std::move(lifted));
+        expect(call->result.has_value(),
+               "the lifted call produces the field argument");
+        if (call->result)
+          changed->body.values[*call->result - 1].definitionBlock = block.id;
+        expect(lang::rebuildMirValueUses(changed->body),
+               "the lifted call retains coherent independent SSA use metadata");
         const auto verified = lang::verifyMirProgram(malformed);
         expect(!verified.valid() &&
                    std::any_of(verified.errors.begin(), verified.errors.end(),

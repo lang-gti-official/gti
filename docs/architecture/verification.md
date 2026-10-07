@@ -79,6 +79,18 @@ and malformed nested executable-schedule checks instead of targetless-default
 assumptions. Complete corpus inventories, the combined base schedule,
 installed consumers and broad campaign validation remain outstanding.
 
+The PR125 base-stage reconciliation passes the full lifecycle emitter suite
+(42.77 seconds), exact generated-base/field-evaluation ordering mutations, and
+the 48-case base native matrix with 24 failure observations and sanitizer
+coverage. Loop-break native checks pass. The constructor-pack native matrix
+also passes (104.85 seconds), including distinct recursive node owners sharing
+a native primary template, after retaining every selected generated default's
+status declaration. Test-only maintenance preserves actual generated schedules
+instead of expecting inline native defaults or same-block base completion.
+The declaration-field failure matrix now reaches an outstanding Expected
+constructor-field publication gap; its earlier base-construction blocker is
+resolved. This checkpoint is still partially verified, not final acceptance.
+
 ## Source-defined process byte provider (S-ALLOC-07 checkpoint)
 
 The pre-reconciliation storage-cost probe uses frozen optimized compiler,
