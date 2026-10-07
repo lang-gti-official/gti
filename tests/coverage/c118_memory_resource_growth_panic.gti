@@ -1,6 +1,6 @@
 // Valid (failure path): plain resource_vector growth on an exhausted resource
 // panics. Before the report, live elements must be destroyed in reverse order,
-// THEN their region returned to the resource (elements before release), then
+// THEN metadata and object regions returned to the resource, in that order, then
 // the remaining locals. The consumed push_back argument is dropped first.
 #include <std/resource_vector>
 #include <std/resource>
@@ -33,10 +33,11 @@ void grow(std::resource_ref<probe::Bump> resource) {
 }
 
 int main() {
-  probe::Bump resource{1, true};
+  probe::Bump resource{2, true};
   Loud outer{200};
   unsafe {
-    // One aligned inline region, never reset or moved while bound.
+    // One object/metadata pair, never reset or moved while bound. The initial
+    // capacity-four allocation succeeds; the fifth insertion exhausts budget.
     std::resource_ref<probe::Bump> bound = std::bind_resource(resource);
     grow(bound);
   }
