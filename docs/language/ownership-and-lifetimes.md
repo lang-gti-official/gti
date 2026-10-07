@@ -1902,6 +1902,13 @@ that the selected call actually returns a borrow from that source. Merely
 calling a method on an owner does not prove this. Local owners, by-value owning
 parameters, and fresh temporary owners cannot supply an escaping view.
 
+The receiver path may include indexing, including an overloaded subscript:
+`return records[index].text();` can relay the enclosing receiver's dependency
+when resolved body analysis proves that the selected element and text accessor
+retain that owner. A free relay through a read-only reference parameter follows
+the same rule. Indexing alone does not establish a lifetime contract, and a
+retained view still prevents conflicting mutation of the enclosing collection.
+
 `std::string::c_string()` and `std::string::try_c_string()` use the same
 single-owner dependency model for the compiler-owned `c_string` boundary type.
 The unchecked spelling always returns the string's non-null terminated storage

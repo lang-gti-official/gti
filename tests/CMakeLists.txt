@@ -2,6 +2,16 @@
 # moving their target ownership out of the root project file.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 
+add_executable(gti_operator_relay_tests operator_relay_tests.cpp)
+target_link_libraries(gti_operator_relay_tests PRIVATE gti_cpp_backend)
+add_test(NAME operator_relay_pipeline COMMAND gti_operator_relay_tests)
+add_test(NAME operator_relay_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/operator_relay_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(operator_relay_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME existing_value_allocation_failure_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/existing_value_allocation_failure_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(existing_value_allocation_failure_runtime PROPERTIES TIMEOUT 180)
+
 add_executable(gti_native_c_scalar_target_tests native_c_scalar_target_tests.cpp)
 target_link_libraries(gti_native_c_scalar_target_tests PRIVATE gti_compiler)
 add_test(NAME native_c_scalar_target COMMAND gti_native_c_scalar_target_tests)
