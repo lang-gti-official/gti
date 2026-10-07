@@ -5,12 +5,16 @@ namespace gti_internal {
 class unique_owner<T> {};
 class shared_owner<T> {};
 class storage<T> {};
+// Layout-only capability: no engagement bit and no automatic payload drop.
+class uninitialized_storage<T> {};
 
 @compiler_constraint("object_layout") concept object_layout_capability<T>;
 
 uint64_t object_size<T>();
 uint64_t object_alignment<T>();
 void object_destroy<T>(T* address);
+void object_construct<T, Args...>(T* address, Args... args);
+void object_relocate<T>(T* destination, T* source);
 
 gti_internal::shared_owner<T> shared_owner_empty<T>();
 gti_internal::shared_owner<T> shared_owner_from_unique<T>(gti_internal::unique_owner<T> owner);
@@ -72,6 +76,17 @@ unsafe void destroy_at<T>(T* address) requires layout_queryable<T> {
   unsafe { gti_internal::object_destroy(address); }
 }
 
+/// Construct at a vacant final address, without allocating backing storage.
+/// The caller guarantees writable extent/alignment and nonconflicting access.
+/// On failure no complete object is published; GTI rolls back initialized
+/// subobjects and prepared owning arguments using its ordinary cleanup rules.
+[[discardable]]
+unsafe T* construct_at<T, Args...>(T* address, Args... args)
+    requires layout_queryable<T> {
+  unsafe { gti_internal::object_construct(address, args...); }
+  return address;
+}
+
 /// Runtime layout of the compiler-selected GTI object representation.
 /// This is neither a stable foreign ABI nor a compile-time layout promise.
 struct layout {
@@ -113,6 +128,34 @@ T* typed_address<T>(void* address) {
 
 const T* typed_address<T>(const void* address) {
   return detail::convert_address<const T*, void>(address);
+}
+
+/// Inline bytes with T's size/alignment, but no initial live T. Destruction
+/// never destroys a payload. Ordinary movement is available only for bitwise
+/// relocatable T; copying additionally requires copyable T. Other carriers
+/// remain fixed-address even while empty. A live owning payload must instead
+/// be explicitly destroyed or relocated before its carrier goes out of scope.
+class uninitialized<layout_queryable T> {
+  mut gti_internal::uninitialized_storage<T> bytes{};
+public:
+  uninitialized() = default;
+  const T* data() {
+    unsafe { return std::typed_address<T>(std::erase_address(&this.bytes)); }
+  }
+  T* data() mut {
+    unsafe { return std::typed_address<T>(std::erase_address(&this.bytes)); }
+  }
+};
+
+/// Transfers one live object into distinct vacant storage without allocation.
+/// Both pointers must denote writable, aligned complete regions for T. The
+/// source must be live and exclusively accessible; the destination must be
+/// vacant and nonoverlapping. Success ends the source lifetime without running
+/// its GTI destructor and leaves exactly one live destination. Eligibility is
+/// the existing failure-free generated relocation contract, never custom moves.
+unsafe void relocate_at<T>(T* destination, T* source)
+    requires layout_queryable<T> && relocatable<T> {
+  unsafe { gti_internal::object_relocate(destination, source); }
 }
 
 /// Asserts that address denotes a live T whose lifetime is covered by owner.

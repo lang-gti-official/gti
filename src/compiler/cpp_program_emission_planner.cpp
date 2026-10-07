@@ -4261,8 +4261,10 @@ public:
             mir.classInstances().begin(), mir.classInstances().end(),
             [&](const MirClassInstance &candidate) {
               return candidate.type == type &&
-                     candidate.compilerCapability ==
-                         CompilerCapabilityTypeKind::OptionalStorage;
+                     (candidate.compilerCapability ==
+                          CompilerCapabilityTypeKind::OptionalStorage ||
+                      candidate.compilerCapability ==
+                          CompilerCapabilityTypeKind::UninitializedStorage);
             });
         if (capability != mir.classInstances().end()) {
           for (const SemanticType &argument : type.arguments) {

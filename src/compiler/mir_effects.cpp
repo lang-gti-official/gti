@@ -454,6 +454,16 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .mayTrap = true,
                     .dropsValue = true,
                     .invokesUserCode = true}, // ObjectDestroy
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .mayTrap = true,
+                    .movesValue = true,
+                    .initializesValue = true,
+                    .invokesUserCode = true}, // ObjectConstruct
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .movesValue = true,
+                    .initializesValue = true}, // ObjectRelocate
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -692,6 +702,8 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "object-alignment",
     "storage-try-adopt",
     "object-destroy",
+    "object-construct",
+    "object-relocate",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({
@@ -1069,10 +1081,12 @@ struct ExactTargets {
            .owner = static_cast<std::size_t>(destructor)});
     }
   } else if (instruction.kind == MirInstructionKind::Call &&
-             (instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+             (instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
+              instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
               instruction.intrinsic == IntrinsicKind::StorageConstruct) &&
              instruction.constructorTarget &&
-             instruction.storagePreflight != 0) {
+             (instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
+              instruction.storagePreflight != 0)) {
     // The sealed slot operation also executes the exact source constructor;
     // retain its memory, synchronization and escape effects in the shared
     // interprocedural analysis rather than treating it as only a helper.
@@ -1630,6 +1644,13 @@ RelocationKind mirTypeRelocationKind(const MirProgram &program,
                    ? merge(RelocationKind::Structural,
                            self(self, candidate.arguments.front()))
                    : RelocationKind::Unavailable;
+    } else if (owner->compilerCapability ==
+               CompilerCapabilityTypeKind::UninitializedStorage) {
+      result = candidate.arguments.size() == 1 &&
+                       self(self, candidate.arguments.front()) ==
+                           RelocationKind::Bitwise
+                   ? RelocationKind::Bitwise
+                   : RelocationKind::Unavailable;
     } else if (owner->compilerCapability != CompilerCapabilityTypeKind::None ||
                owner->moveConstructor != SpecialMemberStatus::Generated ||
                owner->abstract || owner->cOpaqueHandle ||
@@ -1713,6 +1734,15 @@ bool mirTypeRelocationIsDefinedFailureFree(const MirProgram &program,
         owner->unionLayout || !classes.insert(owner->id).second)
       return false;
     if (owner->compilerCapability != CompilerCapabilityTypeKind::None) {
+      if (owner->compilerCapability ==
+          CompilerCapabilityTypeKind::UninitializedStorage) {
+        const bool safe =
+            candidate.arguments.size() == 1 &&
+            mirTypeRelocationKind(program, candidate.arguments.front()) ==
+                RelocationKind::Bitwise;
+        classes.erase(owner->id);
+        return safe;
+      }
       const bool safe = owner->compilerCapability ==
                             CompilerCapabilityTypeKind::OptionalStorage &&
                         candidate.arguments.size() == 1 &&

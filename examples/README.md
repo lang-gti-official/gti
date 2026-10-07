@@ -459,6 +459,12 @@ while any allocation from it remains live.
 
 ## Complete projects
 
+`122-manual-object-lifetimes.gti` builds a source-defined inline owner around
+`std::uninitialized<T>`, constructs an immovable object at its final address,
+returns checked owner-bound references, and explicitly relocates an owning
+string between fixed carriers. Raw validity stays inside the owner's `unsafe`
+implementation; ordinary callers use checked methods.
+
 [`transit-planner/`](transit-planner/README.md) is a multi-file manifest project
 that loads an external graph, runs Dijkstra's shortest-path algorithm, validates
 the result, and prints a report. It demonstrates the language and `gti`

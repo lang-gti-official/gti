@@ -2571,19 +2571,23 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
       const MirConstructorInstance *constructorTarget = nullptr;
       const bool sparseConstruction =
           instruction.intrinsic == IntrinsicKind::StorageConstruct;
+      const bool rawConstruction =
+          instruction.intrinsic == IntrinsicKind::ObjectConstruct;
       const std::size_t storageArgumentCount = sparseConstruction ? 2 : 1;
       if (instruction.kind == MirInstructionKind::Call &&
-          (instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+          (rawConstruction ||
+           instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
            sparseConstruction) &&
           instruction.parameterTypes.size() >= storageArgumentCount &&
           instruction.operands.size() == instruction.parameterTypes.size() &&
-          (instruction.storagePreflight != 0 ||
+          (rawConstruction || instruction.storagePreflight != 0 ||
            std::all_of(
                instruction.parameterTypes.begin() + storageArgumentCount,
                instruction.parameterTypes.end(), isPassiveScalarValueType)) &&
           instruction.parameterTypes.front().kind ==
-              (sparseConstruction ? SemanticType::Storage
-                                  : SemanticType::PrefixStorage) &&
+              (rawConstruction      ? SemanticType::RawPointer
+               : sparseConstruction ? SemanticType::Storage
+                                    : SemanticType::PrefixStorage) &&
           instruction.parameterTypes.front().arguments.size() == 1 &&
           !instruction.constructorTarget) {
         const auto &element =
@@ -2593,7 +2597,16 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             [&](const MirClassInstance &candidate) {
               return candidate.type == element;
             });
+        const bool generatedRawTransfer =
+            rawConstruction && elementOwner != program.classInstances().end() &&
+            instruction.parameterTypes.size() == 2 &&
+            instruction.parameterTypes[1] == element &&
+            ((instruction.constructorKind == ConstructorKind::Move &&
+              elementOwner->traits.movable) ||
+             (instruction.constructorKind == ConstructorKind::Copy &&
+              elementOwner->traits.copyable));
         if (elementOwner != program.classInstances().end() &&
+            !generatedRawTransfer &&
             (instruction.parameterTypes.size() != storageArgumentCount ||
              elementOwner->defaultConstructor ==
                  SpecialMemberStatus::Declared)) {
@@ -2617,6 +2630,10 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
         SemanticType::Kind inPlaceStorageKind = SemanticType::Unknown;
         if (instruction.kind == MirInstructionKind::Call) {
           switch (instruction.intrinsic) {
+          case IntrinsicKind::ObjectConstruct:
+            inPlaceArgumentOffset = 1;
+            inPlaceStorageKind = SemanticType::RawPointer;
+            break;
           case IntrinsicKind::StorageConstruct:
             inPlaceArgumentOffset = 2;
             inPlaceStorageKind = SemanticType::Storage;
@@ -2693,7 +2710,8 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                 ? FailurePropagationKind::Constructor
                 : FailurePropagationKind::None;
         if (instruction.kind == MirInstructionKind::Call &&
-            (instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+            (rawConstruction ||
+             instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
              sparseConstruction) &&
             !instruction.parameterTypes.empty() &&
             instruction.constructorKind == ConstructorKind::Ordinary &&
@@ -2704,9 +2722,11 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                          constructorTarget->parameterTypes.end(),
                          instruction.parameterTypes.begin() +
                              storageArgumentCount) ||
-             instruction.storagePreflight == 0 ||
-             mirStorageConstructForPreflight(
-                 body, instruction.storagePreflight) != &instruction ||
+             (rawConstruction ? instruction.storagePreflight != 0
+                              : instruction.storagePreflight == 0 ||
+                                    mirStorageConstructForPreflight(
+                                        body, instruction.storagePreflight) !=
+                                        &instruction) ||
              instruction.definedFailure.propagation != expectedPropagation)) {
           return verificationFailure(
               body, owner,
@@ -10015,15 +10035,22 @@ verifyMirProgramContracts(const MirProgram &program) {
             instruction.intrinsic == IntrinsicKind::ObjectSize ||
             instruction.intrinsic == IntrinsicKind::ObjectAlignment;
         if ((instruction.intrinsic == IntrinsicKind::ObjectDestroy ||
+             instruction.intrinsic == IntrinsicKind::ObjectRelocate ||
+             instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
              instruction.unsafeOperation ==
                  UnsafeOperationKind::ObjectLifetime) &&
-            !mir_detail::objectDestroy(program, instruction)) {
+            !(instruction.intrinsic == IntrinsicKind::ObjectRelocate
+                  ? mir_detail::objectRelocate(program, instruction)
+              : instruction.intrinsic == IntrinsicKind::ObjectConstruct
+                  ? mir_detail::objectConstruct(program, instruction)
+                  : mir_detail::objectDestroy(program, instruction))) {
           result.errors.push_back(
               {.bodyKind = body.kind,
                .owner = owner,
                .instruction = instruction.id,
-               .message = "object destruction loses its unsafe permission or "
-                          "exact writable complete-object pointer"});
+               .message =
+                   "object lifetime operation loses its unsafe permission or "
+                   "exact writable complete-object pointer"});
         }
         if ((instruction.intrinsic == IntrinsicKind::StorageTryAdopt ||
              instruction.unsafeOperation ==
@@ -10717,6 +10744,62 @@ verifyMirProgramContracts(const MirProgram &program) {
              .message = "compiler-owned mutex capability class does not "
                         "retain its exact passive native-storage shape"});
       }
+    }
+    if (instance.compilerCapability ==
+        CompilerCapabilityTypeKind::UninitializedStorage) {
+      const auto payload =
+          instance.type.arguments.size() == 1
+              ? storagePayloadTraits(program, instance.type.arguments.front())
+              : std::nullopt;
+      const bool movable =
+          payload &&
+          mirTypeRelocationKind(program, instance.type.arguments.front()) ==
+              RelocationKind::Bitwise;
+      const bool copyable = movable && payload->copyable;
+      const auto status = [](bool available) {
+        return available ? SpecialMemberStatus::Generated
+                         : SpecialMemberStatus::Deleted;
+      };
+      const bool exact =
+          payload &&
+          mir_detail::completeObjectType(program,
+                                         instance.type.arguments.front()) &&
+          !payload->containsBorrowedState &&
+          instance.kind == ClassKind::Class &&
+          instance.type.kind == SemanticType::Class &&
+          instance.type.classId == instance.declaration &&
+          instance.traits.ownership == OwnershipKind::Value &&
+          instance.traits.drop == DropKind::Trivial &&
+          instance.traits.copyable == copyable &&
+          instance.traits.movable == movable &&
+          instance.traits.copyAssignable == copyable &&
+          instance.traits.moveAssignable == movable &&
+          instance.traits.transferCapable == payload->transferCapable &&
+          instance.traits.shareCapable == payload->shareCapable &&
+          instance.traits.relocation == (movable
+                                             ? RelocationKind::Bitwise
+                                             : RelocationKind::Unavailable) &&
+          !instance.traits.containsBorrowedState && instance.bases.empty() &&
+          instance.structuralBases.empty() && instance.declaredFields.empty() &&
+          instance.fields.empty() && instance.fieldDropOrder.empty() &&
+          !instance.destructor && !instance.requiresActiveCleanup &&
+          !instance.requiresActiveDropState &&
+          !instance.lifecycleBoundBorrowCarrier && !instance.abstract &&
+          !instance.polymorphic && !instance.cAbiRecord &&
+          !instance.cAbiLayout && !instance.cOpaqueHandle &&
+          !instance.unionLayout &&
+          instance.defaultConstructor == SpecialMemberStatus::Generated &&
+          instance.copyConstructor == status(copyable) &&
+          instance.moveConstructor == status(movable) &&
+          instance.copyAssignment == status(copyable) &&
+          instance.moveAssignment == status(movable) &&
+          instance.destructorStatus == SpecialMemberStatus::Generated;
+      if (!exact)
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::FieldInitializers,
+             .owner = instance.id,
+             .message = "uninitialized storage lost its exact layout-only "
+                        "lifetime contract"});
     }
     if (instance.compilerCapability ==
         CompilerCapabilityTypeKind::OptionalStorage) {

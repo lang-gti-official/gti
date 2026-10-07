@@ -84,7 +84,40 @@ Path joins, weak writes, loops and call summaries retain uncertainty even when
 only one known origin remains. An unknown alternative is not evidence that
 the known alternative must be the actual address.
 
-## Explicit object lifetime end
+## Explicit object construction and lifetime end
+
+`std::uninitialized<T>` supplies inline storage with `T`'s size and alignment,
+without initially constructing a `T`. Its `data()` overloads return `const T*`
+through a read-only receiver and `T*` through a mutable receiver. Forming an
+address does not make a payload live or create a checked loan. Destruction of
+the carrier never invokes the payload destructor; a manual owner must retire
+each live payload explicitly before releasing its storage.
+
+The carrier contains no engagement flag. Ordinary movement is permitted only
+when `T` is structurally bitwise-relocatable; copying additionally requires
+copyable `T`. Those operations transfer representation bytes without reading
+them as an initialized value. Other carriers are fixed-address even when
+empty. In particular, an owning string payload uses explicit relocation between
+two fixed carriers, not ordinary movement of the carrier. Checked borrowed
+state cannot be hidden in the manual carrier. Thread transfer/sharing
+capabilities remain constrained by the payload, not by the apparent byte-only
+representation.
+
+`<std/memory>` provides `unsafe T* std::construct_at<T, Args...>(T* address,
+Args... args)` for complete, layout-queryable object types. The pointer supplies
+the final address; ordinary GTI constructor selection and argument preparation
+apply, including construction of immovable types. The returned pointer is the
+same address, not a checked reference or a new allocation. Discarding it is
+permitted. Constructor failure retains its original failure identity and
+cleans prepared arguments and completed subobjects; it does not publish a live
+complete object.
+
+The unsafe caller guarantees sufficient writable, correctly aligned storage,
+vacancy and nonconflicting access for construction. No allocation or live-slot
+bitmap is hidden in this operation. Raw construction of a type containing
+checked borrowed state is currently rejected: an untracked destination address
+cannot establish that state's checked owner and escape boundary. This is a
+structural restriction, not recognition of particular container or view names.
 
 `<std/memory>` provides `unsafe void std::destroy_at<T>(T* address)` for
 complete, layout-queryable object types admitted by the pointer surface.
@@ -106,6 +139,21 @@ again or authorize a retry; remaining cleanup follows GTI's existing failure
 and secondary-failure rules. There is no hidden slot map, deallocation, C++
 exception, or raw-validity check. Safe containers must maintain their own live
 state and retire it before beginning destruction.
+
+`unsafe void std::relocate_at<T>(T* destination, T* source)` transfers a live
+object into distinct vacant storage using the existing `relocatable<T>`
+contract. Both regions must be sufficiently large, writable, aligned and
+nonoverlapping, with exclusive access. It ends the source object's lifetime
+without running its GTI destructor and leaves the destination as the sole live
+owner. It neither allocates nor releases bytes. Structural eligibility excludes
+immovable values and checked borrowed state; eligible generated relocation
+cannot raise a defined failure or invoke a user-defined move hook. Unlike
+ordinary move construction, the raw source is retired rather than left as an
+object whose moved-from lifetime the caller must subsequently end.
+
+[`122-manual-object-lifetimes.gti`](../../examples/122-manual-object-lifetimes.gti)
+demonstrates a source-defined fixed-address owner, checked access to an
+immovable payload, slot reuse and explicit owning relocation.
 
 ## Optional raw-pointer audit
 

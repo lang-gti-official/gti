@@ -5007,6 +5007,16 @@ validFailureInstructionShape(const MirInstruction &instruction) {
             (instruction.kind == MirInstructionKind::Call &&
              ((instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
                instruction.objectAllocation != 0) ||
+              (instruction.intrinsic == IntrinsicKind::ObjectConstruct &&
+               instruction.constructorKind == ConstructorKind::Ordinary &&
+               !instruction.operands.empty() &&
+               instruction.operands.size() ==
+                   instruction.parameterTypes.size() &&
+               instruction.parameterTypes.front().kind ==
+                   SemanticType::RawPointer &&
+               instruction.unsafeOperation ==
+                   UnsafeOperationKind::ObjectLifetime &&
+               instruction.storagePreflight == 0) ||
               ((instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
                 instruction.intrinsic == IntrinsicKind::StorageConstruct) &&
                instruction.constructorKind == ConstructorKind::Ordinary &&
@@ -8364,6 +8374,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                 (!instruction.functionTarget &&
                  (instruction.intrinsic == IntrinsicKind::Panic ||
                   instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner ||
+                  instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
                   instruction.intrinsic == IntrinsicKind::StorageConstruct ||
                   instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
                   instruction.intrinsic == IntrinsicKind::PrefixStorageInsert ||
@@ -8374,6 +8385,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               *instruction.callableBoundary == CallableBoundary::Confined) &&
              (!instruction.constructorTarget ||
               ((instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner ||
+                instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
                 instruction.intrinsic == IntrinsicKind::StorageConstruct ||
                 instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
                 instruction.intrinsic == IntrinsicKind::PrefixStorageInsert ||
@@ -11975,9 +11987,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         }
       }
       for (const MirLifecycleEvent &event : invocation.lifecycle) {
-        if ((invocation.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-             invocation.intrinsic == IntrinsicKind::StorageConstruct) &&
-            invocation.storagePreflight != 0 &&
+        if ((invocation.intrinsic == IntrinsicKind::ObjectConstruct ||
+             ((invocation.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+               invocation.intrinsic == IntrinsicKind::StorageConstruct) &&
+              invocation.storagePreflight != 0)) &&
             (event.kind != MirLifecycleEventKind::TransferOut ||
              !preparedDrops.contains(event.source))) {
           return failure(body, owner,

@@ -842,6 +842,21 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
              spell(type.arguments.front()) + ">";
     }
     if (classInfo->compilerCapability ==
+        CompilerCapabilityTypeKind::UninitializedStorage) {
+      if (type.arguments.size() != 1)
+        return "void";
+      const auto instance =
+          std::find_if(program.mir().classInstances().begin(),
+                       program.mir().classInstances().end(),
+                       [&](const auto &item) { return item.type == type; });
+      if (instance == program.mir().classInstances().end())
+        return "void";
+      return "::gti_internal::backend::uninitialized_storage<" +
+             spell(type.arguments.front()) + ", " +
+             (instance->traits.copyable ? "true" : "false") + ", " +
+             (instance->traits.movable ? "true" : "false") + ">";
+    }
+    if (classInfo->compilerCapability ==
             CompilerCapabilityTypeKind::MutexStorage ||
         classInfo->compilerCapability ==
             CompilerCapabilityTypeKind::MutexLockToken) {

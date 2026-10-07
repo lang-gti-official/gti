@@ -1,0 +1,52 @@
+#include <std/memory>
+#include <std/string>
+
+class Anchor {
+  int value;
+public:
+  Anchor(int value) : value(value) { std::println(value); }
+  Anchor(Anchor& other) = delete;
+  Anchor(Anchor&& other) = delete;
+  ~Anchor() { std::println(this.value); }
+};
+
+// The carrier owns bytes, not the lifetime of a potentially live payload.
+// This unrelated fixed-address owner supplies the engagement policy.
+class InlineAnchor {
+  mut std::uninitialized<Anchor> bytes{};
+  mut bool live = false;
+public:
+  InlineAnchor(int value) {
+    unsafe { std::construct_at(this.bytes.data(), value); }
+    this.live = true;
+  }
+  InlineAnchor(InlineAnchor& other) = delete;
+  InlineAnchor(InlineAnchor&& other) = delete;
+  ~InlineAnchor() {
+    if (this.live) {
+      this.live = false;
+      unsafe { std::destroy_at(this.bytes.data()); }
+    }
+  }
+};
+
+int main() {
+  // Merely creating or discarding a carrier must never construct/destroy T.
+  std::uninitialized<Anchor> vacant{};
+  mut std::uninitialized<int> scalar{};
+  unsafe {
+    std::construct_at(scalar.data(), 42);
+    std::println(*scalar.data());
+    // Bitwise-copyable payloads retain an independent live representation.
+    auto copied = scalar;
+    mut auto moved = std::move(copied);
+    if (*moved.data() != 42) { return 1; }
+    std::destroy_at(moved.data());
+    std::destroy_at(scalar.data());
+    std::construct_at(scalar.data(), 7);
+    std::println(*scalar.data());
+    std::destroy_at(scalar.data());
+  }
+  InlineAnchor owner{19};
+  return 0;
+}

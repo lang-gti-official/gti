@@ -1,0 +1,77 @@
+#include <std/memory>
+#include <std/panic>
+#include <std/string>
+
+// A source-defined, fixed-address owner. The carrier supplies aligned bytes;
+// this class supplies live-state policy, cleanup and checked access.
+class InlineSlot<std::layout_queryable T> {
+  mut std::uninitialized<T> bytes{};
+  mut bool live = false;
+public:
+  InlineSlot() = default;
+  InlineSlot(InlineSlot<T>& other) = delete;
+  InlineSlot(InlineSlot<T>&& other) = delete;
+
+  void emplace<Args...>(Args... args) mut {
+    if (this.live) { std::panic("inline slot is already occupied"); }
+    // The final carrier address stays fixed. Failure leaves live false and
+    // ordinary GTI constructor rollback cleans any completed subobjects.
+    unsafe { std::construct_at(this.bytes.data(), args...); }
+    this.live = true;
+  }
+  T& get() {
+    if (!this.live) { std::panic("inline slot is empty"); }
+    // The checked result keeps this carrier alive and blocks invalidation.
+    unsafe { return std::assume_ref(this.bytes.data(), this.bytes); }
+  }
+  mut T& get_mut() mut {
+    if (!this.live) { std::panic("inline slot is empty"); }
+    unsafe { return std::assume_mut(this.bytes.data(), this.bytes); }
+  }
+  void clear() mut {
+    if (this.live) {
+      // Retire BEFORE destruction: failure must never retry the same payload.
+      this.live = false;
+      unsafe { std::destroy_at(this.bytes.data()); }
+    }
+  }
+  ~InlineSlot() { this.clear(); }
+};
+
+class Sensor {
+  mut int reading;
+public:
+  Sensor(int reading) : reading(reading) {}
+  Sensor(Sensor& other) = delete;
+  Sensor(Sensor&& other) = delete;
+  int read() { return this.reading; }
+  void update(int value) mut { this.reading = value; }
+  ~Sensor() { std::println(this.reading); }
+};
+
+int main() {
+  mut InlineSlot<Sensor> sensor{};
+  sensor.emplace(41);
+  {
+    mut Sensor& reading = sensor.get_mut();
+    reading.update(42);
+    // sensor.clear() here is rejected while reading remains in use.
+    if (reading.read() != 42) { return 1; }
+  }
+  sensor.clear();
+  sensor.emplace(43); // Reuse the same vacant address for an immovable object.
+
+  mut std::uninitialized<std::string> from{};
+  mut std::uninitialized<std::string> into{};
+  unsafe {
+    std::construct_at(from.data(), std::string("relocated"));
+    std::relocate_at(into.data(), from.data());
+    std::string& text = std::assume_ref(into.data(), into);
+    std::println(text.view());
+  }
+  unsafe { std::destroy_at(into.data()); }
+  // from is vacant: no second string destructor and no automatic payload drop.
+  // A carrier holding string cannot itself move; explicit relocation transfers
+  // the live payload through GTI's generated ownership machinery.
+  return 0;
+}

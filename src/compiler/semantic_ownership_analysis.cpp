@@ -392,8 +392,10 @@ auto SemanticVisitor::Impl::typeCapabilities(
   case SemanticType::Class:
     if (const ClassInfo *owner = classInfo(type);
         owner != nullptr &&
-        owner->compilerCapability ==
-            CompilerCapabilityTypeKind::OptionalStorage &&
+        (owner->compilerCapability ==
+             CompilerCapabilityTypeKind::OptionalStorage ||
+         owner->compilerCapability ==
+             CompilerCapabilityTypeKind::UninitializedStorage) &&
         type.arguments.size() == 1) {
       return typeCapabilities(type.arguments.front(), visiting);
     }
@@ -608,6 +610,31 @@ auto SemanticVisitor::Impl::typeTraits(
   visiting.push_back(type);
 
   const ClassInfo &owner = classInfo(type.classId);
+  if (owner.compilerCapability ==
+      CompilerCapabilityTypeKind::UninitializedStorage) {
+    const auto payload = type.arguments.size() == 1
+                             ? typeTraits(type.arguments.front(), visiting)
+                             : SemanticTypeTraits{};
+    // Symbolic declarations retain generated operations; concrete reanalysis
+    // deletes each operation whose payload fails the structural contract.
+    const bool open = type.arguments.size() == 1 &&
+                      containsOpenTypeParameter(type.arguments.front());
+    const bool movable =
+        type.arguments.size() == 1 &&
+        (open || payload.relocation == RelocationKind::Bitwise);
+    const bool copyable = movable && payload.copyable;
+    visiting.pop_back();
+    return SemanticTypeTraits{.ownership = OwnershipKind::Value,
+                              .drop = DropKind::Trivial,
+                              .copyable = copyable,
+                              .movable = movable,
+                              .copyAssignable = copyable,
+                              .moveAssignable = movable,
+                              .containsBorrowedState = false,
+                              .relocation = movable
+                                                ? RelocationKind::Bitwise
+                                                : RelocationKind::Unavailable};
+  }
   if (owner.compilerCapability == CompilerCapabilityTypeKind::ThreadHandle) {
     visiting.pop_back();
     return SemanticTypeTraits{.ownership = OwnershipKind::Unique,
@@ -1838,6 +1865,12 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     }
     if (name == "object_destroy") {
       return IntrinsicKind::ObjectDestroy;
+    }
+    if (name == "object_construct") {
+      return IntrinsicKind::ObjectConstruct;
+    }
+    if (name == "object_relocate") {
+      return IntrinsicKind::ObjectRelocate;
     }
     if (name == "allocate_unique_owner") {
       return IntrinsicKind::AllocateUniqueOwner;
@@ -6653,34 +6686,114 @@ auto SemanticVisitor::Impl::runtimeObjectLayoutType(
 auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     const Call &expr, const CallableCandidate &declaration) -> void {
   const IntrinsicKind intrinsic = declaration.record().intrinsic;
-  if (intrinsic == IntrinsicKind::ObjectDestroy) {
+  if (intrinsic == IntrinsicKind::ObjectRelocate) {
     std::vector<SemanticType> arguments;
     for (const ExprPtr &argument : expr.arguments())
       arguments.push_back(analyze(argument));
     for (const TypeRef &argument : expr.typeArguments())
       validateType(argument);
     requireUnsafe(expr, UnsafeOperationKind::ObjectLifetime, expr.paren(),
-                  "Ending a raw object's lifetime");
-    if (arguments.size() != 1 || !expr.typeArguments().empty() ||
-        arguments.front().kind != SemanticType::RawPointer ||
-        arguments.front().pointerAccess != AccessMode::Mutable ||
-        arguments.front().arguments.size() != 1 ||
-        (!containsOpenTypeParameter(arguments.front().arguments.front()) &&
-         !runtimeObjectLayoutType(arguments.front().arguments.front()))) {
+                  "Relocating a raw object");
+    const bool pointerShape =
+        arguments.size() == 2 && expr.typeArguments().empty() &&
+        arguments[0] == arguments[1] &&
+        arguments[0].kind == SemanticType::RawPointer &&
+        arguments[0].pointerAccess == AccessMode::Mutable &&
+        arguments[0].arguments.size() == 1;
+    if (!pointerShape) {
       report(expr.paren(),
-             "Object destruction requires one writable pointer to a complete "
-             "object type; the element type is inferred from the pointer.",
+             "Object relocation requires two writable pointers to the same "
+             "complete object type.",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    const auto &element = arguments[0].arguments.front();
+    if (!containsOpenTypeParameter(element) &&
+        (!runtimeObjectLayoutType(element) ||
+         typeTraits(element).containsBorrowedState ||
+         typeTraits(element).relocation == RelocationKind::Unavailable)) {
+      report(expr.paren(),
+             "Object relocation requires a complete relocatable type without "
+             "checked borrowed state.",
              "GTI-S2019");
       currentType = SemanticType::Unknown;
       return;
     }
     currentType = SemanticType::Void;
-    semanticModel.record(
-        expr,
-        ResolvedCallInfo{.returnType = currentType,
-                         .parameterTypes = arguments,
-                         .typeArguments = {arguments.front().arguments.front()},
-                         .intrinsic = intrinsic});
+    semanticModel.record(expr, ResolvedCallInfo{.returnType = currentType,
+                                                .parameterTypes = arguments,
+                                                .typeArguments = {element},
+                                                .intrinsic = intrinsic});
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
+  if (intrinsic == IntrinsicKind::ObjectDestroy ||
+      intrinsic == IntrinsicKind::ObjectConstruct) {
+    const bool construction = intrinsic == IntrinsicKind::ObjectConstruct;
+    std::vector<SemanticType> arguments;
+    for (const ExprPtr &argument : expr.arguments())
+      arguments.push_back(analyze(argument));
+    for (const TypeRef &argument : expr.typeArguments())
+      validateType(argument);
+    requireUnsafe(expr, UnsafeOperationKind::ObjectLifetime, expr.paren(),
+                  construction ? "Constructing a raw object"
+                               : "Ending a raw object's lifetime");
+    if (arguments.empty() || (!construction && arguments.size() != 1) ||
+        !expr.typeArguments().empty() ||
+        arguments.front().kind != SemanticType::RawPointer ||
+        arguments.front().pointerAccess != AccessMode::Mutable ||
+        arguments.front().arguments.size() != 1 ||
+        (!containsOpenTypeParameter(arguments.front().arguments.front()) &&
+         !runtimeObjectLayoutType(arguments.front().arguments.front()))) {
+      report(
+          expr.paren(),
+          construction
+              ? "Object construction requires a writable pointer to a "
+                "complete object type followed by constructor arguments."
+              : "Object destruction requires one writable pointer to a "
+                "complete "
+                "object type; the element type is inferred from the pointer.",
+          "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    const SemanticType element = arguments.front().arguments.front();
+    if (construction) {
+      if (!containsOpenTypeParameter(element) &&
+          typeTraits(element).containsBorrowedState) {
+        report(expr.paren(),
+               "Raw construction cannot store checked borrowed state without "
+               "a tracked destination owner.",
+               "GTI-S2019");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      std::vector<AnalyzedCallArgument> constructorArguments;
+      bool concrete = true;
+      for (std::size_t index = 1; index < arguments.size(); ++index) {
+        if (!appendConcreteCallArgument(arguments[index],
+                                        expr.arguments()[index],
+                                        constructorArguments)) {
+          concrete = false;
+          break;
+        }
+      }
+      if (concrete) {
+        if (element.kind == SemanticType::Class)
+          analyzeConstructorCallArguments(
+              expr, element.classId, element.arguments, element.valueArguments,
+              constructorArguments, expr.paren());
+        else if (!containsOpenTypeParameter(element))
+          validateStorageValueConstruction(expr, element, constructorArguments);
+      }
+      preserveStorageConstructorParameters(semanticModel, expr, 1, arguments);
+    }
+    currentType = SemanticType::Void;
+    semanticModel.record(expr, ResolvedCallInfo{.returnType = currentType,
+                                                .parameterTypes = arguments,
+                                                .typeArguments = {element},
+                                                .intrinsic = intrinsic});
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }

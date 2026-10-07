@@ -34,17 +34,20 @@ void diagnostics(const lang::FrontendResult &result) {
     std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
 }
 template <typename Mutation>
-void forged(const lang::FrontendResult &frontend, Mutation mutation,
-            std::string_view label) {
+void forged(
+    const lang::FrontendResult &frontend, Mutation mutation,
+    std::string_view label,
+    lang::IntrinsicKind intrinsic = lang::IntrinsicKind::ObjectDestroy) {
   auto mir = frontend.mir;
   bool changed = false;
   for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
            mir.functionInstances()))
     for (auto &block : function.body.blocks)
       for (auto &instruction : block.instructions)
-        if (!changed &&
-            instruction.intrinsic == lang::IntrinsicKind::ObjectDestroy &&
-            instruction.elementCleanup) {
+        if (!changed && instruction.intrinsic == intrinsic &&
+            (intrinsic == lang::IntrinsicKind::ObjectConstruct
+                 ? instruction.constructorTarget.has_value()
+                 : instruction.elementCleanup.has_value())) {
           mutation(instruction);
           changed = true;
         }
@@ -189,6 +192,117 @@ int main() {
                                         std::string::npos;
                            }),
            "private destruction rejects readonly and incomplete pointees");
+  }
+  const auto construction = analyze(R"(
+#include <std/memory>
+class Stationary {
+  int value;
+public:
+  Stationary(int divisor) : value(7 / divisor) {}
+  Stationary(Stationary& other) = delete;
+  Stationary(Stationary&& other) = delete;
+};
+int main() {
+  Stationary* object = nullptr;
+  int* scalar = nullptr;
+  unsafe {
+    std::construct_at(object, 2);
+    std::construct_at(scalar, 9);
+    std::destroy_at(object);
+    std::destroy_at(scalar);
+  }
+  return 0;
+}
+)");
+  if (!construction.canGenerateCode())
+    diagnostics(construction);
+  expect(construction.canGenerateCode(),
+         "raw construction admits immovable final-address values and scalars");
+  if (construction.canGenerateCode()) {
+    std::size_t constructions = 0;
+    for (const auto &function : construction.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.intrinsic == lang::IntrinsicKind::ObjectConstruct) {
+            ++constructions;
+            const auto effect = lang::effects(instruction);
+            expect(effect.writesUnknownMemory && effect.initializesValue &&
+                       !effect.removableWhenUnused && !effect.allocates,
+                   "construction initializes caller bytes, not new allocation");
+            expect(instruction.storagePreflight == 0 &&
+                       instruction.localFailureSites.empty() &&
+                       instruction.unsafeOperation ==
+                           lang::UnsafeOperationKind::ObjectLifetime,
+                   "raw construction does not invent storage occupancy proof");
+          }
+    expect(constructions == 2, "concrete raw construction census");
+    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+      try {
+        const auto cpp = gti_test::emitCppText(construction, standard,
+                                               lang::TargetInfo::host(),
+                                               lang::OptimizationLevel::O0);
+        expect(cpp.find("__gti_mir_construct_success_") != std::string::npos,
+               "constructor failure uses verified status edge");
+      } catch (const std::exception &error) {
+        std::cerr << error.what() << '\n';
+        expect(false, "raw construction emits through verified MIR");
+      }
+    }
+    for (int mutation = 0; mutation != 5; ++mutation)
+      forged(
+          construction,
+          [=](auto &i) {
+            switch (mutation) {
+            case 0:
+              i.unsafeOperation = lang::UnsafeOperationKind::None;
+              break;
+            case 1:
+              i.constructorTarget.reset();
+              break;
+            case 2:
+              i.definedFailure = {};
+              break;
+            case 3:
+              i.storagePreflight = i.id;
+              break;
+            case 4:
+              i.borrowArgument = 1;
+              break;
+            }
+          },
+          "forged construction authority rejected",
+          lang::IntrinsicKind::ObjectConstruct);
+  }
+  const auto transfers = analyze(R"(
+#include <std/memory>
+#include <std/string>
+struct Record { int number = 4; };
+int main() {
+  Record record{};
+  Record* copy = nullptr;
+  std::string text{"owned"};
+  std::string* moved = nullptr;
+  unsafe {
+    std::construct_at(copy, record);
+    std::construct_at(moved, std::move(text));
+    std::destroy_at(copy);
+    std::destroy_at(moved);
+  }
+  return 0;
+}
+)");
+  if (!transfers.canGenerateCode())
+    diagnostics(transfers);
+  expect(transfers.canGenerateCode(),
+         "raw construction preserves generated copy and owning movement");
+  if (transfers.canGenerateCode()) {
+    try {
+      (void)gti_test::emitCppText(transfers);
+    } catch (const std::exception &error) {
+      std::cerr << error.what() << '\n';
+      expect(false,
+             "generated transfer construction has complete MIR lowering");
+    }
   }
   return failures == 0 ? 0 : 1;
 }

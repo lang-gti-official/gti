@@ -1,4 +1,5 @@
 #include "mir_verification_queries.h"
+#include "gti/mir_effects.h"
 
 #include <algorithm>
 #include <climits>
@@ -107,7 +108,6 @@ const MirPlace *storageAdoptionDestination(const MirBody &body,
              : nullptr;
 }
 
-namespace {
 bool completeObjectType(const MirProgram &program, const SemanticType &type) {
   const auto eligible = [&](const auto &self, const SemanticType &candidate,
                             std::size_t depth) -> bool {
@@ -156,7 +156,47 @@ bool completeObjectType(const MirProgram &program, const SemanticType &type) {
   };
   return eligible(eligible, type, 0);
 }
-} // namespace
+
+bool objectRelocate(const MirProgram &program,
+                    const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.intrinsic != IntrinsicKind::ObjectRelocate ||
+      instruction.unsafeOperation != UnsafeOperationKind::ObjectLifetime ||
+      instruction.info.type != SemanticType::Void ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly ||
+      instruction.info.traits != semanticTraits(SemanticType::Void) ||
+      instruction.info.updateArithmeticType != SemanticType::Unknown ||
+      instruction.operands.size() != 2 ||
+      instruction.parameterTypes.size() != 2)
+    return false;
+  const auto &pointer = instruction.parameterTypes.front();
+  if (pointer.kind != SemanticType::RawPointer ||
+      pointer.pointerAccess != AccessMode::Mutable ||
+      pointer.arguments.size() != 1 ||
+      !completeObjectType(program, pointer.arguments.front()) ||
+      !mirTypeRelocationIsDefinedFailureFree(program,
+                                             pointer.arguments.front()) ||
+      instruction.parameterTypes[1] != pointer ||
+      !std::all_of(instruction.operands.begin(), instruction.operands.end(),
+                   [&](const MirOperand &operand) {
+                     return operand.kind == MirOperandKind::Value &&
+                            operand.type == pointer;
+                   }))
+    return false;
+  const MirInstruction exact{.id = instruction.id,
+                             .kind = MirInstructionKind::Call,
+                             .hirValue = instruction.hirValue,
+                             .hirStatement = instruction.hirStatement,
+                             .callSite = instruction.callSite,
+                             .unsafeOperation =
+                                 UnsafeOperationKind::ObjectLifetime,
+                             .operands = instruction.operands,
+                             .parameterTypes = instruction.parameterTypes,
+                             .intrinsic = IntrinsicKind::ObjectRelocate,
+                             .info = instruction.info};
+  return instruction == exact;
+}
 
 bool objectDestroy(const MirProgram &program,
                    const MirInstruction &instruction) {
@@ -224,6 +264,84 @@ bool objectLayoutQuery(const MirProgram &program,
   if (instruction != exact)
     return false;
   return completeObjectType(program, *instruction.objectLayoutType);
+}
+
+bool objectConstruct(const MirProgram &program,
+                     const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.intrinsic != IntrinsicKind::ObjectConstruct ||
+      instruction.unsafeOperation != UnsafeOperationKind::ObjectLifetime ||
+      instruction.result || instruction.info.type != SemanticType::Void ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly ||
+      instruction.info.traits != semanticTraits(SemanticType::Void) ||
+      instruction.info.updateArithmeticType != SemanticType::Unknown ||
+      instruction.parameterTypes.empty() ||
+      instruction.parameterTypes.size() != instruction.operands.size())
+    return false;
+  const auto &pointer = instruction.parameterTypes.front();
+  if (pointer.kind != SemanticType::RawPointer ||
+      pointer.pointerAccess != AccessMode::Mutable ||
+      pointer.arguments.size() != 1 ||
+      !completeObjectType(program, pointer.arguments.front()) ||
+      !instruction.definedFailure.localOrigins.empty() ||
+      (instruction.definedFailure.propagation != FailurePropagationKind::None &&
+       instruction.definedFailure.propagation !=
+           FailurePropagationKind::Constructor))
+    return false;
+  // Call-input/lifecycle verification proves every prepared parameter and its
+  // handoff; the program verifier binds constructor identity/signature/failure.
+  for (std::size_t index = 0; index < instruction.operands.size(); ++index)
+    if (instruction.operands[index].kind != MirOperandKind::Value ||
+        instruction.operands[index].type != instruction.parameterTypes[index])
+      return false;
+  const auto &element = pointer.arguments.front();
+  if (element.kind == SemanticType::Class) {
+    for (const auto &owner : program.classInstances()) {
+      if (owner.type != element)
+        continue;
+      if (owner.traits.containsBorrowedState)
+        return false;
+      if (!instruction.constructorTarget) {
+        const bool transfer =
+            instruction.parameterTypes.size() == 2 &&
+            instruction.parameterTypes[1] == element &&
+            ((instruction.constructorKind == ConstructorKind::Copy &&
+              owner.traits.copyable) ||
+             (instruction.constructorKind == ConstructorKind::Move &&
+              owner.traits.movable));
+        const bool defaultConstruction =
+            instruction.parameterTypes.size() == 1 &&
+            instruction.constructorKind == ConstructorKind::Ordinary &&
+            owner.defaultConstructor == SpecialMemberStatus::Generated;
+        if (!transfer && !defaultConstruction)
+          return false;
+      }
+    }
+  } else if (instruction.constructorTarget || !instruction.lifecycle.empty() ||
+             instruction.constructorKind != ConstructorKind::Ordinary ||
+             !instruction.definedFailure.empty() ||
+             instruction.parameterTypes.size() > 2 ||
+             (instruction.parameterTypes.size() == 2 &&
+              instruction.parameterTypes[1] != element)) {
+    return false;
+  }
+  const MirInstruction exact{.id = instruction.id,
+                             .kind = MirInstructionKind::Call,
+                             .hirValue = instruction.hirValue,
+                             .hirStatement = instruction.hirStatement,
+                             .callSite = instruction.callSite,
+                             .unsafeOperation =
+                                 UnsafeOperationKind::ObjectLifetime,
+                             .operands = instruction.operands,
+                             .parameterTypes = instruction.parameterTypes,
+                             .intrinsic = IntrinsicKind::ObjectConstruct,
+                             .definedFailure = instruction.definedFailure,
+                             .constructorTarget = instruction.constructorTarget,
+                             .constructorKind = instruction.constructorKind,
+                             .info = instruction.info,
+                             .lifecycle = instruction.lifecycle};
+  return instruction == exact;
 }
 
 bool rawPointerConversion(const MirInstruction &instruction) {

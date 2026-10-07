@@ -120,6 +120,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "is_trivially_move_assignable_v",
       "assign_representation",
       "mir_restoring_exchange_into_v1",
+      "mir_object_relocate_v1",
       "from_storage_address",
       "bytes",
       "callable",
@@ -194,6 +195,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "once_call",
       "offset",
       "optional_storage",
+      "uninitialized_storage",
       "optional_storage_construct",
       "optional_storage_has_value",
       "optional_storage_read",
@@ -681,6 +683,12 @@ void assign_representation(T &destination, Source &&source) {
 
 // Called only for MIR-proven, failure-free structural relocation. Destruction
 // here ends inactive representation shells, not GTI cleanup obligations.
+template <typename T>
+void mir_object_relocate_v1(T *destination, T *source) {
+  construct_representation_at(destination, std::move(*source));
+  std::destroy_at(source);
+}
+
 template <typename T>
 T mir_restoring_exchange_v1(T &destination, T &&replacement) {
   T previous(std::move(destination));
@@ -1933,6 +1941,35 @@ inline void index_bounds_check(std::uint64_t index, std::uint64_t size) {
     storage_error("container index out of logical bounds");
   }
 }
+
+// Layout-only storage. These booleans are verified GTI traits, never native
+// type-trait guesses. Copy/move transfers bytes without reading a live T and
+// destruction does not inspect the bytes or invoke T's destructor.
+template <typename T, bool Copyable, bool Movable>
+class uninitialized_storage {
+  alignas(T) std::byte bytes_[sizeof(T)];
+public:
+  uninitialized_storage() noexcept {}
+  uninitialized_storage(const uninitialized_storage &other) noexcept requires(Copyable) {
+    std::memcpy(bytes_, other.bytes_, sizeof(T));
+  }
+  uninitialized_storage(const uninitialized_storage &) requires(!Copyable) = delete;
+  uninitialized_storage(uninitialized_storage &&other) noexcept requires(Movable) {
+    std::memcpy(bytes_, other.bytes_, sizeof(T));
+  }
+  uninitialized_storage(uninitialized_storage &&) requires(!Movable) = delete;
+  uninitialized_storage &operator=(const uninitialized_storage &other) noexcept requires(Copyable) {
+    if (this != &other) std::memcpy(bytes_, other.bytes_, sizeof(T));
+    return *this;
+  }
+  uninitialized_storage &operator=(const uninitialized_storage &) requires(!Copyable) = delete;
+  uninitialized_storage &operator=(uninitialized_storage &&other) noexcept requires(Movable) {
+    if (this != &other) std::memcpy(bytes_, other.bytes_, sizeof(T));
+    return *this;
+  }
+  uninitialized_storage &operator=(uninitialized_storage &&) requires(!Movable) = delete;
+  ~uninitialized_storage() = default;
+};
 
 // Inline zero-or-one storage used only by the declaration-bound
 // <std/optional> capability. It has no allocation state: engagement and one

@@ -41,6 +41,9 @@ add_test(NAME storage_adoption_contract COMMAND gti_storage_adoption_tests)
 add_executable(gti_object_lifetime_tests object_lifetime_tests.cpp)
 target_link_libraries(gti_object_lifetime_tests PRIVATE gti_compiler gti_cpp_backend)
 add_test(NAME object_lifetime_contract COMMAND gti_object_lifetime_tests)
+add_executable(gti_uninitialized_carrier_tests uninitialized_carrier_tests.cpp)
+target_link_libraries(gti_uninitialized_carrier_tests PRIVATE gti_compiler gti_cpp_backend)
+add_test(NAME uninitialized_carrier_contract COMMAND gti_uninitialized_carrier_tests)
 add_executable(gti_resource_protocol_tests resource_protocol_tests.cpp)
 target_link_libraries(gti_resource_protocol_tests PRIVATE gti_compiler gti_cpp_backend)
 add_test(NAME resource_protocol_contract COMMAND gti_resource_protocol_tests)
@@ -281,6 +284,21 @@ if(Python3_Interpreter_FOUND)
                    "${PROJECT_SOURCE_DIR}/tests/object_destroy_scalar_runtime_test.py"
                    "$<TARGET_FILE:gti>")
   set_tests_properties(object_destroy_scalar_runtime PROPERTIES TIMEOUT 240)
+  add_test(NAME object_construction_runtime
+           COMMAND ${Python3_EXECUTABLE}
+                   "${PROJECT_SOURCE_DIR}/tests/object_construction_runtime_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(object_construction_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME uninitialized_carrier_runtime
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/uninitialized_carrier_runtime_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(uninitialized_carrier_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME object_relocation_runtime
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/object_relocation_runtime_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(object_relocation_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME programmable_allocators_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/programmable_allocators_runtime_test.py" $<TARGET_FILE:gti>)
   set_tests_properties(programmable_allocators_runtime PROPERTIES TIMEOUT 900)

@@ -1,0 +1,40 @@
+#include <std/memory>
+#include <std/string>
+
+class Packet {
+  std::string text;
+  int id;
+public:
+  Packet(std::string text, int id) : text(std::move(text)), id(id) {}
+  Packet(Packet& other) = delete;
+  Packet(Packet&& other) = default;
+  std::string_view view() { return this.text.view(); }
+  ~Packet() { std::println(this.id); }
+};
+
+int main() {
+  mut std::uninitialized<Packet> first{};
+  mut std::uninitialized<Packet> second{};
+  unsafe {
+    std::construct_at(first.data(), std::string("payload"), 23);
+    std::relocate_at(second.data(), first.data());
+    // The checked view borrows the actual destination carrier, not the old one.
+    Packet& packet = std::assume_ref(second.data(), second);
+    std::println(packet.view());
+  }
+  unsafe {
+    // The source is vacant and can host another independent object.
+    std::construct_at(first.data(), std::string("replacement"), 24);
+    std::destroy_at(first.data());
+    std::destroy_at(second.data());
+  }
+  mut std::uninitialized<int> left{};
+  mut std::uninitialized<int> right{};
+  unsafe {
+    std::construct_at(left.data(), 17);
+    std::relocate_at(right.data(), left.data());
+    if (*right.data() != 17) { return 1; }
+    std::destroy_at(right.data());
+  }
+  return 0;
+}

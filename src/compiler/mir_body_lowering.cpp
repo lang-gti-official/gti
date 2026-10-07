@@ -4955,7 +4955,8 @@ private:
                                 ? FailurePropagationKind::VirtualCall
                                 : FailurePropagationKind::DirectCall;
     }
-    if ((value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+    if ((value.intrinsic == IntrinsicKind::ObjectConstruct ||
+         value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
          value.intrinsic == IntrinsicKind::StorageConstruct) &&
         failure.propagation == FailurePropagationKind::Constructor &&
         value.constructorTarget) {
