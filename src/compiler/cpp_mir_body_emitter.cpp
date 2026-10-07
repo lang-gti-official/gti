@@ -1252,6 +1252,8 @@ valueCallableReceiverInput(const MirBody &body,
 // of a This-rooted Field+Index place with exactly one failure site whose
 // loan is the return loan. The compatibility spelling is the terminal
 // array_at accessor, which contains the bounds failure inside itself.
+[[nodiscard]] bool invokePairedInstruction(const MirBody &body,
+                                           MirInstructionId instruction);
 [[nodiscard]] const MirInstruction *
 elementBorrowLoanProducer(const MirBody &body, const MirLoan &loan) {
   if (loan.kind != MirLoanKind::Return) {
@@ -1261,6 +1263,7 @@ elementBorrowLoanProducer(const MirBody &body, const MirLoan &loan) {
     for (const MirInstruction &instruction : block.instructions) {
       if (instruction.kind != MirInstructionKind::Borrow || !instruction.loan ||
           *instruction.loan != loan.id ||
+          invokePairedInstruction(body, instruction.id) ||
           instruction.localFailureSites.size() != 1 ||
           instruction.operands.size() != 1 ||
           (instruction.operands.front().kind != MirOperandKind::BorrowRead &&
@@ -28245,6 +28248,7 @@ public:
                    << " = ::gti_internal::backend::mir_failure_success_v1;\n";
           }
           if ((instruction.kind == MirInstructionKind::Load ||
+               instruction.kind == MirInstructionKind::Borrow ||
                instruction.kind == MirInstructionKind::AllocateObject ||
                instruction.kind ==
                    MirInstructionKind::StorageConstructPreflight ||
@@ -30712,6 +30716,55 @@ private:
         if (instruction.loan && candidate.id == *instruction.loan) {
           loan = &candidate;
         }
+      }
+      if (failureForm && loan != nullptr &&
+          !instruction.localFailureSites.empty() &&
+          invokePairedInstruction(facts.body, instruction.id)) {
+        const auto *place = facts.body.findPlace(loan->source);
+        const auto emitCheckedReference = [&](const auto &access,
+                                              auto &&emitBase,
+                                              auto &&emitElement) {
+          std::size_t branches = 0;
+          for (std::size_t index = 0; index < access.indices.size(); ++index) {
+            output << "__gti_mir_failure_status_" << instruction.id
+                   << " = ::gti_internal::backend::mir_checked_array_bound_v1(";
+            emitBase();
+            for (std::size_t prefix = 0; prefix < index; ++prefix) {
+              output << '[';
+              emitElementIndex(access.indices[prefix]);
+              output << ']';
+            }
+            output << ", ";
+            emitElementIndexValue(access.indices[index]);
+            output << ");\n";
+            writeIndent();
+            output << "if (__gti_mir_failure_status_" << instruction.id
+                   << ".code == GTI_FAILURE_CODE_NONE_V1) {\n";
+            ++indentation;
+            ++branches;
+            writeIndent();
+          }
+          output << "__gti_mir_loan_" << loan->id << " = &";
+          emitElement();
+          output << ";\n";
+          closeCheckedArrayChain(branches);
+        };
+        if (place != nullptr) {
+          if (const auto access = arrayFieldElementAccess(facts.body, *place)) {
+            emitCheckedReference(
+                *access, [&] { emitArrayFieldBase(facts, *access); },
+                [&] { emitArrayFieldElement(facts, *access, true); });
+            return;
+          }
+          if (const auto access = arrayElementAccess(facts.body, *place)) {
+            emitCheckedReference(
+                *access, [&] { emitArrayBase(facts, *access); },
+                [&] { emitArrayElement(facts, *access, true); });
+            return;
+          }
+        }
+        throw std::logic_error(
+            "checked reference formation lost its exact indexed place");
       }
       if (loan != nullptr && loan->kind == MirLoanKind::Stored) {
         writeIndent();
@@ -37759,6 +37812,7 @@ private:
       const bool elementDetector =
           producer != nullptr &&
           (producer->kind == MirInstructionKind::Load ||
+           producer->kind == MirInstructionKind::Borrow ||
            producer->kind == MirInstructionKind::AllocateObject ||
            producer->kind == MirInstructionKind::StorageConstructPreflight ||
            producer->kind == MirInstructionKind::Assign) &&
@@ -46105,6 +46159,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // terminal array_at accessor contains it.
         if (loan == nullptr ||
             (!instruction.localFailureSites.empty() &&
+             !(failureForm && instructionHasInvoke(block, instruction) &&
+               body.findPlace(loan->source) != nullptr &&
+               (arrayElementAccess(body, *body.findPlace(loan->source)) ||
+                arrayFieldElementAccess(body,
+                                        *body.findPlace(loan->source)))) &&
              elementBorrowLoanProducer(body, *loan) != &instruction)) {
           {
             return false;
@@ -49684,6 +49743,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       }
       if ((producer->kind == MirInstructionKind::Load ||
+           producer->kind == MirInstructionKind::Borrow ||
            producer->kind == MirInstructionKind::Assign) &&
           producer->localFailureSites.size() == 1) {
         continue;

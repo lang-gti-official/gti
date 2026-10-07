@@ -173,6 +173,14 @@ read/operate/commit schedule above. Symbol-rooted globals retain an immediately
 exclusive target loan until interprocedural root-effect summaries can prove
 hidden calls do not alias the reserved place.
 
+Chained selected accessors preserve this schedule. The exact unretained
+receiver ancestry of a plain nested target participates in its reservation;
+retained references do not. For a scalar compound target returned by an
+accessor, lowering stages that exact reference once, then loads the prior
+value before the RHS and performs separate checked arithmetic/conversion and
+one write. It neither treats the class receiver as a raw pointer nor invokes
+an accessor again at commit.
+
 For a plain assignment to a field of an element reached through a checked
 borrow-forming access (for example `points[i].x` over a selected mutable
 `operator[]`), forming the place evaluates the receiver and index constituents

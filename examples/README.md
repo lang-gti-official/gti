@@ -60,7 +60,7 @@ is a teaching helper, not a production server.
 | `11-overloads.gti` | exact overloads and explicit numeric conversions |
 | `12-fixed-arrays.gti` | bounded arrays, signed contextual literals, named passive records, passive unions, indexing, and size |
 | `13-ownership.gti` | non-null borrows, unique allocation, moves, and cleanup |
-| `14-operators.gti` | restricted member operators for safe wrappers |
+| `14-operators.gti` | restricted member operators; self-read dereference stores, nested subscripts and once-formed compound targets |
 | `15-variadic-generics.gti` | confined type packs and explicit forwarding |
 | `16-move-generics.gti` | ownership-aware concrete generic instances |
 | `17-standard-array.gti` | standard imports and source-defined `std::array<T, N>` |
