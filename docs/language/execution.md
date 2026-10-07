@@ -1383,6 +1383,8 @@ order, but these executable-authority gaps remain:
   families; and
 - cleanup interaction with any future manual object-lifetime operations.
 
-The first four are release blockers for backend-independent 1.0 execution.
-Manual lifetime remains later breadth and cannot weaken the defined contract by
-being absent.
+The first four are systems-readiness goals for complete backend-independent
+execution. The current partial-construction and defined-failure implementation
+must be checked against their wider scope before extending it. General manual
+lifetime is a further goal with explicit initialization, drop and failure
+prerequisites; its current absence cannot weaken the defined contract.

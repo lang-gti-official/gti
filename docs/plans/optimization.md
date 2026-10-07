@@ -38,7 +38,7 @@ client-backed pass/analysis manager, and opt-in MIR/report observability are
 implemented. O1 owns this local pipeline. O2/O3 additionally run independent
 bounds, initialized-storage-state, and arithmetic-overflow discharge passes
 backed by canonical body-local proofs. O-MIR-03 and the first O-MIR-04 slice are
-no longer blocked.
+have their architectural prerequisites in place.
 
 Implementation update (2026-08-24): O-MIR-05 adds one deterministic monotone
 forward-dataflow substrate, migrates safety analysis without changing its
@@ -678,7 +678,8 @@ Every optimization change must additionally answer:
 
 These questions belong in code review and in the
 `gti-language` change workflow. If a question cannot be answered from GTI IR,
-the optimization is blocked on architecture rather than delegated to C++.
+identify and implement the missing architectural fact before admitting the
+optimization; C++ behavior cannot supply its proof.
 
 ## Implementation Milestones
 
