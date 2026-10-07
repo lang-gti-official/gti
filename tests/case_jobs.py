@@ -57,6 +57,8 @@ def run_cases(cases, work, jobs=1, observe=None):
             futures = {executor.submit(work, value): key for key, value in cases}
             for future in as_completed(futures):
                 complete(futures[future], future.result)
+        if len(results) != len({key for key, _ in results}):
+            raise RuntimeError("completed case census contains duplicate identities")
         by_key = dict(results)
         results = [(key, by_key[key]) for key in keys if key in by_key]
     else:
