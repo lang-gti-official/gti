@@ -63,28 +63,55 @@ int main() {
       emitter.initializerSchedule(expressionAddress);
   const lang::CppMirInitializerScheduleText payloads =
       emitter.initializerSchedule(payloadAddress);
-  expect(expressions.supported && expressions.fields.size() == 4 &&
-             expressions.fields[0].spelling == "static_cast<std::int32_t>(7)" &&
-             expressions.fields[1].spelling ==
-                 "static_cast<std::int32_t>(static_cast<std::int32_t>(7))" &&
-             expressions.fields[2].spelling.find(
-                 "static_cast<std::int32_t>(::gti_internal::backend::add(") ==
-                 0 &&
-             expressions.fields[3].spelling.find(
-                 "::gti_internal::backend::numeric_cast<std::int8_t>(") == 0,
-         "Identity and Convert should retain the exact ordered MIR field "
-         "spellings");
-  expect(payloads.supported && payloads.fields.size() == 2 &&
-             std::all_of(payloads.fields.begin(), payloads.fields.end(),
-                         [](const auto &field) {
-                           return field.spelling.find("__gti_variant_") !=
-                                  std::string::npos;
-                         }) &&
-             payloads.fields[1].spelling.find(
-                 "static_cast<std::int32_t>(static_cast<std::int32_t>(9))") !=
-                 std::string::npos,
-         "PayloadConstruct should use copied variant metadata and preserve "
-         "payload operand order");
+  expect(
+      expressions.supported && expressions.fields.size() == 4 &&
+          std::all_of(expressions.fields.begin(), expressions.fields.end(),
+                      [](const auto &field) { return field.spelling.empty(); }),
+      "selected constructors suppress duplicate native expression defaults");
+  expect(
+      payloads.supported && payloads.fields.size() == 2 &&
+          std::all_of(payloads.fields.begin(), payloads.fields.end(),
+                      [](const auto &field) { return field.spelling.empty(); }),
+      "selected constructors suppress duplicate native payload defaults");
+
+  std::size_t constructorSchedules = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto *owner = constructor.owner == expressionOwner->id
+                            ? expressionOwner
+                        : constructor.owner == payloadOwner->id ? payloadOwner
+                                                                : nullptr;
+    if (owner == nullptr)
+      continue;
+    ++constructorSchedules;
+    expect(
+        constructor.generatedDefault &&
+            constructor.initializers.size() == owner->declaredFields.size(),
+        "generated defaults retain a complete concrete initializer schedule");
+    std::vector<lang::SymbolId> published;
+    for (const auto &block : constructor.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Initialize ||
+            !instruction.destination)
+          continue;
+        const auto *place =
+            constructor.body.findPlace(*instruction.destination);
+        if (place != nullptr && place->root == lang::MirPlaceRootKind::This &&
+            place->projections.size() == 1 &&
+            place->projections.front().kind == lang::MirProjectionKind::Field)
+          published.push_back(place->projections.front().field);
+      }
+    std::vector<lang::SymbolId> expectedFields;
+    for (const auto &field : owner->declaredFields)
+      expectedFields.push_back(field.symbol);
+    expect(
+        published == expectedFields &&
+            emitter.supportsFailureBodyText(
+                {.kind = lang::MirBodyKind::Constructor,
+                 .owner = constructor.id}),
+        "constructor MIR publishes each exact field once in declaration order");
+  }
+  expect(constructorSchedules == 2,
+         "both owners retain their selected generated constructor bodies");
 
   std::size_t identities = 0;
   std::size_t conversions = 0;
@@ -108,15 +135,19 @@ int main() {
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(artifact.contents.find(
-             "std::int32_t converted = "
-             "static_cast<std::int32_t>(static_cast<std::int32_t>(7));") !=
+  expect(artifact.contents.find("std::int32_t converted;") !=
                  std::string::npos &&
-             artifact.contents.find("payload_t empty = ") !=
+             artifact.contents.find("payload_t empty;") != std::string::npos &&
+             artifact.contents.find("(*this).converted") != std::string::npos &&
+             artifact.contents.find("numeric_cast<std::int8_t>") !=
+                 std::string::npos &&
+             artifact.contents.find("(*this).empty = std::move(") !=
+                 std::string::npos &&
+             artifact.contents.find("(*this).valued = std::move(") !=
                  std::string::npos &&
              artifact.contents.find("__gti_variant_1{}") != std::string::npos,
-         "the production backend should publish conversion and payload field "
-         "initializers from verified MIR");
+         "production emission executes conversion and payload publication in "
+         "constructor MIR without duplicate in-class defaults");
 
   const auto mutableOwner = [](lang::MirProgram &program,
                                lang::HirClassInstanceId owner) {
@@ -183,20 +214,47 @@ int main() {
              rejectedSchedule(wrongType, map, payloadAddress),
          "payload operand type drift must fail closed");
 
-  lang::MirProgram cleanupOwning = frontend.mir;
-  lang::MirClassInstance *cleanupOwner =
-      mutableOwner(cleanupOwning, payloadOwner->id);
-  lang::MirInstruction *cleanupPayload =
-      cleanupOwner == nullptr
+  lang::MirProgram wrongConstructorPayload = frontend.mir;
+  lang::MirConstructorInstance *changedConstructor = nullptr;
+  for (const auto &constructor : wrongConstructorPayload.constructorInstances())
+    if (constructor.owner == payloadOwner->id)
+      changedConstructor =
+          const_cast<lang::MirConstructorInstance *>(&constructor);
+  auto *changedPayload =
+      changedConstructor == nullptr
           ? nullptr
-          : mutableOperation(cleanupOwner->fieldInitializers,
-                             lang::MirOperation::PayloadConstruct);
-  if (cleanupPayload != nullptr) {
-    cleanupPayload->info.traits.drop = lang::DropKind::Lexical;
+          : mutableOperation(changedConstructor->body,
+                             lang::MirOperation::PayloadConstruct, true);
+  if (changedPayload != nullptr) {
+    changedPayload->operands.front().type = lang::SemanticType::UInt32;
   }
-  expect(cleanupPayload != nullptr &&
-             rejectedSchedule(cleanupOwning, map, payloadAddress),
-         "cleanup-owning payload construction must fail closed");
+  expect(
+      changedPayload != nullptr &&
+          !lang::verifyMirProgram(wrongConstructorPayload).valid() &&
+          !lang::CppMirBodyEmitter(wrongConstructorPayload, map)
+               .supportsFailureBodyText({.kind = lang::MirBodyKind::Constructor,
+                                         .owner = changedConstructor->id}),
+      "selected constructor payload operand drift must fail closed");
+
+  lang::MirProgram missingPublication = frontend.mir;
+  bool removedPublication = false;
+  for (const auto &constructor : missingPublication.constructorInstances()) {
+    if (constructor.owner != expressionOwner->id)
+      continue;
+    auto &changed = const_cast<lang::MirConstructorInstance &>(constructor);
+    for (auto &block : changed.body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Initialize &&
+            instruction.constructorInitializer != 0) {
+          instruction.constructorInitializer = 0;
+          removedPublication = true;
+          break;
+        }
+  }
+  expect(removedPublication &&
+             !lang::verifyMirProgram(missingPublication).valid(),
+         "selected constructor field publication must retain its initializer "
+         "identity");
 
   lang::MirProgram wrongOrder = frontend.mir;
   lang::MirClassInstance *wrongOrderOwner =
@@ -248,29 +306,45 @@ int main() {
                               payloadAddress),
          "stale copied payload metadata must fail closed");
 
-  const lang::FrontendResult unsupported =
-      analyze("cpp-mir-body-unsupported-field-expression.gti", R"(
-class unsupported_t {
+  const lang::FrontendResult logicalNot =
+      analyze("cpp-mir-body-logical-not-field-expression.gti", R"(
+class logical_not_t {
   bool flag = !false;
 };
 
 int main() {
-  unsupported_t value = unsupported_t();
+  logical_not_t value = logical_not_t();
   return 0;
 }
 )");
-  expect(unsupported.canGenerateCode(),
-         "the unsupported-expression probe should pass the frontend");
-  if (unsupported.canGenerateCode() &&
-      !unsupported.mir.classInstances().empty()) {
-    const lang::CppMirBodyEmissionMap unsupportedMap(
-        buildRows(unsupported, unsupported.mir, lang::CppStandard::Cpp23));
+  expect(logicalNot.canGenerateCode(),
+         "the LogicalNot field-expression probe should pass the frontend");
+  if (logicalNot.canGenerateCode() &&
+      !logicalNot.mir.classInstances().empty()) {
+    const lang::CppMirBodyEmissionMap logicalNotMap(
+        buildRows(logicalNot, logicalNot.mir, lang::CppStandard::Cpp23));
     const lang::MirClassInstance &owner =
-        unsupported.mir.classInstances().back();
-    expect(rejectedSchedule(unsupported.mir, unsupportedMap,
-                            {.kind = lang::MirBodyKind::FieldInitializers,
-                             .owner = owner.id}),
-           "an unlisted LogicalNot field expression must remain rejected");
+        logicalNot.mir.classInstances().back();
+    const lang::CppMirBodyEmitter logicalNotEmitter(logicalNot.mir,
+                                                    logicalNotMap);
+    const auto schedule = logicalNotEmitter.initializerSchedule(
+        {.kind = lang::MirBodyKind::FieldInitializers, .owner = owner.id});
+    bool sawLogicalNot = false;
+    for (const auto &constructor : logicalNot.mir.constructorInstances()) {
+      if (constructor.owner != owner.id)
+        continue;
+      for (const auto &block : constructor.body.blocks)
+        for (const auto &instruction : block.instructions)
+          sawLogicalNot |=
+              instruction.operation == lang::MirOperation::LogicalNot;
+      expect(logicalNotEmitter.supportsFailureBodyText(
+                 {.kind = lang::MirBodyKind::Constructor,
+                  .owner = constructor.id}),
+             "general constructor MIR supports LogicalNot field execution");
+    }
+    expect(schedule.supported && schedule.fields.size() == 1 &&
+               schedule.fields.front().spelling.empty() && sawLogicalNot,
+           "LogicalNot defaults execute only in selected constructor MIR");
   }
 }
 

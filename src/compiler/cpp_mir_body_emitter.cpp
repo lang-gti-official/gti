@@ -10891,6 +10891,47 @@ bool constructorRollbackCovered(const MirConstructorInstance &constructor,
   }
 }
 
+// A passive union's generated empty representation and bitwise publication
+// cannot run source cleanup. Keep the exact overlapping layout/field witness;
+// an ordinary class, active owner or user special member is not this family.
+[[nodiscard]] bool
+passiveUnionDefaultRepresentation(const MirProgram &program,
+                                  const MirClassInstance &owner) {
+  if (owner.kind != ClassKind::Union || !owner.unionLayout || owner.abstract ||
+      owner.polymorphic || owner.cAbiRecord ||
+      owner.compilerCapability != CompilerCapabilityTypeKind::None ||
+      !owner.bases.empty() || !owner.structuralBases.empty() ||
+      owner.destructor || owner.requiresActiveCleanup ||
+      owner.requiresActiveDropState || owner.traits.containsBorrowedState ||
+      owner.traits.drop != DropKind::Trivial || !owner.fields.empty() ||
+      !owner.fieldDropOrder.empty() ||
+      owner.defaultConstructor != SpecialMemberStatus::Generated ||
+      owner.copyConstructor != SpecialMemberStatus::Generated ||
+      owner.moveConstructor != SpecialMemberStatus::Generated ||
+      owner.moveAssignment != SpecialMemberStatus::Generated ||
+      owner.destructorStatus != SpecialMemberStatus::Generated ||
+      !mirTypeMoveIsDefinedFailureFree(program, owner.type))
+    return false;
+  const auto &layout = *owner.unionLayout;
+  if (layout.sizeBytes == 0 || layout.abiAlignmentBytes == 0 ||
+      layout.sizeBytes % layout.abiAlignmentBytes != 0 ||
+      layout.fields.empty() ||
+      layout.fields.size() != owner.declaredFields.size())
+    return false;
+  for (std::size_t index = 0; index < layout.fields.size(); ++index) {
+    const auto &field = owner.declaredFields[index];
+    const auto &native = layout.fields[index];
+    if (field.field == 0 || field.symbol == 0 ||
+        field.dropKind != DropKind::Trivial || field.requiresActiveCleanup ||
+        native.field != field.symbol || native.type != field.type ||
+        native.sizeBytes == 0 || native.abiAlignmentBytes == 0 ||
+        native.sizeBytes > layout.sizeBytes ||
+        layout.abiAlignmentBytes % native.abiAlignmentBytes != 0)
+      return false;
+  }
+  return true;
+}
+
 [[nodiscard]] bool passiveConstructorFieldInitializersImpl(
     const MirProgram &program, const MirBody &body,
     std::unordered_set<const MirBody *> &visiting) {
@@ -10966,7 +11007,10 @@ bool constructorRollbackCovered(const MirConstructorInstance &constructor,
             (instruction.kind == MirInstructionKind::Construct &&
              instruction.constructorKind != ConstructorKind::Ordinary) ||
             nested == nullptr || !nested->bases.empty() ||
-            nested->polymorphic || nested->unionLayout || nested->cAbiRecord ||
+            nested->polymorphic ||
+            (nested->unionLayout &&
+             !passiveUnionDefaultRepresentation(program, *nested)) ||
+            nested->cAbiRecord ||
             nested->compilerCapability != CompilerCapabilityTypeKind::None ||
             nested->requiresActiveCleanup || nested->requiresActiveDropState ||
             nested->traits.containsBorrowedState ||
@@ -11212,6 +11256,8 @@ enum class EmptyFieldUse { Construction, Assignment };
     }
     instance = &candidate;
   }
+  if (instance != nullptr && instance->unionLayout)
+    return passiveUnionDefaultRepresentation(program, *instance);
   // An interface-only base contributes dispatch identity, not initialized
   // source storage. Native default initialization of those exact empty bases
   // is safe in the private tag constructor; state-bearing or source-defined
@@ -13769,8 +13815,10 @@ passiveGeneratedDefaultFieldInitialize(const MirProgram &program,
   // are preserved by publishing the real T{} at the verified Initialize step.
   if (body.kind != MirBodyKind::Constructor || type == nullptr ||
       !type->bases.empty() || type->polymorphic || type->cAbiRecord ||
-      type->unionLayout || type->requiresActiveCleanup ||
-      type->requiresActiveDropState || type->traits.containsBorrowedState ||
+      (type->unionLayout &&
+       !passiveUnionDefaultRepresentation(program, *type)) ||
+      type->requiresActiveCleanup || type->requiresActiveDropState ||
+      type->traits.containsBorrowedState ||
       type->defaultConstructor != SpecialMemberStatus::Generated ||
       type->moveAssignment != SpecialMemberStatus::Generated ||
       !passiveConstructorFieldInitializers(program, type->fieldInitializers) ||
@@ -15373,6 +15421,91 @@ fixedArrayValueDestinationSlot(const MirProgram &program, const MirBody &body,
              : nullptr;
 }
 
+// A cleanup-free fixed-array prvalue may be copied into a by-value parameter
+// through CallInput without transferring its own full-expression obligation.
+// Its element constructions still need uninitialized storage. Only an exact
+// immediately consumed stage can alias that storage: generated copying is
+// observation-free, and no later argument can change the source before copy.
+[[nodiscard]] const MirPlace *
+passiveFixedArrayAggregateCallInput(const MirProgram &program,
+                                    const MirBody &body,
+                                    const MirInstruction &stage) {
+  if (stage.kind != MirInstructionKind::CallInput || !stage.result ||
+      stage.callInputKind != HirCallInputKind::Value ||
+      stage.callInputRole != MirCallInputRole::Argument ||
+      stage.callSite == 0 || stage.destination || stage.receiver ||
+      stage.operands.size() != 1 ||
+      stage.operands.front().kind != MirOperandKind::Value ||
+      stage.operands.front().type != stage.info.type ||
+      !stage.localFailureSites.empty() || !stage.definedFailure.empty() ||
+      !stage.lifecycle.empty() || stage.preparedParameterDrop ||
+      stage.successResultDrop || stage.successResultDestination ||
+      stage.info.traits.containsBorrowedState || !stage.info.traits.copyable ||
+      !cleanupFreeCopyableFixedArray(program, stage.info.type))
+    return nullptr;
+  const auto &input = stage.operands.front();
+  const auto *value = body.findValue(input.value);
+  const auto *producer =
+      value ? findInstruction(body, value->definition) : nullptr;
+  const auto *drop =
+      uniqueValueLifetimeDrop(body, input.value, stage.info.type);
+  const auto *source = drop ? body.findPlace(drop->place) : nullptr;
+  const auto sourceUses = nonRootRecordUses(body, input.value);
+  const auto uses = body.usesOf(*stage.result);
+  const auto *stagedValue = body.findValue(*stage.result);
+  if (value == nullptr || value->info.type != stage.info.type ||
+      value->info.traits.containsBorrowedState || stagedValue == nullptr ||
+      stagedValue->info != stage.info || producer == nullptr ||
+      producer->info != value->info ||
+      !failureFreeFixedArrayAggregateMove(program, body, *producer) ||
+      source == nullptr || source->root != MirPlaceRootKind::Value ||
+      source->value != input.value || !source->projections.empty() ||
+      source->type != stage.info.type || drop->dropType.requiresActiveCleanup ||
+      sourceUses.size() != 1 ||
+      sourceUses.front().kind != MirValueUseKind::InstructionOperand ||
+      sourceUses.front().instruction != stage.id ||
+      sourceUses.front().operandIndex != 0 || uses.size() != 1 ||
+      uses.front().kind != MirValueUseKind::InstructionOperand ||
+      uses.front().operandIndex != stage.callInputIndex)
+    return nullptr;
+  const auto *consumer = findInstruction(body, uses.front().instruction);
+  if (consumer == nullptr || consumer->callSite != stage.callSite ||
+      stage.callInputIndex >= consumer->operands.size() ||
+      stage.callInputIndex >= consumer->parameterTypes.size() ||
+      consumer->parameterTypes[stage.callInputIndex] != stage.info.type ||
+      consumer->operands[stage.callInputIndex].kind != MirOperandKind::Value ||
+      consumer->operands[stage.callInputIndex].value != *stage.result ||
+      consumer->operands[stage.callInputIndex].type != stage.info.type ||
+      std::any_of(consumer->lifecycle.begin(), consumer->lifecycle.end(),
+                  [&](const MirLifecycleEvent &event) {
+                    return event.source == drop->id;
+                  }))
+    return nullptr;
+  const auto *constructor =
+      consumer->kind == MirInstructionKind::Construct &&
+              consumer->constructorTarget
+          ? program.findConstructorInstance(*consumer->constructorTarget)
+          : nullptr;
+  const auto *function =
+      consumer->kind == MirInstructionKind::Call && consumer->functionTarget
+          ? program.findFunctionInstance(*consumer->functionTarget)
+          : nullptr;
+  if ((constructor == nullptr ||
+       constructor->definitionKind != MirDefinitionKind::Source ||
+       constructor->parameterTypes != consumer->parameterTypes) &&
+      (function == nullptr ||
+       function->definitionKind != MirDefinitionKind::Source ||
+       function->linkage != LanguageLinkage::Gti ||
+       function->parameterTypes != consumer->parameterTypes))
+    return nullptr;
+  for (const auto &block : body.blocks)
+    for (std::size_t index = 0; index + 1 < block.instructions.size(); ++index)
+      if (&block.instructions[index] == &stage &&
+          &block.instructions[index + 1] == consumer)
+        return source;
+  return nullptr;
+}
+
 // A transformed class-returning call used as one element of the bounded
 // aggregate above needs uninitialized SSA storage. The call constructs this
 // slot through its out parameter; the aggregate moves from it and destroys
@@ -15485,6 +15618,10 @@ fixedArrayAggregateInputSlot(const MirProgram &program, const MirBody &body,
   }
   const MirInstruction *aggregate =
       findInstruction(body, uses.front().instruction);
+  if (nestedOwningAggregate && aggregate != nullptr &&
+      passiveFixedArrayAggregateCallInput(program, body, *aggregate) ==
+          body.findPlace(valueDrop->place))
+    return aggregate;
   // An owning fixed-array prvalue may also be an exact by-value constructor
   // argument. Keep it in its value-rooted lifetime slot until all arguments
   // have been evaluated; the consumer's TransferOut, not native copyability,
@@ -27979,6 +28116,10 @@ public:
       output << ";\n";
     }
     for (const MirValue &value : facts.body.values) {
+      const auto *arrayStage = findInstruction(facts.body, value.definition);
+      if (arrayStage != nullptr &&
+          passiveFixedArrayAggregateCallInput(program, facts.body, *arrayStage))
+        continue;
       if (pendingClassTemporaryReturnSlot(facts.body, value.id) != nullptr ||
           expectedConditionalTransportSlot(facts.body, value.id) != nullptr ||
           expectedConditionalPayloadInitialize(facts.body, value.id) !=
@@ -29833,6 +29974,16 @@ private:
                    bool allowSyntheticLogicalConstant = false) {
     if (operand.kind == MirOperandKind::Value) {
       if (currentBody != nullptr && operand.type.kind == SemanticType::Array) {
+        const auto *value = currentBody->findValue(operand.value);
+        const auto *stage =
+            value ? findInstruction(*currentBody, value->definition) : nullptr;
+        if (const auto *slot = stage ? passiveFixedArrayAggregateCallInput(
+                                           program, *currentBody, *stage)
+                                     : nullptr) {
+          output << "std::as_const(__gti_mir_p_"
+                 << canonicalSlotPlaceId(*currentBody, *slot) << ".get())";
+          return;
+        }
         const auto *consumer =
             fixedArrayAggregateInputSlot(program, *currentBody, operand.value);
         if (consumer != nullptr &&
@@ -34981,6 +35132,12 @@ private:
         output << "__gti_mir_v_" << *instruction.result << ".construct(";
         emitStoragePlaceValue(facts, *source);
         output << ");\n";
+        return;
+      }
+      if (passiveFixedArrayAggregateCallInput(program, facts.body,
+                                              instruction)) {
+        output << "// passive array input copies its retained aggregate slot "
+                  "at the adjacent call\n";
         return;
       }
       if (instruction.result && materializedConstructorArgumentStage(
@@ -45704,6 +45861,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
   }
   for (const MirValue &value : body.values) {
+    const auto *arrayStage = findInstruction(body, value.definition);
+    if (arrayStage != nullptr &&
+        passiveFixedArrayAggregateCallInput(program_, body, *arrayStage) &&
+        typeRow(value.info.type))
+      continue;
     if (borrowedPayloadExtract(body, value.id) && typeRow(value.info.type))
       continue;
     if (pendingClassTemporaryReturnSlot(body, value.id) != nullptr ||
@@ -48260,6 +48422,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         const MirOperand &staged = instruction.operands.front();
         if (passiveCopiedCallInput(program_, body, instruction) != nullptr) {
+          continue;
+        }
+        if (passiveFixedArrayAggregateCallInput(program_, body, instruction)) {
           continue;
         }
         const MirPayloadEnum *owningPayloadEnum =
