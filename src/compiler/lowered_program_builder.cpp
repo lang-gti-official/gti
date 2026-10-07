@@ -988,8 +988,7 @@ private:
         (source.source != nullptr || source.declaration != 0 ||
          !source.parameterTypes.empty() || owner == nullptr ||
          owner->defaultConstructor != SpecialMemberStatus::Generated ||
-         !owner->fields.empty() || owner->destructor ||
-         source.initializers.size() != 1 ||
+         !owner->fields.empty() || source.initializers.size() != 1 ||
          source.initializers.front().kind !=
              ConstructorInitializerTargetKind::Base ||
          lowered.definitionKind != MirDefinitionKind::Source))

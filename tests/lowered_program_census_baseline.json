@@ -61,15 +61,15 @@
       }
     },
     "05-objects.gti": {
-      "declarations": 144,
-      "bodies": 31,
-      "generated_items": 1,
+      "declarations": 149,
+      "bodies": 35,
+      "generated_items": 2,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
         "structural_operator_adapter": 0,
         "callable_adapter": 0,
-        "lifecycle_cleanup": 0,
+        "lifecycle_cleanup": 1,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
         "thread_task_adapter": 0
@@ -1817,8 +1817,8 @@
     }
   },
   "totals": {
-    "declarations": 51797,
-    "bodies": 16208,
-    "generated_items": 3405
+    "declarations": 51802,
+    "bodies": 16212,
+    "generated_items": 3406
   }
 }

@@ -5632,6 +5632,21 @@ representation finishes the last base cleanup without crossing their order.
 Base arguments, owning derived fields, declared base/derived destructors, and
 general secondary failure during aggregate cleanup remain separate work.
 
+The constructor-lifecycle issue campaign extends that shared stage to exact
+scalar parameter/literal arguments, owning derived fields, and declared
+base/derived cleanup, with native-prefix and explicit base-drop proofs. The
+five original A45 forms and an unrelated resource-bearing inheritance fixture
+are the focused acceptance inputs. This is not closure of the full base
+initializer goal: `Base(s + 1)` and other checked/effectful argument evaluation
+need a verified pre-native-base MIR preparation runner carrying the selected
+scalar values and original failure record before native base entry. Owning or
+borrowed base arguments additionally need that runner's transfer/loan contracts.
+Historical entry-active declaration-field rollback tokens cannot precede a
+fallible base; declaration-default construction must use the typed constructor
+schedule that arms each field after its successful initializer. The concurrent
+general-object-lifetime work owns that schedule, and the two changes must be
+reconciled and retested together before broader base-construction closure.
+
 The inherited-allocation runtime matrix passes success, base failure, derived
 failure, and exhaustion before base entry across C++20/C++23 O0/O1/O3 plus
 ASan/UBSan (28 runs), with exact original failure sites and cleanup traces.

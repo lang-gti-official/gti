@@ -55,6 +55,14 @@ add_test(NAME constructor_pack_field_runtime
                  "${PROJECT_SOURCE_DIR}/tests/constructor_pack_field_runtime_test.py"
                  "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
 set_tests_properties(constructor_pack_field_runtime PROPERTIES TIMEOUT 600)
+add_executable(gti_base_constructor_stage_tests base_constructor_stage_tests.cpp)
+target_link_libraries(gti_base_constructor_stage_tests PRIVATE gti_cpp_backend)
+add_test(NAME base_constructor_stage COMMAND gti_base_constructor_stage_tests)
+add_test(NAME base_constructor_stage_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/base_constructor_stage_runtime_test.py"
+                 "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+set_tests_properties(base_constructor_stage_runtime PROPERTIES TIMEOUT 600)
 add_executable(gti_ephemeral_carrier_mir_tests ephemeral_carrier_mir_tests.cpp)
 add_executable(gti_resource_memory_runtime_tests resource_memory_runtime_tests.cpp)
 target_link_libraries(gti_resource_memory_runtime_tests PRIVATE gti_runtime)

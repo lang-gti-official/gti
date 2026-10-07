@@ -999,9 +999,9 @@ verifyLoweredProgram(const LoweredProgram &program) {
     if (instance.declaration == 0 &&
         (owner == nullptr ||
          owner->defaultConstructor != SpecialMemberStatus::Generated ||
-         !owner->declaredFields.empty() || owner->destructor ||
-         !mir.parameterTypes.empty() || !mir.typeArguments.empty() ||
-         !mir.valueArguments.empty() || mir.initializers.size() != 1 ||
+         !owner->declaredFields.empty() || !mir.parameterTypes.empty() ||
+         !mir.typeArguments.empty() || !mir.valueArguments.empty() ||
+         mir.initializers.size() != 1 ||
          mir.initializers.front().kind !=
              ConstructorInitializerTargetKind::Base ||
          mir.definitionKind != MirDefinitionKind::Source)) {

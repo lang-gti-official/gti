@@ -6884,7 +6884,13 @@ static MirVerificationResult verifyBaseInitializations(const MirBody &body,
             event.kind == MirLifecycleEventKind::TransferOut &&
             event.source == rollback->id && event.target == 0 &&
             !event.conditional && !event.failureCleanup;
-        if (!drop && !retirement)
+        const bool activation =
+            stage && instruction.definedFailure.empty() &&
+            instruction.lifecycle.size() == 1 &&
+            event.kind == MirLifecycleEventKind::Initialize &&
+            event.source == 0 && event.target == rollback->id &&
+            !event.conditional && !event.failureCleanup;
+        if (!drop && !retirement && !activation)
           return failure(body, owner,
                          "base initialization has a foreign lifecycle use",
                          block.id, instruction.id);
@@ -7686,7 +7692,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
          instruction.kind != MirInstructionKind::Call) ||
         (callable && !targetlessBorrowProbe &&
          instruction.parameterTypes.size() != instruction.operands.size()) ||
-        (!callable && !instruction.parameterTypes.empty()) ||
+        (!callable && instruction.kind != MirInstructionKind::InitializeBase &&
+         !instruction.parameterTypes.empty()) ||
         (callInput != instruction.callInputRole.has_value()) ||
         (callInput && instruction.callSite == 0) ||
         (!callInput && instruction.defaultArgument) ||
@@ -8728,19 +8735,37 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               ? body.findDropObligation(*instruction.successResultDrop)
               : nullptr;
       return body.kind == MirBodyKind::Constructor && noOperation &&
-             !hasResult && base != nullptr && !instruction.receiver &&
-             instruction.constructorInitializer != 0 &&
-             instruction.constructorTarget && instruction.operands.empty() &&
-             instruction.parameterTypes.empty() && !instruction.loan &&
-             !instruction.functionTarget && !instruction.bodyTarget &&
-             !instruction.lambdaTarget && instruction.callSite == 0 &&
-             instruction.hirValue == 0 && instruction.hirStatement == 0 &&
+             !hasResult && base != nullptr && rollback != nullptr &&
+             !instruction.receiver && instruction.constructorInitializer != 0 &&
+             instruction.operands.size() == instruction.parameterTypes.size() &&
+             std::equal(
+                 instruction.operands.begin(), instruction.operands.end(),
+                 instruction.parameterTypes.begin(),
+                 [](const MirOperand &operand, const SemanticType &type) {
+                   return operand.type == type &&
+                          (operand.kind == MirOperandKind::Value ||
+                           operand.kind == MirOperandKind::Constant);
+                 }) &&
+             !instruction.loan && !instruction.functionTarget &&
+             !instruction.bodyTarget && !instruction.lambdaTarget &&
+             instruction.callSite == 0 && instruction.hirValue == 0 &&
+             instruction.hirStatement == 0 &&
              instruction.intrinsic == IntrinsicKind::None &&
              instruction.constructorKind == ConstructorKind::Ordinary &&
-             instruction.lifecycle.empty() && !instruction.ownership &&
+             !instruction.ownership &&
              instruction.definedFailure.localOrigins.empty() &&
-             instruction.definedFailure.propagation ==
-                 FailurePropagationKind::Constructor &&
+             ((instruction.constructorTarget &&
+               instruction.definedFailure.propagation ==
+                   FailurePropagationKind::Constructor &&
+               instruction.lifecycle.empty()) ||
+              (instruction.definedFailure.empty() &&
+               instruction.lifecycle.size() == 1 &&
+               instruction.lifecycle.front().kind ==
+                   MirLifecycleEventKind::Initialize &&
+               instruction.lifecycle.front().source == 0 &&
+               instruction.lifecycle.front().target == rollback->id &&
+               !instruction.lifecycle.front().conditional &&
+               !instruction.lifecycle.front().failureCleanup)) &&
              base->root == MirPlaceRootKind::This &&
              base->projections.size() == 1 &&
              base->projections.front().kind == MirProjectionKind::Base &&
@@ -10076,7 +10101,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                  instruction.kind == MirInstructionKind::Move ||
                  instruction.kind == MirInstructionKind::CallInput ||
                  instruction.kind == MirInstructionKind::Call ||
-                 instruction.kind == MirInstructionKind::Construct) &&
+                 instruction.kind == MirInstructionKind::Construct ||
+                 instruction.kind == MirInstructionKind::InitializeBase) &&
                 instructionProducesObligation(instruction, *target)));
           break;
         case MirLifecycleEventKind::Move:

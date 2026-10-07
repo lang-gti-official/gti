@@ -1767,8 +1767,8 @@ private:
         baseModel->findClassType(owner.declaration);
     if (snapshot.generatedDefault) {
       // Select the same implicit state-bearing base as an ordinary constructor.
-      // Keep the first executable structural family closed: no derived fields
-      // or destructor means there is no additional partial-object schedule.
+      // A source cleanup body belongs to the completed derived lifetime and
+      // does not prevent selecting its exact generated base constructor.
       const auto base = std::find_if(owner.bases.begin(), owner.bases.end(),
                                      [](const HirBaseInstance &candidate) {
                                        return !candidate.interface;
@@ -1781,7 +1781,7 @@ private:
           baseType == nullptr || baseType->declaration == nullptr
               ? nullptr
               : baseModel->findClassLifecycle(*baseType->declaration);
-      if (!owner.fields.empty() || owner.destructor || lifecycle == nullptr ||
+      if (!owner.fields.empty() || lifecycle == nullptr ||
           ownerInfo == nullptr || ownerInfo->declaration == nullptr) {
         lifecycleValid = false;
         return;
