@@ -434,6 +434,16 @@ mir_expected_value_ref_v1(Expected &expected, ResultPointer *result) noexcept {
   return mir_failure_success_v1;
 }
 
+// A verified return-publication consumer constructs directly into caller
+// storage. This adapter owns no lifetime: MIR controls success activation,
+// unpublished-result cleanup, and the final transfer to the caller.
+template <typename Result> struct mir_result_placement_slot_v1 {
+  Result *destination;
+  template <typename... Args> void construct(Args &&...args) {
+    construct_representation_at(destination, std::forward<Args>(args)...);
+  }
+};
+
 template <typename Expected, typename ResultSlot>
 inline mir_failure_status_v1
 mir_expected_value_copy_v1(const Expected &expected, ResultSlot *result) {
