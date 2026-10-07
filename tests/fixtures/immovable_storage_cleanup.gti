@@ -1,0 +1,39 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+struct Part {
+  int id;
+  Part(int id) : id(id) {}
+  ~Part() { std::println(100 + this.id); }
+};
+
+class Fixed {
+  Part part;
+  std::string text;
+  int id;
+public:
+  Fixed(int id, int divisor)
+      : part(Part(id)), text(std::string("owning fixed object")), id(id) {
+    int checked = 1 / divisor;
+  }
+  Fixed(Fixed& other) = delete;
+  Fixed(Fixed&& other) = delete;
+  ~Fixed() { std::println(this.id); }
+};
+
+struct Tail {
+  ~Tail() { std::println(99); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Tail tail{};
+  std::allocator allocator{};
+  auto attempt = allocator.try_storage<Fixed>(std::size_t(2));
+  if (!attempt) { return 1; }
+  mut auto slots = std::move(attempt).value();
+  slots.emplace(std::size_t(0), 1, 1);
+  slots.emplace(std::size_t(1), 2, argc - 2);
+  auto moved = std::move(slots);
+  return 0;
+}

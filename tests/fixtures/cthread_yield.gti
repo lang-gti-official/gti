@@ -1,0 +1,9 @@
+#include <std/cthread>
+
+int main() {
+  // A scheduler hint is legal without enabling a second GTI execution agent.
+  for (mut int index = 0; index < 16; index++) {
+    std::thrd_yield();
+  }
+  return 0;
+}

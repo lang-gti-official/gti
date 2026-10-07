@@ -1,0 +1,12 @@
+class Seed {
+public:
+    int32_t value;
+    Seed() : value(7) {}
+};
+
+class Crop : public Seed {};
+
+int main() {
+    Crop crop = Crop();
+    return crop.value == 7 ? 0 : 1;
+}

@@ -84,6 +84,8 @@ LOCAL_INCLUDE_PATTERN = re.compile(r'^\s*#include\s+"([^"]+)"', re.MULTILINE)
 NATIVE_FAILURE_MARKERS = (
     "native C++ compiler diagnostics",
     "native C++ compiler failed",
+    "backend failed while compiling and linking",
+    "native source compiler failed",
 )
 
 
@@ -125,7 +127,12 @@ class Probe:
         self.stage = stage
         # argv uses the placeholders {GTI} and {SCRATCH} so a replay can
         # substitute its own compiler path and temporary root.
-        self.argv = argv
+        self.argv = list(argv)
+        # This is developer tooling: retain complete backend evidence in the
+        # bundle's captured stderr even when ordinary CLI output is concise.
+        # Never add compiler options to the generated program's execution.
+        if stage != "run" and self.argv[0] == "{GTI}" and "--verbose" not in self.argv:
+            self.argv.append("--verbose")
         self.cwd_role = cwd_role  # "source-dir" | "project-dir"
 
 
@@ -244,15 +251,20 @@ def signature_from(record: dict) -> dict:
         stem = ""
         for line in stderr_text.splitlines():
             if "error" in line and not line.startswith("gti:"):
-                stem = line[:SIGNATURE_STEM_LENGTH]
+                # The generated filename changes between capture and replay.
+                # Keep the tool's reason rather than that incidental prefix.
+                cause = line.partition("error:")[2].strip() if "error:" in line else line
+                stem = cause[:SIGNATURE_STEM_LENGTH]
                 break
         return {"kind": "native-toolchain", "stage": stage, "stem": stem}
 
     match = DIAGNOSTIC_PATTERN.search(stderr_text)
     if match:
+        detail = re.search(r"^Detail:[ \t]*(.+)$", stderr_text, re.MULTILINE)
+        stem = detail.group(1) if match.group(1) == "GTI-B0001" and detail else match.group(2)
         return {"kind": "diagnostic", "stage": stage,
                 "code": match.group(1),
-                "stem": match.group(2)[:SIGNATURE_STEM_LENGTH]}
+                "stem": stem[:SIGNATURE_STEM_LENGTH]}
 
     if stage == "run":
         return {
@@ -266,6 +278,15 @@ def signature_from(record: dict) -> dict:
 
 
 def signatures_match(original: dict, observed: dict) -> bool:
+    if original.get("kind") == observed.get("kind") == "native-toolchain":
+        # Preserve replay of v1 bundles whose stem included a source filename.
+        def canonical(record):
+            result = dict(record)
+            stem = result.get("stem", "")
+            if "error:" in stem:
+                result["stem"] = stem.partition("error:")[2].strip()
+            return result
+        return canonical(original) == canonical(observed)
     return original == observed
 
 

@@ -18,6 +18,8 @@ public:
   [[nodiscard]] std::string
   function(const FunctionInfo &info,
            const ResolvedCallInfo *selected = nullptr) const;
+  [[nodiscard]] std::string nativeCall(const ResolvedCallInfo &selected,
+                                       std::string_view name) const;
   [[nodiscard]] std::string
   conceptSignature(const SymbolRecord &symbol,
                    const ConceptDecl *declaration) const;
@@ -189,6 +191,9 @@ struct CompletionInput {
   std::filesystem::path entryPath;
   std::string source;
   std::size_t byteOffset = 0;
+  TargetInfo target = TargetInfo::host();
+  ConfigurationFlags configurationFlags;
+  RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
   std::vector<std::filesystem::path> preludePaths;
   std::unordered_map<std::string, std::string> sourceOverrides;
   std::vector<std::filesystem::path> standardLibraryRoots;

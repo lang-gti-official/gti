@@ -18,6 +18,14 @@ struct ManagedOutputPolicy {
   std::filesystem::path outputRoot;
 };
 
+// Validates an already-published managed executable before a build-skipping
+// run. The complete parent chain and artifact must remain inside the trusted
+// managed subtree without symbolic-link traversal, and the leaf must be a
+// regular executable file. Returns a user-facing driver diagnostic on failure.
+[[nodiscard]] std::optional<std::string>
+managedExecutableDiagnostic(const ManagedOutputPolicy &policy,
+                            const std::filesystem::path &executable);
+
 struct BuildCachePolicy {
   // A project-owned cache root, normally <package>/build/gti/cache. The build
   // driver owns its versioned layout beneath this directory.
@@ -217,6 +225,9 @@ struct BuildProjectProvenance {
 
 struct BuildProvenance {
   int schema = currentBuildProvenanceSchema;
+  // Additive schema-2 policy field. Older reports imply false.
+  bool debugInfo = false;
+  RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
   BuildFileProvenance producerExecutable;
   CompilerBuildIdentity compilerBuild;
   std::optional<BuildProjectProvenance> project;
@@ -323,6 +334,9 @@ struct ExecutableBuildResult {
   std::vector<std::string> nativeCommand;
   std::filesystem::path generatedSource;
   std::optional<std::string> driverDiagnostic;
+  // Complete developer evidence for a backend-generation/native-build
+  // failure, including native argv/output when available. Not a cache input.
+  std::optional<DiagnosticLogResult> backendDiagnosticLog;
   BuildCacheResult cache;
   std::optional<BuildProvenance> provenance;
   bool generatedSourceRetained = false;
@@ -333,6 +347,7 @@ struct ExecutableBuildResult {
 };
 
 [[nodiscard]] ExecutableBuildResult
-buildExecutable(const ExecutableBuildRequest &request);
+buildExecutable(const ExecutableBuildRequest &request,
+                ProgressObserver *progress = nullptr);
 
 } // namespace lang::driver

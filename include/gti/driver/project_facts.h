@@ -3,6 +3,7 @@
 #include "gti/driver/compilation.h"
 #include "gti/driver/manifest.h"
 #include "gti/driver/workspace.h"
+#include "gti/include_suggestions.h"
 #include "gti/source_graph.h"
 
 #include <filesystem>
@@ -64,6 +65,9 @@ struct ProjectFactsProfile {
   OptimizationLevel optimization = OptimizationLevel::O0;
   CppStandard cppStandard = CppStandard::Cpp23;
   ExecutionProfile executionProfile = ExecutionProfile::SingleThreaded;
+  RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
+  WarningPolicy warningPolicy;
+  bool dependencyWarnings = true;
 };
 
 // One declared target of the selected package.
@@ -113,6 +117,11 @@ public:
   [[nodiscard]] std::optional<AnalysisConfiguration>
   analysisConfiguration(std::string_view profileName, TargetInfo target,
                         RuntimeProfile runtimeProfile) const;
+
+  // Consumer-selected profile policy, classified by the resolved graph's
+  // actual package identities. Dependency manifests cannot hide diagnostics.
+  [[nodiscard]] PackageWarningPolicy
+  packageWarnings(std::string_view profileName) const;
 
   // The resolved package graph's identity: equal identities describe the same
   // workspace closure, package versions, and alias edges. A build plan's model
@@ -169,5 +178,10 @@ struct ProjectFactsResult {
 // workspace for another purpose reuse it instead of resolving twice.
 [[nodiscard]] ProjectFacts
 projectFactsFromWorkspace(const ProjectWorkspace &workspace);
+
+// Search authority for editor include discovery: the selected package and
+// declared direct dependency aliases only. No acquisition or recursive walk.
+[[nodiscard]] std::vector<IncludeSearchRoot>
+projectIncludeSearchRoots(const ProjectFacts &facts);
 
 } // namespace lang::driver

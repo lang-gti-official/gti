@@ -1,0 +1,12 @@
+#include <std/cthread>
+extern "C" {
+  void cthread_install_terminal();
+  int32_t cthread_initial(std::thrd_start_t callback);
+}
+int32_t worker(void* context) { return 42; }
+int main() {
+  cthread_install_terminal();
+  unsafe {
+    return cthread_initial(worker);
+  }
+}

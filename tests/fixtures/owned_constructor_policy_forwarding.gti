@@ -1,0 +1,25 @@
+#include <std/memory>
+
+class Policy {
+  int offset;
+public:
+  Policy(int offset) : offset(offset) {}
+  int operator()(int value) { return value + this.offset; }
+};
+class Inner<P> {
+  std::unique_ptr<int> payload;
+  P policy;
+public:
+  Inner(P policy) : payload(std::make_unique<int>(5)), policy(std::move(policy)) {}
+  int value() { return this.policy(*this.payload); }
+};
+class Outer<P> {
+  Inner<P> inner;
+public:
+  Outer(P policy) : inner(Inner<P>(std::move(policy))) {}
+  int value() { return this.inner.value(); }
+};
+int main() {
+  Outer<Policy> owner = Outer<Policy>(Policy(3));
+  return owner.value() - 8;
+}

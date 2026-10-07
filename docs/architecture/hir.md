@@ -8,6 +8,13 @@ executable typed values. It sits after semantic analysis and before body-local
 control-flow lowering. It is not a pretty AST and it is not an independent
 type system.
 
+Concrete function instances preserve the semantic owned-pointee accessor
+summary (exact receiver-field identity and private borrow operation), refreshed
+from concrete instance analysis. It is proof metadata, not a synthetic field
+access: the accessor call and its returned loan still describe execution. In
+particular, lowering must not replace a source accessor with a caller-side
+access to that accessor's private storage.
+
 ## Inputs And Outputs
 
 `HirLowerer` in `include/gti/hir.h` consumes the checked `Program`, target, and
@@ -15,6 +22,33 @@ type system.
 Concrete generic validity is obtained through semantic instance reanalysis.
 Successfully checked static assertions are skipped entirely: they are semantic
 obligations, not HIR declarations or executable values.
+
+For early constant requests, `lowerConstantFunction` and
+`lowerConstantConstructor` reuse ordinary body lowering on a closure rooted in
+one completed constexpr function, method, or constructor. Semantics supplies
+the completed-definition inventory after primary body and scope analysis. A
+fully selected body has also passed loan-flow validation. A generic primary
+with deferred compile-time branches is available only for concrete reanalysis;
+its incomplete primary flow is not a return, movement, or borrow proof. Every
+discovered source callee must belong to that inventory; registration alone does
+not authorize lowering. Concrete reanalysis must select every compile-time
+branch and validate the resulting flow before HIR can publish its body.
+The root carries exact semantic owner/function/constructor type/value
+substitutions; ordinary instance
+discovery and semantic reanalysis validate concrete generic bodies and callees.
+The staged closure admits passive structural class catalogs with ordinary exact
+field substitution. Discovered constexpr methods and constructors must likewise
+belong to the semantic completed-definition inventories. Constructor rows retain
+semantic constexpr eligibility explicitly; a generated native constructor does
+not establish it. The constant executor currently admits read-only methods and
+explicit constructor field initialization. Staging still excludes destructor
+execution, active cleanup, bases, polymorphism, compiler-capability owners, and
+generic packs.
+It produces no program-initialization or hosted-entry plan and
+deliberately omits the whole-program analysis seal. Its output can feed the
+ordinary failure-metadata builder and MIR lowerer, but cannot pass normal
+whole-program plan verification or be published to the backend. Normal
+`lower` retains its original seal and program-plan checks.
 
 `HirProgram` owns:
 
@@ -37,6 +71,121 @@ obligations, not HIR declarations or executable values.
 
 IDs are stable only inside one `HirProgram`; zero means no identity.
 
+Consuming `expected<T, E>` combinators receive their exact operation, mapper
+identity, and result type from semantics. `transform_error`, `transform`, and
+`and_then` share one expansion into a state test,
+mutually exclusive active-alternative extraction/move paths, an ordinary
+call to the selected function or concrete lambda on the applicable path, an
+Unexpected wrapper, and an Expected-valued conditional join. Error mapping
+changes `E`, success mapping changes `T`, and success chaining retains the
+mapper's complete expected result with the same exact error type. The mapper's ordinary
+defined-failure edge and the existing full-expression lifecycle pass govern
+cleanup. `void` success constructs the empty success alternative without a
+payload extraction. Synthetic values retain stable IDs; lowering does not keep
+pointers into the values vector across appends.
+For a void-returning success mapper, a value's ordered `sequencedInputs`
+complete the ordinary void call before default construction publishes the
+`expected<void, E>` success. These are structural void-evaluation dependencies,
+not a backend expected special case. They share the full-expression lifetime;
+verification rejects missing, duplicate, cyclic, non-void, nonreturning, or
+cross-expression dependencies and verifies the selected void mapper is not
+lost. Reachability, lifecycle assignment, and synthetic-default checks include
+these graph edges. MIR schedules the existing call and construction operations.
+
+The conditional's explicit `conditionalInputs` retain receiver-then-mapper
+evaluation before branching. They participate in full-expression assignment,
+module reachability, and parent-edge checks; synthetic default values cannot
+carry them. Plan verification ties the ordered pair to the selected semantic
+call's source expressions and rejects missing, reordered or unrelated inputs.
+MIR emits them once on the incoming path. Lambda target/environment identity,
+read invocation capability, and callable failure propagation reuse ordinary
+lambda call lowering, not a second callable ABI. A named environment is reused;
+fresh owning captures remain live for cleanup even when the error arm is skipped.
+An explicitly moved lambda receiver uses a `MoveValue` stage independently of
+its read-only invocation capability. Its value obligation retains cleanup for
+the full expression; the receiver stage does not transfer that obligation.
+
+Borrowed success extraction preserves the semantic read-only place category.
+`expected<T&, E>` propagation uses an `ExpectedValue` call carrying
+receiver-origin borrow authority and never adds a success `Move`. Only its
+error transport follows the carrier's value category. Borrowed `expect` uses
+the same extraction as the single normally completing arm of its conditional;
+the other arm is terminal panic. HIR verification checks the exact receiver,
+referent type, access, plan and transfer identities, including the absence of
+a referent copy/move. No public type spelling supplies these rules.
+
+`expect(message)` uses the same selected-combinator record and eager input
+contract, with receiver then counted message rather than a mapper. Its success
+arm extracts/moves the active owned value, borrows the reference success, or
+performs the void observer; its
+error arm is the same terminal `Panic` intrinsic used by the trusted panic
+declaration. The intrinsic carries the call's semantic failure origin and
+caller-tracking contract. HIR plan checks reject a normal continuation or a
+different message on that arm. MIR conditional lowering joins only normally
+completing branches; the panic arm cannot initialize a result slot or add a
+fictional success value. Existing cleanup obligations own receiver/error and
+message-storage cleanup after the panic record has been captured.
+
+When an owner has no generated-default construction route, each concrete source
+constructor selects its omitted declaration field defaults into its own HIR
+body. Explicit initializers override defaults; the combined schedule remains
+base-first and field-declaration-ordered. Each selected initializer has a distinct
+full-expression before constructor body statements. The declaration initializer
+catalog remains available, but is not a second execution site for these owners.
+Most owners with generated default construction retain the existing declaration
+schedule. A bounded generated-derived family now has explicit body-local
+execution: a nongeneric derived class with no instance fields or destructor,
+whose nongeneric state-bearing base selects an exact zero-parameter source
+constructor. `ClassLifecycleInfo::generatedDefaultBaseConstructor` supplies the
+semantic selection. HIR discovers that base and records a source-free
+`generatedDefault` constructor instance, with zero declaration identity and
+one exact base initializer. It does not fabricate an AST constructor. HIR
+verification binds the empty generated body, concrete owner/base identity and
+constructor target to semantics, and rejects erasure of the target/failure
+propagation together. Other generated shapes keep their existing route.
+
+Struct designated construction is resolved in semantics to a compiler-owned,
+full-field construction declaration that is not a source-callable overload.
+Its transfers use the same ownership analysis as explicit moves, by retained
+compiler-generated expression identity rather than a public spelling match.
+HIR receives declaration-ordered, exactly typed inputs; omitted generic field
+defaults are concretely reanalyzed in their declaring class context. MIR uses
+the existing prepared-argument and `Construct` schedule, including rollback
+if evaluation of a later input fails. The C++ backend consumes those MIR slots
+and does not interpret designator names or AST field lists.
+
+Contextual collection lists retain a `ResolvedCollectionInfo`: the exact
+collection/element types and the selected `collection_init` and
+`collection_insert` declaration identities. Semantics validates this public
+owned-value protocol without recognizing any standard-library class by name.
+HIR builds a chain of ordinary static calls with ordered ownership inputs,
+starting with the written count and then transferring the accumulated owner
+and each next element. These values share the original list's source anchor
+and full-expression lifetime. Existing MIR call staging, effects, failure
+edges, transfer, and cleanup own execution; the backend never interprets raw
+collection braces. Program-initialization effect analysis also records the
+selected protocol calls and conservatively rejects unclosed generic effects.
+Even cleanup-free intermediate collections get concrete temporary lifetimes
+so a protocol call must publish successfully before the next element starts.
+
+A concrete by-value parameter pack retains one binding but a distinct
+`HirDropObligation` for each lexical-drop element. Each obligation records the
+binding, concrete pack index, exact element drop type, and source-order
+construction ordinal; it begins active at body entry. Trivial elements have
+no drop row. MIR consumes these element identities rather than relying on
+native parameter destruction for unused or partially forwarded packs.
+Read-only reference pack elements retain their exact reference type and a
+`ReadBorrow` expansion role. They have no element ownership or drop obligation;
+MIR projects their existing parameter carrier and stages that borrow at the
+selected call. A reference element cannot acquire a copy/move role from the
+referent's traits.
+Concrete function-instance signatures flatten pack elements in order, including
+zero elements, whether discovered through a scalar call, forwarded pack, or
+virtual declaration. This does not flatten the body's source bindings: a named
+pack still owns one grouped binding and its per-element cleanup rows. Thus a
+virtual root and override share the same concrete signature without depending
+on which call first caused either instance to be discovered.
+
 Each closed payload enum carries a pointer-free lifecycle table in HIR: exact
 ordered variants, exact field types, a per-field active-cleanup bit, folded
 semantic traits, and the enum-wide active-cleanup bit. Payload construction
@@ -52,8 +201,10 @@ otherwise requires an explicit or fresh move path. Results retain the exact
 enum type and ordinary callable identity. An admitted ordinary class or struct
 field retains that enum type in its existing initializer and lifecycle rows;
 the containing class's folded move/drop policy is the transport authority, not
-a new payload-specific HIR operation. Other wrappers do not inherit this
-permission. This keeps callable selection, containment eligibility, and
+a new payload-specific HIR operation. Concrete generic owners and ordinary
+storage-backed wrappers preserve the same exact fields, ordered inputs, and
+drop descriptors; a generic type argument alone is not a stored field.
+This keeps callable selection, containment eligibility, and
 copy/move policy in the frontend while leaving concrete field publication and
 result lifetimes to MIR.
 
@@ -99,8 +250,13 @@ rejects a hosted entry or native callback adapter in a library snapshot.
 For an owned-argument entry, `HirHostedProgramEntryPlan` maps the exact semantic
 entry, append function, vector constructor, and string constructor to concrete
 HIR instance identities. It also copies the `main` anchor and exactly two
-adapter-local failure operations: native negative-count validation and checked
-GTI count conversion. Allocation failure remains owned and sited by the exact
+adapter-local failure operations. Owner generic arguments remain in the
+constructed type/class instance, not in constructor-local argument lists.
+Hosted construction and an ordinary source call of the same constructor thus
+share one concrete identity. HIR and MIR plan verification reject spurious
+constructor-local arguments on the selected hosted constructors.
+The two adapter-local failure operations are native negative-count validation
+and checked GTI count conversion. Allocation failure remains owned and sited by the exact
 constructor or append callee; `allocation_failure/hosted_arguments` is reserved
 and currently unproduced. This plan is immutable data only. A later M-FAIL-01 /
 M-EXEC-01 cutover must generate the executable hosted-startup HIR/MIR schedule,
@@ -113,6 +269,13 @@ Lowering seeds non-generic declarations and then drains growing worklists.
 Processing a field, call, operator, constructor, destructor, lambda, return, or
 parameter type can discover another concrete instance. A fixed pass over the
 initial declarations is therefore incorrect.
+
+Declaration seeding also closes over nondependent type components in generic
+function and constructor signatures, fields, and bases. A concrete return such
+as `pair<size_t, bool>` needs a class-instance identity even if its generic
+owner is never instantiated: retained declarations still refer to that type.
+Dependent components remain symbolic, and signature discovery does not enqueue
+the unused generic owner or its executable method bodies.
 
 Before a class type enters the worklist, lowering asks the semantic model for
 its exact-specialization identity recursively. A matching primary application
@@ -128,6 +291,12 @@ The worklist therefore sees the same complete ordered type/value identity
 whether an argument was written, inferred, or filled from a default. HIR does
 not store default syntax, evaluate dependent arithmetic, or ask a native
 template to complete an instance.
+
+A signature-pattern primary retains its public signature arguments in class
+instance identity. Semantics publishes the resolved path from each extracted
+type/pack parameter to that argument; HIR uses these projections for ordinary
+field, constructor, and method substitutions. It does not repeat pattern
+matching or flatten the public signature into a different class identity.
 
 `HirInstanceIndex` (`include/gti/hir_instance_index.h`, compiled in
 `src/compiler/hir.cpp`) answers "has this instance already been discovered?"
@@ -151,7 +320,23 @@ shape would merge distinct generic bodies. Capture records retain the source
 and environment-binding symbols, copy/move mode, type, traits, and initializer.
 Each closure-producing `HirValue` carries its initializer operands in written
 left-to-right order; an owned capture is an ordinary HIR `Move` with the same
-place/ownership event used elsewhere. Callable parameters and call values
+place/ownership event used elsewhere. Ordinary by-value closure arguments use
+the same ordered prepared-parameter schedule as class arguments: copying a
+copyable local or field creates a fresh owned stage, while moving retains the
+exact source ownership event. This applies to ordinary calls as well as packs;
+the stage, rather than an untracked backend copy, owns argument cleanup.
+Eligible read-only overloaded operators and ordinary immediate methods on a
+semantically admitted single-owner borrowed carrier use
+`ReadTemporaryBorrow` or `MutableTemporaryBorrow`. HIR preserves the selected
+producer, its stored dependency and access, exact call target, receiver mode,
+and full-expression lifetime; MIR establishes the distinct physical shell loan.
+Already-supported read-only operator observations outside that contract retain
+their ordered `Value` receiver input. HIR gives that source carrier an explicit
+full-expression lifetime slot while retaining its existing dependency loan;
+the receiver stage is only an identity, not a copy or ownership transfer. It
+does not itself grant a temporary receiver borrow or permit mutable access
+that semantics rejected.
+Callable parameters and call values
 use an explicit boundary enum rather than a generic "non-escaping" boolean. The
 `Confined` boundary retains invocation/forwarding requirements. A confined
 parameter may additionally retain one exact same-type return transport when
@@ -195,7 +380,17 @@ linkage, parameters, result, and every value-to-adapter reference. This makes
 callback reachability a concrete-instance edge rather than a backend lookup by
 function spelling.
 
-A contextual GTI-only namespace function becomes
+Native value invocation is a separate `HirValueKind::Call` family. Semantics
+records `ResolvedCallInfo::nativeCalleeType` and any enclosing generic callable
+boundary; HIR preserves that exact signature without manufacturing a selected
+GTI declaration or adapter target. Its receiver is the callee value, staged as
+a passive value before the ordered arguments, and its invocation capability is
+read-only. HIR plan verification checks the signature, result, parameters,
+receiver, lexical foreign-pointer unsafe effect, and absence of unrelated
+static/lambda/adapter targets. Concrete generic callable signatures may select
+the exact native type as an alternative to a function or lambda target.
+
+A selected GTI-only namespace function becomes
 `HirValueKind::FunctionItem`. Its `SemanticType::FunctionItem` contains the
 nominal declaration ID and exact signature, while `functionTarget` names the
 one concrete `HirFunctionInstanceId`. It has no operands, capture environment,
@@ -204,6 +399,11 @@ to be the same body-bearing, GTI-linkage, owner-free namespace function and
 exact-compares result and parameter types. This preserves declaration-order-
 independent semantic selection without making an overload set available to
 later phases.
+Unambiguous names use the same record outside contextual calls. Their zero-state
+values can be ordinary bindings, captures, fields and value-pack elements.
+Calling a function-valued field does not make the containing object a method
+receiver: the callee operand retains evaluation while the selected namespace
+target remains receiver-free.
 
 An exact trusted thread-spawn call creates one `HirThreadTaskAdapter`. Its
 identity retains the concrete task type, the exact spawning `HirValueId`, and
@@ -232,6 +432,13 @@ attached only after semantics resolves a trusted private capability; HIR does
 not infer it from `std` wrapper names or ordinary call spelling. Generated
 range operations and constructor initialization use the same resolved call
 records as ordinary source.
+
+When semantics marks an exact named return as an implicit move, HIR preserves
+the source place value and adds one unary `HirValueKind::Move` as the return
+root. That value carries the same ownership event, exact place identity,
+borrow transport, and intrinsic identity as explicit `std::move`; HIR does not
+reinterpret the return spelling or infer last use. Copyable concrete generic
+instances retain their ordinary place value and therefore remain copies.
 
 For the bounded named-Expected payload range, `HirRangeIteration` carries
 `expectedPayloadProjection` in addition to its exact source value and range
@@ -264,16 +471,35 @@ target is concrete and non-intrinsic; argument cardinality exactly matches the
 selected parameters after caller-side default expansion; no pack expansion is
 present; and every
 parameter is either a supported scalar/reference form, an exact class value
-without borrowed state, or the narrowly scheduled constructor input described
-below. Mutable temporary permission remains confined to
-ordinary methods and reusable `operator()`; existing non-borrowing read-only
+without borrowed state, or the narrowly scheduled borrowed input described
+below. Reusable mutable temporary permission remains confined to
+ordinary methods and reusable `operator()`; consuming value operators also
+receive a temporary stage with exact `Once` capability. Non-borrowing read-only
 operators selected on an admitted fresh temporary also receive a plan so MIR
 does not reconstruct their receiver. Lambdas, unresolved deferred callables,
 and unsupported construction remain outside the slice. A concretely selected
 `operator()` uses the same exact target even when its
 generic source call still has a deferred-callable base record. Its receiver is
 a read or mutable borrow for a place, a value for a reusable value receiver, or
-a `MoveValue` for an explicitly moved receiver or exact trailing-`&&` target.
+a `MoveValue` for an explicitly moved receiver. Ordinary consuming methods
+and value operators retain the same exact invocation capability. A fresh
+owned receiver uses `MutableTemporaryBorrow` plus `Once` capability: it aliases
+the full-expression materialization instead of synthesizing an ownership move.
+Conditional receivers retain their existing join slot. `std::move(this)` has
+an ordinary Move value with an exact whole-This ownership event; HIR does not
+infer it from a returned name or from the selected backend.
+An exact immediate nominal or stored-lambda field invocation authorized by
+semantics inside consuming `this` instead uses `RetainedReceiver`. Its Move-shaped HIR value
+records `retainedReceiverProjection` and creates no new drop obligation;
+transparent grouping preserves that fact. MIR stages the exact field place
+without physically moving it or transferring the enclosing receiver's cleanup.
+Stored-lambda calls with fixed arguments retain an ordered call plan; concrete
+pack calls stage the same retained receiver before expanding their arguments.
+For the proved transparent unique-owner accessor form, `retainedReceiverOwner`
+names the already-lowered accessor receiver separately from the returned loan.
+Lowering does not re-evaluate the owner expression. MIR turns this identity
+into the retained owner anchor while keeping the accessor result as the actual
+call receiver.
 An admitted direct class-value temporary instead uses
 `ReadTemporaryBorrow` or `MutableTemporaryBorrow`; the input names the
 unwrapped producer value and copies semantic access rather than rediscovering
@@ -284,14 +510,16 @@ unwrapped producer, exact read-only parameter type, written parameter index,
 and enclosing full-expression identity. HIR rejects duplicate, omitted, or
 out-of-range semantic indices and never infers this role from a class-shaped
 argument on its own.
-An ordinary constructor may instead receive `MoveBorrowedTemporary` for an
+An ordinary call or constructor may instead receive `MoveBorrowedTemporary` for an
 exact fresh GTI call result whose class value carries borrowed state. This is a
-transfer into the selected constructor parameter, not a copy and not a loan of
+transfer into the selected parameter, not a copy and not a loan of
 the producer. The input retains the producer, parameter index, concrete
 parameter type, and full-expression identity so MIR can reparent the one
-source drop to the constructor parameter and verify single destruction. This
-bounded route is what permits a move-only iterator result such as
-`source.begin()` to initialize an inferred constructor parameter without
+source drop to the parameter and verify single destruction. The external
+owner dependency remains separate from the transferred carrier's cleanup.
+This bounded route permits a move-only iterator result such as
+`source.begin()` to initialize an inferred constructor parameter, and a fresh
+borrowed-view factory result to pass directly to an ordinary helper, without
 weakening ordinary class-value admission.
 This preserves a once-callable requirement even when exact overload selection
 legitimately falls back to a read or mutable target. Ordinary constructors
@@ -350,9 +578,10 @@ validity, or infer that vector position alone is sufficient for every
 expression kind.
 
 An explicitly defaulted default constructor retains its written declaration in
-semantic selection, but HIR represents the construction with the same absent
-source-body target and generated lifecycle status as an implicit structural
-default. A defaulted destructor creates no `HirDestructorInstance`; only a
+semantic selection, but HIR uses the same generated lifecycle route as an
+implicit structural default: normally no body target, or the explicit
+source-free generated-base schedule described above when eligible.
+A defaulted destructor creates no `HirDestructorInstance`; only a
 destructor with a source cleanup body has executable HIR and active-drop state.
 
 `HirValueKind::LayoutQuery` preserves layout-query provenance while carrying
@@ -398,6 +627,28 @@ reference field symbol. A checked carrier or exact stored-referent return keeps
 value's concrete type. HIR does not turn a shell field or projection into that
 stored dependency; MIR lowering must transfer the entry loan explicitly, and
 MIR verification rechecks the transfer.
+
+References to carriers retain a separate `HirLoan.storedDependency` edge to
+the semantic stored-owner loan. The physical reference's place/access and
+parent remain distinct from that inherited authority. Body extraction closes
+over both parent and dependency identities; receiver-only abstract entries are
+selected by their declaring function or source destructor, while function/lambda
+reference entries are selected through their concrete formal bindings. Lifetime endpoints sort
+both edge kinds child-first. HIR preserves these facts for independent MIR
+verification rather than deriving them from a carrier's backend layout.
+
+A source destructor receives the same caller-owned reference-field entry as an
+ordinary method. Its declaration identity selects the body; its concrete class
+and mutable receiver provide the physical place. This entry does not acquire
+another cleanup obligation for the object being destroyed.
+
+For shared multi-path carriers, `HirLoan.additionalDependencies` preserves
+every semantic owner place or opaque parameter field path in the same concrete
+place domain. Constructor instances retain `borrowParameters`; call values
+retain `borrowArguments`; function instances retain `returnBorrowParameters`.
+These complete origin sets supplement the primary origin without fabricating
+a merged storage root. MIR independently checks their publications and all
+owner conflicts; neither HIR nor the backend infers a public wrapper's meaning.
 
 Global-origin call values likewise carry the exact semantic place and access.
 The semantic full-expression or retained-loan endpoint remains authoritative;

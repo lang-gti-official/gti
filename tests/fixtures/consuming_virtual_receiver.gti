@@ -1,0 +1,30 @@
+#include <std/string>
+#include <std/vector>
+
+interface Operation {
+  int operator()(int divisor) &&;
+};
+
+class Receiver : public Operation {
+  int identity;
+public:
+  Receiver(int identity) : identity(identity) {}
+  ~Receiver() { std::println(this.identity); }
+  int operator()(int divisor) && override {
+    std::println(2);
+    return 12 / divisor;
+  }
+};
+
+int later(int divisor) { std::println(3); return 6 / divisor; }
+int combine(int left, int right) { std::println(4); return left + right; }
+
+int main(int argc, std::vector<std::string> argv) {
+  Receiver caller{9};
+  Receiver callback{1};
+  int body_divisor = argc == 2 ? 0 : 1;
+  int later_divisor = argc == 3 ? 0 : 1;
+  int value = combine(std::move(callback)(body_divisor), later(later_divisor));
+  std::println(5);
+  return value - 18;
+}

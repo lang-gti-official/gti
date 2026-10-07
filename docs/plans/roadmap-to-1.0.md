@@ -5,6 +5,18 @@
 
 Status: planning roadmap
 
+The language direction is a fully usable, independent systems language with
+excellent safety, strong C++ syntax familiarity and sound architecture. GTI's
+public libraries should use ordinary source over general facilities; necessary
+compiler/runtime mechanisms remain part of that architecture. C++ generation
+does not make GTI a wrapper or set the limits of its future source language.
+
+This roadmap records goals, prerequisites and evidence. Historical assumptions
+and earlier bounded slices are revisable as the language grows. An unmet
+prerequisite defines further work and its order, not a permanent exclusion from
+the systems-language goal. Current support and intentional safety requirements
+must still be described accurately.
+
 This document maps the durable capability and readiness gates between the
 implemented GTI language and a future 1.0.0 release. Under
 [ADR 012](../decisions/012-outcome-first-systems-readiness.md), 1.0 is a soft,
@@ -998,7 +1010,7 @@ standard-library need, and tooling impact.
 
 ## Operational Sequence
 
-The maintained sequence, blockers, and current ready queue live in
+The maintained goals, prerequisites, and current ready queue live in
 [`implementation-sequence.md`](implementation-sequence.md). At this checkpoint
 the source executable-body cutover is complete. Every body identity
 recorded by `tests/mir_census_baseline.json` uses verified optimized MIR and

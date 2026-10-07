@@ -1,0 +1,50 @@
+#include <std/string>
+#include <std/vector>
+
+namespace native {
+  [[c_opaque]] struct Scene;
+  [[c_opaque]] struct Mesh;
+  extern "C" {
+    const Scene* scene();
+    const Mesh* mesh(const Scene* value, uint32_t index);
+    int32_t selected(const Mesh* value);
+  }
+}
+
+class Cleanup {
+public:
+  ~Cleanup() { std::println("cleanup"); }
+};
+
+class Holder {
+  const native::Scene* value = nullptr;
+public:
+  Holder(const native::Scene* source) : value(source) {}
+  const native::Mesh* get(int index) {
+    unsafe {
+      if (this.value == nullptr) { return nullptr; }
+      return native::mesh(this.value, uint32_t(index));
+    }
+  }
+};
+
+const native::Mesh* forward(Holder& holder, int index) {
+  return holder.get(index);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Cleanup cleanup{};
+  Holder empty{nullptr};
+  if (forward(empty, 0) != nullptr) { return 1; }
+  unsafe {
+    Holder holder{native::scene()};
+    int index = argc == 1 ? 0 : -1;
+    auto invoke = [](Holder& source, int item) -> const native::Mesh* {
+      return source.get(item);
+    };
+    const native::Mesh* result = invoke(holder, index);
+    if (native::selected(result) != 1) { return 2; }
+    if (forward(holder, 0) != result) { return 3; }
+  }
+  return 0;
+}

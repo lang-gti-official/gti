@@ -1,0 +1,45 @@
+#include <std/optional>
+#include <std/string>
+#include <std/vector>
+
+mut int next_number = 0;
+mut bool fail_construction = false;
+mut bool fail_cleanup = false;
+
+class Marker {
+  int number;
+public:
+  Marker(int value) : number(value) {}
+  ~Marker() { std::println(this.number); }
+};
+
+class Entry {
+  Marker marker;
+  std::optional<std::string> text;
+  int number;
+public:
+  Entry() : marker(Marker(next_number + 10)),
+            text(std::optional<std::string>(std::string("owned"))),
+            number(++next_number) {
+    std::println(this.number);
+    int divisor = fail_construction && this.number == 2 ? 0 : 1;
+    int result = 1 / divisor;
+  }
+  ~Entry() {
+    std::println(this.number * 100);
+    int divisor = fail_cleanup && this.number == 1 ? 0 : 1;
+    int result = 1 / divisor;
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  fail_construction = argc == 2 || argc == 3 || argc == 5 || argc == 6;
+  fail_cleanup = argc == 3 || argc == 6;
+  Marker caller = Marker(90);
+  bool resizing = argc >= 4;
+  mut std::vector<Entry> entries{std::size_t(resizing ? 1 : 3)};
+  if (resizing) {
+    entries.resize(std::size_t(3));
+  }
+  return 0;
+}

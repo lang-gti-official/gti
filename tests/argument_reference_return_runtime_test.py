@@ -54,6 +54,30 @@ int32_t& pick(int32_t& candidate) { return candidate; }
 
 CASES = (
     (
+        # Retain the conditional-return case from the superseded backend-only
+        # fix branch. Both return sites must publish the same caller storage
+        # through the current MIR-owned loan transfer.
+        "argument-return-conditional",
+        """\
+int32_t& choose(int32_t& candidate, bool flag) {
+  if (flag) { return candidate; }
+  return candidate;
+}
+
+int main() {
+  mut int32_t value = 3;
+  if (choose(value, true) != 3 || choose(value, false) != 3) {
+    return 1;
+  }
+  value = 17;
+  if (choose(value, true) != 17 || choose(value, false) != 17) {
+    return 2;
+  }
+  return 0;
+}
+""",
+    ),
+    (
         # The reported shape: a local read-only reference binding whose
         # initializer is a free function returning its argument.
         "retain-argument-return",

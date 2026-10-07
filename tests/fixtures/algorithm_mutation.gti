@@ -1,0 +1,59 @@
+#include <std/algorithm>
+#include <std/iterator>
+#include <std/functional>
+#include <std/vector>
+#include <std/list>
+#include <std/deque>
+#include <std/array>
+
+mut int calls = 0;
+class odd {
+public:
+  bool operator()(int& value) mut { calls++; return value % 2 != 0; }
+};
+
+bool rewrite<R>(mut R& values)
+  requires std::mutable_range_of<R, int> {
+  int two = 2;
+  int six = 6;
+  int nine = 9;
+  std::replace(values, two, six);
+  std::replace_if(values, odd(), nine);
+  if (std::count(values, nine) != 2 || std::count(values, six) != 2) { return false; }
+  std::fill(values, two);
+  if (std::count(values, two) != 4) { return false; }
+  for (mut auto& element : values) { element += 1; }
+  int three = 3;
+  return std::count(values, three) == 4;
+}
+
+int main() {
+  mut std::vector<int> vector = {1, 2, 2, 3};
+  mut std::list<int> list = {1, 2, 2, 3};
+  mut std::deque<int> deque = {1, 2, 2, 3};
+  mut std::array<int, 4> array = std::array<int, 4>({1, 2, 2, 3});
+  mut int raw[4] = {1, 2, 2, 3};
+  if (!rewrite(vector) || !rewrite(list) || !rewrite(deque) || !rewrite(array) || !rewrite(raw)) { return 1; }
+  if (calls != 20) { return 2; }
+
+  std::vector<int> source = {1, 2, 3, 4};
+  mut std::vector<int> destination = std::vector<int>(std::size_t(4));
+  int three = 3;
+  int eight = 8;
+  std::copy_if(source.begin(), source.end(), destination.begin_mut(), odd());
+  if (destination[std::size_t(0)] != 1 || destination[std::size_t(1)] != 3 || destination[std::size_t(2)] != 0) { return 3; }
+  std::copy_n(source.begin(), std::size_t(2), destination.begin_mut());
+  if (destination[std::size_t(0)] != 1 || destination[std::size_t(1)] != 2) { return 4; }
+  std::replace_copy(source.begin(), source.end(), destination.begin_mut(), three, eight);
+  if (destination[std::size_t(2)] != 8 || source[std::size_t(2)] != 3) { return 5; }
+  std::replace_copy_if(source.begin(), source.end(), destination.begin_mut(), odd(), eight);
+  if (destination[std::size_t(0)] != 8 || destination[std::size_t(1)] != 2 || destination[std::size_t(2)] != 8) { return 6; }
+  std::remove_copy(source.begin(), source.end(), destination.begin_mut(), three);
+  if (destination[std::size_t(0)] != 1 || destination[std::size_t(1)] != 2 || destination[std::size_t(2)] != 4) { return 7; }
+  std::remove_copy_if(source.begin(), source.end(), destination.begin_mut(), odd());
+  if (destination[std::size_t(0)] != 2 || destination[std::size_t(1)] != 4 || destination[std::size_t(2)] != 4) { return 8; }
+  std::list<int> partitioned = {1, 3, 2, 4};
+  if (!std::is_partitioned(partitioned, odd()) || std::is_partitioned(source, odd())) { return 9; }
+  if (!std::is_partitioned(partitioned.begin(), partitioned.end(), odd())) { return 10; }
+  return 0;
+}

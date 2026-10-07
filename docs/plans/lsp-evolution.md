@@ -15,6 +15,14 @@ shared model instead of building feature-specific semantic systems.
 
 ## Near-Term Priorities
 
+### General missing-include actions — implemented
+
+Project, direct-dependency and standard-library declarations now share compiler
+discovery and speculative frontend validation. The fixed standard-type header
+table is removed. Current scope, snapshot invalidation and conservative limits
+are recorded in the canonical LSP architecture document. This does not provide
+workspace-wide references/rename or a persistent project index.
+
 ### 0. Make the crash boundary state-safe - implemented
 
 `runIsolatedAnalysis` now guards only analysis and snapshot construction. It
@@ -144,24 +152,29 @@ publication, and request freshness only when a concrete feature or testability
 problem warrants it. Preserve the existing worker model during that
 extraction.
 
-### 5. Consume resolved project configuration - profile/runtime bounded slices implemented
+### 5. Consume resolved project configuration - implemented for default host analysis
 
-Nearest-manifest analysis now uses the driver's canonical parser for
-`[build].defines` and the default `dev` profile's execution model. The managed-
-thread tooling gate proves that a concurrent `dev` project receives valid
-diagnostics, hover, definition, completion, and semantic tokens without
-exposing its private capability surface.
+Driver-owned `ProjectFacts` subsume the earlier bounded nearest-manifest
+integration for `[build].defines` and the default profile's execution model.
+The managed-thread tooling gate proves that a concurrent default-profile
+project receives valid diagnostics, hover, definition, completion, and
+semantic tokens without exposing its private capability surface. Standalone
+analysis still accepts the same explicit execution-profile selection as direct
+compilation. The immutable analysis configuration owns capability derivation;
+the protocol adapter does not duplicate it.
 
-Standalone analysis now accepts the same explicit execution-profile selection
-as direct compilation. Both standalone and manifest paths consume the
-driver-owned immutable analysis configuration, whose safe runtime default has
-no capabilities and whose installed hosted profile derives `threads` only for
-a supported target. The protocol adapter does not duplicate that derivation.
+The LSP now consumes the driver's read-only `ProjectFacts` for the package
+containing each entry document. Analysis and completion receive the same
+default-profile configuration and exact dependency source-root graph as
+project compilation. Resolution never builds or fetches; locked-Git failures
+remain structured driver diagnostics; standalone files retain their prior
+defaults; and canonical dirty source overlays remain authoritative across the
+resolved graph. Manifest and lockfile watcher events invalidate every open
+snapshot.
 
-The complete row still requires a read-only driver-owned project/metadata
-model for selected package/profile, target, dependency source roots, and
-workspace structure. Do not parse `gti.toml` semantics inside the LSP,
-build/fetch on open, or let on-disk project state override dirty buffers.
+Explicit client selection of a different workspace package, target,
+non-default profile, or cross target remains a future client-configuration
+contract rather than part of this row.
 
 ## Project Index Boundary
 
@@ -183,7 +196,7 @@ lexical fallbacks are acceptable only when clearly less authoritative.
 
 ## Deferred clangd Complexity
 
-Preambles/PCH, compile-command borrowing, header insertion, macro expansion
+Preambles/PCH, compile-command borrowing, macro expansion
 locations, per-file workers, AST LRUs, adaptive debounce, remote indexes, and
 memory accounting solve C++/clang scale. Adopt none without a measured GTI
 problem.

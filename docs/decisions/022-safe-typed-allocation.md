@@ -2,6 +2,14 @@
 
 Status: Accepted
 
+Scope note (2026-10-07): the initial decision below describes the first checked
+typed-storage slice. Its exclusions and private implementation choices are not
+permanent restrictions on GTI's independent systems-language goal. The later
+low-level, optional-audit and programmable-resource revisions supersede the
+corresponding initial boundaries. Further general public lifetime facilities and
+provider-controlled bookkeeping are goals requiring their own contracts and
+validation; this note does not claim they are implemented.
+
 ## Context
 
 GTI needs allocator-controlled storage for arenas, pools, containers, and
@@ -70,8 +78,10 @@ std::storage<T>
 ```
 
 There is no public `std::mem` namespace, raw allocator handle, allocation
-address, byte slice, `new`, `delete`, `deallocate`, `release`, or unchecked
+address, byte slice, `new`, `delete`, `deallocate`, or unchecked
 slot operation.
+The general-memory extension adds `storage.release()` as explicit owning
+cleanup, not as detachment of a raw allocation from its release authority.
 
 `std::allocator` is initially a stateless process allocator. It creates typed
 storage through two generic methods:
@@ -117,6 +127,7 @@ void storage.destroy(size_t index) mut
 T& storage.get(size_t index)
 mut T& storage.get_mut(size_t index) mut
 void storage.clear() mut
+void storage.release() mut
 ```
 
 Capacity is allocation extent, not logical container size. A container or
@@ -134,7 +145,10 @@ live `T`:
   to the storage receiver;
 - `destroy` requires a live in-bounds slot, ends that value's lifetime exactly
   once, and makes the slot available for a later, distinct lifetime; and
-- `clear` destroys every live value once in descending index order.
+- `clear` destroys every live value once in descending index order; and
+- `release` performs owning cleanup and also releases the allocation, leaving
+  capacity zero. It installs an empty receiver before cleanup of the detached
+  owner, preserving exactly-once cleanup even when an element destructor fails.
 
 Destroying the owner performs the same reverse-slot cleanup for every value
 still live and then releases the allocation. A slot lifetime is not revived by
@@ -184,20 +198,35 @@ forwarding an arbitrary constructor argument pack. Construction of that value
 therefore completes before the storage operation begins. If it raises defined
 failure, no new slot lifetime is published and ordinary MIR cleanup destroys
 every previously live owner, including the storage and its initialized slots.
-Exact in-slot `emplace<Args...>` requires an explicit MIR constructor-failure
-boundary and is deferred rather than routing failure through an untracked C++
-placement call.
+The final-address extension adds `emplace<Args...>(index, args...)`. It reuses
+the MIR constructor-failure protocol: a non-consuming slot preflight precedes
+parameter handoff, and the exact selected constructor runs at the final slot
+address. Partial members are rolled back on failure without publishing a live
+slot. The original constructor failure is propagated, not translated to an
+allocation error. A successful call returns a receiver-tied exclusive borrow.
 
 ### 5. Public policy remains ordinary GTI source
+
+The structural-relocation extension exposes `storage<T>::relocate_to` over
+the existing declaration-bound storage transfer. It moves a checked initialized
+prefix into empty slots in a distinct destination owner, retaining both
+allocations. This enables ordinary GTI growable typed-storage policy without
+raw addresses or manual lifetime reconstruction. It deliberately does not add
+replacement, overlap, or allocation failure to relocation itself. All state
+validation precedes transfer, and both owners remain exclusively borrowed.
 
 The public classes and methods in `<std/memory>` are ordinary source-defined
 GTI. No compiler or backend phase recognizes `std::allocator`,
 `std::storage<T>`, `std::alignment`, or `std::alloc_errc` by spelling.
 
 Their implementation uses exact declaration-bound `gti_internal` operations
-for the irreducible allocation, alignment, bitmap, construction, destruction,
-and checked-reference mechanics. Those declarations are available only to the
-trusted prelude and installed standard-library sources. HIR and MIR retain
+for the current allocation, alignment, bitmap, construction, destruction,
+and checked-reference mechanics. These responsibilities are not all inherently
+irreducible: raw byte acquisition and bookkeeping can be source-defined policy,
+whereas typed lifecycle and checked-reference facts need language/compiler
+authority. Reassess private placement per operation as public facilities grow.
+The current declarations are available only to the trusted prelude and installed
+standard-library sources. HIR and MIR retain
 their selected intrinsic identities and effects, and the backend receives
 only verified typed operations.
 
@@ -221,8 +250,10 @@ Their returned `size_t` positions deliberately are not generation-bearing
 handles. Reset or erase ends the current slot lifetime, and reuse may assign
 the same numeric position to another value. Stateful allocator ownership,
 generation-safe handles, allocator-aware growth/propagation, and heterogeneous
-arenas remain later work. Those features must remain ordinary GTI policy over
-the typed owner rather than add raw escape hatches.
+arenas were follow-up goals for this initial slice. They should use ordinary GTI
+policy over coherent general facilities, including explicitly unsafe raw
+operations where needed. The later low-level and programmable-resource revisions
+extend the original typed-owner-only boundary.
 
 ## Why This Is Safer Than The C++ Model
 
@@ -244,18 +275,22 @@ enforceable invariants:
   supported normal and failure exit, including failure while constructing the
   value passed to `construct`.
 
-C++ remains the appropriate escape level for the current backend
-implementation, but its pointer and object-lifetime rules are representation
-mechanics, not GTI source semantics.
+The reference backend currently implements these operations using C++. Its
+pointer and object-lifetime rules are representation mechanics, not GTI source
+semantics. GTI unsafe code and general public low-level facilities are the
+source-language extension boundary; missing source capabilities are goals to
+implement, not reasons to make host C++ the permanent user escape mechanism.
 
 ## Alternatives
 
-- **Expose `allocate`/`deallocate` and typed pointers.** Rejected because the
-  caller could lose or forge the provenance/count/alignment relationship and
+- **Expose `allocate`/`deallocate` and typed pointers as the initial safe API.**
+  Rejected for that slice because the caller could lose or forge the
+  provenance/count/alignment relationship and
   must manually pair every live object with destruction.
 - **Expose a public `MaybeUninit<T>`-style value.** Rejected for this slice
   because an unchecked `assume_init` would move the crucial proof into
-  `unsafe`; storage can track the finite slot state directly.
+  `unsafe`; storage can track the finite slot state directly. This does not
+  reject a general unsafe uninitialized-storage facility as a future goal.
 - **Use `std::allocator<T>` and C++ allocator traits.** Rejected because rebind,
   equality, propagation traits, fancy pointers, and container-specific copy
   rules are not required to create the first safe arena/pool substrate.
@@ -277,6 +312,126 @@ mechanics, not GTI source semantics.
 - Owner-wide borrowing is intentionally conservative. Per-slot disjoint
   mutable borrows require indexed place/epoch precision and must preserve this
   API's stale-reference guarantees.
-- Stateful allocators, allocator propagation, arbitrary in-slot emplacement,
+- Stateful allocators, allocator propagation,
   bulk initialization, growth, shrinking, and generation-bearing pool handles
   are later coherent slices rather than optional parameters on this one.
+
+## General low-level extension
+
+The accepted Phase 1 campaign (`S-ALLOC-04`) revises the original exclusion of
+public raw allocation and manual object lifetime. Checked storage remains the
+safe default; general facilities must additionally permit application-defined
+owners and raw-backed views. Raw addresses alone grant neither ownership nor
+checked lifetime. An explicit unsafe owner-witness bridge, retained known
+provenance, typed layout/allocation authority and verified lifecycle operations
+are required together. The final-address constructor protocol above is a
+prerequisite, not completion of that campaign. `std::assume_ref` and
+`std::assume_mut` now expose the unsafe owner-witness assertion through checked
+MIR loans as ordinary GTI definitions using public `borrowed_from` contracts,
+with source-wrapper, receiver-field and loop requirements. Concrete ordinary
+source-result queries retain callee-produced raw origins; unsupported query
+shapes fail closed at memory access rather than losing known facts. Built-in address
+formation itself is safe when its operand is safe to evaluate. Explicit
+allocation release now uses ordinary GTI movement and MIR cleanup. The
+existing typed allocation request supplies ordinary-object layout authority,
+including owning class elements; this does not expand constexpr layout queries
+or promise a stable foreign ABI. Public erased-address conversions preserve
+constness, known pointee types and origins without creating a checked loan.
+Conservative source-access/write summaries and byte-preserving native-record
+transport are implemented: a safe inert copy does not evaluate an expired
+native pointer subobject. Ordinary source calls, callbacks, virtual families,
+Expected/enum alternatives and storage transport have focused native evidence.
+The full completion suite and installed/tooling checks complement those
+focused checks; the local evidence is recorded in
+[verification](../architecture/verification.md#low-level-memory-phase-1).
+Stateful allocator policies and resource leases were deferred to Phase 2; see
+[the programmable resource revision](#revision-programmable-resources-phase-2).
+
+The Phase 2 storage extension removes the public movable-element restriction
+from allocation and final-address emplacement. Handle movement transfers the
+same slots without moving their objects. Completed-value construction and
+element relocation keep their distinct capability requirements. The existing
+MIR constructor/preflight and cleanup engines already represent those facts;
+there is no second immovable-object lifecycle. Example 120 demonstrates the
+distinction with an ordinary owning class whose copy and move are deleted.
+
+## Revision: optional unsafe auditing
+
+The Phase 1 provenance analysis exposed an inappropriate acceptance boundary:
+a valid raw-pointer relay could fail solely because a bounded query was
+incomplete, while reordering definitions warmed its cache and accepted the
+same program. An ordinary aggregate mutator was likewise treated as definitely
+ending an object's lifetime despite only conservative effect knowledge.
+
+The revised boundary keeps typing, constness, unsafe permission, checked
+ownership/loan/escape contracts and all HIR/MIR verification mandatory. The
+programmer explicitly assumes raw validity, alignment, initialization, aliasing
+and owner association at unsafe access or a raw-to-checked bridge. Safe return
+annotations alone cannot relabel unrelated lifetimes. The resulting checked
+reference remains compiler-tracked, including retained owner dependencies.
+
+Raw provenance/access/effect checking is now optional (`off` by default,
+`warn`, or CI-oriented `strict`). Disabled analysis performs no source-summary
+queries. Enabled analysis distinguishes observed contradictions, potential
+violations and incomplete inference. Strict promotes findings without changing
+inference or runtime behavior. This is neither an unchecked release mode nor
+permission for undefined behavior; it makes the guarantee/obligation boundary
+explicit and avoids treating a bounded audit as a complete proof system.
+
+Independent per-demand query budgets and root-only reuse also remove the
+declaration-order bug within the optional analyzer itself. Disabling the audit
+is not the fix for that bug. Existing useful Phase 1 storage, placement,
+release, transport and owner-witness facilities are retained.
+
+## Revision: programmable resources (Phase 2)
+
+Phase 2 (`S-ALLOC-05`) lets applications implement allocation policy in
+ordinary GTI and supply it to typed owners and a growable container. The
+accepted design, chosen with the owner on 2026-10-06:
+
+- **Small structural protocol.** `memory_resource<R>` requires read-only
+  `unsafe allocate(layout) -> expected<raw_allocation, alloc_errc>` and
+  `unsafe release(raw_allocation)`. Resources are selected by generic type
+  argument. `raw_allocation` is passive address/extent/alignment/identity
+  metadata. There is no traits, propagation, fancy-pointer or runtime-erasure
+  framework, and nothing in the protocol assumes a process heap.
+- **One explicit trust step.** `unsafe bind_resource(resource)` is the caller's
+  single acknowledgement that the provider honours its documented raw-memory
+  contract. The sealed `resource_ref<R>` it returns is an ordinary checked
+  shared borrow; later storage and container use is safe. Concept satisfaction
+  and the optional raw audit check signatures and effects, never allocator
+  correctness.
+- **Statically borrowed, move-only leases.** Each typed owner holds a lease
+  that retains its resource borrow through final cleanup and owns exactly one
+  region. Several leases coexist without an exclusive borrow of the resource.
+  A safe reset or move of the resource needs exclusive access and is rejected
+  while any lease is live. Element references borrow the owner as well, so
+  growth, release and movement are rejected until their last use. No reference
+  counting, shared ownership or broad interior mutability is introduced:
+  bookkeeping mutation goes through a provider's own raw pointers under its
+  unsafe contract.
+- **Existing lifecycle engine.** Typed owners adopt a provider-selected region
+  through a compiler-private, declaration-bound capability, then reuse the
+  established final-address construction, partial-construction rollback,
+  destruction and failure machinery. Elements are destroyed before the lease
+  returns the original descriptor to the original resource.
+- **General language support, not client exceptions.** The prerequisites are
+  general rules proven with unrelated types: unsafe member functions and unsafe
+  structural requirements, runtime object-layout queries for ordinary owning and
+  immovable types, and destructor-bearing borrowed classes whose dependencies
+  persist through cleanup, movement and constructor rollback. The compiler
+  recognises no public resource or container name.
+- **Small differing-resource rule.** Owners never rebind: moving an owner moves
+  its binding with it, assignment between owners is unavailable, and explicit
+  relocation between distinct resource instances leaves each region released
+  through its own binding.
+
+Rejected alternatives: per-allocation `unsafe` (it repeats the same
+obligation at every safe call site); runtime lease counting or shared ownership
+of the resource (hidden dynamic cost and a second ownership model); an opaque
+request that always delegates to the process heap (no placement control); and
+a C++-style allocator-traits/propagation framework (large surface with no
+current client). The implemented contract, its remaining unsafe obligations and
+its structural limits are specified in
+[raw pointers](../language/raw-pointers.md#explicit-resource-binding) and the
+[standard library](../language/standard-library.md#custom-resource-protocol).

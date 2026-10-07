@@ -1,0 +1,35 @@
+#include <std/string>
+#include <std/vector>
+
+class Token {
+  int identity;
+public:
+  Token(int identity) : identity(identity) {}
+  ~Token() { std::println(this.identity); }
+};
+
+class Extract<T> {
+  mut T first;
+  T second;
+public:
+  Extract(T first, T second)
+      : first(std::move(first)), second(std::move(second)) {}
+  int operator()(int divisor) && {
+    T extracted = std::move(this.first);
+    return 12 / divisor;
+  }
+};
+
+int later() { std::println(3); return 6; }
+int combine(int left, int right) { std::println(4); return left + right; }
+
+int main(int argc, std::vector<std::string> argv) {
+  Token caller{9};
+  Token first{1};
+  Token second{2};
+  Extract<Token> callback{std::move(first), std::move(second)};
+  int divisor = argc == 2 ? 0 : 1;
+  int value = combine(std::move(callback)(divisor), later());
+  std::println(5);
+  return value - 18;
+}

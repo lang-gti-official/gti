@@ -1,0 +1,50 @@
+#include <std/utility>
+
+// A guard borrows a resource until its destructor completes, even after its
+// last ordinary use. Several read-only guards can retain the same resource.
+mut int observed = 0;
+
+class Resource {
+  mut int generation = 7;
+public:
+  int read() { return this.generation; }
+  void reset() mut { this.generation = 9; }
+};
+
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  ~Guard() { observed += this.resource.read(); }
+};
+
+// A constructor may explicitly build its retained child from the same exact
+// reference parameter. The completed child keeps its cleanup dependency when
+// published into the outer field, including constructor rollback paths.
+class GuardOwner {
+  Guard retained;
+public:
+  GuardOwner(Resource& resource) : retained(Guard(resource)) {}
+};
+
+// Moving an incoming owner through local bindings keeps its original resource
+// alive and transfers cleanup exactly once, just like moving a caller local.
+void consume(Guard guard) {
+  auto first = std::move(guard);
+  auto second = std::move(first);
+}
+
+int main() {
+  mut Resource resource{};
+  {
+    Guard first{resource};
+    Guard second{resource};
+    auto moved = std::move(first);
+    consume(std::move(moved));
+    GuardOwner nested{resource};
+    // resource.reset() is rejected here: all guards still need the resource
+    // during cleanup. Moving first transfers its cleanup responsibility.
+  }
+  resource.reset();
+  return observed == 21 ? 0 : 1;
+}

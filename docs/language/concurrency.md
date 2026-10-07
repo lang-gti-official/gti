@@ -1,13 +1,12 @@
 # Concurrency And Atomic Values
 
-Status: Current language contract for the bounded production concurrent
-profile: owned managed threads, ordered scalar atomics, and scoped mutex
-guards.
+Status: Current language contract for the bounded production safe concurrent
+profile and the separate unsafe C-style threading surface.
 
 Rationale is recorded in
-[ADR 008](../decisions/008-safe-concurrency-memory-model.md). Remaining
-condition-variable, scoped-thread, and foreign-entry work is tracked in the
-[concurrency plan](../plans/concurrency-memory-model.md).
+[ADR 008](../decisions/008-safe-concurrency-memory-model.md). Remaining safe
+condition-variable, scoped-thread, and arbitrary foreign-entry work is tracked
+in the [concurrency plan](../plans/concurrency-memory-model.md).
 
 ## Profiles And Availability
 
@@ -30,6 +29,12 @@ values remains valid in the default profile and does not select native
 synchronization support. An executable use fails in semantics with
 `GTI-S2084` when either requirement is absent.
 
+The `<std/cthread>` create/join, once-initialization, manual-mutex, and
+condition-variable operations have the same profile and target requirements
+and additionally require lexical `unsafe`. Its scheduling hint, relative
+sleep, and identity observation/comparison operations remain available in
+either profile as specified below.
+
 ## Data-Race Freedom
 
 One memory location is a live scalar object or non-overlapping scalar
@@ -48,6 +53,276 @@ not turn a race into a defined nondeterministic result.
 `mut` is local mutation permission. It is not atomic, volatile, synchronized,
 transfer-capable, or share-capable. Safe shared mutation requires an approved
 interior-synchronization type.
+
+## C-Style Scheduling Hint
+
+`<std/cthread>` currently implements `void std::thrd_yield()`. It offers the
+host scheduler an opportunity to run another thread and may have no effect.
+The call returns no value, owns no resource, and raises no defined failure.
+It is valid in both execution profiles, including on the initial thread:
+yielding does not create a second GTI execution agent.
+
+Yield does not establish a synchronizes-with edge, publish memory, release a
+lock, guarantee progress or fairness, or impose a minimum delay. A polling
+algorithm still needs atomics or another supported synchronization contract.
+The ordinary native-call effects prevent GTI optimizations from deleting or
+reordering the host operation; they do not constitute synchronization proof.
+Its scheduling-hint meaning follows
+[C11 §7.26.5.8](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf),
+not C handle ABI parity.
+
+## C-Style Relative Sleep
+
+`<std/cthread>` provides `std::timespec`, an ordinary copyable GTI struct with
+mutable public `int64_t tv_sec` and `int64_t tv_nsec` fields. Its default
+constructor sets both to zero; its two-argument constructor stores seconds and
+nanoseconds. For sleep it represents a relative duration; timed mutex locking
+instead uses an absolute timestamp. Neither use promises native C `timespec`
+layout or ABI.
+
+```gti
+int32_t thrd_sleep(timespec duration);
+int32_t thrd_sleep(timespec duration, mut timespec& remaining);
+unsafe int32_t thrd_sleep(const timespec* duration, timespec* remaining);
+```
+
+Valid durations have nonnegative seconds and nanoseconds in `[0, 1000000000)`.
+Sleep returns 0 when elapsed, -1 when interrupted, and -2 for invalid input,
+unrepresentable host duration, or host failure. These results are not the
+create/join status constants. A zero duration succeeds without a host wait.
+Only interruption writes `remaining`; success and error preserve its previous
+value. The reported remainder is normalized, nonnegative, and no greater than
+the request. Host clock resolution and scheduling apply; no exact wakeup time
+or nanosecond precision is promised, and sleep may overshoot.
+
+The value input is copied before the mutable output borrow, so
+`thrd_sleep(duration, duration)` is valid for a mutable binding. The pointer
+overload also snapshots its input before writing output, allowing aliasing.
+A null input returns -2; a null output discards the remainder. Non-null raw
+pointers must address live, aligned, correctly synchronized values, with
+writable storage for the output. These are unsafe caller obligations.
+
+Sleep is valid in either execution profile and does not require target
+thread-creation support. It creates no thread, ownership, callback permission,
+synchronizes-with edge, or GTI defined failure. It does not retry interruptions
+automatically. This relative-duration and interruption model follows
+[C11 §7.26.5.7](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf),
+without promising native C object layout or platform-independent interruption
+delivery.
+
+## C-Style Thread Identity
+
+`<std/cthread>` provides safe `thrd_t thrd_current()` and
+`int32_t thrd_equal(thrd_t left, thrd_t right)`. Both work in either execution
+profile; neither creates a thread or requires target thread-creation support.
+The initial thread and managed workers have identities too. `thrd_current()`
+returns a stable, nonzero, process-local identity that is never reused, even
+after thread exit. A manually created worker observes the exact handle returned
+by `thrd_create`. Native host thread IDs are not exposed. Exhaustion of the
+identity space terminates instead of returning zero or reusing an identity;
+manual creation can instead return `thrd_error` without publishing a handle.
+
+`thrd_equal` returns exactly 1 for equal values and 0 otherwise. It is total
+value comparison, including zero, unknown values, and saved identities after
+exit; it is not validation or a liveness query. Observing, copying, or comparing
+an identity grants no join obligation, callback-entry permission, or
+synchronizes-with edge. Only successful manual creation supplies its matching
+join obligation. Initial and managed identities cannot be joined through
+`thrd_join`. The runtime identity observer can be called by foreign native code
+without registering that thread for GTI callback entry.
+
+## C-Style Manual Create And Join
+
+`<std/cthread>` also provides `thrd_t` (an opaque-purpose `uint64_t` identity),
+`thrd_start_t` (`(void*) -> int32_t`), and these ordinary GTI wrappers:
+
+```gti
+unsafe int32_t thrd_create(thrd_t* output, thrd_start_t entry, void* context);
+unsafe int32_t thrd_create(mut thrd_t& output, thrd_start_t entry, void* context);
+unsafe int32_t thrd_join(thrd_t handle, int32_t* result);
+unsafe int32_t thrd_join(thrd_t handle, mut int32_t& result);
+```
+
+Calls require lexical `unsafe`, the concurrent execution profile, and target
+thread support. Importing the module, describing its aliases, yielding,
+sleeping, and observing/comparing identities do not require the concurrent
+profile.
+Status constants are `thrd_success` (0),
+`thrd_error` (1), `thrd_nomem` (2), and `thrd_busy` (3). These are GTI's C-style
+operations, not a promise of native `<threads.h>` type, layout, or status ABI
+parity.
+
+Creation success publishes one nonzero, never-reused handle. Failure preserves
+the output and context; a null output or callback is an error. Null context is
+valid. The unsafe caller keeps the context and everything reachable through
+it alive and appropriately synchronized until successful join. Creation
+orders prior writes before worker entry; successful join orders worker
+completion and writes before continuation and optionally publishes its signed
+32-bit result. A null result pointer discards the result. Join consumes the
+handle once; stale, unknown, self, and competing joins cannot consume it again.
+A recoverable native join error preserves a live handle for retry. Copying the
+integer handle does not duplicate its obligation.
+
+Every successful creation must be matched by successful join before hosted
+entry returns. There is no automatic join or detach on this manual surface.
+Returning with an outstanding handle terminates as an unsafe lifecycle contract
+violation. Use `std::thread` for owned, automatically joined tasks instead.
+
+Concurrent GTI callback conversion accepts the exact `thrd_start_t` worker
+signature or the once-initializer signature described below and requires the
+trusted `<std/cthread>` runtime declarations. The worker's
+generated adapter enters only on the worker registered for that exact adapter,
+once. Initial-thread invocation, unregistered foreign threads, another adapter,
+recursive entry, and replay are stopped before entering the GTI target.
+Transporting an adapter through C does not grant general foreign-thread entry.
+The target may also be called as an ordinary GTI function; that is not adapter
+entry.
+
+Hosted MIR initializes the runtime after successful program initialization and
+before user entry (before argument-vector construction for owned-argument
+entry). Normal entry completion and its cleanup precede runtime shutdown.
+Currently a concurrent program importing this module conservatively includes
+that empty-service lifecycle even if it only yields. A default-profile
+yield-only program does not initialize the service.
+
+A worker defined failure performs its verified GTI cleanup and terminates the
+invocation with the original failure record. Unlike managed threads, this
+C-style callback boundary does not save the failure for re-raising at join.
+Native exceptions terminate at the callback firewall rather than escaping C.
+Failure termination does not run normal runtime shutdown or replace the
+original failure with an outstanding-handle error.
+
+This is not yet a completed `<threads.h>` equivalent. Detach, exit,
+and thread-specific storage
+remain implementation work. The safe managed owners below retain their
+separate lifetime and failure contract.
+
+## C-Style Once Initialization
+
+`<std/cthread>` supplies noncopyable, nonmovable `once_flag`, the constructor
+tag `ONCE_FLAG_INIT`, `once_initializer_t` (`() -> void`), and unsafe
+`call_once(once_flag&, once_initializer_t)` plus a `const once_flag*` overload.
+Default construction and construction from the tag each create independent,
+uninitialized state. The tag is a value, not a shared flag. Flags may be
+immutable globals: their private atomic state supplies synchronization without
+granting arbitrary mutable-global access.
+
+Calls require the concurrent profile, target threads, and lexical `unsafe`.
+Exactly one caller claims a fresh flag and invokes its supplied initializer.
+Only normal completion publishes the completed state; every normally returning
+caller observes the initializer's writes through release/acquire ordering.
+If different callers supply different initializers, the winning claim selects
+which one runs. Nested calls with different flags work. A recursive call on
+the same active flag cannot complete; it is a caller contract violation.
+Contenders may yield, with no fairness or bounded-wait guarantee. There is no
+reset, relocation, or native C `once_flag` layout promise.
+
+The caller keeps the flag alive through all uses and supplies a non-null
+initializer. A null flag or an invoked null initializer terminates. A GTI
+initializer adapter enters only within its exact synchronous runtime
+invocation on the initial thread, an entered manual worker, or a managed GTI
+worker. Passing the adapter directly to arbitrary native code does not grant
+callback permission, nor does the invocation helper attach a foreign thread.
+
+A defined failure runs the initializer's verified cleanup and terminates with
+the original record, even inside a managed worker; `call_once` does not turn
+that failure into a join result or retry initialization. Native exceptions
+terminate at the callback boundary. Completion is never published on either
+failure path.
+
+## C-Style Manual Mutexes
+
+`<std/cthread>` provides `mtx_t` (a non-owning `uint64_t` handle) and unsafe
+`mtx_init`, `mtx_destroy`, `mtx_lock`, `mtx_trylock`, `mtx_timedlock`, and
+`mtx_unlock`. Every operation requires the concurrent profile and target thread
+support. Initialization accepts a mutable handle reference or output pointer;
+destruction takes a mutable reference or pointer and clears that handle on
+success. Lock/try/unlock accept a handle value or pointer. Timed locking accepts
+a handle value plus `timespec` value, or pointers to both.
+
+Flags are `mtx_plain` (0), `mtx_recursive` (1), and `mtx_timed` (2); the allowed
+combinations are 0, 1, 2, and 3. Initialization publishes a nonzero, never-reused
+identity only on success. Invalid flags/null output return `thrd_error` (1);
+allocation failure returns `thrd_nomem` (2), preserving output. A successful
+initialization creates one explicit destruction obligation. Handle copies do
+not duplicate it. The caller keeps the mutex live through all uses and excludes
+concurrent destruction. These handles are not native C `mtx_t` layout.
+
+Lock returns `thrd_success` (0) after acquisition, or `thrd_error` on failure.
+Try-lock returns `thrd_busy` (3) when another thread holds the mutex, without
+waiting for that ownership to end. A plain mutex cannot be recursively locked:
+self lock is an error and self try-lock returns busy. Recursive acquisition
+increments a checked lock count; each successful acquisition requires one
+unlock by the same thread. Wrong-thread/unlocked unlock returns error without
+changing ownership. Only the final recursive release makes the mutex available.
+
+Timed locking requires `mtx_timed`. Unlike sleep, its `timespec` is an absolute
+UTC/Unix timestamp (seconds since 1970-01-01, normalized nanoseconds). Negative
+seconds are allowed. The timestamp must fit a signed 64-bit nanosecond count;
+otherwise it returns error without acquiring. An available mutex may be
+acquired even if the deadline has passed. If a held mutex remains unavailable
+at the deadline, the result is `thrd_timedout` (4), with no acquired lock. Host
+clock changes/resolution and scheduling apply; no precise wakeup or fairness
+guarantee is made.
+
+A final successful unlock synchronizes with a later successful acquisition of
+the same mutex. Busy, timeout, errors, and intermediate recursive operations
+do not grant a new inter-thread synchronization edge. HIR/MIR retain exact
+private native acquire/release identities, including try/timed calls whose edge
+depends on success; unknown native calls remain only optimization barriers.
+
+Destruction returns no status and requires an unlocked mutex with no operations
+in flight. Invalid, stale, locked, or in-use destruction terminates as an unsafe
+lifecycle violation. There is no automatic unlocking or destruction on scope
+exit or GTI defined failure. Ordinary return/error paths must balance their
+locks and destroy the mutex; prefer `std::mutex<T>` below when an owned scoped
+guard is appropriate. Pointer arguments retain the ordinary raw-pointer
+lifetime, alignment, writable-output, and synchronization obligations. Null
+lock/try/timed/unlock pointers return error; null destruction terminates.
+
+## C-Style Manual Condition Variables
+
+`<std/cthread>` supplies unsafe `cnd_init`, `cnd_destroy`, `cnd_signal`,
+`cnd_broadcast`, `cnd_wait`, and `cnd_timedwait` over non-owning `cnd_t`
+(`uint64_t`) handles. All require the concurrent profile and target threads.
+Initialization takes an output pointer or mutable reference; failure preserves
+it, with `thrd_error` for invalid input and `thrd_nomem` for allocation failure.
+Success creates one explicit destruction obligation with a nonzero, never-reused
+condition identity. Copies do not duplicate the obligation or native C layout.
+
+Wait takes condition/mutex values or pointers to both. The calling thread must
+hold exactly one acquisition of the mutex, including for a recursive mutex.
+It atomically registers its wait and releases that acquisition relative to
+condition notifications. Before returning it reacquires the same mutex once.
+Success returns `thrd_success`; a recoverable host wait error returns
+`thrd_error` with the mutex reacquired. An unrecoverable reacquisition failure
+terminates rather than returning without ownership. Invalid handles or lock
+ownership/count are errors before release and leave ownership unchanged.
+
+Timed wait additionally takes a `timespec` value (or pointer for the pointer
+overload). It uses the same normalized absolute UTC/Unix deadline range as
+`mtx_timedlock`, but does not require the mutex's `mtx_timed` flag. An expired
+deadline returns `thrd_timedout` **after reacquiring**, unlike timed mutex
+acquisition. Invalid timestamps are errors before release. Timeout bounds the
+condition wait, not subsequent mutex reacquisition or total call duration.
+
+Signal wakes one current waiter, if any; broadcast wakes all current waiters.
+Both accept a handle value or pointer and return success even with no waiters.
+Notifications are not retained for future waits and do not transfer mutex
+ownership. There is no fairness guarantee or independent shared-data publication
+edge from notification: publication occurs through mutex release/reacquisition.
+Callers must check a shared predicate under its mutex in a loop, including
+after notification or timeout; notification alone does not prove the predicate.
+MIR explicitly records `ConditionWait` and `ConditionNotify` native operations;
+neither is interchangeable with a simple mutex acquisition or an unknown call.
+
+Destruction accepts a mutable reference or pointer, clears that handle on
+success, and requires every call to have finished, including waiters currently
+reacquiring their mutex. Invalid, stale, or in-use destruction terminates.
+Neither condition nor mutex is automatically destroyed/unlocked by GTI cleanup.
+Null operation pointers return error; null destruction terminates. Other raw
+pointer validity, alignment, lifetime, and synchronization obligations remain
+with the unsafe caller. This is not a safe scoped condition-variable wrapper.
 
 ## Managed Threads
 
@@ -312,11 +587,14 @@ facility as part of safe GTI.
 
 ## Current Omissions
 
-The current surface deliberately excludes weak compare/exchange, spurious
-failure, wait/notify, atomic references, pointer atomics, and fences.
-Condition variables, public manual unlock, recursive/read-write mutexes,
-scoped cross-thread borrows, detach, thread locals, and foreign-created-thread
-entry are also not implemented.
+The safe surface deliberately excludes weak compare/exchange, spurious
+failure, wait/notify, atomic references, pointer atomics, and fences. It also
+has no safe scoped condition-variable wrapper, safe public manual-unlock API,
+or safe recursive/read-write mutex family. The unsafe `<std/cthread>` surface
+does provide manual unlock, recursive mutexes, and manual condition variables.
+Across both surfaces, scoped cross-thread borrows, detach, C-style thread exit,
+thread-specific storage, read/write mutexes, and arbitrary
+foreign-created-thread entry are not implemented.
 
 The absence of these APIs is not permission to call similarly named native
 facilities and treat their behavior as GTI synchronization.

@@ -1,0 +1,27 @@
+#include <std/functional>
+#include <std/string>
+#include <std/vector>
+
+class Resource {
+  int identity;
+public:
+  Resource(int identity) : identity(identity) {}
+  ~Resource() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Resource caller{9};
+  Resource captured{90};
+  auto operation = [captured = std::move(captured)](int divisor) -> std::string {
+    std::println(captured.read());
+    int checked = 12 / divisor;
+    return std::string("owned result");
+  };
+  std::move_only_function<std::string(int)> callback{std::move(operation)};
+  int divisor = argc == 2 ? 0 : 2;
+  std::string result = callback(divisor);
+  std::println(result);
+  int later = 6 / (argc == 3 ? 0 : 1);
+  return later - 6;
+}

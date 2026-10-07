@@ -1,0 +1,67 @@
+// <std/source_location> -- immutable, owned source call-site information.
+//
+// The four private declarations are identity-bound compiler capabilities.
+// Ordinary source cannot invoke them directly. `current` deliberately uses
+// caller-side default arguments so a direct call, or an API defaulted at its
+// caller, records the external invocation rather than this implementation.
+
+#include <std/string>
+
+namespace gti_internal {
+std::string_view source_file_name();
+std::string_view source_function_name();
+uint32_t source_line();
+uint32_t source_column();
+}
+
+namespace std {
+/// An immutable snapshot of one source call site.
+///
+/// File and function names are owned by the value, so moving the location
+/// across scopes or threads cannot leave borrowed compiler storage behind.
+class source_location {
+  std::string file;
+  std::string function;
+  uint32_t line_value;
+  uint32_t column_value;
+
+public:
+  source_location()
+      : file(std::string("")), function(std::string("")),
+        line_value(uint32_t(0)),
+        column_value(uint32_t(0)) {}
+
+  source_location(std::string_view file_name,
+                  std::string_view function_name,
+                  uint32_t line_number,
+                  uint32_t column_number)
+      : file(std::string(file_name)), function(std::string(function_name)),
+        line_value(line_number), column_value(column_number) {}
+
+  static source_location current(
+      std::string_view file_name = gti_internal::source_file_name(),
+      std::string_view function_name = gti_internal::source_function_name(),
+      uint32_t line_number = gti_internal::source_line(),
+      uint32_t column_number = gti_internal::source_column()) {
+    return source_location(file_name, function_name, line_number,
+                           column_number);
+  }
+
+  std::string& file_name() {
+    return this.file;
+  }
+
+  std::string& function_name() {
+    return this.function;
+  }
+
+  uint32_t line() {
+    return this.line_value;
+  }
+
+  /// Returns the one-based source column, or zero when unavailable.
+  uint32_t column() {
+    return this.column_value;
+  }
+};
+}

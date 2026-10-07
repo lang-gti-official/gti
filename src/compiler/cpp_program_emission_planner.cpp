@@ -9,6 +9,7 @@
 #include "gti/backend.h"
 #include "gti/lowered_program.h"
 #include "gti/mir.h"
+#include "gti/mir_effects.h"
 
 #include <algorithm>
 #include <functional>
@@ -17,11 +18,13 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <set>
 #include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <variant>
@@ -32,8 +35,9 @@ namespace lang {
 class CppProgramEmissionPlanner final {
 public:
   explicit CppProgramEmissionPlanner(const LoweredProgram &program,
-                                     CppStandard standard)
-      : standard(standard), mir(program.mir()), loweredProgram(program) {
+                                     CppStandard standard, bool debugInfo)
+      : standard(standard), mir(program.mir()), loweredProgram(program),
+        debugInfo(debugInfo) {
     const std::vector<LoweredProgramIssue> loweredIssues =
         verifyLoweredProgram(loweredProgram);
     if (!loweredIssues.empty()) {
@@ -43,7 +47,7 @@ public:
     }
 
     CppMirRepresentationSnapshotBuild snapshot =
-        buildCppMirRepresentationSnapshot(loweredProgram, standard);
+        buildCppMirRepresentationSnapshot(loweredProgram, standard, debugInfo);
     if (!snapshot.valid()) {
       const auto internal =
           std::find_if(snapshot.issues.begin(), snapshot.issues.end(),
@@ -78,6 +82,9 @@ public:
     output.clear();
     indentation = 0;
     generalBodyEmitter.reset();
+    constructorTemplatePlans.clear();
+    destructorTemplatePlans.clear();
+    callableTemplatePlans.clear();
     moduleGeneralInitializers.clear();
     moduleGeneralSupported = false;
     moduleRuntimeInitializedSymbols.clear();
@@ -89,6 +96,7 @@ public:
     loweredDeferredStaticFields.clear();
     loweredDeferredMembers.clear();
     loweredDeferredMemberIds.clear();
+    loweredDeferredCallableAdapters.clear();
     loweredDeferredLifecycleClasses.clear();
     loweredConcreteLifecycleInstances.clear();
     loweredNativePrimaryClasses.clear();
@@ -100,15 +108,40 @@ public:
         .expected = loweredProgramContainsTypeKind(SemanticType::Expected),
         .storage = true,
         .managedThreads = loweredProgramContainsManagedThreads(),
+        .cThreads = mir.requiresCThreadRuntime(),
         .atomics = loweredProgramContainsAtomics(),
         .mutexes = loweredProgramContainsMutexes(),
+        .simd = loweredProgramContainsSimd(),
         .definedFailure = true,
         .runtimeBinding = loweredProgramContainsRuntimeBinding(),
         .cAbiTextView = loweredProgramContainsCAbiTextView(),
     };
     CppProgramEmissionPlan plan;
-    capture(plan, CppProgramTextRole::SupportPreamble,
-            [&] { writeCppSupportPreamble(output, supportFeatures); });
+    capture(plan, CppProgramTextRole::SupportPreamble, [&] {
+      writeCppSupportPreamble(output, supportFeatures);
+      // Native declarations must implement the selected GTI target, not just
+      // have equal-width arguments. Refuse a mismatched compiler data model.
+      const TargetInfo &target = loweredProgram.target();
+      const auto nativeLong = target.nativeCScalar(NativeCScalarKind::Long);
+      const auto nativeChar = target.nativeCScalar(NativeCScalarKind::Char);
+      const auto fixed64 = target.fixedCScalarIdentity(TargetScalarKind::Int64);
+      if (!nativeLong || !nativeChar || !fixed64) {
+        throw std::logic_error("verified target has no native C scalar ABI");
+      }
+      output
+          << "static_assert(sizeof(long) == " << nativeLong->layout.sizeBytes
+          << " && alignof(long) == " << nativeLong->layout.abiAlignmentBytes
+          << ", \"native compiler long ABI differs from the GTI target\");\n";
+      output << "static_assert(std::is_signed_v<char> == "
+             << (nativeChar->valueKind == TargetScalarKind::Int8 ? "true"
+                                                                 : "false")
+             << ", \"native compiler char signedness differs from the GTI "
+                "target\");\n";
+      output << "static_assert(std::is_same_v<std::int64_t, "
+             << nativeCScalarDeclarationName(*fixed64)
+             << ">, \"native compiler int64_t identity differs from the GTI "
+                "target\");\n";
+    });
     capture(plan, CppProgramTextRole::FailureAndLifecycleSupport, [&] {
       writeCppFailureArtifactDescriptor(output, mir.failureMetadata());
     });
@@ -282,7 +315,9 @@ public:
     if (std::any_of(mir.classInstances().begin(), mir.classInstances().end(),
                     [](const MirClassInstance &instance) {
                       return instance.compilerCapability ==
-                             CompilerCapabilityTypeKind::AtomicStorage;
+                                 CompilerCapabilityTypeKind::AtomicStorage ||
+                             instance.compilerCapability ==
+                                 CompilerCapabilityTypeKind::SharedOwner;
                     })) {
       return true;
     }
@@ -340,6 +375,21 @@ public:
           default:
             break;
           }
+        }
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] bool loweredProgramContainsSimd() const {
+    for (const MirBodyAddress address : enumerateMirBodyAddresses(mir)) {
+      const MirBody *body = findMirBody(mir, address);
+      if (body == nullptr)
+        continue;
+      for (const MirBlock &block : body->blocks) {
+        for (const MirInstruction &instruction : block.instructions) {
+          if (simdIntrinsic(instruction.intrinsic))
+            return true;
         }
       }
     }
@@ -421,8 +471,66 @@ public:
     output << ">\n";
   }
 
+  bool classBoundByteTransport(const SemanticType &type, ClassId owner) const {
+    if (type.kind == SemanticType::Array && type.arguments.size() == 1)
+      return classBoundByteTransport(type.arguments.front(), owner);
+    if (type.kind != SemanticType::TypeParameter &&
+        type.kind != SemanticType::TypePack)
+      return false;
+    const LoweredDeclaration *row = loweredClassRow(owner);
+    const auto *declaration =
+        row == nullptr ? nullptr
+                       : std::get_if<LoweredClassDeclaration>(&row->payload);
+    return declaration != nullptr &&
+           std::any_of(declaration->genericParameters.begin(),
+                       declaration->genericParameters.end(),
+                       [&](const auto &parameter) {
+                         return parameter.id == type.genericParameterId;
+                       });
+  }
+
+  void emitDependentByteTransportPredicate(const SemanticType &type) {
+    // A class-owned parameter or pack element may itself be a checked
+    // reference. Preserve that exact type; only ordinary values use the
+    // private byte transport ABI. Strip references before querying the native
+    // representation trait, whose ADL probe forms a pointer to its argument.
+    output << "(!std::is_reference_v<";
+    emitSemanticType(type);
+    output << "> && "
+              "::gti_internal::backend::byte_transport<std::remove_cvref_t<";
+    emitSemanticType(type);
+    output << ">>::value)";
+  }
+
+  void emitDependentTransportParameter(const SemanticType &type,
+                                       std::string_view name,
+                                       bool pack = false) {
+    output << "std::conditional_t<";
+    emitDependentByteTransportPredicate(type);
+    output << ", const ";
+    emitSemanticType(type);
+    output << " &, ";
+    emitSemanticType(type);
+    output << '>';
+    if (pack)
+      output << "...";
+    output << ' ' << name;
+  }
+
   void emitLoweredParameter(const LoweredParameter &parameter,
-                            std::string_view name) {
+                            std::string_view name, ClassId transportOwner = 0) {
+    if (classBoundByteTransport(parameter.type, transportOwner)) {
+      emitDependentTransportParameter(parameter.type, name, parameter.pack);
+      return;
+    }
+    if (cppRequiresIndirectValueTransport(mir, parameter.type)) {
+      output << "const ";
+      emitSemanticType(parameter.type);
+      output << " &";
+      if (!name.empty())
+        output << ' ' << name;
+      return;
+    }
     const bool reference = parameter.type.kind == SemanticType::Reference;
     const bool pointerRepresentation =
         parameter.type.kind == SemanticType::RawPointer ||
@@ -453,7 +561,16 @@ public:
 
   void emitLoweredCallableTemplateParameter(const LoweredParameter &parameter,
                                             const SemanticType &projectedType,
+                                            const SemanticType &concreteType,
                                             std::string_view name) {
+    if (cppRequiresIndirectValueTransport(mir, concreteType)) {
+      output << "const "
+             << cppSemanticTypeSpelling(loweredProgram, standard, projectedType)
+             << " &";
+      if (!name.empty())
+        output << ' ' << name;
+      return;
+    }
     const bool reference = projectedType.kind == SemanticType::Reference;
     const bool pointerRepresentation =
         projectedType.kind == SemanticType::RawPointer ||
@@ -512,7 +629,8 @@ public:
   }
 
   void emitLoweredParameters(const std::vector<LoweredParameter> &parameters,
-                             bool mirArgumentNames = false) {
+                             bool mirArgumentNames = false,
+                             ClassId transportOwner = 0) {
     for (std::size_t index = 0; index < parameters.size(); ++index) {
       if (index != 0) {
         output << ", ";
@@ -520,7 +638,8 @@ public:
       emitLoweredParameter(parameters[index],
                            mirArgumentNames
                                ? "__gti_mir_arg_" + std::to_string(index)
-                               : parameters[index].name);
+                               : parameters[index].name,
+                           transportOwner);
     }
   }
 
@@ -536,7 +655,13 @@ public:
       if (index != 0) {
         output << ", ";
       }
+      const bool indirect =
+          cppRequiresIndirectValueTransport(mir, (*flattened)[index]);
+      if (indirect)
+        output << "const ";
       emitSemanticType((*flattened)[index]);
+      if (indirect)
+        output << " &";
       output << " __gti_mir_arg_" << index;
     }
     return flattened->size();
@@ -785,7 +910,8 @@ public:
   }
 
   void emitLoweredFailureResultParameter(const SemanticType &returnType,
-                                         bool callableTemplate = false) {
+                                         bool callableTemplate = false,
+                                         bool retainVoidChannel = false) {
     const auto emitType = [&](const SemanticType &type) {
       if (!callableTemplate) {
         emitSemanticType(type);
@@ -809,6 +935,8 @@ public:
     } else if (returnType != SemanticType::Void) {
       emitType(returnType);
       output << " *__gti_mir_out_result, ";
+    } else if (retainVoidChannel) {
+      output << "void *__gti_mir_out_result, ";
     }
   }
 
@@ -817,11 +945,18 @@ public:
                                   const LoweredFunctionDeclaration &function,
                                   const MirFunctionInstance *instance) const {
     std::string name = cppFunctionSpelling(function, row.name);
-    if (instance == nullptr || !instance->owner) {
+    if (instance == nullptr) {
       return name;
     }
     const LoweredFunctionInstance *concrete =
         loweredFunctionInstance(instance->id);
+    if (!instance->owner) {
+      if (concrete != nullptr)
+        if (const auto callable = cppCallableFreeFunctionSpelling(
+                loweredProgram, row, function, *concrete, *instance))
+          return *callable;
+      return name;
+    }
     if (concrete != nullptr) {
       if (const std::optional<std::string> direct =
               cppConcreteMemberFunctionSpelling(loweredProgram, row, function,
@@ -832,13 +967,32 @@ public:
     return name;
   }
 
-  void emitLoweredFunctionSignature(const LoweredDeclaration &row,
-                                    const LoweredFunctionDeclaration &function,
-                                    const MirFunctionInstance *instance,
-                                    bool failure, bool insideClass = false,
-                                    std::string_view owner = {},
-                                    bool sourceParameterTypes = false,
-                                    bool explicitGenericArguments = false) {
+  [[nodiscard]] std::size_t
+  emitLoweredCallerLocationParameter(const LoweredFunctionDeclaration &function,
+                                     std::size_t parameterCount) {
+    if (!function.tracksCaller) {
+      return parameterCount;
+    }
+    if (parameterCount != 0) {
+      output << ", ";
+    }
+    output << "std::uint32_t __gti_mir_caller_site";
+    return parameterCount + 1;
+  }
+
+  void emitLoweredFunctionSignature(
+      const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
+      const MirFunctionInstance *instance, bool failure,
+      bool insideClass = false, std::string_view owner = {},
+      bool sourceParameterTypes = false, bool explicitGenericArguments = false,
+      std::optional<bool> dependentIndirect = std::nullopt) {
+    if (!failure && !dependentIndirect && instance != nullptr &&
+        sourceParameterTypes && !function.virtualMethod &&
+        !function.genericParameters.empty() &&
+        classBoundByteTransport(function.returnType, function.ownerClass)) {
+      dependentIndirect =
+          cppRequiresIndirectValueTransport(mir, instance->returnType);
+    }
     std::optional<CppMirCallableTemplateSignature> callableSignature;
     if (instance != nullptr && sourceParameterTypes) {
       callableSignature =
@@ -855,8 +1009,29 @@ public:
         !function.staticMember) {
       output << "virtual ";
     }
+    const bool conditionalVirtualResult =
+        cppVirtualFamilyHasConditionalResultChannel(loweredProgram, function);
+    const SemanticType &signatureResult =
+        callableSignature     ? callableSignature->returnType
+        : instance == nullptr ? function.returnType
+                              : instance->returnType;
+    const bool indirectResult = dependentIndirect.value_or(
+        (function.definitionKind == MirDefinitionKind::Source ||
+         function.pureVirtual) &&
+        function.linkage != LanguageLinkage::C &&
+        cppRequiresIndirectValueTransport(
+            mir, instance == nullptr ? signatureResult : instance->returnType));
     if (failure) {
       output << "bool ";
+    } else if (conditionalVirtualResult && instance == nullptr &&
+               classBoundByteTransport(signatureResult, function.ownerClass)) {
+      output << "std::conditional_t<";
+      emitDependentByteTransportPredicate(signatureResult);
+      output << ", void, ";
+      emitSemanticType(signatureResult);
+      output << "> ";
+    } else if (indirectResult) {
+      output << "void ";
     } else {
       const SemanticType &returnType =
           callableSignature     ? callableSignature->returnType
@@ -904,15 +1079,19 @@ public:
         emitLoweredCallableTemplateParameter(
             function.parameters[index],
             callableSignature->parameterTypes[index],
+            instance->parameterTypes[index],
             "__gti_mir_arg_" + std::to_string(index));
       }
       parameterCount = callableSignature->parameterTypes.size();
     } else if (instance != nullptr && !sourceParameterTypes) {
       parameterCount = emitLoweredMirParameters(instance->parameterTypes);
     } else {
-      emitLoweredParameters(function.parameters, sourceParameterTypes);
+      emitLoweredParameters(function.parameters, sourceParameterTypes,
+                            function.ownerClass);
       parameterCount = function.parameters.size();
     }
+    parameterCount =
+        emitLoweredCallerLocationParameter(function, parameterCount);
     if (failure) {
       if (parameterCount != 0) {
         output << ", ";
@@ -921,8 +1100,20 @@ public:
           callableSignature     ? callableSignature->returnType
           : instance == nullptr ? function.returnType
                                 : instance->returnType,
-          callableSignature.has_value());
-      output << "::gti_failure_record_v1 *__gti_mir_failure_record";
+          callableSignature.has_value(),
+          cppFunctionHasFailureResultChannel(loweredProgram, function));
+      output << "::gti_failure_record_v2 *__gti_mir_failure_record";
+    }
+    if (!failure && (indirectResult || conditionalVirtualResult)) {
+      if (parameterCount != 0)
+        output << ", ";
+      if (conditionalVirtualResult)
+        output << "std::add_pointer_t<";
+      emitSemanticType(signatureResult);
+      output << (conditionalVirtualResult ? "> __gti_mir_out_result"
+                                          : " *__gti_mir_out_result");
+      if (conditionalVirtualResult && insideClass)
+        output << " = nullptr";
     }
     output << ')';
     const ReceiverMutability receiver = instance == nullptr
@@ -949,13 +1140,20 @@ public:
     if (insideClass && function.overrideMethod) {
       output << " override";
     }
+    if (dependentIndirect) {
+      output << " requires (";
+      if (!*dependentIndirect)
+        output << '!';
+      emitDependentByteTransportPredicate(signatureResult);
+      output << ')';
+    }
   }
 
   void emitLoweredCAbiType(const SemanticType &type) {
     if (type == SemanticType::StringView) {
       output << "::gti_c_string_view";
     } else {
-      emitSemanticType(type);
+      output << cppNativeTypeSpelling(loweredProgram, standard, type);
     }
   }
 
@@ -996,13 +1194,21 @@ public:
 
   [[nodiscard]] bool
   loweredVirtualFailureContractRetained(FunctionId declaration) const {
+    const auto representedFailureBody = [&](const MirFunctionInstance
+                                                &instance) {
+      if (loweredFailureBodySupported(instance))
+        return true;
+      const auto *function =
+          loweredProgram.findFunctionDeclaration(instance.declaration);
+      return function != nullptr &&
+             !loweredCallableTemplateBody(*function, {&instance}, true).empty();
+    };
     for (const MirFunctionInstance &candidate : mir.functionInstances()) {
       if (candidate.declaration != declaration ||
           cppMirVirtualFailureContractRoot(mir, candidate) != &candidate) {
         continue;
       }
-      bool implementation = !candidate.pureVirtual;
-      if (!candidate.pureVirtual && !loweredFailureBodySupported(candidate)) {
+      if (!candidate.pureVirtual && !representedFailureBody(candidate)) {
         continue;
       }
       bool complete = true;
@@ -1011,13 +1217,16 @@ public:
             cppMirVirtualFailureContractRoot(mir, override) != &candidate) {
           continue;
         }
-        implementation = true;
-        if (!loweredFailureBodySupported(override)) {
+        if (!representedFailureBody(override)) {
           complete = false;
           break;
         }
       }
-      if (implementation && complete) {
+      // The abstract root owns the virtual ABI even when no override is
+      // instantiated. A checked call through an empty owner still names that
+      // declaration after its null check. Existing concrete overrides must
+      // remain representable, but their existence cannot gate the contract.
+      if (complete) {
         return true;
       }
     }
@@ -1100,7 +1309,18 @@ public:
             !loweredClassNeedsNativePrimary(*type)) {
           continue;
         }
-        if (!type->genericParameters.empty()) {
+        if (!type->genericArgumentPatterns.empty()) {
+          writeIndent();
+          output << "template <";
+          for (std::size_t index = 0;
+               index < type->genericArgumentPatterns.size(); ++index) {
+            if (index != 0) {
+              output << ", ";
+            }
+            output << "typename __gti_argument_" << index;
+          }
+          output << ">\n";
+        } else if (!type->genericParameters.empty()) {
           emitLoweredTemplateDeclaration(type->genericParameters);
         }
         writeIndent();
@@ -1108,6 +1328,15 @@ public:
                    : type->kind == ClassKind::Union ? "union "
                                                     : "class ")
                << declaration->name << ";\n";
+        SemanticType nativeType;
+        nativeType.kind = SemanticType::Class;
+        nativeType.classId = type->id;
+        if (type->cAbiRecord &&
+            cppRequiresIndirectValueTransport(mir, nativeType)) {
+          writeIndent();
+          output << "std::true_type __gti_byte_transport_tag("
+                 << declaration->name << " *);\n";
+        }
         continue;
       }
       if (const auto *enumeration =
@@ -1124,14 +1353,18 @@ public:
     }
   }
 
-  [[nodiscard]] std::string
-  loweredExactClassArguments(const LoweredClassDeclaration &declaration) const {
-    if (declaration.exactSpecializationPrimary == 0) {
+  [[nodiscard]] std::string loweredDeclaredClassArguments(
+      const LoweredClassDeclaration &declaration) const {
+    if (declaration.exactSpecializationPrimary == 0 &&
+        declaration.genericArgumentPatterns.empty()) {
       return {};
     }
     std::string result = "<";
     bool separator = false;
-    for (const SemanticType &argument : declaration.exactTypeArguments) {
+    const auto &arguments = declaration.exactSpecializationPrimary != 0
+                                ? declaration.exactTypeArguments
+                                : declaration.genericArgumentPatterns;
+    for (const SemanticType &argument : arguments) {
       if (separator) {
         result += ", ";
       }
@@ -1170,23 +1403,33 @@ public:
       output << (type->kind == ClassKind::Struct  ? "struct "
                  : type->kind == ClassKind::Union ? "union "
                                                   : "class ")
-             << row.name << loweredExactClassArguments(*type) << ";\n";
+             << row.name << loweredDeclaredClassArguments(*type) << ";\n";
       emitLoweredNamespaceClose(namespaceCount);
     }
   }
 
   void emitLoweredConcreteClassForwardDeclarations() {
     std::unordered_set<std::string> emitted;
-    for (const MirClassInstance &instance : mir.classInstances()) {
+    const auto emitType = [&](const auto &self,
+                              const SemanticType &type) -> void {
+      // Type-only aliases need the same nominal spelling as executable uses,
+      // but do not require an instantiated layout or executable class body.
+      // Visit only the already-resolved argument graph, not alias members of
+      // the referenced class: recursive aliases must not expand endlessly.
+      for (const SemanticType &argument : type.arguments) {
+        self(self, argument);
+      }
       const std::optional<std::string> name =
-          cppConcreteClassName(loweredProgram, instance.type);
-      const LoweredDeclaration *row = loweredClassRow(instance.declaration);
+          cppConcreteClassName(loweredProgram, type);
+      const LoweredDeclaration *row = type.kind == SemanticType::Class
+                                          ? loweredClassRow(type.classId)
+                                          : nullptr;
       const auto *declaration =
           row == nullptr ? nullptr
                          : std::get_if<LoweredClassDeclaration>(&row->payload);
       if (!name || row == nullptr || declaration == nullptr ||
           !emitted.insert(*name).second) {
-        continue;
+        return;
       }
       const std::size_t namespaceCount =
           emitLoweredNamespaceOpen(row->namespaceScope);
@@ -1196,6 +1439,15 @@ public:
                                                          : "class ")
              << *name << ";\n";
       emitLoweredNamespaceClose(namespaceCount);
+    };
+    for (const MirClassInstance &instance : mir.classInstances()) {
+      emitType(emitType, instance.type);
+    }
+    for (const LoweredDeclaration &row : loweredProgram.declarations()) {
+      if (const auto *alias =
+              std::get_if<LoweredTypeAliasDeclaration>(&row.payload)) {
+        emitType(emitType, alias->type);
+      }
     }
   }
 
@@ -1504,11 +1756,16 @@ public:
       throw std::logic_error(
           "lowered C++ specialization lost its concrete instance");
     }
+    const bool indirectResult =
+        cppRequiresIndirectValueTransport(mir, instance.returnType);
     if (failure) {
       output << "bool ";
     } else {
       output << "template <> ";
-      emitSemanticType(instance.returnType);
+      if (indirectResult)
+        output << "void";
+      else
+        emitSemanticType(instance.returnType);
       output << ' ';
     }
     const std::string name = cppFunctionSpelling(function, row.name);
@@ -1517,14 +1774,22 @@ public:
       emitLoweredExplicitArguments(*lowered);
     }
     output << '(';
-    const std::size_t parameterCount =
-        emitLoweredMirParameters(instance.parameterTypes);
+    const std::size_t parameterCount = emitLoweredCallerLocationParameter(
+        function, emitLoweredMirParameters(instance.parameterTypes));
     if (failure) {
       if (parameterCount != 0) {
         output << ", ";
       }
-      emitLoweredFailureResultParameter(instance.returnType);
-      output << "::gti_failure_record_v1 *__gti_mir_failure_record";
+      emitLoweredFailureResultParameter(
+          instance.returnType, false,
+          cppFunctionHasFailureResultChannel(loweredProgram, function));
+      output << "::gti_failure_record_v2 *__gti_mir_failure_record";
+    }
+    if (!failure && indirectResult) {
+      if (parameterCount != 0)
+        output << ", ";
+      emitSemanticType(instance.returnType);
+      output << " *__gti_mir_out_result";
     }
     output << ')';
   }
@@ -1543,23 +1808,36 @@ public:
       throw std::logic_error(
           "lowered concrete free function lost its stable instance identity");
     }
+    const bool indirectResult =
+        cppRequiresIndirectValueTransport(mir, instance.returnType);
     if (failure) {
       output << "bool ";
     } else {
-      emitSemanticType(instance.returnType);
+      if (indirectResult)
+        output << "void";
+      else
+        emitSemanticType(instance.returnType);
       if (instance.returnType.kind != SemanticType::Reference) {
         output << ' ';
       }
     }
     output << (failure ? cppMirFailureSiblingSpelling(*name) : *name) << '(';
-    const std::size_t parameterCount =
-        emitLoweredMirParameters(instance.parameterTypes);
+    const std::size_t parameterCount = emitLoweredCallerLocationParameter(
+        function, emitLoweredMirParameters(instance.parameterTypes));
     if (failure) {
       if (parameterCount != 0) {
         output << ", ";
       }
-      emitLoweredFailureResultParameter(instance.returnType);
-      output << "::gti_failure_record_v1 *__gti_mir_failure_record";
+      emitLoweredFailureResultParameter(
+          instance.returnType, false,
+          cppFunctionHasFailureResultChannel(loweredProgram, function));
+      output << "::gti_failure_record_v2 *__gti_mir_failure_record";
+    }
+    if (!failure && indirectResult) {
+      if (parameterCount != 0)
+        output << ", ";
+      emitSemanticType(instance.returnType);
+      output << " *__gti_mir_out_result";
     }
     output << ')';
   }
@@ -1619,15 +1897,9 @@ public:
       const bool generic = !function->genericParameters.empty();
       const bool threadTaskTemplate =
           generic && loweredFunctionNeedsThreadTaskTemplate(instances);
-      const bool hasTemplateNormal =
-          generic && function->definitionKind == MirDefinitionKind::Source &&
-          !loweredCallableTemplateBody(*function, instances, false).empty();
-      const bool hasTemplateFailure =
-          generic && function->definitionKind == MirDefinitionKind::Source &&
-          !loweredCallableTemplateBody(*function, instances, true).empty();
       const bool retainPrimaryDeclaration =
           generic && function->definitionKind != MirDefinitionKind::Source;
-      if (!generic || hasTemplateNormal || retainPrimaryDeclaration) {
+      if (!generic || retainPrimaryDeclaration) {
         if (generic) {
           emitLoweredTemplateDeclaration(function->genericParameters,
                                          threadTaskTemplate);
@@ -1641,14 +1913,7 @@ public:
           instances.begin(), instances.end(), [&](const auto *instance) {
             return loweredFailureBodySupported(*instance);
           });
-      if (hasTemplateFailure) {
-        emitLoweredTemplateDeclaration(function->genericParameters,
-                                       threadTaskTemplate);
-        writeIndent();
-        emitLoweredFunctionSignature(*declaration, *function, nullptr, true,
-                                     false, {}, true);
-        output << ";\n";
-      } else if (!generic && !instances.empty() && hasFailure) {
+      if (!generic && !instances.empty() && hasFailure) {
         writeIndent();
         emitLoweredFunctionSignature(*declaration, *function, instances.front(),
                                      true);
@@ -1660,6 +1925,23 @@ public:
       for (const MirFunctionInstance *instance : instances) {
         const LoweredFunctionInstance *concrete =
             loweredFunctionInstance(instance->id);
+        if (concrete != nullptr &&
+            cppCallableFreeFunctionSpelling(loweredProgram, *declaration,
+                                            *function, *concrete, *instance)) {
+          for (const bool failure : {false, true}) {
+            if (loweredCallableTemplateBody(*function, {instance}, failure)
+                    .empty())
+              continue;
+            emitLoweredTemplateDeclaration(
+                function->genericParameters,
+                loweredFunctionNeedsThreadTaskTemplate({instance}));
+            writeIndent();
+            emitLoweredFunctionSignature(*declaration, *function, instance,
+                                         failure, false, {}, true);
+            output << ";\n";
+          }
+          continue;
+        }
         if (concrete == nullptr ||
             !std::all_of(concrete->typeArguments.begin(),
                          concrete->typeArguments.end(),
@@ -1802,7 +2084,13 @@ public:
         for (std::size_t index = 0; index < variant.payloadTypes.size();
              ++index) {
           writeIndent();
+          const bool byteTransport = cppRequiresBytePreservingTransport(
+              mir, variant.payloadTypes[index]);
+          if (byteTransport)
+            output << "::gti_internal::backend::representation_cell<";
           emitSemanticType(variant.payloadTypes[index]);
+          if (byteTransport)
+            output << '>';
           output << " __gti_field_" << index << ";\n";
         }
         writeIndent();
@@ -1895,7 +2183,7 @@ public:
       extents.push_back(element->arrayLength);
       element = &element->arguments.front();
     }
-    emitSemanticType(*element);
+    output << cppNativeTypeSpelling(loweredProgram, standard, *element);
     output << ' ' << name;
     for (const std::uint64_t extent : extents) {
       output << '[' << extent << ']';
@@ -1938,10 +2226,16 @@ public:
             ? cppStaticStorageValueSpelling(storage.symbol, row.name)
             : row.name;
     if (insideClass && owner != nullptr && owner->cAbiRecord &&
-        storage.type.kind == SemanticType::Array) {
+        !storage.staticStorage) {
       emitLoweredCAbiFieldType(storage.type, name);
     } else {
+      const bool byteField = insideClass && owner && !storage.staticStorage &&
+                             cppUsesDependentByteField(storage.type);
+      if (byteField)
+        output << "::gti_internal::backend::byte_field<";
       emitLoweredStorageRepresentationType(storage);
+      if (byteField)
+        output << '>';
       output << ' ' << name;
     }
     if (insideClass && storage.staticStorage && !storage.constexprStorage) {
@@ -2012,9 +2306,10 @@ public:
     output << "); }\n";
   }
 
-  void emitLoweredCallableAdapter(const LoweredDeclaration &row,
-                                  const LoweredFunctionDeclaration &function,
-                                  const LoweredDeclaration &classRow) {
+  void emitLoweredCallableAdapter(
+      const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
+      const LoweredDeclaration &classRow, bool definition = false,
+      std::optional<bool> dependentIndirect = std::nullopt) {
     const auto found = std::find_if(
         programPlan.thunks.begin(), programPlan.thunks.end(),
         [&](const CppMirGeneratedThunk &thunk) {
@@ -2029,15 +2324,44 @@ public:
       throw std::logic_error(
           "lowered callable adapter lost its sealed payload");
     }
+    const bool dependentOwner = loweredOwnerIsGeneric(classRow);
+    if (!dependentIndirect && dependentOwner &&
+        classBoundByteTransport(function.returnType, function.ownerClass)) {
+      emitLoweredCallableAdapter(row, function, classRow, definition, false);
+      emitLoweredCallableAdapter(row, function, classRow, definition, true);
+      return;
+    }
+    const bool indirectResult = dependentIndirect.value_or(
+        cppRequiresIndirectValueTransport(mir, function.returnType));
+    const auto emitAdapterType = [&](const SemanticType &type) {
+      // A retained native carrier can precede a concrete class used only in
+      // its callable signature. Keep the exact resolved type, but make its
+      // completeness check dependent on the injected owner. The hidden
+      // friend's definition is then instantiated after layouts, without
+      // introducing a false by-value layout edge through a call signature.
+      if (dependentOwner) {
+        output << "std::conditional_t<true, ";
+      }
+      emitSemanticType(type);
+      if (dependentOwner) {
+        output << ", " << classRow.name << '>';
+      }
+    };
     writeIndent();
-    output << "friend ";
-    emitSemanticType(function.returnType);
+    output << (definition ? "inline " : "friend ");
+    if (indirectResult)
+      output << "void";
+    else
+      emitAdapterType(function.returnType);
     output << " __gti_invoke(";
     if (function.receiverMutability == ReceiverMutability::ReadOnly) {
       output << "const ";
     }
-    output << classRow.name
-           << (function.receiverMutability == ReceiverMutability::Consuming
+    if (definition)
+      emitLoweredPrimaryClassName(classRow);
+    else
+      output << classRow.name;
+    output << (function.receiverMutability == ReceiverMutability::Consuming
                    ? " &&__gti_callable"
                    : " &__gti_callable")
            << ", ::gti_internal::backend::exact_call<";
@@ -2055,15 +2379,62 @@ public:
     for (const LoweredParameter &parameter : function.parameters) {
       output << ", ";
       emitLoweredExactCallParameter(parameter.type);
+      if (parameter.pack)
+        output << "...";
     }
     output << ">";
     for (std::size_t index = 0; index < function.parameters.size(); ++index) {
       output << ", ";
-      emitLoweredParameter(function.parameters[index],
-                           "__gti_arg_" + std::to_string(index));
+      // The adapter transports its owned argument into the selected MIR
+      // function. Source-level immutability does not make this internal
+      // transport slot const (which would turn its move into a copy).
+      LoweredParameter transport = function.parameters[index];
+      transport.explicitlyMoved =
+          transport.type.kind != SemanticType::Reference;
+      if (classBoundByteTransport(transport.type, function.ownerClass)) {
+        emitDependentTransportParameter(transport.type,
+                                        "__gti_arg_" + std::to_string(index),
+                                        transport.pack);
+      } else if (dependentOwner) {
+        const bool indirectParameter =
+            cppRequiresIndirectValueTransport(mir, transport.type);
+        if (indirectParameter)
+          output << "const ";
+        emitAdapterType(transport.type);
+        if (indirectParameter)
+          output << " &";
+        if (transport.pack)
+          output << "...";
+        output << " __gti_arg_" << index;
+      } else {
+        emitLoweredParameter(transport, "__gti_arg_" + std::to_string(index));
+      }
     }
-    output << ") { ";
-    if (function.returnType != SemanticType::Void) {
+    if (indirectResult) {
+      output << ", ";
+      emitAdapterType(function.returnType);
+      output << " *__gti_mir_out_result";
+    }
+    if (!definition && !loweredOwnerIsGeneric(classRow) &&
+        function.genericParameters.empty()) {
+      // An ADL declaration needs only forward declarations of its by-value
+      // types. Its forwarding definition needs complete types, including the
+      // result. Emit it after all layouts, not as a false layout dependency:
+      // a callable may return a class which itself stores that callable.
+      output << ");\n";
+      loweredDeferredCallableAdapters.push_back({row, function, classRow});
+      return;
+    }
+    output << ')';
+    if (dependentIndirect) {
+      output << " requires (";
+      if (!*dependentIndirect)
+        output << '!';
+      emitDependentByteTransportPredicate(function.returnType);
+      output << ')';
+    }
+    output << " { ";
+    if (!indirectResult && function.returnType != SemanticType::Void) {
       output << "return ";
     }
     if (function.receiverMutability == ReceiverMutability::Consuming) {
@@ -2083,8 +2454,26 @@ public:
       if (function.parameters[index].type.kind != SemanticType::Reference) {
         output << ')';
       }
+      if (function.parameters[index].pack)
+        output << "...";
+    }
+    if (indirectResult) {
+      if (!function.parameters.empty())
+        output << ", ";
+      output << "__gti_mir_out_result";
     }
     output << "); }\n";
+  }
+
+  void emitLoweredCallableAdapterDefinitions() {
+    for (const auto &adapter : loweredDeferredCallableAdapters) {
+      const auto namespaceCount =
+          emitLoweredNamespaceOpen(adapter.owner.namespaceScope);
+      emitLoweredCallableAdapter(adapter.row, adapter.function, adapter.owner,
+                                 true);
+      emitLoweredNamespaceClose(namespaceCount);
+    }
+    loweredDeferredCallableAdapters.clear();
   }
 
   void deferLoweredMember(const LoweredDeclaration &row) {
@@ -2144,8 +2533,9 @@ public:
     const bool threadTaskTemplate =
         generic && loweredFunctionNeedsThreadTaskTemplate(instances);
     const bool hasCallableTemplateNormal =
-        generic && loweredMemberCallableTemplateBodyExists(function, instances,
-                                                           false, genericOwner);
+        (generic || genericOwner) &&
+        loweredMemberCallableTemplateBodyExists(function, instances, false,
+                                                genericOwner);
     const bool retainPrimary =
         !generic || hasCallableTemplateNormal ||
         function.definitionKind != MirDefinitionKind::Source;
@@ -2154,14 +2544,29 @@ public:
                                      threadTaskTemplate);
     }
     if (retainPrimary) {
-      writeIndent();
-      emitLoweredFunctionSignature(row, function, nullptr, false, true, {},
-                                   generic);
-      if (function.pureVirtual ||
-          (owner != nullptr && owner->kind == ClassKind::Interface)) {
-        output << " = 0;\n";
+      const bool splitResult =
+          !function.virtualMethod &&
+          classBoundByteTransport(function.returnType, function.ownerClass);
+      if (splitResult) {
+        for (bool indirect : {false, true}) {
+          if (indirect && generic)
+            emitLoweredTemplateDeclaration(function.genericParameters,
+                                           threadTaskTemplate);
+          writeIndent();
+          emitLoweredFunctionSignature(row, function, nullptr, false, true, {},
+                                       generic, false, indirect);
+          output << ";\n";
+        }
       } else {
-        output << ";\n";
+        writeIndent();
+        emitLoweredFunctionSignature(row, function, nullptr, false, true, {},
+                                     generic);
+        if (function.pureVirtual ||
+            (owner != nullptr && owner->kind == ClassKind::Interface)) {
+          output << " = 0;\n";
+        } else {
+          output << ";\n";
+        }
       }
     }
 
@@ -2184,8 +2589,9 @@ public:
     }
 
     const bool hasCallableTemplateFailure =
-        generic && loweredMemberCallableTemplateBodyExists(function, instances,
-                                                           true, genericOwner);
+        (generic || genericOwner) &&
+        loweredMemberCallableTemplateBodyExists(function, instances, true,
+                                                genericOwner);
     const bool hasFailure =
         hasCallableTemplateFailure ||
         loweredVirtualFailureContractRetained(function.id) ||
@@ -2330,28 +2736,41 @@ public:
     const MirClassInstance *owner = mir.findClassInstance(instance.owner);
     const LoweredDeclaration *ownerRow = loweredClassRow(constructor.owner);
     if (owner == nullptr || ownerRow == nullptr ||
-        !loweredOwnerIsGeneric(*ownerRow) ||
-        loweredTypeIsNameable(owner->type)) {
+        loweredConstructorInstanceIsNameable(instance)) {
       return std::nullopt;
     }
-    CppMirBodyEmissionMapRows rows{
-        .types = generalEmissionMap->types(),
-        .bodies = generalEmissionMap->bodies(),
-        .symbols = generalEmissionMap->symbols(),
-        .enums = generalEmissionMap->enums(),
-        .containedConstructors = generalEmissionMap->containedConstructors(),
-        .capabilities = generalEmissionMap->capabilities()};
-    const std::optional<std::size_t> overlays =
-        cppMirApplyGenericOwnerConstructorTypeOverlays(rows, loweredProgram,
-                                                       constructor, instance);
-    if (!overlays || *overlays == 0) {
-      return std::nullopt;
+    auto cached = constructorTemplatePlans.find(instance.id);
+    if (cached == constructorTemplatePlans.end()) {
+      CppMirBodyEmissionMapRows rows{
+          .types = generalEmissionMap->types(),
+          .bodies = generalEmissionMap->bodies(),
+          .symbols = generalEmissionMap->symbols(),
+          .enums = generalEmissionMap->enums(),
+          .containedConstructors = generalEmissionMap->containedConstructors(),
+          .capabilities = generalEmissionMap->capabilities()};
+      const std::optional<std::size_t> overlays =
+          cppMirApplyGenericOwnerConstructorTypeOverlays(rows, loweredProgram,
+                                                         constructor, instance);
+      if (!overlays || *overlays == 0) {
+        return std::nullopt;
+      }
+      const MirBodyAddress address{.kind = MirBodyKind::Constructor,
+                                   .owner = instance.id};
+      cached = constructorTemplatePlans
+                   .emplace(instance.id,
+                            std::make_unique<TemplateBodyPlan>(
+                                mir, address, constructor.id, std::move(rows),
+                                debugInfo ? std::span<const LoweredBody>(
+                                                loweredProgram.bodies())
+                                          : std::span<const LoweredBody>{}))
+                   .first;
     }
-    const CppMirBodyEmissionMap overlay(std::move(rows));
-    const CppMirBodyEmitter emitter(mir, overlay);
-    const MirBodyAddress address{.kind = MirBodyKind::Constructor,
-                                 .owner = instance.id};
-    const CppMirBodyEmissionPlan plan = emitter.buildPlan(address);
+    const auto &prepared = *cached->second;
+    if (prepared.declaration != constructor.id)
+      throw std::logic_error(
+          "constructor template plan changed declaration identity");
+    const CppMirBodyEmitter emitter(mir, prepared.representations);
+    const CppMirBodyEmissionPlan &plan = prepared.plan;
     const bool supported =
         failure ? plan.supportsFailureText() : plan.supportsPlainText();
     if (!supported) {
@@ -2385,6 +2804,52 @@ public:
                                                                       : &*found;
   }
 
+  [[nodiscard]] std::string
+  loweredGenericOwnerDestructorBodyText(const MirDestructorInstance &instance,
+                                        bool failure) const {
+    if (!generalEmissionMap)
+      throw std::logic_error("retained destructor has no representation map");
+    auto cached = destructorTemplatePlans.find(instance.id);
+    if (cached == destructorTemplatePlans.end()) {
+      CppMirBodyEmissionMapRows rows{
+          .types = generalEmissionMap->types(),
+          .bodies = generalEmissionMap->bodies(),
+          .symbols = generalEmissionMap->symbols(),
+          .enums = generalEmissionMap->enums(),
+          .containedConstructors = generalEmissionMap->containedConstructors(),
+          .capabilities = generalEmissionMap->capabilities()};
+      const auto overlays = cppMirApplyGenericOwnerDestructorTypeOverlays(
+          rows, loweredProgram, instance);
+      if (!overlays || *overlays == 0)
+        throw std::logic_error(
+            "retained destructor has no exact owner overlay");
+      cached =
+          destructorTemplatePlans
+              .emplace(instance.id,
+                       std::make_unique<TemplateBodyPlan>(
+                           mir,
+                           MirBodyAddress{MirBodyKind::Destructor, instance.id},
+                           instance.owner, std::move(rows),
+                           debugInfo ? std::span<const LoweredBody>(
+                                           loweredProgram.bodies())
+                                     : std::span<const LoweredBody>{}))
+              .first;
+    }
+    const auto &prepared = *cached->second;
+    if (prepared.declaration != instance.owner)
+      throw std::logic_error("retained destructor changed owner identity");
+    const CppMirBodyEmitter emitter(mir, prepared.representations);
+    const auto text =
+        failure ? emitter.emitFailureBodyText(prepared.plan,
+                                              "retained-destructor-failure-v1",
+                                              indentation)
+                : emitter.emitBodyText(prepared.plan, "retained-destructor-v1",
+                                       indentation);
+    if (!text.emitted())
+      throw std::logic_error("retained destructor has no admitted MIR body");
+    return text.text;
+  }
+
   void emitLoweredContainedConstructorParameters(
       const LoweredConstructorDeclaration &constructor,
       const MirConstructorInstance &instance, bool sourceParameters) {
@@ -2403,7 +2868,7 @@ public:
     if (count != 0) {
       output << ", ";
       if (sourceParameters) {
-        emitLoweredParameters(constructor.parameters, true);
+        emitLoweredParameters(constructor.parameters, true, constructor.owner);
       } else {
         emitLoweredMirParameters(instance.parameterTypes);
       }
@@ -2448,7 +2913,7 @@ public:
     output << "if (!__gti_mir_contained_state.success) {\n";
     ++indentation;
     writeIndent();
-    output << "::gti_rt_failure_terminate_v1(\n";
+    output << "::gti_rt_failure_terminate_v2(\n";
     ++indentation;
     writeIndent();
     output << "&__gti_mir_contained_state.record,\n";
@@ -2488,7 +2953,7 @@ public:
     if (retainPrimary) {
       writeIndent();
       output << "explicit " << classRow.name << '(';
-      emitLoweredParameters(constructor.parameters);
+      emitLoweredParameters(constructor.parameters, false, constructor.owner);
       output << ");\n";
     }
     if (generic) {
@@ -2515,6 +2980,8 @@ public:
           (!concreteFailure && !genericOwnerPrimary)) {
         continue;
       }
+      if (genericOwnerPrimary)
+        emitLoweredTemplateDeclaration(constructor.genericParameters);
       writeIndent();
       output << "explicit " << classRow.name << '('
              << cppMirFailureConstructorTagSpelling(instance->id);
@@ -2525,14 +2992,16 @@ public:
         output << ", ";
       }
       if (genericOwnerPrimary) {
-        emitLoweredParameters(constructor.parameters, true);
+        emitLoweredParameters(constructor.parameters, true, constructor.owner);
       } else {
         emitLoweredMirParameters(instance->parameterTypes);
       }
       output << ", ";
       output << "bool *__gti_mir_constructor_success, "
-                "::gti_failure_record_v1 *__gti_mir_failure_record);\n";
+                "::gti_failure_record_v2 *__gti_mir_failure_record);\n";
       if (loweredContainedConstructorRepresentation(instance->id) != nullptr) {
+        if (genericOwnerPrimary)
+          emitLoweredTemplateDeclaration(constructor.genericParameters);
         writeIndent();
         output << "explicit " << classRow.name << '(';
         emitLoweredContainedConstructorParameters(constructor, *instance,
@@ -2573,7 +3042,7 @@ public:
         }
         emitLoweredMirParameters(instance->parameterTypes);
         output << ", bool *__gti_mir_constructor_success, "
-                  "::gti_failure_record_v1 *__gti_mir_failure_record);\n";
+                  "::gti_failure_record_v2 *__gti_mir_failure_record);\n";
         if (loweredContainedConstructorRepresentation(instance->id) !=
             nullptr) {
           writeIndent();
@@ -2671,6 +3140,7 @@ public:
 
   void emitLoweredEmptyStateConstructor(
       const LoweredDeclaration &classRow,
+      const LoweredClassDeclaration &declaration,
       const std::vector<const LoweredDeclaration *> &fields) {
     writeIndent();
     output << "explicit " << classRow.name
@@ -2694,13 +3164,19 @@ public:
                << fields[index]->name << ")>>())";
       }
     }
-    output << " {}\n";
+    output << " {";
+    if (declaration.requiresActiveDropState)
+      output << ' ' << loweredLifecycleActiveName(declaration.id)
+             << " = false;";
+    output << " }\n";
   }
 
   void emitLoweredMoveConstructor(
       const LoweredDeclaration &classRow,
       const LoweredClassDeclaration &declaration,
-      const std::vector<const LoweredDeclaration *> &fields) {
+      const std::vector<const LoweredDeclaration *> &fields,
+      const std::set<std::string> &byteFields,
+      const std::set<std::string> &referenceFields) {
     writeIndent();
     output << classRow.name << '(' << classRow.name << " &&other) noexcept : ";
     bool separator = false;
@@ -2716,17 +3192,39 @@ public:
       if (separator) {
         output << ", ";
       }
-      output << field->name << "(std::move(other." << field->name << "))";
+      output << field->name;
+      if (byteFields.contains(field->name))
+        output << "{}";
+      else if (referenceFields.contains(field->name))
+        // Move the binding, not the object it designates. std::move on a
+        // native reference member casts its referent to an rvalue instead.
+        output << "(other." << field->name << ')';
+      else
+        output << "(std::move(other." << field->name << "))";
       separator = true;
     }
-    if (separator) {
-      output << ", ";
+    if (declaration.requiresActiveDropState) {
+      if (separator)
+        output << ", ";
+      // Transfer the representation's lifecycle state, not just its fields.
+      // A private empty-state shell is deliberately disarmed; relocating it
+      // must not manufacture an observable GTI destructor obligation.
+      output << loweredLifecycleActiveName(declaration.id) << "(other."
+             << loweredLifecycleActiveName(declaration.id) << ")";
     }
-    output << loweredLifecycleActiveName(declaration.id) << "(true) {\n";
+    output << " {\n";
     ++indentation;
-    writeIndent();
-    output << "other." << loweredLifecycleActiveName(declaration.id)
-           << " = false;\n";
+    for (const auto &field : byteFields) {
+      writeIndent();
+      output << "std::memcpy(std::addressof(" << field
+             << "), std::addressof(other." << field << "), sizeof(" << field
+             << "));\n";
+    }
+    if (declaration.requiresActiveDropState) {
+      writeIndent();
+      output << "other." << loweredLifecycleActiveName(declaration.id)
+             << " = false;\n";
+    }
     --indentation;
     writeIndent();
     output << "}\n";
@@ -2735,7 +3233,8 @@ public:
   void emitLoweredMoveAssignment(
       const LoweredDeclaration &classRow,
       const LoweredClassDeclaration &declaration,
-      const std::vector<const LoweredDeclaration *> &fields) {
+      const std::vector<const LoweredDeclaration *> &fields,
+      const std::set<std::string> &byteFields = {}) {
     writeIndent();
     output << classRow.name << " &operator=(" << classRow.name
            << " &&other) noexcept {\n";
@@ -2743,8 +3242,10 @@ public:
     writeIndent();
     output << "if (this != &other) {\n";
     ++indentation;
-    writeIndent();
-    output << loweredLifecycleCleanupName(declaration.id) << "();\n";
+    if (declaration.requiresActiveDropState) {
+      writeIndent();
+      output << loweredLifecycleCleanupName(declaration.id) << "();\n";
+    }
     const auto base = std::find_if(
         declaration.bases.begin(), declaration.bases.end(),
         [](const LoweredClassBase &candidate) { return !candidate.interface; });
@@ -2755,13 +3256,21 @@ public:
     }
     for (const LoweredDeclaration *field : fields) {
       writeIndent();
-      output << field->name << " = std::move(other." << field->name << ");\n";
+      if (byteFields.contains(field->name))
+        output << "std::memcpy(std::addressof(" << field->name
+               << "), std::addressof(other." << field->name << "), sizeof("
+               << field->name << "));\n";
+      else
+        output << field->name << " = std::move(other." << field->name << ");\n";
     }
-    writeIndent();
-    output << loweredLifecycleActiveName(declaration.id) << " = true;\n";
-    writeIndent();
-    output << "other." << loweredLifecycleActiveName(declaration.id)
-           << " = false;\n";
+    if (declaration.requiresActiveDropState) {
+      writeIndent();
+      output << loweredLifecycleActiveName(declaration.id) << " = other."
+             << loweredLifecycleActiveName(declaration.id) << ";\n";
+      writeIndent();
+      output << "other." << loweredLifecycleActiveName(declaration.id)
+             << " = false;\n";
+    }
     --indentation;
     writeIndent();
     output << "}\n";
@@ -2773,9 +3282,44 @@ public:
   }
 
   void emitLoweredClassLifecycle(const LoweredDeclaration &classRow,
-                                 const LoweredClassDeclaration &declaration) {
+                                 const LoweredClassDeclaration &declaration,
+                                 const MirClassInstance *concreteInstance) {
     const std::vector<const LoweredDeclaration *> fields =
         loweredClassFields(classRow);
+    // Only passive native-layout subobjects need byte construction here.
+    // Ordinary containing classes have their own fieldwise special members;
+    // owning fields must never be copied wholesale merely for containing one.
+    std::set<std::string> byteFields;
+    std::set<std::string> referenceFields;
+    for (const auto *field : fields) {
+      const auto &storage = std::get<LoweredStorageDeclaration>(field->payload);
+      SemanticType type = storage.type;
+      if (concreteInstance) {
+        for (const auto &concrete : concreteInstance->declaredFields)
+          if (concrete.symbol == storage.symbol)
+            type = concrete.type;
+      }
+      if (type.kind == SemanticType::Reference)
+        referenceFields.insert(field->name);
+      SemanticType element = type;
+      while (element.kind == SemanticType::Array &&
+             element.arguments.size() == 1)
+        element = element.arguments.front();
+      const auto *native =
+          element.kind == SemanticType::Class
+              ? loweredProgram.findClassDeclaration(element.classId)
+              : nullptr;
+      if (native && native->cAbiRecord &&
+          cppRequiresBytePreservingTransport(mir, type))
+        byteFields.insert(field->name);
+    }
+    const bool incompletePointeeCarrier = std::any_of(
+        fields.begin(), fields.end(), [](const LoweredDeclaration *field) {
+          const auto *storage =
+              std::get_if<LoweredStorageDeclaration>(&field->payload);
+          return storage != nullptr &&
+                 storage->type.kind == SemanticType::UniqueOwner;
+        });
     const std::vector<const MirDestructorInstance *> destructors =
         loweredClassDestructorInstances(declaration.id);
     if (declaration.requiresActiveDropState) {
@@ -2803,11 +3347,17 @@ public:
         output << "template <typename, bool> friend class "
                   "::gti_internal::backend::mir_lifetime_slot;\n";
         writeIndent();
+        output
+            << "friend bool "
+               "::gti_internal::backend::mir_unique_owner_drop_with_failure_v1<"
+            << classRow.name << ">(std::unique_ptr<" << classRow.name
+            << "> &, ::gti_failure_record_v2 *);\n";
+        writeIndent();
         output << "bool " << lifecycleFailureDispatchName()
-               << "(::gti_failure_record_v1 *);\n";
+               << "(::gti_failure_record_v2 *);\n";
         writeIndent();
         output << "bool " << lifecycleFailureBodyName()
-               << "(::gti_failure_record_v1 *);\n";
+               << "(::gti_failure_record_v2 *);\n";
       }
       loweredDeferredLifecycleClasses.push_back(classRow);
     }
@@ -2822,31 +3372,139 @@ public:
       output << (status == SpecialMemberStatus::Generated ? " = default;\n"
                                                           : " = delete;\n");
     };
-    if (declaration.defaultConstructor != SpecialMemberStatus::Declared) {
+    const MirConstructorInstance *generatedConstructor = nullptr;
+    for (const LoweredConstructorInstance &candidate :
+         loweredProgram.constructorInstances()) {
+      const MirClassInstance *owner = mir.findClassInstance(candidate.owner);
+      if (candidate.declaration == 0 && owner != nullptr &&
+          owner->declaration == declaration.id) {
+        if (generatedConstructor != nullptr || !owner->type.arguments.empty() ||
+            !owner->type.valueArguments.empty())
+          throw std::logic_error(
+              "generated base constructor needs one concrete owner");
+        generatedConstructor = mir.findConstructorInstance(candidate.id);
+      }
+    }
+    if (generatedConstructor != nullptr) {
+      const auto &plan =
+          generalMirBodyPlan({.kind = MirBodyKind::Constructor,
+                              .owner = generatedConstructor->id});
+      if (plan.supportsPlainText()) {
+        writeIndent();
+        output << classRow.name << "();\n";
+      }
+      if (plan.supportsFailureText()) {
+        writeIndent();
+        output << classRow.name << '(';
+        emitLoweredConstructorParameters(*generatedConstructor, true);
+        output << ");\n";
+      }
+    } else if (declaration.defaultConstructor !=
+               SpecialMemberStatus::Declared) {
       writeIndent();
       output << classRow.name << "()";
-      emitStatus(declaration.defaultConstructor);
+      if (incompletePointeeCarrier &&
+          declaration.defaultConstructor == SpecialMemberStatus::Generated)
+        output << " noexcept {}\n";
+      else
+        emitStatus(declaration.defaultConstructor);
     }
     if (loweredClassNeedsEmptyState(declaration)) {
-      emitLoweredEmptyStateConstructor(classRow, fields);
+      emitLoweredEmptyStateConstructor(classRow, declaration, fields);
     }
     writeIndent();
-    output << classRow.name << "(const " << classRow.name << " &)";
-    emitStatus(declaration.copyConstructor);
-    if (declaration.requiresActiveDropState &&
+    output << classRow.name << "(const " << classRow.name << " &other)";
+    if (!byteFields.empty() &&
+        declaration.copyConstructor == SpecialMemberStatus::Generated) {
+      bool separator = false;
+      for (const auto &base : declaration.bases) {
+        if (base.interface)
+          continue;
+        output << (separator ? ", " : " : ");
+        emitSemanticType(base.type);
+        output << "(other)";
+        separator = true;
+      }
+      for (const auto *field : fields) {
+        output << (separator ? ", " : " : ") << field->name;
+        if (byteFields.contains(field->name))
+          output << "{}";
+        else
+          output << "(other." << field->name << ')';
+        separator = true;
+      }
+      if (declaration.requiresActiveDropState)
+        output << (separator ? ", " : " : ")
+               << loweredLifecycleActiveName(declaration.id) << "(other."
+               << loweredLifecycleActiveName(declaration.id) << ')';
+      output << " {\n";
+      ++indentation;
+      for (const auto &field : byteFields) {
+        writeIndent();
+        output << "std::memcpy(std::addressof(" << field
+               << "), std::addressof(other." << field << "), sizeof(" << field
+               << "));\n";
+      }
+      --indentation;
+      writeIndent();
+      output << "}\n";
+    } else
+      emitStatus(declaration.copyConstructor);
+    if ((declaration.requiresActiveDropState || incompletePointeeCarrier ||
+         !byteFields.empty()) &&
         declaration.moveConstructor == SpecialMemberStatus::Generated) {
-      emitLoweredMoveConstructor(classRow, declaration, fields);
+      emitLoweredMoveConstructor(classRow, declaration, fields, byteFields,
+                                 referenceFields);
     } else {
       writeIndent();
       output << classRow.name << '(' << classRow.name << " &&)";
       emitStatus(declaration.moveConstructor);
     }
     writeIndent();
-    output << classRow.name << " &operator=(const " << classRow.name << " &)";
-    emitStatus(declaration.copyAssignment);
-    if (declaration.requiresActiveDropState &&
+    output << classRow.name << " &operator=(const " << classRow.name
+           << " &other)";
+    if (!byteFields.empty() &&
+        declaration.copyAssignment == SpecialMemberStatus::Generated) {
+      output << " {\n";
+      ++indentation;
+      writeIndent();
+      output << "if (this != &other) {\n";
+      ++indentation;
+      for (const auto &base : declaration.bases) {
+        if (base.interface)
+          continue;
+        writeIndent();
+        emitSemanticType(base.type);
+        output << "::operator=(other);\n";
+      }
+      for (const auto *field : fields) {
+        writeIndent();
+        if (byteFields.contains(field->name))
+          output << "std::memcpy(std::addressof(" << field->name
+                 << "), std::addressof(other." << field->name << "), sizeof("
+                 << field->name << "));\n";
+        else
+          output << field->name << " = other." << field->name << ";\n";
+      }
+      if (declaration.requiresActiveDropState) {
+        writeIndent();
+        output << loweredLifecycleActiveName(declaration.id) << " = other."
+               << loweredLifecycleActiveName(declaration.id) << ";\n";
+      }
+      --indentation;
+      writeIndent();
+      output << "}\n";
+      writeIndent();
+      output << "return *this;\n";
+      --indentation;
+      writeIndent();
+      output << "}\n";
+    } else
+      emitStatus(declaration.copyAssignment);
+    if ((declaration.requiresActiveDropState || incompletePointeeCarrier ||
+         !byteFields.empty()) &&
         declaration.moveAssignment == SpecialMemberStatus::Generated) {
-      emitLoweredMoveAssignment(classRow, declaration, fields);
+      emitLoweredMoveAssignment(classRow, declaration, fields, byteFields);
     } else {
       writeIndent();
       output << classRow.name << " &operator=(" << classRow.name << " &&)";
@@ -2858,7 +3516,16 @@ public:
         output << "virtual ";
       }
       output << '~' << classRow.name << "() noexcept";
-      emitStatus(declaration.destructor);
+      if (declaration.destructor == SpecialMemberStatus::Generated &&
+          incompletePointeeCarrier) {
+        // Keep this representation destructor non-constexpr. C++23's
+        // constexpr unique_ptr destructor otherwise forces the dependent
+        // deleter while mutually recursive pointees are still incomplete.
+        // The empty body preserves the same native member cleanup order.
+        output << " {}\n";
+      } else {
+        emitStatus(declaration.destructor);
+      }
     }
   }
 
@@ -2944,7 +3611,13 @@ public:
     std::size_t valueIndex = 0;
     for (const LoweredGenericParameter &parameter :
          declaration.genericParameters) {
-      if (parameter.value) {
+      if (!parameter.typeArgumentPath.empty()) {
+        if (auto type = projectGenericTypeArgument(
+                concreteType.arguments, parameter.typeArgumentPath,
+                parameter.id, parameter.pack)) {
+          substitution.types.emplace(parameter.id, std::move(*type));
+        }
+      } else if (parameter.value) {
         if (valueIndex < concreteType.valueArguments.size()) {
           substitution.values.insert_or_assign(
               parameter.id, concreteType.valueArguments[valueIndex++]);
@@ -2974,7 +3647,12 @@ public:
       const LoweredDeclaration &classRow,
       const LoweredClassDeclaration &declaration, AccessModifier originalAccess,
       const MirClassInstance *concreteInstance = nullptr) {
-    if (!loweredConstexprAggregateClasses.contains(declaration.id)) {
+    const SemanticType exactType =
+        concreteInstance != nullptr ? concreteInstance->type
+                                    : SemanticType::classType(declaration.id);
+    if (std::find(loweredConstexprAggregateClasses.begin(),
+                  loweredConstexprAggregateClasses.end(),
+                  exactType) == loweredConstexprAggregateClasses.end()) {
       return;
     }
     const std::vector<const LoweredDeclaration *> fields =
@@ -3044,6 +3722,179 @@ public:
     emitAccess(originalAccess);
   }
 
+  void emitUniqueCleanupMember(const LoweredDeclaration &classRow,
+                               const LoweredClassDeclaration &declaration,
+                               const MirClassInstance *concrete) {
+    std::vector<MirDropType> descriptors;
+    for (const auto &instance : mir.classInstances()) {
+      if (instance.declaration != declaration.id ||
+          (concrete != nullptr && concrete->id != instance.id))
+        continue;
+      if (auto descriptor = mirUniqueCleanupType(mir, instance.type))
+        descriptors.push_back(*descriptor);
+    }
+    if (descriptors.empty())
+      return;
+    writeIndent();
+    output << "public:\n";
+    writeIndent();
+    output << "template <std::size_t __gti_cleanup_instance>\n";
+    writeIndent();
+    output << "bool __gti_mir_unique_cleanup_failure(::gti_failure_record_v2 "
+              "*record, bool unwinding) {\n";
+    ++indentation;
+    bool first = true;
+    for (const auto &descriptor : descriptors) {
+      writeIndent();
+      output << (first ? "if" : "else if")
+             << " constexpr (__gti_cleanup_instance == "
+             << *descriptor.classInstance << ") {\n";
+      first = false;
+      ++indentation;
+      writeIndent();
+      output << "::gti_internal::backend::mir_cleanup_sequence_v1 sequence("
+                "record, unwinding, &::gti_internal::backend::"
+                "__gti_failure_artifact_descriptor_v1);\n";
+      if (descriptor.destructor) {
+        const auto *body = mir.findDestructorInstance(*descriptor.destructor);
+        if (body == nullptr)
+          throw std::logic_error("MIR cleanup lost its source destructor");
+        writeIndent();
+        if (body->mayRaiseDefinedFailure) {
+          output << "if (!sequence.step(" << lifecycleFailureDispatchName()
+                 << "(sequence.record()))) return false;\n";
+        } else {
+          output << loweredLifecycleCleanupName(declaration.id) << "();\n";
+        }
+      }
+      for (const auto &step : descriptor.aggregate) {
+        std::string receiver;
+        if (step.uniqueOwnerField != 0) {
+          for (const auto *field : loweredClassFields(classRow)) {
+            const auto *storage =
+                std::get_if<LoweredStorageDeclaration>(&field->payload);
+            if (storage != nullptr &&
+                storage->symbol == step.uniqueOwnerField) {
+              receiver = "this->" + field->name;
+              break;
+            }
+          }
+        } else if (step.uniqueOwnerBase) {
+          const auto *base = mir.findClassInstance(*step.uniqueOwnerBase);
+          if (base != nullptr) {
+            receiver = "(*this)." + loweredConcreteClassName(base->id) + "::";
+          }
+        }
+        if (receiver.empty())
+          throw std::logic_error(
+              "unique cleanup lost its MIR-selected subobject");
+        writeIndent();
+        output << "if (!sequence.step(";
+        if (step.uniqueOwnerBase) {
+          if (!step.classInstance)
+            throw std::logic_error(
+                "unique cleanup lost its next aggregate step");
+          output << receiver << "template __gti_mir_unique_cleanup_failure<"
+                 << *step.classInstance
+                 << ">(sequence.record(), sequence.unwinding())";
+        } else {
+          output << cppMirCleanupValueExpression(
+              mir, step, receiver, "sequence.record()", "sequence.unwinding()");
+        }
+        output << ")) return false;\n";
+      }
+      writeIndent();
+      output << "return sequence.success();\n";
+      --indentation;
+      writeIndent();
+      output << "}\n";
+    }
+    writeIndent();
+    output << "else { static_assert(__gti_cleanup_instance != "
+              "__gti_cleanup_instance, \"unknown MIR cleanup instance\"); }\n";
+    --indentation;
+    writeIndent();
+    output << "}\n";
+  }
+
+  void emitPolymorphicCleanupMember(const LoweredClassDeclaration &declaration,
+                                    const MirClassInstance *concrete) {
+    if (!declaration.polymorphic)
+      return;
+    writeIndent();
+    output << "private:\n";
+    writeIndent();
+    output << "::gti_internal::backend::mir_polymorphic_cleanup_binding_v1 "
+              "__gti_mir_dynamic_cleanup;\n";
+    writeIndent();
+    output << "public:\n";
+    writeIndent();
+    output << "template <std::size_t __gti_cleanup_instance>\n";
+    writeIndent();
+    output << "void __gti_mir_bind_polymorphic_cleanup() noexcept {\n";
+    ++indentation;
+    writeIndent();
+    output << "using __gti_cleanup_self = "
+              "std::remove_pointer_t<decltype(this)>;\n";
+    bool first = true;
+    for (const auto &instance : mir.classInstances()) {
+      if (instance.declaration != declaration.id ||
+          (concrete != nullptr && concrete->id != instance.id))
+        continue;
+      const auto cleanup = mirUniqueCleanupType(mir, instance.type);
+      if (!cleanup && instance.requiresActiveCleanup)
+        throw std::logic_error(
+            "polymorphic allocation lost its complete MIR cleanup");
+      writeIndent();
+      output << (first ? "if" : "else if")
+             << " constexpr (__gti_cleanup_instance == " << instance.id
+             << ") {\n";
+      first = false;
+      ++indentation;
+      writeIndent();
+      if (cleanup) {
+        output << "__gti_mir_dynamic_cleanup.bind([](void *object, "
+                  "::gti_failure_record_v2 *record, bool unwinding) { return "
+                  "static_cast<__gti_cleanup_self *>(object)->template "
+                  "__gti_mir_unique_cleanup_failure<__gti_cleanup_instance>("
+                  "record, "
+                  "unwinding); });\n";
+      } else {
+        output << "__gti_mir_dynamic_cleanup.bind([](void *, "
+                  "::gti_failure_record_v2 *, bool) { return true; });\n";
+      }
+      --indentation;
+      writeIndent();
+      output << "}\n";
+    }
+    writeIndent();
+    output
+        << (first ? "" : "else ")
+        << "{ static_assert(__gti_cleanup_instance != __gti_cleanup_instance, "
+           "\"unknown MIR polymorphic cleanup instance\"); }\n";
+    --indentation;
+    writeIndent();
+    output << "}\n";
+    writeIndent();
+    output << "virtual bool __gti_mir_polymorphic_cleanup_failure("
+              "::gti_failure_record_v2 *record, bool unwinding)";
+    if (std::any_of(declaration.bases.begin(), declaration.bases.end(),
+                    [&](const LoweredClassBase &base) {
+                      const auto *parent = loweredProgram.findClassDeclaration(
+                          base.type.classId);
+                      return parent != nullptr && parent->polymorphic;
+                    }))
+      output << " override";
+    output << " {\n";
+    ++indentation;
+    writeIndent();
+    output
+        << "return __gti_mir_dynamic_cleanup.run(this, record, unwinding);\n";
+    --indentation;
+    writeIndent();
+    output << "}\n";
+  }
+
   void emitLoweredClassDefinitionBody(
       const LoweredDeclaration &classRow,
       const LoweredClassDeclaration &declaration,
@@ -3106,7 +3957,7 @@ public:
     output << (declaration.kind == ClassKind::Struct  ? "struct "
                : declaration.kind == ClassKind::Union ? "union "
                                                       : "class ")
-           << classRow.name << loweredExactClassArguments(declaration);
+           << classRow.name << loweredDeclaredClassArguments(declaration);
     if (!declaration.bases.empty()) {
       output << " : ";
       for (std::size_t index = 0; index < declaration.bases.size(); ++index) {
@@ -3223,7 +4074,9 @@ public:
       }
     }
     if (!declaration.cAbiRecord && declaration.kind != ClassKind::Union) {
-      emitLoweredClassLifecycle(classRow, declaration);
+      emitLoweredClassLifecycle(classRow, declaration, concreteInstance);
+      emitUniqueCleanupMember(classRow, declaration, concreteInstance);
+      emitPolymorphicCleanupMember(declaration, concreteInstance);
     }
     --indentation;
     writeIndent();
@@ -3259,6 +4112,12 @@ public:
     if (declaration.exactSpecializationPrimary == 0 &&
         loweredClassNeedsNativePrimary(declaration)) {
       emitLoweredClassDefinitionBody(classRow, declaration);
+    } else if (declaration.exactSpecializationPrimary != 0 &&
+               loweredConcreteClassInstances(declaration.id).empty()) {
+      // A retained native template carrier needs the definition of its
+      // already-selected exact specialization, not only a forward declaration.
+      // Direct concrete instances are emitted by their separate schedule.
+      emitLoweredClassDefinitionBody(classRow, declaration);
     }
   }
 
@@ -3279,6 +4138,7 @@ public:
     concrete.exactTypeArguments.clear();
     concrete.exactValueArguments.clear();
     concrete.genericParameters.clear();
+    concrete.genericArgumentPatterns.clear();
     concrete.traits = instance.traits;
     concrete.defaultConstructor = instance.defaultConstructor;
     concrete.copyConstructor = instance.copyConstructor;
@@ -3404,6 +4264,7 @@ public:
       std::vector<EnumId> enumerations;
     };
 
+    std::unordered_set<HirClassInstanceId> visitingLayoutArguments;
     const auto collectTypeDependencies = [&](const auto &self,
                                              const SemanticType &type,
                                              TypeDependencies &result) -> void {
@@ -3416,6 +4277,22 @@ public:
       case SemanticType::PrefixStorage:
         return;
       case SemanticType::Class: {
+        // The declaration-bound optional capability stores its exact value
+        // inline even though it has no source fields. Its payload layout must
+        // precede every containing class, unlike pointer-backed storage.
+        const auto capability = std::find_if(
+            mir.classInstances().begin(), mir.classInstances().end(),
+            [&](const MirClassInstance &candidate) {
+              return candidate.type == type &&
+                     candidate.compilerCapability ==
+                         CompilerCapabilityTypeKind::OptionalStorage;
+            });
+        if (capability != mir.classInstances().end()) {
+          for (const SemanticType &argument : type.arguments) {
+            self(self, argument, result);
+          }
+          return;
+        }
         if (const std::optional<std::string> concrete =
                 cppConcreteClassName(loweredProgram, type)) {
           const auto found = concreteClassSchedule.find(*concrete);
@@ -3430,9 +4307,33 @@ public:
             found != sourceClassSchedule.end()) {
           result.classes.push_back(found->second);
         }
-        for (const SemanticType &argument : type.arguments) {
-          self(self, argument, result);
+        if (type.arguments.empty())
+          return;
+        // A generic argument is not necessarily stored by value. Inspect the
+        // exact MIR instance's representation-bearing fields/bases rather
+        // than inventing T layout dependencies for pointer-only wrappers.
+        // Otherwise two classes owning one another through unique_ptr form
+        // a false native layout cycle even though each layout is finite.
+        const MirClassInstance *instance = nullptr;
+        for (const auto &candidate : mir.classInstances()) {
+          if (candidate.type == type) {
+            instance = &candidate;
+            break;
+          }
         }
+        if (instance == nullptr) {
+          // Symbolic source-template spellings have no concrete field graph.
+          for (const auto &argument : type.arguments)
+            self(self, argument, result);
+          return;
+        }
+        if (!visitingLayoutArguments.insert(instance->id).second)
+          return;
+        for (const auto &base : instance->bases)
+          self(self, base.type, result);
+        for (const auto &field : instance->declaredFields)
+          self(self, field.type, result);
+        visitingLayoutArguments.erase(instance->id);
         return;
       }
       case SemanticType::Enum:
@@ -3796,6 +4697,163 @@ public:
         });
   }
 
+  [[nodiscard]] std::string loweredCallableSignatureCondition(
+      const LoweredFunctionDeclaration &function,
+      const MirFunctionInstance &instance,
+      const std::vector<const MirFunctionInstance *> &family) const {
+    const auto signature =
+        cppMirCallableTemplateSignature(loweredProgram, function, instance);
+    if (!signature)
+      throw std::logic_error(
+          "callable selector lost its exact owner-projected signature");
+    const auto *owner =
+        instance.owner ? mir.findClassInstance(*instance.owner) : nullptr;
+    const bool retainedOwner =
+        owner != nullptr && loweredContainsLambdaType(owner->type);
+    // A retained primary still declares its owner parameters. An explicit
+    // concrete-owner specialization does not: use the same owner substitution
+    // already proven for its emitted signature, leaving method parameters open.
+    const auto &declaredReturn =
+        retainedOwner ? function.returnType : signature->returnType;
+    std::vector<std::string> terms;
+    std::string arityCondition;
+    std::vector<const MirFunctionInstance *> sameArityFamily;
+    const auto pack =
+        std::find_if(function.parameters.begin(), function.parameters.end(),
+                     [](const auto &parameter) { return parameter.pack; });
+    if (pack != function.parameters.end()) {
+      const auto first = static_cast<std::size_t>(
+          std::distance(function.parameters.begin(), pack));
+      const auto *genericPack =
+          loweredProgram.findGenericParameter(pack->type.genericParameterId);
+      if (first + 1 != function.parameters.size() ||
+          pack->type.kind != SemanticType::TypePack ||
+          instance.parameterTypes.size() < first || genericPack == nullptr ||
+          !genericPack->pack || genericPack->value || genericPack->name.empty())
+        throw std::logic_error(
+            "callable selector lost its exact trailing pack");
+      arityCondition = "sizeof...(" + genericPack->name + ") == " +
+                       std::to_string(instance.parameterTypes.size() - first);
+      for (const auto *candidate : family)
+        if (candidate->parameterTypes.size() == instance.parameterTypes.size())
+          sameArityFamily.push_back(candidate);
+    }
+    const auto &selectorFamily =
+        arityCondition.empty() ? family : sameArityFamily;
+    // Native closure names are local, but their MIR identities are exact and
+    // artifact-local. Use the same selector dimensions for every instance,
+    // including zero for non-closure substitutions. A matching call signature
+    // alone cannot merge bodies that target different concrete callees.
+    std::vector<std::string> closureDimensions;
+    std::vector<std::pair<std::string, HirLambdaId>> identities;
+    for (const auto *candidate : selectorFamily) {
+      CppMirBodyEmissionMapRows rows{.types = generalEmissionMap->types()};
+      if (!cppMirApplyCallableTemplateTypeOverlays(
+              rows, loweredProgram, standard, function, *candidate))
+        continue;
+      for (const auto &row : rows.types) {
+        if (!row.bodyTypeOverlay || row.type.kind != SemanticType::Lambda)
+          continue;
+        if (std::find(closureDimensions.begin(), closureDimensions.end(),
+                      row.spelling) == closureDimensions.end())
+          closureDimensions.push_back(row.spelling);
+        if (candidate->id != instance.id)
+          continue;
+        const auto lambda = std::find_if(
+            mir.lambdaInstances().begin(), mir.lambdaInstances().end(),
+            [&](const auto &value) { return value.type == row.type; });
+        if (lambda == mir.lambdaInstances().end())
+          throw std::logic_error(
+              "callable selector lost its MIR lambda identity");
+        identities.emplace_back(row.spelling, lambda->id);
+      }
+    }
+    std::sort(closureDimensions.begin(), closureDimensions.end());
+    for (const auto &dimension : closureDimensions) {
+      const auto identity = std::find_if(
+          identities.begin(), identities.end(),
+          [&](const auto &entry) { return entry.first == dimension; });
+      terms.push_back(
+          "(::gti_internal::backend::mir_lambda_identity_v<" + dimension +
+          "> == " +
+          std::to_string(identity == identities.end() ? 0 : identity->second) +
+          ")");
+    }
+    const auto spelling = [&](const SemanticType &type) {
+      const auto text = cppSemanticTypeSpelling(loweredProgram, standard, type);
+      if (text.empty())
+        throw std::logic_error(
+            "callable signature selector has an unspellable type");
+      return text;
+    };
+    // Every variant uses the same selector dimensions. Omitting an unnameable
+    // dimension for only one instance would make its predicate overlap another
+    // variant. A remaining indistinguishable body difference still fails
+    // closed.
+    if (std::all_of(selectorFamily.begin(), selectorFamily.end(),
+                    [&](const auto *candidate) {
+                      return loweredTypeIsNameable(candidate->returnType);
+                    }))
+      terms.push_back("std::is_same_v<" + spelling(declaredReturn) + ", " +
+                      spelling(instance.returnType) + ">");
+    for (std::size_t index = 0; index < function.parameters.size(); ++index) {
+      const auto &parameter = function.parameters[index];
+      const auto &declaredType =
+          retainedOwner ? parameter.type : signature->parameterTypes[index];
+      if (parameter.pack) {
+        if (index + 1 != function.parameters.size())
+          throw std::logic_error(
+              "callable signature selector lost its final pack");
+        const bool nameable = std::all_of(
+            selectorFamily.begin(), selectorFamily.end(),
+            [&](const auto *candidate) {
+              return candidate->parameterTypes.size() >= index &&
+                     std::all_of(candidate->parameterTypes.begin() + index,
+                                 candidate->parameterTypes.end(),
+                                 [&](const auto &type) {
+                                   return loweredTypeIsNameable(type);
+                                 });
+            });
+        if (!nameable)
+          continue;
+        std::string concrete = "std::tuple<";
+        for (std::size_t element = index;
+             element < instance.parameterTypes.size(); ++element) {
+          if (element != index)
+            concrete += ", ";
+          concrete += spelling(instance.parameterTypes[element]);
+        }
+        concrete += '>';
+        terms.push_back("std::is_same_v<std::tuple<" + spelling(declaredType) +
+                        "...>, " + concrete + ">");
+      } else if (std::all_of(selectorFamily.begin(), selectorFamily.end(),
+                             [&](const auto *candidate) {
+                               return index <
+                                          candidate->parameterTypes.size() &&
+                                      loweredTypeIsNameable(
+                                          candidate->parameterTypes[index]);
+                             })) {
+        terms.push_back("std::is_same_v<" + spelling(declaredType) + ", " +
+                        spelling(instance.parameterTypes[index]) + ">");
+      }
+    }
+    std::string condition;
+    for (const auto &term : terms) {
+      if (!condition.empty())
+        condition += " && ";
+      condition += term;
+    }
+    if (arityCondition.empty())
+      return condition;
+    // A conjunction does not guard formation of tuple_element_t in an
+    // indexed closure discriminator. Discard the entire selector expression
+    // for other arities before those types are instantiated. Its dimensions
+    // come only from same-arity instances, so every index is in range.
+    return "([]() constexpr { if constexpr (" + arityCondition + ") { return " +
+           (condition.empty() ? "true" : condition) +
+           "; } else { return false; } }())";
+  }
+
   [[nodiscard]] std::string loweredCallableTemplateBody(
       const LoweredFunctionDeclaration &function,
       const std::vector<const MirFunctionInstance *> &instances,
@@ -3806,6 +4864,7 @@ public:
     }
     const std::string_view familyLabel =
         failure ? "deduced-callable-failure-v1" : "deduced-callable-v1";
+    enum class ResultChannel { Value, Indirect, Failure };
     struct BodyVariant {
       // One canonical template body per parameter-cleanup shape: the bit at
       // each declared parameter index records whether that instance binding
@@ -3815,6 +4874,8 @@ public:
       // instantiation-time destructibility dispatch below reunites under the
       // single emitted template.
       std::vector<bool> cleanupShape;
+      ResultChannel resultChannel = ResultChannel::Value;
+      std::string signatureCondition;
       std::vector<std::string> banners;
       std::string canonical;
     };
@@ -3856,7 +4917,10 @@ public:
     for (const MirFunctionInstance *instance : instances) {
       const LoweredFunctionInstance *concrete =
           loweredFunctionInstance(instance->id);
+      const MirClassInstance *owner =
+          instance->owner ? mir.findClassInstance(*instance->owner) : nullptr;
       const bool lambdaTransport =
+          (owner != nullptr && loweredContainsLambdaType(owner->type)) ||
           std::any_of(instance->typeArguments.begin(),
                       instance->typeArguments.end(),
                       loweredContainsLambdaType) ||
@@ -3868,26 +4932,41 @@ public:
           loweredFunctionInstanceIsNameable(*concrete, *instance)) {
         continue;
       }
-      CppMirBodyEmissionMapRows rows{
-          .types = generalEmissionMap->types(),
-          .bodies = generalEmissionMap->bodies(),
-          .symbols = generalEmissionMap->symbols(),
-          .enums = generalEmissionMap->enums(),
-          .containedConstructors = generalEmissionMap->containedConstructors(),
-          .capabilities = generalEmissionMap->capabilities()};
-      const std::optional<std::size_t> overlays =
-          cppMirApplyCallableTemplateTypeOverlays(
-              rows, loweredProgram, standard, function, *instance);
-      if (!overlays || *overlays == 0) {
-        throw std::logic_error(
-            "lowered unnameable callable instance has no template type "
-            "overlay");
+      auto cached = callableTemplatePlans.find(instance->id);
+      if (cached == callableTemplatePlans.end()) {
+        CppMirBodyEmissionMapRows rows{
+            .types = generalEmissionMap->types(),
+            .bodies = generalEmissionMap->bodies(),
+            .symbols = generalEmissionMap->symbols(),
+            .enums = generalEmissionMap->enums(),
+            .containedConstructors =
+                generalEmissionMap->containedConstructors(),
+            .capabilities = generalEmissionMap->capabilities()};
+        const std::optional<std::size_t> overlays =
+            cppMirApplyCallableTemplateTypeOverlays(
+                rows, loweredProgram, standard, function, *instance);
+        if (!overlays || *overlays == 0) {
+          throw std::logic_error(
+              "lowered unnameable callable instance has no template type "
+              "overlay");
+        }
+        const MirBodyAddress address{.kind = MirBodyKind::Function,
+                                     .owner = instance->id};
+        cached = callableTemplatePlans
+                     .emplace(instance->id,
+                              std::make_unique<TemplateBodyPlan>(
+                                  mir, address, function.id, std::move(rows),
+                                  debugInfo ? std::span<const LoweredBody>(
+                                                  loweredProgram.bodies())
+                                            : std::span<const LoweredBody>{}))
+                     .first;
       }
-      const CppMirBodyEmissionMap overlay{std::move(rows)};
-      const CppMirBodyEmitter emitter(mir, overlay);
-      const MirBodyAddress address{.kind = MirBodyKind::Function,
-                                   .owner = instance->id};
-      const CppMirBodyEmissionPlan plan = emitter.buildPlan(address);
+      const auto &prepared = *cached->second;
+      if (prepared.declaration != function.id)
+        throw std::logic_error(
+            "callable template plan changed declaration identity");
+      const CppMirBodyEmitter emitter(mir, prepared.representations);
+      const CppMirBodyEmissionPlan &plan = prepared.plan;
       const bool supported =
           failure ? plan.supportsFailureText() : plan.supportsPlainText();
       if (!supported) {
@@ -3932,14 +5011,25 @@ public:
         cleanupShape[index] = parameterHasLexicalDrop(*instance, index);
       }
       BodyVariant *variant = nullptr;
+      const ResultChannel resultChannel =
+          failure ? ResultChannel::Failure
+          : cppRequiresIndirectValueTransport(mir, instance->returnType)
+              ? ResultChannel::Indirect
+              : ResultChannel::Value;
+      const std::string signatureCondition =
+          loweredCallableSignatureCondition(function, *instance, instances);
       for (BodyVariant &row : variants) {
-        if (row.cleanupShape == cleanupShape) {
+        if (row.cleanupShape == cleanupShape &&
+            row.resultChannel == resultChannel &&
+            row.signatureCondition == signatureCondition) {
           variant = &row;
           break;
         }
       }
       if (variant == nullptr) {
-        variants.push_back({.cleanupShape = std::move(cleanupShape)});
+        variants.push_back({.cleanupShape = std::move(cleanupShape),
+                            .resultChannel = resultChannel,
+                            .signatureCondition = signatureCondition});
         variant = &variants.back();
       }
       variant->banners.push_back(emission.text.substr(
@@ -3973,7 +5063,8 @@ public:
     };
     std::sort(variants.begin(), variants.end(),
               [](const BodyVariant &left, const BodyVariant &right) {
-                return left.cleanupShape < right.cleanupShape;
+                return std::tie(left.signatureCondition, left.cleanupShape) <
+                       std::tie(right.signatureCondition, right.cleanupShape);
               });
     if (variants.size() == 1) {
       return assemble(variants.front());
@@ -3988,11 +5079,15 @@ public:
     std::vector<std::size_t> varying;
     std::vector<std::string> varyingSpellings(function.parameters.size());
     for (std::size_t index = 0; index < function.parameters.size(); ++index) {
-      const bool first = variants.front().cleanupShape[index];
-      const bool varies = std::any_of(variants.begin(), variants.end(),
-                                      [&](const BodyVariant &row) {
-                                        return row.cleanupShape[index] != first;
-                                      });
+      const bool varies = std::any_of(
+          variants.begin(), variants.end(), [&](const BodyVariant &left) {
+            return std::any_of(
+                variants.begin(), variants.end(),
+                [&](const BodyVariant &right) {
+                  return left.signatureCondition == right.signatureCondition &&
+                         left.cleanupShape[index] != right.cleanupShape[index];
+                });
+          });
       if (!varies) {
         continue;
       }
@@ -4009,7 +5104,10 @@ public:
       varying.push_back(index);
       varyingSpellings[index] = spelling;
     }
-    if (varying.empty()) {
+    if (varying.empty() &&
+        std::any_of(variants.begin(), variants.end(), [](const auto &variant) {
+          return variant.signatureCondition.empty();
+        })) {
       throw std::logic_error(
           "lowered callable template has incompatible cleanup variants");
     }
@@ -4022,7 +5120,8 @@ public:
     const auto branch = [&](std::string_view condition,
                             const BodyVariant &variant) {
       std::string text = branchIndent + std::string(condition) + " {\n";
-      if (function.returnType == SemanticType::Void && !failure) {
+      if (variant.resultChannel == ResultChannel::Indirect ||
+          (function.returnType == SemanticType::Void && !failure)) {
         text += statementIndent + "[&]() -> void " + assemble(variant) +
                 "();\n" + statementIndent + "return;\n";
       } else {
@@ -4033,9 +5132,9 @@ public:
       return text;
     };
     const auto condition = [&](const BodyVariant &variant) {
-      std::string text = "if constexpr (";
+      std::string text = variant.signatureCondition;
       for (std::size_t position = 0; position < varying.size(); ++position) {
-        if (position != 0) {
+        if (!text.empty()) {
           text += " && ";
         }
         const std::size_t index = varying[position];
@@ -4045,18 +5144,24 @@ public:
         text +=
             "std::is_trivially_destructible_v<" + varyingSpellings[index] + ">";
       }
-      text += ")";
       return text;
     };
     std::string assembled = "{\n";
     for (std::size_t index = 0; index < variants.size(); ++index) {
-      const bool last = index + 1 == variants.size();
-      const std::string label = last ? std::string("else")
-                                : index == 0
-                                    ? condition(variants[index])
-                                    : "else " + condition(variants[index]);
+      const std::string label =
+          (index == 0 ? "if constexpr (" : "else if constexpr (") +
+          condition(variants[index]) + ")";
       assembled += branch(label, variants[index]);
     }
+    assembled += branchIndent + "else {\n" + statementIndent + "static_assert(";
+    for (std::size_t index = 0; index < variants.size(); ++index) {
+      if (index != 0)
+        assembled += " || ";
+      assembled += "(" + condition(variants[index]) + ")";
+    }
+    assembled +=
+        ", \"no verified MIR callable instance for this representation\");\n" +
+        branchIndent + "}\n";
     assembled += std::string(indentation * 2, ' ') + "}\n";
     return assembled;
   }
@@ -4104,31 +5209,27 @@ public:
       return;
     }
 
-    const std::string callableFailure =
-        loweredCallableTemplateBody(function, instances, true);
-    const std::string callableNormal =
-        loweredCallableTemplateBody(function, instances, false);
-    const bool threadTaskTemplate =
-        loweredFunctionNeedsThreadTaskTemplate(instances);
-    if (!callableFailure.empty()) {
-      emitLoweredTemplateDeclaration(function.genericParameters,
-                                     threadTaskTemplate);
-      writeIndent();
-      emitLoweredFunctionSignature(row, function, nullptr, true, false, {},
-                                   true);
-      output << ' ' << callableFailure;
-    }
-    if (!callableNormal.empty()) {
-      emitLoweredTemplateDeclaration(function.genericParameters,
-                                     threadTaskTemplate);
-      writeIndent();
-      emitLoweredFunctionSignature(row, function, nullptr, false, false, {},
-                                   true);
-      output << ' ' << callableNormal;
-    }
     for (const MirFunctionInstance *instance : instances) {
       const LoweredFunctionInstance *concrete =
           loweredFunctionInstance(instance->id);
+      if (concrete != nullptr &&
+          cppCallableFreeFunctionSpelling(loweredProgram, row, function,
+                                          *concrete, *instance)) {
+        for (const bool failure : {false, true}) {
+          const std::string body =
+              loweredCallableTemplateBody(function, {instance}, failure);
+          if (body.empty())
+            continue;
+          emitLoweredTemplateDeclaration(
+              function.genericParameters,
+              loweredFunctionNeedsThreadTaskTemplate({instance}));
+          writeIndent();
+          emitLoweredFunctionSignature(row, function, instance, failure, false,
+                                       {}, true);
+          output << ' ' << body;
+        }
+        continue;
+      }
       if (concrete == nullptr ||
           !loweredFunctionInstanceIsNameable(*concrete, *instance)) {
         continue;
@@ -4222,8 +5323,9 @@ public:
       output << "::";
     }
     output << classRow.name;
-    if (declaration->exactSpecializationPrimary != 0) {
-      output << loweredExactClassArguments(*declaration);
+    if (declaration->exactSpecializationPrimary != 0 ||
+        !declaration->genericArgumentPatterns.empty()) {
+      output << loweredDeclaredClassArguments(*declaration);
       return;
     }
     if (declaration->genericParameters.empty()) {
@@ -4489,11 +5591,11 @@ public:
           writeIndent();
           output << "template <> bool " << ownerSpelling
                  << "::" << lifecycleFailureDispatchName()
-                 << "(::gti_failure_record_v1 *);\n";
+                 << "(::gti_failure_record_v2 *);\n";
           writeIndent();
           output << "template <> bool " << ownerSpelling
                  << "::" << lifecycleFailureBodyName()
-                 << "(::gti_failure_record_v1 *);\n";
+                 << "(::gti_failure_record_v2 *);\n";
         }
       }
       emitLoweredNamespaceClose(namespaceCount);
@@ -4519,8 +5621,9 @@ public:
       if (declaration == nullptr) {
         return;
       }
-      if (declaration->exactSpecializationPrimary != 0) {
-        result += loweredExactClassArguments(*declaration);
+      if (declaration->exactSpecializationPrimary != 0 ||
+          !declaration->genericArgumentPatterns.empty()) {
+        result += loweredDeclaredClassArguments(*declaration);
         return;
       }
       if (declaration->genericParameters.empty()) {
@@ -4571,10 +5674,17 @@ public:
                        });
   }
 
-  void emitLoweredVirtualFailureBoundaryWrapper(
+  void emitLoweredVirtualFailureBoundaryBody(
       const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
-      const MirFunctionInstance &instance, std::string_view ownerSpelling,
-      bool explicitSpecialization) {
+      const MirFunctionInstance &instance, bool sourceSignature) {
+    const bool indirectResult =
+        cppRequiresIndirectValueTransport(mir, instance.returnType);
+    const bool placementResult =
+        instance.returnType.kind == SemanticType::Class ||
+        instance.returnType.kind == SemanticType::Lambda ||
+        cppMirOwningArrayPlacementResult(mir, instance.returnType) ||
+        cppMirExpectedClassPlacementResult(mir, *generalEmissionMap,
+                                           instance.returnType);
     const MirFunctionInstance *root =
         cppMirVirtualFailureContractRoot(mir, instance);
     if (root == nullptr ||
@@ -4582,24 +5692,25 @@ public:
       throw std::logic_error(
           "lowered virtual failure body lost its contract root");
     }
-    writeIndent();
-    if (explicitSpecialization) {
-      output << "template <> ";
-    }
-    emitLoweredFunctionSignature(row, function, &instance, false, false,
-                                 ownerSpelling, false,
-                                 !function.genericParameters.empty());
-    output << " {\n";
+    output << "{\n";
     ++indentation;
     writeIndent();
-    output << "::gti_failure_record_v1 __gti_failure_record{};\n";
-    if (instance.returnType.kind == SemanticType::Reference) {
+    output << "::gti_failure_record_v2 __gti_failure_record{};\n";
+    if (indirectResult) {
+      // The ordinary internal signature already supplies final result storage.
+      // Forward it rather than returning a native record through C++ copying.
+    } else if (instance.returnType.kind == SemanticType::Reference) {
       writeIndent();
       if (instance.returnType.referenceAccess == AccessMode::ReadOnly) {
         output << "const ";
       }
       emitSemanticType(instance.returnType.arguments.front());
       output << " *__gti_result = nullptr;\n";
+    } else if (placementResult) {
+      writeIndent();
+      output << "::gti_internal::backend::mir_lifetime_slot<";
+      emitSemanticType(instance.returnType);
+      output << ", true> __gti_result;\n";
     } else if (instance.returnType != SemanticType::Void) {
       writeIndent();
       emitSemanticType(instance.returnType);
@@ -4613,18 +5724,42 @@ public:
     output << cppMirFailureSiblingSpelling(
                   loweredFunctionInstanceSpelling(row, function, &instance))
            << '(';
-    for (std::size_t index = 0; index < instance.parameterTypes.size();
-         ++index) {
+    const std::size_t parameterCount = sourceSignature
+                                           ? function.parameters.size()
+                                           : instance.parameterTypes.size();
+    for (std::size_t index = 0; index < parameterCount; ++index) {
       if (index != 0) {
         output << ", ";
       }
+      if (sourceSignature) {
+        // The signature has already been projected and exact-checked against
+        // MIR. C++ forwarding here preserves its native value/reference ABI;
+        // it does not infer a GTI ownership or overload decision.
+        output << "std::forward<decltype(__gti_mir_arg_" << index
+               << ")>(__gti_mir_arg_" << index << ')';
+        if (function.parameters[index].pack)
+          output << "...";
+        continue;
+      }
+      const bool transfer =
+          instance.parameterTypes[index].kind != SemanticType::Reference;
+      if (transfer) {
+        output << "std::move(";
+      }
       output << "__gti_mir_arg_" << index;
+      if (transfer) {
+        output << ')';
+      }
     }
-    if (!instance.parameterTypes.empty()) {
+    if (parameterCount != 0) {
       output << ", ";
     }
     if (instance.returnType != SemanticType::Void) {
-      output << "&__gti_result, ";
+      output << (indirectResult    ? "__gti_mir_out_result, "
+                 : placementResult ? "__gti_result.construction_address(), "
+                                   : "&__gti_result, ");
+    } else if (cppFunctionHasFailureResultChannel(loweredProgram, function)) {
+      output << "static_cast<void *>(nullptr), ";
     }
     output << "&__gti_failure_record)) {\n";
     ++indentation;
@@ -4632,13 +5767,103 @@ public:
     --indentation;
     writeIndent();
     output << "}\n";
-    if (instance.returnType.kind == SemanticType::Reference) {
+    if (placementResult && !indirectResult) {
+      writeIndent();
+      output << "__gti_result.mark_constructed();\n";
+    }
+    if (indirectResult) {
+      writeIndent();
+      output << "return;\n";
+    } else if (instance.returnType.kind == SemanticType::Reference) {
       writeIndent();
       output << "return *__gti_result;\n";
+    } else if (placementResult) {
+      writeIndent();
+      output << "return std::move(__gti_result.get());\n";
     } else if (instance.returnType != SemanticType::Void) {
       writeIndent();
       output << "return __gti_result;\n";
     }
+    --indentation;
+    writeIndent();
+    output << "}\n";
+  }
+
+  void emitLoweredVirtualFailureBoundaryWrapper(
+      const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
+      const MirFunctionInstance &instance, std::string_view ownerSpelling,
+      bool explicitSpecialization, bool sourceSignature = false) {
+    writeIndent();
+    if (explicitSpecialization)
+      output << "template <> ";
+    emitLoweredFunctionSignature(
+        row, function, sourceSignature ? nullptr : &instance, false, false,
+        ownerSpelling, sourceSignature, !function.genericParameters.empty());
+    output << ' ';
+    emitLoweredVirtualFailureBoundaryBody(row, function, instance,
+                                          sourceSignature);
+  }
+
+  void emitLoweredVirtualFailureBoundaryFamily(
+      const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
+      const std::vector<const MirFunctionInstance *> &instances,
+      std::string_view ownerSpelling) {
+    if (instances.empty())
+      throw std::logic_error(
+          "virtual boundary family has no concrete instance");
+    std::vector<std::pair<std::string, const MirFunctionInstance *>> variants;
+    for (const auto *instance : instances) {
+      if (!cppMirCallableTemplateSignature(loweredProgram, function, *instance))
+        throw std::logic_error(
+            "virtual boundary family lost its exact signature projection");
+      const auto condition =
+          loweredCallableSignatureCondition(function, *instance, instances);
+      const auto existing = std::find_if(
+          variants.begin(), variants.end(),
+          [&](const auto &variant) { return variant.first == condition; });
+      if (existing == variants.end()) {
+        variants.emplace_back(condition, instance);
+      } else if (existing->second->returnType != instance->returnType ||
+                 existing->second->parameterTypes != instance->parameterTypes) {
+        throw std::logic_error(
+            "virtual boundary signatures have no distinct native selectors");
+      }
+    }
+    if (variants.size() == 1) {
+      emitLoweredVirtualFailureBoundaryWrapper(
+          row, function, *variants.front().second, ownerSpelling, false, true);
+      return;
+    }
+    if (std::any_of(variants.begin(), variants.end(),
+                    [](const auto &variant) { return variant.first.empty(); }))
+      throw std::logic_error(
+          "virtual boundary family has an unguarded signature variant");
+    writeIndent();
+    emitLoweredFunctionSignature(row, function, nullptr, false, false,
+                                 ownerSpelling, true);
+    output << " {\n";
+    ++indentation;
+    for (std::size_t index = 0; index < variants.size(); ++index) {
+      writeIndent();
+      output << (index == 0 ? "if constexpr (" : "else if constexpr (")
+             << variants[index].first << ") ";
+      emitLoweredVirtualFailureBoundaryBody(row, function,
+                                            *variants[index].second, true);
+    }
+    writeIndent();
+    output << "else {\n";
+    ++indentation;
+    writeIndent();
+    output << "static_assert(";
+    for (std::size_t index = 0; index < variants.size(); ++index) {
+      if (index != 0)
+        output << " || ";
+      output << '(' << variants[index].first << ')';
+    }
+    output << ", \"no verified MIR virtual boundary for this signature\");\n";
+    --indentation;
+    writeIndent();
+    output << "}\n";
     --indentation;
     writeIndent();
     output << "}\n";
@@ -4654,9 +5879,14 @@ public:
       const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
       const MirFunctionInstance &instance, std::string_view ownerSpelling,
       bool explicitSpecialization) {
+    const bool indirectResult =
+        cppRequiresIndirectValueTransport(mir, instance.returnType);
     const bool placementResult =
         instance.returnType.kind == SemanticType::Class ||
-        instance.returnType.kind == SemanticType::Lambda;
+        instance.returnType.kind == SemanticType::Lambda ||
+        cppMirOwningArrayPlacementResult(mir, instance.returnType) ||
+        cppMirExpectedClassPlacementResult(mir, *generalEmissionMap,
+                                           instance.returnType);
     writeIndent();
     if (explicitSpecialization) {
       output << "template <> ";
@@ -4666,8 +5896,10 @@ public:
     output << " {\n";
     ++indentation;
     writeIndent();
-    output << "::gti_failure_record_v1 __gti_failure_record{};\n";
-    if (instance.returnType.kind == SemanticType::Reference) {
+    output << "::gti_failure_record_v2 __gti_failure_record{};\n";
+    if (indirectResult) {
+      // Preserve the internal byte-transport result convention at the adapter.
+    } else if (instance.returnType.kind == SemanticType::Reference) {
       writeIndent();
       if (instance.returnType.referenceAccess == AccessMode::ReadOnly) {
         output << "const ";
@@ -4694,14 +5926,28 @@ public:
       if (index != 0) {
         output << ", ";
       }
+      const bool transfer =
+          instance.parameterTypes[index].kind != SemanticType::Reference;
+      if (transfer) {
+        output << "std::move(";
+      }
       output << "__gti_mir_arg_" << index;
+      if (transfer) {
+        output << ')';
+      }
     }
     if (!instance.parameterTypes.empty()) {
       output << ", ";
     }
+    if (function.tracksCaller) {
+      output << "__gti_mir_caller_site, ";
+    }
     if (instance.returnType != SemanticType::Void) {
-      output << (placementResult ? "__gti_result.construction_address(), "
-                                 : "&__gti_result, ");
+      output << (indirectResult    ? "__gti_mir_out_result, "
+                 : placementResult ? "__gti_result.construction_address(), "
+                                   : "&__gti_result, ");
+    } else if (cppFunctionHasFailureResultChannel(loweredProgram, function)) {
+      output << "static_cast<void *>(nullptr), ";
     }
     output << "&__gti_failure_record)) {\n";
     ++indentation;
@@ -4709,11 +5955,14 @@ public:
     --indentation;
     writeIndent();
     output << "}\n";
-    if (placementResult) {
+    if (placementResult && !indirectResult) {
       writeIndent();
       output << "__gti_result.mark_constructed();\n";
     }
-    if (instance.returnType.kind == SemanticType::Reference) {
+    if (indirectResult) {
+      writeIndent();
+      output << "return;\n";
+    } else if (instance.returnType.kind == SemanticType::Reference) {
       writeIndent();
       output << "return *__gti_result;\n";
     } else if (placementResult) {
@@ -4768,12 +6017,74 @@ public:
         output << ' ' << callableNormal;
       }
     }
+    if (genericOwner) {
+      std::vector<const MirFunctionInstance *> dependentOwners;
+      for (const MirFunctionInstance *instance : instances) {
+        const MirClassInstance *ownerInstance =
+            instance->owner ? mir.findClassInstance(*instance->owner) : nullptr;
+        if (ownerInstance != nullptr &&
+            !loweredTypeIsNameable(ownerInstance->type)) {
+          dependentOwners.push_back(instance);
+        }
+      }
+      for (const bool failure : {false, true}) {
+        if (!failure && !function.virtualMethod &&
+            classBoundByteTransport(function.returnType, function.ownerClass)) {
+          for (bool indirect : {false, true}) {
+            std::vector<const MirFunctionInstance *> selected;
+            std::copy_if(dependentOwners.begin(), dependentOwners.end(),
+                         std::back_inserter(selected),
+                         [&](const auto *instance) {
+                           return cppRequiresIndirectValueTransport(
+                                      mir, instance->returnType) == indirect;
+                         });
+            const std::string body =
+                loweredCallableTemplateBody(function, selected, failure);
+            if (body.empty())
+              continue;
+            emitLoweredClassTemplateHeaders(owner);
+            emitLoweredTemplateDeclaration(function.genericParameters);
+            writeIndent();
+            emitLoweredFunctionSignature(row, function, nullptr, failure, false,
+                                         loweredPrimaryClassSpelling(owner),
+                                         true, false, indirect);
+            output << ' ' << body;
+          }
+          continue;
+        }
+        const std::string body =
+            loweredCallableTemplateBody(function, dependentOwners, failure);
+        if (body.empty()) {
+          continue;
+        }
+        emitLoweredClassTemplateHeaders(owner);
+        emitLoweredTemplateDeclaration(function.genericParameters);
+        writeIndent();
+        emitLoweredFunctionSignature(row, function, nullptr, failure, false,
+                                     loweredPrimaryClassSpelling(owner), true);
+        output << ' ' << body;
+        if (failure && function.virtualMethod && !dependentOwners.empty()) {
+          // This native vtable bridge contains failure at an ordinary C++
+          // boundary; GTI callers use the verified status-returning sibling.
+          // The closed family retains one bridge per exact signature selector;
+          // every selected body still comes from its concrete verified MIR.
+          emitLoweredClassTemplateHeaders(owner);
+          emitLoweredVirtualFailureBoundaryFamily(
+              row, function, dependentOwners,
+              loweredPrimaryClassSpelling(owner));
+        }
+      }
+    }
     if (genericOwner && !function.genericParameters.empty()) {
       std::vector<HirClassInstanceId> emittedOwners;
       for (const MirFunctionInstance *instance : instances) {
         const LoweredFunctionInstance *concrete =
             loweredFunctionInstance(instance->id);
+        const MirClassInstance *ownerInstance =
+            instance->owner ? mir.findClassInstance(*instance->owner) : nullptr;
         if (!instance->owner || concrete == nullptr ||
+            (ownerInstance != nullptr &&
+             !loweredTypeIsNameable(ownerInstance->type)) ||
             loweredFunctionInstanceIsNameable(*concrete, *instance) ||
             std::find(emittedOwners.begin(), emittedOwners.end(),
                       *instance->owner) != emittedOwners.end()) {
@@ -4818,6 +6129,10 @@ public:
       }
     }
     for (const MirFunctionInstance *instance : instances) {
+      const auto *nameableInstance = loweredFunctionInstance(instance->id);
+      if (nameableInstance == nullptr ||
+          !loweredFunctionInstanceIsNameable(*nameableInstance, *instance))
+        continue;
       if (!loweredNormalBodySupported(*instance) &&
           !loweredFailureBodySupported(*instance)) {
         continue;
@@ -4905,7 +6220,7 @@ public:
       output << ", ";
     }
     output << "bool *__gti_mir_constructor_success, "
-              "::gti_failure_record_v1 *__gti_mir_failure_record";
+              "::gti_failure_record_v2 *__gti_mir_failure_record";
   }
 
   void emitLoweredGenericOwnerConstructorParameters(
@@ -4920,7 +6235,7 @@ public:
       if (separator) {
         output << ", ";
       }
-      emitLoweredParameters(constructor.parameters, true);
+      emitLoweredParameters(constructor.parameters, true, constructor.owner);
       separator = true;
     }
     if (!failure) {
@@ -4930,7 +6245,7 @@ public:
       output << ", ";
     }
     output << "bool *__gti_mir_constructor_success, "
-              "::gti_failure_record_v1 *__gti_mir_failure_record";
+              "::gti_failure_record_v2 *__gti_mir_failure_record";
   }
 
   [[nodiscard]] static std::string
@@ -4950,6 +6265,45 @@ public:
     return body;
   }
 
+  [[nodiscard]] static std::string
+  loweredConstructorRepresentationText(std::string body) {
+    body = loweredBodyWithoutInstanceMarker(std::move(body));
+    // Both owned class and closure parameters can publish exclusively in the
+    // proved native member initializer list. Their MIR writers describe that
+    // same no-op Initialize differently. Compare executable representation,
+    // not those two diagnostic comments; every other line remains exact.
+    constexpr std::string_view fieldPublication =
+        "// field initialization publishes in the member initializer list";
+    constexpr std::string_view closurePrefix = "// closure local ";
+    constexpr std::string_view closureSuffix = " joins the fused chain";
+    for (std::size_t start = 0; start < body.size();) {
+      const std::size_t end = body.find('\n', start);
+      const std::size_t length =
+          (end == std::string::npos ? body.size() : end) - start;
+      std::string_view line(body.data() + start, length);
+      const std::size_t first = line.find_first_not_of(" \t");
+      if (first != std::string_view::npos)
+        line.remove_prefix(first);
+      bool closurePublication = false;
+      if (line.size() >= closurePrefix.size() + closureSuffix.size() &&
+          line.starts_with(closurePrefix) && line.ends_with(closureSuffix)) {
+        const std::string_view identity = line.substr(
+            closurePrefix.size(),
+            line.size() - closurePrefix.size() - closureSuffix.size());
+        closurePublication =
+            !identity.empty() &&
+            std::all_of(identity.begin(), identity.end(),
+                        [](char c) { return c >= '0' && c <= '9'; });
+      }
+      if (line == fieldPublication || closurePublication) {
+        body.erase(start, length + (end != std::string::npos ? 1 : 0));
+      } else {
+        start += length + (end != std::string::npos ? 1 : 0);
+      }
+    }
+    return body;
+  }
+
   void emitLoweredConstructorDefinition(
       const LoweredDeclaration &row,
       const LoweredConstructorDeclaration &constructor,
@@ -4959,7 +6313,13 @@ public:
     const bool generic =
         loweredOwnerIsGeneric(owner) || !constructor.genericParameters.empty();
     const bool genericOwner = loweredOwnerIsGeneric(owner);
-    std::optional<std::string> genericNormalBody;
+    struct GenericNormalBody {
+      const MirConstructorInstance *instance = nullptr;
+      std::vector<bool> cleanup;
+      std::string text;
+      std::string initializers;
+    };
+    std::vector<GenericNormalBody> genericNormalBodies;
     for (const MirConstructorInstance *instance : instances) {
       if (instance->definitionKind != MirDefinitionKind::Source) {
         continue;
@@ -4982,9 +6342,9 @@ public:
           directOwner ||
           (!genericOwner && !constructor.genericParameters.empty() &&
            loweredConstructorInstanceIsNameable(*instance));
-      const bool unnameableOwner = ownerInstance != nullptr &&
-                                   !loweredTypeIsNameable(ownerInstance->type);
-      if (unnameableOwner) {
+      const bool unnameableConstructor =
+          !loweredConstructorInstanceIsNameable(*instance);
+      if (unnameableConstructor) {
         if (!genericNormal && !genericFailure) {
           throw std::logic_error(
               "unnameable generic-owner constructor has no source-template "
@@ -5021,24 +6381,38 @@ public:
         }
         if (genericNormal) {
           const std::string normalized =
-              loweredBodyWithoutInstanceMarker(*genericNormal);
-          if (genericNormalBody && *genericNormalBody != normalized) {
-            throw std::logic_error(
-                "generic-owner constructor instances do not share one "
-                "source-template MIR representation");
+              loweredConstructorRepresentationText(*genericNormal);
+          std::vector<bool> cleanup;
+          for (const HirBindingId binding : instance->parameterBindings) {
+            cleanup.push_back(std::any_of(
+                instance->body.dropObligations.begin(),
+                instance->body.dropObligations.end(),
+                [&](const MirDropObligation &drop) {
+                  return drop.kind == MirDropObligationKind::Binding &&
+                         drop.binding == binding;
+                }));
           }
-          if (!genericNormalBody) {
-            genericNormalBody = normalized;
-            emitLoweredClassTemplateHeaders(owner);
-            emitLoweredTemplateDeclaration(constructor.genericParameters);
-            writeIndent();
-            output << loweredPrimaryClassSpelling(owner) << "::" << owner.name
-                   << '(';
-            emitLoweredGenericOwnerConstructorParameters(constructor, *instance,
-                                                         false);
-            output << ')';
-            emitGeneralMirConstructorInitializerList(*instance);
-            output << ' ' << *genericNormal;
+          std::ostringstream saved = std::move(output);
+          output = std::ostringstream{};
+          emitGeneralMirConstructorInitializerList(*instance);
+          std::string initializers = output.str();
+          output = std::move(saved);
+          const auto previous = std::find_if(
+              genericNormalBodies.begin(), genericNormalBodies.end(),
+              [&](const GenericNormalBody &body) {
+                return body.cleanup == cleanup;
+              });
+          if ((!genericNormalBodies.empty() &&
+               genericNormalBodies.front().initializers != initializers) ||
+              (previous != genericNormalBodies.end() &&
+               previous->text != normalized)) {
+            throw std::logic_error("generic-owner constructor instances have "
+                                   "incompatible MIR representations");
+          }
+          if (previous == genericNormalBodies.end()) {
+            genericNormalBodies.push_back({instance, std::move(cleanup),
+                                           normalized,
+                                           std::move(initializers)});
           }
         }
         continue;
@@ -5094,6 +6468,80 @@ public:
         emitGeneralMirConstructorBodyText(*instance);
       }
     }
+    if (!genericNormalBodies.empty()) {
+      const GenericNormalBody &first = genericNormalBodies.front();
+      emitLoweredClassTemplateHeaders(owner);
+      emitLoweredTemplateDeclaration(constructor.genericParameters);
+      writeIndent();
+      output << loweredPrimaryClassSpelling(owner) << "::" << owner.name << '(';
+      emitLoweredGenericOwnerConstructorParameters(constructor, *first.instance,
+                                                   false);
+      output << ')' << first.initializers << ' ';
+      if (genericNormalBodies.size() == 1) {
+        output << first.text;
+      } else {
+        std::vector<std::size_t> varying;
+        for (std::size_t index = 0; index < first.cleanup.size(); ++index) {
+          if (std::any_of(genericNormalBodies.begin(),
+                          genericNormalBodies.end(),
+                          [&](const GenericNormalBody &body) {
+                            return body.cleanup[index] != first.cleanup[index];
+                          })) {
+            if (index >= constructor.parameters.size() ||
+                constructor.parameters[index].type.kind !=
+                    SemanticType::TypeParameter) {
+              throw std::logic_error("generic constructor cleanup has no exact "
+                                     "template type discriminator");
+            }
+            varying.push_back(index);
+          }
+        }
+        if (varying.empty()) {
+          throw std::logic_error(
+              "generic constructor body variants lack a cleanup discriminator");
+        }
+        output << "{\n";
+        ++indentation;
+        for (std::size_t index = 0; index < genericNormalBodies.size();
+             ++index) {
+          const GenericNormalBody &body = genericNormalBodies[index];
+          writeIndent();
+          output << (index == 0 ? "if constexpr (" : "else if constexpr (");
+          bool separator = false;
+          for (const std::size_t parameter : varying) {
+            if (separator) {
+              output << " && ";
+            }
+            if (body.cleanup[parameter]) {
+              output << '!';
+            }
+            output << "std::is_trivially_destructible_v<"
+                   << cppSemanticTypeSpelling(
+                          loweredProgram, standard,
+                          constructor.parameters[parameter].type)
+                   << '>';
+            separator = true;
+          }
+          output << ") {\n";
+          ++indentation;
+          writeIndent();
+          output << "[&]() -> void " << body.text << "();\n";
+          --indentation;
+          writeIndent();
+          output << "}\n";
+        }
+        const std::string discriminator = cppSemanticTypeSpelling(
+            loweredProgram, standard,
+            constructor.parameters[varying.front()].type);
+        writeIndent();
+        output << "else { static_assert(!std::is_same_v<" << discriminator
+               << ", " << discriminator
+               << ">, \"unrepresented GTI constructor instance\"); }\n";
+        --indentation;
+        writeIndent();
+        output << "}\n";
+      }
+    }
     static_cast<void>(row);
   }
 
@@ -5109,6 +6557,7 @@ public:
     }
     const bool generic = loweredOwnerIsGeneric(owner);
     bool emitted = false;
+    bool retainedPrimaryEmitted = false;
     const bool hasConcreteOwnerInstance =
         loweredClassHasConcreteInstance(destructor.owner);
     for (const MirClassInstance &classInstance : mir.classInstances()) {
@@ -5123,8 +6572,12 @@ public:
       if (!classInstance.destructor) {
         continue;
       }
+      const bool retainedPrimary = !loweredTypeIsNameable(classInstance.type);
+      if (retainedPrimary && retainedPrimaryEmitted)
+        continue;
       const std::string ownerSpelling =
-          loweredClassUsesDirectRepresentation(classInstance)
+          retainedPrimary ? loweredPrimaryClassSpelling(owner)
+          : loweredClassUsesDirectRepresentation(classInstance)
               ? loweredConcreteClassName(classInstance.id)
           : generic ? loweredConcreteClassName(classInstance.id)
                     : loweredPrimaryClassSpelling(owner);
@@ -5133,8 +6586,10 @@ public:
       const std::string destructorName =
           directOwner ? loweredConcreteClassLeafName(classInstance.id)
                       : owner.name;
+      if (retainedPrimary)
+        emitLoweredClassTemplateHeaders(owner);
       writeIndent();
-      if (generic && !directOwner) {
+      if (generic && !directOwner && !retainedPrimary) {
         output << "template <> ";
       }
       output << ownerSpelling << "::~" << destructorName << "() noexcept ";
@@ -5145,6 +6600,7 @@ public:
       output << "{ " << loweredLifecycleCleanupName(classDeclaration->id)
              << "(); }\n";
       emitted = true;
+      retainedPrimaryEmitted = retainedPrimaryEmitted || retainedPrimary;
       if (!generic) {
         break;
       }
@@ -5171,6 +6627,8 @@ public:
       const auto direct =
           loweredConcreteLifecycleInstances.find(classRow->name);
       bool emitted = false;
+      bool deferredToDirectClass = false;
+      std::optional<std::pair<bool, std::string>> retainedBody;
       for (const CppMirGeneratedThunk &thunk : programPlan.thunks) {
         if (thunk.identity.kind != CppMirThunkKind::LifecycleCleanup) {
           continue;
@@ -5184,6 +6642,14 @@ public:
             cleanup->classInstance != direct->second) {
           continue;
         }
+        // A directly represented instance is an ordinary concrete class, not
+        // a specialization of this primary. Its own deferred row defines its
+        // lifecycle members, matching the declarations emitted for it.
+        if (direct == loweredConcreteLifecycleInstances.end() &&
+            loweredClassUsesDirectRepresentation(cleanup->classInstance)) {
+          deferredToDirectClass = true;
+          continue;
+        }
         const MirDestructorInstance *destructor =
             mir.findDestructorInstance(cleanup->destructorInstance);
         if (destructor == nullptr ||
@@ -5195,12 +6661,32 @@ public:
         }
         const bool concrete =
             cleanup->form == CppMirLifecycleCleanupForm::ConcreteSpecialization;
+        const bool retainedPrimary =
+            cleanup->form == CppMirLifecycleCleanupForm::RetainedPrimary;
+        std::optional<std::string> retainedText;
+        if (retainedPrimary) {
+          retainedText = loweredGenericOwnerDestructorBodyText(
+              *destructor, destructor->mayRaiseDefinedFailure);
+          const std::pair<bool, std::string> shape{
+              destructor->mayRaiseDefinedFailure,
+              loweredBodyWithoutInstanceMarker(*retainedText)};
+          if (retainedBody) {
+            if (*retainedBody != shape)
+              throw std::logic_error(
+                  "generic-owner destructor instances have incompatible MIR "
+                  "representations");
+            continue;
+          }
+          retainedBody = shape;
+        }
         const bool directConcrete =
             direct != loweredConcreteLifecycleInstances.end();
         const std::string ownerSpelling =
             concrete ? loweredConcreteClassName(cleanup->classInstance)
                      : loweredPrimaryClassSpelling(*classRow);
         const auto emitPrefix = [&] {
+          if (retainedPrimary)
+            emitLoweredClassTemplateHeaders(*classRow);
           writeIndent();
           if (concrete && !directConcrete) {
             output << "template <> ";
@@ -5208,20 +6694,25 @@ public:
         };
         const MirBodyAddress address{.kind = MirBodyKind::Destructor,
                                      .owner = destructor->id};
-        const bool failure = destructor->mayRaiseDefinedFailure &&
-                             generalMirBodyPlan(address).supportsFailureText();
+        const bool failure =
+            destructor->mayRaiseDefinedFailure &&
+            (retainedPrimary ||
+             generalMirBodyPlan(address).supportsFailureText());
         if (failure) {
           emitPrefix();
           output << "bool " << ownerSpelling
                  << "::" << lifecycleFailureBodyName()
-                 << "(::gti_failure_record_v1 "
+                 << "(::gti_failure_record_v2 "
                     "*__gti_mir_failure_record) ";
-          emitGeneralFailureDestructorBodyText(*destructor);
+          if (retainedText)
+            output << *retainedText;
+          else
+            emitGeneralFailureDestructorBodyText(*destructor);
 
           emitPrefix();
           output << "bool " << ownerSpelling
                  << "::" << lifecycleFailureDispatchName()
-                 << "(::gti_failure_record_v1 "
+                 << "(::gti_failure_record_v2 "
                     "*__gti_mir_failure_record) {\n";
           ++indentation;
           writeIndent();
@@ -5243,9 +6734,12 @@ public:
                << "::" << loweredLifecycleCleanupName(classDeclaration->id)
                << "() noexcept {\n";
         ++indentation;
+        writeIndent();
+        output << "if (::gti_internal::backend::"
+                  "mir_cleanup_emergency_abandonment()) { return; }\n";
         if (failure) {
           writeIndent();
-          output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+          output << "::gti_failure_record_v2 __gti_failure_record{};\n";
           writeIndent();
           output << "if (!" << lifecycleFailureDispatchName()
                  << "(&__gti_failure_record)) {\n";
@@ -5273,7 +6767,8 @@ public:
           writeIndent();
           output << "}\n";
         } else {
-          if (!generalMirBodyPlan(address).supportsPlainText()) {
+          if (!retainedPrimary &&
+              !generalMirBodyPlan(address).supportsPlainText()) {
             throw std::logic_error(
                 "lowered lifecycle cleanup has no admitted destructor "
                 "body");
@@ -5284,16 +6779,20 @@ public:
           writeIndent();
           output << loweredLifecycleActiveName(classDeclaration->id)
                  << " = false;\n";
-          emitGeneralMirDestructorBodyText(*destructor, "scalar-cfg-v1");
+          if (retainedText)
+            output << *retainedText;
+          else
+            emitGeneralMirDestructorBodyText(*destructor, "scalar-cfg-v1");
         }
         --indentation;
         writeIndent();
         output << "}\n\n";
         emitted = true;
       }
-      if (!emitted && (direct != loweredConcreteLifecycleInstances.end() ||
-                       !loweredOwnerIsGeneric(*classRow) ||
-                       loweredClassHasConcreteInstance(classDeclaration->id))) {
+      if (!emitted && !deferredToDirectClass &&
+          (direct != loweredConcreteLifecycleInstances.end() ||
+           !loweredOwnerIsGeneric(*classRow) ||
+           loweredClassHasConcreteInstance(classDeclaration->id))) {
         throw std::logic_error(
             "lowered active-drop class has no lifecycle generated item");
       }
@@ -5303,6 +6802,39 @@ public:
   }
 
   void emitLoweredMemberDefinitions() {
+    for (const LoweredConstructorInstance &candidate :
+         loweredProgram.constructorInstances()) {
+      if (candidate.declaration != 0)
+        continue;
+      const MirConstructorInstance *constructor =
+          mir.findConstructorInstance(candidate.id);
+      const MirClassInstance *instance = mir.findClassInstance(candidate.owner);
+      const LoweredDeclaration *owner =
+          instance == nullptr ? nullptr
+                              : loweredClassRow(instance->declaration);
+      if (constructor == nullptr || owner == nullptr)
+        throw std::logic_error("generated constructor lost its concrete owner");
+      const std::size_t namespaceCount =
+          emitLoweredNamespaceOpen(owner->namespaceScope);
+      const auto &plan = generalMirBodyPlan(
+          {.kind = MirBodyKind::Constructor, .owner = constructor->id});
+      for (const bool failure : {false, true}) {
+        if (!(failure ? plan.supportsFailureText() : plan.supportsPlainText()))
+          continue;
+        writeIndent();
+        output << loweredPrimaryClassSpelling(*owner) << "::" << owner->name
+               << '(';
+        emitLoweredConstructorParameters(*constructor, failure);
+        output << ')';
+        emitGeneralMirConstructorInitializerList(*constructor, failure);
+        output << ' ';
+        if (failure)
+          emitGeneralFailureConstructorBodyText(*constructor);
+        else
+          emitGeneralMirConstructorBodyText(*constructor);
+      }
+      emitLoweredNamespaceClose(namespaceCount);
+    }
     for (const LoweredDeclaration *row : loweredDeferredMembers) {
       const LoweredDeclaration *owner = loweredClassRow(row->ownerClass);
       if (owner == nullptr) {
@@ -5341,7 +6873,12 @@ public:
         throw std::logic_error(
             "object constant lost its exact concrete class type");
       }
-      loweredConstexprAggregateClasses.insert(aggregate->value->identity);
+      const auto &type = *aggregate->value->exactType;
+      if (std::find(loweredConstexprAggregateClasses.begin(),
+                    loweredConstexprAggregateClasses.end(),
+                    type) == loweredConstexprAggregateClasses.end()) {
+        loweredConstexprAggregateClasses.push_back(type);
+      }
       for (const ConstantAggregateField &field : aggregate->value->fields) {
         collectLoweredConstexprAggregateClasses(field.value);
       }
@@ -5386,6 +6923,7 @@ public:
     capture(plan, CppProgramTextRole::DeclarationTypeMemberLifecycle, [&] {
       emitLoweredGlobalStorageForwardDeclarations(0);
       emitLoweredTypeDefinitions();
+      emitLoweredCallableAdapterDefinitions();
       emitLoweredSourceDeclarations(0);
       emitLoweredStaticFieldDefinitions();
       emitLoweredMemberDefinitions();
@@ -5619,6 +7157,53 @@ public:
       output << "template <>\n"
                 "struct managed_thread_task_adapter<"
              << adapter.id << "> final {\n";
+      const auto emitCleanupHelper = [&](std::string_view name,
+                                         const SemanticType &type, bool slot) {
+        const auto cleanup = mirUniqueCleanupType(mir, type);
+        // These helpers run inside run_managed_task_adapter. A verified
+        // cleanup-emergency may use its private handoff to stop all remaining
+        // task cleanup; the public entry adapter remains noexcept.
+        output << "  template <typename Value>\n  static bool " << name
+               << "(Value &value) {\n"
+                  "    const auto pending = ::gti_runtime_detail::"
+                  "managed_task_cleanup_failure_kind();\n"
+                  "    if (pending == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1) "
+                  "return false;\n";
+        if (cleanup && cleanup->requiresActiveCleanup) {
+          output << "    const bool unwinding = pending == "
+                    "GTI_THREAD_WORKER_FAILURE_ORDINARY_V1;\n"
+                    "    ::gti_failure_record_v2 failure{};\n    const bool "
+                    "success = ";
+          if (slot)
+            output << "value.destroy_cleanup_with_failure(&failure, true, "
+                      "unwinding, "
+                      "[](auto &element, ::gti_failure_record_v2 *record, bool "
+                      "unwinding) { return "
+                   << cppMirCleanupValueExpression(mir, *cleanup, "element",
+                                                   "record", "unwinding")
+                   << "; });\n";
+          else
+            output << cppMirCleanupValueExpression(mir, *cleanup, "value",
+                                                   "&failure", "unwinding")
+                   << ";\n";
+          output
+              << "    if (!success && "
+                 "!::gti_runtime_detail::record_managed_task_cleanup_failure(\n"
+                 "        failure, &__gti_failure_artifact_descriptor_v1)) {\n"
+                 "      ::gti_rt_failure_terminate_v2(&failure, "
+                 "&__gti_failure_artifact_descriptor_v1, nullptr, nullptr);\n"
+                 "    }\n";
+        } else if (slot) {
+          output << "    value.destroy_if_engaged();\n";
+        }
+        output << "    return ::gti_runtime_detail::"
+                  "managed_task_cleanup_failure_kind() != "
+                  "GTI_THREAD_WORKER_FAILURE_CLEANUP_V1;\n"
+                  "  }\n\n";
+      };
+      emitCleanupHelper("cleanup_task", adapter.taskType, valueBearing);
+      if (valueBearing)
+        emitCleanupHelper("cleanup_result", adapter.resultType, true);
       if (valueBearing) {
         output << "  template <typename Task, typename Result>\n"
                   "  static void entry_value(void *raw) noexcept {\n"
@@ -5631,7 +7216,7 @@ public:
                   "*>(raw);\n";
       }
       output << "    ::gti_runtime_detail::run_managed_task_adapter([&] {\n"
-                "      ::gti_failure_record_v1 failure{};\n";
+                "      ::gti_failure_record_v2 failure{};\n";
       if (functionTarget != nullptr) {
         emitThreadTaskFunctionCall(adapter, *functionTarget);
       } else if (valueBearing) {
@@ -5676,7 +7261,7 @@ public:
     auto *box =
         static_cast<managed_thread_value_box<Task, Result> *>(raw);
     ::gti_runtime_detail::run_managed_task_adapter(
-        [&] { box->task.destroy(); });
+        [&] { cleanup_task(box->task); });
     return box;
   }
 
@@ -5685,8 +7270,8 @@ public:
     auto *box =
         static_cast<managed_thread_value_box<Task, Result> *>(raw);
     ::gti_runtime_detail::run_managed_task_adapter([&] {
-      box->result.destroy_if_engaged();
-      box->task.destroy_if_engaged();
+      if (!cleanup_result(box->result)) return;
+      if (!cleanup_task(box->task)) return;
       delete box;
     });
   }
@@ -5698,7 +7283,7 @@ public:
     ::gti_runtime_detail::run_managed_task_adapter([&] {
       std::construct_at(static_cast<Result *>(destination),
                         std::move(box->result.get()));
-      box->result.destroy();
+      if (!cleanup_result(box->result)) return;
       delete box;
     });
   }
@@ -5708,7 +7293,7 @@ public:
     auto *box =
         static_cast<managed_thread_value_box<Task, Result> *>(raw);
     ::gti_runtime_detail::run_managed_task_adapter([&] {
-      box->result.destroy();
+      if (!cleanup_result(box->result)) return;
       delete box;
     });
   }
@@ -5717,8 +7302,10 @@ public:
         output << "  template <typename Task>\n"
                   "  static void destroy(void *raw) noexcept {\n"
                   "    ::gti_runtime_detail::run_managed_task_adapter([&] {\n"
-                  "      delete static_cast<managed_thread_task_box<Task> "
+                  "      auto *box = static_cast<managed_thread_task_box<Task> "
                   "*>(raw);\n"
+                  "      if (!cleanup_task(box->task)) return;\n"
+                  "      delete box;\n"
                   "    });\n"
                   "  }\n";
       }
@@ -5797,7 +7384,7 @@ public:
           "verified native callback adapter has no return type");
     }
     output << "extern \"C\" ";
-    emitSemanticType(*returnType);
+    output << cppNativeTypeSpelling(loweredProgram, standard, *returnType);
     output << " __gti_native_callback_" << adapter.id << '(';
     const std::span<const SemanticType> parameters =
         adapter.type.nativeFunctionParameterTypes();
@@ -5805,7 +7392,8 @@ public:
       if (index != 0) {
         output << ", ";
       }
-      emitSemanticType(parameters[index]);
+      output << cppNativeTypeSpelling(loweredProgram, standard,
+                                      parameters[index]);
       if (parameterNames) {
         output << " __gti_callback_arg_" << index;
       }
@@ -5846,7 +7434,14 @@ public:
       if (index != 0) {
         output << ", ";
       }
-      output << "__gti_callback_arg_" << index;
+      if (adapter.type.nativeFunctionParameterTypes()[index].kind ==
+          SemanticType::StringView) {
+        output << "std::string_view(__gti_callback_arg_" << index
+               << ".data, static_cast<std::size_t>(__gti_callback_arg_" << index
+               << ".length))";
+      } else {
+        output << "__gti_callback_arg_" << index;
+      }
     }
   }
 
@@ -5887,6 +7482,28 @@ public:
             "path");
       }
 
+      const bool attached =
+          adapter.cThreadCallback != CThreadCallbackKind::None;
+      const auto emitAttachment = [&](bool entering) {
+        const char *symbol = nullptr;
+        switch (adapter.cThreadCallback) {
+        case CThreadCallbackKind::None:
+          return;
+        case CThreadCallbackKind::ThreadEntry:
+          symbol =
+              entering ? "gti_rt_cthread_enter_v1" : "gti_rt_cthread_leave_v1";
+          break;
+        case CThreadCallbackKind::OnceInitializer:
+          symbol = entering ? "gti_rt_once_enter_v1" : "gti_rt_once_leave_v1";
+          break;
+        }
+        if (symbol == nullptr) {
+          throw std::logic_error("invalid callback entry policy");
+        }
+        writeIndent();
+        output << "::" << symbol << "(&__gti_native_callback_" << adapter.id
+               << ");\n";
+      };
       writeIndent();
       emitNativeCallbackAdapterSignature(callback, true);
       output << " {\n";
@@ -5894,9 +7511,10 @@ public:
       writeIndent();
       output << "try {\n";
       ++indentation;
+      emitAttachment(true);
       if (target.mayRaiseDefinedFailure) {
         writeIndent();
-        output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+        output << "::gti_failure_record_v2 __gti_failure_record{};\n";
         if (returnType != SemanticType::Void) {
           writeIndent();
           emitSemanticType(returnType);
@@ -5916,7 +7534,7 @@ public:
         output << "&__gti_failure_record)) {\n";
         ++indentation;
         writeIndent();
-        output << "::gti_rt_failure_terminate_v1(\n";
+        output << "::gti_rt_failure_terminate_v2(\n";
         ++indentation;
         writeIndent();
         output << "&__gti_failure_record,\n";
@@ -5929,19 +7547,39 @@ public:
         --indentation;
         writeIndent();
         output << "}\n";
+        emitAttachment(false);
         if (returnType != SemanticType::Void) {
           writeIndent();
           output << "return __gti_result;\n";
+        } else {
+          writeIndent();
+          output << "return;\n";
         }
       } else {
+        const bool indirect =
+            cppRequiresIndirectValueTransport(mir, returnType);
         writeIndent();
-        if (returnType != SemanticType::Void) {
-          output << "return ";
+        if (indirect) {
+          emitSemanticType(returnType);
+          output << " __gti_result{};\n";
+          writeIndent();
+        } else if (returnType != SemanticType::Void) {
+          output << (attached ? "const auto __gti_result = " : "return ");
         }
         emitNativeCallbackTargetName(callback);
         output << '(';
         emitNativeCallbackArguments(callback);
+        if (indirect) {
+          if (!adapter.type.nativeFunctionParameterTypes().empty())
+            output << ", ";
+          output << "&__gti_result";
+        }
         output << ");\n";
+        emitAttachment(false);
+        if ((attached || indirect) && returnType != SemanticType::Void) {
+          writeIndent();
+          output << "return __gti_result;\n";
+        }
         if (returnType == SemanticType::Void) {
           writeIndent();
           output << "return;\n";
@@ -6045,7 +7683,7 @@ public:
             cppMirConstructedFieldInitializerBindings(mir, constructor);
     const bool bodyStagedOwnedParameters =
         failureForm && owner != nullptr &&
-        cppMirFailureConstructorEmptyStateEligible(mir, owner->id) &&
+        cppMirFailureConstructorEmptyFieldsEligible(mir, owner->id) &&
         bindings && bindings->empty() && baseBindings &&
         baseBindings->empty() && copiedBindings && copiedBindings->empty();
     if (!bindings || !baseBindings || !copiedBindings ||
@@ -6065,6 +7703,7 @@ public:
       std::vector<bool> movedParameters;
       std::vector<CppMirConstructedFieldInitializerArgument>
           constructedArguments;
+      HirConstructorInstanceId statusConstructor = 0;
     };
     std::vector<InitializerBinding> initializers;
     initializers.reserve(baseBindings->size() + bindings->size() +
@@ -6092,7 +7731,10 @@ public:
                               .initializer = binding.initializer,
                               .field = binding.field,
                               .fieldType = binding.fieldType,
-                              .constructedArguments = binding.arguments});
+                              .constructedArguments = binding.arguments,
+                              .statusConstructor = binding.failureStatus
+                                                       ? binding.constructor
+                                                       : 0});
     }
     if (ownedBindings) {
       for (const CppMirOwnedParameterFieldBinding &binding : *ownedBindings) {
@@ -6110,7 +7752,7 @@ public:
                                 .moved = true});
       }
     }
-    if (failureForm && owner != nullptr) {
+    if (owner != nullptr) {
       for (std::size_t index = 0; index < constructor.initializers.size();
            ++index) {
         const MirConstructorInitializer &initializer =
@@ -6135,6 +7777,9 @@ public:
                         })) {
           continue;
         }
+        // Both ordinary and failure-form bodies publish these fields from
+        // the same verified MIR schedule. Neither may invoke an unrelated
+        // source default constructor before that schedule begins.
         // Passive fields may retain their ordinary C++ default state until
         // verified MIR publishes them. A class field without a native default
         // constructor needs the exact private empty state proved for that
@@ -6167,6 +7812,27 @@ public:
       if (initializer.kind == BindingKind::Base) {
         emitSemanticType(initializer.baseType);
         output << '(';
+        const MirBlock *entry =
+            constructor.body.findBlock(constructor.body.entry);
+        const MirInstruction *baseStage =
+            failureForm && entry != nullptr && !entry->instructions.empty() &&
+                    entry->instructions.front().kind ==
+                        MirInstructionKind::InitializeBase &&
+                    entry->instructions.front().constructorInitializer ==
+                        initializer.initializer + 1
+                ? &entry->instructions.front()
+                : nullptr;
+        if (baseStage != nullptr) {
+          if (!baseStage->constructorTarget ||
+              !initializer.baseParameters.empty()) {
+            throw std::logic_error(
+                "MIR base initialization lost its exact zero-argument target");
+          }
+          output
+              << cppMirFailureConstructorTagSpelling(
+                     *baseStage->constructorTarget)
+              << "{}, __gti_mir_constructor_success, __gti_mir_failure_record";
+        }
         for (std::size_t argument = 0;
              argument < initializer.baseParameters.size(); ++argument) {
           if (argument != 0) {
@@ -6201,9 +7867,16 @@ public:
         output << fieldName << '(';
         emitSemanticType(initializer.fieldType);
         output << '(';
+        if (initializer.statusConstructor != 0) {
+          if (!failureForm)
+            throw std::logic_error("raising native field requires status form");
+          output << cppMirFailureConstructorTagSpelling(
+                        initializer.statusConstructor)
+                 << "{}";
+        }
         for (std::size_t argument = 0;
              argument < initializer.constructedArguments.size(); ++argument) {
-          if (argument != 0) {
+          if (argument != 0 || initializer.statusConstructor != 0) {
             output << ", ";
           }
           const CppMirConstructedFieldInitializerArgument &source =
@@ -6224,6 +7897,8 @@ public:
             }
           }
         }
+        if (initializer.statusConstructor != 0)
+          output << ", __gti_mir_constructor_success, __gti_mir_failure_record";
         output << "))";
         continue;
       }
@@ -6232,6 +7907,14 @@ public:
                << "(::gti_internal::backend::mir_empty_state_v1<"
                   "std::remove_cv_t<decltype("
                << fieldName << ")>>())";
+        continue;
+      }
+      if (initializer.parameter < constructor.parameterTypes.size() &&
+          cppRequiresIndirectValueTransport(
+              mir, constructor.parameterTypes[initializer.parameter])) {
+        // The shared binding proof still owns the source selection; passive
+        // native fields publish their bytes at the matching MIR Initialize.
+        output << fieldName << "{}";
         continue;
       }
       output << fieldName << '(';
@@ -6315,7 +7998,7 @@ public:
 
   void emitHostedFailureTermination() {
     writeIndent();
-    output << "::gti_rt_failure_terminate_v1(\n";
+    output << "::gti_rt_failure_terminate_v2(\n";
     ++indentation;
     writeIndent();
     output << "&__gti_failure_record,\n";
@@ -6347,7 +8030,7 @@ public:
     output << "static " << (moduleRuntimeMayRaise ? "bool" : "void")
            << " __gti_program_initialize(";
     if (moduleRuntimeMayRaise) {
-      output << "::gti_failure_record_v1 *__gti_mir_failure_record";
+      output << "::gti_failure_record_v2 *__gti_mir_failure_record";
     }
     output << ") " << emission.text << '\n';
 
@@ -6363,7 +8046,7 @@ public:
     ++indentation;
     if (moduleRuntimeMayRaise) {
       writeIndent();
-      output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+      output << "::gti_failure_record_v2 __gti_failure_record{};\n";
       writeIndent();
       output << "try {\n";
       ++indentation;
@@ -6446,6 +8129,21 @@ public:
           "lowered hosted startup lost its exact entry declaration");
     }
     const bool failure = entry->mayRaiseDefinedFailure;
+    const auto emitCThreadBoundary = [&](bool begin) {
+      const auto targetId = begin ? hosted->cThreadBegin : hosted->cThreadEnd;
+      if (targetId == 0) {
+        return;
+      }
+      const MirFunctionInstance *target = mir.findFunctionInstance(targetId);
+      if (target == nullptr ||
+          target->cThreadOperation != (begin ? CThreadRuntimeOperation::Begin
+                                             : CThreadRuntimeOperation::End)) {
+        throw std::logic_error(
+            "hosted C-thread boundary lost its exact target");
+      }
+      writeIndent();
+      output << "::" << target->externalSymbol << "();\n";
+    };
     const MirBodyAddress entryAddress{.kind = MirBodyKind::Function,
                                       .owner = entry->id};
     const CppMirBodyEmissionPlan &entryPlan = generalMirBodyPlan(entryAddress);
@@ -6463,18 +8161,20 @@ public:
         output << "\nint main() {\n";
         ++indentation;
         writeIndent();
-        output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+        output << "::gti_failure_record_v2 __gti_failure_record{};\n";
         writeIndent();
         output << "std::int32_t __gti_result{};\n";
         writeIndent();
         output << "try {\n";
         ++indentation;
         emitRuntimeModuleInitializationCall();
+        emitCThreadBoundary(true);
         writeIndent();
         output << "if (";
         emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration, true);
         output << "(&__gti_result, &__gti_failure_record)) {\n";
         ++indentation;
+        emitCThreadBoundary(false);
         writeIndent();
         output << "return __gti_result;\n";
         --indentation;
@@ -6499,7 +8199,7 @@ public:
         throw std::logic_error(
             "lowered no-argument entry has no failure-free startup schedule");
       }
-      if (!moduleRuntimeEmission) {
+      if (!moduleRuntimeEmission && !mir.requiresCThreadRuntime()) {
         output << "\nint main() { return ";
         emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration);
         output << "(); }\n";
@@ -6509,7 +8209,7 @@ public:
       ++indentation;
       if (moduleRuntimeMayRaise) {
         writeIndent();
-        output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+        output << "::gti_failure_record_v2 __gti_failure_record{};\n";
         writeIndent();
         output << "try {\n";
         ++indentation;
@@ -6526,10 +8226,14 @@ public:
       } else {
         emitRuntimeModuleInitializationCall();
       }
+      emitCThreadBoundary(true);
       writeIndent();
-      output << "return ";
+      output << "const auto __gti_result = ";
       emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration);
       output << "();\n";
+      emitCThreadBoundary(false);
+      writeIndent();
+      output << "return __gti_result;\n";
       --indentation;
       output << "}\n";
       return;
@@ -6571,7 +8275,7 @@ public:
     ++indentation;
     if (failure || moduleRuntimeMayRaise) {
       writeIndent();
-      output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+      output << "::gti_failure_record_v2 __gti_failure_record{};\n";
     }
     if (failure) {
       writeIndent();
@@ -6594,6 +8298,7 @@ public:
               "::gti_internal::backend::numeric_cast<std::int32_t>("
               "__gti_native_argc);\n";
     emitRuntimeModuleInitializationCall();
+    emitCThreadBoundary(true);
 
     if (failure) {
       writeIndent();
@@ -6660,6 +8365,7 @@ public:
       output << "(__gti_stabilized_argc, std::move(__gti_arguments), "
                 "&__gti_result, &__gti_failure_record)) {\n";
       ++indentation;
+      emitCThreadBoundary(false);
       writeIndent();
       output << "return __gti_result;\n";
       --indentation;
@@ -6676,9 +8382,12 @@ public:
       writeIndent();
       output << "}\n";
     } else {
-      output << "return ";
+      output << "const auto __gti_result = ";
       emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration);
       output << "(__gti_stabilized_argc, std::move(__gti_arguments));\n";
+      emitCThreadBoundary(false);
+      writeIndent();
+      output << "return __gti_result;\n";
     }
     --indentation;
     output << "}\n";
@@ -6760,8 +8469,7 @@ public:
     } else if (const auto *value = std::get_if<BinaryFloat>(&constant)) {
       emitFloat(*value);
     } else if (const auto *value = std::get_if<CharacterLiteral>(&constant)) {
-      output << "std::uint8_t{" << static_cast<unsigned int>(value->value)
-             << '}';
+      output << "char8_t{" << static_cast<unsigned int>(value->value) << '}';
     } else if (const auto *value = std::get_if<std::string>(&constant)) {
       output << cppMirStringViewLiteralSpelling(*value);
     } else if (const auto *value = std::get_if<bool>(&constant)) {
@@ -6892,7 +8600,7 @@ public:
       return;
     }
     if (const auto *character = std::get_if<CharacterLiteral>(&literal)) {
-      output << "std::uint8_t{" << static_cast<unsigned int>(character->value)
+      output << "char8_t{" << static_cast<unsigned int>(character->value)
              << '}';
       return;
     }
@@ -7008,6 +8716,7 @@ public:
   CppStandard standard;
   const MirProgram &mir;
   const LoweredProgram &loweredProgram;
+  bool debugInfo;
   CppMirProgramPlan programPlan;
   CppMirProgramEmissionPlan generalEmissionPlan;
   std::unordered_map<SymbolId, std::string> moduleGeneralInitializers;
@@ -7023,20 +8732,51 @@ public:
   std::unordered_set<SymbolId> loweredNamespaceStaticSymbols;
   std::vector<const LoweredDeclaration *> loweredDeferredStaticFields;
   std::vector<const LoweredDeclaration *> loweredDeferredMembers;
+  struct DeferredCallableAdapter {
+    LoweredDeclaration row;
+    LoweredFunctionDeclaration function;
+    LoweredDeclaration owner;
+  };
+  std::vector<DeferredCallableAdapter> loweredDeferredCallableAdapters;
   std::vector<LoweredDeclaration> loweredDeferredLifecycleClasses;
   std::unordered_map<std::string, HirClassInstanceId>
       loweredConcreteLifecycleInstances;
   std::unordered_set<ClassId> loweredNativePrimaryClasses;
   std::unordered_set<LoweredDeclarationId> loweredDeferredMemberIds;
   std::unordered_set<LoweredDeclarationId> loweredEmittedTypes;
-  std::unordered_set<ClassId> loweredConstexprAggregateClasses;
+  std::vector<SemanticType> loweredConstexprAggregateClasses;
   mutable std::optional<CppMirBodyEmitter> generalBodyEmitter;
+  // A planner owns one immutable LoweredProgram and representation map. Keep
+  // each fully validated overlay plan for declaration and definition emission
+  // instead of re-verifying the whole program at every spelling request.
+  // No plan crosses a planner/compilation boundary, and no validation is
+  // skipped when a plan is first constructed.
+  struct TemplateBodyPlan {
+    std::size_t declaration;
+    CppMirBodyEmissionMap representations;
+    CppMirBodyEmissionPlan plan;
+    TemplateBodyPlan(const MirProgram &program, MirBodyAddress address,
+                     std::size_t declaration, CppMirBodyEmissionMapRows rows,
+                     std::span<const LoweredBody> debugBodies)
+        : declaration(declaration), representations(std::move(rows)),
+          plan(CppMirBodyEmitter(program, representations, nullptr, debugBodies)
+                   .buildPlan(address)) {}
+  };
+  mutable std::unordered_map<HirConstructorInstanceId,
+                             std::unique_ptr<TemplateBodyPlan>>
+      constructorTemplatePlans;
+  mutable std::unordered_map<HirDestructorInstanceId,
+                             std::unique_ptr<TemplateBodyPlan>>
+      destructorTemplatePlans;
+  mutable std::unordered_map<HirFunctionInstanceId,
+                             std::unique_ptr<TemplateBodyPlan>>
+      callableTemplatePlans;
 };
 
 CppProgramEmissionPlan
-buildCppProgramEmissionPlan(const LoweredProgram &program,
-                            CppStandard standard) {
-  return CppProgramEmissionPlanner(program, standard).build();
+buildCppProgramEmissionPlan(const LoweredProgram &program, CppStandard standard,
+                            bool debugInfo) {
+  return CppProgramEmissionPlanner(program, standard, debugInfo).build();
 }
 
 } // namespace lang

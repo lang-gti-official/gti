@@ -1,0 +1,23 @@
+#include <std/utility>
+#include <std/string>
+
+class ReadView {
+  int& item;
+public:
+  ReadView(int& item) : item(item) {}
+  int& read() { return this.item; }
+};
+class Guard<T> {
+  T item;
+public:
+  Guard(T value) : item(std::move(value)) {}
+  ~Guard() { std::println(33); }
+};
+int main() {
+  mut int value = 33;
+  {
+    Guard<ReadView> guard{ReadView(value)};
+  }
+  value = 44;
+  return value - 44;
+}

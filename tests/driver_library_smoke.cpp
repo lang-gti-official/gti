@@ -5,6 +5,7 @@
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/project.h"
 #include "gti/driver/project_facts.h"
+#include "gti/driver/registry.h"
 
 #include <string>
 #include <type_traits>
@@ -15,7 +16,48 @@ static_assert(!std::is_default_constructible_v<lang::driver::ProjectFacts>);
 static_assert(std::is_copy_constructible_v<lang::driver::ProjectFacts>);
 static_assert(std::is_move_constructible_v<lang::driver::ProjectFacts>);
 
+class ProgressClient final : public lang::ProgressObserver {
+public:
+  unsigned events = 0;
+  void onProgress(const lang::ProgressEvent &) noexcept override { ++events; }
+};
+
 int main() {
+  // Registry algorithms/types are usable from installed LLVM-free headers.
+  auto registry = lang::driver::configuredRegistries();
+  auto credentials = lang::driver::systemRegistryCredentialStore();
+  // No protected-store query or platform types/languages are needed here.
+  auto authenticatedRegistry = lang::driver::configuredRegistries(credentials);
+  lang::driver::validateRegistryCredential({.secret = "synthetic-sdk-token"});
+  lang::driver::validateRegistryPasswordLogin(
+      {"sdk-user", "synthetic-password", ""});
+  const auto requirement =
+      lang::driver::PackageVersionRequirement::parse("^0.2.1");
+  const auto version = lang::driver::parsePackageVersion("0.2.9");
+  const auto archive = lang::driver::encodePackageArchive(
+      {{"gti.toml", "manifest-version = 1\n"},
+       {"src/unit.gti", "int value() { return 42; }\n"}});
+  if (!registry || !authenticatedRegistry || !credentials ||
+      credentials->name().empty() || !requirement || !version ||
+      !requirement->accepts(*version) ||
+      lang::driver::decodePackageArchive(archive).size() != 2 ||
+      !lang::driver::validPackageChecksum(
+          lang::driver::packageChecksum(archive))) {
+    return 9;
+  }
+  // An installed consumer can observe work without LLVM or CLI types in its
+  // public headers, and callbacks are not retained after the invocation.
+  ProgressClient progress;
+  const auto missingInputs = lang::driver::loadCompilationInputs(
+      lang::driver::CompilationRequest(
+          "gti-absent-progress-source.gti",
+          lang::standardLibraryLayout("missing-stdlib"),
+          lang::TargetInfo::host(), lang::OptimizationLevel::O0,
+          lang::CppStandard::Cpp23),
+      &progress);
+  if (missingInputs.succeeded() || progress.events != 3) {
+    return 7;
+  }
   const lang::driver::CompilationRequest compilation(
       "main.gti", lang::standardLibraryLayout("stdlib"),
       lang::TargetInfo{.os = "linux", .vendor = "unknown", .arch = "x86_64"},
@@ -23,8 +65,25 @@ int main() {
       {.capturePreMir = true, .capturePostMir = true, .captureReport = true});
   if (compilation.entry() != "main.gti" || compilation.target().os != "linux" ||
       compilation.standardLibrary().prelude != "stdlib/prelude.gti" ||
-      !compilation.optimizationOutputs().requested()) {
+      !compilation.optimizationOutputs().requested() ||
+      !compilation.packageWarnings().dependencyWarnings()) {
     return 1;
+  }
+
+  const lang::driver::PackageWarningPolicy packageWarnings(
+      false, "application@1.0.0",
+      {"library@1.0.0", "application@1.0.0", "library@1.0.0"});
+  const lang::SourceGraph unownedSources;
+  lang::Diagnostic diagnostic = lang::makeDiagnostic(
+      "GTI-S2096", lang::DiagnosticPhase::Semantics,
+      {"build/gti/deps/not-owned.gti", 0, 3, 1}, "test warning");
+  diagnostic.severity = lang::DiagnosticSeverity::Warning;
+  if (packageWarnings.dependencyWarnings() ||
+      packageWarnings.selectedPackage() != "application@1.0.0" ||
+      packageWarnings.dependencyPackages() !=
+          std::vector<std::string>{"library@1.0.0"} ||
+      packageWarnings.suppresses(diagnostic, unownedSources)) {
+    return 8;
   }
 
   lang::driver::NativeInputs inputs;

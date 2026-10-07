@@ -1,0 +1,28 @@
+#include <std/string>
+
+mut int drops = 0;
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() { drops++; }
+};
+
+class Holder {
+  Cleanup cleanup = Cleanup();
+public:
+  int operator()(int amount) mut { return amount; }
+};
+
+int later() {
+  // The generated field's lifetime must still reach the outer expression.
+  return drops == 0 ? 2 : 100;
+}
+
+int combine(int left, int right) { return left + right; }
+
+int main() {
+  Holder value{};
+  int result = combine(std::move(value)(3), later());
+  if (result != 5 || drops != 1) { return 1; }
+  return 0;
+}

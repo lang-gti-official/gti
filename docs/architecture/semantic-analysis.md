@@ -2,6 +2,287 @@
 
 Status: Current implementation.
 
+## Native C scalar target facts
+
+`NativeCScalarKind` identifies a C declaration family independently of numeric
+width. `TargetInfo::nativeCScalar` resolves that identity to a numeric value
+domain and layout for the selected target, not the host compiler. Accepted
+macOS/Linux targets use LP64; Windows uses LLP64. Pointer-sized typedefs resolve
+to their primitive C identity, and plain `char` retains its separate identity
+with target-specific signedness (unsigned on Linux arm64, signed on the other
+accepted profiles). `None`, invalid identities and unsupported targets have no
+native scalar facts. A consumer must not substitute an equal-width family.
+`fixedCScalarIdentity` records the underlying native primitive of the existing
+fixed-width C ABI vocabulary: `int64_t`/`uint64_t` use long families on Linux
+and long-long families on macOS/Windows. This is a declaration-identity fact,
+not an extra integer-width distinction; consumers can canonicalize genuine
+aliases without conflating different native primitives. GTI's `char` code unit
+does not acquire C `char` identity through this query.
+
+The trusted prelude declares the `c_*` families as ordinary global aliases.
+Their private declarations bind `NativeCScalar` by declaration identity;
+application spellings cannot manufacture the capability. Resolution produces a
+primitive numeric type, not an executable nominal class. A type retains its
+native primitive identity separately from its numeric value domain only when
+it differs from that domain's fixed-width C typedef. Genuine aliases therefore
+canonicalize, while equal-width `long` and `long long`, or plain `char` and
+`signed char`, remain distinct. Exact overload matching, generic instance
+identity, HIR hashing, MIR types and native declarations preserve that fact.
+Numeric conversions and operations use the existing checked GTI rules; equal
+width integer arithmetic chooses the higher C declaration family independently
+of operand order.
+
+MIR owns the selected target and validates native scalar identities across its
+declaration, aggregate, callable and body type inventories. Lowered-program
+verification requires the same target; native headers and C++ representation
+consume these verified facts. Bindgen retains the primitive family supplied by
+Clang rather than replacing it solely by bit width. Existing fixed-width GTI
+types and GTI's distinct `char` code unit retain their meaning.
+
+## Optional function results
+
+Function result-discard policy belongs to the selected declaration. Callable
+registration records `[[discardable]]` in `CallableDeclaration`, then publishes
+it in `FunctionInfo`. Expression-statement analysis consults the resolved call
+identity, never a public function spelling or the result's representation.
+Signature queries expose the same fact. This only admits the existing discarded
+full-expression path; HIR/MIR cleanup, failure and borrow rules are unchanged.
+
+## Optional raw-address auditing
+
+`RawPointerAuditMode` is an immutable frontend policy (`Off`, `Warn`, `Strict`).
+Off is the default and bypasses raw origin/field traversal, result/effect
+queries, loop substitution and wrapper assertions. Ordinary raw type/constness,
+unsafe permission, checked ownership/loans, and explicit reference contracts
+remain mandatory. Audit facts do not authorize HIR/MIR execution or backend
+representation. In particular `RawReferenceAssertionInfo` is recorded even
+with the audit disabled: the programmer asserts the raw validity/owner relation,
+and the compiler verifies the resulting witness loan and escape boundary.
+
+Warn and Strict perform identical inference. Semantic/query workers emit
+typed warnings, split into observed violations, potential violations and
+incomplete analysis. The frontend promotes these warnings only after the
+requested frontend phases for Strict; promotion cannot poison query summaries.
+Audit-only conflicts are excluded from mandatory loan endpoint planning and
+inspect its completed liveness facts only for diagnostics. No checked loan,
+cleanup schedule or native output may depend on audit mode.
+
+The remaining section describes the optional analyzer, not extra mandatory
+conditions for compiling an unsafe implementation.
+
+Local raw pointer flow retains address origins as existing `PlaceKey` values,
+with the address source span and originating checked-loan identity when one
+exists. These facts travel with semantic scope/value-flow snapshots; joins
+union possible origins instead of replacing a known source with unknown
+validity. They do not create or extend loans. Unsafe dereference, indexing,
+member writes and selected mutable receiver calls consult source availability
+and the same checked-loan conflict/last-use machinery as ordinary accesses.
+The backend does not reconstruct this rule from native pointer syntax.
+
+An origin's monotone `possible` flag records path/call uncertainty, including
+choices where the other alternative carries no known origin. Singleton origin
+sets are not completeness proofs. Weak writes, loop substitutions and source
+summary imports conservatively retain this flag; exact direct linear copies
+can retain definite evidence. Potential facts cannot become demonstrated
+violations merely because merging removed duplicate origins.
+
+Class field symbols are established with declaration-owned field types before
+the catalog is sealed, in every audit mode. Isolated workers therefore retain
+canonical projected field identities even when a constructor's class body has
+not yet been visited by the caller; worker-local symbol allocation cannot
+silently lose a returned field's provenance.
+
+Explicit pointer type calls resolve to `RawPointerConversion` by the target
+type, not a library spelling. Erasure adds a type-only provenance record with
+no origin place; it grants no lifetime or access fact. Copies, joins and source
+result queries retain it alongside the complete storage-origin records.
+Conversion/result auditing reports a known contradictory restored pointee.
+Lifetime invalidation and witness containment do not treat the place-less type
+record as an allocation. Concrete HIR resolves dependent target type calls;
+MIR lowers the inert operation to a tightly checked pointer `Convert`.
+
+Symbols retain a projection-keyed raw-field map alongside direct pointer
+origins. Field paths use the same resolved `SymbolId` and array projections as
+ordinary place checking; designated construction and generated aggregate
+copy/move preserve that map. Assignment replaces the affected map subtree,
+while uncertain call writes weakly merge possible input origins. Scope exit
+and owner replacement mark retained origin facts expired/invalidated, so a
+later binding incarnation cannot silently revive an earlier address.
+The traversal includes inherited fields and raw-bearing `expected`,
+`unexpected`, and payload-enum alternatives. Tagged alternatives currently
+share a conservative origin union rather than variant-sensitive projections;
+enum pattern bindings and expected observers preserve that union. An observer
+of a stored pointer does not substitute the live carrier shell as its origin.
+Raw-bearing expected mapper outputs remain unresolved until their selected
+mapper effects have an exact query substitution; inert transport is permitted.
+
+Loop entry seeds temporary symbolic pointer-input origins. Copies and field
+flow carry these symbols to actual memory-use sites; reachable backedges
+substitute them transitively until the finite origin set closes. A reseat
+before use removes the input symbol. Merely carrying an expired address across
+the backedge is not itself rejected. Nested callable bodies isolate this
+transfer state. Deferred bridge uses retain shared backedge-origin/diagnostic
+records, allowing call-contract finalization to demand a fully resolved loop
+use without replaying source execution or dropping known lifetime facts.
+Namespace raw storage also receives loop-input symbols. Source write effects
+through loop-carried aliases defer their destination substitution and weakly
+close projected writes over backedge symbol facts before checking deferred uses.
+
+Source calls query normalized raw-result origins before caller memory uses and
+alias writes. A request-local cache keys the selected function or constructor
+and concrete owner/function type and value arguments. An isolated ordinary
+semantic instance worker analyzes the body; it does not reenter or reset the
+active caller and is not a second execution engine. Results retain separate
+raw-field projections. Formal, receiver and global raw inputs substitute the
+caller's current origin facts (including omitted default arguments), while
+addresses produced from callee-local/by-value storage are expired and actual
+global addresses keep their place identity. Global pointer inputs are symbolic
+in cached summaries, not snapshots of the first caller's value. Source and
+generated-default constructors collect field origins; generated copy/move
+construction preserves existing maps. Imported facts retain lifetime-ending
+flags and participate in the ordinary checked-loan/write machinery.
+
+The same workers collect raw memory-access preconditions: normalized input
+origins, read/write permission, and whether the operation checks loans or only
+address lifetime (pointer arithmetic). Import substitutes actual caller facts
+before mutation invalidation and checks the caller's existing loan flow, with
+diagnostics anchored at the invocation. Requirements propagate through source
+helpers and constructors; loop uses retain their original loan-flow context.
+Operator resolution supplies a nonowning normalized invocation view while its
+exact receiver expression or synthetic receiver place and argument slots are
+available. Ordinary, contextual, and projection operators use the same access,
+result, write, and invalidation helpers. Projection results retain the selected
+member's relative field paths rather than replacing it with the whole referent.
+
+An exact concrete lambda type may carry an access-free fact obtained from its
+ordinary body analysis. Inert copying/comparison does not create a raw access;
+unknown source, foreign, or non-proven primitive execution prevents that proof.
+Source summaries separately record access completeness, so an unresolved nested
+call with no currently known origins cannot certify an empty precise summary.
+Identity-bound address-conversion/transport and checked-carrier observation
+primitives are classified by their semantic operation, not their public name.
+Restoring swap/exchange/indexed swap is access-free only for a concrete semantic
+relocatable type whose existing structural active-cleanup query is false;
+possible source cleanup prevents this proof. Lexical wrapper cleanup alone
+does not imply user execution when all of its owned components are passive.
+Checked-reference returns collect projected raw fields too, so operator-arrow
+and ordinary reference helpers cannot certify an empty raw-field result merely
+because the returned carrier is borrowed.
+
+Dynamic access-free proofs use existing resolved virtual-root/member facts:
+either a canonical unprojected owning receiver identifies one concrete class,
+or every effective target in a sealed nongeneric declaration family must have
+a complete, empty ordinary access summary. Open generic families, unknown or
+foreign/bodyless targets, recursion, and query limits block the proof. This
+waives only access fallback, never unresolved dynamic result/write facts.
+Erased callable allocations do not retain a concrete subtype in these checked
+places; their open target families therefore remain conservative. Unmatched
+carried raw-field paths (for example derived fields behind a base reference)
+are checked conservatively, not dropped. No callable effect type system or
+second source-execution/call-graph engine is introduced.
+
+The same ordinary assignment visitors collect normalized raw-write effects for
+source functions and selected constructors. Destinations are global/static
+storage, mapped checked-reference formals, raw-pointer aliases, or method
+receivers; values retain the same projected origin records as returned values.
+Call-site import runs after conservative mutation invalidation, so a proved
+fresh setter can establish a new origin. Exact destinations in a structurally
+linear ordinary function body permit replacement; constructor write effects,
+conditional control flow, ambiguous aliases, and dynamic indices weakly union
+facts. Constructor writes remain weak until initializer dominance is proved;
+their returned receiver-field origins are still collected precisely.
+Namespace flow is not part of lexical scope snapshots, so writes in caller
+branches, short-circuit/conditional expressions, and loops also remain weak.
+This can conservatively retain overwritten facts within those regions; an exact
+unconditional reset after the region can still replace them.
+This bounded linearity check classifies
+control structure, not source execution. Failed or recursive write queries
+retain unresolved facts on possible raw-bearing destinations. Function,
+constructor, destructor and lambda declaration analysis saves and restores
+namespace raw-flow state: checking a body is never execution of its writes.
+
+Lambda/deferred calls currently have no exact write substitution; they weakly
+mark raw globals and mutable raw-bearing actuals unresolved. Lambda captures
+retain their raw fields using capture-binding projections in the ordinary
+value-flow map, so later reseating the source binding cannot change the captured
+alias. Unsupported callable effects follow carried mutable raw origins to
+known raw-bearing destinations, without marking unrelated locals.
+Source-destructor effects similarly follow stored mutable aliases and retain
+unresolved raw-global writes when source cleanup can run, including value
+temporaries and scope exits. These conservative boundaries preserve existing
+expired/conflicting facts and permit inert transport; they are not precise
+destructor/captured-alias write summaries.
+
+Each independent top-level demand is bounded to 32 active bodies and 2,048
+distinct family entries. Its nested summaries never participate in cross-root
+reuse. Completed top-level outcomes have a separate 2,048-entry cache; when full,
+further demands are evaluated uncached under the same family budget. Thus cache
+warmth or declaration order cannot change completeness. Lightweight diagnostic
+evidence is interned separately from bounded heavy summaries. Query
+workers and staged constexpr workers preserve both request-local query
+accounting and the existing constexpr work/depth budget. Their mutual calls
+cannot restart either limit; mutable body-analysis state remains isolated.
+This changes neither constant eligibility nor the staged execution engine.
+Recursive,
+dynamically dispatched, failed/budget-limited queries, lambda/deferred-callable raw
+results, and raw-bearing source results with expanded parameter packs preserve
+an unresolved-source marker. Constructor-relative self addresses and raw fields
+behind unresolved stored checked references do likewise; concrete retained
+loans are resolved first, without recursively treating borrowed fields as owned
+storage. Memory use/borrow assertions report incomplete analysis for these
+markers; inert transport and comparison remain permitted. Abstract source dispatch signatures remain
+unresolved even without a body; readonly receivers still carry mutable raw
+aliases whose possible write destinations must remain unresolved. Native,
+statically selected bodyless, and runtime-bound outputs instead retain the
+explicit unsafe unknown-address boundary. Unknown outputs never
+erase other known or unresolved facts.
+
+Complete, valid aggregate-result queries own their projected output maps;
+foreign or unresolved results additionally retain conservative raw input and
+reference/receiver-derived origins. Temporary member/index projections use the
+ordinary field/index paths. Unsupported raw-bearing expressions keep available
+origins plus an unresolved marker, never an empty precision claim. Complete
+write summaries also supersede the older input-union fallback: a proved
+no-write method must not manufacture a receiver-shell origin in a null field.
+Unknown mutable receiver/reference effects still preserve possible writes by
+weak union. Scalar pointer results and unresolved effects remain conservative;
+these summaries are not a complete interprocedural alias proof.
+
+Explicit `borrowed_from` attributes resolve to existing declaration-relative
+return-origin/access facts. Inference cannot replace an explicit contract,
+including an invalid one. Normal return checking proves it. A direct raw
+dereference returned in lexical unsafe additionally records
+`RawReferenceAssertionInfo`: a resolved witness place and checked reference
+type. HIR synthesizes that witness input and lowers the assertion to the same
+typed raw-borrow MIR operation; no private source declaration or public-name
+recognition is needed. The backend validates and consumes the MIR loan.
+Known raw-input obligations propagate through source wrappers and receiver/
+aggregate-field transport. Reference fields use stored-loan dependencies to
+resolve their external referents. Polymorphic raw-assertion bodies report
+incomplete optional auditing until their dispatch-family observations are
+represented. Source-produced output facts use the bounded queries above;
+this does not imply complete campaign or release acceptance.
+
+## Exact structural member signatures
+
+Source member requirements carry a typed receiver, exact parameter types/access,
+and an exact owned result. Their synthetic bindings are tooling identities, not
+runtime variables or loans. Concept parameters have semantic generic identities;
+dependent compound arguments substitute through the existing type machinery and
+canonical exact class specialization selector. Eager concept resolution follows
+class/specialization registration; primitive constraints needed during class
+registration resolve lazily. No formatter or stream spelling selects a rule.
+
+Generic body analysis uses only signatures guaranteed by its requirements,
+checking argument and receiver access plus the retained unsafe-call obligation.
+Safe structural facts imply the weaker unsafe capability; the reverse does not
+hold. The existing conjunction/alternative fact calculation preserves that
+direction, including forwarded requirements. Concrete instance analysis selects
+the ordinary method and publishes the normal HIR/MIR call. Comma-pack fold targets
+may carry requirements: each concrete element passes ordinary instantiation and
+constraint checking before a resolved fold can enter HIR. Signature requirements
+do not create a second executable call path or bypass actual borrow checking.
+
 Semantic analysis is GTI's authoritative language layer. It resolves meaning
 over the syntax-preserving AST and records facts in `SemanticModel`; HIR, MIR,
 backends, and language queries consume those facts rather than repeating
@@ -26,6 +307,38 @@ program/value-flow finalization compile in the specialized
 artifact export selection compiles separately in `semantic_embedding.cpp`.
 Snapshot/database operations compile in `semantic_model.cpp`; canonical type
 rendering compiles in `semantic_type_printer.cpp`.
+
+## Structural Relocation Facts
+
+Structural relocation is recorded in `SemanticTypeTraits::relocation` as
+`Unavailable`, `Structural`, or `Bitwise`. Semantics derives it from primitive
+capabilities, concrete bases/fields/captures, generated movement, declared
+cleanup, and borrowed-state restrictions, not from a public library spelling
+or emitted C++ traits. `std::relocatable` and `std::bitwise_relocatable` are
+ordinary source concepts over declaration-bound private constraints. HIR
+preserves the trait; MIR replays its structural proof before the backend may
+select a bulk relocation. It is independent of assignability, transfer/share,
+and the MIR defined-failure proof: an empty-destination transfer does not prove
+that replacing a live destination can skip cleanup.
+
+Lifecycle, cleanup, and transfer/share queries distinguish an exact type cycle
+from growth of a generic substitution. A closed non-generic declaration breaks
+that substitution dependency: `Wrapper<Envelope>` containing an `Envelope`
+which itself contains `Wrapper<Leaf>` is not a growing generic recurrence.
+The queries still inspect the leaf's movement, cleanup and concurrency facts,
+and retain exact-cycle checks across that boundary. Uninterrupted nondecreasing
+generic recurrence remains conservatively bounded. MIR independently derives
+relocation from concrete instance identities; it does not accept a semantic
+trait simply because a wrapper's name appeared earlier in a query.
+
+`ClassLifecycleInfo::generatedDefaultBaseConstructor` records the exact base
+constructor selected for the bounded executable generated-default family:
+nongeneric owners/bases, no derived instance fields or destructor, and an
+exact zero-parameter source base constructor. Construction carries ordinary
+constructor-failure propagation; HIR consumes this identity rather than
+reselecting a constructor. A zero identity retains the existing generated
+declaration schedule for other shapes. This fact changes representation of an
+already permitted construction, not source overload availability.
 
 ## Analysis Order
 
@@ -54,7 +367,7 @@ After an otherwise valid program check, `Frontend` applies the immutable
 artifact `ProgramRequest`. Executable requests admit no exports. A dormant
 library request rejects `main` and process-lifetime callback adapters, resolves
 each requested qualified name to exactly one non-generic namespace source
-function with a body, validates the ADR 023 signature and C-symbol families,
+function with a body, validates the ADR 026 signature and C-symbol families,
 and publishes a public-symbol-sorted `SemanticEmbeddingPlan`. This is artifact
 policy rather than GTI source meaning, but semantics remains the sole authority
 for declaration identity and boundary-type eligibility. HIR and later phases
@@ -64,6 +377,43 @@ This ordering prevents declaration-order dependence. A new declaration kind may
 need registration, source-unit publication, tooling-symbol creation, body
 analysis, and finalization—not only a visitor method.
 
+Text-return relay predeclaration consults the owning class's registered instance
+fields for implicit receiver spellings as well as explicit `this` paths.
+Parameter names take precedence; static fields/methods do not nominate a
+receiver. This is a candidate contract, not a body-local lifetime proof:
+ordinary body lookup and return-borrow validation must confirm the actual
+origin, rejecting local shadowing and unrelated borrowed call results. HIR/MIR
+and the LSP consume the same validated receiver/argument summary.
+
+Dependent generic type defaults retain their resolved symbolic semantic type.
+Only while resolving that default, constraints on open type arguments defer;
+name lookup, arity, and closed constraints remain checked immediately. Selecting
+an omitted argument substitutes the earlier arguments, then checks nested class
+constraints and the defaulted parameter's constraint. An explicit argument
+bypasses the unused default. Ordinary symbolic fields do not enter this context.
+HIR and tooling consume the already selected, validated type rather than asking
+the native compiler to instantiate or reject a default.
+
+`FunctionInfo::ownedPointeeProjection` is separate from ordinary return-borrow
+origins. It identifies a bounded transparent accessor whose entire body returns
+the declaration-bound private unique-owner borrow of one direct receiver field.
+The field identity, private owner type, returned pointee type, and read/mutable
+access must agree; static, virtual, effectful, parameterized, inherited-field,
+and ordinary reference-forwarding methods receive no such summary. Concrete
+reanalysis substitutes the field type before publishing this fact. It is not
+inferred from a public wrapper name and does not itself authorize moving through
+a reference. HIR preserves the summary and MIR checks it against the actual
+accessor body before any consumer may rely on it.
+
+Immediate moved invocation inside consuming `this` may use the mutable form
+of this proof. `ResolvedCallInfo::retainedReceiverOwner` identifies the exact
+accessor receiver expression, restricted to a writable field-only This path.
+Availability consumes that owner wrapper, while execution still uses the
+accessor's returned loan. This does not authorize extracting a pointee or
+moving through an ordinary reference, and it does not bypass existing aliases.
+Concrete HIR maps the retained owner to its already-lowered value identity;
+MIR keeps the separate executable referent and lifetime owner.
+
 Class-scoped type aliases use that staged boundary deliberately. Registration
 walks active conditional members while tracking access labels and records the
 owner declaration before alias targets are resolved. Once primary class IDs
@@ -72,12 +422,96 @@ generic-parameter scope, resolves the transparent target, and installs a
 separate type-member map. Value and callable collection consults that map for
 same-owner name collisions but does not turn aliases into storage members or
 inherit them with base value/function members. Type lookup, concrete generic
-reanalysis, and tooling all consume the same resolved target. Lowered-program
+reanalysis, and tooling all consume the same resolved target. Type lookup
+through a concrete type alias substitutes the containing specialization
+at every member step, preserving access checks on the qualifier chain and
+source identities for both qualifiers and selected members. Lowered-program
 rows retain the source declaration so the C++ backend can emit the alias in its
 owning class; no HIR or MIR instruction is introduced because an alias has no
 runtime effect.
 
 ## Request Sessions
+
+Function-signature syntax has a distinct `TypeRef` shape and resolves to
+`SemanticType::FunctionSignature`, with the result followed by ordered parameter
+types plus `signatureReceiver` (`ReadOnly`, `Mutable`, or `Consuming`). The AST
+retains the written `mut`/`&&` token and source span. Generic substitution,
+canonical equality, overload-signature comparison, type printing, and alias
+resolution use that structural type. Signature components do not introduce
+stored borrows into an enclosing generic argument. `GTI-S2093` rejects non-value
+components and attempts to use a signature as storage. Native callback types
+retain their separate ABI contract. Signatures have no value lifecycle traits.
+The lowered C++ representation emits the signature as a type, and MIR rejects
+bare signatures in executable values, places, and declared fields.
+Exact function-generic deduction traverses signature components using the
+ordinary structural inference path, including `void` result metadata and
+paired reference layers. It requires exact receiver-qualifier agreement;
+capability satisfaction is not a conversion between signature metadata types.
+Generic arguments and defaults no longer reject
+`void` categorically; concrete object-position validation and constraints own
+those restrictions. Class-instance reanalysis also validates alias targets in
+the concrete owner scope so a dependent signature parameter or array element
+cannot become `void` unnoticed. Exact deduction also matches a final symbolic
+`TypePack` against the ordered tail of a signature or nominal argument list.
+Diagnostic and speculative inference share this matcher. Empty tails are
+concrete empty packs, while symbolic forwarding retains the source pack's
+identity. Repeated and explicitly supplied deductions must agree. A generic
+type pack need not introduce a named value parameter when a formal metadata
+pattern binds it; concrete instances still retain one flat generic argument
+list for reanalysis, constraints, and HIR identity. This does not add class
+pattern selection or overload ranking.
+
+Headerless signature-first patterned-primary syntax is retained separately in
+`ClassDecl::genericArgumentPatterns()`. It is not flattened into AST generic
+parameter declarations and is not an exact specialization. Registration derives
+binders from bare unqualified type leaves; repeated names share an identity.
+Pattern resolution publishes canonical semantic shapes and a type-argument
+projection for each binder. Class identity retains its public argument list:
+`Callback<int(bool)>` has one signature argument, not two flat arguments.
+Semantic admission and concrete reanalysis require exact agreement after
+substitution, including fixed components, repeated names, and empty pack tails.
+HIR and lowered representation consume the resolved projections; they do not
+declare binders or select among patterns. The lowered seal includes both shapes
+and paths, and verification rejects invalid paths and forged projections.
+A single-signature name can group disjoint receiver-qualified definitions in
+the semantic catalog. The first registered ID owns the family inventory; each
+definition retains a distinct ID, generic binders, members, and member aliases.
+Selection uses the exact signature qualifier before pattern admission and
+repeats after substitution. Registration rejects duplicate qualifiers, mixed
+declaration kinds, ordinary-primary overlap, and foreign-package extensions.
+Use-site admission preserves source-unit visibility. Member aliases are indexed
+by their owning declaration rather than a shared family spelling, including
+during alias dependency resolution. Exact concrete specialization keys use the
+selected definition's ID and public arguments. HIR, MIR, backend representation,
+and language queries consume that selection without selecting a family again.
+There is no pattern ranking. See `L-CALL-02` for remaining wrapper gates.
+
+Class type packs reuse the generic parameter identity and `TypePack`
+substitution representation. `TypeRef::packExpansion` distinguishes a type-list
+expansion from a named value pack. Semantic resolution flattens concrete packs
+into canonical class/signature arguments, including an empty list; HIR and
+detached representation substitution preserve the same ordered identity.
+Reference arguments in nominal metadata do not themselves create borrowed
+state: lifecycle traits still derive from actual fields and bases. Concrete
+storage and reference-referent validation remain frontend responsibilities.
+There is no public-library-name recognition or backend-selected expansion rule.
+
+Named method packs can bind the enclosing class's final generic pack by its
+resolved identity. Declaration signatures retain symbolic `TypePack` metadata;
+class substitution preserves that identity through symbolic base forwarding.
+Method selection groups the owner's prescribed concrete list by source argument
+expression and reuses exact argument and ownership checks, including forwarding
+and `operator()`. It does not infer owner arguments from the call. Concrete
+class reanalysis validates member pack object positions even for uncalled
+methods. Empty owner packs still trigger concrete method reanalysis. HIR
+instance signatures flatten concrete packs independently of discovery path,
+while body bindings retain source pack identity for cleanup and forwarding.
+Each mutable-reference pack element has its own semantic entry loan, identified
+by the formal pack binding and constant element index. Whole-pack forwarding
+preserves the exact reference type/access rather than borrowing the grouped
+binding. These elements cannot be named independently or escape through a pack
+expression; the entry capabilities last for the invocation. HIR and MIR retain
+the projected identities and end the loans on normal and failure exits.
 
 One call to either public `SemanticVisitor::check` overload owns one complete
 semantic request session. `SemanticVisitor::Impl::RequestSessionState` owns one
@@ -176,6 +610,14 @@ and the analyzer therefore retains conservative borrow restrictions for
 families whose MIR schedule is not yet representable. Accepted bodies never
 fall back to an earlier executable authority.
 
+Ordinary call/construction exclusivity follows the implemented ordered-input
+schedule: a completed mutation in an earlier operand does not conflict with a
+borrow first produced by a later operand. The opposite order still conflicts,
+including nested helper-produced and stored-carrier loans. Simultaneous
+mutable parameter accesses and pre-existing lexical loans remain independently
+checked. The primary diagnostic identifies the later invalidating operand and
+relates the earlier borrow; there is no automatic operand-reordering fix.
+
 ## SemanticModel
 
 `SemanticModel` is a set of snapshot-owned side tables keyed by AST identity or
@@ -198,6 +640,9 @@ compiler IDs. Important facts include:
 - class bases, override roots, abstract/polymorphic state, and destruction;
 - array extents, switch constants, lambdas, target selections, moves, loans,
   unsafe operations, selected execution profile, and completion context;
+- concrete implicit-return movement for an exact whole move-only local or
+  by-value parameter, including its borrow transport access; the fact is
+  instance-local because copyability may change after generic substitution;
 - static-assertion pass/fail/deferred state and concrete generic evaluation;
 - the semantic analysis seal, exact program-initialization plan, exact
   program-constant substitutions, and the selected hosted-entry plan.
@@ -229,12 +674,25 @@ promotion, implicit `float`-to-`double` widening, explicit-only narrowing, and
 the selected width passed to constant evaluation. LLVM floating types never
 enter `SemanticModel`.
 
+Built-in numeric place updates additionally retain their selected arithmetic
+domain as `ExpressionInfo::updateArithmeticType`. The destination and expression
+result keep their own type. Semantics authors independent arithmetic and
+checked-back-conversion failure origins at the written operator; HIR preserves
+them and MIR emits separate primitive stages. Native C++ promotions are not an
+authority for narrow increment/decrement or compound assignment.
+
 For a binary operator's bounded integer-literal context, semantics recognizes
 the complete literal expression, including one unary sign, checks its
 mathematical value against the selected concrete operand type, and records a
 signed operand fact when the sign expression itself adopts that type. HIR,
 MIR lowering, and target representation consume the recorded expression
 type/fact; they do not re-decide literal eligibility from native promotions.
+Symbolic operands constrained by `std::numeric` (including composed concepts)
+also supply that context, so equality does not reject literals that arithmetic
+already accepts. Concrete integer instances range-check and retype the literal;
+floating instances retain the ordinary integer literal and existing floating
+operand conversion. No new MIR operation, implicit narrowing, or call-ranking
+rule is introduced.
 
 `SemanticVisitor::visitLayoutQueryExpr` is the sole authority for source
 `sizeof(type)` and `alignof(type)`. It resolves aliases, recursively derives
@@ -252,6 +710,14 @@ bases, access sections, statics, empty and recursive-by-value records, and
 cleanup-owning or symbolic fields with `GTI-S2064`. The resulting immutable
 layout is also the authority used by `extern "C"` signature validation and by
 recursive unsafe-call classification when a record contains a raw pointer.
+
+An `extern "C"` function retains two identities when it uses
+`[[link_name("symbol")]]`: namespace lookup and tooling use the declared GTI
+name, while `CallableDeclaration::externalSymbol` stores the validated portable
+C identifier. Program-global duplicate-symbol, reserved-`main`, generated
+header, and root-storage collision checks use the external symbol. HIR and MIR
+copy that resolved fact; they do not reparse the attribute or derive the symbol
+from the source name.
 
 Native-union validation is a separate semantic family. It accepts a nonempty,
 nongeneric, baseless public field-only declaration and computes maximum-field
@@ -449,7 +915,16 @@ confined parameter. Each call site records an exact parameter list, result
 type, required receiver access, and selected concrete lambda or `operator()`
 target. A call used as a `void` operation has a `void` result requirement. A
 condition supplies exact `bool`; an explicitly typed initializer, assignment,
-or enclosing return supplies an exact non-reference value type. Raw pointers
+or enclosing return supplies an exact non-reference value type. A direct
+generic-parameter or generic-field invocation used as a call argument can also
+take its result requirement from the uniquely selected outer parameter. The
+contextual-argument pass inspects declaration types without evaluating the
+receiver, defers that argument and its suffix, then analyzes them once in
+source order after selection. Named functions/methods, constructors, lexical
+lambdas, function items, and concrete call operators share this rule. A
+callback's eventual concrete result does not choose between outer overloads;
+an ambiguous outer signature remains ambiguous. Unknown arguments do not
+deduce an outer generic parameter. Raw pointers
 remain non-owning values under their ordinary language rules, and the current
 `std::string_view` denotes static literal storage; the callable boundary does
 not reclassify either as ownership. `auto` cannot infer a result through an
@@ -501,10 +976,36 @@ parameter move. An exact same-type return may instead coexist with a
 forwarding edges, and mutable access only when declared `mut`. A callable
 argument at either transporting boundary must use explicit `std::move`, remain
 exactly typed and movable, and contain no reference, tracked-borrow, or raw-
-pointer stored state. Arbitrary storage, wrappers, inferred closure results,
-and type erasure do not acquire this fact. Local closure environment movement
-and cleanup remain represented independently and supply its concrete lifecycle
-evidence.
+pointer stored state. Local closure environment movement and cleanup remain
+represented independently and supply its concrete lifecycle evidence.
+
+After confined forwarding reaches its fixed point, a source-defined function's
+otherwise ordinary direct by-value type parameter, or nominal generic carrier
+such as `Owner<T>`, receives an `Owned` value entry contract. This contract
+describes the concrete parameter type, not a
+prescribed return/constructor expression. Branches, local owners, normal
+transfers, and cleanup therefore use ordinary concrete semantic analysis and
+MIR lifecycle verification. It neither upgrades an existing confined contract
+nor permits an implicit caller move or borrowed/raw capture state. MIR requires
+the exact initially available parameter place and, for lexical values, its
+initially active cleanup obligation; calls retain their exact consuming input.
+An ordinary `CallInput` may stage a nominal carrier after its explicit move.
+Verification follows the exact single-use stage back to the ownership event;
+the prepared lifetime and its handoff remain independently checked. This does
+not admit a reference parameter, bodyless transport, implicit closure copy, or
+borrowed/raw stored state.
+Final by-value generic packs receive the same contract per concrete closure
+element. Declaration contracts retain the source formal index; instantiated
+contracts and call boundaries use flattened argument indices, so fixed prefixes
+and non-callable elements cannot shift ownership onto a different argument.
+Explicit whole-pack expansion preserves the existing copyable-element copy /
+move-only-element move rule. Each copied element gets a fresh prepared lifetime;
+moving any move-only element consumes the source pack. Ordinary call arguments
+still require explicit closure transfer and reject borrowed/raw capture state.
+Callable-reference parameters, general native template shape composition, and
+fully general allocation and failure cleanup through erased owners remain
+incomplete. This does not claim that
+public owning wrappers are implemented.
 
 Each exact callable signature also retains a `Read`, `Mutable`, or `Once`
 invocation capability. An immutable by-value generic callable parameter
@@ -522,37 +1023,44 @@ source. A consuming-only target cannot satisfy a reusable read or mutable
 client. `GTI-S2046` reports capability and confined-forwarding mismatches
 before HIR lowering, while ordinary move diagnostics own repeated use.
 
-After exact target selection, an explicit consuming invocation also queries
-the concrete receiver's recursive active-cleanup property. Cleanup-owning
-direct calls use the ordinary operator boundary; cleanup discovered while
-reanalyzing a concrete confined generic instance remains a confined-callable
-error. Both stop before HIR because the language has no accepted cleanup
-schedule for that moved receiver across the enclosing full expression; this is
-a semantic/lowering restriction, not a backend fallback.
+Explicit consuming invocation retains a full-expression owner even when the
+receiver requires active cleanup. An immediate nominal or stored-lambda field
+invocation in a consuming method additionally records `retainedReceiverProjection` on the exact
+resolved Move and a `ConsumeReceiver` ownership event. It requires a writable
+owned field-only path rooted in `this`, consumes availability, and leaves
+cleanup ownership with that receiver. Only transparent callee grouping is
+ignored: a Move used as an argument, returned value, or member-access base is
+still an actual extraction. The selected field-call target must return a value
+without tracked borrowed state; reference-returning fallback overloads receive
+`GTI-S2022` before HIR. Ordinary reference/pointer dereferences gain no owning
+capability from this rule. Stored lambdas remain read-callable and retain their
+complete resolved closure identity; consumption does not permit capture mutation.
 
-### Contextual Free-Function Items
+### Namespace Function Items
 
-The callable-argument resolver recognizes a bare namespace function name only
-after the selected generic parameter has a complete callable contract. The
-contextual inference helper is deliberately gated to `Confined` contracts and
-`Owned` contracts whose transport kind is exactly `ThreadTask`; it is not a
-general type-inference or value-storage path. Each eligible non-generic,
-body-bearing GTI namespace function is checked against the contract's exact
-result and ordinary argument-binding rules. Semantics accepts one viable
-target, diagnoses zero or multiple targets without conversion ranking, and
-constructs `SemanticType::FunctionItem` from the selected `FunctionId`, result,
-and parameter list.
+A bare namespace function name in a value context selects one eligible
+non-generic, body-bearing GTI declaration. With no required signature, multiple
+eligible declarations are ambiguous. Existing confined callable contracts and
+managed-thread task contracts can instead select one exact matching target.
+Semantics constructs `SemanticType::FunctionItem` from the selected
+`FunctionId`, result, and parameter list; neither HIR nor a backend sees an
+overload set or must infer which declaration the source intended.
 
-The resolved expression records a function occurrence for hover and
-definition, the exact function target, read-callable capability, and the
-existing confined or task boundary. Type traits classify the zero-state item
-as trivial, transfer-capable, and share-capable, but the expression audit
-rejects storage, capture, independent result, general-owned, and native use. A
-confined exact-return contract may relay the same item only to an unbound,
-explicitly discarded result. Ordinary direct calls and the separate named-
-native-callback contextual conversion keep
-their existing resolution paths. This ensures neither HIR nor a backend sees
-an overload set or must infer which declaration the source intended.
+The expression records a function occurrence for hover and definition, the
+exact target, and read-callable capability. Its zero-state type is trivial,
+transfer-capable, and share-capable. Ordinary value rules allow storage,
+copy-capture, generic fields, and exact results without closure cleanup.
+Function-item calls expand concrete value/read-only-reference packs under
+ordinary argument matching. A callee-producing expression still evaluates
+before the arguments even though its selected function identity is static.
+
+Parenthesized construction resumes deferred value arguments in source order
+before constructor inference, just as direct braces analyze value arguments.
+The deferred flags belong to the current analysis, including concrete generic
+reanalysis; an expression entry inherited from another analysis does not prove
+the argument was analyzed here. Contextual array tails retain their selected
+constructor parameter context. Ordinary direct function calls and the separate
+named-native-callback conversion retain their existing resolution paths.
 
 ## Owned Managed-Thread Tasks
 
@@ -594,14 +1102,56 @@ Resolved ordinary method calls and class `operator()` calls retain a
 `CallReceiverMode` alongside the exact selected target. The mode distinguishes
 read-only and mutable source places, reusable values, consuming receivers, and
 read-only or mutable borrows of a fresh temporary. Semantics alone classifies
-freshness: it requires a direct ordinary construction or by-value GTI call, a
-concrete class/struct value without tracked borrowed state, and a supported
-non-static, non-virtual target whose result cannot carry borrowed state.
-Transparent grouping is ignored, while an explicit move from named storage is
-not fresh. Concrete generic reanalysis repeats these checks using substituted
+freshness: ordinary construction, by-value GTI calls, and value-producing GTI
+operators qualify for the bounded ephemeral-borrow contract. Receiver-only
+materialization also accepts owned movable class values from conditional
+expressions, lambda calls, copy/move construction, and consuming Expected
+extraction; this does not broaden ephemeral argument borrowing. Reusable
+targets remain non-static and non-virtual with non-borrowing results, apart
+from the existing nonescaping read-observation exception. Transparent grouping
+is ignored, while an explicit move from named storage is not fresh. Concrete
+generic reanalysis repeats these checks using substituted
 type and lifecycle traits. Expression value category and access remain
 unchanged, preventing the receiver-only capability from authorizing general
 mutable-place operations.
+
+`freshTemporaryReceiverValue` extends that receiver assessment, but not
+`freshTemporaryValue`'s separate temporary-argument contract, to direct
+ordinary GTI construction/calls producing a class with one proven stable
+stored dependency. It reuses `storedBorrowDependencies`, the resolved producer
+summary, and the existing stable-storage query. Native, virtual, unresolved,
+multi-origin, or temporary-owner production fails closed. The selected method
+cannot export a reference, tracked borrowed result, or untracked pointer-like
+result. The stored dependency retains its producer-established access mode;
+mutating the carrier shell never upgrades a shared external-owner loan.
+Ordered call exclusivity retains that dependency through the complete
+expression, including later arguments and operands. Unsupported immediate
+receiver uses keep `GTI-S2081`, with the failed lifetime condition, selected
+declaration, and a named-storage hint. LSP consumes these same semantic facts
+and diagnostics without a separate receiver rule.
+
+The existing passive shared-carrier `Value` receiver remains distinct: a
+copyable carrier without active cleanup can observe multiple exact stable
+read-only dependencies through an ordinary method with a non-borrowing result.
+The stable-storage query also admits abstract caller-owned dependencies of
+carrier parameters; `protectsStorage` describes storage accounting, not whether
+such a dependency is valid.
+It does not gain a mutable physical-shell loan. Receiver-argument exclusivity
+and later-operand transient checks consume every stored owner dependency, not
+only the producer's primary origin, so a conflicting second owner receives
+`GTI-S2017` before MIR construction.
+
+Ordinary methods and arithmetic/bitwise value operators can declare a
+consuming receiver with trailing `&&`. Overload selection prefers this exact
+capability for an owned movable value or explicit `std::move` receiver, never
+for a named place or reference. Otherwise-exact reusable overloads remain
+eligible. Consuming calls retain their full-expression owner and cannot return
+a reference or tracked borrowed state; concrete generic instances repeat the
+check. Virtual/interface signatures preserve the receiver qualifier.
+`std::move(this)` is an explicit whole-receiver transfer inside a consuming
+method: semantics records the exact receiver place and rejects overlapping
+live loans, partial moves, and subsequent reads, writes, or implicit calls.
+Implicit return movement does not infer this transfer from `return this;`.
 
 `ResolvedCallInfo::ephemeralBorrowArguments` separately records the exact
 written argument indices that use the bounded call-only read-borrow fallback.
@@ -623,6 +1173,19 @@ relationship plus the ordered indices of the concept parameters to which it
 applies. Source concept composition remaps both forms through each concept
 application; public concept names never become semantic enum cases.
 
+Source member requirements add one general `ReadMember` relationship carrying
+the member name, receiver/result/parameter types, receiver access, and explicit
+unsafe-call permission. Both direct boolean queries and named concept leaves use
+the same semantic signature check. Composition
+remaps the arguments and preserves the name; disjunction must not merge facts
+for different methods or erase an unsafe obligation. Symbolic bodies can call a
+guaranteed exact member under its receiver and safety contract, but concrete
+instance analysis must resolve the real method before HIR. Query results become
+ordinary boolean HIR/MIR literals, never
+synthetic runtime calls. Neither the constant evaluator nor the backend decides
+whether a type supports cloning. `std::clone` and vector element duplication
+remain ordinary source-defined generic bodies and verified-MIR calls.
+
 A function or constructor's trailing clause is resolved once into
 `AppliedConceptRequirement` records containing the selected `ConceptId`, AST
 application, and exact semantic type arguments. Arguments may be visible
@@ -636,6 +1199,16 @@ capability; iterator-aware predicate and operation relations derive the exact
 checked-dereference referent privately. This is semantic proof, not text-based
 operator guessing. The AST application is retained for source-facing
 diagnostics and tooling occurrences.
+
+Unary structural annotations on class generic parameters reuse those same
+applications. The parameter's resolved `conceptId` remains the concrete
+class-argument admission contract; each symbolic type-parameter scope also
+publishes its application in the ordinary requirement-scope stack. Constructors,
+methods, field initializers and destructors therefore see the same guaranteed
+member facts and unsafe-call obligations as a trailing clause. The paired type
+scope owns the application's endpoint, including isolated instance analysis.
+Concrete parameters do not receive assumed applications: type resolution checks
+their actual member signatures before HIR can select an instance.
 
 Call or construction viability substitutes concrete type arguments into the same records and
 checks both unary and structural facts. Concrete generic reanalysis then
@@ -724,6 +1297,11 @@ recovery and is converted to the shared value before it becomes durable
 semantic data. Raw addresses and opaque results still receive no guessed
 provenance.
 
+Plain member assignment records the same exact `Reinitialize` event as local
+and indexed assignment, including the field's previous availability. Checked
+arrow access retains the owner/dereference/field key; restoring the field can
+therefore make the whole owner movable again in both semantics and MIR.
+
 A resolved non-static instance field always forms a receiver-rooted `PlaceKey`
 with a field projection, whether the source spells `field` or `this.field`.
 Borrow-return validation consumes that resolved identity, so lexical locals and
@@ -739,17 +1317,66 @@ field. HIR and MIR carry that fact directionally so MIR verification can bind a
 returned runtime place or carrier value to the same formal dependency; later
 phases do not infer the field from its type or emitted representation.
 
-The same representation covers one direct mutable stored reference.
-Declaration analysis requires every constructor to bind the field from one
-exact mutable reference parameter. Lifecycle traits make the carrier movable,
-noncopyable, and non-assignable. Borrow-summary selection admits a mutable
-reference or direct mutable-carrier parameter only for a mutable return and
-rejects multiple compatible origins. Ownership analysis records construction
-as an exclusive stored child of that origin, transfers its carrier identity on
-move, keeps the parent unavailable while the child is live, and reactivates it
-only after the final child and carrier endpoint. Nested borrowed fields,
-custom destruction, globals/captures, dependency reseating, dynamic origins,
-and multi-origin returns remain outside this bounded graph.
+Stored carriers generalize this to a set of reference-bearing field
+paths and checked owner places. `SemanticLoanInfo.additionalDependencies`
+retains the remaining places, access modes, storage protection, and entry
+field paths alongside the original primary dependency. Every constructor
+binds each borrowed field from an exact parameter; resolved construction/call
+records preserve the complete supplying-parameter set. Every owner participates
+in conflicts, argument exclusivity, escape validation, and the common carrier
+endpoint. Copies alias the whole set only when the carrier's state is copyable
+and every retained dependency is shared; moves transfer its shell and complete
+dependency set. Shared projections retain the full set conservatively. This
+rule applies equally to unrelated source-defined carriers and source-library
+views.
+
+Shared and exclusive fields may coexist without a cardinality limit. Each
+exclusive origin retains its own access mode and suspended-parent relationship;
+only conflicting overlapping places are rejected. Declaration analysis requires
+exact constructor parameter-to-field bindings. Field-wise return summaries
+identify the result field, receiver or parameter, source field path and access
+mode; body analysis validates that inferred summary against actual returned
+origins. Selected reference accessors do not inherit an unrelated first field's
+permission. Concrete generic reanalysis substitutes these same facts.
+Lifecycle traits reject copying any exclusive path, and transfer preserves all
+parents until the final child/carrier endpoint. Custom destruction,
+when present, extends the dependency endpoint through cleanup; it does not
+change the origin or access mode. Globals/captures, dependency reseating,
+dynamic origins and ambiguous return provenance remain outside this bounded
+graph.
+
+A reference returned from an ordinary receiver's owned field or owned storage
+protects the receiver's physical storage separately from its external stored
+dependencies. Exact stored-reference-field returns instead preserve the
+selected external referent. Field-origin summaries distinguish these cases,
+including single-path carriers; a type merely containing borrowed state is
+not permission to replace its shell origin with its resource dependency.
+An exact field-origin path can extend beneath a stored external reference.
+An unambiguous nonvirtual accessor relay composes that path, and independent
+body analysis checks its actual return. Composition respects the callee's
+checked contract: an accessor into receiver-owned storage exposes the receiver
+as owner, not an implementation-private field or allocation path. The same
+physical-storage classification governs mutable reference initialization;
+a read-only external dependency does not make a separately owned field
+read-only. Returning through a reference alias
+uses the selected stored dependency, not the alias's separate physical-shell
+loan. A projected referent retains its exact suffix instead of becoming an
+alias of the whole external owner. Dynamic, ambiguous and recursive declaration
+provenance remain conservative.
+Synthesized range dereference retains the selected physical range-storage loan
+before composing field mappings. Its transitive resource dependency remains
+separate; borrowing an element cannot be substituted with borrowing the resource
+that supplied the container's allocation.
+Moving a cleanup-bound carrier updates flow availability and transfers the
+active loan, but retains the declaration's historical loan identity so earlier
+reference uses still lower against the original shell and dependency.
+
+A direct by-value return of a nested copyable shared view records the exact
+receiver field prefix and the result-relative reference path. Copying that
+view creates independent shell storage while retaining its external referent.
+This is distinct from returning a reference to the field, which also protects
+the enclosing shell. Concrete field identities, not public type names, select
+the rule.
 
 Addressable namespace bindings and non-generic static data members use the
 same symbol-rooted place whether their source spelling is qualified or
@@ -768,6 +1395,18 @@ static storage with `std::move` remains rejected because its initialization
 state is not locally provable.
 
 ## Loan Flow
+
+Borrowed expected propagation yields a read-only referent place, preserving
+the carrier's original owner, escape boundary and loan endpoint. Its success
+does not require referent copyability or movability; only the error alternative
+is transported. Borrowed `expect` records a reference return and a consuming
+receiver, so both ordinary reference checks and explicit named consumption
+apply. These extraction forms participate in the same stored-source,
+transient-production and retained-loan queries as other checked references.
+Global and local loan-flow places use the same analysis-local domain. HIR
+qualifies those places with its concrete snapshot/body identity; qualifying
+only global dependencies during semantic conflict checks would incorrectly
+make every local carrier potentially alias a global owner.
 
 Retained borrows receive stable semantic loan identities. A move transfers a
 carrier; a read-only alias adds another carrier to the same identity, while a
@@ -913,6 +1552,99 @@ constant is accepted. HIR and MIR retain only facts needed by runtime or
 program-storage materialization. The C++ backend may serialize an accepted
 constant from its exact fields, but it cannot invoke source constructors or
 host constant evaluation to recover language meaning.
+
+Literal-backed text inspection dispatches on resolved `StringViewSize` and
+`StringViewEmpty` intrinsic identities and the typed string-view index
+operation. Its byte/length kernels live in `constant_evaluator`, independent of
+AST or library spelling; indexing preserves unsigned code units and rejects
+negative and end-or-later offsets, matching the verified-MIR runtime operation.
+The semantic interpreter supplies operands and consumes source-located failures.
+Read-only operator expressions normalize their already-resolved receiver and
+arguments into the same constant-call boundary as named methods. This shares
+generic substitution, argument observation, and completed-definition checks;
+operator bodies require staged MIR and never fall back to AST execution.
+Within MIR, an exact static read-only nominal call operator uses the ordinary
+function target and receiver. Its recorded read capability is admitted while
+mutable/consuming invocation, lambda execution, and raw operations remain
+excluded. This does not add a second overload resolver or special stdlib path.
+Completed constexpr free-function closures, including concrete type/value
+generic calls, now execute through
+staged ordinary HIR, exact failure metadata, and verified unoptimized MIR before
+whole-program analysis completes. `semantic_constexpr.cpp` owns this bridge;
+the frontend lends it the request's source graph and source manager so failure
+metadata uses real source bytes, not synthesized locations. All staged
+identities die with that synchronous request. Definition availability is
+recorded after body and scope analysis, not at declaration registration.
+For a fully selected body this includes loan-flow validation. A generic primary
+with deferred branches is only available for concrete reanalysis: its
+availability is not an executable flow proof.
+
+A value- or type-dependent `if constexpr` in a symbolic primary now records an
+explicit deferred selection. Neither arm contributes primary semantics. The
+body-local flow state records that its CFG is incomplete; name/type checking and
+independent assertions continue, but missing-return, move availability,
+receiver-restoration and loan-endpoint proofs cannot use that incomplete CFG.
+Concrete analysis selects the arm and reruns all those checks with fresh body
+state. HIR rejects any still-unselected branch rather than emitting an empty
+branch. Unused-mut advice is withheld for a deferred-flow body's locals since
+uninspected arms may contain writes.
+
+Required constants encountered during concrete reanalysis stage against its
+canonical base model, never its partially analyzed delta. Nested workers keep
+separate semantic state and share only a constant-request work account. Nested
+staging counts toward the depth bound, and its executed work consumes the same
+4096-step budget as the enclosing request. Recursive semantic-staging cycles
+therefore fail with a resource diagnostic instead of unbounded reentry.
+
+Concrete reanalysis resets body scopes, so early HIR discovery uses a lazy,
+isolated semantic provider rather than reentering the unfinished caller. Its
+request-local snapshot copies the sealed catalog and current semantic model,
+preserves declaration IDs, and rebuilds owned callable indexes. Ordinary
+instance analysis still produces each typed delta; there is no second generic
+resolver. Non-generic closures do not allocate this snapshot. The snapshot and
+its instance deltas expire after the synchronous lowering operation. Tests
+retain enclosing locals and live loans across this boundary. Concrete semantic
+diagnostics are authoritative and cannot fall back to legacy execution.
+
+Unsupported closures/profile operations still use the existing AST driver;
+work already executed consumes the shared limit, and arithmetic/resource
+failures are authoritative. Direct semantic-only callers without source text
+also retain the early kernel. Fixed arrays and passive structural record
+parameters, local copies, indexed/field mutation, and returned values now use
+ordinary MIR places. Class catalogs retain exact concrete field identities;
+runtime destruction or borrowed fields cannot be hidden behind passive
+constant storage. Completed explicitly constexpr constructors with explicit
+field initialization and read-only constexpr methods now execute in that same
+profile, retaining exact receiver identity and constructor failure provenance.
+Direct constructor and read-only/static method roots use the same request-local
+staging service, including exact generic owner substitutions. Declaration-default
+schedules and returned-view loans remain staging/profile work. The bridge
+does not introduce a new executable representation or weaken whole-program
+publication seals. Request metrics count actual completed MIR evaluations so
+tests can distinguish this path from compatibility fallback.
+
+`convertConstantToType` is shared by both execution mechanisms in the constant
+service. It preserves exact aggregate/enum identity, checked numeric domains,
+binary-float formats, and the char/uint8 code-unit conversions. Neither engine
+may introduce a separate cast policy.
+
+Constexpr declaration validation checks potential type eligibility before
+instantiation. Concrete reanalysis retains signature-shape and ordinary
+ownership checks but does not reject a generic runtime-only type substitution
+merely because the declaration is constexpr. Required constant execution still
+checks exact types and operations independently. Contextually signed integer
+literals retain their whole checked mathematical value, avoiding a fictitious
+positive intermediate outside the target domain. MIR execution shares the
+exact single-use signed-minimum literal query with native emission; ordinary
+negation and its overflow behaviour are not relaxed.
+
+Read-only reference signatures are now potentially constexpr-capable when the
+referent is supported. Ordinary semantic loans and return-origin checks retain
+authority; the staged MIR evaluator alone executes reference calls and produces
+the observed referent value, not a persistent reference constant. Failed staging
+does not fall back to an AST interpretation of newly admitted reference rules.
+Constructor parameters, mutable references, and stored-reference carriers retain
+their earlier boundaries.
 
 ## Boundaries
 

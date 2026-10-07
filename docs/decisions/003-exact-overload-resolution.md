@@ -49,3 +49,13 @@ callable identity for HIR/MIR/backend/tooling. The bounded integer conversions
 available to value-assignment and built-in numeric-expression contexts do not
 participate in calls. Any additive call conversion requires a new
 proposal proving unique selection without conversion ranking.
+
+Receiver capabilities are an explicit, separate selection axis. Named places
+never consume implicitly. Owned movable temporaries and explicitly moved
+receivers prefer an exact consuming instance member, with reusable overloads
+as fallbacks. Mutable named receivers prefer mutable over read-only members.
+This applies to ordinary methods and the permitted value-producing operators
+as well as call operators. The compiler records the selected receiver mode;
+the C++ backend does not perform receiver-overload resolution. This permits
+builder chains to reuse owned intermediate storage without copying every
+intermediate or weakening named-value availability and borrow checks.

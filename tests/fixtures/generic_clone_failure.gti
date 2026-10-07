@@ -1,0 +1,19 @@
+#include <std/vector>
+
+class Item {
+public:
+  int value;
+  Item(int n) : value(n) { std::println(n); }
+  ~Item() { std::println(0 - this.value); }
+  Item clone() {
+    std::println(100 + this.value);
+    int checked = 10 / (this.value - 2);
+    return Item(this.value + 10);
+  }
+};
+
+int main() {
+  std::vector<Item> items = {Item(1), Item(2), Item(3)};
+  auto copies = items.clone();
+  return 1;
+}

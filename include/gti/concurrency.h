@@ -6,6 +6,45 @@
 
 namespace lang {
 
+enum class CThreadCallbackKind : std::uint8_t {
+  None,
+  ThreadEntry,
+  OnceInitializer,
+};
+
+// Selected only from exact compiler-private C-thread runtime declarations in
+// the trusted library unit. These remain ordinary native calls, not managed
+// task intrinsics: the caller retains context and manual join obligations.
+enum class CThreadRuntimeOperation : std::uint8_t {
+  None,
+  Create,
+  Join,
+  Begin,
+  End,
+  MutexInit,
+  MutexDestroy,
+  MutexLock,
+  MutexTryLock,
+  MutexTimedLock,
+  MutexUnlock,
+  ConditionInit,
+  ConditionDestroy,
+  ConditionSignal,
+  ConditionBroadcast,
+  ConditionWait,
+  ConditionTimedWait,
+  InvokeOnceInitializer,
+  Count
+};
+
+[[nodiscard]] constexpr bool
+requiresCThreadConcurrency(CThreadRuntimeOperation operation) {
+  return operation != CThreadRuntimeOperation::None &&
+         operation != CThreadRuntimeOperation::Begin &&
+         operation != CThreadRuntimeOperation::End &&
+         operation < CThreadRuntimeOperation::Count;
+}
+
 // Backend-independent synchronization identities. Public library types such
 // as std::thread remain ordinary GTI classes; trusted private capabilities
 // attach these records to their resolved calls before MIR lowering.
@@ -19,6 +58,10 @@ enum class SynchronizationOperationKind : std::uint8_t {
   AtomicCompareExchange,
   MutexLock,
   MutexUnlock,
+  // Wait atomically enrolls/releases and reacquires before returning. Notify
+  // schedules existing waiters; shared-data ordering is through their mutex.
+  ConditionWait,
+  ConditionNotify,
   Count,
 };
 
@@ -99,6 +142,8 @@ validSynchronizationOperation(const SynchronizationOperation &operation) {
   case SynchronizationOperationKind::ThreadJoin:
   case SynchronizationOperationKind::MutexLock:
   case SynchronizationOperationKind::MutexUnlock:
+  case SynchronizationOperationKind::ConditionWait:
+  case SynchronizationOperationKind::ConditionNotify:
     return !operation.order && !operation.failureOrder;
   case SynchronizationOperationKind::AtomicLoad:
     return operation.order && validAtomicLoadOrder(*operation.order) &&

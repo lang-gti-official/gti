@@ -1,0 +1,75 @@
+#include <std/utility>
+
+mut int observed = 0;
+mut int payload_drops = 0;
+mut int binding_drops = 0;
+
+class Payload {
+public:
+  ~Payload() { payload_drops += 1; }
+};
+
+class BoundMove {
+  mut int& target;
+  int& source;
+  Payload payload{};
+public:
+  BoundMove(mut int& target, int& source) : target(target), source(source) {}
+  ~BoundMove() {
+    this.target += this.source;
+    binding_drops += 1;
+  }
+};
+
+int check_generated_binding_move() {
+  mut int target = 0;
+  int source = 3;
+  {
+    BoundMove original{target, source};
+    // Explicit construction exercises generated fieldwise movement, not just
+    // a direct owner transfer. Both referents stay at their original addresses.
+    BoundMove moved{std::move(original)};
+  }
+  return target == 3 && source == 3 && binding_drops == 1 && payload_drops == 1
+      ? 0 : 7;
+}
+
+struct Resource {
+  mut int value = 3;
+  void reset() mut { this.value = 5; }
+};
+
+class Mixed {
+  Resource& resource;
+  mut int local;
+public:
+  Mixed(Resource& resource, int local) : resource(resource), local(local) {}
+  int& get() { return this.local; }
+  Resource& external() { return this.resource; }
+  void reset() mut { this.local = 9; }
+  ~Mixed() { observed = this.local + this.resource.value; }
+};
+
+int main() {
+  mut Resource resource{};
+  {
+    mut Mixed value{resource, 7};
+    int& element = value.get();
+    if (element != 7) { return 1; }
+    // The element's last use ended its physical-storage loan.
+    value.reset();
+    Resource& external = value.external();
+    // A selected external reference does not borrow the owner's inline data.
+    value.reset();
+    if (external.value != 3 || value.get() != 9) { return 2; }
+    auto moved = std::move(value);
+    int& next = moved.get();
+    if (next != 9) { return 5; }
+    auto final_owner = std::move(moved);
+    if (final_owner.get() != 9) { return 6; }
+  }
+  if (observed != 12) { return 3; }
+  resource.reset();
+  if (resource.value != 5) { return 4; }
+  return check_generated_binding_move();
+}

@@ -13,7 +13,9 @@ vim.fn.mkdir(temporary, "p")
 
 local ok, problem = xpcall(function()
   local lazy_spec = dofile(vim.fs.joinpath(repository, "lazy.lua"))
-  if lazy_spec[1] ~= "LukeHHA/gti"
+  if lazy_spec[1]
+      ~= "https://git.internal.howetotech.dev/gti-lang/gti.git"
+    or lazy_spec.name ~= "gti"
     or lazy_spec.lazy ~= false
     or lazy_spec.build ~= "build.lua"
   then
@@ -21,6 +23,11 @@ local ok, problem = xpcall(function()
   end
 
   local installer = dofile(vim.fs.joinpath(repository, "lua", "gti", "installer.lua"))
+  local expected_release_url =
+    "https://git.internal.howetotech.dev/gti-lang/gti/releases/download/nightly/BUILD_ID"
+  if installer.release_url("nightly", "BUILD_ID") ~= expected_release_url then
+    fail("installer does not resolve release assets from canonical Gitea")
+  end
   local installed = installer.install({
     root = temporary,
     version = version,
@@ -126,6 +133,7 @@ local ok, problem = xpcall(function()
     "uint64_t selected_extent<uint64_t N>() { return N; }",
     "uint64_t default_extent<uint64_t N = 3, uint64_t M = N + 2>() { return M; }",
     "int explicit_value_client() { return int(selected_extent<4>()); }",
+    "unsafe void retain_context(void* context) {}",
     "char marker = 'G';",
     "constexpr uint64_t int_size = sizeof(int32_t);",
     "void raw_write(uint8_t* writable, const uint8_t* readable) {",
@@ -214,6 +222,11 @@ local ok, problem = xpcall(function()
     fail("could not locate fallback syntax fixture line: " .. line_text)
   end
 
+  -- Tree-sitter deliberately clears 'syntax' when its highlighter starts.
+  -- Activate the independent regex fallback for these assertions, then restore
+  -- the normal highlighting state; synID does not inspect Tree-sitter captures.
+  local active_syntax = vim.bo.syntax
+  vim.bo.syntax = "gti"
   require_fallback_syntax(
     "  requires pairwise<Left, Right> { return left; }",
     "requires",
@@ -224,6 +237,30 @@ local ok, problem = xpcall(function()
     "sizeof",
     "gtiOperator"
   )
+  require_fallback_syntax(
+    "unsafe void retain_context(void* context) {}", "unsafe", "gtiKeyword"
+  )
+  vim.bo.syntax = active_syntax
+
+  local module_buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_call(module_buffer, function()
+    vim.api.nvim_buf_set_lines(module_buffer, 0, -1, false, {
+      "export module geometry;",
+      "import dependency.geometry;",
+    })
+    vim.bo.syntax = "gti"
+    for _, expected in ipairs({
+      { 1, 1, "gtiStorageClass" },
+      { 1, 8, "gtiNamespaceKeyword" },
+      { 2, 1, "gtiInclude" },
+    }) do
+      local group = vim.fn.synIDattr(vim.fn.synID(expected[1], expected[2], true), "name")
+      if group ~= expected[3] then
+        fail("module fallback syntax: expected " .. expected[3] .. ", found " .. group)
+      end
+    end
+  end)
+  vim.api.nvim_buf_delete(module_buffer, { force = true })
 
   local function require_capture(line_text, token, capture)
     for row, line in ipairs(source_lines) do
@@ -243,6 +280,7 @@ local ok, problem = xpcall(function()
   end
 
   require_capture("T choose<std::ordered T>(T left, T right) {", "left", "variable.parameter")
+  require_capture("unsafe void retain_context(void* context) {}", "unsafe", "keyword")
   require_capture("int explicit_value_client() { return int(selected_extent<4>()); }", "selected_extent", "function.call")
   require_capture("int explicit_value_client() { return int(selected_extent<4>()); }", "4", "number")
   require_capture("uint64_t default_extent<uint64_t N = 3, uint64_t M = N + 2>() { return M; }", "N", "variable.parameter")

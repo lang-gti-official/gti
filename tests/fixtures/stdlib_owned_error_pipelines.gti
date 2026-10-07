@@ -1,0 +1,53 @@
+#include <std/chrono>
+#include <std/json>
+#include <std/memory>
+#include <std/string>
+
+expected<std::json::value, std::json::error> build_document(
+    std::string_view text) {
+  mut auto object = std::json::value::object();
+  ?object.set("name", text);
+  mut auto children = std::json::value::array();
+  ?children.push(text);
+  ?object.set("children", std::move(children));
+  return std::move(object);
+}
+
+int main() {
+  auto good = build_document("tea");
+  if (!good) { return 1; }
+  auto name = good.value().get_string("name");
+  if (!name || name.value() != "tea" ||
+      good.value().at("children").size() != std::size_t(1)) { return 1; }
+  mut std::string invalid = std::string("");
+  invalid.push_back(char(uint8_t(192)));
+  auto bad = build_document(invalid.view());
+  if (bad || bad.error().code() != std::json::errc::invalid_unicode ||
+      bad.error().has_source_location()) { return 2; }
+
+  // The recursive parser must retain the original child path and byte site.
+  auto malformed = std::json::parse("{\"items\":[\"ok\",\"\\q\"]}");
+  if (malformed || malformed.error().code() != std::json::errc::invalid_escape ||
+      malformed.error().path() != "/items/1" ||
+      !malformed.error().has_source_location() ||
+      malformed.error().line() != std::size_t(1)) { return 3; }
+
+  int64_t low = int64_t(-9223372036854775807) - int64_t(1);
+  int64_t high = int64_t(9223372036854775807);
+  auto start = std::chrono::system_time_point(std::chrono::nanoseconds(low));
+  auto end = std::chrono::system_time_point(std::chrono::nanoseconds(high));
+  auto forward = end.elapsed_since(start);
+  auto backward = start.elapsed_since(end);
+  auto zero = start.elapsed_since(start);
+  if (forward || backward ||
+      forward.error() != std::chrono::clock_errc::out_of_range ||
+      backward.error() != std::chrono::clock_errc::out_of_range ||
+      !zero || zero.value().count() != int64_t(0)) { return 4; }
+
+  // These are deterministic overflow errors, not attempts to exhaust memory.
+  auto arena = std::try_make_arena<int64_t>(std::size_t(18446744073709551615));
+  auto pool = std::try_make_pool<int64_t>(std::size_t(18446744073709551615));
+  if (arena || pool || arena.error() != std::alloc_errc::size_overflow ||
+      pool.error() != std::alloc_errc::size_overflow) { return 5; }
+  return 0;
+}

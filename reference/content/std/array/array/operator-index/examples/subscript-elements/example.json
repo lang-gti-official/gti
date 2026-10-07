@@ -1,6 +1,0 @@
-{
-  "title": "Use checked subscript syntax",
-  "description": "Reads and writes array elements with the checked subscript operator.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

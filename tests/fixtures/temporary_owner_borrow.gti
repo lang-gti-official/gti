@@ -1,0 +1,26 @@
+#include <std/string>
+#include <std/vector>
+
+class Owner {
+  int value = 7;
+public:
+  Owner() { std::println(1); }
+  ~Owner() { std::println(9); }
+  int& get() { std::println(2); return this.value; }
+};
+class Passive { int value = 3; public: int& get() { return this.value; } };
+Passive passive() { return Passive(); }
+int read(int& value) { return value; }
+Owner produce() { return Owner(); }
+std::string text() { return std::string("hello"); }
+int size(std::string_view value) { return int(value.size()); }
+int later(int divisor) { std::println(3); return 1 / divisor; }
+int consume(int& value, int divisor) { std::println(4); return value / divisor; }
+
+int main(int argc, std::vector<std::string> argv) {
+  if (size(text().view()) != 5 || size(std::string("hello").view()) != 5 ||
+      read(passive().get()) != 3 || read(Passive().get()) != 3) { return 1; }
+  int divisor = argc == 2 ? 0 : 1;
+  int value = consume(produce().get(), later(divisor) - (argc == 3 ? 1 : 0));
+  return value - 7;
+}

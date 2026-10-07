@@ -44,6 +44,7 @@ enum class CppMirBodyEmissionIssueKind {
   MissingCallInputScheduleMir,
   MissingConstructionScheduleMir,
   MissingPartialConstructionRollbackMir,
+  MissingFieldInitializerFailureRouting,
   MissingFailureCleanupMir,
   MissingProgramInitializationMir,
   MissingHostedStartupMir,

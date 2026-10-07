@@ -1,0 +1,13 @@
+#include <std/cthread>
+extern "C" {
+  void cthread_install_terminal();
+  void cthread_block();
+}
+int32_t worker(void* context) { cthread_block(); return 42; }
+int main() {
+  cthread_install_terminal();
+  mut std::thrd_t handle = 0;
+  unsafe {
+    return std::thrd_create(handle, worker, nullptr);
+  }
+}

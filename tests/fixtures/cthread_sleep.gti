@@ -1,0 +1,21 @@
+#include <std/cthread>
+
+int main() {
+  std::timespec zero = std::timespec();
+  mut std::timespec remaining = std::timespec(int64_t(7), int64_t(9));
+  if (std::thrd_sleep(zero, remaining) != 0) { return 1; }
+  if (remaining.tv_sec != 7 || remaining.tv_nsec != 9) { return 2; }
+  if (std::thrd_sleep(std::timespec(int64_t(0), int64_t(1))) != 0) { return 3; }
+  if (std::thrd_sleep(std::timespec(int64_t(-1), int64_t(0)), remaining) != -2) { return 4; }
+  if (std::thrd_sleep(std::timespec(int64_t(0), int64_t(-1)), remaining) != -2) { return 5; }
+  if (std::thrd_sleep(std::timespec(int64_t(0), int64_t(1000000000)), remaining) != -2) { return 6; }
+  if (remaining.tv_sec != 7 || remaining.tv_nsec != 9) { return 7; }
+  mut std::timespec aliased = std::timespec();
+  if (std::thrd_sleep(aliased, aliased) != 0) { return 8; }
+  unsafe {
+    if (std::thrd_sleep(nullptr, &remaining) != -2) { return 9; }
+    if (std::thrd_sleep(&zero, nullptr) != 0) { return 10; }
+    if (std::thrd_sleep(&aliased, &aliased) != 0) { return 11; }
+  }
+  return remaining.tv_sec == 7 && remaining.tv_nsec == 9 ? 0 : 12;
+}

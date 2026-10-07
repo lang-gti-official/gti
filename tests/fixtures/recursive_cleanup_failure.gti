@@ -1,0 +1,190 @@
+#include <std/forward_list>
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+mut int32_t phase = 0;
+mut int32_t zero = 0;
+
+struct Trace {
+  ~Trace() { std::println(9); }
+};
+
+struct Value {
+  int32_t identity;
+  Value(int32_t id) : identity(id) {}
+  ~Value() {
+    std::println(identity);
+    if ((phase == 1 || phase == 3 || phase == 4 || phase == 7 ||
+         phase == 8 || phase == 9) && identity == 2) {
+      int32_t value_failure = 11 / zero;
+    }
+    if (phase == 4 && identity == 1) {
+      int32_t second_failure = 13 / zero;
+    }
+  }
+};
+
+struct Node {
+  mut std::unique_ptr<Node> next;
+  int32_t identity;
+  Node(int32_t id, std::unique_ptr<Node> following)
+      : next(std::move(following)), identity(id) {}
+  ~Node() {
+    std::println(identity);
+    if ((phase == 11 || phase == 13 || phase == 14 || phase == 16 ||
+         phase == 17 || phase == 18 || phase == 19 || phase == 22 ||
+         phase == 29 || phase == 30 || phase == 31 || phase == 33 ||
+         phase == 34) &&
+        identity == 2) {
+      int32_t node_failure = 19 / zero;
+    }
+    if (phase == 14 && identity == 1) {
+      int32_t node_second_failure = 23 / zero;
+    }
+    if (phase == 30 && identity == 3) {
+      int32_t staged_failure = 43 / zero;
+    }
+  }
+};
+
+struct Left {
+  mut std::unique_ptr<Right> next = std::unique_ptr<Right>();
+  int32_t identity;
+  Left(int32_t id, std::unique_ptr<Right> following)
+      : next(std::move(following)), identity(id) {}
+  ~Left() {
+    std::println(identity);
+    if (phase == 25 && identity == 1) {
+      int32_t left_failure = 31 / zero;
+    }
+  }
+};
+
+struct Right {
+  mut std::unique_ptr<Left> next = std::unique_ptr<Left>();
+  Right(std::unique_ptr<Left> following) : next(std::move(following)) {}
+  ~Right() {
+    std::println(2);
+    if ((phase >= 24 && phase <= 26) || phase == 40) {
+      int32_t right_failure = 37 / zero;
+    }
+  }
+};
+
+int32_t run() {
+  Trace trace = Trace();
+  if (phase >= 37) {
+    mut auto root = std::make_unique<Left>(1, std::unique_ptr<Right>());
+    if (phase != 39) {
+      root->next = std::make_unique<Right>(std::unique_ptr<Left>());
+    }
+    root->next->next = std::make_unique<Left>(3, std::unique_ptr<Right>());
+    if (phase == 38) {
+      root->next->next.reset();
+    } else if (phase == 41) {
+      root->next->next->next =
+          std::make_unique<Right>(std::unique_ptr<Left>());
+      return root->next->next->identity - 3;
+    }
+    return 0;
+  }
+  if (phase >= 27) {
+    if (phase == 28) {
+      mut std::unique_ptr<Node> empty = std::unique_ptr<Node>();
+      empty = std::make_unique<Node>(3, std::unique_ptr<Node>());
+      return 0;
+    }
+    auto tail = std::make_unique<Node>(1, std::unique_ptr<Node>());
+    if (phase == 31 || phase == 32 || phase == 33) {
+      mut Node direct = Node(2, std::move(tail));
+      if (phase == 33) {
+        Node fresh = Node(3, std::unique_ptr<Node>());
+        direct = std::move(fresh);
+      } else {
+        direct = Node(3, std::unique_ptr<Node>());
+      }
+      return 0;
+    }
+    mut auto root = std::make_unique<Node>(2, std::move(tail));
+    if (phase == 29 || phase == 30) {
+      auto fresh = std::make_unique<Node>(3, std::unique_ptr<Node>());
+      root = std::move(fresh);
+    } else if (phase == 34 || phase == 35) {
+      mut auto holder = std::make_unique<Node>(4, std::move(root));
+      holder->next = std::make_unique<Node>(3, std::unique_ptr<Node>());
+    } else {
+      root = std::make_unique<Node>(3, std::unique_ptr<Node>());
+      if (phase == 36) {
+        root = std::make_unique<Node>(4, std::unique_ptr<Node>());
+      }
+    }
+    return 0;
+  }
+  if (phase >= 23) {
+    auto tail = std::make_unique<Left>(3, std::unique_ptr<Right>());
+    auto middle = std::make_unique<Right>(std::move(tail));
+    auto root = std::make_unique<Left>(1, std::move(middle));
+    if (phase == 26) {
+      return 41 / zero;
+    }
+    return 0;
+  }
+  if (phase >= 10) {
+    mut auto tail = std::make_unique<Node>(1, std::unique_ptr<Node>());
+    if (phase == 21 || phase == 22) {
+      Node direct = Node(2, std::move(tail));
+      return 0;
+    }
+    mut auto root = std::make_unique<Node>(2, std::move(tail));
+    if (phase == 12 || phase == 13) {
+      return 29 / zero;
+    }
+    if (phase == 15 || phase == 16) {
+      root.reset();
+    }
+    if (phase == 17) {
+      root = std::make_unique<Node>(3, std::unique_ptr<Node>());
+    }
+    if (phase == 18 || phase == 19) {
+      mut std::vector<std::unique_ptr<Node>> nodes =
+          std::vector<std::unique_ptr<Node>>();
+      nodes.push_back(std::move(root));
+      if (phase == 19) {
+        nodes.pop_back();
+      }
+      return 0;
+    }
+    if (phase == 20) {
+      mut auto moved = std::move(root);
+    }
+    return 0;
+  }
+  mut std::forward_list<Value> values = std::forward_list<Value>();
+  if (phase == 5) {
+    return 0;
+  }
+  values.push_front(Value(1));
+  values.push_front(Value(2));
+  if (phase == 2 || phase == 3) {
+    return 17 / zero;
+  }
+  if (phase == 6 || phase == 7) {
+    values.pop_front();
+    values.push_front(Value(3));
+  }
+  if (phase == 8) {
+    return 0;
+  }
+  if (phase == 9) {
+    auto moved = std::move(values);
+    return 0;
+  }
+  values.clear();
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  return run();
+}

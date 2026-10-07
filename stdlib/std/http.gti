@@ -1,0 +1,1254 @@
+#include <std/string>
+#include <std/vector>
+
+namespace gti_internal {
+  namespace runtime {
+    extern "C" {
+      uint32_t gti_rt_http_client_create_v1(int64_t* output_client);
+      void gti_rt_http_client_destroy_v1(int64_t client);
+      uint32_t gti_rt_http_client_send_v1(int64_t client, uint32_t method, gti_internal::text_view url, gti_internal::text_view encoded_headers, uint64_t header_count, gti_internal::text_view body, uint64_t connect_timeout_ms, uint64_t request_timeout_ms, uint64_t max_response_bytes, gti_internal::text_view ca_bundle_path, int64_t* output_response, int32_t* output_native_code);
+      uint64_t gti_rt_http_client_error_size_v1(int64_t client);
+      int64_t gti_rt_http_client_error_read_v1(int64_t client, uint64_t offset, uint8_t* output, uint64_t capacity);
+      void gti_rt_http_response_destroy_v1(int64_t response);
+      uint32_t gti_rt_http_response_status_v1(int64_t response);
+      uint64_t gti_rt_http_response_header_count_v1(int64_t response);
+      uint64_t gti_rt_http_response_header_name_size_v1(int64_t response, uint64_t index);
+      int64_t gti_rt_http_response_header_name_read_v1(int64_t response, uint64_t index, uint64_t offset, uint8_t* output, uint64_t capacity);
+      uint64_t gti_rt_http_response_header_value_size_v1(int64_t response, uint64_t index);
+      int64_t gti_rt_http_response_header_value_read_v1(int64_t response, uint64_t index, uint64_t offset, uint8_t* output, uint64_t capacity);
+      uint64_t gti_rt_http_response_body_size_v1(int64_t response);
+      int64_t gti_rt_http_response_body_read_v1(int64_t response, uint64_t offset, uint8_t* output, uint64_t capacity);
+    }
+  }
+
+  [[no_transfer, no_share]] class http_client_handle {
+    mut int64_t value = 0;
+
+  public:
+    http_client_handle(int64_t handle) : value(handle) {}
+    http_client_handle(http_client_handle& other) = delete;
+    http_client_handle(http_client_handle&& other) = default;
+
+    bool is_valid() {
+      return this.value > 0;
+    }
+
+    int64_t get() {
+      return this.value;
+    }
+
+    int64_t release() mut {
+      int64_t result = this.value;
+      this.value = 0;
+      return result;
+    }
+  };
+
+  [[no_transfer, no_share]] class http_response_handle {
+    mut int64_t value = 0;
+
+  public:
+    http_response_handle(int64_t handle) : value(handle) {}
+    http_response_handle(http_response_handle& other) = delete;
+    http_response_handle(http_response_handle&& other) = default;
+
+    int64_t get() {
+      return this.value;
+    }
+
+    bool is_valid() {
+      return this.value > 0;
+    }
+
+    int64_t release() mut {
+      int64_t result = this.value;
+      this.value = 0;
+      return result;
+    }
+  };
+
+  namespace http_detail {
+    uint8_t normalized_header_character(char value) {
+      uint8_t code = uint8_t(value);
+      if (code >= uint8_t(65) && code <= uint8_t(90)) {
+        return uint8_t(code + uint8_t(32));
+      }
+      return code;
+    }
+
+    bool equal_header_name(std::string_view left, std::string_view right) {
+      if (left.size() != right.size()) {
+        return false;
+      }
+      for (mut std::size_t index = std::size_t(0); index < left.size(); index++) {
+        if (normalized_header_character(left[index]) != normalized_header_character(right[index])) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    bool valid_header_name_character(char value) {
+      uint8_t code = uint8_t(value);
+      if ((code >= uint8_t(65) && code <= uint8_t(90)) || (code >= uint8_t(97) && code <= uint8_t(122)) || (code >= uint8_t(48) && code <= uint8_t(57))) {
+        return true;
+      }
+      switch (value) {
+      case '!':
+      case '#':
+      case '$':
+      case '%':
+      case '&':
+      case '\'':
+      case '*':
+      case '+':
+      case '-':
+      case '.':
+      case '^':
+      case '_':
+      case '`':
+      case '|':
+      case '~':
+        return true;
+      default:
+        return false;
+      }
+    }
+
+    int32_t header_validation(std::string_view name, std::string_view value) {
+      if (name.empty()) {
+        return int32_t(1);
+      }
+      for (mut std::size_t index = std::size_t(0); index < name.size(); index++) {
+        if (!valid_header_name_character(name[index])) {
+          return int32_t(1);
+        }
+      }
+      for (mut std::size_t index = std::size_t(0); index < value.size(); index++) {
+        if (value[index] == '\0' || value[index] == '\r' || value[index] == '\n') {
+          return int32_t(2);
+        }
+      }
+      return int32_t(0);
+    }
+
+    int32_t hex_digit_value(char value) {
+      uint8_t code = uint8_t(value);
+      if (code >= uint8_t(48) && code <= uint8_t(57)) {
+        return int32_t(code - uint8_t(48));
+      }
+      if (code >= uint8_t(65) && code <= uint8_t(70)) {
+        return int32_t(code - uint8_t(65) + uint8_t(10));
+      }
+      if (code >= uint8_t(97) && code <= uint8_t(102)) {
+        return int32_t(code - uint8_t(97) + uint8_t(10));
+      }
+      return int32_t(-1);
+    }
+
+    char upper_hex_digit(uint8_t value) {
+      switch (value) {
+      case uint8_t(0):
+        return '0';
+      case uint8_t(1):
+        return '1';
+      case uint8_t(2):
+        return '2';
+      case uint8_t(3):
+        return '3';
+      case uint8_t(4):
+        return '4';
+      case uint8_t(5):
+        return '5';
+      case uint8_t(6):
+        return '6';
+      case uint8_t(7):
+        return '7';
+      case uint8_t(8):
+        return '8';
+      case uint8_t(9):
+        return '9';
+      case uint8_t(10):
+        return 'A';
+      case uint8_t(11):
+        return 'B';
+      case uint8_t(12):
+        return 'C';
+      case uint8_t(13):
+        return 'D';
+      case uint8_t(14):
+        return 'E';
+      case uint8_t(15):
+        return 'F';
+      default:
+        return '?';
+      }
+    }
+
+    bool equal_ascii_insensitive(std::string_view source, std::size_t begin, std::string_view pattern) {
+      if (source.size() - begin < pattern.size()) {
+        return false;
+      }
+      for (mut std::size_t index = std::size_t(0); index < pattern.size(); index++) {
+        if (normalized_header_character(source[begin + index]) != normalized_header_character(pattern[index])) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    bool valid_encoded_text(std::string_view source, std::size_t begin, std::size_t end) {
+      mut std::size_t index = begin;
+      while (index < end) {
+        uint8_t code = uint8_t(source[index]);
+        if (code <= uint8_t(32) || code >= uint8_t(127)) {
+          return false;
+        }
+        if (source[index] == '%') {
+          if (index + std::size_t(2) >= end || hex_digit_value(source[index + std::size_t(1)]) < int32_t(0) || hex_digit_value(source[index + std::size_t(2)]) < int32_t(0)) {
+            return false;
+          }
+          index = index + std::size_t(3);
+        } else {
+          index++;
+        }
+      }
+      return true;
+    }
+
+    bool valid_reg_name(std::string_view source, std::size_t begin, std::size_t end) {
+      if (begin == end) {
+        return false;
+      }
+      mut std::size_t index = begin;
+      while (index < end) {
+        uint8_t code = uint8_t(source[index]);
+        if ((code >= uint8_t(65) && code <= uint8_t(90)) || (code >= uint8_t(97) && code <= uint8_t(122)) || (code >= uint8_t(48) && code <= uint8_t(57))) {
+          index++;
+          continue;
+        }
+        switch (source[index]) {
+        case '-':
+        case '.':
+        case '_':
+        case '~':
+        case '!':
+        case '$':
+        case '&':
+        case '\'':
+        case '(':
+        case ')':
+        case '*':
+        case '+':
+        case ',':
+        case ';':
+        case '=':
+          index++;
+          continue;
+        case '%':
+          if (index + std::size_t(2) >= end || hex_digit_value(source[index + std::size_t(1)]) < int32_t(0) || hex_digit_value(source[index + std::size_t(2)]) < int32_t(0)) {
+            return false;
+          }
+          index = index + std::size_t(3);
+          continue;
+        default:
+          return false;
+        }
+      }
+      return true;
+    }
+
+    bool valid_bracketed_host(std::string_view source, std::size_t begin, std::size_t end) {
+      if (end - begin < std::size_t(4) || source[begin] != '[' || source[end - std::size_t(1)] != ']') {
+        return false;
+      }
+      mut bool saw_colon = false;
+      for (mut std::size_t index = begin + std::size_t(1); index + std::size_t(1) < end; index++) {
+        char value = source[index];
+        if (value == ':') {
+          saw_colon = true;
+          continue;
+        }
+        if (value == '.') {
+          continue;
+        }
+        if (hex_digit_value(value) < int32_t(0)) {
+          return false;
+        }
+      }
+      return saw_colon;
+    }
+
+    void append_percent_encoded(std::string_view source, mut std::string& output) {
+      for (mut std::size_t index = std::size_t(0); index < source.size(); index++) {
+        uint8_t code = uint8_t(source[index]);
+        if ((code >= uint8_t(65) && code <= uint8_t(90)) || (code >= uint8_t(97) && code <= uint8_t(122)) || (code >= uint8_t(48) && code <= uint8_t(57)) || source[index] == '-' || source[index] == '.' || source[index] == '_' || source[index] == '~') {
+          output.push_back(source[index]);
+        } else {
+          output.push_back('%');
+          output.push_back(upper_hex_digit(uint8_t(code / uint8_t(16))));
+          output.push_back(upper_hex_digit(uint8_t(code % uint8_t(16))));
+        }
+      }
+    }
+
+    void append_text_range(std::string& source, std::size_t begin, std::size_t end, mut std::string& output) {
+      for (mut std::size_t index = begin; index < end; index++) {
+        output.push_back(source[index]);
+      }
+    }
+
+    bool query_key_matches(std::string& query, std::size_t begin, std::size_t end, std::string_view raw_name) {
+      mut std::size_t key_end = begin;
+      while (key_end < end && query[key_end] != '=') {
+        key_end++;
+      }
+
+      mut std::size_t encoded_index = begin;
+      mut std::size_t raw_index = std::size_t(0);
+      while (encoded_index < key_end && raw_index < raw_name.size()) {
+        mut uint8_t decoded = uint8_t(query[encoded_index]);
+        if (query[encoded_index] == '%') {
+          if (encoded_index + std::size_t(2) >= key_end) {
+            return false;
+          }
+          int32_t high = hex_digit_value(query[encoded_index + std::size_t(1)]);
+          int32_t low = hex_digit_value(query[encoded_index + std::size_t(2)]);
+          if (high < int32_t(0) || low < int32_t(0)) {
+            return false;
+          }
+          decoded = uint8_t(high * int32_t(16) + low);
+          encoded_index = encoded_index + std::size_t(3);
+        } else {
+          encoded_index++;
+        }
+        if (decoded != uint8_t(raw_name[raw_index])) {
+          return false;
+        }
+        raw_index++;
+      }
+      return encoded_index == key_end && raw_index == raw_name.size();
+    }
+
+    // Scalar parse metadata keeps the fallible public factory independent of the
+    // owned component construction. Error codes map one-to-one to url_errc in the
+    // declaration order, with zero denoting success.
+    class url_analysis {
+      int32_t error_code;
+      bool secure_scheme = false;
+      std::size_t host_begin = std::size_t(0);
+      std::size_t host_end = std::size_t(0);
+      std::size_t authority_end = std::size_t(0);
+      std::size_t port_begin = std::size_t(0);
+      bool explicit_port = false;
+      uint16_t port_number = uint16_t(0);
+      std::size_t query_marker = std::size_t(0);
+      bool query_present = false;
+
+    public:
+      url_analysis(int32_t error) : error_code(error) {}
+
+      url_analysis(bool secure, std::size_t host_start, std::size_t host_finish, std::size_t authority_finish, std::size_t port_start, bool has_port, uint16_t port, std::size_t query_at, bool has_query) : error_code(int32_t(0)), secure_scheme(secure), host_begin(host_start), host_end(host_finish), authority_end(authority_finish), port_begin(port_start), explicit_port(has_port), port_number(port), query_marker(query_at), query_present(has_query) {}
+
+      url_analysis(url_analysis& other) = default;
+
+      int32_t error() {
+        return this.error_code;
+      }
+
+      bool secure() {
+        return this.secure_scheme;
+      }
+
+      std::size_t host_start() {
+        return this.host_begin;
+      }
+
+      std::size_t host_finish() {
+        return this.host_end;
+      }
+
+      std::size_t authority_finish() {
+        return this.authority_end;
+      }
+
+      std::size_t port_start() {
+        return this.port_begin;
+      }
+
+      bool has_port() {
+        return this.explicit_port;
+      }
+
+      uint16_t port() {
+        return this.port_number;
+      }
+
+      std::size_t query_at() {
+        return this.query_marker;
+      }
+
+      bool has_query() {
+        return this.query_present;
+      }
+    };
+
+    enum class url_clone_tag {
+      clone,
+    };
+
+    url_analysis analyze_url(std::string_view input) {
+      if (input.empty()) {
+        return url_analysis(int32_t(1));
+      }
+
+      for (mut std::size_t index = std::size_t(0); index < input.size(); index++) {
+        if (input[index] == '#') {
+          return url_analysis(int32_t(7));
+        }
+      }
+
+      mut std::size_t scheme_size = std::size_t(0);
+      mut bool secure = false;
+      if (input.size() >= std::size_t(7) && equal_ascii_insensitive(input, std::size_t(0), "http://")) {
+        scheme_size = std::size_t(4);
+      } else if (input.size() >= std::size_t(8) && equal_ascii_insensitive(input, std::size_t(0), "https://")) {
+        scheme_size = std::size_t(5);
+        secure = true;
+      } else {
+        return url_analysis(int32_t(1));
+      }
+
+      std::size_t authority_begin = scheme_size + std::size_t(3);
+      mut std::size_t authority_end = authority_begin;
+      while (authority_end < input.size() && input[authority_end] != '/' && input[authority_end] != '?') {
+        authority_end++;
+      }
+      if (authority_begin == authority_end) {
+        return url_analysis(int32_t(2));
+      }
+      for (mut std::size_t index = authority_begin; index < authority_end; index++) {
+        if (input[index] == '@') {
+          return url_analysis(int32_t(6));
+        }
+      }
+
+      mut std::size_t host_end = authority_end;
+      mut std::size_t port_begin = authority_end;
+      mut bool has_port = false;
+      if (input[authority_begin] == '[') {
+        mut std::size_t close = authority_begin + std::size_t(1);
+        while (close < authority_end && input[close] != ']') {
+          close++;
+        }
+        if (close == authority_end || !valid_bracketed_host(input, authority_begin, close + std::size_t(1))) {
+          return url_analysis(int32_t(3));
+        }
+        host_end = close + std::size_t(1);
+        if (host_end < authority_end) {
+          if (input[host_end] != ':') {
+            return url_analysis(int32_t(3));
+          }
+          has_port = true;
+          port_begin = host_end + std::size_t(1);
+        }
+      } else {
+        mut std::size_t separator = authority_end;
+        for (mut std::size_t index = authority_begin; index < authority_end; index++) {
+          if (input[index] == ':') {
+            if (separator != authority_end) {
+              return url_analysis(int32_t(3));
+            }
+            separator = index;
+          }
+        }
+        if (separator != authority_end) {
+          host_end = separator;
+          port_begin = separator + std::size_t(1);
+          has_port = true;
+        }
+        if (host_end == authority_begin) {
+          return url_analysis(int32_t(2));
+        }
+        if (!valid_reg_name(input, authority_begin, host_end)) {
+          return url_analysis(int32_t(3));
+        }
+      }
+
+      mut uint32_t parsed_port = uint32_t(0);
+      if (has_port) {
+        if (port_begin == authority_end) {
+          return url_analysis(int32_t(4));
+        }
+        for (mut std::size_t index = port_begin; index < authority_end; index++) {
+          uint8_t code = uint8_t(input[index]);
+          if (code < uint8_t(48) || code > uint8_t(57)) {
+            return url_analysis(int32_t(4));
+          }
+          uint32_t digit = uint32_t(code - uint8_t(48));
+          if (parsed_port > uint32_t(6553) || (parsed_port == uint32_t(6553) && digit > uint32_t(5))) {
+            return url_analysis(int32_t(4));
+          }
+          parsed_port = parsed_port * uint32_t(10) + digit;
+        }
+      } else if (secure) {
+        parsed_port = uint32_t(443);
+      } else {
+        parsed_port = uint32_t(80);
+      }
+
+      mut std::size_t query_marker = input.size();
+      for (mut std::size_t index = authority_end; index < input.size(); index++) {
+        if (input[index] == '?') {
+          query_marker = index;
+          break;
+        }
+      }
+      if (!valid_encoded_text(input, authority_end, query_marker)) {
+        return url_analysis(int32_t(5));
+      }
+      if (query_marker < input.size() && !valid_encoded_text(input, query_marker + std::size_t(1), input.size())) {
+        return url_analysis(int32_t(5));
+      }
+
+      return url_analysis(secure, authority_begin, host_end, authority_end, port_begin, has_port, uint16_t(parsed_port), query_marker, query_marker < input.size());
+    }
+
+    std::string copy_text_range(std::string_view input, std::size_t begin, std::size_t end) {
+      mut std::string output = std::string();
+      output.reserve(end - begin);
+      for (mut std::size_t index = begin; index < end; index++) {
+        output.push_back(input[index]);
+      }
+      return std::move(output);
+    }
+
+    std::string url_scheme_text(bool secure) {
+      if (secure) {
+        return std::string("https");
+      }
+      return std::string("http");
+    }
+
+    std::string url_port_text(std::string_view input, url_analysis& parts) {
+      if (!parts.has_port()) {
+        return std::string();
+      }
+      return copy_text_range(input, parts.port_start(), parts.authority_finish());
+    }
+
+    std::string url_query_text(std::string_view input, url_analysis& parts) {
+      if (!parts.has_query()) {
+        return std::string();
+      }
+      return copy_text_range(input, parts.query_at() + std::size_t(1), input.size());
+    }
+
+  }
+}
+
+namespace std {
+  namespace http {
+    /// HTTP methods supported by the first synchronous client surface.
+    enum class method {
+      get,
+      post,
+      put,
+      patch,
+      delete_,
+      head,
+    };
+
+    /// Recoverable request construction and transport outcomes.
+    enum class errc {
+      invalid_url,
+      invalid_header,
+      unsupported_scheme,
+      name_resolution_failed,
+      connection_failed,
+      tls_failed,
+      timeout,
+      request_failed,
+      response_too_large,
+      backend_unavailable,
+      client_creation_failed,
+    };
+
+    /// Recoverable absolute-URL parsing and construction outcomes.
+    enum class url_errc {
+      invalid_scheme,
+      missing_host,
+      invalid_host,
+      invalid_port,
+      invalid_percent_encoding,
+      credentials_not_allowed,
+      fragment_not_allowed,
+    };
+
+    /// An owned absolute HTTP(S) URL. Parsed path and query bytes retain their
+    /// spelling; builder inputs are encoded as individual path/query components.
+    class url {
+      mut std::string scheme_text;
+      mut std::string host_text;
+      bool explicit_port;
+      uint16_t port_number;
+      mut std::string port_text;
+      mut std::string path_text;
+      mut bool query_present;
+      mut std::string query_text;
+      mut std::string rendered_text;
+
+      // Only the checked factories and explicit clone may construct the
+      // component state directly.
+      url(string_view source, gti_internal::http_detail::url_analysis& parts) : scheme_text(gti_internal::http_detail::url_scheme_text(parts.secure())), host_text(gti_internal::http_detail::copy_text_range(source, parts.host_start(), parts.host_finish())), explicit_port(parts.has_port()), port_number(parts.port()), port_text(gti_internal::http_detail::url_port_text(source, parts)), path_text(gti_internal::http_detail::copy_text_range(source, parts.authority_finish(), parts.query_at())), query_present(parts.has_query()), query_text(gti_internal::http_detail::url_query_text(source, parts)), rendered_text(std::string()) {
+        this.rebuild();
+      }
+
+      url(url& other, gti_internal::http_detail::url_clone_tag tag) : scheme_text(other.scheme_text.clone()), host_text(other.host_text.clone()), explicit_port(other.explicit_port), port_number(other.port_number), port_text(other.port_text.clone()), path_text(other.path_text.clone()), query_present(other.query_present), query_text(other.query_text.clone()), rendered_text(std::string()) {
+        this.rebuild();
+      }
+
+    private:
+
+      void rebuild() mut {
+        mut std::string replacement = std::string();
+        replacement.append(this.scheme_text.view());
+        replacement.append("://");
+        replacement.append(this.host_text.view());
+        if (this.explicit_port) {
+          replacement.push_back(':');
+          replacement.append(this.port_text.view());
+        }
+        replacement.append(this.path_text.view());
+        if (this.query_present) {
+          replacement.push_back('?');
+          replacement.append(this.query_text.view());
+        }
+        this.rendered_text.swap(replacement);
+
+      }
+
+    public:
+      url(url& other) = delete;
+      url(url&& other) = default;
+
+      /// Appends one raw segment, percent-encoding reserved characters.
+      void operator/=(string_view segment) mut {
+        this.push_path_segment(segment);
+      }
+
+      url operator/(string_view segment) {
+        mut url result = this.clone();
+        result.push_path_segment(segment);
+        return std::move(result);
+      }
+
+      /// Reuses a fresh or explicitly consumed URL without cloning its fields.
+      url operator/(string_view segment) && {
+        this.push_path_segment(segment);
+        return std::move(this);
+      }
+
+      /// Parses one absolute HTTP(S) URL. Scheme spelling is normalized to lower
+      /// case; the authority, encoded path, and encoded query otherwise retain
+      /// their source spelling.
+      static expected<url, url_errc> parse(string_view source) {
+        mut auto parts = gti_internal::http_detail::analyze_url(source);
+        switch (parts.error()) {
+        case int32_t(0):
+          return url(source, parts);
+        case int32_t(1):
+          return unexpected(url_errc::invalid_scheme);
+        case int32_t(2):
+          return unexpected(url_errc::missing_host);
+        case int32_t(3):
+          return unexpected(url_errc::invalid_host);
+        case int32_t(4):
+          return unexpected(url_errc::invalid_port);
+        case int32_t(5):
+          return unexpected(url_errc::invalid_percent_encoding);
+        case int32_t(6):
+          return unexpected(url_errc::credentials_not_allowed);
+        case int32_t(7):
+          return unexpected(url_errc::fragment_not_allowed);
+        default:
+          return unexpected(url_errc::invalid_scheme);
+        }
+      }
+
+      /// Constructs an HTTPS URL from an ASCII host or host:port authority.
+      static expected<url, url_errc> https(string_view authority) {
+        if (authority.empty()) {
+          return unexpected(url_errc::missing_host);
+        }
+        for (mut size_t index = size_t(0); index < authority.size(); index++) {
+          if (authority[index] == '#') {
+            return unexpected(url_errc::fragment_not_allowed);
+          }
+          if (authority[index] == '@') {
+            return unexpected(url_errc::credentials_not_allowed);
+          }
+          if (authority[index] == '/' || authority[index] == '?') {
+            return unexpected(url_errc::invalid_host);
+          }
+        }
+        mut std::string source = std::string("https://");
+        source.append(authority);
+        return parse(source.view());
+      }
+
+      url clone() {
+        return url(this, gti_internal::http_detail::url_clone_tag::clone);
+      }
+
+      string_view scheme() {
+        return this.scheme_text.view();
+      }
+
+      string_view host() {
+        return this.host_text.view();
+      }
+
+      bool has_explicit_port() {
+        return this.explicit_port;
+      }
+
+      /// Returns the explicit port, or the scheme default (80/443) when omitted.
+      uint16_t port() {
+        return this.port_number;
+      }
+
+      void push_path_segment(string_view segment) mut {
+        if (this.path_text.empty() || this.path_text.back() != '/') {
+          this.path_text.push_back('/');
+        }
+        gti_internal::http_detail::append_percent_encoded(segment, this.path_text);
+        this.rebuild();
+      }
+
+      void add_query_parameter(string_view name, string_view value) mut {
+        if (!this.query_text.empty()) {
+          this.query_text.push_back('&');
+        }
+        gti_internal::http_detail::append_percent_encoded(name, this.query_text);
+        this.query_text.push_back('=');
+        gti_internal::http_detail::append_percent_encoded(value, this.query_text);
+        this.query_present = true;
+        this.rebuild();
+      }
+
+      /// Replaces the first percent-decoded matching name, removes later matches,
+      /// and appends a new field when the name was absent. `+` remains a literal
+      /// plus; this is URL query handling, not form decoding.
+      void set_query_parameter(string_view name, string_view value) mut {
+        mut std::string replacement = std::string();
+        mut bool replaced = false;
+        mut size_t emitted = size_t(0);
+        if (!this.query_text.empty()) {
+          mut size_t begin = size_t(0);
+          while (begin <= this.query_text.size()) {
+            mut size_t end = begin;
+            while (end < this.query_text.size() && this.query_text[end] != '&') {
+              end++;
+            }
+            bool matches = gti_internal::http_detail::query_key_matches(this.query_text, begin, end, name);
+            if (!matches || !replaced) {
+              if (emitted > size_t(0)) {
+                replacement.push_back('&');
+              }
+              if (matches) {
+                gti_internal::http_detail::append_percent_encoded(name, replacement);
+                replacement.push_back('=');
+                gti_internal::http_detail::append_percent_encoded(value, replacement);
+                replaced = true;
+              } else {
+                gti_internal::http_detail::append_text_range(this.query_text, begin, end, replacement);
+              }
+              emitted++;
+            }
+            if (end == this.query_text.size()) {
+              break;
+            }
+            begin = end + size_t(1);
+          }
+        }
+        if (!replaced) {
+          if (emitted > size_t(0)) {
+            replacement.push_back('&');
+          }
+          gti_internal::http_detail::append_percent_encoded(name, replacement);
+          replacement.push_back('=');
+          gti_internal::http_detail::append_percent_encoded(value, replacement);
+        }
+        this.query_text.swap(replacement);
+        this.query_present = true;
+        this.rebuild();
+      }
+
+      void clear_query() mut {
+        this.query_text.clear();
+        this.query_present = false;
+        this.rebuild();
+      }
+
+      string_view view() {
+        return this.rendered_text.view();
+      }
+
+      std::string string() {
+        return this.rendered_text.clone();
+      }
+    };
+
+    /// One owned header field. Names compare case-insensitively through request
+    /// and response lookup, while original spelling and duplicate response fields
+    /// remain available in `response::headers()`.
+    class header {
+      string field_name;
+      mut string field_value;
+
+    public:
+      header(string name, string value) : field_name(std::move(name)), field_value(std::move(value)) {}
+
+      header(string_view name, string_view value) : field_name(std::string(name)), field_value(std::string(value)) {}
+
+      header(header& other) = delete;
+      header(header&& other) = default;
+
+      string& name() {
+        return this.field_name;
+      }
+
+      string& value() {
+        return this.field_value;
+      }
+
+      void replace_value(string_view value) mut {
+        mut string replacement = string(value);
+        this.field_value.swap(replacement);
+      }
+    };
+
+    /// An owned, reusable request description. URL, headers, body, and CA path are
+    /// copied into the request; no caller view escapes the constructing call.
+    class request {
+      method request_method;
+      mut string request_url;
+      mut vector<header> request_headers;
+      mut string request_body;
+      mut string ca_bundle_path;
+      mut uint64_t connect_timeout = uint64_t(10000);
+      mut uint64_t total_timeout = uint64_t(30000);
+      mut uint64_t response_limit = uint64_t(16 * 1024 * 1024);
+
+    public:
+      request(method verb, string_view url) : request_method(verb), request_url(std::string(url)), request_headers(vector<header>()), request_body(string()), ca_bundle_path(string()) {}
+
+      request(method verb, std::http::url& target) : request_method(verb), request_url(std::string(target.view())), request_headers(vector<header>()), request_body(string()), ca_bundle_path(string()) {}
+
+      request(request& other) = delete;
+      request(request&& other) = default;
+
+      method verb() {
+        return this.request_method;
+      }
+
+      string& url() {
+        return this.request_url;
+      }
+
+      vector < header >& headers() {
+        return this.request_headers;
+      }
+
+      string& body() {
+        return this.request_body;
+      }
+
+      string& ca_bundle() {
+        return this.ca_bundle_path;
+      }
+
+      uint64_t connect_timeout_ms() {
+        return this.connect_timeout;
+      }
+
+      uint64_t timeout_ms() {
+        return this.total_timeout;
+      }
+
+      uint64_t max_response_bytes() {
+        return this.response_limit;
+      }
+
+      void set_url(string_view url) mut {
+        mut string replacement = string(url);
+        this.request_url.swap(replacement);
+      }
+
+      void set_url(std::http::url& target) mut {
+        mut string replacement = string(target.view());
+        this.request_url.swap(replacement);
+      }
+
+      void set_body(string body) mut {
+        mut string replacement = std::move(body);
+        this.request_body.swap(replacement);
+      }
+
+      void set_body(string_view body) mut {
+        mut string replacement = string(body);
+        this.request_body.swap(replacement);
+      }
+
+      void set_connect_timeout_ms(uint64_t milliseconds) mut {
+        this.connect_timeout = milliseconds;
+      }
+
+      void set_timeout_ms(uint64_t milliseconds) mut {
+        this.total_timeout = milliseconds;
+      }
+
+      void set_max_response_bytes(uint64_t maximum) mut {
+        this.response_limit = maximum;
+      }
+
+      expected<void, errc> set_ca_bundle(string_view path) mut {
+        for (mut size_t index = size_t(0); index < path.size(); index++) {
+          if (path[index] == '\0') {
+            return unexpected(errc::request_failed);
+          }
+        }
+        mut string replacement = string(path);
+        this.ca_bundle_path.swap(replacement);
+        return;
+      }
+
+      expected<void, errc> add_header(string_view name, string_view value) mut {
+        int32_t validation = gti_internal::http_detail::header_validation(name, value);
+        if (validation == int32_t(1)) {
+          return unexpected(errc::invalid_header);
+        }
+        if (validation != int32_t(0)) {
+          return unexpected(errc::invalid_header);
+        }
+        this.request_headers.push_back(header(name, value));
+        return;
+      }
+
+      expected<void, errc> set_header(string_view name, string_view value) mut {
+        int32_t validation = gti_internal::http_detail::header_validation(name, value);
+        if (validation == int32_t(1)) {
+          return unexpected(errc::invalid_header);
+        }
+        if (validation != int32_t(0)) {
+          return unexpected(errc::invalid_header);
+        }
+
+        mut bool replaced = false;
+        mut size_t index = size_t(0);
+        while (index < this.request_headers.size()) {
+          if (gti_internal::http_detail::equal_header_name(this.request_headers[index].name().view(), name)) {
+            if (!replaced) {
+              this.request_headers[index].replace_value(value);
+              replaced = true;
+              index++;
+            } else {
+              this.request_headers.erase(index);
+            }
+          } else {
+            index++;
+          }
+        }
+        if (!replaced) {
+          this.request_headers.push_back(header(name, value));
+        }
+        return;
+      }
+    };
+
+    /// A completely owned buffered HTTP response. Status values including 4xx and
+    /// 5xx are successful responses; only construction/transport failures use the
+    /// `errc` channel. The private runtime owner stores the already-buffered bytes;
+    /// no socket, transfer, or libcurl identity is exposed through this type.
+    class response {
+      mut gti_internal::http_response_handle handle;
+
+      string read_text(uint32_t kind, uint64_t index, uint64_t length) {
+        mut string result = string();
+        result.reserve(size_t(length));
+        mut uint8_t buffer[4096] = {};
+        mut uint64_t offset = uint64_t(0);
+        while (offset < length) {
+          mut uint64_t capacity = length - offset;
+          if (capacity > uint64_t(4096)) {
+            capacity = uint64_t(4096);
+          }
+          mut int64_t count = -1;
+          unsafe {
+            if (kind == uint32_t(0)) {
+              count = gti_internal::runtime::gti_rt_http_response_header_name_read_v1(this.handle.get(), index, offset, &buffer[0], capacity);
+            } else if (kind == uint32_t(1)) {
+              count = gti_internal::runtime::gti_rt_http_response_header_value_read_v1(this.handle.get(), index, offset, &buffer[0], capacity);
+            } else {
+              count = gti_internal::runtime::gti_rt_http_response_body_read_v1(this.handle.get(), offset, &buffer[0], capacity);
+            }
+          }
+          if (count <= 0 || uint64_t(count) > capacity) {
+            return std::move(result);
+          }
+          for (mut int64_t byte = int64_t(0); byte < count; byte++) {
+            result.push_back(char(buffer[size_t(byte)]));
+          }
+          offset = offset + uint64_t(count);
+        }
+        return std::move(result);
+      }
+
+    public:
+      response(gti_internal::http_response_handle value) : handle(std::move(value)) {}
+
+      response(response& other) = delete;
+      response(response&& other) = default;
+
+      ~response() {
+        if (this.handle.is_valid()) {
+          gti_internal::runtime::gti_rt_http_response_destroy_v1(this.handle.release());
+        }
+      }
+
+      uint32_t status() {
+        return gti_internal::runtime::gti_rt_http_response_status_v1(this.handle.get());
+      }
+
+      vector<header> headers() {
+        uint64_t count = gti_internal::runtime::gti_rt_http_response_header_count_v1(this.handle.get());
+        mut vector<header> result = vector<header>();
+        result.reserve(size_t(count));
+        for (mut uint64_t index = uint64_t(0); index < count; index++) {
+          uint64_t name_size = gti_internal::runtime::gti_rt_http_response_header_name_size_v1(this.handle.get(), index);
+          uint64_t value_size = gti_internal::runtime::gti_rt_http_response_header_value_size_v1(this.handle.get(), index);
+          result.push_back(header(this.read_text(uint32_t(0), index, name_size), this.read_text(uint32_t(1), index, value_size)));
+        }
+        return std::move(result);
+      }
+
+      string body() {
+        uint64_t length = gti_internal::runtime::gti_rt_http_response_body_size_v1(this.handle.get());
+        return this.read_text(uint32_t(2), uint64_t(0), length);
+      }
+
+    };
+  }
+}
+
+namespace gti_internal {
+  namespace http_detail {
+    uint32_t runtime_method(std::http::method value) {
+      switch (value) {
+      case std::http::method::get:
+        return uint32_t(0);
+      case std::http::method::post:
+        return uint32_t(1);
+      case std::http::method::put:
+        return uint32_t(2);
+      case std::http::method::patch:
+        return uint32_t(3);
+      case std::http::method::delete_:
+        return uint32_t(4);
+      case std::http::method::head:
+        return uint32_t(5);
+      default:
+        return uint32_t(6);
+      }
+    }
+
+    std::http::errc public_error(uint32_t value) {
+      switch (value) {
+      case uint32_t(1):
+        return std::http::errc::invalid_url;
+      case uint32_t(2):
+        return std::http::errc::invalid_header;
+      case uint32_t(3):
+        return std::http::errc::unsupported_scheme;
+      case uint32_t(4):
+        return std::http::errc::name_resolution_failed;
+      case uint32_t(5):
+        return std::http::errc::connection_failed;
+      case uint32_t(6):
+        return std::http::errc::tls_failed;
+      case uint32_t(7):
+        return std::http::errc::timeout;
+      case uint32_t(9):
+        return std::http::errc::response_too_large;
+      case uint32_t(10):
+        return std::http::errc::backend_unavailable;
+      case uint32_t(11):
+        return std::http::errc::client_creation_failed;
+      default:
+        return std::http::errc::request_failed;
+      }
+    }
+
+  }
+}
+
+namespace std {
+  namespace http {
+    /// A reusable synchronous client. One mutable borrow permits one request at a
+    /// time; the native easy handle retains its connection pool between calls.
+    class client {
+      mut gti_internal::http_client_handle handle;
+      mut int32_t backend_code = int32_t(0);
+
+      client(gti_internal::http_client_handle value) : handle(std::move(value)) {}
+
+    public:
+      client(client& other) = delete;
+      client(client&& other) = default;
+
+      static expected<client, errc> create() {
+        mut int64_t value = int64_t(0);
+        mut uint32_t status = uint32_t(0);
+        unsafe {
+          status = gti_internal::runtime::gti_rt_http_client_create_v1(&value);
+        }
+        if (status != uint32_t(0)) {
+          errc code = gti_internal::http_detail::public_error(status);
+          return unexpected(code);
+        }
+        return client(gti_internal::http_client_handle(value));
+      }
+
+      ~client() {
+        if (this.handle.is_valid()) {
+          gti_internal::runtime::gti_rt_http_client_destroy_v1(this.handle.release());
+        }
+      }
+
+      /// Returns the libcurl status from the most recent `send`; zero means no
+      /// backend error. This remains diagnostic-only—branch on `errc` instead.
+      int32_t last_native_code() {
+        return this.backend_code;
+      }
+
+      /// Copies the backend diagnostic from the most recent failed `send`.
+      /// Branching logic must use `errc`; this text is intended for logs only.
+      string last_error_message() {
+        uint64_t length = gti_internal::runtime::gti_rt_http_client_error_size_v1(this.handle.get());
+        mut string result = string();
+        result.reserve(size_t(length));
+        mut uint8_t buffer[4096] = {};
+        mut uint64_t offset = uint64_t(0);
+        while (offset < length) {
+          mut uint64_t capacity = length - offset;
+          if (capacity > uint64_t(4096)) {
+            capacity = uint64_t(4096);
+          }
+          mut int64_t count = -1;
+          unsafe {
+            count = gti_internal::runtime::gti_rt_http_client_error_read_v1(this.handle.get(), offset, &buffer[0], capacity);
+          }
+          if (count <= 0 || uint64_t(count) > capacity) {
+            return std::move(result);
+          }
+          for (mut int64_t byte = int64_t(0); byte < count; byte++) {
+            result.push_back(char(buffer[size_t(byte)]));
+          }
+          offset = offset + uint64_t(count);
+        }
+        return std::move(result);
+      }
+
+      expected<response, errc> send(request& input) mut {
+        mut string encoded_headers = string();
+        vector < header >& fields = input.headers();
+        for (mut size_t index = size_t(0); index < fields.size(); index++) {
+          encoded_headers.append(fields[index].name().view());
+          encoded_headers.push_back('\0');
+          encoded_headers.append(fields[index].value().view());
+          encoded_headers.push_back('\0');
+        }
+        mut int64_t response_value = int64_t(0);
+        mut int32_t native_code = int32_t(0);
+        mut uint32_t status = uint32_t(0);
+        unsafe {
+          status = gti_internal::runtime::gti_rt_http_client_send_v1(this.handle.get(), gti_internal::http_detail::runtime_method(input.verb()), input.url().view(), encoded_headers.view(), uint64_t(fields.size()), input.body().view(), input.connect_timeout_ms(), input.timeout_ms(), input.max_response_bytes(), input.ca_bundle().view(), &response_value, &native_code);
+        }
+        this.backend_code = native_code;
+        if (status != uint32_t(0)) {
+          errc code = gti_internal::http_detail::public_error(status);
+          return unexpected(code);
+        }
+        return response(gti_internal::http_response_handle(response_value));
+      }
+
+      expected<response, errc> get(string_view url) mut {
+        mut request input = request(method::get, url);
+        return this.send(input);
+      }
+
+      expected<response, errc> get(std::http::url& target) mut {
+        mut request input = request(method::get, target);
+        return this.send(input);
+      }
+
+      expected<response, errc> post(string_view url, string_view body) mut {
+        mut request input = request(method::post, url);
+        input.set_body(body);
+        return this.send(input);
+      }
+
+      expected<response, errc> post(std::http::url& target, string_view body) mut {
+        mut request input = request(method::post, target);
+        input.set_body(body);
+        return this.send(input);
+      }
+
+      expected<response, errc> put(string_view url, string_view body) mut {
+        mut request input = request(method::put, url);
+        input.set_body(body);
+        return this.send(input);
+      }
+
+      expected<response, errc> put(std::http::url& target, string_view body) mut {
+        mut request input = request(method::put, target);
+        input.set_body(body);
+        return this.send(input);
+      }
+
+      expected<response, errc> patch(string_view url, string_view body) mut {
+        mut request input = request(method::patch, url);
+        input.set_body(body);
+        return this.send(input);
+      }
+
+      expected<response, errc> patch(std::http::url& target, string_view body) mut {
+        mut request input = request(method::patch, target);
+        input.set_body(body);
+        return this.send(input);
+      }
+
+      expected<response, errc> delete_(string_view url) mut {
+        mut request input = request(method::delete_, url);
+        return this.send(input);
+      }
+
+      expected<response, errc> delete_(std::http::url& target) mut {
+        mut request input = request(method::delete_, target);
+        return this.send(input);
+      }
+
+      expected<response, errc> head(string_view url) mut {
+        mut request input = request(method::head, url);
+        return this.send(input);
+      }
+
+      expected<response, errc> head(std::http::url& target) mut {
+        mut request input = request(method::head, target);
+        return this.send(input);
+      }
+
+    };
+  }
+}

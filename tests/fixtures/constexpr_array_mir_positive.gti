@@ -1,0 +1,50 @@
+constexpr int table_sum(int seed) {
+  mut int values[3] = {seed, seed + 1, seed + 2};
+  values[1] = values[1] + 4;
+  mut int total = 0;
+  for (mut uint64_t index = 0; index < 3; index++) { total += values[index]; }
+  return total;
+}
+
+constexpr int default_table(int seed) {
+  mut int values[4] = {};
+  for (mut uint64_t index = 0; index < values.size(); index++) {
+    values[index] = seed;
+    values[index]++;
+  }
+  return values[0] + values[1] + values[2] + values[3];
+}
+constexpr int copy_table(int values[3]) {
+  mut int copy[3] = values;
+  copy[0] = 9;
+  return copy[0] + values[0];
+}
+constexpr int nested_table(int seed) {
+  mut int grid[2][3] = {};
+  uint64_t row = 1;
+  uint64_t column = 2;
+  grid[row][column] = seed;
+  grid[0] = {1, 2, 3};
+  mut int copy[2][3] = grid;
+  copy[1][2]++;
+  return grid[1][2] + copy[1][2] + grid[0][2];
+}
+constexpr int generic_table<uint64_t N>(int seed) {
+  mut int values[N] = {};
+  mut int result = 0;
+  for (mut uint64_t index = 0; index < N; index++) {
+    values[index] = seed;
+    result += values[index];
+  }
+  return result;
+}
+static_assert(table_sum(5) == 22);
+static_assert(default_table(2) == 12);
+static_assert(copy_table({2, 3, 4}) == 11);
+static_assert(nested_table(5) == 14);
+static_assert(generic_table<4>(3) == 12);
+int main() {
+  return table_sum(5) == 22 && default_table(2) == 12 &&
+         copy_table({2, 3, 4}) == 11 && nested_table(5) == 14 &&
+         generic_table<4>(3) == 12 ? 0 : 1;
+}

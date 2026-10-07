@@ -1,0 +1,12 @@
+#include <std/optional>
+class NoClone {
+public:
+  NoClone() {}
+  NoClone(NoClone& other) = delete;
+  NoClone(NoClone&& other) = default;
+};
+int main() {
+  std::optional<NoClone> value{};
+  auto copy = value.clone();
+  return 0;
+}

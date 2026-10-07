@@ -54,12 +54,30 @@ struct ProjectNativeSettings {
   std::vector<ProjectNativePlatform> platforms;
 };
 
+// A host-side package build program. The command is an exact argv vector run
+// with the package directory as its working directory. Inputs are declared as
+// package-contained paths so the driver can form a deterministic identity;
+// outputs are reported by the program through GTI_BUILD_OUTPUT.
+struct ProjectBuildScript {
+  std::vector<std::string> command;
+  std::optional<std::filesystem::path> source;
+  std::optional<std::string> declaredSource;
+  std::vector<std::filesystem::path> inputs;
+  std::vector<std::string> declaredInputs;
+  SourceSpan declaration;
+  SourceSpan sourceDeclaration;
+  std::vector<SourceSpan> commandDeclarations;
+  std::vector<SourceSpan> inputDeclarations;
+};
+
 struct ProjectPackage {
   std::string name;
   std::string version;
   std::filesystem::path sourceRoot;
   SourceSpan sourceRootDeclaration;
   ProjectNativeSettings native;
+  std::optional<ProjectBuildScript> buildScript;
+  std::vector<std::pair<std::string, std::filesystem::path>> modules;
 };
 
 // A pinned git dependency source as spelled in the manifest: an exact URL
@@ -73,13 +91,20 @@ struct ProjectGitDependencySource {
   SourceSpan revisionDeclaration;
 };
 
+struct ProjectRegistryDependencySource {
+  std::string registry = "official";
+  std::string package;
+  std::string requirement;
+};
+
 struct ProjectDependency {
   std::string alias;
-  // For a path dependency, the resolved package directory. A git dependency
+  // For a path dependency, the resolved package directory. A Git dependency
   // leaves this empty until workspace resolution materializes its verified
   // checkout.
   std::filesystem::path packageRoot;
   std::optional<ProjectGitDependencySource> git;
+  std::optional<ProjectRegistryDependencySource> registry;
   SourceSpan declaration;
   SourceSpan pathDeclaration;
 };
@@ -107,8 +132,9 @@ struct ProjectBindgenImport {
   // Validated `-D<name>[=<value>]` / `-U<name>` preprocessor arguments in
   // declaration order.
   std::vector<std::string> macroArguments;
-  // Opt-in import policy (C-07): name selectors, type/constant renames, and
-  // declared pointer-plus-count results. Sorted for deterministic identity.
+  // Opt-in import policy (C-07): name selectors, GTI source renames, and
+  // declared pointer-plus-count results. Function renames retain their C
+  // symbol through [[link_name]]. Sorted for deterministic identity.
   std::vector<std::string> allowPatterns;
   std::vector<std::string> denyPatterns;
   std::vector<std::pair<std::string, std::string>> renames;
@@ -193,7 +219,11 @@ struct ProjectProfile {
   OptimizationLevel optimization = OptimizationLevel::O0;
   CppStandard cppStandard = CppStandard::Cpp23;
   ExecutionProfile executionProfile = ExecutionProfile::SingleThreaded;
+  RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
+  WarningPolicy warningPolicy;
+  bool dependencyWarnings = true;
   bool keepCpp = false;
+  bool debugInfo = false;
   SourceSpan declaration;
   ProjectNativeSettings native;
 };
@@ -201,6 +231,11 @@ struct ProjectProfile {
 struct ProjectBuildSettings {
   ConfigurationFlags defines;
   std::vector<SourceSpan> defineDeclarations;
+  // Consumer-owned permission list. Dependency packages cannot authorize
+  // their own build programs: only the selected root/member's [build] table
+  // is consulted when plans are assembled.
+  std::vector<std::string> allowedBuildScripts;
+  std::vector<SourceSpan> allowedBuildScriptDeclarations;
   SourceSpan declaration;
 };
 
@@ -283,8 +318,9 @@ struct ManifestLoadResult {
 [[nodiscard]] ManifestDiscoveryResult
 discoverProjectManifest(const std::filesystem::path &startDirectory);
 
-[[nodiscard]] ManifestLoadResult
-loadProjectManifest(const std::filesystem::path &manifestPath,
-                    ManifestFeaturePolicy features = {});
+[[nodiscard]] ManifestLoadResult loadProjectManifest(
+    const std::filesystem::path &manifestPath,
+    const std::optional<std::string> &textOverride = std::nullopt,
+    ManifestFeaturePolicy features = {});
 
 } // namespace lang::driver

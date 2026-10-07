@@ -1,3 +1,13 @@
+namespace raw {
+  // The declaration gives callers a safety obligation: pointer must address a
+  // live initialized byte for this call. It does not make the body unsafe.
+  unsafe uint8_t read(const uint8_t* pointer) {
+    unsafe {
+      return *pointer;
+    }
+  }
+}
+
 int main() {
   // Raw pointer spelling follows C++, while address formation and memory
   // access are confined to a lexical unsafe block. The pointer does not own
@@ -11,6 +21,10 @@ int main() {
     cursor[1] = 20;
     *(cursor + 2) = 30;
     distance = (cursor + 3) - cursor;
+    // The caller acknowledges the contract separately from address formation.
+    if (raw::read(cursor) != 1) {
+      return 2;
+    }
   }
 
   if (values[1] != 20 or values[2] != 30 or distance != 3) {

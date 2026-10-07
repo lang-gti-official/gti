@@ -256,12 +256,12 @@ void testSemanticAndLoweringRoots() {
   if (lowered.valid()) {
     const std::string serialized =
         lang::LoweredProgramPrinter().print(*lowered.program);
-    expect(serialized.starts_with("lowered-program-v6\n") &&
+    expect(serialized.starts_with("lowered-program-v12\n") &&
                serialized.find("embedding-export symbol=\"game_update_v1\"") !=
                    std::string::npos &&
                lang::MirPrinter()
                    .print(optimized.mir)
-                   .starts_with("mir-v55 valid=1\n"),
+                   .starts_with("mir-v92 valid=1\n"),
            "library-only serialization should retain canonical export facts");
   }
 
@@ -313,7 +313,7 @@ void expectSemanticRejection(std::string_view label, std::string source,
           : analyze(std::string(label) + ".gti", std::move(source),
                     std::move(request));
   const bool rejected =
-      !result.semanticValid && hasCode(result.diagnostics, "GTI-S2091") &&
+      !result.semanticValid && hasCode(result.diagnostics, "GTI-S2104") &&
       (message.empty() || hasMessage(result.diagnostics, message));
   if (!rejected) {
     std::cerr << "diagnostics for " << label << ":\n";
@@ -364,18 +364,24 @@ void testSemanticRejections() {
       "fixed array boundary",
       "int32_t read(int32_t values[2]) { return values[0]; }",
       libraryRequest({{"read", "read_v1"}}), "type outside");
-  const lang::FrontendResult nestedPointer =
-      analyze("nested-pointer.gti",
-              "[[c_opaque]] struct Handle; "
-              "int32_t read(Handle** value) { return 0; }",
-              libraryRequest({{"read", "read_v1"}}));
-  expect(!nestedPointer.semanticValid &&
-             hasCode(nestedPointer.diagnostics, "GTI-S2074"),
-         "the ordinary pointer rules should reject a nested-pointer export "
-         "before artifact policy runs");
+  expectSemanticRejection("nested-pointer boundary",
+                          "[[c_opaque]] struct Handle; "
+                          "int32_t read(Handle** value) { return 0; }",
+                          libraryRequest({{"read", "read_v1"}}),
+                          "type outside");
   expectSemanticRejection(
       "boolean boundary", "bool read(bool value) { return value; }",
       libraryRequest({{"read", "read_v1"}}), "type outside");
+  const auto nativeLong = lang::SemanticType::nativeCScalarType(
+      lang::NativeCScalarKind::Long, lang::TargetInfo::host());
+  const std::string distinctNative =
+      nativeLong && nativeLong->nativeCScalar != lang::NativeCScalarKind::None
+          ? "c_long"
+          : "c_longlong";
+  expectSemanticRejection(
+      "distinct native scalar boundary",
+      distinctNative + " read(" + distinctNative + " value) { return value; }",
+      libraryRequest({{"read", "read_v1"}}), "type outside", true);
   expectSemanticRejection(
       "c string boundary", "c_string read(c_string value) { return value; }",
       libraryRequest({{"read", "read_v1"}}), "type outside", true);
@@ -445,7 +451,7 @@ void testSemanticRejections() {
       analyze("anchored.gti", "int32_t a() { return 0; }", anchored);
   const lang::Diagnostic *reserved =
       findMessage(anchoredResult.diagnostics, "not a non-reserved");
-  expect(reserved != nullptr && reserved->code == "GTI-S2091" &&
+  expect(reserved != nullptr && reserved->code == "GTI-S2104" &&
              reserved->primary == anchored.exports.front().symbolDeclaration &&
              !reserved->hints.empty() && reserved->fixes.empty(),
          "embedding diagnostics should retain the exact manifest field span, "
@@ -491,7 +497,7 @@ void testDormantDriverModel() {
   const lang::driver::ManifestFeaturePolicy enabled{.dormantLibraryTargets =
                                                         true};
   const lang::driver::ManifestLoadResult loaded =
-      lang::driver::loadProjectManifest(manifestPath, enabled);
+      lang::driver::loadProjectManifest(manifestPath, std::nullopt, enabled);
   const lang::driver::ProjectTarget *target =
       loaded.succeeded() ? loaded.manifest->findTarget("gameplay") : nullptr;
   expect(target != nullptr &&
@@ -553,8 +559,8 @@ void testDormantDriverModel() {
         lang::driver::checkCompilation(lang::driver::CompilationRequest(
             plan->entry(), lang::standardLibraryLayout(repository / "stdlib"),
             plan->target(), plan->optimization(), plan->cppStandard(),
-            plan->packageSources(), plan->configurationFlags(), {},
-            plan->programRequest()));
+            plan->packageSources(), plan->configurationFlags(), {}, {}, false,
+            {}, lang::RawPointerAuditMode::Off, plan->programRequest()));
     expect(checked.succeeded() && checked.diagnostics.empty(),
            "internal gti check should analyze a no-main library plan");
   }
@@ -566,7 +572,8 @@ root = "src/gameplay.gti"
 [[targets.gameplay.exports]]
 function = "game::update"
 symbol = "game_update_v1"
-)")) && !lang::driver::loadProjectManifest(manifestPath, enabled).succeeded(),
+)")) && !lang::driver::loadProjectManifest(manifestPath, std::nullopt, enabled)
+                 .succeeded(),
          "a library target without linkage should fail manifest validation");
   expect(writeFile(manifestPath, manifest(R"(
 [targets.gameplay]
@@ -576,7 +583,8 @@ root = "src/gameplay.gti"
 [[targets.gameplay.exports]]
 function = "game::update"
 symbol = "game_update_v1"
-)")) && hasCode(lang::driver::loadProjectManifest(manifestPath, enabled)
+)")) && hasCode(lang::driver::loadProjectManifest(manifestPath, std::nullopt,
+                                                  enabled)
                     .diagnostics,
                 "GTI-B2000"),
          "unknown library linkage should fail with the embedding diagnostic");
@@ -585,7 +593,8 @@ symbol = "game_update_v1"
 kind = "library"
 linkage = "shared"
 root = "src/gameplay.gti"
-)")) && !lang::driver::loadProjectManifest(manifestPath, enabled).succeeded(),
+)")) && !lang::driver::loadProjectManifest(manifestPath, std::nullopt, enabled)
+                 .succeeded(),
          "a library target without exports should fail manifest validation");
 }
 

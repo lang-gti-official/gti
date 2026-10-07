@@ -1,0 +1,50 @@
+#include <std/map>
+
+int main() {
+  // A bounded deterministic differential test against an independent dense
+  // model covers all insertion/deletion rotations and vacant-slot reuse.
+  mut std::map<int, int> values{};
+  mut bool present[128] = {};
+  mut int payload[128] = {};
+  mut uint64_t state = 17;
+  mut std::size_t count = 0;
+  for (mut int step = 0; step < 3000; step++) {
+    state = (state * uint64_t(1664525) + uint64_t(1013904223)) % uint64_t(4294967296);
+    int key = int((state / uint64_t(65536)) % uint64_t(128));
+    std::size_t index = std::size_t(key);
+    if (step % 3 == 0) {
+      std::size_t erased = values.erase(key);
+      if (present[index]) {
+        if (erased != 1) { return 1; }
+        present[index] = false;
+        count--;
+      } else if (erased != 0) { return 2; }
+    } else {
+      bool inserted = values.insert_or_assign(key, step).second;
+      if (inserted == present[index]) { return 3; }
+      if (inserted) { count++; }
+      present[index] = true;
+      payload[index] = step;
+    }
+    if (values.size() != count) { return 4; }
+    mut int previous = -1;
+    mut std::size_t traversed = 0;
+    for (auto& entry : values) {
+      std::size_t slot = std::size_t(entry.first);
+      if (entry.first <= previous || !present[slot] || entry.second != payload[slot]) { return 5; }
+      previous = entry.first;
+      traversed++;
+    }
+    if (traversed != count) { return 6; }
+    for (mut int probe = 0; probe < 128; probe++) {
+      std::size_t slot = std::size_t(probe);
+      if (values.contains(probe) != present[slot]) { return 7; }
+      if (present[slot] && values.at(probe) != payload[slot]) { return 8; }
+    }
+  }
+  for (mut int key = 127; key >= 0; key--) {
+    [[discard]] values.erase(key);
+  }
+  if (!values.empty()) { return 9; }
+  return 0;
+}

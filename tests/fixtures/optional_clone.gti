@@ -1,0 +1,40 @@
+#include <std/optional>
+#include <std/string>
+#include <std/vector>
+#include <std/utility>
+
+class Snapshot {
+  int stored;
+public:
+  Snapshot(int value) : stored(value) {}
+  Snapshot(Snapshot& other) = delete;
+  Snapshot(Snapshot&& other) = default;
+  Snapshot clone() { return Snapshot(this.stored + 1); }
+  int value() { return this.stored; }
+};
+
+int main() {
+  mut std::optional<std::string> original{std::string("tea")};
+  auto duplicate = std::clone(original);
+  original.value().push_back('!');
+  if (original.value() != "tea!" || duplicate.value() != "tea") { return 1; }
+
+  std::optional<std::string> empty{};
+  auto empty_copy = std::clone(empty);
+  if (empty_copy.has_value()) { return 2; }
+
+  mut std::vector<std::string> words{};
+  words.push_back(std::string("auth"));
+  mut std::optional<std::vector<std::string>> tree{std::move(words)};
+  auto tree_copy = tree.clone();
+  tree.value()[std::size_t(0)].push_back('!');
+  if (tree_copy.value()[std::size_t(0)] != "auth") { return 3; }
+
+  std::optional<Snapshot> user{Snapshot(41)};
+  auto user_copy = user.clone();
+  if (user.value().value() != 41 || user_copy.value().value() != 42) { return 4; }
+
+  std::optional<int> scalar{7};
+  auto scalar_copy = std::clone(scalar);
+  return scalar_copy.value() == 7 ? 0 : 5;
+}

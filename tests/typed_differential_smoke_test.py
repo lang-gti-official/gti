@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from unittest.mock import patch
 
 
 def require(condition: bool, message: str, detail: str = "") -> None:
@@ -62,6 +63,25 @@ def main() -> int:
 
     sys.path.insert(0, str(repository / "scripts"))
     import local_language_audit as language_audit
+
+    with tempfile.TemporaryDirectory(prefix="gti-audit-example-selection-") as raw:
+        examples = Path(raw)
+        for name in ("09-small.gti", "99-old.gti", "100-new.gti",
+                     "110-enum.gti", "1000-future.gti", "1bad-ignore.gti",
+                     "notes.gti", "12-ignore.cpp"):
+            (examples / name).touch()
+        (examples / "111-directory.gti").mkdir()
+        with patch.object(language_audit, "EXAMPLES_ROOT", examples):
+            selected = [source.name for source in language_audit.numbered_examples()]
+            require(selected == ["09-small.gti", "99-old.gti", "100-new.gti",
+                                 "110-enum.gti", "1000-future.gti"],
+                    "audit example selection must include arbitrary digit counts",
+                    str(selected))
+            module = examples / "10-modules" / "main.gti"
+            module.parent.mkdir()
+            module.touch()
+            require(language_audit.numbered_examples()[-1] == module,
+                    "audit must retain an existing module entry")
 
     expected_fragments = {
         "evaluator": "disagreed with the evaluator",

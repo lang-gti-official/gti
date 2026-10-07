@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+"""Concurrent retention and synchronized mutation through read-only owners."""
+
+from lambda_pack_invocation_runtime_test import main
+
+
+if __name__ == "__main__":
+    main(("shared_ownership_threads",), execution_profile="concurrent")

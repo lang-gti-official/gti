@@ -1,0 +1,51 @@
+[[c_abi]] struct RawMatrix { mut float values[9]; };
+extern "C" {
+  RawMatrix gti_test_matrix();
+  int gti_test_mode();
+  void gti_test_drop(int identity);
+}
+
+struct Guard {
+  int identity;
+  Guard(int value) : identity(value) {}
+  ~Guard() { gti_test_drop(this.identity); }
+};
+
+struct Matrix {
+  mut RawMatrix storage;
+  Matrix(RawMatrix value) : storage(value) {}
+  float at(uint64_t index) { return this.storage.values[index]; } // matrix-read
+  void set(uint64_t index, float value) mut {
+    this.storage.values[index] = value; // matrix-write
+  }
+};
+
+struct Grid { mut int values[2][3] = {{1, 2, 3}, {4, 5, 6}}; };
+struct Holder {
+  mut Grid storage;
+  Holder(Grid value) : storage(value) {}
+  int at(uint64_t row, uint64_t column) {
+    return this.storage.values[row][column]; // grid-read
+  }
+  void set(uint64_t row, uint64_t column, int value) mut {
+    this.storage.values[row][column] = value; // grid-write
+  }
+};
+
+int main() {
+  Guard outer{1};
+  Guard inner{2};
+  mut Matrix matrix{gti_test_matrix()};
+  Grid grid{};
+  mut Holder holder{grid};
+  int mode = gti_test_mode();
+  if (mode == 1) { return int(matrix.at(uint64_t(9))); }
+  if (mode == 2) { matrix.set(uint64_t(9), float(7)); }
+  if (mode == 3) { return holder.at(uint64_t(2), uint64_t(3)); }
+  if (mode == 4) { return holder.at(uint64_t(1), uint64_t(3)); }
+  if (mode == 5) { holder.set(uint64_t(2), uint64_t(3), 7); }
+  if (mode == 6) { holder.set(uint64_t(1), uint64_t(3), 7); }
+  matrix.set(uint64_t(8), float(42));
+  holder.set(uint64_t(1), uint64_t(2), 42);
+  return int(matrix.at(uint64_t(8))) + holder.at(uint64_t(1), uint64_t(2)) - 84;
+}

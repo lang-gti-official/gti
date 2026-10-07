@@ -98,6 +98,121 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
 
 void SemanticDiagnosticReporter::reportConstraintFailure(
     const Token &site, const SemanticConstraintFailure &failure) {
+  const auto applicationSpelling = [&](const SemanticConstraintContext &item) {
+    std::string spelling = item.name + "<";
+    for (std::size_t index = 0; index < item.arguments.size(); ++index) {
+      if (index != 0)
+        spelling += ", ";
+      spelling += typeSpelling(item.arguments[index]);
+    }
+    return spelling + ">";
+  };
+  const auto appendMemberReason = [&](Diagnostic &diagnostic,
+                                      const SemanticConstraintFailure &leaf) {
+    if (!leaf.memberFailure)
+      return;
+    const auto &detail = *leaf.memberFailure;
+    std::string reason;
+    switch (detail.kind) {
+    case MemberRequirementFailureKind::Missing:
+      reason = "Type '" + typeSpelling(leaf.argument) + "' has no member '" +
+               leaf.memberName + "()'.";
+      break;
+    case MemberRequirementFailureKind::Shape:
+      if (leaf.leafApplication && leaf.leafApplication->memberRequirement &&
+          leaf.leafApplication->memberRequirement->parameters().empty() &&
+          !leaf.leafApplication->memberRequirement->receiver()
+               .referenceMutability)
+        reason = "Member '" + leaf.memberName +
+                 "' is not a read-only, nongeneric instance method taking no "
+                 "arguments.";
+      else
+        reason = "Member '" + leaf.memberName +
+                 "' does not match the required nongeneric instance signature "
+                 "and receiver access.";
+      break;
+    case MemberRequirementFailureKind::Ambiguous:
+      reason = "More than one member matches the required '" + leaf.memberName +
+               "()' call.";
+      break;
+    case MemberRequirementFailureKind::Inaccessible:
+      reason = "Member '" + leaf.memberName + "()' is not publicly accessible.";
+      break;
+    case MemberRequirementFailureKind::Unsafe:
+      reason = "Member '" + leaf.memberName + "()' requires unsafe access.";
+      break;
+    case MemberRequirementFailureKind::Result:
+      reason = "Member '" + leaf.memberName + "()' returns '" +
+               typeSpelling(detail.actualResult) +
+               "', but the required exact "
+               "result is '" +
+               typeSpelling(detail.requiredResult) + "'.";
+      break;
+    case MemberRequirementFailureKind::BorrowedResult:
+      reason = "Member '" + leaf.memberName +
+               "()' returns a reference or tracked borrowed state; this "
+               "requirement needs an owned result.";
+      break;
+    case MemberRequirementFailureKind::Constraints:
+      reason = "Member '" + leaf.memberName +
+               "()' has unsatisfied requirements of its own.";
+      break;
+    case MemberRequirementFailureKind::Recursive:
+      reason = "Checking member '" + leaf.memberName +
+               "()' reaches a recursive requirement or the requirement depth "
+               "limit.";
+      break;
+    case MemberRequirementFailureKind::Unproven:
+      reason = "The enclosing generic requirements do not prove member '" +
+               leaf.memberName + "()' with the required exact result.";
+      break;
+    case MemberRequirementFailureKind::None:
+      return;
+    }
+    const Token *location = detail.declaration ? &*detail.declaration : nullptr;
+    if (location == nullptr && leaf.leafApplication != nullptr &&
+        leaf.leafApplication->memberRequirement != nullptr) {
+      location = &leaf.leafApplication->memberRequirement->member();
+    }
+    if (location != nullptr)
+      diagnostic.related.push_back({tokenSpan(*location), std::move(reason)});
+    else
+      diagnostic.hints.push_back(std::move(reason));
+  };
+  const auto publish = [&](Diagnostic diagnostic) {
+    if (failure.callArgument && failure.callArgumentIndex) {
+      diagnostic.primary = tokenSpan(*failure.callArgument);
+      std::string prefix =
+          "Argument " + std::to_string(*failure.callArgumentIndex + 1) +
+          " has type '" + typeSpelling(failure.callArgumentType) + "'";
+      prefix +=
+          failure.callArgumentType == failure.argument
+              ? ", which "
+              : "; its inferred type '" + typeSpelling(failure.argument) + "' ";
+      if (!failure.context.empty()) {
+        diagnostic.message = prefix + "does not satisfy concept '" +
+                             applicationSpelling(failure.context.front()) +
+                             "'.";
+      } else if (failure.structural == StructuralConstraintKind::ReadMember) {
+        diagnostic.message = prefix + "does not satisfy required member '" +
+                             failure.memberName + "()'.";
+      } else {
+        diagnostic.message =
+            prefix + "does not satisfy generic constraint '" +
+            (failure.constraintName
+                 ? semantic_spelling::pathSpelling(*failure.constraintName)
+                 : "the declared constraint") +
+            "'.";
+      }
+    }
+    for (const auto &context : failure.context) {
+      diagnostic.related.push_back(
+          {tokenSpan(context.location),
+           "Required application '" + applicationSpelling(context) + "'."});
+    }
+    appendMemberReason(diagnostic, failure);
+    diagnostics.emplace_back(std::move(diagnostic));
+  };
   if (!failure.alternatives.empty()) {
     const std::string constraint =
         failure.constraintName
@@ -145,6 +260,13 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
                    : "Alternative concept '" + alternativeName +
                          "' is not satisfied by type '" +
                          typeSpelling(alternative.argument) + "'."});
+          for (const auto &context : alternative.context) {
+            diagnostic.related.push_back(
+                {tokenSpan(context.location), "Unsatisfied alternative '" +
+                                                  applicationSpelling(context) +
+                                                  "'."});
+          }
+          appendMemberReason(diagnostic, alternative);
         };
     for (const SemanticConstraintFailure &alternative : failure.alternatives) {
       appendAlternatives(alternative);
@@ -152,10 +274,14 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     diagnostic.hints.emplace_back(
         "At least one complete '||' branch must be satisfied; capabilities "
         "from different alternatives are not combined.");
-    diagnostics.emplace_back(std::move(diagnostic));
+    publish(std::move(diagnostic));
     return;
   }
   if (failure.structural != StructuralConstraintKind::None) {
+    const MemberRequirement *memberQuery =
+        failure.leafApplication == nullptr
+            ? nullptr
+            : failure.leafApplication->memberRequirement.get();
     const std::string constraint =
         failure.constraintName
             ? semantic_spelling::pathSpelling(*failure.constraintName)
@@ -173,13 +299,58 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     }
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2029", DiagnosticPhase::Semantics, site,
-        "Generic arguments do not satisfy concept '" + constraint + "'.");
-    if (failure.application != nullptr) {
+        memberQuery != nullptr && !failure.constraintName
+            ? "Generic arguments do not satisfy required member '" +
+                  memberQuery->member().lexeme + "()'."
+            : "Generic arguments do not satisfy concept '" + constraint + "'.");
+    if (memberQuery != nullptr) {
+      std::string signature = memberQuery->member().lexeme + "(";
+      for (std::size_t index = 0; index < memberQuery->parameters().size();
+           ++index) {
+        if (index != 0)
+          signature += ", ";
+        const TypeRef &parameter = memberQuery->parameters()[index];
+        if (parameter.referenceMutability)
+          signature += "mut ";
+        signature += semantic_spelling::typeRefSpelling(parameter);
+      }
+      signature += ")";
+      if (memberQuery->receiver().referenceMutability)
+        signature += " mut";
+      if (memberQuery->unsafeKeyword())
+        signature = "unsafe { " + signature + " }";
+      diagnostic.related.push_back(
+          {tokenSpan(memberQuery->member()),
+           "Required here as '" + signature + " -> " +
+               semantic_spelling::typeRefSpelling(memberQuery->result()) +
+               "' on '" +
+               semantic_spelling::typeRefSpelling(memberQuery->receiver()) +
+               "'."});
+    } else if (failure.application != nullptr) {
       diagnostic.related.push_back(
           {tokenSpan(failure.application->name.last()),
            "Required here as '" + constraint + "<" + arguments + ">'."});
     }
     switch (failure.structural) {
+    case StructuralConstraintKind::ReadMember: {
+      const bool permitsUnsafe = memberQuery && memberQuery->unsafeKeyword();
+      const std::string safety = permitsUnsafe ? "public" : "public, safe";
+      if (memberQuery && memberQuery->parameters().empty() &&
+          !memberQuery->receiver().referenceMutability)
+        diagnostic.hints.emplace_back(
+            "Provide a " + safety + ", read-only '" + failure.memberName +
+            "()' member with the exact required owned result type.");
+      else
+        diagnostic.hints.emplace_back(
+            "Provide a " + safety + " '" + failure.memberName +
+            "' member with the required receiver access, exact parameter types "
+            "and exact owned result type.");
+      if (permitsUnsafe)
+        diagnostic.hints.emplace_back(
+            "This requirement permits a safe or unsafe member; generic calls "
+            "through this requirement still need an explicit unsafe context.");
+      break;
+    }
     case StructuralConstraintKind::InputIterator:
       diagnostic.hints.emplace_back(
           "The iterator must provide public read-only operator*() returning "
@@ -247,6 +418,17 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
       diagnostic.hints.emplace_back(
           "The range must provide one exact public read-only size() returning "
           "std::size_t.");
+      break;
+    case StructuralConstraintKind::EnumUnderlying:
+      diagnostic.hints.emplace_back(
+          "The first type must be an integral enum and the second its exact "
+          "declared underlying integer type.");
+      break;
+    case StructuralConstraintKind::ObjectLayout:
+      diagnostic.hints.emplace_back(
+          "The type must be a scalar, raw pointer, integral enum, positive "
+          "concrete array, or complete non-abstract class, struct or passive "
+          "union. Copying and moving are not required.");
       break;
     case StructuralConstraintKind::Adds:
       diagnostic.hints.emplace_back(
@@ -318,7 +500,7 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     case StructuralConstraintKind::None:
       break;
     }
-    diagnostics.emplace_back(std::move(diagnostic));
+    publish(std::move(diagnostic));
     return;
   }
   const std::string constraint =
@@ -352,6 +534,11 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
         "The required concept needs an available copy constructor; copy "
         "assignment is not required.");
     break;
+  case GenericConstraintKind::MoveConstructible:
+    diagnostic.hints.emplace_back(
+        "The required concept needs available move construction; move "
+        "assignment is not required.");
+    break;
   case GenericConstraintKind::Copyable:
     diagnostic.hints.emplace_back(
         "The required concept needs available copy construction and "
@@ -367,6 +554,18 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
         "The required concept needs state and cleanup that can safely move "
         "between threads.");
     break;
+  case GenericConstraintKind::Relocatable:
+    diagnostic.hints.emplace_back(
+        "Relocation requires available structural movement and no stored "
+        "borrows or address-stable host state; it does not require "
+        "assignment.");
+    break;
+  case GenericConstraintKind::BitwiseRelocatable:
+    diagnostic.hints.emplace_back(
+        "Bytewise eligibility requires passive scalar/array state or a "
+        "non-polymorphic class with no bases, declared cleanup, or "
+        "non-bitwise fields.");
+    break;
   case GenericConstraintKind::Shareable:
     diagnostic.hints.emplace_back(
         "The required concept needs read-only shared access that is safe "
@@ -381,6 +580,10 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
         "The atomic scalar domain contains bool and the fixed-width signed "
         "and unsigned integer types only.");
     break;
+  case GenericConstraintKind::IntegralEnum:
+    diagnostic.hints.emplace_back("The type must be an integral enum; payload "
+                                  "enums have no underlying integer value.");
+    break;
   case GenericConstraintKind::None:
   case GenericConstraintKind::Invalid:
   case GenericConstraintKind::Count:
@@ -392,7 +595,7 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
   case GenericConstraintKind::FloatingPoint:
     break;
   }
-  diagnostics.emplace_back(std::move(diagnostic));
+  publish(std::move(diagnostic));
 }
 
 void SemanticDiagnosticReporter::reportConstexprConditionFailure(

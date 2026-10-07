@@ -2,7 +2,9 @@
 
 #include "gti/semantic_analyzer.h"
 
+#include "diagnostic_registry.h"
 #include "gti/frontend_work.h"
+#include "gti/standard_library.h"
 #include "semantic_diagnostics.h"
 #include "semantic_spelling.h"
 
@@ -19,7 +21,9 @@ using semantic_spelling::pathSpelling;
 using semantic_spelling::qualifiedName;
 using semantic_spelling::typeRefSpelling;
 
-class SemanticVisitor::Impl final : public ExprVisitor, public StmtVisitor {
+class SemanticVisitor::Impl final : public ExprVisitor,
+                                    public StmtVisitor,
+                                    public SemanticInstanceProvider {
 public:
   enum class ProgramEffectOwnerKind {
     None,
@@ -76,9 +80,12 @@ public:
   };
 
   explicit Impl(TargetInfo target, const SourceGraph *sourceGraph,
-                bool toolingOccurrences, FrontendWorkMetrics *workMetrics)
-      : target(std::move(target)), sourceGraph(sourceGraph),
-        toolingOccurrences(toolingOccurrences), workMetrics(workMetrics) {
+                bool toolingOccurrences, FrontendWorkMetrics *workMetrics,
+                const SourceManager *sources,
+                RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off)
+      : target(std::move(target)), sourceGraph(sourceGraph), sources(sources),
+        toolingOccurrences(toolingOccurrences), workMetrics(workMetrics),
+        rawPointerAudit(rawPointerAudit) {
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
   }
 
@@ -86,6 +93,10 @@ public:
   // Constructor configuration remains on Impl; no result, AST pointer, flow
   // fact, diagnostic, or identity counter survives this operation.
   void resetRequestState(const Program *program);
+
+  [[nodiscard]] bool rawAuditEnabled() const {
+    return rawPointerAudit != RawPointerAuditMode::Off;
+  }
 
   bool check(const Program &program);
 
@@ -106,9 +117,11 @@ public:
   // further analysis (including concrete instance reanalysis) afterwards.
   [[nodiscard]] SemanticModel takeModel();
 
-  [[nodiscard]] SemanticTypeTraits traitsFor(const SemanticType &type) const;
+  [[nodiscard]] SemanticTypeTraits
+  traitsFor(const SemanticType &type) const override;
 
-  [[nodiscard]] bool requiresActiveCleanupFor(const SemanticType &type) const;
+  [[nodiscard]] bool
+  requiresActiveCleanupFor(const SemanticType &type) const override;
 
   void attachDeclarationDocumentation(SymbolId symbol, const Stmt &declaration);
 
@@ -173,22 +186,22 @@ public:
       const std::vector<SemanticType> &classTypeArguments,
       const std::vector<CompileTimeValue> &classValueArguments,
       const std::vector<SemanticType> &functionTypeArguments,
-      const std::vector<CompileTimeValue> &functionValueArguments);
+      const std::vector<CompileTimeValue> &functionValueArguments) override;
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeConstructorInstance(
       ConstructorId constructorId,
       const std::vector<SemanticType> &classTypeArguments,
       const std::vector<CompileTimeValue> &classValueArguments,
       const std::vector<SemanticType> &constructorTypeArguments,
-      const std::vector<CompileTimeValue> &constructorValueArguments);
+      const std::vector<CompileTimeValue> &constructorValueArguments) override;
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeDestructorInstance(
       ClassId classId, const std::vector<SemanticType> &classTypeArguments,
-      const std::vector<CompileTimeValue> &classValueArguments);
+      const std::vector<CompileTimeValue> &classValueArguments) override;
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeClassFieldInitializers(
       ClassId classId, const std::vector<SemanticType> &classTypeArguments,
-      const std::vector<CompileTimeValue> &classValueArguments);
+      const std::vector<CompileTimeValue> &classValueArguments) override;
 
   void visitAccessSpecifierDecl(const AccessSpecifierDecl &) override;
 
@@ -249,6 +262,8 @@ public:
   void visitAssignExpr(const Assign &expr) override;
 
   void visitArrayInitializerExpr(const ArrayInitializer &expr) override;
+  void analyzeCollectionInitializer(const ArrayInitializer &expr,
+                                    const SemanticType &target);
 
   void visitBinaryExpr(const Binary &expr) override;
 
@@ -319,6 +334,7 @@ public:
   layoutDiagnosticSpan(const TypeRef &type, LayoutEvaluationError error) const;
 
   void visitLayoutQueryExpr(const LayoutQuery &expr) override;
+  void visitMemberRequirementExpr(const MemberRequirement &expr) override;
 
   void visitLiteralExpr(const LiteralExpr &expr) override;
 
@@ -362,6 +378,8 @@ private:
   struct ProjectedValueState {
     std::vector<PlaceProjection> projections;
     ValueState state = ValueState::Available;
+    // Diagnostic provenance only; never participates in ownership decisions.
+    std::vector<SourceSpan> moveOrigins;
   };
 
   // The catalog owns exactly one declaration record for each source callable.
@@ -387,6 +405,11 @@ private:
     bool staticMember = false;
     bool internalLinkage = false;
     bool constexprFunction = false;
+    bool requiresUnsafe = false;
+    bool neverReturns = false;
+    bool tracksCaller = false;
+    bool discardableResult = false;
+    CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
     LanguageLinkage linkage = LanguageLinkage::Gti;
     std::string externalSymbol;
     std::optional<std::size_t> cArrayCountParameter;
@@ -397,6 +420,8 @@ private:
     BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
     std::size_t returnBorrowParameter = 0;
     AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+    std::vector<std::size_t> returnBorrowParameters;
+    std::vector<BorrowedFieldOrigin> returnBorrowFields;
     std::optional<BorrowOriginPlace> returnBorrowPlace;
     std::vector<FunctionId> virtualRoots;
     bool compilerPrivate = false;
@@ -424,6 +449,8 @@ private:
     BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
     std::size_t returnBorrowParameter = 0;
     AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+    std::vector<std::size_t> returnBorrowParameters;
+    std::vector<BorrowedFieldOrigin> returnBorrowFields;
     std::optional<BorrowOriginPlace> returnBorrowPlace;
     std::vector<FunctionId> virtualRoots;
     SemanticType dispatchOwner = SemanticType::Unknown;
@@ -467,10 +494,15 @@ private:
     BorrowOriginKind origin = BorrowOriginKind::None;
     std::size_t parameter = 0;
     AccessMode access = AccessMode::ReadOnly;
+    std::vector<std::size_t> parameters;
+    std::vector<BorrowedFieldOrigin> fields;
     std::optional<BorrowOriginPlace> place;
     std::size_t eligibleParameters = 0;
     bool hasMutableCandidate = false;
   };
+
+  [[nodiscard]] std::optional<OwnedPointeeProjection>
+  ownedPointeeReturnProjection(const FunctionInfo &function);
 
   struct AnalyzedCallArgument {
     SemanticType type = SemanticType::Unknown;
@@ -495,6 +527,9 @@ private:
     StructuralConstraintKind kind = StructuralConstraintKind::None;
     std::vector<SemanticType> arguments;
     const ConceptApplication *application = nullptr;
+    std::string memberName;
+    bool mutableReceiver = false;
+    bool requiresUnsafe = false;
   };
 
   struct ContextualCallableResult {
@@ -518,6 +553,7 @@ private:
     SemanticLoanId loan = 0;
     const Variable *carrier = nullptr;
     bool transfer = false;
+    std::optional<SemanticLoanDependency> dependency;
   };
 
   enum class StoredCarrierReturnProvenance {
@@ -552,6 +588,7 @@ private:
     const Stmt *statement = nullptr;
     std::vector<ActiveLoanFlowConditionalArm> path;
     std::vector<ActiveLoanFlowSwitchArm> switchPath;
+    std::vector<std::size_t> loops;
     Diagnostic diagnostic;
   };
 
@@ -662,10 +699,18 @@ private:
   };
 
   struct LoanFlowState {
+    // A symbolic constexpr branch has unknown control/ownership effects.
+    // Name/type checking continues, but this body's flow is not a proof until
+    // concrete instance analysis selects every branch and reruns the checks.
+    bool deferredConstexprSelection = false;
+    std::size_t rawConditionalExpressionDepth = 0;
     std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
     std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
     std::vector<SemanticLoanId> receiverStorageLoans;
     std::vector<PendingBorrowConflict> conflicts;
+    // Audit uses may inspect checked liveness, but cannot request an endpoint
+    // or otherwise change the mandatory loan schedule.
+    std::vector<PendingBorrowConflict> rawAuditConflicts;
     std::vector<LoanFlowUse> uses;
     std::vector<LoanFlowConditionalBoundary> conditionalBoundaries;
     std::vector<LoanFlowSwitchBoundary> switchBoundaries;
@@ -683,12 +728,108 @@ private:
     const Stmt *currentStatement = nullptr;
   };
 
+  // Address provenance is not a loan: copying it neither retains the source
+  // nor prevents movement. It only preserves facts needed at an unsafe use.
+  struct RawPointerOrigin {
+    PlaceKey place;
+    SourceSpan addressSite;
+    SemanticLoanId throughLoan = 0;
+    bool invalidated = false;
+    // Symbolic input pointee, not the address of the parameter's stack slot.
+    bool parameterPointee = false;
+    // Ephemeral loop transfer variable; place names a pointer, not a pointee.
+    std::size_t loopInput = 0;
+    bool expired = false;
+    // An unresolved source result is not a foreign address. It may be copied
+    // inertly, but memory access requires a completed provenance query.
+    std::size_t sourceResultQuery = 0;
+    std::vector<PlaceKey> lifetimeInvalidations;
+    // A type-only origin has no place and grants no lifetime/access proof.
+    SemanticType pointeeType = SemanticType::Unknown;
+    // A may-origin survives a choice or conservative source summary; even a
+    // singleton then does not prove that this storage is selected at the use.
+    bool possible = false;
+    friend bool operator==(const RawPointerOrigin &,
+                           const RawPointerOrigin &) = default;
+  };
+
+  struct ProjectedRawPointerOrigins {
+    std::vector<PlaceProjection> projections;
+    std::vector<RawPointerOrigin> origins;
+    friend bool operator==(const ProjectedRawPointerOrigins &,
+                           const ProjectedRawPointerOrigins &) = default;
+  };
+
+  struct RawResultOrigin {
+    RawPointerOrigin origin;
+    std::optional<std::size_t> parameter;
+    bool receiver = false;
+    bool pointerInput = false;
+    bool globalInput = false;
+  };
+
+  struct RawResultField {
+    std::vector<PlaceProjection> projections;
+    std::vector<RawResultOrigin> origins;
+  };
+
+  struct RawResultWrite {
+    RawResultOrigin destination;
+    std::vector<RawResultField> fields;
+    bool strong = false;
+  };
+
+  struct RawResultAccess {
+    std::vector<RawResultField> fields;
+    AccessMode access = AccessMode::ReadOnly;
+    bool checksLoans = true;
+    SourceSpan site;
+  };
+
+  struct RawResultQuery {
+    FunctionId function = 0;
+    ConstructorId constructor = 0;
+    ClassId defaultOwner = 0;
+    std::vector<SemanticType> ownerTypes;
+    std::vector<CompileTimeValue> ownerValues;
+    std::vector<SemanticType> types;
+    std::vector<CompileTimeValue> values;
+    std::vector<RawResultField> fields;
+    std::vector<RawResultWrite> writes;
+    std::vector<RawResultAccess> accesses;
+    bool linearWrites = false;
+    bool writesComplete = true;
+    bool accessesComplete = true;
+    std::size_t identity = 0;
+    // Only independently budgeted top-level outcomes may be reused by another
+    // demand. Nested results depend on their enclosing family's remaining work.
+    bool topLevel = false;
+    bool complete = false;
+    bool valid = false;
+    std::optional<Diagnostic> failure;
+  };
+
+  struct RawResultQueryState {
+    // Interned diagnostic records only. Keeping evidence is independent of
+    // admitting a complete root result to the bounded reuse cache.
+    std::vector<std::shared_ptr<RawResultQuery>> entries;
+    std::vector<std::shared_ptr<RawResultQuery>> cachedRoots;
+    std::vector<std::shared_ptr<RawResultQuery>> familyEntries;
+    std::size_t nextIdentity = 1;
+    std::size_t depth = 0;
+    std::optional<bool> hasRawGlobals;
+  };
+
   struct Symbol {
     SemanticType type = SemanticType::Unknown;
     std::optional<ConstantValue> constant;
     SourceUnitId sourceUnit = 0;
     bool assignable = false;
     ValueState valueState = ValueState::Available;
+    // Diagnostic provenance only; never participates in ownership decisions.
+    std::vector<SourceSpan> moveOrigins;
+    std::vector<RawPointerOrigin> rawPointerOrigins;
+    std::vector<ProjectedRawPointerOrigins> rawPointerFields;
     std::vector<CallableCandidate> overloads;
     ClassId ownerClass = 0;
     Token declaration;
@@ -714,10 +855,34 @@ private:
     bool receiver = false;
   };
 
+  struct RawProgramStorageState {
+    Symbol *symbol = nullptr;
+    enum class Namespace {
+      Global,
+      Internal,
+      Visible
+    } space = Namespace::Global;
+    SourceUnitId unit = 0;
+    std::string name;
+    std::vector<RawPointerOrigin> origins;
+    std::vector<ProjectedRawPointerOrigins> fields;
+  };
+
   struct OperatorReceiverState {
     SemanticPlace place;
     bool mutableReceiver = false;
     std::optional<ExpressionInfo> info;
+  };
+
+  // One resolved source invocation, independent of its surface syntax. Operator
+  // resolution supplies this while synthetic receiver places are still alive.
+  struct RawInvocation {
+    ResolvedCallInfo resolved;
+    std::span<const ExprPtr> arguments;
+    const Expr *receiver = nullptr;
+    std::optional<SemanticPlace> receiverPlace;
+    SemanticType receiverType = SemanticType::Unknown;
+    Token site;
   };
 
   struct ResolvedFieldUse {
@@ -738,6 +903,32 @@ private:
     const Stmt *statement = nullptr;
     std::vector<ScopeStack> breakStates;
     std::vector<ScopeStack> continueStates;
+  };
+
+  struct RawPointerLoopUse {
+    std::vector<RawPointerOrigin> origins;
+    std::vector<Diagnostic> diagnostics;
+    std::size_t pendingLoops = 0;
+  };
+
+  struct RawPointerLoop {
+    struct Write {
+      RawPointerOrigin destination;
+      std::vector<PlaceProjection> projections;
+      std::vector<ProjectedRawPointerOrigins> fields;
+    };
+    struct Access {
+      std::vector<RawPointerOrigin> origins;
+      Token site;
+      std::shared_ptr<RawPointerLoopUse> deferred;
+      // A type-only use is inert: check contradictions, not pointee lifetime.
+      SemanticType expectedPointee = SemanticType::Unknown;
+      std::optional<AccessMode> memoryAccess;
+      std::shared_ptr<LoanFlowState> loanContext;
+    };
+    std::size_t identity = 0;
+    std::vector<Access> accesses;
+    std::vector<Write> writes;
   };
 
   struct MemberInfo {
@@ -767,14 +958,22 @@ private:
     ClassKind kind = ClassKind::Class;
     std::vector<std::string> namespaceScope;
     ClassId exactSpecializationPrimary = 0;
+    // Disjoint signature receiver definitions share a lookup name, not a
+    // concrete class identity. The first registered definition owns the list.
+    ClassId signatureFamilyPrimary = 0;
+    std::vector<ClassId> signatureFamilyMembers;
     std::vector<SemanticType> exactTypeArguments;
     std::vector<CompileTimeValue> exactValueArguments;
     std::vector<GenericParameterInfo> genericParameters;
+    std::vector<SemanticType> genericArgumentPatterns;
+    bool argumentPatternsResolving = false;
+    bool argumentPatternsResolved = false;
     std::unordered_map<std::string, MemberInfo> members;
     std::unordered_map<std::string, MemberTypeAliasInfo> typeAliases;
     std::vector<FieldInfo> fields;
     std::vector<FieldInfo> staticFields;
     std::vector<ConstructorInfo> constructors;
+    std::optional<ConstructorInfo> designatedConstructor;
     std::optional<ConstructorInfo> copyConstructor;
     std::optional<ConstructorInfo> moveConstructor;
     std::optional<DestructorInfo> destructor;
@@ -797,6 +996,7 @@ private:
     bool compilerPrivate = false;
     CompilerCapabilityTypeKind compilerCapability =
         CompilerCapabilityTypeKind::None;
+    NativeCScalarKind nativeCScalar = NativeCScalarKind::None;
   };
 
   struct ExactClassSpecialization {
@@ -888,6 +1088,8 @@ private:
     ClassId ownerClass = 0;
     AccessModifier access = AccessModifier::Public;
     bool compilerPrivate = false;
+    bool specializedOwner = false;
+    std::vector<ResolvedTypeAlias> qualifiers;
   };
 
   enum class ConceptResolution {
@@ -914,6 +1116,9 @@ private:
       };
       StructuralConstraintKind kind = StructuralConstraintKind::None;
       std::vector<Argument> arguments;
+      std::string memberName;
+      bool mutableReceiver = false;
+      bool requiresUnsafe = false;
 
       friend bool operator==(const StructuralPattern &,
                              const StructuralPattern &) = default;
@@ -932,6 +1137,7 @@ private:
     ConceptResolution resolution = ConceptResolution::Unresolved;
     SymbolId symbol = 0;
     std::vector<SymbolId> parameterSymbols;
+    std::vector<GenericParameterId> parameterIds;
     bool compilerPrivate = false;
   };
 
@@ -939,6 +1145,7 @@ private:
     bool canFallThrough = true;
     bool breaksEnclosingControl = false;
     bool continuesEnclosingLoop = false;
+    const ReturnStmt *normalReturn = nullptr;
   };
 
   struct ConstexprEvaluation {
@@ -952,8 +1159,13 @@ private:
 
   using ConstexprLocalValue = std::optional<ConstantValue>;
 
-  struct ConstexprInterpreter {
+  struct ConstexprWorkBudget {
     std::size_t steps = 0;
+    std::size_t stagingDepth = 0;
+  };
+
+  struct ConstexprInterpreter {
+    std::shared_ptr<ConstexprWorkBudget> work;
     std::size_t callDepth = 0;
     std::vector<std::unordered_map<SymbolId, ConstexprLocalValue>> scopes;
     std::vector<GenericSubstitution> substitutions;
@@ -976,6 +1188,14 @@ private:
 
   static constexpr std::size_t constexprExpressionStepLimit = 4096;
   static constexpr std::size_t constexprCallDepthLimit = 64;
+
+  [[nodiscard]] std::optional<ConstexprEvaluation> executeStagedConstexpr(
+      const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
+          &target,
+      const std::vector<ConstantValue> &arguments,
+      const GenericSubstitution &substitution,
+      const std::optional<ConstantValue> &receiver, const Token &callSite,
+      ConstexprInterpreter &context);
 
   [[nodiscard]] ConstexprInterpreter makeConstexprInterpreter() const;
 
@@ -1000,9 +1220,6 @@ private:
   bool validateConstexprConstructor(const ConstructorDecl &constructor,
                                     const ConstructorInfo *info,
                                     const SemanticType &ownerType);
-
-  [[nodiscard]] static ConstantEvaluation
-  convertConstantToType(const ConstantValue &value, const SemanticType &target);
 
   [[nodiscard]] ConstexprEvaluation
   constexprSuccess(const Expr &expression, ConstantValue value,
@@ -1051,6 +1268,12 @@ private:
   evaluateConstexprExpression(const Expr &source,
                               ConstexprInterpreter &context);
 
+  [[nodiscard]] ConstexprEvaluation
+  evaluateConstexprCall(const Expr &source, const ResolvedCallInfo &resolved,
+                        const Expr *receiver,
+                        const std::vector<const Expr *> &explicitArguments,
+                        const Token &callSite, ConstexprInterpreter &context);
+
   [[nodiscard]] ConstexprStatementEvaluation
   executeConstexprStatements(const StmtList &statements,
                              ConstexprInterpreter &context);
@@ -1086,6 +1309,8 @@ private:
   [[nodiscard]] static std::optional<bool>
   constantBoolean(const ExprPtr &expression);
 
+  [[nodiscard]] bool expressionNeverReturns(const Expr *expression) const;
+
   [[nodiscard]] FlowSummary summarizeFlow(const StmtList &statements) const;
 
   [[nodiscard]] FlowSummary summarizeFlow(const Stmt *statement) const;
@@ -1118,15 +1343,19 @@ private:
   struct ActiveCleanupEntry {
     SemanticType type = SemanticType::Unknown;
     ActiveCleanupState state = ActiveCleanupState::InProgress;
-    std::size_t complexity = 0;
   };
 
   struct ActiveCleanupQuery {
     std::vector<ActiveCleanupEntry> entries;
+    std::vector<SemanticType> activeTypes;
   };
 
   [[nodiscard]] static std::size_t
   semanticTypeComplexity(const SemanticType &type);
+
+  [[nodiscard]] bool
+  nonDecreasingNominalRecurrence(const SemanticType &type,
+                                 std::span<const SemanticType> active) const;
 
   [[nodiscard]] SemanticTypeTraits
   lambdaTraitsForCaptures(std::span<const SemanticType> captureTypes) const;
@@ -1151,6 +1380,11 @@ private:
   [[nodiscard]] std::optional<TransferCapabilityDenial>
   transferCapabilityDenial(const SemanticType &type) const;
 
+  bool reportOwnershipErasureCapabilityAmplification(
+      const Token &site, std::string_view ownership,
+      const SemanticType &sourcePointee, const SemanticType &targetPointee,
+      const SemanticType &sourceOwner, const SemanticType &targetOwner);
+
   bool reportConcurrentGlobalPolicyFailure(const VariableDecl &declaration,
                                            const SemanticType &type,
                                            bool globalStorage);
@@ -1161,14 +1395,15 @@ private:
                  AccessMode access = AccessMode::ReadOnly) const;
 
   [[nodiscard]] ExpressionInfo
-  ownerDependentStringViewInfo(ValueCategory category = ValueCategory::Value,
-                               AccessMode access = AccessMode::ReadOnly) const;
+  ownerDependentTextInfo(SemanticType type,
+                         ValueCategory category = ValueCategory::Value,
+                         AccessMode access = AccessMode::ReadOnly) const;
 
   [[nodiscard]] bool
-  isOwnerDependentStringViewExpression(const ExprPtr &expression) const;
+  isOwnerDependentTextExpression(const ExprPtr &expression) const;
 
-  void reportDynamicStringViewStorage(const ExprPtr &expression,
-                                      std::string_view destination);
+  void reportOwnerDependentTextStorage(const ExprPtr &expression,
+                                       std::string_view destination);
 
   [[nodiscard]] BindingInfo
   bindingInfo(SemanticType type,
@@ -1176,8 +1411,54 @@ private:
 
   [[nodiscard]] bool isMoveOnlyOwnerType(const SemanticType &type) const;
 
+  struct StoredReferencePath {
+    std::vector<const VariableDecl *> fields;
+    SemanticType reference = SemanticType::Unknown;
+  };
+
+  struct StoredReferenceBinding {
+    StoredReferencePath destination;
+    std::size_t parameter = 0;
+    // A nominal parameter contributes the same path below the initialized
+    // field. A direct reference parameter contributes its referent itself.
+    std::vector<const VariableDecl *> sourceFields;
+  };
+
+  [[nodiscard]] std::vector<StoredReferenceBinding>
+  storedCarrierConstructorBindings(
+      const SemanticType &type, const ConstructorDecl *constructor,
+      std::span<const SemanticType> parameterTypes) const;
+
+  [[nodiscard]] std::vector<SymbolId>
+  storedFieldSymbols(SemanticType type,
+                     std::span<const VariableDecl *const> fields);
+
+  // Enumerate every independently checked dependency in declaration order.
+  // An empty result means either no reference or an unsupported carrier shape.
+  [[nodiscard]] std::vector<StoredReferencePath>
+  storedReferencePaths(const SemanticType &type) const;
+
+  // A concrete carrier may wrap its one direct reference in ordinary nominal
+  // fields. The complete declaration path is the dependency identity; an
+  // aggregate with two paths is not a one-owner carrier.
+  [[nodiscard]] std::optional<StoredReferencePath>
+  storedReferencePath(const SemanticType &type) const;
+
+  [[nodiscard]] std::optional<std::size_t> storedCarrierConstructorParameter(
+      const SemanticType &type, const ConstructorInfo &constructor,
+      std::span<const SemanticType> parameterTypes) const;
+
+  [[nodiscard]] std::vector<std::size_t> storedCarrierConstructorParameters(
+      const SemanticType &type, const ConstructorInfo &constructor,
+      std::span<const SemanticType> parameterTypes) const;
+
   [[nodiscard]] bool
   isDirectStoredReferenceType(const SemanticType &type) const;
+
+  [[nodiscard]] bool isFallibleBorrowType(const SemanticType &type) const;
+
+  [[nodiscard]] std::optional<SemanticType>
+  fallibleBorrowReferent(const SemanticType &type) const;
 
   [[nodiscard]] std::optional<SemanticType>
   storedReferenceReferent(const SemanticType &type) const;
@@ -1192,6 +1473,11 @@ private:
 
   void applyFunctionReturnBorrowSummary(CallableCandidate &function) const;
 
+  [[nodiscard]] std::optional<FunctionReturnBorrowSummary>
+  storedFieldReturnBorrowSummary(
+      const FunctionInfo &function,
+      SemanticType ownerType = SemanticType::Unknown);
+
   void reportMissingFunctionReturnBorrowSummary(const FunctionDecl &function,
                                                 const FunctionInfo &info);
 
@@ -1199,10 +1485,11 @@ private:
 
   [[nodiscard]] bool nestsBorrowedState(const SemanticType &type) const;
 
-  [[nodiscard]] bool
-  isReadOnlyBorrowedCarrierParameter(const SemanticType &type) const;
+  [[nodiscard]] bool isBorrowedCarrierReference(const SemanticType &type) const;
 
   [[nodiscard]] static bool isDirectOwnerType(const SemanticType &type);
+
+  [[nodiscard]] bool runtimeObjectLayoutType(const SemanticType &type) const;
 
   [[nodiscard]] IntrinsicKind
   trustedIntrinsicKind(SourceUnitId sourceUnit,
@@ -1221,12 +1508,26 @@ private:
 
   [[nodiscard]] static const Variable *movedVariable(const ExprPtr &expression);
 
+  enum class ImplicitReturnMoveStatus {
+    NotEligible,
+    Moved,
+    Invalid,
+  };
+
+  [[nodiscard]] ImplicitReturnMoveStatus
+  analyzeImplicitReturnMove(const ExprPtr &expression,
+                            const SemanticType &returnType,
+                            const SemanticType &valueType);
+
   [[nodiscard]] const ExprPtr *
   operatorBorrowSource(const ExprPtr &expression,
                        const ResolvedOperatorInfo &resolved) const;
 
   [[nodiscard]] const ExprPtr *
   storedBorrowSource(const ExprPtr &expression) const;
+
+  [[nodiscard]] std::vector<SemanticLoanDependency>
+  storedBorrowDependencies(const ExprPtr &expression);
 
   [[nodiscard]] const Variable *
   borrowedOwnerVariable(const ExprPtr &expression) const;
@@ -1242,6 +1543,10 @@ private:
 
   [[nodiscard]] std::optional<RetainedLoanSource>
   retainedLoanSource(const ExprPtr &expression) const;
+
+  [[nodiscard]] std::optional<SemanticLoanDependency>
+  projectedStoredDependency(const SemanticLoanInfo &loan,
+                            std::span<const PlaceProjection> projections) const;
 
   static void appendUniqueLoan(std::vector<SemanticLoanId> &loans,
                                SemanticLoanId loan);
@@ -1276,6 +1581,9 @@ private:
                                AccessMode requested, std::string message,
                                SemanticLoanId throughLoan = 0);
 
+  void reportRawLoanConflict(const Token &token, const SemanticLoanPlace &place,
+                             AccessMode access, SemanticLoanId throughLoan);
+
   void validateLoanPlaceAccess(const Expr &expression, OccurrenceRole roles);
 
   void
@@ -1287,6 +1595,7 @@ private:
     SemanticLoanPlace place;
     AccessMode access = AccessMode::ReadOnly;
     bool globalStorage = false;
+    bool retainsValueCarrier = false;
   };
 
   [[nodiscard]] std::optional<TransientBorrowProduction>
@@ -1295,6 +1604,7 @@ private:
   [[nodiscard]] SemanticLoanPlace transientLoanPlace(const ExprPtr &expression);
 
   [[nodiscard]] SemanticLoanPlace retainedLoanPlace(const ExprPtr &expression);
+  [[nodiscard]] bool receiverStorageBorrow(const ExprPtr &expression) const;
 
   static const ExprPtr *operatorReceiverExpression(const ExprPtr &expression);
 
@@ -1310,6 +1620,10 @@ private:
 
   [[nodiscard]] bool reportCommaTransientConflict(const ExprPtr &expression,
                                                   const Token &location);
+
+  void validateSequencedTransientLoans(const ExprPtr &left,
+                                       const ExprPtr &right,
+                                       const Token &location);
 
   void validateCallPlaceExclusivityImpl(
       std::span<const SemanticType> parameterTypes,
@@ -1338,16 +1652,19 @@ private:
 
   void registerStorageLoan(SymbolId owner, bool receiver, SemanticLoanId loan);
 
-  SemanticLoanId createRetainedLoan(Symbol &carrier, SymbolId carrierSymbol,
-                                    SemanticLoanKind kind, const Expr *origin,
-                                    SemanticLoanPlace place, SymbolId owner,
-                                    bool receiverOrigin, AccessMode access,
-                                    bool protectsStorage,
-                                    SemanticLoanId parent = 0,
-                                    bool entry = false,
-                                    SymbolId designatedField = 0);
+  SemanticLoanId createRetainedLoan(
+      Symbol &carrier, SymbolId carrierSymbol, SemanticLoanKind kind,
+      const Expr *origin, SemanticLoanPlace place, SymbolId owner,
+      bool receiverOrigin, AccessMode access, bool protectsStorage,
+      SemanticLoanId parent = 0, bool entry = false,
+      std::vector<SymbolId> designatedFields = {});
 
   void recordParameterEntryLoan(const Parameter &parameter);
+  SemanticLoanId recordStoredEntryDependency(Symbol &carrier,
+                                             SymbolId carrierSymbol,
+                                             const SemanticType &type,
+                                             bool receiver,
+                                             const Stmt *declaration = nullptr);
 
   void recordRetainedBorrow(const VariableDecl &binding,
                             const ExprPtr &expression);
@@ -1438,7 +1755,7 @@ private:
 
   void reportBorrowConflict(const Token &token,
                             const std::vector<SemanticLoanId> &loans,
-                            std::string message);
+                            std::string message, bool rawAudit = false);
 
   void recordProvenLoanEndpoint(SemanticLoanId id,
                                 const LoanFlowArmEndpoint &endpoint);
@@ -1470,8 +1787,15 @@ private:
   void analyzeMutexIntrinsicCall(const Call &expr,
                                  const CallableCandidate &declaration);
 
+  void analyzeSourceLocationIntrinsicCall(const Call &expr,
+                                          const CallableCandidate &declaration);
+
   void analyzeIntrinsicCall(const Call &expr,
                             const CallableCandidate &declaration);
+  void analyzeMoveCall(const Call &expr,
+                       const CallableCandidate *declaration = nullptr,
+                       bool immediateReceiver = false);
+  std::unordered_set<const Call *> designatedMoves;
 
   void
   analyzeIntegerArithmeticIntrinsicCall(const Call &expr,
@@ -1479,6 +1803,9 @@ private:
 
   void analyzeUniqueOwnerIntrinsicCall(const Call &expr,
                                        IntrinsicKind intrinsic);
+  void analyzeRestoringIntrinsicCall(const Call &expr, IntrinsicKind intrinsic);
+  void analyzeSharedOwnerIntrinsicCall(const Call &expr,
+                                       const CallableCandidate &declaration);
 
   // The prefix-initialized storage family (P-STORAGE-01): the live
   // elements always form the prefix [0, length). Construction appends
@@ -1501,6 +1828,7 @@ private:
                                 const std::vector<SemanticType> &argumentTypes);
 
   [[nodiscard]] static bool isStorageElementType(const SemanticType &type);
+  [[nodiscard]] bool isAllocatedScalarType(const SemanticType &type) const;
 
   void requireMutableStorage(const ExprPtr &argument,
                              std::string_view operation);
@@ -1531,11 +1859,6 @@ private:
 
   [[nodiscard]] bool isExplicitMoveReceiver(const ExprPtr &expression) const;
 
-  [[nodiscard]] bool
-  rejectConsumingActiveCleanup(const Token &location,
-                               const SemanticType &receiverType,
-                               std::optional<CallableBoundary> boundary);
-
   [[nodiscard]] const Variable *
   directCallableParameterVariable(const ExprPtr &expression) const;
 
@@ -1565,6 +1888,9 @@ private:
   void analyzeLambdaCall(const Call &call, const SemanticType &calleeType,
                          const std::vector<SemanticType> &argumentTypes);
 
+  void
+  analyzeNativeIndirectCall(const Call &call, const SemanticType &calleeType,
+                            const std::vector<SemanticType> &argumentTypes);
   void analyzeFunctionItemCall(const Call &call, const SemanticType &calleeType,
                                const std::vector<SemanticType> &argumentTypes);
 
@@ -1626,6 +1952,29 @@ private:
 
   [[nodiscard]] static std::vector<StructuralConstraintKind>
   guaranteedStructuralKinds(StructuralConstraintKind kind);
+  [[nodiscard]] bool readMemberRequirementSatisfied(
+      const SemanticType &receiver, std::string_view member,
+      const SemanticType &result,
+      SemanticMemberRequirementFailure *failure = nullptr,
+      std::span<const SemanticType> parameters = {},
+      bool mutableReceiver = false, bool requiresUnsafe = false) const;
+  void recordMemberRequirementReceiver(const MemberRequirement &query,
+                                       const SemanticType &type);
+  struct ActiveMemberRequirement {
+    SemanticType receiver;
+    std::string member;
+    SemanticType result;
+    std::vector<SemanticType> parameters;
+    bool mutableReceiver = false;
+    bool requiresUnsafe = false;
+  };
+  mutable std::vector<ActiveMemberRequirement> activeMemberRequirements;
+  [[nodiscard]] std::optional<SemanticType>
+  symbolicReadMemberReturnType(const SemanticType &receiver,
+                               std::string_view member) const;
+  [[nodiscard]] TypeSubstitution
+  conceptSubstitution(const RegisteredConcept &conceptInfo,
+                      std::span<const SemanticType> arguments) const;
 
   [[nodiscard]] std::vector<ExpandedStructuralRequirement>
   activeStructuralRequirements() const;
@@ -1648,6 +1997,12 @@ private:
 
   void reportConstraintFailure(const Token &site,
                                const ConstraintFailure &failure);
+
+  void
+  attachConstraintCallContext(ConstraintFailure &failure,
+                              const CallableCandidate &candidate,
+                              const std::vector<SemanticType> &argumentTypes,
+                              const ExprList &expressions) const;
 
   bool applyVariadicFunctionTypeArguments(
       CallableCandidate &function,
@@ -1714,6 +2069,7 @@ private:
                            const ExprPtr &expression) const;
 
   void discoverOwnedCallableContracts();
+  void discoverOwnedCallableValueParameters();
 
   [[nodiscard]] bool
   ownedTransportMatchesConcrete(const FunctionInfo &function,
@@ -1758,6 +2114,50 @@ private:
   [[nodiscard]] bool
   validateConcurrentSurfaceAvailability(const Token &location,
                                         std::string_view surface);
+
+  void finalizeCThreadRequirements();
+
+  void recordRawBorrowCall(const Call &call, const ResolvedCallInfo &resolved);
+  void finalizeRawBorrowContracts();
+  bool analyzeRawReferenceReturn(const ExprPtr &expression);
+
+  struct RawBorrowCallArgument {
+    PlaceKey place;
+    std::vector<SemanticLoanDependency> dependencies;
+    std::optional<std::size_t> ownerParameter;
+    std::vector<RawPointerOrigin> origins;
+    std::vector<std::size_t> pointerParameters;
+    bool pointerReceiver = false;
+    std::vector<Diagnostic> lifetimeDiagnostics;
+    std::shared_ptr<RawPointerLoopUse> loopUse;
+  };
+
+  struct RawBorrowCallUse {
+    const FunctionDecl *caller = nullptr;
+    const FunctionDecl *callee = nullptr;
+    IntrinsicKind intrinsic = IntrinsicKind::None;
+    Token location;
+    std::vector<RawBorrowCallArgument> arguments;
+    std::optional<RawBorrowCallArgument> receiver;
+  };
+
+  RawBorrowCallArgument rawBorrowArgument(const ExprPtr &argument,
+                                          const Token &location);
+  void completeRawBorrowArgument(RawBorrowCallArgument &snapshot,
+                                 const Token &location);
+
+  void recordMutableBindingUse(SymbolId symbol);
+
+  void recordMutableBindingUse(const ExprPtr &expression);
+
+  void finalizeAdvisoryDiagnostics();
+
+  struct CThreadCallUse {
+    const FunctionDecl *caller = nullptr;
+    const FunctionDecl *callee = nullptr;
+    Token location;
+    bool trusted = false;
+  };
 
   [[nodiscard]] static std::string
   constructorSignatureSpelling(const ConstructorInfo &constructor);
@@ -1822,7 +2222,8 @@ private:
       std::span<const ExprPtr> arguments = {}, bool contextual = false,
       std::optional<CallableBoundary> boundary = std::nullopt,
       std::optional<OperatorReceiverState> receiverState = std::nullopt,
-      bool projection = false, bool preferReadOnlyReceiver = false);
+      bool projection = false, bool preferReadOnlyReceiver = false,
+      ContextualCallArguments *contextualArguments = nullptr);
 
   SemanticType arrowTargetType(const Expr &site, const ExprPtr &receiver,
                                const SemanticType &receiverType,
@@ -1866,7 +2267,8 @@ private:
   void reportOverloadResolutionFailure(
       const Call &call, const Symbol &overloadSet,
       const std::vector<SemanticType> &argumentTypes,
-      const std::vector<const CallableCandidate *> &exactMatches);
+      const std::vector<const CallableCandidate *> &exactMatches,
+      std::span<const ConstraintFailure> constraintFailures = {});
 
   [[nodiscard]] static int callConversionRank(const SemanticType &parameter,
                                               const SemanticType &argument);
@@ -1943,7 +2345,7 @@ private:
   isContextualNativeFunctionArgument(const ExprPtr &expression) const;
 
   [[nodiscard]] bool
-  isContextualNativeOutPointerArgument(const ExprPtr &expression) const;
+  isContextualCallableResultArgument(const ExprPtr &expression) const;
 
   [[nodiscard]] ContextualCallArguments
   analyzeContextualCallArguments(const ExprList &arguments);
@@ -2076,8 +2478,7 @@ private:
 
   void validateArrayExtent(const ArrayExtentExprPtr &extent);
 
-  void validateType(const TypeRef &type, bool allowNativeCOuterPointer = false,
-                    bool allowNativeFunctionType = false);
+  void validateType(const TypeRef &type, bool allowNativeFunctionType = false);
 
   [[nodiscard]] CompilerCapabilityTypeKind
   compilerCapabilityType(const TypeRef &type,
@@ -2092,17 +2493,21 @@ private:
 
   [[nodiscard]] bool isGtiInternalTextView(const TypeRef &type) const;
 
-  [[nodiscard]] static bool containsReference(const TypeRef &type);
+  [[nodiscard]] bool containsReference(const TypeRef &type) const;
 
   [[nodiscard]] static bool containsRawPointer(const TypeRef &type);
 
   [[nodiscard]] bool isActiveTypePack(const TypeRef &type) const;
 
+  void validateReferencePlacement(
+      const TypeRef &type, bool allowTopLevel, std::string_view context,
+      bool allowRvalueReference = false,
+      bool allowDefaultLibraryStorageReference = false,
+      bool typeMetadata = false, bool genericFunctionParameter = false);
+
   void
-  validateReferencePlacement(const TypeRef &type, bool allowTopLevel,
-                             std::string_view context,
-                             bool allowRvalueReference = false,
-                             bool allowDefaultLibraryStorageReference = false);
+  validateReferenceReferent(const SemanticType &type, const Token &site,
+                            bool allowDefaultLibraryStorageReference = false);
 
   [[nodiscard]] bool containsOwningPayloadEnum(const SemanticType &type) const;
 
@@ -2132,8 +2537,8 @@ private:
                                   const SemanticType &valueType,
                                   const ExprPtr &value);
 
-  void validateOwnerDependentStringViewReturn(const SemanticType &valueType,
-                                              const ExprPtr &value);
+  void validateOwnerDependentTextReturn(const SemanticType &valueType,
+                                        const ExprPtr &value);
 
   void validateReferenceReturn(const SemanticType &reference,
                                const SemanticType &valueType,
@@ -2175,7 +2580,8 @@ private:
   std::vector<GenericParameterInfo>
   makeGenericParameters(const std::vector<GenericParameter> &parameters,
                         const Token &declarationName,
-                        const std::vector<std::string> &fromScope);
+                        const std::vector<std::string> &fromScope,
+                        bool allowStructural = false);
 
   [[nodiscard]] std::shared_ptr<const GenericValueExpression>
   normalizeGenericValueDefault(const ArrayExtentExpr &expression,
@@ -2186,6 +2592,7 @@ private:
     SourceUnitId sourceUnit = 0;
     bool internalLinkage = false;
     std::string qualifiedName;
+    Token declaration;
   };
 
   struct GenericDefaultConstantUse {
@@ -2220,6 +2627,9 @@ private:
   applyGenericDefaults(const std::vector<GenericParameterInfo> &parameters,
                        GenericSubstitution &substitution, const Token &site,
                        bool diagnoseFailure);
+
+  [[nodiscard]] std::optional<ConstraintFailure>
+  firstNestedTypeConstraintFailure(const SemanticType &type) const;
 
   [[nodiscard]] const std::vector<GenericParameterInfo> &
   genericParametersFor(const FunctionDecl &function) const;
@@ -2296,6 +2706,11 @@ private:
       const FunctionDecl &function,
       const std::vector<GenericParameterInfo> &genericParameters);
 
+  void validateParameterPacks(
+      std::span<const Parameter> parameters,
+      const std::vector<GenericParameterInfo> &genericParameters,
+      const TypeRef *returnType = nullptr);
+
   void validateOperatorDeclaration(const FunctionDecl &function,
                                    bool methodDeclaration);
 
@@ -2310,18 +2725,15 @@ private:
   [[nodiscard]] bool isCAbiRawPointer(const SemanticType &type) const;
 
   [[nodiscard]] bool
-  isCAbiOpaqueHandleOutPointer(const SemanticType &type) const;
-
-  [[nodiscard]] bool
   nativeFunctionBoundaryTypeAllowed(const SemanticType &type,
                                     bool returnPosition) const;
 
   [[nodiscard]] bool isCAbiNativeFunction(const SemanticType &type) const;
 
-  [[nodiscard]] bool isCAbiArrayReturnPointer(const SemanticType &type) const;
-
   void validateNativeCArrayAttribute(const FunctionDecl &function,
                                      const SemanticType &returnType);
+
+  void validateNativeLinkNameAttribute(const FunctionDecl &function);
 
   void validateExternCFunction(const FunctionDecl &function,
                                bool methodDeclaration,
@@ -2351,7 +2763,10 @@ private:
 
   [[nodiscard]] SourceUnitId sourceUnitFor(const Token &token) const;
 
-  [[nodiscard]] bool sourceVisible(SourceUnitId declaration) const;
+  [[nodiscard]] bool declarationVisible(SourceUnitId declaration,
+                                        const Token &name) const;
+  void validateModuleExports(const StmtList &statements,
+                             bool inherited = false);
 
   [[nodiscard]] bool isCompilerTrustedUnit(SourceUnitId sourceUnit) const;
 
@@ -2377,7 +2792,7 @@ private:
 
   template <typename Callback>
   void forEachSourceConsumer(SourceUnitId declaration, bool compilerPrivate,
-                             Callback callback) {
+                             std::size_t nameOffset, Callback callback) {
     if (sourceGraph == nullptr || declaration == 0) {
       return;
     }
@@ -2385,29 +2800,31 @@ private:
       return;
     }
     for (const SourceUnit &unit : sourceGraph->sourceUnits()) {
-      if (sourceGraph->isVisible(unit.id, declaration) &&
+      if (sourceGraph->isDeclarationVisible(unit.id, declaration, nameOffset) &&
           (!compilerPrivate || isCompilerTrustedUnit(unit.id))) {
         callback(unit.id);
       }
     }
   }
 
-  void publishNamespace(const std::string &name, SourceUnitId declaration);
+  void publishNamespace(const std::string &name, SourceUnitId declaration,
+                        const Token &token);
 
   void publishNamespaceAlias(const std::string &name,
-                             const NamespaceAliasInfo &alias);
+                             const NamespaceAliasInfo &alias,
+                             const Token &token);
 
   void publishTypeAlias(const std::string &name, TypeAliasId id,
                         SourceUnitId declaration, bool compilerPrivate = false);
 
   void publishConcept(const std::string &name, ConceptId id,
-                      SourceUnitId declaration);
+                      SourceUnitId declaration, const Token &token);
 
   void publishClass(const std::string &name, ClassId id,
-                    SourceUnitId declaration);
+                    SourceUnitId declaration, const Token &token);
 
-  void publishEnum(const std::string &name, EnumId id,
-                   SourceUnitId declaration);
+  void publishEnum(const std::string &name, EnumId id, SourceUnitId declaration,
+                   const Token &token);
 
   [[nodiscard]] std::unordered_map<std::string, Symbol> &
   activeNamespaceSymbols();
@@ -2510,11 +2927,22 @@ private:
   void registerClasses(const StmtList &statements,
                        std::vector<std::string> scope);
 
+  [[nodiscard]] std::vector<GenericParameterInfo>
+  makeClassPatternParameters(const ClassDecl &declaration,
+                             const std::vector<std::string> &scope);
+  void resolveClassArgumentPatterns(ClassId id);
+  [[nodiscard]] bool
+  classArgumentPatternsMatch(const ClassInfo &owner,
+                             const std::vector<SemanticType> &arguments) const;
+
   [[nodiscard]] SemanticType
   canonicalExactSpecializationType(SemanticType type) const;
 
   [[nodiscard]] SemanticType
   selectExactClassSpecialization(SemanticType type) const;
+
+  [[nodiscard]] ClassId selectSignatureClassDefinition(
+      ClassId id, const std::vector<SemanticType> &arguments) const;
 
   [[nodiscard]] static bool
   isConcreteExactSpecializationType(const SemanticType &type);
@@ -2555,7 +2983,8 @@ private:
 
   [[nodiscard]] bool
   byValueTypeReachesClass(const SemanticType &type, ClassId target,
-                          std::unordered_set<ClassId> &visiting) const;
+                          std::unordered_set<ClassId> &visiting,
+                          std::unordered_set<EnumId> &visitingEnums) const;
 
   void validateOrdinaryClassLayouts();
 
@@ -2631,6 +3060,17 @@ private:
       std::string_view spelling, bool exposedWithExactCSpelling,
       bool occupiesCOrdinaryNamespace, bool followedByLeftParen);
 
+  [[nodiscard]] static bool
+  isPortableNativeCIdentifier(std::string_view spelling);
+
+  bool validateNativeCIdentifierSpelling(std::string_view spelling,
+                                         const Token &location,
+                                         std::string_view diagnosticCode,
+                                         std::string_view entity,
+                                         bool exposedWithExactCSpelling,
+                                         bool occupiesCOrdinaryNamespace,
+                                         bool followedByLeftParen = false);
+
   bool validateNativeCIdentifier(const Token &identifier,
                                  std::string_view diagnosticCode,
                                  std::string_view entity,
@@ -2700,19 +3140,19 @@ private:
   collectBorrowReturnExpressions(const Stmt *statement,
                                  std::vector<const ExprPtr *> &returns) const;
 
-  struct PredeclaredStringViewBorrowSource {
+  struct PredeclaredTextBorrowSource {
     bool known = false;
     bool ownerDependent = false;
     BorrowOriginKind origin = BorrowOriginKind::None;
     std::size_t parameter = 0;
   };
 
-  [[nodiscard]] PredeclaredStringViewBorrowSource
-  predeclaredStringViewBorrowSource(const ExprPtr &expression,
-                                    const FunctionInfo &function) const;
+  [[nodiscard]] PredeclaredTextBorrowSource
+  predeclaredTextBorrowSource(const ExprPtr &expression,
+                              const FunctionInfo &function) const;
 
   [[nodiscard]] std::optional<FunctionReturnBorrowSummary>
-  dynamicStringViewReturnBorrowSummary(const FunctionInfo &function);
+  dynamicTextReturnBorrowSummary(const FunctionInfo &function);
 
   [[nodiscard]] std::optional<BorrowOriginPlace>
   globalReturnBorrowPlace(const FunctionInfo &function);
@@ -2720,6 +3160,8 @@ private:
   void resolveFunctionBorrowSummaries();
 
   void recordClassLifecycles();
+  void registerDesignatedConstructors();
+  void analyzeDesignatedInitializer(const DirectInitializer &expr);
 
   void collectMembers(const StmtList &members, ClassInfo &owner,
                       AccessModifier &access,
@@ -2887,11 +3329,11 @@ private:
   numericConversionMayFail(const SemanticType &source,
                            const SemanticType &target);
 
-  [[nodiscard]] static SemanticType
+  [[nodiscard]] SemanticType
   compoundIntermediateType(TokenKind operation, const SemanticType &target,
                            const SemanticType &right,
                            const Expr *leftExpression,
-                           const Expr *rightExpression);
+                           const Expr *rightExpression) const;
 
   void addCompoundConversionFailure(DefinedFailureOperation &operation,
                                     TokenKind token, const SemanticType &target,
@@ -2932,7 +3374,10 @@ private:
   [[nodiscard]] bool isMemoryLibraryUnit(SourceUnitId sourceUnit) const;
   [[nodiscard]] bool isOptionalLibraryUnit(SourceUnitId sourceUnit) const;
 
+  [[nodiscard]] bool isSourceLocationLibraryUnit(SourceUnitId sourceUnit) const;
+
   [[nodiscard]] bool isNumericLibraryUnit(SourceUnitId sourceUnit) const;
+  [[nodiscard]] bool isSimdLibraryUnit(SourceUnitId sourceUnit) const;
 
   [[nodiscard]] bool isIteratorLibraryUnit(SourceUnitId sourceUnit) const;
 
@@ -3209,6 +3654,7 @@ private:
     ExplicitMove,
     NonConcreteRecord,
     BorrowedState,
+    UnstableBorrowOwner,
     UnsupportedProducer,
   };
 
@@ -3225,16 +3671,21 @@ private:
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryValue(const ExprPtr &expression) const;
 
+  // Receiver-only extension. Temporary reference arguments retain the stricter
+  // self-contained-value rule in freshTemporaryValue.
+  [[nodiscard]] FreshTemporaryValueAssessment
+  freshTemporaryReceiverValue(const ExprPtr &expression);
+
   [[nodiscard]] bool
   freshTemporaryMethodSupported(const CallableCandidate &function) const;
 
   [[nodiscard]] CallReceiverMode receiverModeForObject(
       const ExprPtr &receiver, const CallableCandidate &function,
-      bool allowFreshTemporary, bool consumingReceiver = false) const;
+      bool allowFreshTemporary, bool consumingReceiver = false);
+  [[nodiscard]] bool consumingReceiverValue(const ExprPtr &receiver) const;
 
   [[nodiscard]] CallReceiverMode
-  callReceiverMode(const ExprPtr &callee,
-                   const CallableCandidate &function) const;
+  callReceiverMode(const ExprPtr &callee, const CallableCandidate &function);
 
   [[nodiscard]] static bool receiverModeAllowsMutation(CallReceiverMode mode);
 
@@ -3308,7 +3759,15 @@ private:
 
   [[nodiscard]] SemanticPlace movedSourcePlace(const ExprPtr &expression);
 
-  void setProjectedValueState(const SemanticPlace &place, ValueState state);
+  void setProjectedValueState(const SemanticPlace &place, ValueState state,
+                              const Token &origin);
+  static std::vector<SourceSpan>
+  mergedMoveOrigins(const std::vector<SourceSpan> &left,
+                    const std::vector<SourceSpan> &right);
+  static void appendMoveContext(Diagnostic &diagnostic,
+                                const std::vector<SourceSpan> &origins);
+  void appendReadOnlyPlaceContext(Diagnostic &diagnostic,
+                                  const ExprPtr &expression) const;
 
   void reinitializePlace(const SemanticPlace &place);
 
@@ -3363,6 +3822,102 @@ private:
 
   void requireUnsafe(const Expr &expression, UnsafeOperationKind operation,
                      const Token &token, std::string_view description);
+
+  [[nodiscard]] std::vector<RawPointerOrigin>
+  rawPointerOrigins(const ExprPtr &expression);
+  [[nodiscard]] std::vector<RawPointerOrigin>
+  rawPointerOrigins(const Expr *expression);
+  [[nodiscard]] std::vector<ProjectedRawPointerOrigins>
+  rawPointerFields(const Expr *expression);
+  [[nodiscard]] std::vector<ProjectedRawPointerOrigins>
+  rawPointerFieldsAt(const PlaceKey &place);
+  [[nodiscard]] std::vector<std::vector<PlaceProjection>>
+  rawPointerFieldPaths(const SemanticType &type);
+  [[nodiscard]] std::vector<SemanticType>
+  rawPointerTypesAt(const SemanticType &type,
+                    const std::vector<PlaceProjection> &projections);
+  [[nodiscard]] std::vector<RawPointerOrigin>
+  rawCallPointerOrigins(const Expr &expression, bool includeProduced = true);
+  [[nodiscard]] std::vector<ProjectedRawPointerOrigins>
+  rawProducedFields(const Expr &expression,
+                    const std::vector<RawResultField> *fields = nullptr,
+                    const RawInvocation *invocation = nullptr);
+  [[nodiscard]] std::shared_ptr<RawResultQuery>
+  rawResultQuery(const Call &call, const ResolvedCallInfo &resolved);
+  [[nodiscard]] std::shared_ptr<RawResultQuery>
+  rawResultQuery(const ResolvedCallInfo &resolved, SemanticType owner);
+  [[nodiscard]] std::shared_ptr<RawResultQuery>
+  rawConstructorResultQuery(const ResolvedConstructionInfo &resolved);
+  void runRawResultQuery(const std::shared_ptr<RawResultQuery> &query);
+  void recordRawResult(const ExprPtr &expression);
+  void recordRawConstructorResult(const ConstructorDecl &constructor);
+  void
+  collectRawResultFields(const std::vector<ProjectedRawPointerOrigins> &fields,
+                         const std::vector<Parameter> &parameters,
+                         const std::vector<SemanticType> &parameterTypes,
+                         bool constructedReceiver,
+                         std::vector<RawResultField> *output = nullptr);
+  std::vector<RawProgramStorageState> saveRawProgramStorage();
+  void restoreRawProgramStorage(std::vector<RawProgramStorageState> state);
+  void recordRawWrite(const SemanticPlace &place,
+                      const std::vector<ProjectedRawPointerOrigins> &fields,
+                      bool strong);
+  void applyRawCallWrites(const Expr &expression,
+                          const RawInvocation *invocation = nullptr);
+  void applyUnknownRawWrite(const SemanticPlace &place,
+                            const SemanticType &type, const SourceSpan &span,
+                            std::size_t query = 0);
+  void applyRawCleanupWrites(
+      const SemanticType &type, const SourceSpan &span,
+      const std::vector<ProjectedRawPointerOrigins> &fields = {});
+  void applyRawAliasWrites(std::vector<ProjectedRawPointerOrigins> fields,
+                           const SemanticType &type, const SourceSpan &span);
+  void
+  applyRawPointerFields(const SemanticPlace &place,
+                        const std::vector<ProjectedRawPointerOrigins> &fields,
+                        bool strong);
+  static bool rawWritesAreLinear(const StmtList &statements);
+  [[nodiscard]] Symbol *rawPointerRoot(const PlaceKey &place);
+  void preserveRawCallWrites(const Call &call);
+  void invalidateRawCallOrigins(const Call *call,
+                                const RawInvocation *invocation = nullptr);
+  void
+  applyRawPointerLifetimeInvalidations(RawPointerOrigin &origin,
+                                       const std::vector<PlaceKey> &places);
+  void assignRawPointerFields(const SemanticPlace &place, const Expr *value);
+  std::vector<SemanticPlace> rawPointerStoragePlaces(const SemanticPlace &place,
+                                                     bool &weak);
+  void invalidateRawPointerOrigins(const SemanticPlace &place);
+  static void
+  mergeRawPointerFields(std::vector<ProjectedRawPointerOrigins> &target,
+                        const std::vector<ProjectedRawPointerOrigins> &source);
+  static void
+  mergeRawPointerOrigins(std::vector<RawPointerOrigin> &target,
+                         const std::vector<RawPointerOrigin> &source);
+  void validateRawPointerAccess(const ExprPtr &pointer, const Token &site,
+                                AccessMode access);
+  void validateRawPointerOrigins(const std::vector<RawPointerOrigin> &origins,
+                                 const Token &site, AccessMode access,
+                                 bool checksLoans = true);
+  void recordRawAccess(const std::vector<RawPointerOrigin> &origins,
+                       const Token &site, AccessMode access, bool checksLoans);
+  void validateRawCallAccesses(const Expr &expression,
+                               const RawInvocation *invocation = nullptr);
+  void applyRawOperatorInvocation(const Expr &expression,
+                                  const RawInvocation &invocation,
+                                  bool contextual, bool projection);
+  [[nodiscard]] bool rawDispatchAccessFree(const ResolvedCallInfo &resolved,
+                                           const SemanticPlace &receiver);
+  void beginRawPointerLoop();
+  void endRawPointerLoop(const ScopeStack &backedge, bool reachable);
+  std::shared_ptr<RawPointerLoopUse>
+  deferredRawPointerLoopUse(const ExprPtr &pointer, const Token &site);
+  std::shared_ptr<RawPointerLoopUse>
+  deferredRawPointerLoopUse(const std::vector<RawPointerOrigin> &origins,
+                            const Token &site);
+  [[nodiscard]] std::optional<Diagnostic>
+  rawPointerLifetimeDiagnostic(const RawPointerOrigin &origin,
+                               const Token &site);
 
   [[nodiscard]] static bool containsRawPointer(const SemanticType &type);
 
@@ -3443,8 +3998,8 @@ private:
 
   [[nodiscard]] static SemanticType promotedInteger(SemanticType type);
 
-  [[nodiscard]] static SemanticType widerInteger(SemanticType left,
-                                                 SemanticType right);
+  [[nodiscard]] SemanticType widerInteger(SemanticType left,
+                                          SemanticType right) const;
 
   [[nodiscard]] static bool canConvertToUnsigned(SemanticType originalType,
                                                  const Expr *expression,
@@ -3454,10 +4009,10 @@ private:
 
   [[nodiscard]] static bool isExpectedVoid(const SemanticType &type);
 
-  [[nodiscard]] static SemanticType numericResult(SemanticType left,
-                                                  SemanticType right,
-                                                  const Expr *leftExpression,
-                                                  const Expr *rightExpression);
+  [[nodiscard]] SemanticType numericResult(SemanticType left,
+                                           SemanticType right,
+                                           const Expr *leftExpression,
+                                           const Expr *rightExpression) const;
 
   [[nodiscard]] bool isOwnershipAssignable(const SemanticType &target,
                                            const SemanticType &value,
@@ -3571,6 +4126,7 @@ private:
     std::vector<std::size_t> sealedShape;
 
     void clear() { *this = SemanticCatalog{}; }
+    [[nodiscard]] SemanticCatalog snapshotForInstanceAnalysis() const;
     void seal() {
       assert(!sealed);
       sealedShape = shape();
@@ -3656,7 +4212,11 @@ private:
   // and their joins are part of the same body-scoped value-flow owner.
   struct ValueFlowState {
     ScopeStack scopes;
+    std::unordered_map<const Expr *, std::vector<ProjectedRawPointerOrigins>>
+        rawOperatorResults;
     std::vector<ValueControlFlowContext> controlFlow;
+    std::vector<RawPointerLoop> rawPointerLoops;
+    std::size_t nextRawPointerLoop = 1;
     std::unordered_map<std::string, Symbol> namespaceSymbols;
     std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
         internalNamespaceSymbols;
@@ -3665,7 +4225,10 @@ private:
 
     void clear() {
       scopes.clear();
+      rawOperatorResults.clear();
       controlFlow.clear();
+      rawPointerLoops.clear();
+      nextRawPointerLoop = 1;
       namespaceSymbols.clear();
       internalNamespaceSymbols.clear();
       visibleNamespaceSymbols.clear();
@@ -3684,6 +4247,18 @@ private:
   // They do not introduce another owner: every binding refers into this one
   // object, and resetRequestState() is its only public-entry reset operation.
   struct RequestSessionState {
+    struct MutableLocalCandidate {
+      SymbolId symbol = 0;
+      Token keyword;
+      Token name;
+      ProgramEffectOwner owner;
+    };
+    struct UnsafeBlockCandidate {
+      const BlockStmt *block = nullptr;
+      Token keyword;
+      ProgramEffectOwner owner;
+    };
+
     std::vector<SemanticDiagnostic> diagnostics;
     SemanticModel semanticModel;
     // Diagnostic construction lives in its own translation unit
@@ -3701,6 +4276,10 @@ private:
     std::unordered_map<std::string, const FunctionDecl *> externCSymbols;
     std::unordered_set<const FunctionDecl *> constexprDefinitionsAnalyzed;
     std::unordered_set<const ConstructorDecl *> constexprConstructorsAnalyzed;
+    // Only nested staging workers share the request's execution budget.
+    std::shared_ptr<ConstexprWorkBudget> constexprWork;
+    std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash>
+        deferredFlowOwners;
     std::unordered_map<std::string, std::vector<GenericDefaultConstant>>
         genericDefaultConstants;
     std::vector<GenericDefaultConstantUse> genericDefaultConstantUses;
@@ -3710,6 +4289,11 @@ private:
         valueParameterScopes;
     std::vector<std::unordered_set<GenericParameterId>> typePackScopes;
     std::vector<std::vector<AppliedConceptRequirement>> requirementScopes;
+    std::vector<MutableLocalCandidate> mutableLocalCandidates;
+    std::unordered_set<SymbolId> mutableBindingUses;
+    std::vector<UnsafeBlockCandidate> unsafeBlockCandidates;
+    std::vector<const BlockStmt *> activeUnsafeBlocks;
+    std::unordered_set<const BlockStmt *> usedUnsafeBlocks;
     TypeSubstitution instanceTypeSubstitution;
     ValueSubstitution instanceValueSubstitution;
     std::vector<std::string> currentNamespace;
@@ -3726,16 +4310,18 @@ private:
     const Expr *currentDefaultArgumentRoot = nullptr;
     std::unordered_set<std::string> currentDefaultParameterNames;
     bool analyzingCallCallee = false;
+    const Call *immediateCallReceiver = nullptr;
     // Non-null only while analysing the compiler-generated read-only range
     // owner initializer. An exact expected.value() at this identity may
     // publish the bounded receiver-rooted payload borrow.
     const Expr *expectedPayloadRangeCandidate = nullptr;
     bool analyzingPackFoldElement = false;
-    bool analyzingStaticAssertCondition = false;
-    bool staticAssertGenericDependency = false;
+    bool analyzingDependentConstantCondition = false;
+    bool constantConditionGenericDependency = false;
     bool allowPayloadEnumeratorReference = false;
     bool currentStaticMemberFunction = false;
     bool allowPackTypeReference = false;
+    bool resolvingGenericTypeDefault = false;
     LoanFlowState loanFlow;
     bool instanceClassContextActive = false;
     bool instanceAnalysisActive = false;
@@ -3745,7 +4331,6 @@ private:
     const Expr *contextualInitializerExpression = nullptr;
     std::optional<SemanticType> contextualOperatorIntegerType;
     std::optional<ContextualCallableResult> contextualCallableResult;
-    std::optional<SemanticType> contextualNativeOutPointerType;
     ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
     std::size_t constructorDepth = 0;
     std::size_t destructorDepth = 0;
@@ -3758,6 +4343,12 @@ private:
     std::size_t preferReadOnlySubscriptReceiverDepth = 0;
     std::vector<const Expr *> suppressedProjectedPlaceReads;
     ProgramEffectOwner currentProgramEffectOwner;
+    std::vector<CThreadCallUse> cThreadCallUses;
+    std::vector<RawBorrowCallUse> rawBorrowCallUses;
+    std::shared_ptr<RawResultQueryState> rawResultQueries;
+    std::shared_ptr<RawResultQuery> collectingRawResult;
+    std::size_t rawAccessObservation = 0;
+    bool hasCThreadRequirements = false;
     std::unordered_map<ProgramEffectOwner, ProgramEffectSummary,
                        ProgramEffectOwnerHash>
         programEffects;
@@ -3884,18 +4475,21 @@ private:
   std::unordered_set<std::string> &currentDefaultParameterNames =
       requestSession.currentDefaultParameterNames;
   bool &analyzingCallCallee = requestSession.analyzingCallCallee;
+  const Call *&immediateCallReceiver = requestSession.immediateCallReceiver;
   const Expr *&expectedPayloadRangeCandidate =
       requestSession.expectedPayloadRangeCandidate;
   bool &analyzingPackFoldElement = requestSession.analyzingPackFoldElement;
-  bool &analyzingStaticAssertCondition =
-      requestSession.analyzingStaticAssertCondition;
-  bool &staticAssertGenericDependency =
-      requestSession.staticAssertGenericDependency;
+  bool &analyzingDependentConstantCondition =
+      requestSession.analyzingDependentConstantCondition;
+  bool &constantConditionGenericDependency =
+      requestSession.constantConditionGenericDependency;
   bool &allowPayloadEnumeratorReference =
       requestSession.allowPayloadEnumeratorReference;
   bool &currentStaticMemberFunction =
       requestSession.currentStaticMemberFunction;
   bool &allowPackTypeReference = requestSession.allowPackTypeReference;
+  bool &resolvingGenericTypeDefault =
+      requestSession.resolvingGenericTypeDefault;
   LoanFlowState &loanFlow = requestSession.loanFlow;
   std::vector<ValueControlFlowContext> &valueControlFlow =
       requestSession.valueFlow.controlFlow;
@@ -3912,8 +4506,6 @@ private:
       requestSession.contextualOperatorIntegerType;
   std::optional<ContextualCallableResult> &contextualCallableResult =
       requestSession.contextualCallableResult;
-  std::optional<SemanticType> &contextualNativeOutPointerType =
-      requestSession.contextualNativeOutPointerType;
   ReceiverMutability &currentReceiverMutability =
       requestSession.currentReceiverMutability;
   std::size_t &constructorDepth = requestSession.constructorDepth;
@@ -3948,10 +4540,12 @@ private:
 
   TargetInfo target;
   const SourceGraph *sourceGraph = nullptr;
+  const SourceManager *sources = nullptr;
   // Mirrors FrontendOptions::toolingOccurrences; reapplied after the
   // model is cleared at the start of each check().
   bool toolingOccurrences = true;
   FrontendWorkMetrics *workMetrics = nullptr;
+  RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
 };
 
 } // namespace lang

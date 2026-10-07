@@ -1,0 +1,43 @@
+#include <std/optional>
+#include <std/string>
+
+class Envelope {
+  std::optional<std::string> text;
+public:
+  Envelope(std::string value)
+      : text(std::optional<std::string>(std::move(value))) {}
+  Envelope(Envelope& other) = delete;
+  Envelope(Envelope&& other) = default;
+  std::string_view view() { return this.text.value().view(); }
+  Envelope clone() { return Envelope(this.text.value().clone()); }
+};
+
+int main() {
+  std::optional<std::string> inner{std::string("nested")};
+  mut std::optional<std::optional<std::string>> outer{std::move(inner)};
+  std::optional<std::optional<std::string>> copy = outer.clone();
+  outer.value().value().push_back('!');
+  if (copy.value().value().view() != "nested" ||
+      outer.value().value().view() != "nested!") { return 1; }
+  std::optional<std::optional<std::string>> moved{std::move(outer)};
+  if (moved.value().value().view() != "nested!") { return 2; }
+
+  mut std::optional<std::optional<std::string>> empty{};
+  std::optional<std::optional<std::string>> empty_copy = empty.clone();
+  if (empty_copy.has_value()) { return 3; }
+  [[discard]] empty.emplace();
+  if (!empty.has_value() || empty.value().has_value()) { return 4; }
+  empty.reset();
+  if (empty.has_value()) { return 5; }
+  [[discard]] empty.emplace(std::optional<std::string>(std::string("first")));
+  [[discard]] empty.emplace(std::optional<std::string>(std::string("replaced")));
+  if (empty.value().value().view() != "replaced") { return 6; }
+
+  mut std::optional<std::string> owned{};
+  [[discard]] owned.emplace(std::string("owned"));
+  if (owned.value().view() != "owned") { return 7; }
+
+  std::optional<Envelope> wrapped{Envelope(std::string("wrapped"))};
+  std::optional<Envelope> cloned = wrapped.clone();
+  return cloned.value().view() == "wrapped" ? 0 : 8;
+}

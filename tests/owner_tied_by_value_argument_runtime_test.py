@@ -4,11 +4,10 @@
 
 Passing a NAMED borrowing local (a copyable class value holding a
 reference field, e.g. `std::detail::vector_iterator<T>`) by value into a
-generic function used to raise GTI-B0001: HIR plans no call-input stage
-for a borrowed-state copy, so the argument arrives in MIR as a bare Load
-copy that the C++ emitter had no vocabulary for. The emitter now materializes
-that copy at the MIR Load and moves the sequenced local into the consuming
-call, preserving both the owner dependency and MIR's copy-before-call order.
+generic function uses the ordinary ordered CallInput copy stage. Its prepared
+slot remains caller-owned while later arguments are evaluated, then transfers
+into the consuming call and retires. The owner loan remains live through the
+full expression, including a later argument's failure cleanup.
 """
 
 import pathlib
@@ -45,19 +44,31 @@ def main() -> int:
         prefix="gti-owner-tied-by-value-"
     ) as temporary:
         root = pathlib.Path(temporary)
-        for optimization in ("O0", "O3"):
-            executable = root / optimization
+        modes = [
+            (f"{standard}-{optimization}",
+             ["--std", standard, f"-{optimization}"], [])
+            for standard in ("c++20", "c++23")
+            for optimization in ("O0", "O1", "O3")
+        ] + [
+            ("no-elide", ["--std", "c++23", "-O0"],
+             ["-fno-elide-constructors"]),
+            ("sanitized", ["--std", "c++23", "-O1"],
+             ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]),
+        ]
+        for mode, flags, native in modes:
+            executable = root / mode
             built = run(
                 [
                     str(compiler),
                     str(source),
-                    f"-{optimization}",
+                    *flags,
                     "-o",
                     str(executable),
+                    *(["--", *native] if native else []),
                 ]
             )
             if built.returncode != 0:
-                return fail(f"build {optimization}", built)
+                return fail(f"build {mode}", built)
 
             executed = run([str(executable)])
             if (
@@ -65,10 +76,10 @@ def main() -> int:
                 or executed.stdout != EXPECTED_OUTPUT
                 or executed.stderr != ""
             ):
-                return fail(f"run {optimization}", executed)
+                return fail(f"run {mode}", executed)
 
-        # Pin the vocabulary: the named-local copies never materialize a
-        # staging local; the consuming calls spell the source places.
+        # Copy at CallInput, not at the consumer. Across Invoke blocks the
+        # prepared argument lives in an outer slot and retires after use.
         generated = root / "generated.cpp"
         emitted = run(
             [
@@ -82,11 +93,18 @@ def main() -> int:
         if emitted.returncode != 0:
             return fail("emit O0", emitted)
         generated_text = generated.read_text(encoding="utf8")
-        if "auto __gti_mir_v_" not in generated_text or not re.search(
-            r"std::move\(__gti_mir_v_\d+\)", generated_text
+        copies = list(re.finditer(
+            r"(?P<slot>__gti_mir_p_\d+)\.construct\("
+            r"(?P<source>__gti_mir_p_\d+)\.get\(\)\);"
+            r".*?[^\n]*__gti_mir_failure\([^\n]*std::move\((?P=slot)\.get\(\)\)"
+            r"[^\n]*\);.*?(?P=slot)\.destroy\(\);",
+            generated_text, re.DOTALL,
+        ))
+        if len(copies) < 3 or any(
+            copy.group("slot") == copy.group("source") for copy in copies
         ):
             sys.stderr.write(
-                "O0 emission lost the sequenced by-value argument copy\n"
+                "O0 emission lost prepared copy/consume/retire order\n"
             )
             return 1
 

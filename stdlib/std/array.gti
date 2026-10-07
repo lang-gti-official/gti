@@ -1,13 +1,54 @@
 // The value and indexed core is implemented without pointer decay or hidden
-// allocation. Iteration remains pending an owner-dependent fixed-array view.
+// allocation. Nominal cursors borrow the array owner, never decay its storage.
 namespace std {
+namespace detail {
+class array_sentinel {
+  size_t length;
+public:
+  array_sentinel(size_t length) : length(length) {}
+  size_t position() { return this.length; }
+};
+class array_iterator<T, uint64_t N> {
+  array<T, N>& owner;
+  mut size_t position;
+public:
+  array_iterator(array<T, N>& owner, size_t position) : owner(owner), position(position) {}
+  T& operator*() {
+    gti_internal::index_bounds_check(this.position, N);
+    return this.owner[this.position];
+  }
+  void operator++() mut { this.position++; }
+  void operator--() mut { this.position--; }
+  void operator+=(ptrdiff_t offset) mut { this.position = size_t(ptrdiff_t(this.position) + offset); }
+  void operator-=(ptrdiff_t offset) mut { this.position = size_t(ptrdiff_t(this.position) - offset); }
+  bool operator!=(array_sentinel& end) { return this.position != end.position(); }
+  bool operator!=(array_iterator<T, N>& other) { return this.position != other.position; }
+  ptrdiff_t operator-(array_sentinel& end) { return ptrdiff_t(end.position()) - ptrdiff_t(this.position); }
+};
+class array_mut_iterator<T, uint64_t N> {
+  mut array<T, N>& owner;
+  mut size_t position;
+public:
+  array_mut_iterator(mut array<T, N>& owner) : owner(owner), position(0) {}
+  T& operator*() {
+    gti_internal::index_bounds_check(this.position, N);
+    return this.owner[this.position];
+  }
+  mut T& operator*() mut {
+    gti_internal::index_bounds_check(this.position, N);
+    return this.owner[this.position];
+  }
+  void operator++() mut { this.position++; }
+  bool operator!=(array_sentinel& end) { return this.position != end.position(); }
+};
+}
 class array<T, uint64_t N> {
   mut T values[N];
 
 public:
   constexpr array() : values({}) {}
 
-  constexpr array(T initial[N]) : values(initial) {}
+  constexpr array(T initial[N]) : values(std::move(initial)) {}
 
   constexpr size_t size() {
     return N;
@@ -17,7 +58,15 @@ public:
     return N == 0;
   }
 
-  T& at(int index) {
+  detail::array_iterator<T, N> begin() {
+    return detail::array_iterator<T, N>(this, size_t(0));
+  }
+  detail::array_mut_iterator<T, N> begin_mut() mut {
+    return detail::array_mut_iterator<T, N>(this);
+  }
+  detail::array_sentinel end() { return detail::array_sentinel(N); }
+
+  constexpr T& at(int index) {
     return this.values[index];
   }
 
@@ -25,7 +74,7 @@ public:
     return this.values[index];
   }
 
-  T& at(size_t index) {
+  constexpr T& at(size_t index) {
     return this.values[index];
   }
 
@@ -33,7 +82,7 @@ public:
     return this.values[index];
   }
 
-  T& front() {
+  constexpr T& front() {
     return this.values[0];
   }
 
@@ -41,7 +90,7 @@ public:
     return this.values[0];
   }
 
-  T& back() {
+  constexpr T& back() {
     return this.values[N - 1];
   }
 
@@ -49,7 +98,7 @@ public:
     return this.values[N - 1];
   }
 
-  T& operator[](int index) {
+  constexpr T& operator[](int index) {
     return this.values[index];
   }
 
@@ -57,7 +106,7 @@ public:
     return this.values[index];
   }
 
-  T& operator[](size_t index) {
+  constexpr T& operator[](size_t index) {
     return this.values[index];
   }
 
@@ -73,6 +122,16 @@ public:
   }
 
   void swap(mut array<T, N>& other) mut
-    requires std::movable<T>;
+    requires std::relocatable<T> {
+    gti_internal::restoring_swap(this.values, other.values);
+  }
+
+  /// Check both indices before mutation; equal valid indices are a no-op.
+  void swap_elements(size_t left, size_t right) mut
+    requires std::relocatable<T> {
+    gti_internal::index_bounds_check(left, N);
+    gti_internal::index_bounds_check(right, N);
+    gti_internal::restoring_indexed_swap(this.values, left, right);
+  }
 };
 }

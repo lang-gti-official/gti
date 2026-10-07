@@ -55,6 +55,9 @@ venv/
 *~
 
 # Local logs and scratch files.
+.env
+.env.*
+!.env.example
 *.log
 *.tmp
 *.bak

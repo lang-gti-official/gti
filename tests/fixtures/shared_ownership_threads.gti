@@ -1,0 +1,54 @@
+#include <std/memory>
+#include <std/thread>
+#include <std/atomic>
+
+void retain_many(std::shared_ptr<int> owner, std::shared_ptr<std::atomic<int>> counter) {
+  for (mut int index = 0; index < 200; index++) {
+    auto copy = owner.clone();
+    if (*copy != 7) { std::println(999); }
+    [[discard]] counter->fetch_add(1);
+  }
+}
+
+int main() {
+  auto owner = std::make_shared<int>(7);
+  auto counter = std::make_shared<std::atomic<int>>(0);
+  auto first_owner = owner.clone();
+  auto first_counter = counter.clone();
+  auto first_result = std::thread::start(
+      [value = std::move(first_owner), count = std::move(first_counter)]() -> void {
+        retain_many(value.clone(), count.clone());
+      });
+  if (!first_result.has_value()) { return 1; }
+  mut auto first = std::move(first_result).value();
+  auto second_owner = owner.clone();
+  auto second_counter = counter.clone();
+  auto second_result = std::thread::start(
+      [value = std::move(second_owner), count = std::move(second_counter)]() -> void {
+        retain_many(value.clone(), count.clone());
+      });
+  if (!second_result.has_value()) { return 2; }
+  mut auto second = std::move(second_result).value();
+  if (!first.join().has_value() || !second.join().has_value()) { return 3; }
+  if (counter->load() != 400 || counter.use_count() != 1) { return 4; }
+  {
+    mut std::thread_result<std::shared_ptr<int>> producer{};
+    auto copy = owner.clone();
+    auto started = producer.start(
+        [source = std::move(copy)]() -> std::shared_ptr<int> { return source.clone(); });
+    if (!started.has_value()) { return 5; }
+    auto joined = producer.join();
+    if (!joined.has_value()) { return 6; }
+    auto result = std::move(joined).value();
+    if (*result != 7 || owner.use_count() != 2) { return 7; }
+  }
+  {
+    mut std::thread_result<std::shared_ptr<int>> abandoned{};
+    auto copy = owner.clone();
+    auto started = abandoned.start(
+        [source = std::move(copy)]() -> std::shared_ptr<int> { return source.clone(); });
+    if (!started.has_value()) { return 8; }
+    // Automatic join must release the unpublished owning result.
+  }
+  return int(owner.use_count()) - 1;
+}

@@ -1,0 +1,24 @@
+#include <std/string>
+#include <std/memory>
+
+struct Copyable {
+  int number;
+  Copyable(int input) : number(input) {}
+};
+
+struct Printer {
+  Printer(Copyable first, Copyable second) {
+    std::println(first.number);
+    std::println(second.number);
+  }
+};
+
+void repeat<T, Args...>(Args... args) {
+  auto first = std::make_unique<T>(args...);
+  auto second = std::make_unique<T>(args...);
+}
+
+int main() {
+  repeat<Printer>(Copyable(11), Copyable(22));
+  return 0;
+}

@@ -93,7 +93,9 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
   // through exact verified MIR shapes below.
   const auto passiveType = [&](const SemanticType &type) {
     return scalarType(type) || type.kind == SemanticType::StringView ||
-           type.kind == SemanticType::CString || rawPointerType(type) ||
+           type.kind == SemanticType::CString ||
+           (type.kind == SemanticType::RawPointer &&
+            type.arguments.size() == 1) ||
            (type.kind == SemanticType::NativeFunction &&
             type.hasNativeFunctionShape()) ||
            passiveCAbiRecordType(type);
@@ -655,7 +657,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
             source != nullptr && source->kind == MirOperandKind::Address
                 ? body.findPlace(source->place)
                 : nullptr;
-        return instruction.unsafeOperation == UnsafeOperationKind::AddressOf &&
+        return instruction.unsafeOperation == UnsafeOperationKind::None &&
                source != nullptr && place != nullptr &&
                source->type == place->type &&
                rawPointerType(instruction.info.type) &&
@@ -759,8 +761,10 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
             return candidate.hirValue == instruction.hirValue &&
                    candidate.unsafeOperation ==
                        UnsafeOperationKind::ForeignPointerCall &&
-                   !candidate.rawMemoryAccess && target != nullptr &&
-                   target->linkage == LanguageLinkage::C;
+                   !candidate.rawMemoryAccess &&
+                   ((target != nullptr &&
+                     target->linkage == LanguageLinkage::C) ||
+                    isMirNativeIndirectCall(program, body, candidate));
           };
           if (instruction.kind == MirInstructionKind::Call) {
             return nativeCall(instruction);
@@ -772,6 +776,37 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                                    candidateBlock.instructions.begin(),
                                    candidateBlock.instructions.end(),
                                    nativeCall);
+                             });
+        };
+    const auto exactDeclaredUnsafeOperation =
+        [&](const MirInstruction &instruction) {
+          if (instruction.unsafeOperation !=
+                  UnsafeOperationKind::DeclaredUnsafeCall ||
+              instruction.rawMemoryAccess || instruction.hirValue == 0) {
+            return false;
+          }
+          const auto unsafeCall = [&](const MirInstruction &candidate) {
+            const auto *target =
+                candidate.kind == MirInstructionKind::Call &&
+                        candidate.functionTarget
+                    ? program.findFunctionInstance(*candidate.functionTarget)
+                    : nullptr;
+            return candidate.hirValue == instruction.hirValue &&
+                   candidate.unsafeOperation ==
+                       UnsafeOperationKind::DeclaredUnsafeCall &&
+                   !candidate.rawMemoryAccess && target != nullptr &&
+                   target->requiresUnsafe;
+          };
+          if (instruction.kind == MirInstructionKind::Call) {
+            return unsafeCall(instruction);
+          }
+          return instruction.kind == MirInstructionKind::Lifecycle &&
+                 std::any_of(body.blocks.begin(), body.blocks.end(),
+                             [&](const MirBlock &candidateBlock) {
+                               return std::any_of(
+                                   candidateBlock.instructions.begin(),
+                                   candidateBlock.instructions.end(),
+                                   unsafeCall);
                              });
         };
     // A reference parameter cannot raise by itself: the reference is a
@@ -873,11 +908,13 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         const bool exactRawBoundary = exactRawLifecycle(instruction);
         const bool exactForeignPointer =
             exactForeignPointerOperation(instruction);
+        const bool exactDeclaredUnsafe =
+            exactDeclaredUnsafeOperation(instruction);
         const bool admittedOperationMetadata =
             (instruction.unsafeOperation == UnsafeOperationKind::None &&
              !instruction.rawMemoryAccess) ||
             exactRawComputeInstruction || exactRawMemory || exactRawBoundary ||
-            exactForeignPointer;
+            exactForeignPointer || exactDeclaredUnsafe;
         const bool common =
             admittedOperationMetadata &&
             instruction.closureCaptureTypes.empty() &&
@@ -900,7 +937,9 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
             instruction.constructorKind == ConstructorKind::Ordinary &&
             !instruction.lambdaTarget &&
             instruction.callableArguments.empty() &&
-            !instruction.callableBoundary && !instruction.callableInvocation &&
+            !instruction.callableBoundary &&
+            (!instruction.callableInvocation ||
+             isMirNativeIndirectCall(program, body, instruction)) &&
             instruction.lifecycle.empty() &&
             !instruction.preparedParameterDrop &&
             !instruction.successResultDrop &&
@@ -989,20 +1028,23 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                    exactRawMemory);
           break;
         case MirInstructionKind::Lifecycle:
-          valid = instruction.callSite == 0 && !instruction.callInputRole &&
-                  !instruction.destination && !instruction.receiver &&
-                  instruction.parameterTypes.empty() &&
-                  !instruction.functionTarget && !instruction.result &&
-                  instruction.operation == MirOperation::None &&
-                  !instruction.literal && instruction.definedFailure.empty() &&
-                  instruction.fullExpressionEnd != 0 &&
-                  instruction.operands.empty() &&
-                  (instruction.unsafeOperation == UnsafeOperationKind::None ||
-                   exactRawBoundary || exactForeignPointer);
+          valid =
+              instruction.callSite == 0 && !instruction.callInputRole &&
+              !instruction.destination && !instruction.receiver &&
+              instruction.parameterTypes.empty() &&
+              !instruction.functionTarget && !instruction.result &&
+              instruction.operation == MirOperation::None &&
+              !instruction.literal && instruction.definedFailure.empty() &&
+              instruction.fullExpressionEnd != 0 &&
+              instruction.operands.empty() &&
+              (instruction.unsafeOperation == UnsafeOperationKind::None ||
+               exactRawBoundary || exactForeignPointer || exactDeclaredUnsafe);
           break;
         case MirInstructionKind::CallInput:
           valid = instruction.callSite != 0 &&
-                  instruction.callInputRole == MirCallInputRole::Argument &&
+                  (instruction.callInputRole == MirCallInputRole::Argument ||
+                   (instruction.callInputRole == MirCallInputRole::Receiver &&
+                    instruction.info.type.hasNativeFunctionShape())) &&
                   instruction.callInputKind == HirCallInputKind::Value &&
                   !instruction.destination && !instruction.receiver &&
                   instruction.parameterTypes.empty() &&
@@ -1015,6 +1057,12 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                   instruction.operands.front().kind == MirOperandKind::Value;
           break;
         case MirInstructionKind::Call: {
+          if (instruction.nativeCalleeType) {
+            valid = isMirNativeIndirectCall(program, body, instruction);
+            if (valid)
+              exactCalls.insert(instruction.id);
+            break;
+          }
           if (instruction.intrinsic != IntrinsicKind::None) {
             // A wrapping/saturating arithmetic intrinsic carries no failure
             // channel: None propagation, no sites, scalar operands.
@@ -1099,6 +1147,10 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         case MirInstructionKind::EndBorrow:
         case MirInstructionKind::Modify:
         case MirInstructionKind::CallBody:
+        case MirInstructionKind::AllocateObject:
+        case MirInstructionKind::InitializeBase:
+        case MirInstructionKind::CleanupBeforeAssign:
+        case MirInstructionKind::StorageConstructPreflight:
         case MirInstructionKind::Count:
           valid = false;
           break;
@@ -1699,6 +1751,10 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
       case MirInstructionKind::ActivateBorrow:
       case MirInstructionKind::EndBorrow:
       case MirInstructionKind::CallBody:
+      case MirInstructionKind::AllocateObject:
+      case MirInstructionKind::InitializeBase:
+      case MirInstructionKind::CleanupBeforeAssign:
+      case MirInstructionKind::StorageConstructPreflight:
       case MirInstructionKind::Count:
         return false;
       }
@@ -2023,7 +2079,6 @@ bool MirOwnedFailureClosure::proveConstructor(HirConstructorInstanceId id) {
   std::unordered_set<SymbolId> fields;
   std::unordered_set<std::size_t> stages;
   std::unordered_set<std::size_t> boundaries;
-  std::size_t expectedStages = 0;
   for (std::size_t index = 0; valid && index < constructor.initializers.size();
        ++index) {
     const MirConstructorInitializer &initializer =
@@ -2063,39 +2118,17 @@ bool MirOwnedFailureClosure::proveConstructor(HirConstructorInstanceId id) {
         stage != nullptr && stage->destination
             ? constructor.body.findPlace(*stage->destination)
             : nullptr;
-    const MirValue *aggregateValue = nullptr;
-    for (const MirValue &value : constructor.body.values) {
-      if (value.sourceValue != initializer.arguments.front() ||
-          value.info.type != initializer.targetType) {
-        continue;
-      }
-      if (aggregateValue != nullptr) {
-        valid = false;
-        break;
-      }
-      aggregateValue = &value;
-    }
-    const MirInstruction *aggregateDefinition = nullptr;
-    if (aggregateValue != nullptr) {
-      for (const MirBlock &block : constructor.body.blocks) {
-        const auto found =
-            std::find_if(block.instructions.begin(), block.instructions.end(),
-                         [&](const MirInstruction &instruction) {
-                           return instruction.id == aggregateValue->definition;
-                         });
-        if (found != block.instructions.end()) {
-          aggregateDefinition = &*found;
-          break;
-        }
-      }
-    }
     const auto full = std::find_if(
         constructor.body.fullExpressions.begin(),
         constructor.body.fullExpressions.end(),
         [&](const auto &candidate) { return candidate.id == index + 1; });
-    const bool scalarStage =
-        scalarType(initializer.targetType) && stage != nullptr &&
-        !stage->result && stage->destination &&
+    // Passive arrays now publish through the same explicit MIR field write as
+    // scalars. An Aggregate value alone proves computation, not initialization
+    // of this field; require its exact stage instead of reconstructing a write
+    // from the declaration's initializer inventory.
+    const bool passiveStage =
+        passiveConstructorValueType(initializer.targetType) &&
+        stage != nullptr && !stage->result && stage->destination &&
         stage->hirValue == initializer.arguments.front() &&
         stage->operation == MirOperation::None && !stage->literal &&
         stage->operands.size() == 1 &&
@@ -2110,27 +2143,14 @@ bool MirOwnedFailureClosure::proveConstructor(HirConstructorInstanceId id) {
         destination->sourceValue == initializer.arguments.front() &&
         destination->type == initializer.targetType &&
         stages.insert(index + 1).second;
-    const bool aggregatePublication =
-        initializer.targetType.kind == SemanticType::Array &&
-        stage == nullptr && aggregateValue != nullptr &&
-        aggregateDefinition != nullptr &&
-        aggregateDefinition->kind == MirInstructionKind::Compute &&
-        aggregateDefinition->operation == MirOperation::Aggregate &&
-        aggregateDefinition->result == aggregateValue->id &&
-        aggregateDefinition->hirValue == initializer.arguments.front() &&
-        passiveConstructorValueTraits(aggregateValue->info.traits,
-                                      aggregateValue->info.type);
-    if (scalarType(initializer.targetType)) {
-      ++expectedStages;
-    }
-    valid = valid && (scalarStage || aggregatePublication) &&
-            boundary != nullptr && boundaries.insert(index + 1).second &&
+    valid = valid && passiveStage && boundary != nullptr &&
+            boundaries.insert(index + 1).second &&
             full != constructor.body.fullExpressions.end() &&
             full->constructorInitializer == index + 1 &&
             full->roots == initializer.arguments;
   }
   valid = valid && fields.size() == owner->declaredFields.size() &&
-          stages.size() == expectedStages &&
+          stages.size() == constructor.initializers.size() &&
           boundaries.size() == constructor.initializers.size();
   state = State::Complete;
   effects.constructors[id - 1] = !valid;
@@ -2299,6 +2319,7 @@ bool mirTypeMoveIsDefinedFailureFree(const MirProgram &program,
     case SemanticType::TypePack:
     case SemanticType::TypeName:
     case SemanticType::Function:
+    case SemanticType::FunctionSignature:
     case SemanticType::Lambda:
       return false;
     }

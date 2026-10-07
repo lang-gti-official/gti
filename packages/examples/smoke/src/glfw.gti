@@ -1,0 +1,12 @@
+#include <glfw/glfw>
+
+int main() {
+  unsafe {
+    mut int32_t major = 0;
+    mut int32_t minor = 0;
+    mut int32_t revision = 0;
+    glfwGetVersion(&major, &minor, &revision);
+    if (major != 3 || minor != 4 || revision != 0) { return 1; }
+  }
+  return 0;
+}

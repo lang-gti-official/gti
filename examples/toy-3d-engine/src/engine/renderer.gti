@@ -1,0 +1,226 @@
+#include "math.gti"
+#include "model.gti"
+#include "scene.gti"
+#include <glad/glad>
+#include <std/cmath>
+
+namespace toy3d {
+class Renderer {
+  mut uint32_t shader_program = uint32_t(0);
+  mut uint32_t vertex_array = uint32_t(0);
+  mut uint32_t vertex_buffer = uint32_t(0);
+  mut bool ready = false;
+
+  uint32_t compile_shader(uint32_t shader_type, c_string source) {
+    unsafe {
+      uint32_t shader = gl::gti_glad_create_shader(shader_type);
+      if (shader == uint32_t(0)) {
+        return uint32_t(0);
+      }
+      gl::gti_glad_shader_source(shader, source);
+      gl::gti_glad_compile_shader(shader);
+      mut int32_t compiled = 0;
+      gl::gti_glad_get_shader_iv(
+          shader, uint32_t(gl::GL_COMPILE_STATUS), &compiled);
+      if (compiled == 0) {
+        gl::gti_glad_delete_shader(shader);
+        return uint32_t(0);
+      }
+      return shader;
+    }
+  }
+
+public:
+  Renderer() {}
+  Renderer(Renderer& other) = delete;
+  Renderer(Renderer&& other) = delete;
+
+  ~Renderer() { this.shutdown(); }
+
+  bool initialize() mut {
+    uint32_t vertex_shader = this.compile_shader(
+        uint32_t(gl::GL_VERTEX_SHADER),
+        "#version 330 core\nlayout(location = 0) in vec3 aPosition;\nlayout(location = 1) in vec3 aColor;\nout vec3 vertexColor;\nvoid main() {\n  gl_Position = vec4(aPosition, 1.0);\n  vertexColor = aColor;\n}\n");
+    if (vertex_shader == uint32_t(0)) {
+      return false;
+    }
+    uint32_t fragment_shader = this.compile_shader(
+        uint32_t(gl::GL_FRAGMENT_SHADER),
+        "#version 330 core\nin vec3 vertexColor;\nout vec4 fragmentColor;\nvoid main() { fragmentColor = vec4(vertexColor, 1.0); }\n");
+    if (fragment_shader == uint32_t(0)) {
+      unsafe { gl::gti_glad_delete_shader(vertex_shader); }
+      return false;
+    }
+
+    unsafe {
+      uint32_t program = gl::gti_glad_create_program();
+      if (program == uint32_t(0)) {
+        gl::gti_glad_delete_shader(vertex_shader);
+        gl::gti_glad_delete_shader(fragment_shader);
+        return false;
+      }
+      gl::gti_glad_attach_shader(program, vertex_shader);
+      gl::gti_glad_attach_shader(program, fragment_shader);
+      gl::gti_glad_link_program(program);
+      gl::gti_glad_delete_shader(vertex_shader);
+      gl::gti_glad_delete_shader(fragment_shader);
+
+      mut int32_t linked = 0;
+      gl::gti_glad_get_program_iv(
+          program, uint32_t(gl::GL_LINK_STATUS), &linked);
+      if (linked == 0) {
+        gl::gti_glad_delete_program(program);
+        return false;
+      }
+      this.shader_program = program;
+
+      mut uint32_t array = uint32_t(0);
+      mut uint32_t buffer = uint32_t(0);
+      gl::gti_glad_gen_vertex_arrays(1, &array);
+      gl::gti_glad_gen_buffers(1, &buffer);
+      if (array == uint32_t(0) or buffer == uint32_t(0)) {
+        if (array != uint32_t(0)) {
+          gl::gti_glad_delete_vertex_arrays(1, &array);
+        }
+        if (buffer != uint32_t(0)) {
+          gl::gti_glad_delete_buffers(1, &buffer);
+        }
+        gl::gti_glad_delete_program(this.shader_program);
+        this.shader_program = uint32_t(0);
+        return false;
+      }
+
+      this.vertex_array = array;
+      this.vertex_buffer = buffer;
+      gl::gti_glad_bind_vertex_array(this.vertex_array);
+      gl::gti_glad_bind_buffer(
+          uint32_t(gl::GL_ARRAY_BUFFER), this.vertex_buffer);
+      gl::gti_glad_vertex_attrib_pointer(
+          uint32_t(0), 3, uint32_t(gl::GL_FLOAT), 0, 24, uint64_t(0));
+      gl::gti_glad_enable_vertex_attrib_array(uint32_t(0));
+      gl::gti_glad_vertex_attrib_pointer(
+          uint32_t(1), 3, uint32_t(gl::GL_FLOAT), 0, 24, uint64_t(12));
+      gl::gti_glad_enable_vertex_attrib_array(uint32_t(1));
+      gl::gti_glad_enable(uint32_t(gl::GL_DEPTH_TEST));
+      this.ready = true;
+      return true;
+    }
+  }
+
+  void shutdown() mut {
+    unsafe {
+      if (this.vertex_buffer != uint32_t(0)) {
+        uint32_t buffer = this.vertex_buffer;
+        gl::gti_glad_delete_buffers(1, &buffer);
+        this.vertex_buffer = uint32_t(0);
+      }
+      if (this.vertex_array != uint32_t(0)) {
+        uint32_t array = this.vertex_array;
+        gl::gti_glad_delete_vertex_arrays(1, &array);
+        this.vertex_array = uint32_t(0);
+      }
+      if (this.shader_program != uint32_t(0)) {
+        gl::gti_glad_delete_program(this.shader_program);
+        this.shader_program = uint32_t(0);
+      }
+      this.ready = false;
+    }
+  }
+
+  bool render(Model& model, Scene& scene, Camera& camera, int32_t width,
+              int32_t height) {
+    if (!this.ready or width <= 0 or height <= 0) {
+      return false;
+    }
+
+    float colors[18] = {
+        0.95, 0.25, 0.20,
+        0.20, 0.75, 0.95,
+        0.25, 0.90, 0.35,
+        0.95, 0.75, 0.20,
+        0.70, 0.30, 0.95,
+        0.95, 0.45, 0.70,
+    };
+    mut float vertices[2304] = {};
+
+    uint32_t triangle_count = model.triangle_count();
+    if (triangle_count == uint32_t(0) || triangle_count > uint32_t(128)) {
+      return false;
+    }
+    int vertex_count = int(triangle_count * uint32_t(3));
+
+    float rotation = scene.cube_rotation_y();
+    float cosine = std::cos(rotation);
+    float sine = std::sin(rotation);
+    float scale = scene.cube_scale();
+    float aspect_ratio = float(width) / float(height);
+
+    for (mut int vertex = 0; vertex < vertex_count; vertex++) {
+      mut float local_x = 0.0;
+      mut float local_y = 0.0;
+      mut float local_z = 0.0;
+      mut float normal_x = 0.0;
+      mut float normal_y = 0.0;
+      mut float normal_z = 0.0;
+      if (!model.vertex(uint32_t(vertex / 3), uint32_t(vertex % 3), local_x,
+                        local_y, local_z, normal_x, normal_y, normal_z)) {
+        return false;
+      }
+      local_x *= scale;
+      local_y *= scale;
+      local_z *= scale;
+
+      float world_x = local_x * cosine + local_z * sine + scene.cube_x();
+      float world_y = local_y + scene.cube_y();
+      float world_z = -local_x * sine + local_z * cosine + scene.cube_z();
+
+      float view_x = world_x - camera.x();
+      float view_y = world_y - camera.y();
+      mut float depth = camera.z() - world_z;
+      if (depth < camera.near_plane()) {
+        depth = camera.near_plane();
+      }
+
+      int output = vertex * 6;
+      vertices[output] = project_horizontal(
+          view_x, depth, camera.vertical_fov(), aspect_ratio);
+      vertices[output + 1] =
+          project_vertical(view_y, depth, camera.vertical_fov());
+      vertices[output + 2] = project_depth(
+          depth, camera.near_plane(), camera.far_plane());
+
+      float world_normal_z = -normal_x * sine + normal_z * cosine;
+      mut float light = 0.35 + world_normal_z * 0.65;
+      if (light < 0.2) {
+        light = 0.2;
+      }
+      if (light > 1.0) {
+        light = 1.0;
+      }
+
+      int color = ((vertex / 3) % 6) * 3;
+      vertices[output + 3] = colors[color] * light;
+      vertices[output + 4] = colors[color + 1] * light;
+      vertices[output + 5] = colors[color + 2] * light;
+    }
+
+    unsafe {
+      gl::gti_glad_viewport(0, 0, width, height);
+      gl::gti_glad_clear_color(0.025, 0.035, 0.075, 1.0);
+      gl::gti_glad_clear(uint32_t(
+          gl::GL_COLOR_BUFFER_BIT | gl::GL_DEPTH_BUFFER_BIT));
+      gl::gti_glad_use_program(this.shader_program);
+      gl::gti_glad_bind_vertex_array(this.vertex_array);
+      gl::gti_glad_bind_buffer(
+          uint32_t(gl::GL_ARRAY_BUFFER), this.vertex_buffer);
+      gl::gti_glad_buffer_data_f32(
+          uint32_t(gl::GL_ARRAY_BUFFER), int64_t(vertex_count * 24),
+          &vertices[0],
+          uint32_t(gl::GL_STATIC_DRAW));
+      gl::gti_glad_draw_arrays(
+          uint32_t(gl::GL_TRIANGLES), 0, int32_t(vertex_count));
+      return gl::gti_glad_get_error() == uint32_t(0);
+    }
+  }
+};
+}

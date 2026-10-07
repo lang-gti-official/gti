@@ -1,0 +1,24 @@
+manifest-version = 1
+
+[package]
+name = "gti-libpng"
+version = "0.1.0"
+
+[dependencies]
+zlib = { path = "../zlib" }
+
+[package.native]
+include-dirs = ["native", "native/generated", "vendor/libpng"]
+c-compile-args = ["-DPNG_ARM_NEON_OPT=0", "-DPNG_INTEL_SSE_OPT=0"]
+c-sources = [
+  "native/adapter.c", "vendor/libpng/png.c", "vendor/libpng/pngerror.c",
+  "vendor/libpng/pngget.c", "vendor/libpng/pngmem.c", "vendor/libpng/pngpread.c",
+  "vendor/libpng/pngread.c", "vendor/libpng/pngrio.c", "vendor/libpng/pngrtran.c",
+  "vendor/libpng/pngrutil.c", "vendor/libpng/pngset.c", "vendor/libpng/pngtrans.c",
+  "vendor/libpng/pngwio.c", "vendor/libpng/pngwrite.c", "vendor/libpng/pngwtran.c",
+  "vendor/libpng/pngwutil.c"
+]
+
+[[package.native.platforms]]
+os = "linux"
+libraries = ["m"]

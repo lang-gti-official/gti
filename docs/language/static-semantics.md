@@ -34,11 +34,19 @@ instance fields inside `mut { ... }`; each enclosed field is semantically the
 same ordinary mutable field as if it had its own leading `mut`. The group does
 not change binding or receiver mutability, access, type identity, layout,
 lifecycle, initialization order, or the immutable default outside its braces.
-Methods have read-only receivers unless their
-declaration has a trailing `mut` qualifier. The bounded trailing `&&` receiver
-qualifier is available only on `operator()` and denotes consuming access, not a
-general rvalue-reference type. A consuming call operator may mutate its
-receiver while consuming it.
+Methods have read-only receivers unless their declaration has a trailing `mut`
+or `&&` qualifier. Trailing `&&` denotes consuming access, not a general
+rvalue-reference type. It is available on ordinary instance methods,
+`operator()`, and arithmetic/bitwise value operators. A consuming member may
+mutate its writable fields while consuming its receiver; free and static
+functions have no receiver and cannot use this qualifier.
+
+An explicit `mut` on an ordinary local value that is never required for a
+write, mutable-reference argument, mutable raw address, or mutable receiver is
+well-formed but produces warning `GTI-S2096`. Removing that token is a
+semantics-preserving quick fix. The compiler is conservative at boundaries it
+cannot prove: generated range/reference bindings and compiler-trusted library
+implementation locals do not receive this advisory warning.
 
 `T&` denotes a non-null read-only borrow of `T`. `mut T&` denotes a non-null
 writable borrow. Reference binding and escape are subject to the ownership
@@ -121,11 +129,23 @@ lexically enclosing `unsafe` block. A nested lambda starts a fresh safety
 context. Unsafe context does not suppress type, access, initialization,
 ownership, or control-flow checking.
 
+A GTI free function or ordinary non-polymorphic instance/static method may
+carry `unsafe` to require lexical unsafe permission at every call. Exact member
+requirements preserve this effect explicitly. Concrete generic instances retain this
+requirement. It grants no permission inside the declaration's body and cannot
+be erased through a native callback or safe function-item conversion. Hosted
+`main` cannot carry it. See [the caller contract](raw-pointers.md#functions-with-a-caller-obligation)
+for the admitted declaration forms and proof obligations.
+
 The ordinary type surface supports exactly one pointer level. Pointer-to-pointer
 locals, parameters, fields, aliases, and unannotated returns, references to raw
 pointers, anonymous/general function-pointer declarators, pointer-to-array
 types, implicit fixed-array
-decay, casts, and source allocation/deallocation expressions are ill-formed.
+decay, integer/pointer casts, unrelated typed-pointer reinterpretation, and
+source allocation/deallocation expressions are ill-formed. Explicit
+const-preserving typed/`void*` conversions use pointer-alias type calls (or
+concrete dependent target type calls), as specified in
+[Raw pointers](raw-pointers.md#void).
 An exact `[[c_array(count)]] extern "C"` return may add one outer pointer when
 the named parameter is a writable fixed-width integer out pointer; this does
 not admit nested pointers elsewhere. `void*` is opaque and cannot be
@@ -136,10 +156,115 @@ specified by [`native-c-interop.md`](native-c-interop.md#native-callback-types).
 The complete programmer obligations are incorporated from
 [`raw-pointers.md`](raw-pointers.md).
 
+## 3.3.1 Unreachable Statements
+
+After a statement that cannot fall through, the first statement of the
+consecutive unreachable tail produces warning `GTI-S2095`. Unreachable source
+is still parsed and semantically analyzed in isolated flow state so names,
+hover/completion facts, and independent errors remain available without
+repairing the reachable ownership state. The compiler does not offer an
+automatic deletion because removing an unreachable region can still discard
+intentional declarations or documentation.
+
 ## 3.4 Names, Scopes, And Visibility
 
+An explicit module interface publishes only its exported namespace-scope
+declarations and its explicit re-exports. Publication is per declaration and
+overload, not per spelling: exporting one overload does not export the others.
+Private implementation declarations and private imports remain usable while
+checking their defining bodies and concrete generic instances. Consumers cannot
+name a private declaration through qualification or an include bypass. A public
+function can return a private nominal type; an inferred value retains that exact
+type and ordinary member access, without making its private type name visible.
+Modules do not introduce namespaces or change existing program-wide
+qualified-name uniqueness, ownership, borrowing, or lifecycle rules. The
+[source syntax](lexical-and-syntax.md#explicit-module-interfaces) specifies
+import resolution and the initial single-interface boundary.
+
+Function-signature types use `R(Args...)` syntax, for example `void()` and
+`bool(int)`. They may be alias targets and generic type arguments, including
+components dependent on generic type parameters. Their exact result and ordered
+parameter types and receiver qualifier form their identity; transparent aliases
+preserve that identity. An absent qualifier describes read-only invocation,
+trailing `mut` describes mutable invocation, and trailing `&&` describes
+consuming invocation. For example, `int(int)`, `int(int) mut`, and `int(int) &&`
+are three distinct metadata types. Exact deduction and class-pattern matching
+preserve the qualifier; they do not convert one signature type to another.
+This metadata does not itself implement invocation: an owning source-defined
+class must still declare an operator with the appropriate receiver access.
+The empty parameter list is `()`, not `(void)`. Parameters are value or reference
+types; results may also be `void`, but cannot be arrays or signatures. Reference
+components follow the existing reference-placement rules. A parameter `T&`
+describes read-only access, while `mut T&` describes mutable access; for example,
+`void(mut int&, int&)`. The prefix requires a reference and is distinct from
+the trailing qualifier governing access to the callable itself.
+
+A signature is type metadata, with no object storage, copy/move operations, or
+implicit function-pointer conversion. It cannot itself be a variable, field,
+parameter, return value, array element, pointer pointee, or reference referent.
+A generic class may use a signature as metadata without storing it as a field.
+The native callback alias `(Args...) -> R` remains a distinct C ABI type.
+Ordinary exact generic deduction can decompose fixed-arity signatures in a
+parameter type: `Tag<R(A)>&` can infer `R = void` and `A = int` from a
+`Tag<void(int)>` argument. Reference components retain their exact layers;
+matching `R&(A&)` against `int&(int&)` infers `int` for both parameters.
+Repeated deductions must agree, and this adds no conversion or overload ranking.
+A final type pack can also be deduced from signature metadata:
+`int inspect<R, Args...>(Tag<R(Args...)>& tag)` extracts the result and exact
+ordered argument list, including an empty list or reference elements. A fixed
+prefix such as `R(int, Args...)` retains its exact required prefix. The same
+rule applies to the final pack of a nominal type (`Types<Args...>`). Repeated
+patterns, explicitly supplied pack elements, and a matching named value pack
+must all agree; inline pack constraints apply to every inferred element.
+Metadata references remain types. When used in a concrete named parameter pack,
+read-only reference elements borrow the caller's storage rather than own values.
+Headerless primary declarations can decompose a signature:
+`class Callback<R(Args...)> { ... };` accepts one public signature argument
+and binds `R` and the ordered list `Args`. Bare unqualified type leaves in the
+head declare parameters, even when an outer type has the same spelling;
+builtins and qualified names refer to existing types. Repeated names must
+agree exactly. For example, `class Identity<R(R)>` accepts `int(int)` but not
+`int(bool)`. A fixed prefix such as `R(int, Args...)` is exact, and a pack may
+be empty. At least one binder is required, with at most one type pack and no
+value parameters or defaults in a pattern head. A name may have disjoint
+single-signature definitions for the read-only, `mut`, and `&&` receiver
+qualifiers. Each qualifier admits at most one definition, even when result or
+argument patterns differ. All definitions must have the same class/struct kind
+and belong to the same package ownership domain. Each has a distinct class
+identity and member scope; selection requires that definition to be visible.
+The qualifier selects the definition before exact component matching, including
+after generic substitution. There is no ranking, fallback between qualifiers,
+or overlap with an ordinary `class Name<T>` primary. Exact qualified concrete
+specializations remain available against the selected definition.
+Public arguments and aliases retain their canonical identity through generic
+forwarding and concrete reanalysis; a non-signature does not become a signature
+by conversion. Read-only and mutable reference elements can flow through named
+parameter packs. Mutable references retain exclusive access to each caller
+argument, and overlapping mutable/read or mutable/mutable arguments are rejected.
+Consuming public wrappers remain incomplete.
+This declaration syntax does not itself implement `std::function`.
+
+A lambda or nominal `operator()` call can expand a concrete parameter pack. Concrete
+reanalysis checks the flattened arity and each exact argument type, including
+an empty expansion. It does not pass a pack object as one lambda argument.
+Declaration-wide symbolic packs defer target publication until that check.
+Nominal operator overloads compare the expanded arguments in exact order;
+this does not expand operands of non-call operators or add implicit conversions.
+Read-only reference elements forward to the same exact read-only reference
+parameter type. They are not copied, moved, or given callee cleanup obligations;
+the ordinary caller-side borrow rules apply for the invocation. Mutable
+reference elements and fully general stored signature-based invocation remain
+incomplete.
+
 Namespaces, namespace aliases, and qualified `::` names use lexical declaration
-and source-unit visibility. Namespace- and class-scoped
+and source-unit visibility. `namespace outer::inner { ... }` is shorthand for
+`namespace outer { namespace inner { ... } }`; it can reopen existing
+namespaces and nest inside another namespace. Every component denotes an
+ordinary namespace, not a namespace alias. Alias declarations retain a single
+declared name (`namespace short_name = outer::inner;`). An exported shorthand
+namespace exports its nested declarations under the ordinary module rules.
+[The namespaces example](../../examples/06-namespaces.gti) demonstrates the
+shorthand, qualification, and alias spelling. Namespace- and class-scoped
 `using Name = Type;` aliases are declaration-order independent within their
 direct declaring scope after cycle validation. Every class-like body (`class`,
 `struct`, `interface`, and `union`) admits aliases as type members. An alias
@@ -150,7 +275,11 @@ type alias in that owner. A public alias of a non-generic type may be named with
 
 A generic class alias may name the owner's type or value parameters and is
 substituted for each concrete member-body and backend instance. The alias is
-usable unqualified within that owner. The grammar does not yet represent an
+usable unqualified within that owner. A type alias naming a specialization may
+qualify its public type members: `using IntBox = Box<int>;` permits
+`IntBox::value_type`. Each alias qualifier retains its access checks and its
+owning specialization's generic substitution, including chained type members.
+The grammar does not yet represent an
 intermediate specialization in a type path, so `Box<int>::value_type` is not a
 GTI spelling and `Box::value_type` is rejected outside generic `Box` as an
 unspecialized type. Class aliases are direct members rather than inherited
@@ -201,13 +330,21 @@ The binary equality, relational, arithmetic, modulo, and bitwise operators add
 one narrow operand context for integer literals. When exactly one operand is
 an integer literal, optionally parenthesized and optionally preceded by one
 unary `+` or `-`, and the other operand has a built-in integer type or a
-type-parameter type whose constraints imply `std::integral`, the complete
-literal expression adopts that exact type. Its mathematical value, including
-the sign, must fit a concrete adopted type; generic declarations defer that
-range check until concrete instance reanalysis. Shift counts are excluded
-because their type is independent of the shifted value. Non-literal mixed
-operands receive no such conversion and continue to require the operator's
-exact type contract.
+type-parameter type whose constraints imply `std::numeric`, the complete
+literal expression adopts that exact type during checking. Its mathematical
+value, including the sign, must fit a concrete adopted type; generic
+declarations defer that range check until concrete instance reanalysis. A
+floating-point instance uses the ordinary integer-to-floating operand
+conversion instead of retyping an
+integer constant as a floating constant. Thus `value == 0` and `value / 2`
+work uniformly in numeric generics; integer promotions and explicit narrowing
+of arithmetic results remain unchanged. The rule does not contextualize two
+literal operands, floating literals, named constants, or arbitrary expression
+trees, and does not participate in call or constructor overload selection.
+Shift counts are excluded because their type is independent of the shifted
+value. Non-literal operands receive no literal context: concrete built-in
+operands use the existing numeric common-type rules, while mixed generic
+operands must satisfy the operator's exact type contract.
 
 `float` is IEEE-754 binary32 and `double` is IEEE-754 binary64. An unsuffixed
 floating literal has type `float`; `d` or `D` selects `double`. A built-in
@@ -229,6 +366,83 @@ not make `char` satisfy an integer or numeric constraint.
 `Type name{arguments};` directly constructs a declared class or struct. It is
 not C++ aggregate initialization, list conversion, initializer-list preference,
 copy-list initialization, or CTAD.
+
+Structs additionally support **designated construction**:
+
+```gti
+struct Point { int x = 0; int y = 0; };
+Point point = {.x = 3, .y = 4};
+Point other{.y = 8}; // x uses its declaration default
+```
+
+The destination supplies the exact struct type. Names refer to public instance
+fields, must occur at most once, and must follow declaration order. Positional
+and designated entries cannot be mixed. Omitted fields require declaration
+initializers; there is no implicit zero initialization of missing fields.
+Nested designated lists receive their destination field's type.
+
+This form is limited to structs without declared constructors or inheritance,
+and public value fields. Reference, fixed-array, borrowed-state, and native-layout
+records are excluded from this first slice. Classes retain constructor-based
+initialization. Normal ownership rules still apply: a fresh owning value is
+accepted, while transferring a named move-only value requires `std::move`.
+Nonliteral numeric values require the exact field type in this initial slice;
+use an explicit numeric conversion when the types differ. Integer literals
+retain the usual representable-value initialization rules.
+Field inputs are evaluated in declaration order, including omitted defaults;
+prepared owning inputs have the ordinary constructor-argument rollback rules.
+Existing backend limits on declaration-time field initializers still apply;
+in particular, arbitrary function calls in declaration defaults are not newly
+supported by this syntax. Such calls can be supplied explicitly in a
+designated entry instead.
+
+An ordinary brace list in a class-typed initialization context uses the
+**owned collection protocol**. This includes `C values = {...}` and a
+designated field such as `.subcommands = {{.name = ...}, ...}`. Each nested
+element receives the exact element type, so collection lists and designated
+struct construction compose recursively. `std::vector<T>` implements this
+protocol; application-defined containers can implement it too. There is no
+`std::initializer_list` object or hidden const backing array.
+
+A participating class or struct `C` supplies these two public, non-overloaded,
+static GTI functions (names are protocol names, not standard-library identity):
+
+```gti
+static C collection_init(uint64_t count);
+static C collection_insert(C collection, T element);
+```
+
+Both functions must have GTI bodies, return exactly `C`, and have no
+method-local generic parameters, default arguments, or unsafe contract. The
+containing class may be generic. Ordinary `requires` constraints are checked
+after substituting its concrete arguments, using the same rules as explicit
+calls. Both hooks must satisfy their constraints, even for an empty list;
+an unsatisfied unused hook does not forbid other explicit construction of the
+container. The second insertion parameter
+defines the exact contextual element type `T`. The collection must be movable;
+collection and element values cannot carry stored borrow dependencies.
+Reference and fixed-array element parameters are excluded from this slice.
+Expected-value and confined-callable elements are also excluded until their
+ordered owned-call transport is supported by this lowering path.
+Normal ownership rules apply: named move-only elements require `std::move`,
+while fresh owners transfer directly. Numeric values require the exact element
+type; integer literals adopt the usual representable contextual type. Owning
+strings still require `std::string("text")`; this adds no string conversion.
+
+Execution first calls `collection_init` with the written count, then evaluates
+each element left to right and calls `collection_insert`, transferring the
+previous collection and the new element. Each insertion completes before the
+next element begins. Empty braces call only `collection_init(0)`. Allocation,
+ordering, duplicate-key policy, and storage are library responsibilities;
+vector reserves once and appends each element. Failure uses ordinary call
+argument and local cleanup, including the already-built collection and any
+prepared element. No collection-specific backend execution path exists.
+
+Direct braces `C values{arguments}` retain constructor-call meaning, and call
+arguments retain the contextual fixed-array rules below. This slice does not
+add untyped lists, list-preferred overload selection, or collection type
+deduction. Other standard containers must explicitly implement the protocol;
+being container-shaped does not silently opt a type in.
 
 A union uses the same direct-brace spelling only for zero initialization or an
 exact value for its first declared field. Selecting another active field is an
@@ -320,10 +534,31 @@ Constructor-local value parameters remain inference-only, cannot declare a
 default, and cannot shadow an enclosing class or struct generic parameter.
 Unrestricted value-generic expressions and value packs are not implemented.
 
+Generic type arguments are type metadata and may be `void`, including written,
+inferred, and defaulted arguments. That does not give `void` an object
+representation: concrete variables, fields, array elements, reference
+referents, and value parameters still require valid object types. Constraints
+remain in force. Concrete class alias targets are revalidated under the
+selected substitution, so `using signature = int(T)` rejects `T = void` even
+if no field uses the alias. `void*` remains an opaque pointer value.
+Ordinary nominal generic arguments may also carry reference types as metadata,
+without introducing stored borrows into that owner. Reference referents retain
+their normal restrictions (including no void, array, raw-pointer, or nested
+reference referents). Actual reference bindings still require an explicit
+reference declarator; a type argument cannot silently turn an ordinary value
+field into a stored-reference carrier. Concrete field/lifetime validation
+continues to reject unsupported borrowed storage.
+
 Generic declarations may give their type and value parameter list a trailing
-suffix of defaults. A type default must resolve to an exact non-void type, may
+suffix of defaults. A type default must resolve to an exact type, may
 reference only visible types and earlier generic parameters, and must satisfy
-its inline constraint. A value default uses the closed expression domain above
+its inline constraint. Constraint checks within a dependent type default wait
+until its earlier parameters are substituted and the default is selected.
+An explicitly supplied argument does not instantiate the unused default;
+closed invalid defaults still fail at declaration time. Selecting a default
+validates nested class constraints as well as the defaulted parameter's own
+constraint before HIR. This does not defer constraints in ordinary generic
+fields or other non-default type uses. A value default uses the closed expression domain above
 and may reference only earlier visible namespace `constexpr uint64_t` bindings
 whose initializers are themselves closed `uint64_t` arithmetic and earlier
 value parameters. Arithmetic is checked in the `uint64_t` domain at the
@@ -365,28 +600,46 @@ initializer-list preference or C++ list-overload ranking. Generic `operator()`
 dispatch does not yet admit brace arguments because its callable contract has
 no contextual-array representation.
 
+A direct generic callable invocation used as an argument, such as
+`combine(callback(n), other)`, obtains its exact result requirement from the
+selected outer parameter. This also applies to explicit consuming invocation
+and stored generic callable fields. Argument evaluation remains left-to-right;
+the callback and following arguments are checked once after selecting the
+outer signature. Selection must be possible without inferring the callback's
+concrete result or using that result to distinguish overloads. An unresolved
+outer generic parameter cannot supply an exact result context. A typed local
+can supply the context explicitly when selection otherwise remains ambiguous.
+
 Receiver mutability may distinguish method overloads. A read-only receiver can
 select only a read-only method; a mutable receiver prefers the otherwise exact
-mutable overload when both exist. `operator()` additionally admits a consuming
-overload with trailing `&&`. It is available only through an explicitly moved
-receiver, and an otherwise exact consuming overload is preferred for that
-form. Read-only, mutable, and consuming call-operator overloads may coexist.
+mutable overload when both exist. Ordinary methods and `operator()` also admit
+a consuming overload with trailing `&&`. It is available through an owned
+movable temporary or an explicitly moved receiver, and an otherwise exact
+consuming overload is preferred for those forms. A named value is never
+implicitly consumed. Read-only, mutable, and consuming overloads may coexist;
+arithmetic/bitwise value operators admit read-only and consuming forms.
 
 A concrete self-contained class or struct value produced directly by an
 ordinary constructor or by-value GTI function call is a fresh temporary
 receiver. For one direct ordinary non-static, non-virtual method call, including
 reusable `operator()`, it may be borrowed read-only or mutably; transparent
 parentheses do not change that classification. A fresh receiver prefers an
-otherwise exact trailing-`mut` overload. This permission is receiver-only: the
+otherwise exact consuming overload, then a trailing-`mut` overload when no
+consuming overload matches. Receiver-only materialization additionally admits
+owned movable conditional and operator results, lambda results, copy/move
+construction, and owned Expected extraction. This permission is receiver-only: the
 value does not become a general mutable place, and cannot bind a mutable
 reference, have its address taken, or be assigned through as storage.
 `std::move(named)` is existing storage rather than a fresh receiver. The
 selected method must return `void`, an ordinary scalar, or an owned value with
-no tracked borrowed state; receiver-tied references and borrowed-state results
-remain ill-formed.
+no tracked borrowed state, except that a read-only member may provide a
+nonescaping receiver-tied read observation through a read-only reference or
+string view. Such a borrow cannot outlive the temporary's full expression.
+Consuming members cannot return any reference or tracked borrowed state.
 
-For an ordinary GTI function or non-operator method call, the same direct fresh
-value may initialize an exact read-only `T&` parameter for that invocation
+For an ordinary GTI function or non-operator method call, a direct fresh
+construction, GTI function call, or GTI value-operator result may initialize an
+exact read-only `T&` parameter for that invocation
 only.
 Overload selection first considers every otherwise-exact candidate that needs
 no temporary argument borrow. Only when that tier is empty does it consider
@@ -399,8 +652,9 @@ targets, compound producers, borrowed-state values, and results that could
 retain the argument loan remain ill-formed. Transparent parentheses do not
 change eligibility.
 
-A consuming call operator is non-virtual, has a body, and cannot implement an
-interface contract. Its result cannot be a reference or contain tracked
+A consuming method or call operator may be virtual or an interface requirement. An
+override must preserve its exact `&&` receiver capability, parameters, and
+result. Its result cannot be a reference or contain tracked
 borrowed state. Invocation consumes the exact source place under the ordinary
 move-state rules; a later possible read, move, or
 invocation is ill-formed. A confined generic call written as
@@ -408,28 +662,31 @@ invocation is ill-formed. A confined generic call written as
 exact consuming target or a reusable read/mutable target. Reusable clients do
 not accept a consuming-only target.
 
-The consumed receiver must not structurally require active cleanup. This
-includes cleanup inherited through a base, field, fixed array, owner/storage
-component, concrete generic substitution, or callable capture. GTI does not
-yet have a full-expression-owned receiver representation that can transfer and
-clean up such state at the language-defined boundary, so both direct calls and
-concrete generic once-call selections are rejected before HIR.
+Moved nominal and lambda receivers may own active cleanup. Their MIR value
+obligation remains in the caller through the enclosing full expression and
+drains on normal or defined-failure cleanup. This includes an owned concrete
+receiver invoking a virtual consuming operator. It does not make a borrowed
+reference or pointer dereference an owned receiver; erased-pointee consumption
+still requires an ownership contract beyond ordinary virtual dispatch.
 
 The selected callable, constructor, or operator identity is part of the
 program's semantics and must not be re-selected by a backend.
 
-### Contextual Namespace Function Items
+### Namespace Function Items
 
 An eligible namespace free-function name can be used as a stateless callable
-value only where an existing confined generic-callable parameter or consumed
-managed-thread task parameter supplies one complete required signature. The
+value. Without a required signature, exactly one eligible visible declaration
+must identify the value; an overload set is not itself a value. Existing
+confined generic-callable parameters and managed-thread tasks can supply an
+exact required signature for contextual selection. The
 selected declaration must be a non-generic, body-bearing GTI function at
 namespace scope. Entry functions, members, operators, native declarations,
 intrinsics, and compiler-private functions are not eligible.
 
 Selection considers all visible declarations independently of source order.
-The result type must be exactly the contract result, and each written contract
-argument must bind under the ordinary exact call-argument rules. There is no
+Where a contract supplies a signature, the result type must be exactly its
+result, and each written contract argument must bind under the ordinary exact
+call-argument rules. There is no
 conversion ranking, overload-set value, ADL, or backend overload resolution.
 Exactly one viable declaration forms the item; zero candidates are a signature
 mismatch and multiple candidates are ambiguous.
@@ -437,12 +694,17 @@ mismatch and multiple candidates are ambiguous.
 The resulting semantic type contains the selected nominal function identity,
 exact parameter types, and exact result type. It is a zero-state read-callable
 and is transfer- and share-capable, so the existing exact `void()` and owned-
-result managed-thread transports can consume it. Its use is nevertheless
-confined to the single contextual call: it cannot initialize an ordinary
-binding, be captured, be independently returned, enter general owned generic
-transport, or cross a native boundary. A confined client whose existing
-contract returns its exact callable parameter may relay the item only as an
-unbound result that is explicitly discarded. A named native callback alias
+result managed-thread transports can consume it. Its use is
+subject to ordinary exact value rules: `auto item = handler;` retains its
+identity, generic classes may store it, lambdas may copy-capture it, and generic
+functions may return that exact type. Value packs preserve the nominal identity
+without creating cleanup obligations. Function-item invocation can expand
+concrete value/read-only-reference argument packs, with exact arity and type
+checking. Evaluating the callee expression precedes its arguments even when
+the selected target is statically known. A confined client returning its exact
+callable parameter may likewise produce a retained item. Different named
+functions remain different types even when their signatures match; source-defined
+owning wrappers provide erasure. A named native callback alias
 uses the separate exact native-callback conversion and never exposes the GTI
 function item as a C/C++ function pointer.
 
@@ -488,6 +750,11 @@ polymorphic contract equivalence require separate representation rules.
 
 Constraints affect candidate validity but do not rank overloads, distinguish
 otherwise identical signatures, provide SFINAE, or select specializations.
+Exact safe read-only nullary member signatures can be declared with
+`requires (T& x) { { x.snapshot() } -> R; }`, either in concepts or as a
+boolean static query. `R` is an exact owned result type; the query does not
+execute the method. See [concepts](concepts.md#exact-read-only-member-requirements)
+for the bounded syntax, composition and ownership rules.
 Negation, general requires-expressions, arbitrary expression requirements,
 value constraints, constraint subsumption, forwarding
 references, and unrestricted metaprogramming are not part of the implemented
@@ -500,8 +767,12 @@ type/value substitution as written or inferred arguments. Concrete generic
 bodies are rechecked after substitution; generic validity and default selection
 are not delegated to C++ template instantiation.
 
-A function or method may own one final type pack and one matching final named,
-immutable, by-value parameter pack. Whole-pack forwarding remains available
+A function or method may own one final type pack, bound either through a final
+named immutable by-value parameter pack or an explicit type-list expansion in
+a formal parameter's type metadata. A metadata-bound pack does not add runtime
+parameters and may also expand into returned nominal metadata. Bare pack types
+remain invalid as return values or object storage. A named value pack uses the
+same deduced list if both forms are present. Whole-pack forwarding remains available
 only as the final argument of another variadic call. The bounded comma-pack
 fold `(call(fixed, pack), ...)` additionally applies one call pattern to each
 concrete pack element. It is well-formed only when:
@@ -525,6 +796,33 @@ has type `void`, including for an empty pack. This rule adds neither a general
 fold-expression algebra nor pack indexing, multiple packs, mutable element
 iteration, partial movement, member-call patterns, or backend-selected
 template behavior.
+
+A class or struct may also declare one final type pack, for example
+`class Signature<R, Args...>`. This form cannot combine packs with value
+parameters or generic defaults. A bare `Args...` type-list expansion is allowed
+only as the final parameter of a signature (`R(Args...)`) or as the final
+argument feeding another class's final pack (`Signature<R, Args...>`). A pack
+cannot fill a fixed generic slot or stand alone as a field type. Decorated
+expansions such as `Args&...` are not yet supported. Empty packs contribute no
+types; `Types<>` and `Types<>()` are valid for an all-pack owner. Concrete
+elements preserve order and exact identity, and each must satisfy the pack's
+constraint and its eventual use (so `void` metadata cannot become a signature
+parameter).
+
+A method may bind the enclosing class's final type pack with one final,
+immutable, by-value parameter pack (`void send(Args... args)`). Its argument
+types are prescribed by the receiver's class instantiation, not inferred anew
+at the call. Ordinary methods, `operator()`, and interface/virtual methods use
+the same exact argument and ownership rules. A method may also have its own
+fixed generic parameters. Empty packs require no arguments; forwarding uses
+the existing final `args...` expression, with per-element deterministic cleanup
+and no repeated consumption of move-only elements. Concrete value-pack elements
+must be non-void object types or references; bare signatures are rejected even
+if the method is never called. Mutable reference elements require exact mutable
+reference forwarding and do not consume the referent, so sequential forwarding
+is allowed. The grouped pack binding itself remains immutable.
+This does not admit reference-pack declarators (`Args&...`) or forwarding
+references, nor implicit borrowing during unconstrained pack deduction.
 
 ## 3.8 Classes, Interfaces, And Lifecycle
 
@@ -551,7 +849,10 @@ public:
 ```
 
 Virtual roots and overrides match parameter types, receiver access, operator
-identity, and return type exactly. Abstract values cannot be directly
+identity, and return type exactly. A concretely bound owner pack is expanded
+before comparing parameter lists, so an ordinary zero-argument or multi-argument
+override can implement the corresponding instantiated interface pack. Symbolic
+packs remain distinct until substitution. Abstract values cannot be directly
 constructed. GTI does not permit object slicing. Polymorphic destruction is
 derived by the compiler from lifecycle metadata.
 
@@ -675,7 +976,8 @@ An `enum class` with at least one parameterized alternative is a closed tagged
 sum. It cannot declare an integral backing type or explicit enumerator values.
 Every payload field is named, immutable, and non-variadic. The admitted field
 types are primitive scalars, `std::string_view`, `nullptr_t`, one-level raw
-pointers, integral scoped enums, and ordinary class values. A concrete class
+pointers, integral scoped enums, and ordinary concrete class instances,
+including generic instances. A concrete class
 payload may require active cleanup through its destructor or owned fields; the
 enum then has lexical cleanup and folds its copy, move, and ownership policy
 from every alternative. Stored borrowed state remains ill-formed. Active
@@ -690,38 +992,50 @@ the alternative before any later sibling field expression evaluates, matching
 the ordinary left-to-right argument order. An enum whose alternatives carry
 class payloads folds its copyability, movability, and ownership traits from
 those payload types, so a move-only payload makes the enum value move-only.
-An admitted owning enum supports whole-value move construction and move
-assignment between direct local bindings. Move assignment first drops the
-destination's old active alternative, transfers the source alternative, and
+An admitted owning enum supports whole-value move construction. Move
+assignment between direct local bindings additionally requires the folded
+assignment capability of its payloads; field construction does not require
+assignment. Move assignment first drops the destination's old active
+alternative, transfers the source alternative, and
 leaves the moved-from source without the transferred cleanup obligation.
 
 The bounded owning family admits direct local values and top-level read-only
 checked-reference observation. It also admits the enum itself by value across
 an ordinary source-defined free function, non-polymorphic method or ordinary
-constructor, and an exact typed lambda. Ordinary argument analysis selects
-copy only when the enum's folded traits permit it; otherwise an explicit move
-or fresh value is required.
+constructor, and an exact typed captureless lambda. Ordinary argument analysis
+selects copy only when the enum's folded traits permit it; otherwise an explicit
+move or fresh value is required.
 
-An ordinary non-generic, non-polymorphic class or struct may contain an owning
-payload enum as a direct field. The field may be initialized by an in-class
-initializer or an ordinary constructor initializer. Its containing value
+An ordinary non-polymorphic class or struct, including a concrete generic
+instance, may contain an owning payload enum as a direct field. The field may
+be initialized by an in-class initializer or an ordinary constructor
+initializer. Its containing value
 inherits the enum's structural copy, move, assignment, and cleanup traits and
 may use the existing direct class-value call and return transport. A mutable
 direct field may be replaced from an explicit move; the old active alternative
-is dropped before the replacement obligation is published. This permission is
-not recursive and does not extend through a fixed array, `expected`,
-owner/container, another payload enum, generic wrapper, stored-reference
-class, compiler-private capability, polymorphic base, or native-layout
-declaration.
+is dropped before the replacement obligation is published. Recursive owning
+class containment is permitted when its by-value layout is finite, including
+an alternative holding a vector of enclosing nodes. A direct enum/class
+by-value cycle remains ill-formed. This does not authorize reference payloads,
+direct non-class aggregate payloads, stored-reference classes,
+compiler-private capabilities, polymorphic bases, or native-layout
+declarations.
 
-Generic callable families, including methods and constructors declared on a
-generic owner, polymorphic dispatch, native/runtime declarations, operators,
-and lambda captures retain `GTI-S2067` at their declaration or capture
+Concrete generic free functions, methods, and constructors use that same
+ordered transport contract. A type argument mentioning the enum does not by
+itself create an ownership edge; concrete fields and declaration-bound storage
+capabilities determine containment and cleanup. This permits ordinary owning
+collections and inline optional storage of the enum without public-library
+name recognition. Consuming methods may return an enum field while retaining
+the containing receiver through the caller's full expression.
+
+Polymorphic dispatch, native/runtime declarations, operators,
+and direct enum lambda captures retain `GTI-S2067` at their declaration or capture
 boundary. Unsupported containment retains `GTI-S2067` at the field or
 aggregate boundary, before HIR/MIR/backend emission. A direct checked
-reference or raw pointer to the enum does not itself contain the referent's
-ownership state; indirection to a generic wrapper still instantiates that
-unsupported nested value type.
+reference or raw pointer does not itself contain the referent's ownership
+state. Fixed arrays of direct owning enum elements and direct enum captures
+remain outside this transport slice.
 
 Payload alternatives use exact construction. A unit alternative is written
 `Result::empty`; a payload alternative is written `Result::value(arguments)`.
@@ -747,8 +1061,15 @@ Each binding is an immutable copied value scoped to its arm; a class-typed
 binding therefore requires a copyable payload type, and its copy drops at the
 arm's end exactly like an ordinary local. A move-only active payload can still
 be matched exhaustively by using its tag-only form, such as
-`case Message::owned:`. Consuming or borrowed payload bindings remain a
-follow-on pattern family. Every alternative
+`case Message::owned:`. `case Message::owned(auto& item)` instead binds an
+arm-scoped shared reference to the original payload; `mut auto& item` binds an
+exclusive mutable reference and requires mutable enum storage. Temporary
+subjects cannot provide either reference. The entire matched enum is the
+conservative alias-conflict root, including for sibling fields: two mutable
+payload bindings in the same arm conflict. Owner replacement, movement, or
+conflicting access is forbidden while the loan lives. Existing checked return
+summaries can relay receiver-derived payload references, but cannot let local
+or temporary payloads escape. Consuming patterns remain unsupported. Every alternative
 must be handled exactly once unless a `default` arm is present. A complete
 payload switch is exhaustive for return, ownership-state, loan, HIR, and MIR
 control-flow analysis. `GTI-S2067` owns payload declaration, construction, and
@@ -786,8 +1107,19 @@ and the immediately enclosing function or lambda must return
 does not consider conversions or overloads. The expression has type `T`, or
 `void` when `T` is `void`.
 
-An operand whose expression category is a value selects move transport for
-both alternatives. A named place selects copy transport for both alternatives.
+For the bounded `expected<T&, E>` checked-borrow specialization, `?` yields a
+read-only place of type `T`, retaining the original owner dependency without
+copying or moving the referent. Only the error alternative uses the operand's
+copy/move transport policy. That specialization accepts only a read-only
+reference success payload, one non-borrowing error type, and the single receiver,
+argument, or global owner origin described by the ownership rules. It may be a
+local or function return, but not a field, global variable, parameter, or
+lambda return; `value_or` and direct local `unexpected` initialization are not
+available in the initial surface.
+
+An owning operand whose expression category is a value selects move transport
+for both alternatives. A named owning place selects copy transport for both
+alternatives.
 The selected move or copy must be available for every non-`void` alternative.
 Consequently a named expected with a move-only value or error is rejected;
 `?std::move(result)` is the explicit consuming form. `GTI-S2086` owns invalid
@@ -799,6 +1131,22 @@ unavailable alternative transport.
 Every reachable path through a non-`void` function, method, operator, or lambda
 returns an appropriate value. The permitted top-level `main` definition may
 reach its closing brace, which returns zero.
+
+A by-value `return name;`, including transparent parentheses around `name`,
+implicitly selects move transport only when `name` denotes a whole local or
+by-value parameter, the source and result types are exact, and the concrete
+type is movable but not copyable. The source becomes unavailable on that path.
+A copyable source still selects copy transport. Return conversions and fields,
+indexed or dereferenced places, globals, references, captures, temporaries, and
+immovable values do not gain implicit movement; their existing copy,
+conversion, or explicit `std::move` requirements remain in force. Concrete
+generic reanalysis makes this decision from the substituted type traits.
+
+A void-returning function, method, operator, or lambda accepts a bare `return`
+or `return expression;` with an exactly void-typed expression. Non-void values
+cannot be discarded implicitly by returning them from a void body. The same
+check runs after concrete generic substitution; constructors and destructors
+retain their separate prohibition on return statements.
 
 Every executable `switch` arm terminates explicitly as defined by the control
 flow rules. GTI does not have implicit switch fallthrough. A payload-enum
@@ -865,7 +1213,8 @@ The evaluator accepts fixed-width integer, `float`, `double`, `bool`, `char`,
 concrete fixed arrays; structural class and struct values; layout-query
 constants; earlier constexpr bindings; grouping; supported scalar unary,
 binary, comparison, and short-circuit logical operations; lazy conditional
-expressions; read-only field and fixed-array indexing; and explicit numeric
+expressions; read-only field and fixed-array indexing; literal-backed
+string-view `size()`, `empty()`, and checked indexing; and explicit numeric
 conversions plus lossless `uint8_t(char)` code-unit extraction.
 Integer operations use the language's checked domains.
 Floating literals, arithmetic, comparisons, integer conversions, signed zero,
@@ -876,9 +1225,26 @@ integer overflow, integer zero divisors, invalid shifts, out-of-range
 conversions, non-constant references, unsupported operations, and resource
 exhaustion at source locations.
 
-A free function or method may be `constexpr` when each concrete call has
-non-pack, by-value supported parameters and a supported value result. Concrete
-type and `uint64_t` value-generic arguments retain canonical declaration and
+Constant string views retain their complete byte sequence, including embedded
+NULs. Indexing produces one unsigned `char` code unit, not a Unicode code point;
+negative indices and indices greater than or equal to `size()` fail constant
+evaluation. These observers also work on constant parameters, returned views,
+and structural fields. A runtime-owned view cannot become a constant merely
+because its type supports these operations. Text inspection uses the same
+shared evaluation budget and can form array extents, value-generic arguments,
+static assertions, and compile-time branch conditions.
+
+A free function or method may be `constexpr` when its declaration has
+non-pack potentially supported value parameters (by value or read-only
+reference) and a potentially supported value or read-only reference result.
+A generic type parameter can stand for a supported type at the
+declaration. A concrete instantiation with runtime-only types remains callable
+at runtime; for example, a generic by-value transfer helper can accept an owning
+string without becoming eligible to allocate or destroy one at compile time.
+Required constant calls must still have supported concrete types and executed
+operations. Ordinary exact typing, ownership transfer, borrow checks, and
+source-written reference/receiver restrictions apply to every instantiation.
+Concrete type and `uint64_t` value-generic arguments retain canonical declaration and
 type/value identity throughout evaluation. A non-static instance method must
 have a read-only receiver of a supported structural class or struct. Its body
 may use supported automatic value bindings, exact assignment, scalar compound
@@ -888,10 +1254,57 @@ recursion, and calls to available constexpr definitions. Calling the same
 function at runtime remains an ordinary GTI call with the same language
 semantics.
 
+Read-only arithmetic, bitwise, comparison, subscript, dereference, and call
+operators may also be `constexpr` under those same signature and structural
+receiver rules. Ordinary overload resolution selects the exact target; no
+reversed operands, new conversions, or alternate lookup is introduced. Both
+direct operator expressions and calls inside completed constexpr bodies use
+verified MIR execution, not an AST operator-body fallback. Generic owners retain
+their concrete type/value arguments. For example, a source-defined math record
+can implement constexpr addition, and a read-only `std::array` can be indexed
+in a required constant expression. Reference results are observed values, not
+persistable constant references. Mutable/consuming operators, arrow operators,
+and contextual-bool operators remain excluded from constexpr declarations.
+
+Completed free constexpr functions also support local fixed arrays of supported
+scalar elements (including nested arrays): default or explicit construction,
+by-value copies and parameters, `size()`, checked indexing, element assignment,
+compound assignment, and increment/decrement. Copies remain independent after
+mutation. These operations execute canonical verified MIR during semantic
+constant evaluation; no runtime C++ execution or optimization is required.
+Array materialization and updates share the evaluation budget. This does not
+admit mutation through references or mutable class receivers.
+
+Completed constexpr functions may bind, pass, forward, and return checked
+read-only references to supported scalar, fixed-array, and passive structural
+values. The ordinary loan rules still govern the exact source owner, projection,
+access, and escape lifetime; returning a local reference or mutating an owner
+while a reference remains live is invalid. Required constant calls must observe
+constant data: a reference to a runtime variable cannot supply it. Reference
+results can be read into constant values, but references themselves are not
+persistable constexpr bindings or fields. This capability requires the verified
+MIR executor; it does not extend the legacy AST evaluator with reference rules.
+Mutable references, stored-reference wrappers, raw addresses, and active
+cleanup remain outside this constant-execution profile.
+
+Completed free constexpr functions may also transform fully initialized passive
+structural records supplied by value: copy into a mutable local, mutate fields
+(including nested records and fixed arrays), and return the independent value.
+The same no-base, no-polymorphism, no-stored-borrow, no-active-cleanup boundaries
+apply. Field selection uses exact declaration identity, not field spelling or
+native layout. Completed function closures also execute explicitly constexpr
+constructors with explicit field initializers and read-only constexpr methods
+through MIR. Other already-admitted constructor forms retain the earlier
+evaluator during migration; eligibility is never inferred from a generated
+native constructor.
+
 An ordinary constructor with a source body may be `constexpr`. The constructed
 class or struct must have no base, polymorphism, union state, stored reference,
 or active destructor, and every recursively reachable field must have a
-supported constexpr value type. Each field must be fully initialized by its
+supported constexpr value type for compile-time construction. Generic
+constructors and read-only methods can also be instantiated with runtime-only
+field types for ordinary runtime use, under the same declaration-versus-call
+distinction. Each field must be fully initialized by its
 declaration or one exact constructor initializer before the body runs. The
 bounded initial subset permits local computation in the constructor body but
 does not permit receiver mutation after initialization or a control transfer
@@ -903,6 +1316,15 @@ generic packs, and polymorphic dispatch remain outside this subset.
 the selected branch is semantically analyzed and lowered; the discarded branch
 cannot contribute diagnostics, symbols, calls, ownership effects, HIR, MIR, or
 emitted C++. Native C++ constant evaluation is not used to choose the branch.
+When a condition depends on an unresolved generic type or value parameter,
+primary analysis records a deferred selection and inspects neither arm.
+Ordinary name/type checks and independent static assertions outside those arms
+still run. Branch-dependent return, movement, receiver-restoration, and loan
+flow must be checked again for each concrete instance; the symbolic primary is
+not an executable flow proof. A concrete instance must select every branch
+before HIR lowering. Nested constexpr predicates may themselves require staged
+concrete analysis; their execution shares the enclosing constant request's
+step budget and a bounded staging/call depth.
 
 Concrete non-negative integer constexpr values may supply fixed-array extents
 and `uint64_t` value-generic arguments. These uses refer to the declaration's
@@ -915,8 +1337,8 @@ from unrelated enums are not interchangeable. The backend may materialize a
 frontend-computed structural value, but it may not replay constructors or use
 native C++ constant evaluation to decide that value.
 
-Generic parameter packs, constexpr operator functions, mutable or polymorphic
-instance calls, references, allocation, payload enums, unions, inherited or
+Generic parameter packs, mutable or polymorphic
+instance calls, mutable or persistently stored references, allocation, payload enums, unions, inherited or
 cleanup-owning aggregates, and runtime/intrinsic/C calls are rejected until
 they have compiler-owned evaluation rules.
 
@@ -963,10 +1385,11 @@ current implementation:
   capability families plus any general expression-requirement model;
 - complete lifetime relationships for borrowed aggregate values;
 - general place movement, partial initialization, and reinitialization;
-- owned callable escape beyond exact same-type generic return, the bounded
-  one-field generic owner, local closure movement, and explicit owned
-  move-capture, including retained or independently returned function items
-  and general function-pointer values;
+- full owned-callable composition beyond direct by-value generic parameters
+  and nominal generic owning-carrier parameters,
+  per-element by-value pack transport, exact concrete field ownership, local
+  closure movement, and explicit owned move-capture, including general pack
+  template-shape composition, broader erased allocation, and general function-pointer values;
 - constexpr execution beyond the bounded concrete-generic, scoped-enum,
   fixed-array, and structural-aggregate subset, including references,
   allocation, mutation through aggregate places, payload enums, packs,

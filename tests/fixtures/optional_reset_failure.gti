@@ -1,0 +1,29 @@
+#include <std/optional>
+#include <std/vector>
+#include <std/string>
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { std::println(9); }
+};
+
+class Payload {
+  int divisor;
+public:
+  Payload(int divisor) : divisor(divisor) {}
+  ~Payload() {
+    std::println(3);
+    int divisor = this.divisor;
+    int checked = 12 / divisor;
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard outer{};
+  mut std::optional<Payload> slot{Payload(2 - argc)};
+  slot.reset();
+  slot.reset();
+  std::println("done");
+  return 0;
+}

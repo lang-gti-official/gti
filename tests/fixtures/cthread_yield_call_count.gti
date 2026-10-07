@@ -1,0 +1,14 @@
+#include <std/cthread>
+
+extern "C" {
+int32_t gti_test_yield_count();
+}
+
+int main() {
+  if (gti_test_yield_count() != 0) { return 1; }
+  for (mut int index = 0; index < 16; index++) {
+    std::thrd_yield();
+  }
+  if (gti_test_yield_count() != 16) { return 2; }
+  return 0;
+}

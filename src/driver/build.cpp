@@ -24,6 +24,77 @@
 namespace lang::driver {
 namespace {
 
+struct StagedDebugBundleCleanup {
+  std::filesystem::path path;
+  ~StagedDebugBundleCleanup() {
+    // This exact path is inside the fresh driver-owned link staging directory.
+    std::error_code error;
+    std::filesystem::remove_all(path, error);
+  }
+};
+
+// Native Darwin symbols are a bundle, not a single rename-replaceable file.
+// Never replace an unowned directory or follow a symbol-bundle symlink.
+std::optional<std::string>
+publishDebugBundle(const std::filesystem::path &staged,
+                   const std::filesystem::path &destination) {
+  constexpr std::string_view markerName = ".gti-debug-symbols";
+  constexpr std::string_view markerContents = "gti-debug-symbols-v1\n";
+  std::error_code error;
+  const auto status = std::filesystem::symlink_status(destination, error);
+  if (error && error != std::errc::no_such_file_or_directory)
+    return error.message();
+  const bool exists = std::filesystem::exists(status);
+  if (exists) {
+    if (!std::filesystem::is_directory(status))
+      return "refusing to replace a non-directory or symlink debug bundle";
+    const auto marker = destination / markerName;
+    error.clear();
+    if (!std::filesystem::is_regular_file(
+            std::filesystem::symlink_status(marker, error)) ||
+        error)
+      return "refusing to replace a debug bundle not owned by GTI";
+    std::ifstream input(marker);
+    std::string contents(markerContents.size(), '\0');
+    input.read(contents.data(), static_cast<std::streamsize>(contents.size()));
+    if (!input || contents != markerContents ||
+        input.peek() != std::char_traits<char>::eof())
+      return "refusing to replace a debug bundle not owned by GTI";
+  }
+  if (writeArtifact(staged / markerName, markerContents) !=
+      ArtifactWriteStatus::Success)
+    return "cannot mark staged debug bundle as GTI-owned";
+  const auto backup = stagedArtifactPath(destination);
+  if (exists) {
+    error.clear();
+    std::filesystem::rename(destination, backup, error);
+    if (error)
+      return error.message();
+  }
+  error.clear();
+  std::filesystem::rename(staged, destination, error);
+  if (error) {
+    if (exists) {
+      std::error_code restoreError;
+      std::filesystem::rename(backup, destination, restoreError);
+      if (restoreError)
+        return error.message() + "; previous bundle retained at '" +
+               backup.string() +
+               "' (restore failed: " + restoreError.message() + ")";
+    }
+    return error.message();
+  }
+  if (exists) {
+    // Exact validated, GTI-owned bundle moved above; never a workspace root.
+    std::filesystem::remove_all(backup, error);
+    if (error)
+      return "published symbols but could not remove previous GTI-owned bundle "
+             "'" +
+             backup.string() + "': " + error.message();
+  }
+  return std::nullopt;
+}
+
 constexpr std::string_view cacheSchema = "gti-build-cache-v2";
 using detail::IdentityBuilder;
 
@@ -466,6 +537,43 @@ logicalSourceName(const SourceUnit &unit,
 
 } // namespace
 
+std::optional<std::string>
+managedExecutableDiagnostic(const ManagedOutputPolicy &policy,
+                            const std::filesystem::path &executable) {
+  if (const std::optional<std::string> diagnostic =
+          managedPathDiagnostic(policy, executable, false)) {
+    return diagnostic;
+  }
+
+  std::error_code error;
+  const std::filesystem::file_status status =
+      std::filesystem::symlink_status(executable, error);
+  const bool missing = error == std::errc::no_such_file_or_directory ||
+                       (!error && !std::filesystem::exists(status));
+  if (missing) {
+    return "gti: managed executable does not exist: '" + executable.string() +
+           "'";
+  }
+  if (error) {
+    return "gti: failed to inspect managed executable '" + executable.string() +
+           "': " + error.message();
+  }
+  if (!std::filesystem::is_regular_file(status)) {
+    return "gti: managed executable is not a regular file: '" +
+           executable.string() + "'";
+  }
+#if !defined(_WIN32)
+  constexpr std::filesystem::perms executableBits =
+      std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+      std::filesystem::perms::others_exec;
+  if ((status.permissions() & executableBits) == std::filesystem::perms::none) {
+    return "gti: managed executable is not executable: '" +
+           executable.string() + "'";
+  }
+#endif
+  return std::nullopt;
+}
+
 namespace detail {
 
 std::optional<BuildSourceMaterialProjection>
@@ -715,6 +823,11 @@ struct ResolvedNativeLibrary {
   std::filesystem::path file;
 };
 
+struct ResolvedNativeFramework {
+  std::string name;
+  std::filesystem::path file;
+};
+
 // The concrete files a native link configuration resolved to, established
 // before any cache key exists. `nativeCacheBypassDetail` fills this in while
 // deciding whether every link input has an exact identity; `buildCacheKey`
@@ -722,6 +835,7 @@ struct ResolvedNativeLibrary {
 // different file cannot reuse an entry.
 struct NativeLinkIdentityPlan {
   std::vector<ResolvedNativeLibrary> libraries;
+  std::vector<ResolvedNativeFramework> frameworks;
 };
 
 // Runs one native preprocessor probe and folds the compiler's own dependency
@@ -812,7 +926,7 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
   identity.add("cache.schema", cacheSchema);
   identity.add("compiler.identity", policy.compilerIdentity);
   identity.add("project-model.identity", policy.projectModelIdentity);
-  constexpr std::array<std::string_view, 17> nativeEnvironment{
+  constexpr std::array<std::string_view, 19> nativeEnvironment{
       "PATH",
       "CPATH",
       "C_INCLUDE_PATH",
@@ -828,6 +942,8 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
       "SOURCE_DATE_EPOCH",
       "LD_LIBRARY_PATH",
       "DYLD_LIBRARY_PATH",
+      "DYLD_FRAMEWORK_PATH",
+      "DYLD_FALLBACK_FRAMEWORK_PATH",
       "INCLUDE",
       "LIB",
   };
@@ -843,8 +959,27 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
   }
   identity.add("backend.standard",
                static_cast<std::uint64_t>(request.compilation().cppStandard()));
+  identity.add(
+      "frontend.requires-entry-point",
+      static_cast<std::uint64_t>(request.compilation().requiresEntryPoint()));
   identity.add("optimization", static_cast<std::uint64_t>(
                                    request.compilation().optimization()));
+  identity.add(
+      "raw-pointer-audit",
+      rawPointerAuditModeName(request.compilation().rawPointerAudit()));
+  for (const std::string &group :
+       request.compilation().warnings().disabledGroups()) {
+    identity.add("warning.disabled-group", group);
+  }
+  const PackageWarningPolicy &packageWarnings =
+      request.compilation().packageWarnings();
+  identity.add(
+      "warning.dependency-warnings",
+      static_cast<std::uint64_t>(packageWarnings.dependencyWarnings()));
+  identity.add("warning.selected-package", packageWarnings.selectedPackage());
+  for (const std::string &package : packageWarnings.dependencyPackages()) {
+    identity.add("warning.dependency-package", package);
+  }
   for (const std::string &flag : request.compilation().configurationFlags()) {
     identity.add("configuration.flag", flag);
   }
@@ -980,6 +1115,18 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
     identity.add("native.resolved-library.name", library.name);
     if (!addFileIdentity(identity, "native.resolved-library.file", library.file,
                          true, errorMessage)) {
+      return std::nullopt;
+    }
+  }
+
+  // Apple framework names join only after a real linker-map probe established
+  // the exact text stub or binary selected by this compiler/target/SDK policy.
+  identity.add("native.resolved-framework.count",
+               static_cast<std::uint64_t>(linkPlan.frameworks.size()));
+  for (const ResolvedNativeFramework &framework : linkPlan.frameworks) {
+    identity.add("native.resolved-framework.name", framework.name);
+    if (!addFileIdentity(identity, "native.resolved-framework.file",
+                         framework.file, true, errorMessage)) {
       return std::nullopt;
     }
   }
@@ -1251,7 +1398,7 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
                                    .size = generated->size()};
   if (generatedDigest != metadata->generated) {
     return {.status = CacheLookupStatus::Corrupt,
-            .detail = "generated C++ digest does not match metadata"};
+            .detail = "backend representation digest does not match metadata"};
   }
   const std::optional<FileDigest> executableDigest =
       digestFile(executablePath, detail);
@@ -1277,7 +1424,7 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
           .generated = std::move(*generated),
           .executableDigest = *executableDigest,
           .executablePermissions = executablePermissions,
-          .detail = "verified generated C++ and executable digests"};
+          .detail = "verified backend representation and executable digests"};
 }
 
 bool writeBinaryFile(const std::filesystem::path &path,
@@ -1442,6 +1589,143 @@ nativeLibrarySearchDirectories(const NativeInputs &inputs) {
   return directories;
 }
 
+#if defined(__APPLE__)
+std::optional<std::filesystem::path>
+frameworkSelectionFromLinkMap(std::string_view linkMap, std::string_view name,
+                              std::string &detail) {
+  const std::string marker = "/" + std::string(name) + ".framework/";
+  const std::string binaryName(name);
+  const std::string stubName = binaryName + ".tbd";
+  std::optional<std::filesystem::path> selected;
+  while (!linkMap.empty()) {
+    const std::size_t newline = linkMap.find('\n');
+    std::string_view line = linkMap.substr(0, newline);
+    if (!line.empty() && line.back() == '\r') {
+      line.remove_suffix(1);
+    }
+    if (line == "# Sections:") {
+      break;
+    }
+    const std::size_t fieldEnd = line.find("] ");
+    if (fieldEnd != std::string_view::npos) {
+      const std::string_view pathText = line.substr(fieldEnd + 2);
+      if (pathText.find(marker) != std::string_view::npos) {
+        const std::filesystem::path candidate(pathText);
+        const std::string filename = candidate.filename().string();
+        if (filename == binaryName || filename == stubName) {
+          const std::filesystem::path normalized =
+              normalizedAbsolute(candidate);
+          if (selected && *selected != normalized) {
+            detail = "framework '" + std::string(name) +
+                     "' resolved to multiple link inputs";
+            return std::nullopt;
+          }
+          selected = normalized;
+        }
+      }
+    }
+    if (newline == std::string_view::npos) {
+      break;
+    }
+    linkMap.remove_prefix(newline + 1);
+  }
+  if (!selected) {
+    detail = "framework '" + std::string(name) +
+             "' did not appear in the native linker's map";
+  }
+  return selected;
+}
+#endif
+
+// Uses the selected native compiler and linker to resolve every `-framework`
+// name exactly as the real link will. The emitted Apple link map names the
+// chosen framework stub or binary; that file then joins the cache key by path
+// and content. A failed, missing, or ambiguous trace remains a conservative
+// cache bypass and never prevents the ordinary native build from running.
+std::optional<std::string>
+resolveNativeFrameworks(const ExecutableBuildRequest &request,
+                        const std::vector<std::string> &frameworkNames,
+                        NativeLinkIdentityPlan &plan) {
+  if (frameworkNames.empty()) {
+    return std::nullopt;
+  }
+#if !defined(__APPLE__)
+  (void)request;
+  (void)plan;
+  return "name-resolved frameworks require an Apple linker resolution trace";
+#else
+  std::vector<std::string> uniqueNames;
+  uniqueNames.reserve(frameworkNames.size());
+  for (const std::string &name : frameworkNames) {
+    if (std::find(uniqueNames.begin(), uniqueNames.end(), name) ==
+        uniqueNames.end()) {
+      uniqueNames.push_back(name);
+    }
+  }
+
+  const std::filesystem::path source =
+      temporaryArtifactPath(request.output(), ".framework-probe.cpp");
+  const std::filesystem::path output =
+      temporaryArtifactPath(request.output(), ".framework-probe");
+  const std::filesystem::path linkMap =
+      temporaryArtifactPath(request.output(), ".framework-probe.map");
+  TemporaryArtifact sourceCleanup(source, true);
+  TemporaryArtifact outputCleanup(output, true);
+  TemporaryArtifact linkMapCleanup(linkMap, true);
+  std::string writeError;
+  if (!publishTextAtomically(source, "int main() { return 0; }\n",
+                             writeError)) {
+    return "framework resolution probe could not create its source: " +
+           writeError;
+  }
+
+  std::vector<std::string> command{request.nativeCompiler(), "-x", "c++"};
+  appendNativeTargetPolicy(command, request.nativeInputs().targetPolicy);
+  command.push_back(source.string());
+  for (const std::string &name : uniqueNames) {
+    command.emplace_back("-framework");
+    command.push_back(name);
+  }
+  command.emplace_back("-Xlinker");
+  command.emplace_back("-map");
+  command.emplace_back("-Xlinker");
+  command.push_back(linkMap.string());
+  command.emplace_back("-o");
+  command.push_back(output.string());
+  const ProcessResult probe =
+      invokeProcess(command, {.outputMode = ProcessOutputMode::Capture,
+                              .captureSuccessfulOutput = false,
+                              .description = "native framework resolution"});
+  if (!probe.succeeded()) {
+    return "framework resolution probe failed with exit code " +
+           std::to_string(probe.exitCode);
+  }
+
+  std::string readError;
+  const std::optional<std::string> contents = readTextFile(linkMap, readError);
+  if (!contents) {
+    return "framework resolution probe produced no readable linker map: " +
+           readError;
+  }
+  for (const std::string &name : uniqueNames) {
+    std::string detail;
+    const std::optional<std::filesystem::path> selected =
+        frameworkSelectionFromLinkMap(*contents, name, detail);
+    if (!selected) {
+      return detail;
+    }
+    std::error_code statusError;
+    if (!std::filesystem::is_regular_file(*selected, statusError) ||
+        statusError) {
+      return "framework '" + name + "' resolved to unreadable link input '" +
+             selected->string() + "'";
+    }
+    plan.frameworks.push_back({.name = name, .file = *selected});
+  }
+  return std::nullopt;
+#endif
+}
+
 // Returns the reason a native configuration must bypass the cache, or
 // nullopt when every native input can join the identity exactly, filling
 // `plan` with the concrete files that named libraries resolved to. Declared
@@ -1455,9 +1739,14 @@ nativeLibrarySearchDirectories(const NativeInputs &inputs) {
 // identities. Narrowing a bypass here must never widen what the key trusts:
 // an unidentifiable input bypasses.
 std::optional<std::string>
-nativeCacheBypassDetail(const NativeInputs &inputs,
+nativeCacheBypassDetail(const ExecutableBuildRequest &request,
                         NativeLinkIdentityPlan &plan) {
   plan = {};
+  if (request.compilation().debugInfo()) {
+    return "source-level debug artifacts retain checkout paths and native "
+           "symbol sidecars; caching these is not yet supported";
+  }
+  const NativeInputs &inputs = request.nativeInputs();
   if (!inputs.compilerArguments.empty() || !inputs.cCompilerArguments.empty() ||
       !inputs.linkerArguments.empty() || !inputs.trailingArguments.empty()) {
     return "opaque native argument vectors can introduce undeclared "
@@ -1474,7 +1763,7 @@ nativeCacheBypassDetail(const NativeInputs &inputs,
       });
   std::vector<std::filesystem::path> linkFiles;
   std::vector<std::string> namedLibraries;
-  bool namedFramework = false;
+  std::vector<std::string> namedFrameworks;
   const auto collectOperands =
       [&](const std::vector<NativeLinkOperand> &operands) {
         for (const NativeLinkOperand &operand : operands) {
@@ -1486,7 +1775,7 @@ nativeCacheBypassDetail(const NativeInputs &inputs,
             namedLibraries.push_back(operand.value);
             break;
           case NativeLinkOperandKind::Framework:
-            namedFramework = true;
+            namedFrameworks.push_back(operand.value);
             break;
           }
         }
@@ -1494,19 +1783,12 @@ nativeCacheBypassDetail(const NativeInputs &inputs,
   if (inputs.orderedLinkOperands.empty() && !groupLinkContribution) {
     linkFiles = inputs.libraryFiles;
     namedLibraries = inputs.libraries;
-    namedFramework = !inputs.frameworks.empty();
+    namedFrameworks = inputs.frameworks;
   } else {
     collectOperands(inputs.orderedLinkOperands);
     for (const NativeDependencyGroup &group : inputs.dependencyGroups) {
       collectOperands(group.linkOperands);
     }
-  }
-
-  if (namedFramework) {
-    // A framework resolves through undeclared `-F` and system framework
-    // directories to a bundle whose binary, headers, and re-exported
-    // dependencies are not determined by any declared path.
-    return "name-resolved frameworks require framework search resolution";
   }
 
   const std::vector<std::filesystem::path> searchDirectories =
@@ -1552,6 +1834,10 @@ nativeCacheBypassDetail(const NativeInputs &inputs,
              "' cannot be read for cache identity";
     }
   }
+  if (const std::optional<std::string> frameworkBypass =
+          resolveNativeFrameworks(request, namedFrameworks, plan)) {
+    return frameworkBypass;
+  }
   return std::nullopt;
 }
 
@@ -1559,7 +1845,7 @@ bool hasDependencyInjectingNativeEnvironment() {
   // These variables name mutable search roots or toolchain resources. Hashing
   // only the variable spelling cannot identify headers, linker scripts,
   // archives, plugins, or sub-tools reached through the named location.
-  constexpr std::array<std::string_view, 13> variables{
+  constexpr std::array<std::string_view, 15> variables{
       "CPATH",
       "C_INCLUDE_PATH",
       "CPLUS_INCLUDE_PATH",
@@ -1571,6 +1857,8 @@ bool hasDependencyInjectingNativeEnvironment() {
       "DEVELOPER_DIR",
       "LD_LIBRARY_PATH",
       "DYLD_LIBRARY_PATH",
+      "DYLD_FRAMEWORK_PATH",
+      "DYLD_FALLBACK_FRAMEWORK_PATH",
       "INCLUDE",
       "LIB",
   };
@@ -2088,7 +2376,7 @@ ExecutableBuildRequest::ExecutableBuildRequest(
     std::optional<ManagedOutputPolicy> managedOutput,
     std::optional<std::string> cCompiler, std::optional<BuildCachePolicy> cache,
     std::optional<BuildReportRequest> buildReport)
-    : compilationRequest(std::move(compilation)),
+    : compilationRequest(compilation.forExecutable()),
       toolchainLayout(std::move(toolchain)),
       generatedSourcePath(std::move(generatedSource)),
       outputPath(std::move(output)),
@@ -2156,9 +2444,27 @@ ExecutableBuildRequest::buildReport() const {
   return requestedBuildReport;
 }
 
-ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
+ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
+                                      ProgressObserver *progress) {
   ExecutableBuildResult result;
   result.generatedSource = request.generatedSource();
+  const auto hasObjectiveCpp = [](const auto &sources) {
+    return std::any_of(sources.begin(), sources.end(), [](const auto &source) {
+      return source.extension() == ".mm";
+    });
+  };
+  if (request.compilation().target().os != "macos" &&
+      (hasObjectiveCpp(request.nativeInputs().cppSources) ||
+       std::any_of(request.nativeInputs().dependencyGroups.begin(),
+                   request.nativeInputs().dependencyGroups.end(),
+                   [&](const auto &group) {
+                     return hasObjectiveCpp(group.cppSources);
+                   }))) {
+    result.status = ExecutableBuildStatus::ToolchainConfigurationFailure;
+    result.driverDiagnostic =
+        "gti: Objective-C++ '.mm' sources require a macOS target";
+    return result;
+  }
   if (request.buildReport()) {
     const std::filesystem::path report =
         normalizedAbsolute(request.buildReport()->output);
@@ -2171,7 +2477,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
       result.status = ExecutableBuildStatus::ArtifactPathConflict;
       result.driverDiagnostic =
           "gti: --build-report must not overwrite the executable, generated "
-          "C++, or compiler executable";
+          "backend representation, or compiler executable";
       return result;
     }
   }
@@ -2246,10 +2552,10 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   }
 
   CompilationInputs compilationInputs =
-      loadCompilationInputs(request.compilation());
+      loadCompilationInputs(request.compilation(), progress);
   if (!compilationInputs.succeeded()) {
-    result.compilation =
-        compileToCpp(request.compilation(), std::move(compilationInputs));
+    result.compilation = compileToCpp(request.compilation(),
+                                      std::move(compilationInputs), progress);
     result.status = ExecutableBuildStatus::CompilationFailure;
     return result;
   }
@@ -2262,7 +2568,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   }
   if (const std::optional<std::string> diagnostic =
           loadedSourceCollisionDiagnostic(request.generatedSource(),
-                                          "generated C++ output",
+                                          "backend representation output",
                                           compilationInputs.sources)) {
     result.status = ExecutableBuildStatus::ArtifactPathConflict;
     result.driverDiagnostic = diagnostic;
@@ -2288,6 +2594,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
       return result;
     }
     buildProvenance = BuildProvenance{
+        .debugInfo = request.compilation().debugInfo(),
+        .rawPointerAudit = request.compilation().rawPointerAudit(),
         .compilerBuild = currentCompilerBuildIdentity(),
         .project = request.buildReport()->project,
         .source = std::move(*source),
@@ -2325,13 +2633,14 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   bool corruptCacheEntry = false;
   NativeLinkIdentityPlan linkIdentityPlan;
   if (request.cache()) {
+    const ProgressScope cacheProgress(progress, ProgressPhase::Cache,
+                                      "checking build cache");
     if (request.buildReport()) {
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail =
           "build-report capture requires a real native invocation";
     } else if (const std::optional<std::string> bypassDetail =
-                   nativeCacheBypassDetail(request.nativeInputs(),
-                                           linkIdentityPlan)) {
+                   nativeCacheBypassDetail(request, linkIdentityPlan)) {
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail = bypassDetail;
     } else if (hasDependencyInjectingNativeEnvironment()) {
@@ -2376,6 +2685,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
 
         const CacheLookupResult lookup = lookupCacheEntry(*cacheEntry, *key);
         if (lookup.status == CacheLookupStatus::Hit) {
+          cacheProgress.update("hit; restoring executable");
           result.cache.status = BuildCacheStatus::Hit;
           result.cache.detail = lookup.detail;
           result.resourceError = validateToolchainLayout(
@@ -2403,7 +2713,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
                                        lookup.generated, writeError)) {
               result.artifactWriteStatus = ArtifactWriteStatus::WriteFailure;
               result.driverDiagnostic = "gti: failed to restore cached "
-                                        "generated C++: " +
+                                        "backend representation: " +
                                         writeError;
               result.status = ExecutableBuildStatus::GeneratedArtifactFailure;
               return result;
@@ -2414,9 +2724,9 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
             std::filesystem::remove(request.generatedSource(), removeError);
             if (removeError) {
               result.artifactWriteStatus = ArtifactWriteStatus::WriteFailure;
-              result.driverDiagnostic =
-                  "gti: failed to remove generated C++ after cache hit: " +
-                  removeError.message();
+              result.driverDiagnostic = "gti: failed to remove backend "
+                                        "representation after cache hit: " +
+                                        removeError.message();
               result.status = ExecutableBuildStatus::GeneratedArtifactFailure;
               return result;
             }
@@ -2448,9 +2758,13 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
     }
   }
 
-  result.compilation =
-      compileToCpp(request.compilation(), std::move(compilationInputs));
+  result.compilation = compileToCpp(request.compilation(),
+                                    std::move(compilationInputs), progress);
   if (!result.compilation.succeeded()) {
+    if (result.compilation.backendFailureDetails) {
+      result.backendDiagnosticLog =
+          writeDiagnosticLog(*result.compilation.backendFailureDetails);
+    }
     result.status = ExecutableBuildStatus::CompilationFailure;
     return result;
   }
@@ -2464,9 +2778,9 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
                              result.compilation.artifact->contents,
                              generatedWriteError)) {
     result.artifactWriteStatus = ArtifactWriteStatus::WriteFailure;
-    result.driverDiagnostic = "gti: failed to publish generated C++ '" +
-                              request.generatedSource().string() +
-                              "': " + generatedWriteError;
+    result.driverDiagnostic =
+        "gti: failed to publish backend representation '" +
+        request.generatedSource().string() + "': " + generatedWriteError;
     result.status = ExecutableBuildStatus::GeneratedArtifactFailure;
     return result;
   }
@@ -2487,6 +2801,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
           const std::filesystem::path &object, CStandard cStandard,
           const std::vector<std::filesystem::path> &includeDirectories,
           const std::vector<std::string> &arguments) {
+        const ProgressScope nativeProgress(
+            progress, ProgressPhase::NativeSource, source.string());
         const std::filesystem::path stagedObject = stagedArtifactPath(object);
         TemporaryArtifact stagedNativeObject(stagedObject, true);
         const NativeCCompileRequest cRequest(
@@ -2530,6 +2846,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
           const std::filesystem::path &object,
           const std::vector<std::filesystem::path> &includeDirectories,
           const std::vector<std::string> &arguments) {
+        const ProgressScope nativeProgress(
+            progress, ProgressPhase::NativeSource, source.string());
         const std::filesystem::path stagedObject = stagedArtifactPath(object);
         TemporaryArtifact stagedNativeObject(stagedObject, true);
         const NativeCppCompileRequest cppRequest(
@@ -2654,6 +2972,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   const std::filesystem::path stagedOutput =
       stagedOutputDirectory / request.output().filename();
   TemporaryArtifact stagedArtifact(stagedOutput, true);
+  const StagedDebugBundleCleanup stagedSymbolsCleanup{
+      std::filesystem::path(stagedOutput.string() + ".dSYM")};
   const std::filesystem::path nativeDependencyFile =
       request.buildReport()
           ? temporaryArtifactPath(request.output(), ".build-report.d")
@@ -2668,11 +2988,15 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
                             request.nativeInputs(), nativeObjects),
       request.buildReport()
           ? std::optional<std::filesystem::path>(nativeDependencyFile)
-          : std::nullopt);
+          : std::nullopt,
+      request.compilation().debugInfo());
   result.nativeCommand = nativeToolchain.command(nativeRequest);
+  ProgressScope nativeProgress(progress, ProgressPhase::NativeLink,
+                               request.nativeCompiler());
   result.nativeProcess = nativeToolchain.invoke(
       nativeRequest,
       {.captureSuccessfulOutput = request.captureSuccessfulNativeOutput()});
+  nativeProgress.finish();
   if (result.nativeProcess->driverDiagnostic) {
     result.driverDiagnostic = result.nativeProcess->driverDiagnostic;
   }
@@ -2680,6 +3004,18 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
     generatedArtifact.keep();
     result.generatedSourceRetained = true;
     result.status = ExecutableBuildStatus::NativeCompilerFailure;
+    std::ostringstream evidence;
+    evidence << "GTI backend build failure\nBackend representation: C++\n"
+             << "Stage: native compilation and linking\nRepresentation: "
+             << request.generatedSource().string()
+             << "\nCommand: " << renderCommand(result.nativeCommand)
+             << "\nExit code: " << result.nativeProcess->exitCode << '\n';
+    if (result.nativeProcess->driverDiagnostic) {
+      evidence << "Driver diagnostic: "
+               << *result.nativeProcess->driverDiagnostic << '\n';
+    }
+    evidence << "Tool output:\n" << result.nativeProcess->output;
+    result.backendDiagnosticLog = writeDiagnosticLog(evidence.str());
     return result;
   }
 
@@ -2737,6 +3073,68 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
     result.provenance = std::move(buildProvenance);
   }
 
+  if (request.compilation().debugInfo() &&
+      request.compilation().target().os == "macos") {
+    const ProgressScope symbolProgress(progress, ProgressPhase::Symbols);
+    const std::filesystem::path stagedSymbols(stagedOutput.string() + ".dSYM");
+    const std::filesystem::path symbols(request.output().string() + ".dSYM");
+    // Replacing an owned bundle must not remove a loaded source that was
+    // deliberately placed inside it. A symlink bundle is rejected below.
+    std::error_code collisionError;
+    const auto canonicalSymbols =
+        std::filesystem::weakly_canonical(symbols, collisionError);
+    if (collisionError) {
+      result.status = ExecutableBuildStatus::ArtifactPathConflict;
+      result.driverDiagnostic =
+          "gti: cannot inspect debug bundle path: " + collisionError.message();
+      return result;
+    }
+    for (const std::string &name : result.compilation.sources.names()) {
+      const auto source =
+          std::filesystem::weakly_canonical(name, collisionError);
+      if (collisionError)
+        continue;
+      if (std::mismatch(canonicalSymbols.begin(), canonicalSymbols.end(),
+                        source.begin(), source.end())
+              .first == canonicalSymbols.end()) {
+        result.status = ExecutableBuildStatus::ArtifactPathConflict;
+        result.driverDiagnostic =
+            "gti: refusing to replace debug bundle containing loaded source '" +
+            name + "'";
+        return result;
+      }
+    }
+    std::error_code symbolError;
+    if (!std::filesystem::is_directory(stagedSymbols, symbolError)) {
+      // Clang normally creates this during its compile/link invocation. A
+      // native toolchain that does not must provide the standard DWARF tool.
+      const ProcessResult symbolProcess = invokeProcess(
+          {"dsymutil", stagedOutput.string(), "-o", stagedSymbols.string()},
+          {.captureSuccessfulOutput = request.captureSuccessfulNativeOutput()});
+      if (!symbolProcess.succeeded()) {
+        generatedArtifact.keep();
+        result.generatedSourceRetained = true;
+        result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+        result.driverDiagnostic =
+            "gti: failed to collect native debug symbols: " +
+            symbolProcess.output;
+        return result;
+      }
+    }
+    if (const auto diagnostic = publishDebugBundle(stagedSymbols, symbols)) {
+      generatedArtifact.keep();
+      result.generatedSourceRetained = true;
+      result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+      result.driverDiagnostic = "gti: failed to publish debug bundle '" +
+                                symbols.string() + "': " + *diagnostic;
+      return result;
+    }
+  }
+
+  const ProgressScope publicationProgress(
+      progress, ProgressPhase::Publishing,
+      cacheEntry && !result.cache.key.empty() ? "executable and build cache"
+                                              : "executable");
   result.artifactPublishResult =
       publishArtifact(stagedOutput, request.output());
   if (!result.artifactPublishResult->succeeded()) {

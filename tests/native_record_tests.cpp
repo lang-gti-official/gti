@@ -452,17 +452,17 @@ void testNativeRecordDiagnostics() {
       "int main() { return 0; }",
       "cannot declare cleanup");
   expectNativeRecordFailure(
-      "bool-field.gti",
-      "[[c_abi]] struct Bad { bool value; }; int main() { return 0; }",
+      "code-unit-field.gti",
+      "[[c_abi]] struct Bad { char value; }; int main() { return 0; }",
       "outside the bounded");
   expectNativeArrayFieldFailure("zero-array-field.gti",
                                 "[[c_abi]] struct Bad { int32_t values[0]; }; "
                                 "int main() { return 0; }",
                                 "GTI-S2069", "0", "positive concrete extent");
   expectNativeArrayFieldFailure("invalid-array-element.gti",
-                                "[[c_abi]] struct Bad { bool values[4]; }; "
+                                "[[c_abi]] struct Bad { char values[4]; }; "
                                 "int main() { return 0; }",
-                                "GTI-S2070", "bool", "element type outside");
+                                "GTI-S2070", "char", "element type outside");
   expectNativeRecordFailure(
       "ordinary-field.gti",
       "struct Ordinary { int32_t value; }; [[c_abi]] struct Bad { "
@@ -746,7 +746,7 @@ int main() {
   expectOpaqueHandleFailure(
       "opaque-by-value.gti",
       "[[c_opaque]] struct Bad; Bad value; int main() { return 0; }",
-      "may be used only behind one raw pointer");
+      "may be used only behind raw pointers");
   expectOpaqueHandleFailure(
       "opaque-record-conflict.gti",
       "[[c_abi, c_opaque]] struct Bad; int main() { return 0; }",

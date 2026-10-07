@@ -6,14 +6,57 @@
 > mut-callable selection plus consuming once-callable cardinality are
 > implemented for confined generic parameters. Ordered copy/move closure
 > environments, one explicit owned move-capture mode, exact same-type generic
-> return, and one exact generic field owner are implemented. General owned
-> wrappers, extraction, erasure, and external storage remain planned. Exact
-> namespace free-function items are implemented as contextual, stateless
-> values for existing confined generic-callable and consumed managed-thread
-> task contracts; they are not general stored function values or pointers.
+> return, and one exact generic field owner are implemented. Source-defined
+> `std::function` and `std::move_only_function` now support repeatable read-only
+> and mutable (`mut`) signatures, including retained fields and erased storage.
+> Signature metadata now distinguishes read-only, `mut`, and `&&` receivers.
+> Mutable-reference arguments retain per-element entry capabilities through
+> erased invocation. Consuming (`&&`) wrappers now use verified retained
+> unique-owner invocation with full-expression capture lifetime. The agreed
+> owning-wrapper API is implemented, passes the combined 294-test production
+> suite and clean installed-consumer checks, and is installed locally.
+> Combined repository publication is user-approved under L-CALL-02; Gitea owns
+> asynchronous release packaging. Exact
+> namespace free-function items are stateless values that can be retained,
+> captured, returned through generics and erased by the owning wrappers.
+> Existing confined and managed-task contracts also select contextual items.
+> These are nominal values, not native function pointers.
 
 Original design baseline: GTI 0.94.0. The status above and the operational
 sequence track later implementation.
+
+The user-requested `L-CALL-02` delivery now supplies the demonstrated client for
+general owning wrappers: retained authentication handlers and recursive command
+schemas. Its implementation sequence owns the remaining delivery gates. Unqualified
+`R(Args...)` signature metadata and final class type-list packs are implemented,
+including forwarding into another nominal pack and forming signatures.
+Owner-pack value/read-only-reference method parameters now include exact ordinary/operator()
+calls and interface dispatch, with grouped body bindings and concrete flattened
+signatures. Mutable reference elements now use exact per-element entry loans
+and can be forwarded repeatedly without consuming their referents. Ordinary
+function-generic inference now decomposes signature and
+nominal type-list tails, including metadata-only packs. Headerless
+signature-pattern primary classes now bind result/pack components while
+preserving a single public signature argument; exact matching is GTI-owned and
+lowering retains resolved binding projections. The public wrappers implement
+read-only, mutable, and consuming invocation, empty observation,
+reset/replacement, explicit movement, and deterministic capture cleanup.
+`function` requires copy-constructible targets and has an explicit deep
+`clone()`; both wrapper values are move-only, and `move_only_function`
+additionally accepts move-only targets without cloning. Their models and
+erasure are ordinary GTI interfaces and unique owners, not public-name compiler
+exceptions or native `std::function` policy.
+The retained-field invocation slice now has normal-path and capture-destructor
+failure evidence: explicit MIR capture cleanup recipes drain remaining caller
+cleanup and preserve secondary-failure records. The backend emits a materialized
+environment with status-returning cleanup for this family, instead of relying
+on opaque native capture teardown. Focused tests also cover retained setters,
+recursive schemas, owned results, allocation/replacement failure, and consuming
+capture lifetime through later sibling evaluation. Those checkpoints do not
+replace combined production evidence. The fresh full-suite pass, installed
+consumer checks, and local installation are recorded under L-CALL-02.
+The earlier erasure deferral
+does not exclude this authorized work.
 
 This document defines the callable identity, invocation, ownership, capture,
 movement, destruction, and escape model that later algorithm, thread-task, and
@@ -58,9 +101,11 @@ keywords.
    parameters may invoke or forward during one selected call; owned transport
    may move the exact concrete callable through a generic result or field once
    MIR temporary/drop authority can prove its lifetime.
-8. There is no general `std::function` equivalent, implicit type erasure,
-   common closure supertype, callable reference, or capture-by-reference. A
-   generic class may retain an exact concrete callable type without erasing it.
+8. The original confined-only baseline excluded a general `std::function`
+   equivalent. L-CALL-02 supersedes that exclusion with explicit source-defined
+   owning wrappers and interface erasure. It does not add implicit type erasure,
+   a common closure supertype, callable references, or capture-by-reference.
+   A generic class can also retain an exact concrete callable without erasure.
 9. Lambda identity is lexical and concrete-instance-specific. Two lambda
    expressions have different types even when their signatures and captures
    match. One lambda expression instantiated under different concrete generic
@@ -300,9 +345,15 @@ The environment is an ordinary aggregate for lifecycle purposes:
 
 M-LIFE-01 supplies the normal-exit temporary and active-drop prerequisite, and
 L-CALL-01 now models local capture initialization, closure movement, exact
-environment places, cleanup, and the bounded exact generic return/field owner.
-General owned escape remains a separate boundary. The C++ closure object's
-special-member behavior is not the proof.
+environment places, cleanup, and exact generic return/field ownership.
+The active L-CALL-02 implementation also admits ordinary direct by-value type
+parameters through explicit owned entry, so a multi-statement factory can move
+through local owners and branching returns. It preserves existing confined
+contracts. Final value packs now retain per-element owned contracts and exact
+copy/move/prepared cleanup, including scalar and move-only captures. Concrete
+pack-shape composition and source-defined erased allocation have focused
+regressions, including differing arities and allocation failure. The C++ closure
+object's special-member behavior is not the proof.
 
 ## Confinement, Ownership, And Escape
 
@@ -321,6 +372,12 @@ limited to shapes that preserve the exact concrete type:
 
 - a generic function may move a callable parameter into an exact generic
   result of that same concrete type;
+- an otherwise ordinary direct by-value generic parameter can own the concrete
+  callable throughout its body; explicit entry transfer, capture restrictions,
+  and normal value/loan/lifecycle rules apply without prescribing a return shape;
+- a final by-value generic pack preserves each concrete callable's ownership,
+  copying copyable elements and consuming move-only elements during explicit
+  whole-pack expansion;
 - a concrete generic class may store the callable in a field whose substituted
   type is that exact callable type;
 - another owned callable may own it as an explicit move capture; and
@@ -471,9 +528,10 @@ MIR verifies semantic decisions and predecessor agreement. It does not infer a
 capture's ownership mode or rescue an escaping borrow. M-LIFE-01 makes
 temporary and active-drop state authoritative; MIR v10 carries exact capture
 places, environment initialization/move/drop, owned-callable destinations, all
-declared owner fields, and constructor parameter-to-field evidence. General
-owned wrappers and external storage remain later L-CALL-01 or client-specific
-work.
+declared owner fields, and constructor parameter-to-field evidence. The public
+owning wrappers use those ordinary contracts. Other escaping-storage policies
+remain separate L-CALL-01 or client-specific work rather than exemptions from
+the same lifetime authority.
 
 ### Backend And Runtime
 
@@ -578,9 +636,9 @@ follow-ons.
   managed-thread task result forms without a lambda wrapper;
 - overloaded function-item selection succeeds only for one contextually exact
   target; ambiguity and mismatch are diagnosed without conversion ranking;
-- a bare item without context and attempts to store, capture, independently
-  return, or pass it through general owned transport are rejected; an existing
-  exact-return client may produce only an explicitly discarded temporary;
+- a bare function name without an exact callable context is rejected;
+  contextually selected function items can be stored, captured, returned
+  through exact generic transport, and retained by owning wrappers;
 - read-callable satisfies repeated read, exclusive, and one-call clients;
 - mut-callable fails read-only access but satisfies repeated exclusive use;
 - once-callable succeeds on one path and fails on any path permitting a second
@@ -614,7 +672,7 @@ follow-ons.
 - copied environments are independent snapshots;
 - move-captured resources clean up exactly once, including moved-from storage;
 - algorithms never retain a confined callable;
-- a task adapter transfers/drops once when that later row lands;
+- a managed-task adapter transfers/drops once;
 - a C harness validates callback registration/call/unregister and failure
   containment for completed S-CALL-01; and
 - hover/signature help describes exact signature, capture modes, capability,
@@ -641,23 +699,32 @@ follow-ons.
 
 ## Deliberate Deferrals
 
-This decision does not add or promise in the bounded-first slice:
+The original bounded-first decision and the implemented L-CALL-02 wrappers do
+not add or promise:
 
 - implicit/default/reference capture;
 - general inferred lambda or generic callable result types;
 - lambda reference/borrowed-state results without an explicit origin summary;
 - callable references or scoped borrowed closures;
-- function items outside exact confined/task contexts, general stored function
-  values, function pointers, or closure-to-pointer casts;
+- function pointers or closure-to-pointer casts (L-CALL-02 now supersedes the
+  original confined-only function-item storage exclusion);
 - global/static closure storage;
 - recursive/self-referential closures;
-- type-erased callable containers;
 - coroutine/generator frames;
 - detached tasks or cross-thread borrows; or
 - native callbacks outside the separately accepted C ABI/runtime boundary.
 
-Each requires a demonstrated client and a new or already named row. None may be
-introduced as an incidental extension of L-CALL-01.
+The original owning type-erasure exclusion is superseded by L-CALL-02; it is
+not an unmet wrapper prerequisite. Custom copy/move constructor bodies,
+implicit signature conversions, general typed brace expressions, allocator
+customization, and small-buffer optimization are likewise not requirements of
+the agreed callback API. Existing language restrictions still apply; named
+brace declarations and parenthesized construction support wrapper use.
+
+Further capabilities require a demonstrated client and a new or already named
+row. None may be introduced as an incidental extension of L-CALL-01. Conversely,
+a concrete regression in valid use of the implemented API is a correctness
+issue, not automatically one of these deferrals.
 
 ## Completion Evidence
 

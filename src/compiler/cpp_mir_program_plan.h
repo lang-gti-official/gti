@@ -185,6 +185,7 @@ struct CppMirCallableThunk {
 enum class CppMirLifecycleCleanupForm {
   OrdinaryClass,
   ConcreteSpecialization,
+  RetainedPrimary,
   Count,
 };
 

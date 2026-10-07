@@ -1,0 +1,36 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+struct Metadata {
+  mut int visits = 0;
+  ~Metadata() { std::println(this.visits); }
+};
+
+// This is an unrelated bookkeeping owner, not an allocator intrinsic. The
+// checked shared receiver protects the shell; metadata lives in separate,
+// non-const owned storage. No checked reference to that storage escapes.
+class Counter {
+  mut std::unique_ptr<Metadata> data;
+  mut Metadata* address = nullptr;
+public:
+  Counter(int initial) : data(std::make_unique<Metadata>()) {
+    this.address = &*this.data;
+    unsafe { this.address->visits = initial; }
+  }
+  void record() {
+    // Private invariant: address is the live allocation owned by data. No
+    // callbacks, concurrent access or checked metadata aliases overlap this
+    // mutation. A shared shell does not grant mutation of its ordinary fields.
+    unsafe { this.address->visits += 1; }
+  }
+  int count() { unsafe { return this.address->visits; } }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Counter first{argc > 1 ? 2147483646 : 0};
+  first.record();
+  auto moved = std::move(first);
+  moved.record();
+  return moved.count() - 2;
+}

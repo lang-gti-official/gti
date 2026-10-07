@@ -1,0 +1,52 @@
+enum class item_error { unavailable };
+mut int destroyed = 0;
+mut int consumed = 0;
+
+class Item {
+public:
+  Item() {}
+  Item(Item& other) = delete;
+  Item(Item&& other) = default;
+  ~Item() { destroyed++; }
+};
+
+expected<Item, item_error> produce(int index) {
+  if (index == 2) { return unexpected(item_error::unavailable); }
+  return Item();
+}
+void consume(Item value) { consumed++; }
+
+class Sink {
+public:
+  void accept(Item value) mut { consumed++; }
+};
+
+expected<void, item_error> free_arguments() {
+  for (mut int index = 0; index < 4; index++) {
+    consume(?produce(index));
+  }
+  return;
+}
+expected<void, item_error> member_arguments() {
+  mut Sink sink = Sink();
+  for (mut int index = 0; index < 4; index++) {
+    sink.accept(?produce(index));
+  }
+  return;
+}
+
+int main() {
+  auto first = free_arguments();
+  if (first.has_value() || first.error() != item_error::unavailable) { return 1; }
+  if (consumed != 2 || destroyed != 2) { return 2; }
+  auto second = member_arguments();
+  if (second.has_value() || second.error() != item_error::unavailable) { return 3; }
+  if (consumed != 4 || destroyed != 4) { return 4; }
+  mut Item named = Item();
+  consume(std::move(named));
+  if (consumed != 5 || destroyed != 5) { return 5; }
+  named = Item();
+  consume(std::move(named));
+  if (consumed != 6 || destroyed != 6) { return 6; }
+  return 0;
+}

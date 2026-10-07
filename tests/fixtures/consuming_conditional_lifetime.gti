@@ -1,0 +1,27 @@
+#include <std/string>
+#include <std/vector>
+
+class Receiver {
+  int identity;
+  mut std::string text;
+public:
+  Receiver(int identity) : identity(identity), text(std::string("owned")) {}
+  ~Receiver() { std::println(this.identity); }
+  int invoke(int divisor) && {
+    std::println(2);
+    return 12 / divisor;
+  }
+};
+
+Receiver make_receiver() { return Receiver(1); }
+int later(int divisor) { std::println(3); return 6 / divisor; }
+int combine(int left, int right) { std::println(4); return left + right; }
+
+int main(int argc, std::vector<std::string> argv) {
+  Receiver caller{9};
+  int body_divisor = argc == 2 ? 0 : 1;
+  int later_divisor = argc == 3 ? 0 : 1;
+  int value = combine((argc == 1 ? make_receiver() : Receiver(1)).invoke(body_divisor), later(later_divisor));
+  std::println(5);
+  return value - 18;
+}

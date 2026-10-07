@@ -1,0 +1,39 @@
+#include <std/string>
+#include <std/vector>
+#include <std/functional>
+
+class Packet {
+  int value;
+public:
+  Packet(int value) : value(value) { std::println(value); }
+  Packet(Packet& other) = default;
+  Packet(Packet&& other) = default;
+  int get() { return value; }
+};
+
+Packet make_packet(int divisor) { return Packet(12 / divisor); }
+
+class App {
+public:
+  ~App() { std::println(9); }
+  Packet root(int divisor) { return make_packet(divisor); }
+  void accept(Packet packet, int after = 7) mut {
+    std::println(100 + packet.get());
+    std::println(after);
+  }
+};
+
+class Consumer {
+public:
+  Consumer(Packet packet) { std::println(200 + packet.get()); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut App app{};
+  app.accept(app.root(argc == 2 ? 0 : 2), 24 / (argc == 3 ? 0 : 3));
+  std::function<Packet(int)> producer{make_packet};
+  app.accept(producer(argc == 4 ? 0 : 4));
+  Consumer consumer{make_packet(argc == 5 ? 0 : 6)};
+  std::println(8);
+  return 0;
+}

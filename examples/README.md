@@ -1,8 +1,49 @@
 # GTI examples
 
+[`123-native-c-scalars.gti`](123-native-c-scalars.gti) demonstrates target-correct
+C integer and character families, real libc calls, unrelated generic values,
+and checked conversion/indexing. C types preserve native declaration identity;
+they do not import unchecked C arithmetic.
+
+[`124-nested-raw-pointers.gti`](124-nested-raw-pointers.gti) demonstrates stored
+and forwarded pointer-slot addresses, triple pointers, independent slot
+qualification, real libc writeback, and native pointer-array elements.
+
 These examples are a runnable introduction to GTI. Read them in numerical
 order: each file introduces one small group of language features and has its
 own `main` function.
+
+## Find a recipe
+
+You do not need to read the entire sequence to find an API pattern:
+
+| I want to… | Start here |
+| --- | --- |
+| Reuse one parser with memory, files and buffered input | [107: composable I/O](107-composable-io.gti) |
+| Modify a checked contiguous subrange without copying | [108: mutable slices](108-mutable-slices.gti) |
+| Format my own application types | [106: custom formatters](106-custom-formatters.gti) |
+| Parse, inspect, build, and serialize JSON | [91: JSON documents](91-json-documents.gti) |
+| Map JSON to my own classes and report field errors | [92: JSON codecs](92-json-codecs.gti) |
+| Build URLs, GET JSON, or POST a JSON body | [93: HTTP/JSON client](93-http-json-client.gti), [local demo below](#http-and-json-without-an-external-service) |
+| Encode counted bytes as Base64 or hex | [94: binary-to-text encoding](94-binary-text-encoding.gti) |
+| Duplicate a vector of strings or constrain a generic member call | [95: explicit cloning](95-explicit-cloning.gti) |
+| Translate library errors into application errors | [96: error mapping](96-error-mapping.gti) |
+| Build and validate data at compile time | [97: constexpr tables](97-constexpr-tables.gti) |
+| Share an object's lifetime without deep-copying it | [98: shared ownership](98-shared-ownership.gti) |
+| Propagate a failed lookup without copying its borrowed result | [99: borrowed expected](99-borrowed-expected.gti) |
+| Retain a lambda as a callback | [86: owning callbacks](86-owning-callbacks.gti) |
+| Model an absent value and initialize it later | [84: optional values](84-optional-values.gti) |
+| Read program arguments | [43: hosted arguments](43-program-arguments.gti) |
+| Traverse, search, or modify containers | [90: algorithms](90-generic-algorithms.gti), [87: dictionaries](87-associative-containers.gti) |
+| Model an owner and its checked views | [41: owner dependencies](41-owner-dependencies.gti), [42: reborrows](42-exclusive-reborrows.gti) |
+
+Each recipe is a complete program, includes the modules it names, checks
+recoverable errors, and returns nonzero if its demonstrated invariant fails.
+The numbered examples run without arguments or external services. The HTTP
+recipe opts into networking only when you supply a URL. Its local test server
+is a teaching helper, not a production server.
+
+## Numerical index
 
 | Example | Focus |
 | --- | --- |
@@ -11,7 +52,7 @@ own `main` function.
 | `03-functions.gti` | typed parameters, return values, and calls |
 | `04-integers.gti` | fixed-width integers, arithmetic, and bitwise operators |
 | `05-objects.gti` | structs, classes, constructors, access, and mutable methods |
-| `06-namespaces.gti` | nested namespaces, qualification, and aliases |
+| `06-namespaces.gti` | nested namespace shorthand, qualification, and aliases |
 | `07-generics.gti` | type generics, exact inference, and class value parameters |
 | `08-expected.gti` | explicit recoverable errors and `?` propagation with `expected<T, E>` |
 | `09-target-selection.gti` | compile-time host selection and active `#error` guards |
@@ -38,13 +79,13 @@ own `main` function.
 | `30-callable-forwarding.gti` | proven confined callable forwarding through generic helper layers |
 | `31-exact-constraints.gti` | exact lifecycle and comparison capabilities for generic APIs |
 | `32-structured-bindings.gti` | immutable exact-arity decomposition of arrays and public aggregates |
-| `33-source-concepts.gti` | namespace-scoped unary concepts composed from exact capabilities |
+| `33-source-concepts.gti` | unary capabilities and exact structural class contracts, including destructor bodies |
 | `34-do-while.gti` | body-first loops with explicit `continue` and termination |
 | `35-conditional-expressions.gti` | lazy conditional values and explicit move selection |
 | `36-c-abi-sockets.gti` | bounded `extern "C"` interoperability with POSIX `socket` and `close` |
 | `37-tcp-socket-owner.gti` | a move-only `std::tcp::socket` owner over the POSIX C ABI |
 | `38-vector-emplace.gti` | move-aware dynamic storage, checked access, read-only iteration, and in-place construction |
-| `39-raw-pointers.gti` | one-level raw pointers, lexical `unsafe`, and pointer arithmetic |
+| `39-raw-pointers.gti` | one-level raw pointers, unsafe declaration/call contracts, lexical `unsafe`, and pointer arithmetic |
 | `40-loan-flow-edges.gti` | bounded switch-exit and immediate-`break` retained-loan endings |
 | `41-owner-dependencies.gti` | single-origin read-only and mutable owner dependencies through factories, generics, moves, and returns |
 | `42-exclusive-reborrows.gti` | nested mutable and read-only reborrows with parent reactivation after its final active child ends |
@@ -67,7 +108,7 @@ own `main` function.
 | `59-default-parameters.gti` | caller-side defaults for functions, constructors, methods, and concrete generic calls |
 | `60-configuration-and-comments.gti` | configuration flags, ordinary comments, and `///` hover documentation |
 | `61-global-borrow-returns.gti` | checked mutable borrows returned from exact global and static storage |
-| `62-native-c-boundaries.gti` | fixed-array C records, NUL-terminated strings, pointer-count results, and exact callbacks |
+| `62-native-c-boundaries.gti` | fixed-array C records, link-name aliases, NUL-terminated strings, pointer-count results, and exact callbacks |
 | `63-random-engine.gti` | deterministic seeded pseudo-random sequences from `<std/random>` |
 | `64-restricted-arithmetic-operators.gti` | independently declared read-only arithmetic and mutable compound operators |
 | `65-mutable-ranges.gti` | exclusive in-place iteration over fixed arrays and `std::vector` |
@@ -89,6 +130,45 @@ own `main` function.
 | `83-complete-ranges.gti` | structural whole-range algorithms over application ranges and fixed arrays |
 | `84-optional-values.gti` | allocation-free optional storage, checked access, reset, emplacement, and move-only payloads |
 | `85-payload-enum-fields.gti` | ordinary class and struct fields that directly own active-cleanup payload enums |
+| `86-owning-callbacks.gti` | retained lambda callbacks, `std::function`, cloning/replacement, mutable state, move-only captures, and one-shot invocation |
+| `87-associative-containers.gti` | ordered and hashed dictionaries, nested borrowed insertion results, moves, and owner reactivation |
+| `88-consuming-builders.gti` | consuming builder methods and explicit receiver movement |
+| `89-library-workflow.gti` | numeric option parsing, string editing, filesystem queries, and owning work queues/history/sets |
+| `90-generic-algorithms.gti` | search, mutation, replacement, and filtered copying |
+| `91-json-documents.gti` | parsing, typed access, missing versus null, builders, array traversal, and deep cloning |
+| `92-json-codecs.gti` | exact codec specialization, owned application values, arrays, and JSON Pointer errors |
+| `93-http-json-client.gti` | encoded URLs, bounded GET/POST requests, transport/status/schema errors, and JSON responses |
+| `94-binary-text-encoding.gti` | Base64/hex round trips, embedded zero bytes, and strict decoding |
+| `95-explicit-cloning.gti` | vector/string cloning, ownership transfer, and exact member requirements |
+| `96-error-mapping.gti` | consuming `transform_error`, named mapper functions, and `?` propagation |
+| `97-constexpr-tables.gti` | constexpr constructors, methods, arrays, loops, and static assertions |
+| `98-shared-ownership.gti` | shared handles, explicit cloning versus moving, and final-owner cleanup |
+| `99-borrowed-expected.gti` | read-only fallible lookup, borrowed `?` propagation, and consuming `.expect` with owner lifetime checks |
+| `100-owned-error-pipelines.gti` | exact-error propagation and explicit conversion into an owning application error without losing JSON path context |
+| `101-owned-algorithm-results.gti` | move-only string transformation and bounded comparator sorting for asset-build work |
+| `102-constexpr-frame-budget.gti` | compile-time duration budgets, passive asset metadata, and pre-epoch timestamp decomposition |
+| `103-resource-exchange.gti` | restoring exchange and swap of unrelated move-only resources without copying |
+| `104-move-only-ordering.gti` | sorting and reversing move-only jobs, checked indexed swap, and swapping owning arrays |
+| `105-member-signature-contracts.gti` | exact source-defined mutable receiver and parameter contracts without executing their queries |
+| `106-custom-formatters.gti` | application-owned formatter specializations, presentation delegation and recoverable dynamic errors |
+| `107-composable-io.gti` | generic line reading, memory input, buffered output and explicit flushing |
+| `108-mutable-slices.gti` | exclusive subviews, shared projections and parent reactivation |
+| `109-borrowed-aggregates.gti` | mixed shared/exclusive service dependencies, generic movement and owner reactivation |
+| `110-integral-enums.gti` | exact enum extraction, numeric formatting and application customization |
+| `111-final-address-storage.gti` | in-slot construction, checked borrowing, allocation-owner movement, slot reuse and explicit release |
+| `112-raw-owner-witness.gti` | safe address formation and explicit unsafe conversion into owner-tied checked references |
+| `113-erased-addresses.gti` | explicit const-preserving typed/erased address conversion and separate owner-witness borrowing |
+| `114-owning-storage-view.gti` | application-defined allocation owner and raw-backed view, final-address construction, checked lifetime, movement and explicit release |
+| `115-discardable-results.gti` | optional API results, explicit call-site discard, checked reference last use and storage insertion |
+| `116-optional-raw-audit.gti` | programmer-owned unsafe validity versus mandatory checked loans, with optional conservative raw-pointer auditing |
+| `117-unsafe-member-contracts.gti` | unsafe instance/static methods and exact structural requirements preserving caller obligations through generic forwarding |
+| `118-cleanup-bound-guards.gti` | resource dependencies retained through guard destruction, simultaneous shared guards, by-value parameter/local movement and explicit nested child construction |
+| `119-runtime-object-layout.gti` | runtime size/alignment descriptors for owning, immovable and nested ordinary types without constructing an object |
+| `120-immovable-storage.gti` | fixed-address owning objects, moving their storage handle, checked access and destruction without element movement |
+| `121-programmable-allocators.gti` | an application-defined arena choosing aligned placement in one backing region, one unsafe resource binding, and safe allocator-aware `resource_vector` and fixed-slot containers sharing it |
+| `122-native-function-invocation.gti` | exact native function-pointer invocation from locals, fields and returned factories under lexical unsafe, with nullable transport |
+
+## Build and run
 
 Build and run an example from the repository root:
 
@@ -96,6 +176,50 @@ Build and run an example from the repository root:
 ./build/gti examples/01-basics.gti -o /tmp/gti-basics
 /tmp/gti-basics
 ```
+
+Use your installed `gti` instead of `./build/gti` if preferred. Development
+test runs must use a host-optimized compiler (Release/RelWithDebInfo/MinSizeRel);
+this is independent of the generated program's `-O0`/`-O3` setting.
+
+## HTTP and JSON without an external service
+
+Build the client, then start the bundled Python 3 server in another terminal:
+
+```sh
+gti examples/93-http-json-client.gti -o /tmp/http-json
+python3 examples/http-json-server.py
+```
+
+Run these from the first terminal:
+
+```sh
+/tmp/http-json                                      # offline URL-building recipe
+/tmp/http-json http://127.0.0.1:8765/user             # GET: prints "local demo"
+/tmp/http-json http://127.0.0.1:8765/user post        # POST JSON: prints "tea"
+/tmp/http-json http://127.0.0.1:8765/not-found        # status error; exits 6
+/tmp/http-json http://127.0.0.1:8765/invalid-json     # parse error; exits 7
+/tmp/http-json http://127.0.0.1:8765/missing-name     # schema error; exits 8
+```
+
+Stop the server with Ctrl-C. Use `--port 8766` if the default port is busy.
+Requests have explicit time and response-size limits. Plain HTTP is used only
+for this loopback demo; use HTTPS for remote services. GTI verifies HTTPS
+certificates and hostnames and does not automatically follow redirects. A
+transport success does **not** imply an HTTP success or valid application JSON.
+Never paste credentials into these examples. The platform libcurl shared
+library is required for actual requests.
+
+The codec example keeps schema decisions in application code; GTI does not
+infer JSON members from a class. Cloning examples distinguish independent
+string/document contents from `shared_ptr::clone()`, which shares the same
+pointee. The error-mapping example demonstrates an exact namespace-function
+mapper and explicit movement of a named Expected receiver.
+
+See the canonical [HTTP](../docs/language/http.md),
+[JSON](../docs/language/json.md), [encoding](../docs/language/encoding.md), and
+[Expected](../docs/language/expected.md) contracts for limits and details.
+
+## Language notes
 
 The compiler automatically loads the standard-library prelude, so
 `std::print` and `std::println` are available in every program. The language
@@ -120,8 +244,9 @@ invalidates the private handle before calling POSIX `close`, so a native close
 failure cannot be retried or accidentally closed again by cleanup.
 
 `39-raw-pointers.gti` keeps pointer formation, reads, writes, and arithmetic in
-a small `unsafe` block. For the native-resource RAII pattern built on the same
-foundation, see
+a small `unsafe` block and demonstrates an `unsafe` function with separate
+caller and implementation obligations. For the native-resource RAII pattern
+built on the same foundation, see
 [`../docs/language/raw-pointers.md`](../docs/language/raw-pointers.md).
 
 `41-owner-dependencies.gti` builds ordinary source-defined read-only and
@@ -279,8 +404,8 @@ inherit aliases through base classes, or add a `Box<int>::value_type` spelling.
 
 `80-function-items.gti` passes exact namespace free functions directly to
 confined generic callables and standard algorithms. Function items are
-zero-state GTI callable identities; they are not native function pointers and
-cannot be stored as ordinary values.
+zero-state GTI callable identities; they are not native function pointers.
+The owning callback example below also demonstrates retaining one in a wrapper.
 
 `83-complete-ranges.gti` defines an application-owned range with the exact
 read-only, mutable, and sized structural protocol. The same source-defined
@@ -299,9 +424,48 @@ replacing its active field, and leaving scope each destroy exactly the active
 payload. Generic, polymorphic, recursive, array, and public native-layout
 owners remain outside this bounded slice.
 
-For paired, machine-verifiable examples that compare GTI's familiar source
-shape and enforced guarantees with C++, see
-[`gti-vs-cpp/`](gti-vs-cpp/README.md).
+`86-owning-callbacks.gti` starts with an authentication callback setter that
+accepts a lambda directly and invokes it after registration has returned. It
+then shows all three receiver modes: read-only `std::function<R(Args...)>`,
+mutable `std::function<R(Args...) mut>`, and one-shot
+`std::move_only_function<R(Args...) &&>`. GTI wrappers are move-only; use
+`clone()` explicitly when the target is copyable, and `move_only_function` for
+owned move-only captures. An empty wrapper can be observed or reset but must
+not be invoked. Comments explain where ownership moves and which values can
+no longer be used.
+
+With the locally installed toolchain, run it from the repository root:
+
+```sh
+./toolchain/bin/gti examples/86-owning-callbacks.gti -o /tmp/gti-callbacks
+/tmp/gti-callbacks
+```
+
+## Generic container algorithms
+
+[`90-generic-algorithms.gti`](90-generic-algorithms.gti) demonstrates sequence
+`contains`/`find`, adjacent search, associative member lookup, mutable array
+traversal, replacement predicates, and filtered copying into an existing
+destination. Search cursors retain a checked borrow of their owner; mutating
+that owner while the cursor is still used is rejected.
+
+## Programmable allocators
+
+[`121-programmable-allocators.gti`](121-programmable-allocators.gti) includes
+[`allocator-support/arena.gti`](allocator-support/arena.gti), an engine-style
+monotonic arena that obtains one backing region and selects aligned subregions
+from it. `main` acknowledges the arena's provider contract once with
+`unsafe std::bind_resource(arena)`; everything after that is ordinary safe
+code. A growable `std::resource_vector` and an application-defined fixed-slot
+container holding immovable objects allocate from the same arena at the same
+time. Moving a container moves only its allocation handle, live element
+references block growth and release, and the arena cannot be reset or moved
+while any allocation from it remains live.
+
+```sh
+./build/gti examples/121-programmable-allocators.gti -o /tmp/gti-allocators
+/tmp/gti-allocators
+```
 
 ## Complete projects
 
@@ -310,9 +474,9 @@ that loads an external graph, runs Dijkstra's shortest-path algorithm, validates
 the result, and prints a report. It demonstrates the language and `gti`
 project workflow working together beyond isolated syntax examples.
 
-[`game-engine/gti/`](game-engine/gti/README.md) ports the core/application
-architecture of the adjacent C++ Psych engine into a headless GTI project. It
-demonstrates state-bearing application inheritance, interface-based layers,
-ordered layer/overlay dispatch, explicit lifecycle management, and a small CLI
-game loop while deliberately excluding vendor-backed windowing, rendering,
-editor, logging, and native bindings.
+[`toy-3d-engine/`](toy-3d-engine/README.md) is a real-time GTI project using the
+repository's GLFW, GLAD, Assimp, and cimgui packages. It demonstrates exclusive
+resource owners, deterministic OpenGL cleanup, keyboard-driven camera movement,
+scene updates, CPU-side perspective projection, Assimp model import, shader
+compilation, interleaved vertex streaming, and an interactive ImGui debug panel,
+with headless math/model tests alongside the graphical executable.

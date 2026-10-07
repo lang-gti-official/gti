@@ -1,0 +1,115 @@
+#include <std/functional>
+#include <std/string>
+#include <std/memory>
+
+std::size_t hashed<Hash, Key>(Hash hash, Key& key)
+  requires std::read_callable<Hash, Key, std::size_t> {
+  return hash(key);
+}
+
+bool equivalent<Equal, Key>(Equal equal, Key& left, Key& right)
+  requires std::read_binary_callable<Equal, Key, Key, bool> {
+  return equal(left, right);
+}
+
+class Key {
+  int32_t value;
+public:
+  Key(int32_t value) : value(value) {}
+  int32_t get() { return this.value; }
+};
+
+class std::hash<Key> {
+public:
+  std::size_t operator()(Key& key) {
+    int32_t value = key.get();
+    std::hash<int32_t> hash{};
+    return hash(value);
+  }
+};
+
+class KeyEqual {
+public:
+  bool operator()(Key& left, Key& right) {
+    return left.get() == right.get();
+  }
+};
+
+class OwningHasher {
+  std::unique_ptr<int32_t> salt;
+public:
+  OwningHasher(int32_t salt) : salt(std::make_unique<int32_t>(salt)) {}
+  std::size_t operator()(int32_t& key) {
+    return std::size_t(key + *this.salt);
+  }
+};
+
+class StoredHash<Key, Hash> {
+  Hash hash;
+public:
+  StoredHash(Hash hash) : hash(std::move(hash)) {}
+  std::size_t read(Key& key) { return this.hash(key); }
+};
+
+int main() {
+  std::hash<int8_t> i8{};
+  std::hash<int16_t> i16{};
+  std::hash<int32_t> i32{};
+  std::hash<int64_t> i64{};
+  int8_t min8 = -128;
+  int16_t min16 = -32768;
+  int32_t min32 = -2147483648;
+  int64_t min64 = -9223372036854775808;
+  if (hashed(i8, min8) != uint64_t(18446744073709551488)) { return 1; }
+  if (hashed(i16, min16) != uint64_t(18446744073709518848)) { return 2; }
+  if (hashed(i32, min32) != uint64_t(18446744071562067968)) { return 3; }
+  if (hashed(i64, min64) != uint64_t(9223372036854775808)) { return 4; }
+  int64_t minus_one = -1;
+  if (hashed(i64, minus_one) != uint64_t(18446744073709551615)) { return 5; }
+  int32_t zero = 0;
+  int32_t positive = 123;
+  if (hashed(i32, zero) != 0 || hashed(i32, positive) != 123) { return 6; }
+
+  std::hash<uint8_t> u8{};
+  std::hash<uint16_t> u16{};
+  std::hash<uint32_t> u32{};
+  std::hash<uint64_t> u64{};
+  uint8_t max8 = 255;
+  uint16_t max16 = 65535;
+  uint32_t max32 = 4294967295;
+  uint64_t max64 = 18446744073709551615;
+  if (hashed(u8, max8) != 255 || hashed(u16, max16) != 65535 ||
+      hashed(u32, max32) != uint64_t(4294967295) ||
+      hashed(u64, max64) != max64) { return 11; }
+
+  std::hash<bool> boolean{};
+  bool yes = true;
+  bool no = false;
+  if (hashed(boolean, yes) != 1 || hashed(boolean, no) != 0) { return 7; }
+  std::hash<char> character{};
+  char byte = char(uint8_t(255));
+  if (hashed(character, byte) != 255) { return 8; }
+
+  std::hash<std::string> string_hash{};
+  std::string first = std::string("key");
+  std::string second = std::string("key");
+  if (hashed(string_hash, first) != hashed(string_hash, second)) { return 9; }
+  std::string binary_first = std::string("a\0b");
+  std::string binary_second = std::string("a\0b");
+  std::string prefix = std::string("a");
+  if (hashed(string_hash, binary_first) != hashed(string_hash, binary_second) ||
+      hashed(string_hash, binary_first) == hashed(string_hash, prefix)) { return 12; }
+
+  StoredHash<int32_t, OwningHasher> stored =
+      StoredHash<int32_t, OwningHasher>(OwningHasher(11));
+  if (stored.read(positive) != 134 || stored.read(positive) != 134) { return 13; }
+
+  Key key = Key(17);
+  Key same = Key(17);
+  Key other = Key(18);
+  std::hash<Key> custom{};
+  KeyEqual equal{};
+  if (hashed(custom, key) != 17 || !equivalent(equal, key, same) ||
+      equivalent(equal, key, other)) { return 10; }
+  return 0;
+}

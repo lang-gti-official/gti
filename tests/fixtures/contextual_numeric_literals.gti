@@ -1,0 +1,37 @@
+#include <std/numeric>
+
+constexpr bool zero<std::numeric T>(T value) { return value == (0); }
+bool operators<std::numeric T>(T value) {
+  return value != 0 && 0 < value && value > (+0) && value >= 1 &&
+         6 <= value && T(value / 2) == 3 && T(2 * value) == 12 &&
+         T(value + 1) == 7 && T(value - 1) == 5;
+}
+bool signed_literals<std::signed_numeric T>(T value) {
+  return value == (-1) && (-2) < value && value < (+1);
+}
+bool floating_literals<std::floating_point T>(T value) {
+  return value == 2 && 2 == value && T(value / 2) == 1;
+}
+
+static_assert(zero(uint64_t(0)));
+static_assert(zero(0.0));
+static_assert(zero(0.0d));
+
+int main() {
+  if (!operators(int8_t(6)) || !operators(uint8_t(6)) ||
+      !operators(int16_t(6)) || !operators(uint16_t(6)) ||
+      !operators(int32_t(6)) || !operators(uint32_t(6)) ||
+      !operators(int64_t(6)) || !operators(uint64_t(6)) ||
+      !operators(6.0) || !operators(6.0d)) { return 1; }
+  if (!signed_literals(int8_t(-1)) || !signed_literals(-1.0) ||
+      !signed_literals(-1.0d)) { return 2; }
+  if (!floating_literals(2.0) || !floating_literals(2.0d)) { return 3; }
+  if (std::midpoint(uint8_t(0), uint8_t(255)) != 127 ||
+      std::midpoint(int8_t(-128), int8_t(127)) != -1 ||
+      std::midpoint(uint64_t(18446744073709551614),
+                    uint64_t(18446744073709551615)) !=
+          18446744073709551614 ||
+      std::midpoint(2.0, 7.0) != 4.5 ||
+      std::midpoint(2.0d, 7.0d) != 4.5d) { return 4; }
+  return 0;
+}

@@ -1,0 +1,23 @@
+#include <std/panic>
+
+namespace sample {
+class Reader<T> {
+public:
+  int read() { return 1; }
+};
+}
+
+class sample::Reader<int> {
+public:
+  int read() { return 2; }
+};
+
+struct Unrelated {};
+int invoke<F>(F callback) { return callback(); }
+
+int main() {
+  sample::Reader<int> exact{};
+  sample::Reader<Unrelated> primary{};
+  int selected = exact.read() + primary.read() + invoke([]() -> int { return 3; });
+  std::panic("selected {}", selected); // exact-carrier-site
+}

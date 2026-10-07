@@ -2,6 +2,7 @@
 
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string_view>
@@ -64,6 +65,24 @@ ProcessResult finishCapturedProcess(std::FILE *capture, int status,
 }
 
 #if !defined(_WIN32)
+bool applyChildOptions(const ProcessInvocationOptions &options) {
+  if (options.workingDirectory &&
+      chdir(options.workingDirectory->c_str()) == -1) {
+    std::fprintf(
+        stderr, "gti: failed to enter process working directory '%s': %s\n",
+        options.workingDirectory->string().c_str(), std::strerror(errno));
+    return false;
+  }
+  for (const auto &[name, value] : options.environment) {
+    if (setenv(name.c_str(), value.c_str(), 1) == -1) {
+      std::fprintf(stderr, "gti: failed to set process environment '%s': %s\n",
+                   name.c_str(), std::strerror(errno));
+      return false;
+    }
+  }
+  return true;
+}
+
 ProcessResult waitForProcess(pid_t child, std::string_view description,
                              std::FILE *capture, bool captureSuccessfulOutput) {
   int status = 0;
@@ -92,17 +111,23 @@ ProcessResult waitForProcess(pid_t child, std::string_view description,
 #endif
 
 ProcessResult invokeInherited(const std::vector<std::string> &arguments,
-                              std::string_view description) {
+                              const ProcessInvocationOptions &options) {
   std::vector<char *> process = processArguments(arguments);
   std::cout.flush();
   std::cerr.flush();
 
 #if defined(_WIN32)
+  if (options.workingDirectory || !options.environment.empty()) {
+    return {.exitCode = 127,
+            .driverDiagnostic =
+                "gti: working-directory and environment process overrides "
+                "are not supported on Windows yet"};
+  }
   const intptr_t status = _spawnvp(_P_WAIT, process.front(), process.data());
   if (status == -1) {
     return {.exitCode = 127,
             .driverDiagnostic = "gti: failed to execute '" + arguments.front() +
-                                "' as " + std::string(description) + ": " +
+                                "' as " + options.description + ": " +
                                 std::strerror(errno)};
   }
   return {.exitCode = static_cast<int>(status)};
@@ -110,11 +135,13 @@ ProcessResult invokeInherited(const std::vector<std::string> &arguments,
   const pid_t child = fork();
   if (child == -1) {
     return {.exitCode = 127,
-            .driverDiagnostic = "gti: failed to start " +
-                                std::string(description) + ": " +
-                                std::strerror(errno)};
+            .driverDiagnostic = "gti: failed to start " + options.description +
+                                ": " + std::strerror(errno)};
   }
   if (child == 0) {
+    if (!applyChildOptions(options)) {
+      _exit(127);
+    }
     execvp(process.front(), process.data());
     const int executeError = errno;
     std::fprintf(stderr, "gti: failed to execute '%s': %s\n",
@@ -122,7 +149,7 @@ ProcessResult invokeInherited(const std::vector<std::string> &arguments,
     std::fflush(stderr);
     _exit(127);
   }
-  return waitForProcess(child, description, nullptr, false);
+  return waitForProcess(child, options.description, nullptr, false);
 #endif
 }
 
@@ -139,6 +166,13 @@ ProcessResult invokeCaptured(const std::vector<std::string> &arguments,
   std::cerr.flush();
 
 #if defined(_WIN32)
+  if (options.workingDirectory || !options.environment.empty()) {
+    std::fclose(capture);
+    return {.exitCode = 127,
+            .driverDiagnostic =
+                "gti: working-directory and environment process overrides "
+                "are not supported on Windows yet"};
+  }
   const int standardOutput = _fileno(stdout);
   const int standardError = _fileno(stderr);
   const int savedOutput = _dup(standardOutput);
@@ -198,6 +232,9 @@ ProcessResult invokeCaptured(const std::vector<std::string> &arguments,
     if (descriptor > STDERR_FILENO) {
       close(descriptor);
     }
+    if (!applyChildOptions(options)) {
+      _exit(127);
+    }
     execvp(process.front(), process.data());
     const int executeError = errno;
     std::fprintf(stderr, "gti: failed to execute '%s': %s\n",
@@ -220,7 +257,7 @@ ProcessResult invokeProcess(const std::vector<std::string> &arguments,
                 "gti: " + options.description + " command is empty"};
   }
   if (options.outputMode == ProcessOutputMode::Inherit) {
-    return invokeInherited(arguments, options.description);
+    return invokeInherited(arguments, options);
   }
   return invokeCaptured(arguments, options);
 }
@@ -306,6 +343,16 @@ StartedProcess startProcess(const std::vector<std::string> &arguments,
                           "gti: " + options.description + " command is empty"};
     return started;
   }
+#if defined(_WIN32)
+  if (options.workingDirectory || !options.environment.empty()) {
+    started.startFailure = ProcessResult{
+        .exitCode = 127,
+        .driverDiagnostic =
+            "gti: working-directory and environment process overrides are "
+            "not supported on Windows yet"};
+    return started;
+  }
+#endif
 
   std::vector<char *> process = processArguments(arguments);
   std::FILE *capture = std::tmpfile();
@@ -387,6 +434,9 @@ StartedProcess startProcess(const std::vector<std::string> &arguments,
     }
     if (descriptor > STDERR_FILENO) {
       close(descriptor);
+    }
+    if (!applyChildOptions(options)) {
+      _exit(127);
     }
     execvp(process.front(), process.data());
     const int executeError = errno;

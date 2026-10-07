@@ -1,0 +1,42 @@
+#include <std/forward_list>
+
+enum class Color { red, green };
+
+class Immovable {
+public:
+  mut int value;
+  Immovable(int initial) : value(initial) {}
+  Immovable(Immovable& other) = delete;
+  Immovable(Immovable&& other) = delete;
+};
+
+int main() {
+  mut std::forward_list<Immovable> objects = std::forward_list<Immovable>();
+  {
+    mut Immovable& front = objects.emplace_front(41);
+    front.value = 42;
+  }
+  [[discard]] objects.emplace_front(10);
+  if (objects.front().value != 10) { return 1; }
+  objects.pop_front();
+  if (objects.front().value != 42) { return 2; }
+  objects.clear();
+  if (!objects.empty()) { return 3; }
+
+  mut std::forward_list<int> numbers = std::forward_list<int>();
+  [[discard]] numbers.emplace_front();
+  if (numbers.front() != 0) { return 4; }
+  [[discard]] numbers.emplace_front(43);
+  if (numbers.front() != 43) { return 5; }
+
+  mut std::forward_list<bool> flags = std::forward_list<bool>();
+  [[discard]] flags.emplace_front(true);
+  if (!flags.front()) { return 6; }
+  mut std::forward_list<char> characters = std::forward_list<char>();
+  [[discard]] characters.emplace_front('x');
+  if (characters.front() != 'x') { return 7; }
+  mut std::forward_list<Color> colors = std::forward_list<Color>();
+  [[discard]] colors.emplace_front(Color::green);
+  if (colors.front() != Color::green) { return 8; }
+  return 0;
+}

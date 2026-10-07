@@ -80,7 +80,7 @@ int main() {
                 return fail(emitted)
             generated_text = generated.read_text(encoding="utf8")
             required_fragments = (
-                "std::construct_at(__gti_mir_out_result",
+                "construct_representation_at(__gti_mir_out_result",
                 ".construction_address()",
                 ".mark_constructed()",
             )

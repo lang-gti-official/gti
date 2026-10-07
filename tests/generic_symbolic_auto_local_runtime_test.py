@@ -20,19 +20,22 @@ def fail(label: str, process: subprocess.CompletedProcess[str]) -> int:
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4) or (
+        len(sys.argv) == 4 and sys.argv[3] != "--include-o1"
+    ):
         raise SystemExit(
-            "usage: generic_symbolic_auto_local_runtime_test.py <gti> <source>"
+            "usage: generic_symbolic_auto_local_runtime_test.py <gti> <source> [--include-o1]"
         )
 
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source = pathlib.Path(sys.argv[2]).resolve()
+    optimizations = ("O0", "O1", "O3") if len(sys.argv) == 4 else ("O0", "O3")
     with tempfile.TemporaryDirectory(
         prefix="gti-generic-symbolic-auto-"
     ) as temporary:
         root = pathlib.Path(temporary)
         for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
+            for optimization in optimizations:
                 mode = f"{standard}-{optimization}"
                 executable = root / mode
                 built = run(

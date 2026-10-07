@@ -1,0 +1,126 @@
+#include <std/resource>
+#include <std/memory>
+#include <std/panic>
+
+// Single-threaded test instrumentation, independent of the provider shell.
+mut uint64_t allocations = 0;
+mut uint64_t releases = 0;
+mut uint64_t released = 0;
+mut void* first_address = nullptr;
+mut void* second_address = nullptr;
+mut std::size_t first_request = 0;
+mut std::size_t second_request = 0;
+mut std::size_t first_extent = 0;
+mut std::size_t second_extent = 0;
+mut std::size_t first_reported_alignment = 0;
+mut std::size_t second_reported_alignment = 0;
+mut std::size_t first_actual_extent = 0;
+mut std::size_t second_actual_extent = 0;
+
+// Mode zero obeys the provider contract. Modes one/two deliberately return
+// contradictory extent/alignment metadata over genuine process allocations.
+// They test only the wrapper's explicit defensive branches and exact release;
+// this is not a valid provider binding or containment of arbitrary unsafe
+// memory. No malformed region is dereferenced or adopted into a live object.
+[[no_transfer, no_share]] class ProbeResource {
+  int mode;
+public:
+  ProbeResource(int mode) : mode(mode) {}
+  unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) {
+    std::process_resource process{};
+    unsafe {
+      auto attempt = process.allocate(request);
+      if (!attempt) { return unexpected(attempt.error()); }
+      auto actual = std::move(attempt).value();
+      allocations++;
+      mut std::size_t extent = actual.bytes;
+      mut std::size_t alignment = actual.alignment;
+      if (allocations == uint64_t(1) && this.mode == 1) { extent--; }
+      if (allocations == uint64_t(1) && this.mode == 2) { alignment /= std::size_t(2); }
+      if (allocations == uint64_t(1)) {
+        first_address = actual.address;
+        first_request = request.alignment;
+        first_extent = extent;
+        first_reported_alignment = alignment;
+        first_actual_extent = actual.bytes;
+      } else if (allocations == uint64_t(2)) {
+        second_address = actual.address;
+        second_request = request.alignment;
+        second_extent = extent;
+        second_reported_alignment = alignment;
+        second_actual_extent = actual.bytes;
+      } else { std::panic("unexpected allocation"); }
+      return std::raw_allocation(actual.address, extent, alignment, allocations);
+    }
+  }
+  unsafe void release(std::raw_allocation allocation) {
+    std::process_resource process{};
+    unsafe {
+      if (allocation.id == uint64_t(1)) {
+        if ((released & uint64_t(1)) != uint64_t(0) ||
+            allocation.address != first_address || allocation.bytes != first_extent ||
+            allocation.alignment != first_reported_alignment) {
+          std::panic("first descriptor not released exactly once");
+        }
+        released |= uint64_t(1);
+        process.release(std::raw_allocation(first_address, first_actual_extent,
+                                           first_request, uint64_t(0)));
+      } else if (allocation.id == uint64_t(2)) {
+        if ((released & uint64_t(2)) != uint64_t(0) ||
+            allocation.address != second_address || allocation.bytes != second_extent ||
+            allocation.alignment != second_reported_alignment) {
+          std::panic("second descriptor not released exactly once");
+        }
+        released |= uint64_t(2);
+        process.release(std::raw_allocation(second_address, second_actual_extent,
+                                           second_request, uint64_t(0)));
+      } else { std::panic("wrong allocation identity"); }
+      releases++;
+    }
+  }
+};
+
+int growth(std::resource_ref<ProbeResource> resource) {
+  mut std::resource_storage<int,ProbeResource> slots{resource};
+  auto allocated = slots.try_allocate(std::size_t(1), std::alignment(std::size_t(128)));
+  if (!allocated) { return 7; }
+  slots.emplace(std::size_t(0), 42);
+  auto grown = slots.try_reserve_prefix(std::size_t(8), std::size_t(1));
+  if (!grown) { return 8; }
+  if (first_request != std::size_t(128) || second_request != std::size_t(128) ||
+      allocations != uint64_t(2) || releases != uint64_t(1) ||
+      released != uint64_t(1) || slots.get(std::size_t(0)) != 42) { return 1; }
+  slots.release();
+  return slots.capacity() == std::size_t(0) ? 0 : 2;
+}
+
+int defensive_recovery(std::resource_ref<ProbeResource> resource) {
+  mut std::resource_storage<int,ProbeResource> slots{resource};
+  auto rejected = slots.try_allocate(std::size_t(2), std::alignment(std::size_t(128)));
+  if (rejected || rejected.error() != std::alloc_errc::invalid_region ||
+      slots.capacity() != std::size_t(0) || releases != uint64_t(1) ||
+      released != uint64_t(1)) { return 3; }
+  auto retried = slots.try_allocate(std::size_t(2), std::alignment(std::size_t(128)));
+  if (!retried) { return 9; }
+  slots.emplace(std::size_t(0), 43);
+  if (slots.get(std::size_t(0)) != 43) { return 4; }
+  slots.release();
+  return slots.capacity() == std::size_t(0) ? 0 : 5;
+}
+
+int main() {
+  for (mut int mode = 0; mode < 3; mode++) {
+    allocations = uint64_t(0);
+    releases = uint64_t(0);
+    released = uint64_t(0);
+    ProbeResource provider{mode};
+    unsafe {
+      auto bound = std::bind_resource(provider);
+      int result = mode == 0 ? growth(bound) : defensive_recovery(bound);
+      if (result != 0) { return result; }
+    }
+    if (allocations != uint64_t(2) || releases != uint64_t(2) ||
+        released != uint64_t(3)) { return 6; }
+  }
+  return 0;
+}

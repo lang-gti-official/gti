@@ -1,0 +1,28 @@
+#include <std/functional>
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Resource {
+  int identity;
+public:
+  Resource(int identity) : identity(identity) {}
+  ~Resource() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+std::unique_ptr<Resource> produce(int divisor) {
+  int value = 12 / divisor;
+  return std::make_unique<Resource>(value);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Resource caller{9};
+  std::function<std::unique_ptr<Resource>(int)> callback{produce};
+  auto copy = callback.clone();
+  int divisor = argc == 2 ? 0 : 2;
+  auto result = copy(divisor);
+  std::println(result->read());
+  int later = 6 / (argc == 3 ? 0 : 1);
+  return later - 6;
+}

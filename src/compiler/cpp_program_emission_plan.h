@@ -42,7 +42,7 @@ private:
 };
 
 [[nodiscard]] CppProgramEmissionPlan
-buildCppProgramEmissionPlan(const LoweredProgram &program,
-                            CppStandard standard);
+buildCppProgramEmissionPlan(const LoweredProgram &program, CppStandard standard,
+                            bool debugInfo = false);
 
 } // namespace lang

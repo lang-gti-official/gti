@@ -1,0 +1,42 @@
+#include <std/memory>
+
+// The allocation owns the address independently of the storage handle's place.
+// Construction happens in that address, not in a temporary that is moved in.
+class Entry {
+  int value;
+  mut const int* original_address = nullptr;
+public:
+  Entry(int input) : value(input) {
+    this.original_address = &this.value;
+  }
+  Entry(Entry& other) = delete;
+  Entry(Entry&& other) = default;
+
+  bool at_original_address() {
+    return this.original_address == &this.value;
+  }
+  int read() { return this.value; }
+};
+
+int main() {
+  std::allocator allocator{};
+  mut auto allocated = allocator.try_storage<Entry>(std::size_t(2));
+  if (!allocated) { return 1; }
+  mut auto slots = std::move(allocated).value();
+  Entry& entry = slots.emplace(std::size_t(1), 42);
+  if (entry.read() != 42 || !entry.at_original_address()) { return 2; }
+
+  // The checked reference's last use is above. Moving the allocation owner
+  // transfers cleanup, without moving the objects stored inside it.
+  mut auto moved = std::move(slots);
+  if (!moved.get(std::size_t(1)).at_original_address()) { return 3; }
+  moved.destroy(std::size_t(1));
+  // emplace's optional reference result is declared [[discardable]].
+  moved.emplace(std::size_t(1), 7);
+  if (moved.get(std::size_t(1)).read() != 7) { return 4; }
+  // Unlike clear(), release() also frees the allocation and leaves capacity 0.
+  // Any remaining live elements are destroyed first, in reverse slot order.
+  moved.release();
+  moved.release(); // Empty release is harmless.
+  return moved.capacity() == std::size_t(0) ? 0 : 5;
+}

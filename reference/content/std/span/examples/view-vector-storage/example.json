@@ -1,5 +1,0 @@
-{
-  "title": "View vector storage",
-  "description": "Creates checked owner-tied subviews without copying elements.",
-  "mode": "run"
-}

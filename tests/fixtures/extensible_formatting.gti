@@ -1,0 +1,70 @@
+#include <std/format>
+#include <std/string>
+
+namespace app {
+mut int drops = 0;
+mut int calls = 0;
+struct Identifier {
+  uint64_t value;
+};
+struct Record {
+  int count;
+};
+struct Owned {
+  std::string text;
+  Owned(std::string value) : text(std::move(value)) {}
+  ~Owned() { drops += 1; }
+};
+}
+
+class std::formatter<app::Owned> {
+public:
+  expected<void, std::format_errc> format(app::Owned& value,
+      mut std::string& output, std::format_spec& spec) {
+    app::calls += 1;
+    if (spec.type == 'x') { return unexpected(std::format_errc::argument_count_mismatch); }
+    if (spec.type == 's') { return unexpected(std::format_errc::unsupported_argument); }
+    output.append(value.text.view());
+    return;
+  }
+};
+
+class std::formatter<app::Identifier> {
+public:
+  expected<void, std::format_errc> format(app::Identifier& value,
+      mut std::string& output, std::format_spec& spec) {
+    std::formatter<uint64_t> numeric{};
+    return numeric.format(value.value, output, spec);
+  }
+};
+
+class std::formatter<app::Record> {
+public:
+  expected<void, std::format_errc> format(app::Record& value,
+      mut std::string& output, std::format_spec& spec) {
+    if (spec.type != '\0') {
+      output.append("discarded");
+      return unexpected(std::format_errc::invalid_format);
+    }
+    return std::try_format_to(output, "Record({})", value.count);
+  }
+};
+
+int main() {
+  app::Identifier id = {.value = uint64_t(42)};
+  app::Record record = {.count = 7};
+  auto text = std::format("ID={:04x} {}", id, record);
+  if (text != "ID=002a Record(7)") { return 1; }
+  mut std::string output{"kept"};
+  auto rejected = std::try_format_to(output, "{:s}", record);
+  if (rejected || rejected.error() != std::format_errc::invalid_format || output != "kept") { return 2; }
+  app::Owned owned{std::string("owned")};
+  auto repeated = std::try_format("{0} {0}", std::move(owned));
+  if (!repeated || repeated.value() != "owned owned" || app::drops != 1 || app::calls != 2) { return 3; }
+  auto count = std::try_format("{:x}", app::Owned(std::string("discard")));
+  if (count || count.error() != std::format_errc::argument_count_mismatch || app::drops != 2) { return 4; }
+  auto unsupported = std::try_print("{:s}", app::Owned(std::string("discard")));
+  if (unsupported || unsupported.error() != std::print_errc::unsupported_argument || app::drops != 3) { return 5; }
+  std::println("{}", text.view());
+  return 0;
+}

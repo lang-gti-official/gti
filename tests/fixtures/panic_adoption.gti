@@ -1,0 +1,130 @@
+#include <std/cstdio>
+#include <std/format>
+#include <std/string>
+#include <std/vector>
+
+extern "C" {
+  void gti_test_unbuffer_stdout();
+}
+
+struct Guard {
+  int id;
+  Guard(int value) : id(value) {}
+  ~Guard() {
+    // Keep cleanup observable even when stdout has failed.
+    if (id == 1) {
+      [[discard]] std::try_write_stderr("outer\n");
+    } else {
+      [[discard]] std::try_write_stderr("inner\n");
+    }
+  }
+};
+
+struct Unknown {};
+class std::formatter<Unknown> {
+public:
+  expected<void, std::format_errc> format(Unknown& value,
+      mut std::string& output, std::format_spec& spec) {
+    return unexpected(std::format_errc::unsupported_argument);
+  }
+};
+
+struct OutputCleanup {
+  ~OutputCleanup() {
+    std::print("cleanup"); // cleanup-output
+  }
+};
+
+[[track_caller]]
+std::string through_wrapper(std::string_view pattern) {
+  return std::format(pattern, 1);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  unsafe { gti_test_unbuffer_stdout(); }
+  if (argc == 1) {
+    auto plain = std::format("{{literal}}");
+    if (plain != "{literal}") { return 1; }
+    mut auto text = std::format("{} {}", std::string("owned"), std::string("second"));
+    std::format_to(text, " {{suffix}}");
+    std::format_to(text, " {}", 42);
+    if (text != "owned second {suffix} 42") { return 2; }
+    auto failed = std::try_format_to(text, "leak {}", Unknown());
+    if (failed || failed.error() != std::format_errc::unsupported_argument ||
+        text != "owned second {suffix} 42") { return 3; }
+    auto raw = std::try_print("{raw}");
+    auto raw_line = std::try_println("{{raw}}");
+    if (!raw || !raw_line) { return 4; }
+    std::print("{} {}", 1, 2);
+    std::println(" {}", std::string("three"));
+    auto rejected = std::try_println("LEAK {}", Unknown());
+    if (rejected || rejected.error() != std::print_errc::unsupported_argument) { return 5; }
+    auto mismatch = std::try_print("LEAK {} {}", 1);
+    if (mismatch || mismatch.error() != std::print_errc::argument_count_mismatch) { return 6; }
+    auto invalid = std::try_print("LEAK {", 1);
+    if (invalid || invalid.error() != std::print_errc::invalid_format) { return 7; }
+    auto empty = std::try_format("{}");
+    if (empty || empty.error() != std::format_errc::argument_count_mismatch) { return 8; }
+    auto success = std::try_format("{}", 42).expect("formatting failed");
+    return success == "42" ? 0 : 9;
+  }
+  Guard outer{1};
+  Guard inner{2};
+  if (argc == 2) {
+    [[discard]] std::format("{"); // invalid
+  }
+  if (argc == 3) {
+    [[discard]] std::format("{} {}", 1); // count
+  }
+  if (argc == 4) {
+    [[discard]] std::format("{}", Unknown()); // unsupported
+  }
+  if (argc == 5) {
+    mut std::string text{"unchanged"};
+    std::format_to(text, "{"); // append-zero
+  }
+  if (argc == 6) {
+    mut std::string text{"unchanged"};
+    std::format_to(text, "{:s}", 1); // append-spec
+  }
+  if (argc == 7) {
+    std::println("LEAK {}", Unknown()); // println-format
+  }
+  if (argc == 8) {
+    [[discard]] through_wrapper("{"); // wrapper
+  }
+  if (argc == 9) {
+    auto result = std::try_println("write {}", 1);
+    return !result && result.error() == std::print_errc::write_failed ? 0 : 10;
+  }
+  if (argc == 10) {
+    std::println("write {}", 1); // println-io
+  }
+  if (argc == 11) {
+    std::print("write {}", 1); // print-io
+  }
+  if (argc == 12) {
+    std::print("raw"); // raw-io
+  }
+  if (argc == 13) {
+    std::println('x'); // char-io
+  }
+  if (argc == 14) {
+    std::println(42); // integer-io
+  }
+  if (argc == 15) {
+    std::println(std::string("owned")); // string-io
+  }
+  if (argc == 16) {
+    std::println(1.25); // float-io
+  }
+  if (argc == 17) {
+    auto result = std::try_print("raw");
+    return !result && result.error() == std::print_errc::write_failed ? 0 : 11;
+  }
+  if (argc == 18) {
+    OutputCleanup cleanup{};
+    [[discard]] std::format("{"); // cleanup-primary
+  }
+  return 99;
+}

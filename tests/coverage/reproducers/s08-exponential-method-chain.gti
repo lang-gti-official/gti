@@ -1,0 +1,5 @@
+// S08: chaining by-value method calls costs exponential compile time.
+// 50 links takes ~21s, 60 takes ~60s; the same calls as separate
+// statements, or a reference-returning self(), are instant.
+class L { public: L() {} int32_t v() { return 1; } L self() { return L(); } };
+int main() { mut L l = L(); std::println(l.self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().self().v()); return 0; }

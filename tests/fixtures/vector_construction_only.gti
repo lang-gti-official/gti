@@ -1,0 +1,62 @@
+#include <std/optional>
+#include <std/string>
+#include <std/vector>
+
+struct Envelope {
+  std::optional<std::string> payload{};
+  Envelope() {}
+};
+
+class Message {
+  std::optional<std::string> text;
+  int number;
+public:
+  Message(int initial, std::string value)
+      : text(std::optional<std::string>(std::move(value))), number(initial) {}
+  Message(Message& other) = delete;
+  Message(Message&& other) = default;
+  ~Message() { std::println(this.number); }
+  Message clone() {
+    return Message(this.number + 100, this.text.value().clone());
+  }
+  std::string& value() { return this.text.value(); }
+};
+
+int main() {
+  {
+    mut std::vector<Envelope> envelopes{std::size_t(2)};
+    envelopes.resize(std::size_t(4));
+    if (envelopes.size() != std::size_t(4) ||
+        envelopes[std::size_t(3)].payload.has_value()) {
+      return 1;
+    }
+  }
+  Message caller = Message(9, std::string("caller"));
+  {
+    mut std::vector<std::optional<std::string>> names{std::size_t(2)};
+    names.clear();
+    names.push_back(std::optional<std::string>());
+    names.push_back(std::optional<std::string>(std::string("alpha")));
+    names.reserve(std::size_t(8));
+    names.insert(std::size_t(1), std::optional<std::string>(std::string("beta")));
+    names.erase(std::size_t(0));
+    names.shrink_to_fit();
+    auto copy = names.clone();
+    names.clear();
+    std::println(copy[std::size_t(0)].value());
+    std::println(copy[std::size_t(1)].value());
+  }
+  {
+    mut std::vector<Message> messages{};
+    messages.push_back(Message(1, std::string("one")));
+    messages.push_back(Message(2, std::string("two")));
+    messages.reserve(std::size_t(8));
+    messages.insert(std::size_t(1), Message(3, std::string("three")));
+    messages.erase(std::size_t(0));
+    auto copy = messages.clone();
+    messages.clear();
+    std::println(copy[std::size_t(0)].value());
+    std::println(copy[std::size_t(1)].value());
+  }
+  return 0;
+}

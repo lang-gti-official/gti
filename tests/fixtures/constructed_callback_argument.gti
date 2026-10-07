@@ -1,0 +1,42 @@
+#include <std/functional>
+#include <std/string>
+#include <std/vector>
+
+struct Packet {
+  int value;
+  Packet(int value, int divisor) : value(value) {
+    std::println(value);
+    int checked = 12 / divisor;
+  }
+};
+
+class Target {
+public:
+  int operator()(Packet input, int divisor) {
+    std::println(100);
+    return input.value / divisor;
+  }
+};
+
+class MutableTarget {
+public:
+  int operator()(Packet input, int divisor) mut {
+    std::println(200);
+    return input.value / divisor;
+  }
+};
+
+class Caller {
+public:
+  ~Caller() { std::println(9); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Caller caller{};
+  std::function<int(Packet, int)> callback{Target()};
+  std::println(callback(Packet(12, argc == 5 ? 0 : 1), argc == 2 ? 0 : 2));
+  mut std::function<int(Packet, int) mut> mutable_callback{MutableTarget()};
+  std::println(mutable_callback(Packet(15, 1), argc == 3 ? 0 : 3));
+  std::println(callback(Packet(18, 1), argc == 4 ? 12 / (argc - 4) : 3));
+  return 0;
+}

@@ -1,0 +1,27 @@
+#include <std/source_location>
+
+std::source_location capture(
+    std::source_location location = std::source_location::current()) {
+  return location;
+}
+
+int main() {
+  std::source_location direct = std::source_location::current();
+  if (direct.file_name().empty() || direct.function_name() != "main" ||
+      direct.line() != uint32_t(9) || direct.column() != uint32_t(0)) {
+    return 1;
+  }
+
+  std::source_location defaulted = capture();
+  if (defaulted.file_name().empty() || defaulted.function_name() != "main" ||
+      defaulted.line() != uint32_t(15) || defaulted.column() != uint32_t(0)) {
+    return 2;
+  }
+
+  std::source_location empty{};
+  if (!empty.file_name().empty() || !empty.function_name().empty() ||
+      empty.line() != uint32_t(0) || empty.column() != uint32_t(0)) {
+    return 3;
+  }
+  return 0;
+}

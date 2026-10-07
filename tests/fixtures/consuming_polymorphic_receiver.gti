@@ -1,0 +1,36 @@
+#include <std/memory>
+#include <std/string>
+
+interface Operation {
+  int operator()(int value) &&;
+};
+
+class Increment : public Operation {
+  int amount;
+public:
+  Increment(int amount) : amount(amount) {}
+  ~Increment() { std::println(1); }
+  int operator()(int value) && override { return value + this.amount; }
+};
+
+class Owner {
+  mut std::unique_ptr<Operation> operation;
+public:
+  Owner(std::unique_ptr<Operation> operation)
+      : operation(std::move(operation)) {}
+  int operator()(int value) && {
+    return std::move(*this.operation)(value);
+  }
+};
+
+int later() { std::println(2); return 3; }
+int combine(int left, int right) { std::println(4); return left + right; }
+
+int main() {
+  auto concrete = std::make_unique<Increment>(5);
+  auto erased = std::upcast_unique<Operation, Increment>(std::move(concrete));
+  Owner operation{std::move(erased)};
+  int result = combine(std::move(operation)(7), later());
+  std::println(9);
+  return result - 15;
+}

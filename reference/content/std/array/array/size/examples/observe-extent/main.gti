@@ -1,8 +1,0 @@
-#include <std/array>
-
-int main() {
-  std::array<int32_t, 4> values =
-      std::array<int32_t, 4>({1, 2, 3, 4});
-  std::println(values.size());
-  return 0;
-}

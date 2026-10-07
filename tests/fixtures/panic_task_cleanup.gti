@@ -1,0 +1,45 @@
+#include <std/panic>
+#include <std/thread>
+
+struct Guard {
+  int id;
+  bool fails;
+  Guard(int value, bool failure = false) : id(value), fails(failure) {}
+  ~Guard() {
+    std::println(id);
+    if (fails) {
+      std::panic("cleanup failed"); // cleanup-site
+    }
+  }
+};
+
+
+[[unsafe_transfer]] struct TaskSentinel {
+  ~TaskSentinel() { std::println(99); }
+};
+
+[[unsafe_transfer]] struct TaskCleanupFailure {
+  Guard sibling;
+  TaskCleanupFailure() : sibling(Guard(98)) {}
+  ~TaskCleanupFailure() {
+    Guard skipped{97};
+    Guard failing{82, true};
+    std::panic("capture primary failure"); // capture-primary-site
+  }
+};
+
+
+int main() {
+  Guard parent{90};
+  TaskSentinel first{};
+  TaskCleanupFailure last{};
+  auto task = [first = std::move(first), last = std::move(last)]() -> void {
+    std::println("worker body");
+  };
+  auto started = std::thread::start(std::move(task));
+  if (!started) { return 99; }
+  mut std::thread worker = std::move(started).value();
+  auto joined = worker.join();
+  if (!joined) { return 98; }
+  return 0;
+}

@@ -53,7 +53,8 @@ struct CppMirCallableTemplateSignature {
 // derived here; no boolean/capability input can bless a row.
 [[nodiscard]] CppMirRepresentationSnapshotBuild
 buildCppMirRepresentationSnapshot(const LoweredProgram &program,
-                                  CppStandard standard = CppStandard::Cpp23);
+                                  CppStandard standard = CppStandard::Cpp23,
+                                  bool debugInfo = false);
 
 // Builds the deterministic copied representation rows the generic MIR body
 // emitter consumes (ADR 016 phase 4). Spellings come only from the extracted
@@ -86,11 +87,20 @@ cppMirCallableTemplateSignature(const LoweredProgram &program,
                                 const LoweredFunctionDeclaration &declaration,
                                 const MirFunctionInstance &instance);
 
+// Includes constructor-local generic bindings as well as enclosing-owner
+// bindings. The concrete signature is checked before any overlay is consumed.
 [[nodiscard]] std::optional<std::size_t>
 cppMirApplyGenericOwnerConstructorTypeOverlays(
     CppMirBodyEmissionMapRows &rows, const LoweredProgram &program,
     const LoweredConstructorDeclaration &declaration,
     const MirConstructorInstance &instance);
+
+// Retains the exact declared destructor body when an enclosing owner contains
+// an unnameable closure argument. No executable behavior is synthesized.
+[[nodiscard]] std::optional<std::size_t>
+cppMirApplyGenericOwnerDestructorTypeOverlays(
+    CppMirBodyEmissionMapRows &rows, const LoweredProgram &program,
+    const MirDestructorInstance &instance);
 
 enum class CppMirBackendProgramRoute {
   VerifiedMir,

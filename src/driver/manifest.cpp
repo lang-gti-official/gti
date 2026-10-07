@@ -1,6 +1,9 @@
 #include "gti/driver/manifest.h"
+#include "gti/driver/registry.h"
+#include "gti/driver/semver.h"
 
 #include "gti/driver/dependencies.h"
+#include "manifest_source.h"
 
 #define TOML_EXCEPTIONS 0
 #include "toml.hpp"
@@ -38,47 +41,9 @@ SourceSpan pointSpan(std::string_view source, std::size_t offset, int line) {
   return {std::string(source), offset, offset + 1, line};
 }
 
-std::size_t utf8CodePointLength(unsigned char byte) {
-  if ((byte & 0x80U) == 0) {
-    return 1;
-  }
-  if ((byte & 0xE0U) == 0xC0U) {
-    return 2;
-  }
-  if ((byte & 0xF0U) == 0xE0U) {
-    return 3;
-  }
-  if ((byte & 0xF8U) == 0xF0U) {
-    return 4;
-  }
-  return 1;
-}
-
 std::size_t sourceOffset(std::string_view source,
                          const toml::source_position &position) {
-  if (position.line == 0 || position.column == 0) {
-    return 0;
-  }
-
-  std::size_t offset = 0;
-  for (std::uint32_t line = 1; line < position.line && offset < source.size();
-       ++line) {
-    const std::size_t newline = source.find('\n', offset);
-    if (newline == std::string_view::npos) {
-      return source.size();
-    }
-    offset = newline + 1;
-  }
-
-  for (std::uint32_t column = 1;
-       column < position.column && offset < source.size() &&
-       source[offset] != '\n';
-       ++column) {
-    const std::size_t length =
-        utf8CodePointLength(static_cast<unsigned char>(source[offset]));
-    offset += std::min(length, source.size() - offset);
-  }
-  return offset;
+  return detail::manifestSourceOffset(source, position.line, position.column);
 }
 
 SourceSpan sourceSpan(std::string_view sourceName, std::string_view source,
@@ -261,82 +226,8 @@ bool isPortableProjectName(std::string_view name) {
 
 namespace {
 
-bool isIdentifierText(std::string_view identifier, bool numericLeadingZero) {
-  if (identifier.empty()) {
-    return false;
-  }
-  const bool numeric =
-      std::all_of(identifier.begin(), identifier.end(), [](char character) {
-        return character >= '0' && character <= '9';
-      });
-  if (numeric && numericLeadingZero && identifier.size() > 1 &&
-      identifier.front() == '0') {
-    return false;
-  }
-  return std::all_of(identifier.begin(), identifier.end(), [](char character) {
-    return (character >= 'A' && character <= 'Z') ||
-           (character >= 'a' && character <= 'z') ||
-           (character >= '0' && character <= '9') || character == '-';
-  });
-}
-
-bool validIdentifierList(std::string_view text, bool numericLeadingZero) {
-  if (text.empty()) {
-    return false;
-  }
-  std::size_t start = 0;
-  while (start <= text.size()) {
-    const std::size_t separator = text.find('.', start);
-    const std::size_t end =
-        separator == std::string_view::npos ? text.size() : separator;
-    if (!isIdentifierText(text.substr(start, end - start),
-                          numericLeadingZero)) {
-      return false;
-    }
-    if (separator == std::string_view::npos) {
-      break;
-    }
-    start = separator + 1;
-  }
-  return true;
-}
-
 bool isSemanticVersion(std::string_view version) {
-  const std::size_t buildSeparator = version.find('+');
-  const std::string_view beforeBuild = version.substr(0, buildSeparator);
-  if (buildSeparator != std::string_view::npos &&
-      !validIdentifierList(version.substr(buildSeparator + 1), false)) {
-    return false;
-  }
-
-  const std::size_t prereleaseSeparator = beforeBuild.find('-');
-  const std::string_view core = beforeBuild.substr(0, prereleaseSeparator);
-  if (prereleaseSeparator != std::string_view::npos &&
-      !validIdentifierList(beforeBuild.substr(prereleaseSeparator + 1), true)) {
-    return false;
-  }
-
-  std::size_t start = 0;
-  for (int component = 0; component < 3; ++component) {
-    const std::size_t separator = core.find('.', start);
-    const bool final = component == 2;
-    if ((final && separator != std::string_view::npos) ||
-        (!final && separator == std::string_view::npos)) {
-      return false;
-    }
-    const std::size_t end = final ? core.size() : separator;
-    const std::string_view value = core.substr(start, end - start);
-    if (value.empty() ||
-        !std::all_of(value.begin(), value.end(),
-                     [](char character) {
-                       return character >= '0' && character <= '9';
-                     }) ||
-        (value.size() > 1 && value.front() == '0')) {
-      return false;
-    }
-    start = end + 1;
-  }
-  return true;
+  return parsePackageVersion(version).has_value();
 }
 
 bool pathIsWithin(const std::filesystem::path &root,
@@ -534,14 +425,15 @@ void rejectNonCppSources(std::vector<std::filesystem::path> &sources,
                          std::vector<Diagnostic> &diagnostics) {
   for (std::size_t index = 0; index < sources.size();) {
     const std::filesystem::path extension = sources[index].extension();
-    if (extension == ".cpp" || extension == ".cc" || extension == ".cxx") {
+    if (extension == ".cpp" || extension == ".cc" || extension == ".cxx" ||
+        extension == ".mm") {
       ++index;
       continue;
     }
     diagnostics.push_back(buildDiagnostic(
         "GTI-B1005", declarations[index],
         "Native field 'cpp-sources' accepts only files with the '.cpp', "
-        "'.cc', or '.cxx' extension."));
+        "'.cc', '.cxx', or Objective-C++ '.mm' extension."));
     sources.erase(sources.begin() + static_cast<std::ptrdiff_t>(index));
     declarations.erase(declarations.begin() +
                        static_cast<std::ptrdiff_t>(index));
@@ -861,7 +753,8 @@ void applyProfileFields(ProjectProfile &profile, const toml::table &table,
                         std::vector<Diagnostic> &diagnostics) {
   validateFields(table,
                  {"optimization", "cpp-standard", "execution-profile",
-                  "keep-cpp", "native"},
+                  "raw-pointer-audit", "disabled-warnings",
+                  "dependency-warnings", "keep-cpp", "debug-info", "native"},
                  "profile", sourceName, source, diagnostics);
 
   if (const toml::node *optimization = table.get("optimization")) {
@@ -911,6 +804,63 @@ void applyProfileFields(ProjectProfile &profile, const toml::table &table,
           "GTI-B1005", sourceSpan(sourceName, source, *execution),
           "Profile execution profile must be 'single-threaded' or "
           "'concurrent'."));
+    }
+  }
+
+  if (const toml::node *audit = table.get("raw-pointer-audit")) {
+    const auto value = audit->value<std::string>();
+    if (!value) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1004", sourceSpan(sourceName, source, *audit),
+          "Profile field 'raw-pointer-audit' must be a string."));
+    } else if (const auto parsed = parseRawPointerAuditMode(*value)) {
+      profile.rawPointerAudit = *parsed;
+    } else {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1005", sourceSpan(sourceName, source, *audit),
+          "Profile raw pointer audit must be 'off', 'warn', or 'strict'."));
+    }
+  }
+
+  if (table.get("disabled-warnings") != nullptr) {
+    std::vector<SourceSpan> declarations;
+    std::vector<std::string> disabledWarnings =
+        stringArray(table, "disabled-warnings", "Profile", sourceName, source,
+                    diagnostics, &declarations);
+    std::vector<std::string> accepted;
+    accepted.reserve(disabledWarnings.size());
+    for (std::size_t index = 0; index < disabledWarnings.size(); ++index) {
+      if (!isKnownWarningGroup(disabledWarnings[index])) {
+        diagnostics.push_back(buildDiagnostic(
+            "GTI-B1005", declarations[index],
+            "Profile disabled-warnings contains unknown warning group '" +
+                disabledWarnings[index] + "'."));
+        continue;
+      }
+      accepted.push_back(std::move(disabledWarnings[index]));
+    }
+    profile.warningPolicy = WarningPolicy(std::move(accepted));
+  }
+
+  if (const toml::node *dependencyWarnings = table.get("dependency-warnings")) {
+    const std::optional<bool> value = dependencyWarnings->value_exact<bool>();
+    if (!value) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1004", sourceSpan(sourceName, source, *dependencyWarnings),
+          "Profile field 'dependency-warnings' must be a Boolean."));
+    } else {
+      profile.dependencyWarnings = *value;
+    }
+  }
+
+  if (const toml::node *debugInfo = table.get("debug-info")) {
+    const std::optional<bool> value = debugInfo->value<bool>();
+    if (!value) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1004", sourceSpan(sourceName, source, *debugInfo),
+          "Profile field 'debug-info' must be a Boolean."));
+    } else {
+      profile.debugInfo = *value;
     }
   }
 
@@ -1001,6 +951,49 @@ parseDependencies(const toml::table &document,
           "be 'std'."));
     }
     const toml::table *dependencyTable = dependencyNode.as_table();
+    const auto range = dependencyNode.value<std::string>();
+    const bool hasRange = dependencyTable && dependencyTable->get("version");
+    if (range || hasRange) {
+      const auto requirement =
+          range ? range : dependencyTable->get("version")->value<std::string>();
+      const SourceSpan span = sourceSpan(sourceName, source, dependencyNode);
+      std::string registry = "official", package = alias;
+      bool valid = requirement &&
+                   PackageVersionRequirement::parse(*requirement).has_value();
+      if (dependencyTable) {
+        validateFields(*dependencyTable, {"version", "registry", "package"},
+                       "registry dependency", sourceName, source, diagnostics);
+        for (auto field : {"registry", "package"}) {
+          if (const auto *value = dependencyTable->get(field)) {
+            auto text = value->value<std::string>();
+            if (!text || !validRegistryName(*text)) {
+              valid = false;
+            } else if (std::string_view(field) == "registry") {
+              registry = *text;
+            } else {
+              package = *text;
+            }
+          }
+        }
+      }
+      if (!valid || !validRegistryName(package)) {
+        diagnostics.push_back(buildDiagnostic(
+            "GTI-B1710", span,
+            "Registry dependency '" + alias +
+                "' needs a valid package/registry name and a caret, tilde or "
+                "exact SemVer requirement (for example '^0.2.1')."));
+        continue;
+      }
+      dependencies.push_back(
+          {.alias = alias,
+           .registry =
+               ProjectRegistryDependencySource{.registry = registry,
+                                               .package = package,
+                                               .requirement = *requirement},
+           .declaration = aliasSpan,
+           .pathDeclaration = span});
+      continue;
+    }
     if (dependencyTable == nullptr) {
       diagnostics.push_back(buildDiagnostic(
           "GTI-B1004", sourceSpan(sourceName, source, dependencyNode),
@@ -1525,7 +1518,7 @@ parseToolchains(const toml::table &document,
       Diagnostic diagnostic = buildDiagnostic(
           "GTI-B1902", toolchain.declaration,
           "Toolchain '" + toolchain.declaredTriple +
-              "' must declare 'cxx', the native C++ compiler and linker for "
+              "' must declare 'cxx', the native compiler and linker for "
               "that target.");
       diagnostic.hints.push_back(
           "Without it the build would fall back to host compiler discovery "
@@ -1904,6 +1897,7 @@ discoverProjectManifest(const std::filesystem::path &startDirectory) {
 
 ManifestLoadResult
 loadProjectManifest(const std::filesystem::path &requestedManifestPath,
+                    const std::optional<std::string> &textOverride,
                     ManifestFeaturePolicy features) {
   ManifestLoadResult result;
   std::error_code error;
@@ -1922,16 +1916,18 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
 
   const std::string sourceName = pathString(manifestPath);
   std::ifstream input(manifestPath, std::ios::binary);
-  if (!input) {
+  if (!input && !textOverride) {
     result.status = ManifestLoadStatus::IoFailure;
     result.diagnostics.push_back(
         buildDiagnostic("GTI-B1102", {sourceName, 0, 1, 1},
                         "Failed to open the project manifest."));
     return result;
   }
-  const std::string source{std::istreambuf_iterator<char>(input),
-                           std::istreambuf_iterator<char>()};
-  if (!input.good() && !input.eof()) {
+  const std::string source =
+      textOverride ? *textOverride
+                   : std::string{std::istreambuf_iterator<char>(input),
+                                 std::istreambuf_iterator<char>()};
+  if (!textOverride && !input.good() && !input.eof()) {
     result.status = ManifestLoadStatus::IoFailure;
     result.diagnostics.push_back(
         buildDiagnostic("GTI-B1102", {sourceName, 0, 1, 1},
@@ -1953,8 +1949,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
   toml::table document = std::move(parsed).table();
   validateFields(document,
                  {"manifest-version", "package", "targets", "profiles",
-                  "dependencies", "workspace", "build", "bindgen",
-                  "toolchains"},
+                  "dependencies", "workspace", "build", "bindgen", "toolchains",
+                  "modules"},
                  "top-level manifest", sourceName, source, result.diagnostics);
 
   if (const toml::node *version =
@@ -1988,7 +1984,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
   if (const toml::table *packageTable =
           requiredTable(document, "package", "top-level", sourceName, source,
                         result.diagnostics)) {
-    validateFields(*packageTable, {"name", "version", "source-root", "native"},
+    validateFields(*packageTable,
+                   {"name", "version", "source-root", "native", "build-script"},
                    "package", sourceName, source, result.diagnostics);
     package.sourceRootDeclaration =
         sourceSpan(sourceName, source, *packageTable);
@@ -2036,6 +2033,201 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
     package.native =
         parseOptionalNative(*packageTable, packageRoot, "Package", sourceName,
                             source, result.diagnostics);
+    if (const toml::node *scriptNode = packageTable->get("build-script")) {
+      ProjectBuildScript script;
+      script.declaration = sourceSpan(sourceName, source, *scriptNode);
+      const toml::table *scriptTable = scriptNode->as_table();
+      if (scriptTable == nullptr) {
+        result.diagnostics.push_back(
+            buildDiagnostic("GTI-B1004", script.declaration,
+                            "Package field 'build-script' must be a table."));
+      } else {
+        validateFields(*scriptTable, {"command", "source", "inputs"},
+                       "package build-script", sourceName, source,
+                       result.diagnostics);
+        if (scriptTable->contains("command")) {
+          script.command = stringArray(
+              *scriptTable, "command", "Package build-script", sourceName,
+              source, result.diagnostics, &script.commandDeclarations);
+        }
+        const toml::node *sourceNode = scriptTable->get("source");
+        if (sourceNode != nullptr) {
+          script.sourceDeclaration =
+              sourceSpan(sourceName, source, *sourceNode);
+          const std::optional<std::string> spelling =
+              sourceNode->value<std::string>();
+          if (!spelling) {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B1004", script.sourceDeclaration,
+                "Package build-script field 'source' must be a string."));
+          } else {
+            const std::filesystem::path declared(*spelling);
+            if (declared.empty() ||
+                isAbsoluteOnSupportedHost(*spelling, declared)) {
+              result.diagnostics.push_back(buildDiagnostic(
+                  "GTI-B1103", script.sourceDeclaration,
+                  "Package build-script source must be a non-empty path "
+                  "relative to gti.toml."));
+            } else {
+              std::error_code sourceError;
+              const std::filesystem::path resolved =
+                  std::filesystem::weakly_canonical(packageRoot / declared,
+                                                    sourceError);
+              if (sourceError ||
+                  !std::filesystem::is_regular_file(resolved, sourceError)) {
+                result.diagnostics.push_back(buildDiagnostic(
+                    "GTI-B2001", script.sourceDeclaration,
+                    "Package build-script source does not name an existing "
+                    "regular file: " +
+                        *spelling + "."));
+              } else if (!pathIsWithin(packageRoot, resolved)) {
+                result.diagnostics.push_back(buildDiagnostic(
+                    "GTI-B1104", script.sourceDeclaration,
+                    "Package build-script source escapes the package "
+                    "directory: " +
+                        *spelling + "."));
+              } else if (resolved.extension() != ".gti") {
+                result.diagnostics.push_back(buildDiagnostic(
+                    "GTI-B2001", script.sourceDeclaration,
+                    "Package build-script source must use the '.gti' "
+                    "extension: " +
+                        *spelling + "."));
+              } else {
+                script.source = resolved;
+                script.declaredSource = *spelling;
+              }
+            }
+          }
+        }
+        if (script.command.empty() == !script.source.has_value()) {
+          result.diagnostics.push_back(buildDiagnostic(
+              "GTI-B1002", script.declaration,
+              "Package build-script requires exactly one of a non-empty "
+              "'command' array or a GTI 'source' file."));
+        }
+
+        std::vector<SourceSpan> inputDeclarations;
+        script.declaredInputs = stringArray(
+            *scriptTable, "inputs", "Package build-script", sourceName, source,
+            result.diagnostics, &inputDeclarations);
+        for (std::size_t index = 0; index < script.declaredInputs.size();
+             ++index) {
+          const std::string &spelling = script.declaredInputs[index];
+          const std::filesystem::path declared(spelling);
+          if (declared.empty() ||
+              isAbsoluteOnSupportedHost(spelling, declared)) {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B1103", inputDeclarations[index],
+                "Package build-script inputs must be non-empty paths relative "
+                "to gti.toml."));
+            continue;
+          }
+          std::error_code inputError;
+          const std::filesystem::path resolved =
+              std::filesystem::weakly_canonical(packageRoot / declared,
+                                                inputError);
+          if (inputError || !std::filesystem::exists(resolved, inputError)) {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B2001", inputDeclarations[index],
+                "Package build-script input does not exist: " + spelling +
+                    "."));
+            continue;
+          }
+          if (!pathIsWithin(packageRoot, resolved)) {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B1104", inputDeclarations[index],
+                "Package build-script input escapes the package directory: " +
+                    spelling + "."));
+            continue;
+          }
+          script.inputs.push_back(resolved);
+          script.inputDeclarations.push_back(inputDeclarations[index]);
+        }
+        if (script.source &&
+            std::find(script.inputs.begin(), script.inputs.end(),
+                      *script.source) == script.inputs.end()) {
+          script.inputs.push_back(*script.source);
+          script.inputDeclarations.push_back(script.sourceDeclaration);
+        }
+        if (script.inputs.size() != script.declaredInputs.size()) {
+          script.declaredInputs.clear();
+          for (const std::filesystem::path &input : script.inputs) {
+            script.declaredInputs.push_back(
+                std::filesystem::relative(input, packageRoot).generic_string());
+          }
+        }
+        package.buildScript = std::move(script);
+      }
+    }
+  }
+
+  if (const toml::node *moduleNode = document.get("modules")) {
+    const toml::table *modules = moduleNode->as_table();
+    if (modules == nullptr) {
+      result.diagnostics.push_back(buildDiagnostic(
+          "GTI-B1004", sourceSpan(sourceName, source, *moduleNode),
+          "Manifest field 'modules' must map module names to interface "
+          "paths."));
+    } else {
+      for (const auto &[moduleKey, pathNode] : *modules) {
+        const std::string name(moduleKey.str());
+        const SourceSpan declaration = sourceSpan(sourceName, source, pathNode);
+        if (!isImportAlias(name) || keywords.contains(name) ||
+            isCppReservedIdentifier(name) || name.starts_with("__gti_")) {
+          result.diagnostics.push_back(buildDiagnostic(
+              "GTI-B1005", sourceSpan(sourceName, source, moduleKey),
+              "Module names must be ordinary ASCII GTI identifiers."));
+          continue;
+        }
+        const auto spelling = pathNode.value<std::string>();
+        if (!spelling) {
+          result.diagnostics.push_back(
+              buildDiagnostic("GTI-B1004", declaration,
+                              "A module interface path must be a string."));
+          continue;
+        }
+        const std::filesystem::path relative(*spelling);
+        if (spelling->empty() || spelling->find('\0') != std::string::npos ||
+            isAbsoluteOnSupportedHost(*spelling, relative) ||
+            relative.extension() != ".gti") {
+          result.diagnostics.push_back(
+              buildDiagnostic("GTI-B1103", declaration,
+                              "A module interface must be a relative .gti path "
+                              "inside its package."));
+          continue;
+        }
+        std::error_code pathError;
+        const auto resolved =
+            std::filesystem::canonical(packageRoot / relative, pathError);
+        if (pathError ||
+            !std::filesystem::is_regular_file(resolved, pathError)) {
+          result.diagnostics.push_back(buildDiagnostic(
+              "GTI-B1103", declaration,
+              "Module interface does not name an existing regular file: " +
+                  *spelling + "."));
+          continue;
+        }
+        if (!pathIsWithin(packageRoot, resolved)) {
+          result.diagnostics.push_back(
+              buildDiagnostic("GTI-B1104", declaration,
+                              "Module interface escapes its owning package."));
+          continue;
+        }
+        if (std::any_of(package.modules.begin(), package.modules.end(),
+                        [&](const auto &module) {
+                          return module.second == resolved ||
+                                 portableProjectNameKey(module.first) ==
+                                     portableProjectNameKey(name);
+                        })) {
+          result.diagnostics.push_back(
+              buildDiagnostic("GTI-B1005", declaration,
+                              "Module registrations must have distinct "
+                              "interface files and portable names."));
+          continue;
+        }
+        package.modules.emplace_back(name, resolved);
+      }
+    }
   }
 
   std::vector<ProjectDependency> dependencies = parseDependencies(
@@ -2056,8 +2248,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
           buildDiagnostic("GTI-B1004", build.declaration,
                           "Manifest field 'build' must be a table."));
     } else {
-      validateFields(*buildTable, {"defines"}, "build", sourceName, source,
-                     result.diagnostics);
+      validateFields(*buildTable, {"defines", "allow-build-scripts"}, "build",
+                     sourceName, source, result.diagnostics);
       build.defines =
           stringArray(*buildTable, "defines", "Build", sourceName, source,
                       result.diagnostics, &build.defineDeclarations);
@@ -2092,6 +2284,31 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
       for (auto &[name, declaration] : valid) {
         build.defines.push_back(std::move(name));
         build.defineDeclarations.push_back(std::move(declaration));
+      }
+      build.allowedBuildScripts = stringArray(
+          *buildTable, "allow-build-scripts", "Build", sourceName, source,
+          result.diagnostics, &build.allowedBuildScriptDeclarations);
+      std::vector<std::pair<std::string, SourceSpan>> permissions;
+      permissions.reserve(build.allowedBuildScripts.size());
+      for (std::size_t index = 0; index < build.allowedBuildScripts.size();
+           ++index) {
+        permissions.emplace_back(build.allowedBuildScripts[index],
+                                 build.allowedBuildScriptDeclarations[index]);
+      }
+      std::sort(permissions.begin(), permissions.end(),
+                [](const auto &left, const auto &right) {
+                  return left.first < right.first;
+                });
+      permissions.erase(std::unique(permissions.begin(), permissions.end(),
+                                    [](const auto &left, const auto &right) {
+                                      return left.first == right.first;
+                                    }),
+                        permissions.end());
+      build.allowedBuildScripts.clear();
+      build.allowedBuildScriptDeclarations.clear();
+      for (auto &[identity, declaration] : permissions) {
+        build.allowedBuildScripts.push_back(std::move(identity));
+        build.allowedBuildScriptDeclarations.push_back(std::move(declaration));
       }
     }
   }

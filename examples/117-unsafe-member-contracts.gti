@@ -1,0 +1,46 @@
+// Named methods can expose caller obligations without special library names.
+// The caller guarantees a live, initialized address for every sample/write.
+struct Sensor {
+  int* address = nullptr;
+
+  unsafe int sample() { unsafe { return *this.address; } }
+  unsafe void write(int value) mut { unsafe { *this.address = value; } }
+  unsafe static int load(const int* address) {
+    unsafe { return *address; }
+  }
+};
+
+concept samples<T> = requires(T& source) {
+  unsafe { source.sample() } -> int;
+};
+concept writes<T> = requires(mut T& target, int value) {
+  unsafe { target.write(value) } -> void;
+};
+
+// Both declarations and their bodies preserve the caller's obligation.
+unsafe int observe<T>(T& source) requires samples<T> {
+  unsafe { return source.sample(); }
+}
+unsafe void update<T>(mut T& target, int value) requires writes<T> {
+  unsafe { target.write(value); }
+}
+unsafe int forward<T>(T& source) requires samples<T> {
+  unsafe { return observe(source); }
+}
+
+// A safe implementation satisfies a contract permitting an unsafe operation.
+// A caller using only that contract still acknowledges the obligation.
+struct ConstantSensor { int sample() { return 42; } };
+
+int main() {
+  static_assert(!(requires(Sensor& source) { { source.sample() } -> int; }));
+  static_assert(requires(Sensor& source) { unsafe { source.sample() } -> int; });
+  mut int value = 7;
+  mut Sensor sensor{.address = &value};
+  ConstantSensor constant{};
+  unsafe {
+    update(sensor, 42);
+    if (forward(sensor) != forward(constant)) { return 1; }
+    return Sensor::load(&value) == 42 ? 0 : 2;
+  }
+}

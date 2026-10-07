@@ -1,0 +1,55 @@
+#include <std/utility>
+
+class ReadView {
+public:
+  int& item;
+  ReadView(int& item) : item(item) {}
+  int& read() { return this.item; }
+};
+
+class Envelope<T> {
+public:
+  T payload;
+  int marker;
+  Envelope(T payload, int marker) : payload(std::move(payload)), marker(marker) {}
+};
+
+class Selected {
+  ReadView view;
+public:
+  // The stored field follows the selected constructor argument, not the
+  // unrelated carrier argument that is deliberately unused.
+  Selected(ReadView unused, int& chosen) : view(ReadView(chosen)) {}
+  int& read() { return this.view.read(); }
+};
+
+std::pair<ReadView, bool> make_result(int& value) {
+  return std::pair<ReadView, bool>(ReadView(value), true);
+}
+
+int& read_result(std::pair<ReadView, bool> result) {
+  return result.first.item;
+}
+
+int main() {
+  int value = 42;
+  auto result = make_result(value);
+  if (!result.second || result.first.read() != 42) { return 1; }
+  auto copy = result;
+  if (copy.first.read() != 42) { return 2; }
+  if (read_result(copy) != 42) { return 4; }
+  auto nested = Envelope<std::pair<ReadView, bool>>(std::move(result), 9);
+  if (nested.marker != 9 || nested.payload.first.read() != 42) { return 3; }
+  int other = 7;
+  auto independent = std::pair<ReadView, ReadView>(ReadView(value), ReadView(other));
+  if (independent.first.read() != 42 || independent.second.read() != 7) { return 5; }
+  auto shared = std::pair<ReadView, ReadView>(ReadView(value), ReadView(value));
+  if (shared.first.read() != 42 || shared.second.read() != 42) { return 6; }
+  mut int unused = 1;
+  int chosen = 2;
+  Selected selected{ReadView(unused), chosen};
+  unused = 3;
+  auto selected_copy = selected;
+  if (selected.read() != 2 || selected_copy.read() != 2 || unused != 3) { return 7; }
+  return 0;
+}

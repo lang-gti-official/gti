@@ -1,0 +1,32 @@
+#include <std/vector>
+#include <std/string>
+#include <std/forward_list>
+
+class item {
+public:
+  int32_t key;
+  item(int32_t value) : key(value) {}
+  item(item& other) = delete;
+  item(item&& other) = default;
+  ~item() { std::println(this.key); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut std::vector<item> a = std::vector<item>();
+  mut std::vector<item> b = std::vector<item>();
+  a.push_back(item(1));
+  a.push_back(item(2));
+  b.push_back(item(3));
+  a.swap(b);
+  mut std::forward_list<item> left = std::forward_list<item>();
+  mut std::forward_list<item> right = std::forward_list<item>();
+  left.push_front(item(4));
+  left.push_front(item(5));
+  right.push_front(item(6));
+  left.swap(right);
+  std::println("swapped");
+  if (argc == 2) { std::println(1 / (argc - 2)); }
+  if (a.front().key != 3 || b.back().key != 2 ||
+      left.front().key != 6 || right.front().key != 5) { return 1; }
+  return 0;
+}

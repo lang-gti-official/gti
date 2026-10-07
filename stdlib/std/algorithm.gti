@@ -9,21 +9,21 @@
 #include <std/vector>
 
 namespace std {
-T min<std::totally_ordered T>(T left, T right) {
+constexpr T min<std::totally_ordered T>(T left, T right) {
   if (right < left) {
     return std::move(right);
   }
   return std::move(left);
 }
 
-T max<std::totally_ordered T>(T left, T right) {
+constexpr T max<std::totally_ordered T>(T left, T right) {
   if (left < right) {
     return std::move(right);
   }
   return std::move(left);
 }
 
-T clamp<std::totally_ordered T>(T value, T low, T high) {
+constexpr T clamp<std::totally_ordered T>(T value, T low, T high) {
   if (value < low) {
     return std::move(low);
   }
@@ -191,100 +191,107 @@ void fill<Range, std::copyable T>(mut Range& values, T& value)
 // slot.
 // Reading and writing the same vector is rejected by borrow exclusivity at
 // the call site; an undersized destination raises its own checked failure.
-void transform<std::copyable T, Operation>(std::vector<T>& source,
+void transform<std::movable T, Operation>(std::vector<T>& source,
                                            mut std::vector<T>& destination,
                                            mut Operation operation)
   requires std::operation<Operation, T, T> {
   for (mut size_t index = size_t(0); index < source.size(); index++) {
     T produced = operation(source[index]);
-    destination[index] = produced;
+    destination[index] = std::move(produced);
   }
 }
 
-// In-place families rewrite one owning container through a single exclusive
-// borrow, copying each element out and assigning it back into place. Element
-// types must therefore be copyable until place-aware initialization tracking
-// allows moving directly out of an indexed element.
-void reverse<std::copyable T>(mut std::vector<T>& values) {
+// In-place families retain one exclusive container borrow. Checked restoring
+// transfers permute initialized elements without copying or leaving a hole.
+void reverse<std::relocatable T>(mut std::vector<T>& values) {
   if (values.size() < std::size_t(2)) {
     return;
   }
   mut ptrdiff_t left = ptrdiff_t(0);
   mut ptrdiff_t right = ptrdiff_t(values.size()) - ptrdiff_t(1);
   while (left < right) {
-    T low = values[size_t(left)];
-    T high = values[size_t(right)];
-    values[size_t(left)] = high;
-    values[size_t(right)] = low;
+    values.swap_elements(size_t(left), size_t(right));
     left++;
     right--;
   }
 }
 
 namespace detail {
-// Lomuto partition quicksort over a copied pivot. Recursion always descends
-// into the smaller side while the loop continues on the larger, so the stack
-// stays logarithmic in the range length.
-void sort_range<std::copyable T>(mut std::vector<T>& values,
-                                 mut ptrdiff_t low, mut ptrdiff_t high)
+// Borrow the owner read-only for the entire comparison. This selects readable
+// element access even though the sorting caller owns an exclusive reborrow.
+bool sort_less_at<std::relocatable T>(std::vector<T>& values,
+                                    size_t left, size_t right)
   requires std::totally_ordered<T> {
-  while (low < high) {
-    T pivot = values[size_t(high)];
-    mut ptrdiff_t store = low;
-    for (mut ptrdiff_t scan = low; scan < high; scan++) {
-      if (values[size_t(scan)] < pivot) {
-        T lower = values[size_t(scan)];
-        T kept = values[size_t(store)];
-        values[size_t(scan)] = kept;
-        values[size_t(store)] = lower;
-        store++;
-      }
-    }
-    T boundary = values[size_t(store)];
-    values[size_t(high)] = boundary;
-    values[size_t(store)] = pivot;
-    if (store - low < high - store) {
-      sort_range(values, low, store - ptrdiff_t(1));
-      low = store + ptrdiff_t(1);
-    } else {
-      sort_range(values, store + ptrdiff_t(1), high);
-      high = store - ptrdiff_t(1);
-    }
-  }
+  return values[left] < values[right];
 }
 }
 
-void sort<std::copyable T>(mut std::vector<T>& values)
+void sort<std::relocatable T>(mut std::vector<T>& values)
   requires std::totally_ordered<T> {
-  if (values.size() > std::size_t(1)) {
-    detail::sort_range(values, ptrdiff_t(0),
-                       ptrdiff_t(values.size()) - ptrdiff_t(1));
+  mut size_t end = values.size();
+  mut size_t start = end / size_t(2);
+  while (end > size_t(1)) {
+    mut size_t root = size_t(0);
+    if (start > size_t(0)) {
+      start--;
+      root = start;
+    } else {
+      end--;
+      values.swap_elements(size_t(0), end);
+    }
+    while (root < end / size_t(2)) {
+      mut size_t child = root * size_t(2) + size_t(1);
+      if (child + size_t(1) < end &&
+          detail::sort_less_at(values, child, child + size_t(1))) {
+        child++;
+      }
+      if (!detail::sort_less_at(values, root, child)) { break; }
+      values.swap_elements(root, child);
+      root = child;
+    }
   }
 }
 
 // A complete-range comparator overload keeps one exact callable in the same
 // exclusive scope as the vector. The bounded relation guarantees an owned
 // bool result for two readable T values and rejects a consuming target because
-// sorting may compare zero or more times. Insertion sort keeps the first
-// comparator client iterative and deterministic without forwarding callable
-// state through recursive helpers.
-void sort<std::copyable T, Compare>(mut std::vector<T>& values,
+// sorting may compare zero or more times. Iterative heapsort keeps one owned
+// comparator, O(n log n) comparisons, and constant auxiliary storage. Neither
+// sort overload promises stability. Compare must define a strict weak order.
+void sort<std::relocatable T, Compare>(mut std::vector<T>& values,
                                     mut Compare compare)
   requires std::comparator<Compare, T> {
-  for (mut size_t index = size_t(1); index < values.size(); index++) {
-    mut size_t current = index;
-    while (current > size_t(0)) {
-      size_t previous = current - size_t(1);
-      T current_value = values[current];
-      T previous_value = values[previous];
-      if (!compare(current_value, previous_value)) {
-        break;
+  mut size_t end = values.size();
+  mut size_t start = end / size_t(2);
+  while (end > size_t(1)) {
+    mut size_t root = size_t(0);
+    if (start > size_t(0)) {
+      start--;
+      root = start;
+    } else {
+      end--;
+      values.swap_elements(size_t(0), end);
+    }
+    // root < end/2 proves 2*root+1 is an in-bounds child without overflow.
+    // An odd-sized heap's last parent also has children at root == end/2-1.
+    while (root < end / size_t(2)) {
+      mut size_t child = root * size_t(2) + size_t(1);
+      if (child + size_t(1) < end) {
+        mut bool before = false;
+        {
+          std::vector<T>& readable = values;
+          before = compare(readable[child], readable[child + size_t(1)]);
+        }
+        if (before) { child++; }
       }
-      T lower = values[current];
-      T upper = values[previous];
-      values[current] = upper;
-      values[previous] = lower;
-      current--;
+      mut bool before = false;
+      {
+        std::vector<T>& readable = values;
+        before = compare(readable[root], readable[child]);
+      }
+      if (!before) { break; }
+      values.swap_elements(root, child);
+      root = child;
     }
   }
 }
@@ -393,5 +400,342 @@ bool binary_search<Iterator, Sentinel, T>(mut Iterator first,
     count++;
   }
   return detail::binary_search_counted(std::move(first), count, value);
+}
+bool contains<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T& value)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::equality_comparable<T> {
+  while (first != last) {
+    if (*first == value) { return true; }
+    ++first;
+  }
+  return false;
+}
+
+bool contains<Range, T>(Range& values, T& value)
+  requires std::range_of<Range, T> && std::equality_comparable<T> {
+  for (auto& element : values) {
+    if (element == value) { return true; }
+  }
+  return false;
+}
+
+ptrdiff_t count<Range, T>(Range& values, T& value)
+  requires std::range_of<Range, T> && std::equality_comparable<T> {
+  mut ptrdiff_t result = 0;
+  for (auto& element : values) {
+    if (element == value) { result++; }
+  }
+  return result;
+}
+
+bool is_partitioned<Iterator, Sentinel, Predicate>(
+    mut Iterator first, Sentinel last, mut Predicate predicate)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::indirect_predicate<Predicate, Iterator> {
+  mut bool reached_false = false;
+  while (first != last) {
+    if (predicate(*first)) {
+      if (reached_false) { return false; }
+    } else { reached_false = true; }
+    ++first;
+  }
+  return true;
+}
+
+bool is_partitioned<Range, Predicate>(Range& values, mut Predicate predicate)
+  requires std::input_range<Range> && std::range_predicate<Predicate, Range> {
+  mut bool reached_false = false;
+  for (auto& element : values) {
+    if (predicate(element)) {
+      if (reached_false) { return false; }
+    } else { reached_false = true; }
+  }
+  return true;
+}
+
+// Four endpoints keep both reads bounded, including unequal-length inputs.
+// Element comparisons are ordinary exact GTI operators, checked again for
+// every concrete instance (no host comparison, conversion, or type erasure).
+bool equal<I, S, J, E>(mut I first, S last, mut J second, E end)
+  requires std::input_iterator<I> && std::sentinel_for<S, I> &&
+           std::input_iterator<J> && std::sentinel_for<E, J> {
+  while (first != last && second != end) {
+    if (!(*first == *second)) { return false; }
+    ++first;
+    ++second;
+  }
+  return !(first != last) && !(second != end);
+}
+
+bool starts_with<I, S, J, E>(mut I first, S last, mut J second, E end)
+  requires std::input_iterator<I> && std::sentinel_for<S, I> &&
+           std::input_iterator<J> && std::sentinel_for<E, J> {
+  while (second != end) {
+    if (!(first != last)) { return false; }
+    if (!(*first == *second)) { return false; }
+    ++first;
+    ++second;
+  }
+  return true;
+}
+
+bool lexicographical_compare<I, S, J, E>(mut I first, S last, mut J second, E end)
+  requires std::input_iterator<I> && std::sentinel_for<S, I> &&
+           std::input_iterator<J> && std::sentinel_for<E, J> {
+  while (first != last && second != end) {
+    if (*first < *second) { return true; }
+    if (*second < *first) { return false; }
+    ++first;
+    ++second;
+  }
+  return !(first != last) && second != end;
+}
+
+Iterator adjacent_find<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> {
+  if (!(first != last)) { return std::move(first); }
+  mut Iterator next = first;
+  ++next;
+  while (next != last) {
+    if (*first == *next) { return std::move(first); }
+    ++first;
+    ++next;
+  }
+  ++first;
+  return std::move(first);
+}
+
+Iterator search<Iterator, Sentinel, Pattern, PatternEnd>(
+    mut Iterator first, Sentinel last, Pattern pattern, PatternEnd pattern_end)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::forward_iterator<Pattern> && std::sentinel_for<PatternEnd, Pattern> {
+  while (first != last) {
+    mut Iterator scan = first;
+    mut Pattern needle = pattern;
+    while (scan != last && needle != pattern_end) {
+      if (!(*scan == *needle)) { break; }
+      ++scan;
+      ++needle;
+    }
+    if (!(needle != pattern_end)) { return std::move(first); }
+    ++first;
+  }
+  return std::move(first);
+}
+
+Iterator find_first_of<Iterator, Sentinel, Pattern, PatternEnd>(
+    mut Iterator first, Sentinel last, Pattern pattern, PatternEnd pattern_end)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::forward_iterator<Pattern> && std::sentinel_for<PatternEnd, Pattern> {
+  while (first != last) {
+    mut Pattern needle = pattern;
+    while (needle != pattern_end) {
+      if (*first == *needle) { return std::move(first); }
+      ++needle;
+    }
+    ++first;
+  }
+  return std::move(first);
+}
+
+Iterator search_n<Iterator, Sentinel, T>(
+    mut Iterator first, Sentinel last, size_t count, T& value)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::equality_comparable<T> {
+  if (count == 0) { return std::move(first); }
+  while (first != last) {
+    mut Iterator scan = first;
+    mut size_t matched = 0;
+    while (scan != last && matched < count) {
+      if (!(*scan == value)) { break; }
+      ++scan;
+      matched++;
+    }
+    if (matched == count) { return std::move(first); }
+    // A failing run cannot contain the start of a successful overlapping run.
+    for (mut size_t skipped = 0; skipped < matched; skipped++) { ++first; }
+    if (first != last) { ++first; }
+  }
+  return std::move(first);
+}
+
+// Returning the original parameter preserves its exact owner identity. Cursor
+// positions are advanced, never reassigned or reseated to a different owner.
+Iterator lower_bound<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T& value)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::totally_ordered<T> {
+  mut Iterator scan = first;
+  mut size_t remaining = 0;
+  while (scan != last) { ++scan; remaining++; }
+  while (remaining > 0) {
+    size_t half = remaining / 2;
+    mut Iterator middle = first;
+    for (mut size_t step = 0; step < half; step++) { ++middle; }
+    if (*middle < value) {
+      for (mut size_t step = 0; step <= half; step++) { ++first; }
+      remaining -= half + 1;
+    } else { remaining = half; }
+  }
+  return std::move(first);
+}
+
+Iterator upper_bound<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T& value)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::totally_ordered<T> {
+  mut Iterator scan = first;
+  mut size_t remaining = 0;
+  while (scan != last) { ++scan; remaining++; }
+  while (remaining > 0) {
+    size_t half = remaining / 2;
+    mut Iterator middle = first;
+    for (mut size_t step = 0; step < half; step++) { ++middle; }
+    if (!(value < *middle)) {
+      for (mut size_t step = 0; step <= half; step++) { ++first; }
+      remaining -= half + 1;
+    } else { remaining = half; }
+  }
+  return std::move(first);
+}
+
+Iterator min_element<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> {
+  if (!(first != last)) { return std::move(first); }
+  mut Iterator scan = first;
+  ++scan;
+  while (scan != last) {
+    if (*scan < *first) {
+      while (first != scan) { ++first; }
+    }
+    ++scan;
+  }
+  return std::move(first);
+}
+
+Iterator max_element<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> {
+  if (!(first != last)) { return std::move(first); }
+  mut Iterator scan = first;
+  ++scan;
+  while (scan != last) {
+    if (*first < *scan) {
+      while (first != scan) { ++first; }
+    }
+    ++scan;
+  }
+  return std::move(first);
+}
+
+bool is_sorted<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> {
+  if (!(first != last)) { return true; }
+  mut Iterator next = first;
+  ++next;
+  while (next != last) {
+    if (*next < *first) { return false; }
+    ++first;
+    ++next;
+  }
+  return true;
+}
+
+Iterator is_sorted_until<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> {
+  if (!(first != last)) { return std::move(first); }
+  mut Iterator next = first;
+  ++next;
+  while (next != last) {
+    if (*next < *first) { ++first; return std::move(first); }
+    ++first;
+    ++next;
+  }
+  ++first;
+  return std::move(first);
+}
+
+void replace<Range, std::copyable T>(mut Range& values, T& old_value, T& new_value)
+  requires std::mutable_range_of<Range, T> && std::equality_comparable<T> {
+  for (mut T& element : values) {
+    if (element == old_value) { element = new_value; }
+  }
+}
+
+void replace_if<Range, std::copyable T, Predicate>(
+    mut Range& values, mut Predicate predicate, T& replacement)
+  requires std::mutable_range_of<Range, T> && std::predicate<Predicate, T> {
+  for (mut T& element : values) {
+    if (predicate(element)) { element = replacement; }
+  }
+}
+
+// Output algorithms retain one exclusive destination cursor and return no
+// escaping cursor. Output exhaustion uses the destination's checked failure.
+void copy_if<Iterator, Sentinel, Output, Predicate>(
+    mut Iterator first, Sentinel last, mut Output output, mut Predicate predicate)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::output_iterator<Output> && std::indirect_predicate<Predicate, Iterator> {
+  while (first != last) {
+    if (predicate(*first)) { *output = *first; ++output; }
+    ++first;
+  }
+}
+
+void copy_n<Iterator, Output>(mut Iterator first, size_t count, mut Output output)
+  requires std::input_iterator<Iterator> && std::output_iterator<Output> {
+  for (mut size_t index = 0; index < count; index++) {
+    *output = *first;
+    ++first;
+    ++output;
+  }
+}
+
+void replace_copy<Iterator, Sentinel, Output, T>(
+    mut Iterator first, Sentinel last, mut Output output, T& old_value, T& new_value)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::copyable<T> &&
+           std::equality_comparable<T> && std::output_iterator<Output> &&
+           std::writes_to<Output, T> {
+  while (first != last) {
+    if (*first == old_value) { *output = new_value; }
+    else { *output = *first; }
+    ++first;
+    ++output;
+  }
+}
+
+void replace_copy_if<Iterator, Sentinel, Output, T, Predicate>(
+    mut Iterator first, Sentinel last, mut Output output,
+    mut Predicate predicate, T& replacement)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::copyable<T> &&
+           std::output_iterator<Output> && std::writes_to<Output, T> &&
+           std::indirect_predicate<Predicate, Iterator> {
+  while (first != last) {
+    if (predicate(*first)) { *output = replacement; }
+    else { *output = *first; }
+    ++first;
+    ++output;
+  }
+}
+
+void remove_copy<Iterator, Sentinel, Output, T>(
+    mut Iterator first, Sentinel last, mut Output output, T& value)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::copyable<T> &&
+           std::equality_comparable<T> && std::output_iterator<Output> &&
+           std::writes_to<Output, T> {
+  while (first != last) {
+    if (!(*first == value)) { *output = *first; ++output; }
+    ++first;
+  }
+}
+
+void remove_copy_if<Iterator, Sentinel, Output, Predicate>(
+    mut Iterator first, Sentinel last, mut Output output, mut Predicate predicate)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::output_iterator<Output> && std::indirect_predicate<Predicate, Iterator> {
+  while (first != last) {
+    if (!predicate(*first)) { *output = *first; ++output; }
+    ++first;
+  }
 }
 }

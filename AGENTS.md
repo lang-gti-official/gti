@@ -1,7 +1,32 @@
 # GTI Repository Guidance
 
-GTI is an experimental, statically typed systems language with C++-familiar
-syntax, explicit ownership, deterministic cleanup, and a native C++ backend.
+GTI is an independent, experimental, statically typed systems language with
+strong C++ syntax familiarity, explicit ownership, and deterministic cleanup.
+Its goal is a fully usable systems language with excellent safety and sound
+architecture. The reference compiler currently generates native code through
+C++; GTI is not a C++ wrapper, and that backend does not define its semantics.
+
+## Language Direction
+
+- Design general GTI facilities that let applications and libraries implement
+  systems abstractions in ordinary source. Prefer source-defined public policy
+  wherever its invariants can be expressed, while retaining compiler/runtime
+  mechanisms for layout, object lifetime, checked ownership, target operations,
+  or other facts that source cannot establish. Justify that split per operation;
+  source-defined does not mean removing necessary compiler support.
+- Keep C++ spelling and familiarity strong when they fit coherent GTI semantics.
+  Neither C++ compatibility nor generated C++ behavior is the acceptance rule.
+  Safe guarantees and explicit unsafe obligations belong to GTI itself.
+- Earlier assumptions, bounded slices, private capabilities, and deferred work
+  may have been appropriate for an earlier language. Reassess their rationale
+  against current capabilities and the systems-language goal. Record an explicit
+  revision when a decision changes; historical restrictions are not permanent
+  requirements merely because they were once accepted.
+- Describe remaining work as goals with named prerequisites, current evidence,
+  and acceptance criteria. Missing support calls for implementing or scheduling
+  the prerequisite, rather than treating it as a reason to abandon the outcome.
+  Preserve honest implementation status and mandatory safety/verification rules;
+  goal-oriented planning does not authorize unvalidated behavior or bypasses.
 
 ## Start Here
 
@@ -12,6 +37,34 @@ syntax, explicit ownership, deterministic cleanup, and a native C++ backend.
   than guessing intent.
 - Use repository skills under [`.codex/skills/`](.codex/skills/) for repeatable
   workflows. Skills describe how to work; they do not replace canonical docs.
+
+## Implementation Task Lifecycle
+
+- Apply [agent-workflow](.codex/skills/agent-workflow/SKILL.md) to implementation
+  tasks. The owner's standing authorization is to publish task checkpoints,
+  open/update the task PR, merge validated in-scope work through that PR, sync
+  primary local `main`, and safely clean up that task's integrated branch and
+  worktree. An implementation is normally complete when local `main` contains
+  the merged change and is ready for the user's local install script.
+- Explicit requests such as "PR only", "leave local", "do not merge", or
+  "review first" override automatic integration. Read-only reviews/discussions
+  do not authorize implementation or publication. Installation remains opt-in.
+- Begin from current canonical `origin/main` in a clean task-specific branch
+  and worktree. Publish the branch immediately; create a draft PR after the
+  first meaningful checkpoint. Commit and push coherent checkpoints before
+  pauses/handoffs and at completion. Do not leave meaningful task work only in
+  an opaque local checkout or reuse another task's branch.
+- Use `scripts/agent_workflow.py` for lifecycle operations. Reconcile upstream,
+  validate the resulting head/base, and merge only through Gitea PRs. Respect
+  required checks/reviews. No direct pushes to `main`, rewritten shared history,
+  or administrative bypasses. The owner authorizes the helper's `protection
+  --configure` to establish this PR-only/up-to-date rule; preserve existing
+  review and status requirements.
+- Preserve unrelated primary-checkout edits and unique commits during sync.
+  Confirm remote integration before archiving/removing a task worktree or
+  deleting its branches. Preserve needed ignored files and any residual source
+  first. Explicitly mark and publish abandoned/superseded work; never silently
+  discard it. See [the lifecycle contract](docs/architecture/agent-workflow.md).
 
 ## Documentation Roles
 
@@ -38,11 +91,22 @@ one-off implementation-note or redesign files when an existing category fits.
    flow and effects in MIR, and representation choices in backends.
 4. Add focused positive and negative tests at the layer that owns the rule.
    Run broader relevant CTest, CLI, LSP, Tree-sitter, formatter, or installed
-   toolchain checks in proportion to the change.
+   toolchain checks in proportion to the change. Use a GTI compiler executable
+   built with host optimization for every test that compiles or analyzes GTI
+   (`Release`, `RelWithDebInfo`, or `MinSizeRel`); an unoptimized compiler is
+   not valid verification evidence.
 5. Update the canonical architecture or language document when implementation
    behavior changes. Update a plan when its status changes; do not describe
    planned behavior as current.
-6. Keep generated, vendored, and unrelated user files out of task diffs.
+6. Every new language feature must ship with an accompanying runnable example
+   under `examples/` in the same change. Add a focused example or extend an
+   existing one to demonstrate the feature explicitly, including its intended
+   use and important supported boundaries. Test fixtures and documentation
+   snippets alone do not satisfy this requirement. Validate the example with
+   an optimized GTI compiler and update the applicable example index, corpus
+   registration, and census expectations. A feature is not complete without
+   its example and passing example evidence.
+7. Keep generated, vendored, and unrelated user files out of task diffs.
 
 ## Release Channels And VERSION
 
@@ -77,6 +141,55 @@ that work. A commit that changes no user-visible behavior should leave
   for systems programming, not as a horizon used to defer essential
   capabilities. Preserve GTI's accepted safety and phase-authority rules while
   pursuing that goal.
+
+## General Semantics Before Client Exceptions
+
+- Separate the motivating library type or workload from the language rule that
+  enables it. State the rule without naming a particular `std::*` type, and
+  prove it with an unrelated user-defined type whenever the rule is intended to
+  be general.
+- A bounded first slice may deliberately support fewer shapes, but its boundary
+  must be structural and recorded as such. Do not accumulate nominal compiler
+  exceptions for individual views, ranges, callbacks, containers, or other
+  public wrappers.
+- For ownership, borrowing, and callable work, identify the shared semantic
+  facts being extended: origin place or places, access mode, permitted escape
+  boundary, loan endpoint, and transfer/drop behavior. Semantics owns those
+  facts; HIR and MIR preserve or verify them; the backend must not rediscover
+  them from representation.
+- Before adding a new path, audit overlapping special cases. A generalization
+  should remove or subsume them. If it cannot, explain why the new behavior is
+  a distinct semantic family rather than another client-specific exception.
+- Compiler-private capabilities remain appropriate only when ordinary GTI
+  cannot express an invariant safely. Bind those capabilities by trusted
+  declaration identity; never make a public standard-library spelling the
+  source of language meaning.
+
+## Constexpr Evolution
+
+- Before extending `constexpr`, `static_assert`, compile-time branches, or any
+  other constant context, read the `L-CONST-01` evaluator direction in
+  [`docs/plans/implementation-sequence.md`](docs/plans/implementation-sequence.md#l-const-01-remaining-bounded-compile-time-programming).
+  Treat the current semantic AST interpreter as implemented staging, not the
+  desired place to duplicate each new runtime execution rule indefinitely.
+- Distinguish semantic authority from the execution engine. Semantics still
+  decides whether an operation is permitted in a constant context and consumes
+  the resulting `ConstantValue`; this does not require program execution to
+  remain implemented inside semantic analysis.
+- Audit whether the requested slice can move the applicable function,
+  constructor, control-flow, place, or aggregate behavior toward a verified
+  body-local MIR constant-evaluation profile. Reuse MIR operations and typed
+  identities rather than creating an unrelated CTFE bytecode or another type
+  system.
+- Preserve phase timing. `if constexpr`, static assertions, array extents, and
+  value-generic arguments can shape semantic analysis before complete program
+  HIR/MIR exists. Do not move evaluation after completed semantics without a
+  staged or query-driven design that resolves that dependency.
+- A bounded interim AST-evaluator addition must identify why MIR-backed
+  migration is not coherent in the same slice, retain deterministic resource
+  limits and source diagnostics, add compile-time/runtime differential evidence
+  where runtime execution exists, and record the remaining migration work. Do
+  not leave two permanent execution rules for the same operation.
 
 ## Repository Boundaries
 

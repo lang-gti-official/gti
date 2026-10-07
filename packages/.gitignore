@@ -1,0 +1,6 @@
+.cache/
+*/vendor/
+*/build/
+*/native/generated/
+*/native/lib/
+examples/*/build/

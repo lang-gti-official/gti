@@ -1,0 +1,45 @@
+#include <std/string>
+
+// A named path keeps its storage. Intermediate owned paths can reuse theirs.
+class Path {
+  mut std::string text;
+public:
+  Path(std::string text) : text(std::move(text)) {}
+
+  Path append(std::string_view segment) && {
+    this.text.push_back('/');
+    this.text.append(segment);
+    return std::move(this);
+  }
+
+  Path operator/(std::string_view segment) {
+    Path copy{this.text.clone()};
+    return std::move(copy).append(segment);
+  }
+
+  Path operator/(std::string_view segment) && {
+    this.text.push_back('/');
+    this.text.append(segment);
+    return std::move(this);
+  }
+
+  void print() { std::println(this.text.view()); }
+};
+
+Path make_root() {
+  Path root{std::string("api")};
+  // An exact move-only local moves implicitly when returned; not at calls.
+  return root;
+}
+
+int main() {
+  Path root = make_root();
+  Path login = root / "auth" / "login";
+  root.print();   // api: the named operand selected the read-only overload.
+  login.print();  // api/auth/login: the intermediate selected operator/ &&.
+
+  Path logout = std::move(root).append("auth").append("logout");
+  logout.print();
+  // root.print(); would be an error: ownership was explicitly transferred.
+  return 0;
+}

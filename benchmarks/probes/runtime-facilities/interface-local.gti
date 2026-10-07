@@ -1,0 +1,24 @@
+#include <std/vector>
+int32_t step(int32_t value, int32_t bias) {
+  return (value * 17 + bias) % 65521;
+}
+interface Update { int32_t run(int32_t value, int32_t bias); };
+class Linear : public Update {
+public:
+  Linear() {}
+  int32_t run(int32_t value, int32_t bias) override { return step(value, bias); }
+};
+int main() {
+  mut std::vector<int32_t> state = std::vector<int32_t>(std::size_t(1024));
+  for (mut std::size_t i = 0; i < state.size(); i++) { state[i] = int32_t(i); }
+  Linear action{};
+  Update& selected = action;
+  for (mut int32_t tick = 0; tick < 120000; tick++) {
+    int32_t bias = tick % 127;
+    for (mut std::size_t i = 0; i < state.size(); i++) {
+      state[i] = selected.run(state[i], bias);
+    }
+  }
+  for (auto& value : state) { std::println(value); }
+  return 0;
+}

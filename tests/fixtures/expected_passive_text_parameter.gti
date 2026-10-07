@@ -1,0 +1,28 @@
+enum class inspect_error { failed };
+enum class record_kind { regular };
+
+class Record {
+  record_kind value;
+public:
+  Record(record_kind value) : value(value) {}
+  record_kind kind() { return this.value; }
+};
+
+expected<Record, inspect_error> inspect(std::string_view input) {
+  if (input.empty()) { return unexpected(inspect_error::failed); }
+  int narrowed = int(input.size());
+  if (narrowed < 0) { return unexpected(inspect_error::failed); }
+  return Record(record_kind::regular);
+}
+
+expected<Record, inspect_error> relay(std::string_view input) {
+  return inspect(input);
+}
+
+int main() {
+  auto present = relay("data");
+  if (!present.has_value() || present.value().kind() != record_kind::regular) { return 1; }
+  auto absent = relay("");
+  if (absent.has_value() || absent.error() != inspect_error::failed) { return 2; }
+  return 0;
+}

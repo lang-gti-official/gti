@@ -7,7 +7,8 @@
 
 namespace lang {
 
-CppBackend::CppBackend(CppStandard standard) : standard(standard) {}
+CppBackend::CppBackend(CppStandard standard, bool debugInfo)
+    : standard(standard), debugInfo(debugInfo) {}
 
 std::string_view CppBackend::name() const { return "cpp"; }
 
@@ -18,7 +19,7 @@ BackendArtifact CppBackend::generate(const LoweredProgram &program) {
                            issues.front().detail);
   }
   return {.kind = BackendArtifactKind::Source,
-          .contents = CppEmitter(program, standard).emit(),
+          .contents = CppEmitter(program, standard, debugInfo).emit(),
           .extension = ".cpp"};
 }
 

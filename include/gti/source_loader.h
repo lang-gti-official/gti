@@ -61,6 +61,10 @@ private:
   struct FileState {
     LoadState state = LoadState::Visiting;
     SourceUnitId unit = 0;
+    // Includes run once in each isolated module configuration domain. The
+    // source graph and selected syntax still have one canonical identity.
+    std::unordered_set<SourceUnitId> configurationDomains;
+    std::unordered_set<std::string> inputFlags;
   };
 
   struct ResolvedInclude {
@@ -108,6 +112,12 @@ private:
                         std::size_t directiveEnd, const Token &includeToken,
                         const std::filesystem::path &includingFile);
 
+  ResolvedInclude resolveImport(const std::vector<Token> &tokens,
+                                std::size_t index,
+                                const std::filesystem::path &includingFile,
+                                int braceDepth, int conditionalDepth,
+                                bool reexport);
+
   void report(const Token &token, std::string message,
               std::string code = "GTI-I0000");
 
@@ -124,6 +134,8 @@ private:
   TargetInfo targetInfo = TargetInfo::host();
   std::unordered_set<std::string> activeFlags;
   std::unordered_set<std::string> declaredFlags;
+  std::unordered_set<std::string> initialFlags;
+  SourceUnitId configurationDomain = 0;
   FrontendWorkMetrics *workMetrics = nullptr;
   std::shared_ptr<FrontendCache> cache;
   const std::unordered_map<std::string, std::uint64_t> *sourceGenerations =

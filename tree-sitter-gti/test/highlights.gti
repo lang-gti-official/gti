@@ -228,7 +228,7 @@ void call_member_generic<Owner, Base>(Owner& owner) {
 }
 
 extern "C" {
-  [[c_array(count)]] NativeHandle** native_handles(int32_t* count);
+  [[c_array(count)]] [[link_name("gti_native_handles")]] NativeHandle** native_handles(int32_t* count);
 }
 
 using NativeCallback = (int32_t, c_string) -> int32_t;
@@ -298,3 +298,13 @@ uint64_t default_extent_highlight<uint64_t N = 3,
                                   uint64_t M = N + 2>() {
   return M;
 }
+
+unsafe void retain_context_highlight(void* context) {}
+[[noreturn, track_caller]] void terminal_highlight() { while (true) {} }
+[[discardable]] int optional_highlight() { return 1; }
+[[borrowed_from(owner)]] int& borrow_highlight(int& owner) { return owner; }
+
+concept snapshot_highlight<T> =
+    requires(T& item) { { item.snapshot() } -> T; };
+
+namespace qualified_outer::qualified_inner::qualified_leaf {}

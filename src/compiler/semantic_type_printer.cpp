@@ -8,6 +8,9 @@ public:
       : semantics(semantics) {}
 
   [[nodiscard]] std::string print(const SemanticType &type) const {
+    if (type.nativeCScalar != NativeCScalarKind::None) {
+      return std::string(nativeCScalarKindName(type.nativeCScalar));
+    }
     switch (type.kind) {
     case SemanticType::Unknown:
       return "unknown";
@@ -45,6 +48,9 @@ public:
       return "nullptr_t";
     case SemanticType::RawPointer:
       if (type.arguments.size() == 1) {
+        if (type.arguments.front().kind == SemanticType::RawPointer)
+          return print(type.arguments.front()) +
+                 (type.pointerAccess == AccessMode::ReadOnly ? " const*" : "*");
         return (type.pointerAccess == AccessMode::ReadOnly ? "const " : "") +
                print(type.arguments.front()) + "*";
       }
@@ -86,6 +92,22 @@ public:
       return "type";
     case SemanticType::Function:
       return "function";
+    case SemanticType::FunctionSignature: {
+      if (type.arguments.empty()) {
+        return "function signature";
+      }
+      std::string result = print(type.arguments.front()) + "(";
+      for (std::size_t index = 1; index < type.arguments.size(); ++index) {
+        if (index > 1) {
+          result += ", ";
+        }
+        result += print(type.arguments[index]);
+      }
+      return result + ")" +
+             (type.signatureReceiver == ReceiverMutability::Mutable     ? " mut"
+              : type.signatureReceiver == ReceiverMutability::Consuming ? " &&"
+                                                                        : "");
+    }
     case SemanticType::FunctionItem: {
       if (!type.hasFunctionItemShape()) {
         return "function item";

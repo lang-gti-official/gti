@@ -6,6 +6,8 @@
 
 namespace lang {
 
+class SourceManager;
+
 // Narrow mutable capability used only by HIR's concrete-instance discovery.
 // Consumers receive the immutable base SemanticModel separately and cannot
 // initiate a fresh program/expression analysis through this interface.
@@ -17,6 +19,16 @@ public:
   traitsFor(const SemanticType &type) const = 0;
   [[nodiscard]] virtual bool
   requiresActiveCleanupFor(const SemanticType &type) const = 0;
+
+  // A borrowed nominal value with executable cleanup must retain its external
+  // dependencies until that cleanup completes, not merely its last source use.
+  // Query concrete semantic facts so generic field substitutions participate.
+  [[nodiscard]] bool
+  lifecycleBoundBorrowCarrierFor(const SemanticType &type) const {
+    return type.kind == SemanticType::Class &&
+           traitsFor(type).containsBorrowedState &&
+           requiresActiveCleanupFor(type);
+  }
 
   [[nodiscard]] virtual SemanticInstanceAnalysis analyzeFunctionInstance(
       FunctionId functionId,
@@ -40,10 +52,12 @@ public:
 
 class SemanticVisitor final : public SemanticInstanceProvider {
 public:
-  explicit SemanticVisitor(TargetInfo target = TargetInfo::host(),
-                           const SourceGraph *sourceGraph = nullptr,
-                           bool toolingOccurrences = true,
-                           FrontendWorkMetrics *workMetrics = nullptr);
+  explicit SemanticVisitor(
+      TargetInfo target = TargetInfo::host(),
+      const SourceGraph *sourceGraph = nullptr, bool toolingOccurrences = true,
+      FrontendWorkMetrics *workMetrics = nullptr,
+      const SourceManager *sources = nullptr,
+      RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off);
   ~SemanticVisitor();
 
   SemanticVisitor(const SemanticVisitor &) = delete;

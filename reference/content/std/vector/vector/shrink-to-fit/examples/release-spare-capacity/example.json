@@ -1,6 +1,0 @@
-{
-  "title": "Release spare capacity",
-  "description": "Shrinks a reserved vector back to exactly its live element count.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

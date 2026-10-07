@@ -1,0 +1,13 @@
+#include <std/optional>
+
+class View {
+  int& source;
+public:
+  View(int& value) : source(value) {}
+};
+
+int main() {
+  int source = 7;
+  std::optional<View> item{View(source)};
+  return 0;
+}

@@ -1,0 +1,67 @@
+#include <std/optional>
+#include <std/vector>
+
+mut int32_t drops = 0;
+
+class Resource {
+public:
+  Resource(int32_t identity) : identity(identity) {}
+  Resource(Resource&& other) = default;
+  ~Resource() {
+    drops = drops + 1;
+    std::println(this.identity);
+  }
+  int32_t id() { return this.identity; }
+private:
+  int32_t identity;
+};
+
+enum class Event { message(Resource resource), idle };
+
+int32_t id(Event& event) {
+  switch (event) {
+  case Event::message(auto& resource): return resource.id();
+  case Event::idle: return 0;
+  }
+}
+
+T relay<T>(T value) { return std::move(value); }
+
+// Deliberately unrelated to a public container: generic ownership must use
+// the exact concrete field and callable identities, not library spellings.
+class Envelope<T> {
+public:
+  Envelope(T value) : value(std::move(value)) {}
+  T& get() { return this.value; }
+  void replace(T replacement) mut { this.value = std::move(replacement); }
+  T extract() && { return std::move(this.value); }
+private:
+  mut T value;
+};
+
+void exercise() {
+  Event source = relay(Event::message(Resource(1)));
+  mut Envelope<Event> packet = Envelope<Event>(std::move(source));
+  packet.replace(Event::message(Resource(2)));
+  if (id(packet.get()) != 2) { std::println(99); }
+  Event extracted = std::move(packet).extract();
+
+  mut std::vector<Event> events{};
+  events.push_back(std::move(extracted));
+  events.push_back(Event::idle);
+  events.push_back(Event::message(Resource(3)));
+  events.reserve(std::size_t(12));
+  mut int32_t total = 0;
+  for (auto& event : events) { total = total + id(event); }
+  if (total != 5) { std::println(99); }
+
+  mut std::optional<Event> selected =
+      std::optional<Event>(Event::message(Resource(4)));
+  if (id(selected.value()) != 4) { std::println(99); }
+  selected.reset();
+}
+
+int main() {
+  exercise();
+  return drops == 4 ? 0 : 1;
+}

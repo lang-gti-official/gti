@@ -37,10 +37,10 @@ compiler path.
    implementation status. Keep README commands user-focused. Advance `VERSION`
    when shipped CLI/driver/project behavior changes.
 
-After local validation, use the `finish-release` skill to commit completed
-work and initiate the required version/tag/release path. Finish after GitHub
-accepts the push or workflow dispatch; do not poll or wait for asynchronous
-CI/CD.
+After local validation, use the `agent-workflow` and `finish-release` skills for
+PR integration, local-main sync and version policy. Respect required PR checks;
+post-merge packaging does not block completion. Explicit PR-only/local-only
+instructions override integration.
 
 Use the `implement-language-feature` skill as well only when the build change
 modifies source syntax, target semantics, source visibility, runtime bindings,

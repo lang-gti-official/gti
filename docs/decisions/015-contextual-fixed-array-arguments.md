@@ -41,6 +41,12 @@ list initialization and overload resolution are never semantic authority.
 
 ## Consequences
 
+Contextual collection **initialization** now additionally supports an opt-in
+owned-value protocol, as specified in static semantics. That separate context
+does not change brace **arguments**, fixed-array inference, or overload
+ranking described here. It avoids the copying array constructor for move-only
+collection elements and is available to user-defined containers.
+
 - The feature is generic: any ordinary API can accept `T[N]`; `std::vector` is
   only the first standard-library client.
 - APIs get compact braces without adding a non-owning list view or its lifetime

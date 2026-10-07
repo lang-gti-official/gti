@@ -1126,7 +1126,7 @@ int main() {
   const lang::OptimizationPassReport *ownedFold =
       findPass(optimized.report, "fold-literal-identities");
   expect(optimized.valid() && optimized.report.verificationEnabled &&
-             optimized.report.passes.size() == 9 && ownedFold != nullptr &&
+             optimized.report.passes.size() == 10 && ownedFold != nullptr &&
              ownedFold->shadowMismatches == 0,
          "the owned MIR pipeline should verify and report its bounded shadow "
          "transform");
@@ -2408,7 +2408,7 @@ int main() {
                                   .mir = frontend.mir,
                                   .level = level,
                                   .compatibility = &compatibility});
-    bool sharedPassesMatch = optimized.report.passes.size() == 9;
+    bool sharedPassesMatch = optimized.report.passes.size() == 10;
     for (const lang::OptimizationPassReport &expected : o1.report.passes) {
       if (expected.name != "scalar-promotion" &&
           expected.name != "fold-literal-identities") {
@@ -3738,7 +3738,7 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v47\n") &&
+  expect(dump.starts_with("mir-body-v77\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&
@@ -4058,14 +4058,14 @@ int main() {
       }
     }
   }
-  expect(spawnInstruction != nullptr && lowered.valid() &&
+  expect(spawnInstruction != nullptr && !lowered.valid() &&
              lowered.program.executionProfile() ==
                  lang::ExecutionProfile::Concurrent &&
              spawnInstruction->synchronization.kind ==
                  lang::SynchronizationOperationKind::ThreadSpawn &&
-             lang::verifyMirProgram(lowered.program).valid(),
-         "HIR synchronization identity should lower exactly into verified "
-         "concurrent MIR");
+             !lang::verifyMirProgram(lowered.program).valid(),
+         "staged HIR synchronization must survive lowering, but an ordinary "
+         "call cannot impersonate an exact thread-spawn operation");
   if (loweredMain == nullptr || spawnInstruction == nullptr) {
     return;
   }
@@ -4100,6 +4100,8 @@ int main() {
        .failureOrder = lang::AtomicMemoryOrder::Acquire},
       {.kind = lang::SynchronizationOperationKind::MutexLock},
       {.kind = lang::SynchronizationOperationKind::MutexUnlock},
+      {.kind = lang::SynchronizationOperationKind::ConditionWait},
+      {.kind = lang::SynchronizationOperationKind::ConditionNotify},
   };
   for (const lang::SynchronizationOperation &operation : validOperations) {
     lang::MirBody candidate = loweredMain->body;
@@ -4196,6 +4198,948 @@ int main() {
                          }),
          "the MIR program verifier should reject synchronization operations "
          "in the single-threaded profile");
+}
+
+void testCopiedCarrierPublicationProof() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("copied-carrier-publication.gti", R"gti(
+struct Shared {
+  int& value;
+  Shared(int& source) : value(source) {}
+};
+struct Exclusive {
+  mut int& value;
+  Exclusive(mut int& source) : value(source) {}
+  Shared readonly_view() { return Shared(this.value); }
+};
+int readonly_constructed_view() {
+  mut int number = 4;
+  Exclusive wrapper{number};
+  return wrapper.readonly_view().value;
+}
+int lambda_copied() {
+  int number = 4;
+  Shared view{number};
+  auto read = [](Shared& source) -> int {
+    Shared local = source;
+    return local.value;
+  };
+  return read(view);
+}
+int copied(Shared& source, Shared& other) {
+  Shared first = source;
+  Shared second = first;
+  return second.value + other.value;
+}
+int main() {
+  int one = 1;
+  int two = 2;
+  Shared first{one};
+  Shared second{two};
+  return copied(first, second);
+}
+)gti");
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "value copies from a reference formal independently retain its "
+         "external dependency");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << "copied carrier: " << diagnostic.message << '\n';
+    return;
+  }
+  expect(frontend.mir.lambdaInstances().size() == 1,
+         "a carrier reference lambda retains its own exact formal declaration");
+  if (frontend.mir.lambdaInstances().size() == 1) {
+    lang::MirProgram forged = frontend.mir;
+    auto &lambda = const_cast<std::vector<lang::MirLambdaInstance> &>(
+                       forged.lambdaInstances())
+                       .front();
+    bool changed = false;
+    for (auto &loan : lambda.body.loans)
+      if (loan.kind == lang::MirLoanKind::Stored && loan.entry) {
+        loan.carriers.push_back(lambda.parameterBindings.front());
+        changed = true;
+      }
+    const auto verified = lang::verifyMirProgram(forged);
+    expect(changed && !verified.valid() &&
+               std::any_of(verified.errors.begin(), verified.errors.end(),
+                           [](const auto &error) {
+                             return error.message.find(
+                                        "abstract stored dependency carrier") !=
+                                    std::string::npos;
+                           }),
+           "lambda formals cannot be forged into local value-carrier "
+           "publications");
+  }
+  const auto *viewFunction = findHirFunction(frontend, "readonly_view");
+  const auto *view = viewFunction == nullptr
+                         ? nullptr
+                         : frontend.mir.findFunctionInstance(viewFunction->id);
+  expect(view != nullptr, "an exclusive carrier can construct a readonly "
+                          "result under its independent producer contract");
+  if (view != nullptr) {
+    lang::MirProgram forged = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        forged.functionInstances());
+    auto &body = functions[view->id - 1].body;
+    bool changed = false;
+    for (auto &loan : body.loans)
+      if (loan.kind == lang::MirLoanKind::Return && loan.escapes) {
+        loan.access = lang::AccessMode::Mutable;
+        changed = true;
+      }
+    const auto result = lang::verifyMirProgram(forged);
+    expect(changed && !result.valid() &&
+               std::any_of(result.errors.begin(), result.errors.end(),
+                           [](const auto &error) {
+                             return error.message.find(
+                                        "owner-dependent return loan") !=
+                                    std::string::npos;
+                           }),
+           "a readonly constructed result cannot claim to copy the receiver's "
+           "stronger abstract dependency");
+  }
+  const auto *function = findHirFunction(frontend, "copied");
+  const auto *instance = function == nullptr
+                             ? nullptr
+                             : frontend.mir.findFunctionInstance(function->id);
+  const lang::MirLoan *entry = nullptr;
+  if (instance != nullptr)
+    for (const auto &loan : instance->body.loans) {
+      const auto *source = instance->body.findPlace(loan.source);
+      if (loan.kind == lang::MirLoanKind::Stored && loan.entry &&
+          source != nullptr &&
+          source->root == lang::MirPlaceRootKind::Binding &&
+          source->binding == instance->parameterBindings.front())
+        entry = &loan;
+    }
+  expect(entry != nullptr && entry->carriers.size() == 2,
+         "the formal dependency retains both independently initialized local "
+         "copies");
+  if (entry == nullptr || entry->carriers.size() != 2)
+    return;
+  const auto reject = [&](auto mutate, const std::string &message,
+                          std::string_view expected =
+                              "abstract stored dependency") {
+    lang::MirProgram forged = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        forged.functionInstances());
+    auto &changed = functions[instance->id - 1];
+    mutate(changed, changed.body.loans[entry->id - 1]);
+    const auto verified = lang::verifyMirProgram(forged);
+    expect(!verified.valid() &&
+               std::any_of(verified.errors.begin(), verified.errors.end(),
+                           [&](const lang::MirVerificationError &error) {
+                             return error.message.find(expected) !=
+                                    std::string::npos;
+                           }),
+           message);
+  };
+  const auto initialize =
+      [](lang::MirBody &body,
+         lang::HirBindingId binding) -> lang::MirInstruction * {
+    for (auto &block : body.blocks)
+      for (auto &instruction : block.instructions) {
+        const auto *destination = instruction.destination
+                                      ? body.findPlace(*instruction.destination)
+                                      : nullptr;
+        if (instruction.kind == lang::MirInstructionKind::Initialize &&
+            destination != nullptr &&
+            destination->root == lang::MirPlaceRootKind::Binding &&
+            destination->binding == binding)
+          return &instruction;
+      }
+    return nullptr;
+  };
+  reject(
+      [](auto &function, auto &loan) {
+        loan.carriers.push_back(function.parameterBindings.front());
+      },
+      "a reference formal cannot be laundered into an abstract entry's value "
+      "carrier set");
+  reject(
+      [](auto &, auto &loan) {
+        loan.carriers.push_back(std::numeric_limits<lang::HirBindingId>::max());
+      },
+      "an attached carrier without concrete storage/publication is not "
+      "authority");
+  reject(
+      [](auto &, auto &loan) { loan.access = lang::AccessMode::Mutable; },
+      "a shared reference field cannot forge mutable external-owner authority",
+      "abstract stored dependency access does not match");
+  reject(
+      [&](auto &function, auto &loan) {
+        auto *publication = initialize(function.body, loan.carriers.front());
+        expect(publication != nullptr,
+               "publication forgery locates the exact initializer");
+        if (publication != nullptr)
+          publication->operands.clear();
+      },
+      "a carrier publication cannot omit its actual received value");
+  reject(
+      [&](auto &function, auto &loan) {
+        auto *publication = initialize(function.body, loan.carriers.front());
+        if (publication != nullptr)
+          function.body.places[*publication->destination - 1].type =
+              lang::SemanticType::Int32;
+      },
+      "a carrier binding with a forged concrete type cannot inherit class "
+      "reference paths");
+  reject(
+      [](auto &function, auto &loan) {
+        // Keep the declaration and origin shape valid, but point at a
+        // non-formal binding. The entry must be tied to the independently
+        // declared formal.
+        auto &source = function.body.places[loan.source - 1];
+        source.binding = std::numeric_limits<lang::HirBindingId>::max();
+      },
+      "changing the abstract owner does not retarget its already-copied "
+      "values");
+  reject(
+      [](auto &, auto &loan) {
+        loan.designatedFields.front() =
+            std::numeric_limits<lang::SymbolId>::max();
+      },
+      "copied carriers retain exact declared reference-field paths",
+      "exact reference-field path");
+  reject(
+      [&](auto &function, auto &loan) {
+        auto *first = initialize(function.body, loan.carriers.front());
+        auto *second = initialize(function.body, loan.carriers.back());
+        if (first != nullptr && second != nullptr)
+          first->operands = second->operands;
+      },
+      "a later or cyclic copy cannot fabricate an earlier carrier publication");
+}
+
+void testAbstractStoredReferentReborrow() {
+  const auto frontend =
+      lang::Frontend().analyze("abstract-stored-referent-reborrow.gti", R"gti(
+struct Leaf {
+  mut int value = 4;
+  mut int& get() mut { return this.value; }
+};
+struct Box {
+  mut Leaf leaf{};
+  mut Leaf& get() mut { return this.leaf; }
+};
+class Cursor {
+  mut Box& box;
+public:
+  Cursor(mut Box& value) : box(value) {}
+  mut int& through() mut { return this.box.get().get(); }
+};
+int main() {
+  mut Box box{};
+  mut Cursor cursor{box};
+  mut int& value = cursor.through();
+  value += 1;
+  return value - 5;
+}
+)gti");
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "an exact abstract stored referent supports ordinary nested mutable "
+         "helper calls without becoming a competing sibling loan");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << "abstract referent: " << diagnostic.message << '\n';
+    return;
+  }
+  const auto *function = findHirFunction(frontend, "through");
+  const auto *instance = function == nullptr
+                             ? nullptr
+                             : frontend.mir.findFunctionInstance(function->id);
+  expect(instance != nullptr, "the user-defined reborrow helper is concrete");
+  if (instance == nullptr)
+    return;
+  const auto &baseline = instance->body;
+  const auto entry = std::find_if(
+      baseline.loans.begin(), baseline.loans.end(), [](const auto &loan) {
+        return loan.kind == lang::MirLoanKind::Stored && loan.entry &&
+               !loan.designatedFields.empty();
+      });
+  expect(entry != baseline.loans.end(),
+         "the helper has exact abstract reference-field authority");
+  if (entry == baseline.loans.end())
+    return;
+  const auto rejects = [&](auto mutate, const std::string &fragment) {
+    auto changed = baseline;
+    mutate(changed, changed.loans[entry->id - 1]);
+    const auto verified = lang::verifyMirBody(changed);
+    return !verified.valid() &&
+           std::any_of(verified.errors.begin(), verified.errors.end(),
+                       [&](const auto &error) {
+                         return error.message.find(fragment) !=
+                                std::string::npos;
+                       });
+  };
+  auto forgedField = frontend.mir;
+  auto *forgedFunction = const_cast<lang::MirFunctionInstance *>(
+      forgedField.findFunctionInstance(instance->id));
+  ++forgedFunction->body.loans[entry->id - 1].designatedFields.front();
+  // Body-local flow legitimately permits a disjoint owning field. The
+  // independent program verifier owns the class layout and must reject a
+  // forged designated field before that disjointness can grant authority.
+  expect(!lang::verifyMirProgram(forgedField).valid(),
+         "a forged field cannot inherit abstract referent authority");
+  expect(rejects([](auto &,
+                    auto &loan) { loan.access = lang::AccessMode::ReadOnly; },
+                 "read-only stored dependency"),
+         "a mutable derived borrow cannot widen the field's declared access");
+  expect(rejects(
+             [](auto &body, auto &loan) {
+               body.places[loan.source - 1].access = lang::AccessMode::ReadOnly;
+             },
+             "read-only carrier shell"),
+         "mutable inherited authority cannot widen a readonly receiver");
+  expect(rejects(
+             [](auto &body, auto &loan) {
+               for (auto &place : body.places)
+                 if (place.root == lang::MirPlaceRootKind::This &&
+                     place.projections.size() == 2 &&
+                     place.projections.front().field ==
+                         loan.designatedFields.front())
+                   place.projections.back() = {
+                       .kind = lang::MirProjectionKind::Field, .field = 999};
+             },
+             "exact designated reference dereference"),
+         "referent authority requires the explicit reference dereference");
+}
+
+void testLifecycleCarrierAbstractEntry() {
+  auto target = lang::TargetInfo::host();
+  target.executionProfile = lang::ExecutionProfile::Concurrent;
+  target.runtimeCapabilities.threads = true;
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto frontend =
+      lang::Frontend({.target = target})
+          .analyze("lifecycle-carrier-abstract-entry.gti", R"gti(
+#include <std/mutex>
+int32_t observe(std::mutex_guard<int32_t>& guard) { return guard.get(); }
+void update(mut std::mutex_guard<int32_t>& guard) {
+  mut int32_t& value = guard.get();
+  value += 1;
+}
+int main() {
+  std::mutex<int32_t> owner{1};
+  {
+    std::mutex_guard<int32_t> first = owner.lock();
+    mut std::mutex_guard<int32_t> guard = std::move(first);
+    update(guard);
+    if (observe(guard) != 2) { return 1; }
+  }
+  std::mutex_guard<int32_t> guard = owner.lock();
+  return observe(guard) - 2;
+}
+)gti",
+                   {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "noncopyable lifecycle carriers preserve caller-owned abstract "
+         "receiver and reference-formal dependencies");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << "lifecycle abstract entry: " << diagnostic.message << '\n';
+    return;
+  }
+  bool receiverChecked = false;
+  bool parameterChecked = false;
+  bool producedReleaseChecked = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &loan : function.body.loans) {
+      const auto *source = function.body.findPlace(loan.source);
+      if (loan.lifecycleBound && !loan.entry &&
+          loan.kind == lang::MirLoanKind::Stored) {
+        expect(loan.access == lang::AccessMode::Mutable && loan.producedBy != 0,
+               "an actual lock guard keeps its produced exclusive release "
+               "obligation");
+        producedReleaseChecked = true;
+      }
+      if (loan.kind != lang::MirLoanKind::Stored || !loan.entry ||
+          loan.designatedFields.empty() || source == nullptr)
+        continue;
+      const auto &type = source->type.kind == lang::SemanticType::Reference
+                             ? source->type.arguments.front()
+                             : source->type;
+      const auto carrier = std::find_if(
+          frontend.mir.classInstances().begin(),
+          frontend.mir.classInstances().end(),
+          [&](const auto &instance) { return instance.type == type; });
+      if (carrier == frontend.mir.classInstances().end() ||
+          !carrier->lifecycleBoundBorrowCarrier)
+        continue;
+      expect(!loan.lifecycleBound &&
+                 loan.access == lang::AccessMode::ReadOnly &&
+                 loan.carriers.empty() && !carrier->traits.copyable &&
+                 carrier->requiresActiveCleanup,
+             "abstract entries describe the exact readonly storage field, "
+             "not the caller's active lock token or cleanup ownership");
+      receiverChecked =
+          receiverChecked || source->root == lang::MirPlaceRootKind::This;
+      parameterChecked = parameterChecked ||
+                         (source->root == lang::MirPlaceRootKind::Binding &&
+                          source->type.kind == lang::SemanticType::Reference);
+      for (const bool forgeLifecycle : {false, true}) {
+        auto forged = frontend.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            forged.findFunctionInstance(function.id));
+        auto &entry = changed->body.loans[loan.id - 1];
+        if (forgeLifecycle)
+          entry.lifecycleBound = true;
+        else
+          entry.access = lang::AccessMode::Mutable;
+        const auto verified = lang::verifyMirProgram(forged);
+        const std::string expected =
+            forgeLifecycle ? "abstract stored dependency cannot own"
+                           : "abstract stored dependency access does not match";
+        expect(!verified.valid() &&
+                   std::any_of(verified.errors.begin(), verified.errors.end(),
+                               [&](const auto &error) {
+                                 return error.message.find(expected) !=
+                                        std::string::npos;
+                               }),
+               "abstract lock-carrier entries cannot forge release ownership "
+               "or stronger storage-field access");
+      }
+    }
+  }
+  expect(receiverChecked && parameterChecked && producedReleaseChecked,
+         "the regression covers abstract receiver/formal entries separately "
+         "from the genuine produced guard obligation");
+}
+
+void testCarrierShellDependencyMirFlow() {
+  // This body-local fixture intentionally uses opaque formal storage. The
+  // program verifier separately proves that the source-level carrier and its
+  // concrete fields establish this dependency; these tests isolate the loan
+  // graph and flow obligations from that producer proof.
+  const auto end = [](lang::MirInstructionId id, lang::MirLoanId loan) {
+    return lang::MirInstruction{
+        .id = id, .kind = lang::MirInstructionKind::EndBorrow, .loan = loan};
+  };
+  lang::MirBody baseline{
+      .kind = lang::MirBodyKind::Function,
+      .entry = 1,
+      .blocks = {{.id = 1,
+                  .instructions = {end(1, 2), end(2, 1)},
+                  .terminator = {.kind = lang::MirTerminatorKind::Return},
+                  .reachable = true}},
+      .places = {{.id = 1,
+                  .root = lang::MirPlaceRootKind::Binding,
+                  .binding = 1,
+                  .type = lang::SemanticType::Int32,
+                  .access = lang::AccessMode::Mutable,
+                  .initiallyAvailable = true},
+                 {.id = 2,
+                  .root = lang::MirPlaceRootKind::Binding,
+                  .binding = 2,
+                  .type = lang::SemanticType::Int32,
+                  .access = lang::AccessMode::Mutable,
+                  .initiallyAvailable = true}},
+      .loans = {{.id = 1,
+                 .kind = lang::MirLoanKind::Stored,
+                 .source = 1,
+                 .access = lang::AccessMode::ReadOnly,
+                 .carriers = {1},
+                 .entry = true},
+                {.id = 2,
+                 .storedDependency = 1,
+                 .kind = lang::MirLoanKind::Parameter,
+                 .source = 2,
+                 .access = lang::AccessMode::Mutable,
+                 .carriers = {2},
+                 .entry = true}}};
+  const auto hasError = [](const lang::MirBody &body, std::string_view text) {
+    const auto result = lang::verifyMirBody(body);
+    return std::any_of(result.errors.begin(), result.errors.end(),
+                       [&](const auto &error) {
+                         return error.message.find(text) != std::string::npos;
+                       });
+  };
+  const auto verified = lang::verifyMirBody(baseline);
+  expect(verified.valid(),
+         "a shell loan should retain an independent live stored dependency");
+  if (!verified.valid()) {
+    for (const auto &error : verified.errors)
+      std::cerr << "carrier-shell baseline: " << error.message << '\n';
+    return;
+  }
+  expect(lang::mirLoanProtectedSources(baseline, 2) ==
+             std::vector<lang::MirPlaceId>{2, 1},
+         "protected sources should preserve shell then inherited owner");
+  auto repeated = baseline;
+  repeated.loans[0].additionalDependencies = {{.source = 1}};
+  expect(lang::mirLoanProtectedSources(repeated, 2) ==
+             std::vector<lang::MirPlaceId>{2, 1},
+         "the complete protected-place query should deterministically dedup");
+  expect(lang::mirLoanProtectedSources(baseline, 99).empty(),
+         "missing protected-source identities should fail closed");
+
+  auto missing = baseline;
+  missing.loans[1].storedDependency = 99;
+  expect(hasError(missing, "invalid identity") &&
+             lang::mirLoanProtectedSources(missing, 2).empty(),
+         "a missing dependency identity must be rejected before graph lookup");
+  auto self = baseline;
+  self.loans[1].storedDependency = 2;
+  expect(hasError(self, "invalid identity"),
+         "a carrier shell cannot depend on itself");
+  auto wrongKind = baseline;
+  wrongKind.loans[0].kind = lang::MirLoanKind::Parameter;
+  expect(hasError(wrongKind, "independent Stored dependency") &&
+             lang::mirLoanProtectedSources(wrongKind, 2).empty(),
+         "an ordinary reference cannot replace exact Stored authority");
+  auto earlyEnd = baseline;
+  std::swap(earlyEnd.blocks[0].instructions[0],
+            earlyEnd.blocks[0].instructions[1]);
+  expect(hasError(earlyEnd, "ended before its carrier-shell loan"),
+         "the inherited dependency must outlive every dependent shell");
+
+  auto child = baseline;
+  child.loans.push_back({.id = 3,
+                         .parent = 2,
+                         .storedDependency = 1,
+                         .kind = lang::MirLoanKind::Local,
+                         .source = 2,
+                         .access = lang::AccessMode::ReadOnly,
+                         .carriers = {3}});
+  child.blocks[0].instructions = {
+      {.id = 3,
+       .kind = lang::MirInstructionKind::Borrow,
+       .operands = {{.kind = lang::MirOperandKind::Loan,
+                     .loan = 2,
+                     .type = lang::SemanticType::Int32}},
+       .loan = 3,
+       .info = {.type = lang::SemanticType::Int32}},
+      end(4, 3),
+      end(1, 2),
+      end(2, 1)};
+  expect(lang::verifyMirBody(child).valid(),
+         "a physical child preserves the shell's independent owner lifetime");
+  auto omitted = child;
+  omitted.loans[2].storedDependency = 0;
+  expect(hasError(omitted, "does not preserve its parent's stored dependency"),
+         "a child cannot silently erase its shell's dependency");
+  auto suspendedShell = child;
+  suspendedShell.blocks[0].instructions = {child.blocks[0].instructions[0],
+                                           end(2, 1), end(4, 3), end(1, 2)};
+  expect(hasError(suspendedShell, "ended before its carrier-shell loan"),
+         "a suspended shell retains its dependency while its child is live");
+  auto cycle = child;
+  cycle.loans[1].kind = lang::MirLoanKind::Local;
+  cycle.loans[1].entry = false;
+  cycle.loans[1].parent = 3;
+  cycle.loans[2].access = lang::AccessMode::Mutable;
+  expect(hasError(cycle, "parent/stored-dependency cycle"),
+         "the combined lifetime graph must reject cycles before dataflow");
+
+  auto producedLate = baseline;
+  producedLate.loans[1].kind = lang::MirLoanKind::Local;
+  producedLate.loans[1].entry = false;
+  producedLate.loans[1].access = lang::AccessMode::ReadOnly;
+  producedLate.blocks[0].instructions = {
+      end(2, 1),
+      {.id = 3,
+       .kind = lang::MirInstructionKind::Borrow,
+       .operands = {{.kind = lang::MirOperandKind::BorrowRead,
+                     .place = 2,
+                     .type = lang::SemanticType::Int32}},
+       .loan = 2,
+       .info = {.type = lang::SemanticType::Int32}},
+      end(1, 2)};
+  expect(hasError(producedLate, "requires active stored dependency"),
+         "a shell cannot be produced after its inherited dependency ended");
+
+  const auto mutableReference = lang::SemanticType::referenceTo(
+      lang::SemanticType::Int32, lang::AccessMode::Mutable);
+  const auto readReference =
+      lang::SemanticType::referenceTo(lang::SemanticType::Int32);
+  auto sharedCall = baseline;
+  sharedCall.blocks[0].instructions.insert(
+      sharedCall.blocks[0].instructions.begin(),
+      {.id = 3,
+       .kind = lang::MirInstructionKind::Call,
+       .operands = {{.kind = lang::MirOperandKind::Loan,
+                     .loan = 2,
+                     .type = mutableReference},
+                    {.kind = lang::MirOperandKind::Loan,
+                     .loan = 1,
+                     .type = readReference}},
+       .parameterTypes = {mutableReference, readReference},
+       .functionTarget = 1,
+       .info = {.type = lang::SemanticType::Void}});
+  expect(lang::verifyMirBody(sharedCall).valid(),
+         "mutable shell access must not upgrade a shared inherited owner");
+  auto exclusiveCall = sharedCall;
+  exclusiveCall.loans[0].access = lang::AccessMode::Mutable;
+  expect(hasError(exclusiveCall, "overlapping call-duration"),
+         "distinct inputs cannot alias an exclusively used inherited owner");
+  auto readShellCall = exclusiveCall;
+  readShellCall.blocks[0].instructions[0].operands[0].type = readReference;
+  readShellCall.blocks[0].instructions[0].parameterTypes[0] = readReference;
+  expect(lang::verifyMirBody(readShellCall).valid(),
+         "a read-only shell use caps an existing mutable owner permission");
+
+  auto physicalBorrow = baseline;
+  physicalBorrow.places[1].traits.containsBorrowedState = true;
+  physicalBorrow.loans[1].access = lang::AccessMode::ReadOnly;
+  physicalBorrow.loans.push_back({.id = 3,
+                                  .storedDependency = 1,
+                                  .kind = lang::MirLoanKind::Local,
+                                  .source = 2,
+                                  .access = lang::AccessMode::ReadOnly});
+  physicalBorrow.blocks[0].instructions = {
+      {.id = 3,
+       .kind = lang::MirInstructionKind::Borrow,
+       .operands = {{.kind = lang::MirOperandKind::BorrowRead,
+                     .place = 2,
+                     .type = lang::SemanticType::Int32}},
+       .loan = 3,
+       .info = {.type = lang::SemanticType::Int32}},
+      {.id = 4,
+       .kind = lang::MirInstructionKind::Drop,
+       .destination = 2,
+       .info = {.type = lang::SemanticType::Int32,
+                .category = lang::ValueCategory::Place,
+                .access = lang::AccessMode::Mutable}},
+      end(5, 3),
+      end(1, 2),
+      end(2, 1)};
+  expect(hasError(physicalBorrow, "a carrier shell drop"),
+         "the exact own-carrier Drop exemption must not bypass a second "
+         "reference protecting its physical shell");
+  auto movedShell = physicalBorrow;
+  movedShell.blocks[0].instructions[1] = {
+      .id = 4,
+      .kind = lang::MirInstructionKind::Call,
+      .operands = {{.kind = lang::MirOperandKind::Move,
+                    .place = 2,
+                    .type = lang::SemanticType::Int32}},
+      .parameterTypes = {lang::SemanticType::Int32},
+      .functionTarget = 1,
+      .info = {.type = lang::SemanticType::Void}};
+  expect(hasError(movedShell, "write of a place conflicts"),
+         "moving a borrowed carrier still checks a distinct physical shell "
+         "reference independently of its retained external dependency");
+  if (!hasError(movedShell, "write of a place conflicts")) {
+    for (const auto &error : lang::verifyMirBody(movedShell).errors)
+      std::cerr << "carrier-shell move: " << error.message << '\n';
+  }
+
+  const auto carrierType = lang::SemanticType::classType(1);
+  const auto carrierReference = lang::SemanticType::referenceTo(carrierType);
+  auto receiverEntry = baseline;
+  receiverEntry.loans.resize(1);
+  receiverEntry.places.resize(1);
+  receiverEntry.places[0].root = lang::MirPlaceRootKind::This;
+  receiverEntry.places[0].binding = 0;
+  receiverEntry.places[0].type = carrierType;
+  receiverEntry.loans[0].carriers.clear();
+  receiverEntry.loans[0].designatedFields = {1};
+  receiverEntry.blocks[0].instructions = {end(1, 1)};
+  expect(lang::verifyMirBody(receiverEntry).valid(),
+         "an exact receiver can have a separate no-carrier Stored entry for "
+         "its caller-owned designated fields");
+  auto receiverAccess = receiverEntry;
+  receiverAccess.places.push_back(
+      {.id = 2,
+       .root = lang::MirPlaceRootKind::This,
+       .projections = {{.kind = lang::MirProjectionKind::Field, .field = 2}},
+       .type = lang::SemanticType::Int32,
+       .access = lang::AccessMode::Mutable});
+  receiverAccess.places.push_back(
+      {.id = 3,
+       .root = lang::MirPlaceRootKind::This,
+       .projections = {{.kind = lang::MirProjectionKind::Field, .field = 1},
+                       {.kind = lang::MirProjectionKind::Dereference}},
+       .type = lang::SemanticType::Int32,
+       .access = lang::AccessMode::Mutable});
+  const auto access = [&](lang::MirInstructionId id, lang::MirPlaceId place,
+                          bool write) {
+    const auto reference = write ? mutableReference : readReference;
+    return lang::MirInstruction{
+        .id = id,
+        .kind = lang::MirInstructionKind::Call,
+        .operands = {{.kind = write ? lang::MirOperandKind::BorrowWrite
+                                    : lang::MirOperandKind::BorrowRead,
+                      .place = place,
+                      .type = reference}},
+        .parameterTypes = {reference},
+        .functionTarget = 1,
+        .info = {.type = lang::SemanticType::Void}};
+  };
+  receiverAccess.blocks[0].instructions = {access(2, 2, true),
+                                           access(3, 3, false), end(1, 1)};
+  expect(lang::verifyMirBody(receiverAccess).valid(),
+         "an abstract read dependency does not prevent mutation of independent "
+         "shell fields or reading its designated referent");
+  auto exclusiveAccess = receiverAccess;
+  exclusiveAccess.loans[0].access = lang::AccessMode::Mutable;
+  exclusiveAccess.blocks[0].instructions[1] = access(3, 3, true);
+  expect(lang::verifyMirBody(exclusiveAccess).valid(),
+         "an exact mutable shell and mutable dependency authorize referent "
+         "mutation without treating the abstract entry as a sibling loan");
+  auto sharedReferentWrite = exclusiveAccess;
+  sharedReferentWrite.loans[0].access = lang::AccessMode::ReadOnly;
+  expect(hasError(sharedReferentWrite, "read-only stored dependency"),
+         "a mutable shell cannot upgrade a read-only external owner");
+  auto readOnlyShellWrite = exclusiveAccess;
+  readOnlyShellWrite.places[0].access = lang::AccessMode::ReadOnly;
+  expect(hasError(readOnlyShellWrite, "read-only carrier shell"),
+         "an exclusive inherited dependency cannot upgrade a read-only shell");
+  auto reseated = exclusiveAccess;
+  reseated.places[2].projections.pop_back();
+  reseated.places[2].type = mutableReference;
+  expect(hasError(reseated, "cannot be reseated"),
+         "the abstract entry never authorizes reseating its stored reference");
+  auto erasedDereference = receiverAccess;
+  erasedDereference.places[2].projections[1] = {
+      .kind = lang::MirProjectionKind::Field, .field = 3};
+  expect(hasError(erasedDereference, "exact designated reference dereference"),
+         "erasing a stored-reference dereference cannot disguise referent "
+         "access as independent shell storage");
+  auto unrelatedShellLoan = receiverAccess;
+  unrelatedShellLoan.loans.push_back({.id = 2,
+                                      .kind = lang::MirLoanKind::Local,
+                                      .source = 2,
+                                      .access = lang::AccessMode::ReadOnly});
+  unrelatedShellLoan.blocks[0].instructions = {
+      {.id = 4,
+       .kind = lang::MirInstructionKind::Borrow,
+       .operands = {{.kind = lang::MirOperandKind::BorrowRead,
+                     .place = 2,
+                     .type = lang::SemanticType::Int32}},
+       .loan = 2,
+       .info = {.type = lang::SemanticType::Int32}},
+      access(2, 2, true),
+      end(5, 2),
+      end(1, 1)};
+  expect(hasError(unrelatedShellLoan, "write of a place conflicts"),
+         "abstract owner authority does not exempt a distinct physical "
+         "reference into the shell");
+  auto referentChain = exclusiveAccess;
+  referentChain.loans.push_back({.id = 2,
+                                 .kind = lang::MirLoanKind::Local,
+                                 .source = 3,
+                                 .access = lang::AccessMode::Mutable});
+  referentChain.loans.push_back({.id = 3,
+                                 .parent = 2,
+                                 .kind = lang::MirLoanKind::CallResult,
+                                 .source = 3,
+                                 .access = lang::AccessMode::Mutable,
+                                 .producedBy = 4});
+  referentChain.blocks[0].instructions = {
+      {.id = 2,
+       .kind = lang::MirInstructionKind::Borrow,
+       .operands = {{.kind = lang::MirOperandKind::BorrowWrite,
+                     .place = 3,
+                     .type = lang::SemanticType::Int32}},
+       .loan = 2,
+       .info = {.type = lang::SemanticType::Int32}},
+      {.id = 3,
+       .kind = lang::MirInstructionKind::Call,
+       .hirValue = 4,
+       .receiver = lang::MirOperand{.kind = lang::MirOperandKind::Loan,
+                                    .loan = 2,
+                                    .type = mutableReference},
+       .loan = 3,
+       .borrowOrigin = lang::BorrowOriginKind::Receiver,
+       .borrowAccess = lang::AccessMode::Mutable,
+       .info = {.type = lang::SemanticType::Void}},
+      end(4, 3),
+      end(5, 2),
+      end(1, 1)};
+  expect(lang::rebuildMirValueUses(referentChain) &&
+             lang::verifyMirBody(referentChain).valid(),
+         "ordinary reborrows through a designated referent retain their "
+         "physical parent independently of abstract entry authority");
+  auto competingReferent = referentChain;
+  competingReferent.loans.push_back({.id = 4,
+                                     .parent = 2,
+                                     .kind = lang::MirLoanKind::CallResult,
+                                     .source = 3,
+                                     .access = lang::AccessMode::Mutable,
+                                     .producedBy = 5});
+  auto secondCall = competingReferent.blocks[0].instructions[1];
+  secondCall.id = 6;
+  secondCall.hirValue = 5;
+  secondCall.loan = 4;
+  competingReferent.blocks[0].instructions.insert(
+      competingReferent.blocks[0].instructions.begin() + 2, secondCall);
+  competingReferent.blocks[0].instructions.insert(
+      competingReferent.blocks[0].instructions.begin() + 3, end(7, 4));
+  expect(lang::rebuildMirValueUses(competingReferent) &&
+             hasError(competingReferent, "exclusive child reborrow"),
+         "abstract referent authority never exempts a competing live mutable "
+         "child of the physical parent");
+  auto referenceEntry = receiverEntry;
+  referenceEntry.places[0].root = lang::MirPlaceRootKind::Binding;
+  referenceEntry.places[0].binding = 1;
+  referenceEntry.places[0].type = carrierReference;
+  expect(lang::verifyMirBody(referenceEntry).valid(),
+         "a reference formal's abstract dependencies need no by-value carrier");
+  auto undesignatedEntry = referenceEntry;
+  undesignatedEntry.loans[0].designatedFields.clear();
+  expect(hasError(undesignatedEntry, "abstract stored receiver/reference"),
+         "a no-carrier entry cannot stand for unproved arbitrary storage");
+  auto valueEntry = referenceEntry;
+  valueEntry.places[0].type = carrierType;
+  expect(hasError(valueEntry, "abstract stored receiver/reference"),
+         "ordinary by-value formal entries must still retain their carrier");
+  auto scalarEntry = receiverEntry;
+  scalarEntry.places[0].type = lang::SemanticType::Int32;
+  expect(hasError(scalarEntry, "abstract stored receiver/reference"),
+         "abstract receiver dependencies require an exact class shell");
+  auto leakedEntry = receiverEntry;
+  leakedEntry.blocks[0].instructions.clear();
+  expect(hasError(leakedEntry, "non-escaping loan"),
+         "an abstract dependency must end on returns that do not publish it");
+  auto escapedEntry = receiverEntry;
+  escapedEntry.loans[0].escapes = true;
+  expect(hasError(escapedEntry, "non-escaping Stored"),
+         "abstract entry dependencies must not become globally escaping");
+
+  auto publishedEntry = referenceEntry;
+  publishedEntry.returnType = carrierReference;
+  publishedEntry.blocks[0].instructions.clear();
+  publishedEntry.loans.push_back({.id = 2,
+                                  .storedDependency = 1,
+                                  .kind = lang::MirLoanKind::Return,
+                                  .source = 1,
+                                  .access = lang::AccessMode::ReadOnly,
+                                  .carriers = {1},
+                                  .entry = true,
+                                  .escapes = true});
+  publishedEntry.blocks[0].terminator = {
+      .kind = lang::MirTerminatorKind::Return,
+      .value = lang::MirOperand{.kind = lang::MirOperandKind::Loan,
+                                .loan = 2,
+                                .type = carrierReference},
+      .returnLoan = 2};
+  expect(lang::verifyMirBody(publishedEntry).valid(),
+         "only an exact active escaping Return shell can export its abstract "
+         "Stored dependency on that return edge");
+  auto unrelatedReturn = publishedEntry;
+  unrelatedReturn.loans[1].storedDependency = 0;
+  expect(
+      hasError(unrelatedReturn, "non-escaping loan"),
+      "returning an unrelated loan cannot preserve a dangling abstract entry");
+  auto endedPublishedEntry = publishedEntry;
+  endedPublishedEntry.blocks[0].instructions = {end(1, 1)};
+  expect(hasError(endedPublishedEntry, "ended before its carrier-shell loan"),
+         "return publication cannot retain an already-ended dependency");
+  auto nonreturnExit = publishedEntry;
+  nonreturnExit.blocks[0].terminator = {.kind = lang::MirTerminatorKind::Exit};
+  expect(
+      hasError(nonreturnExit, "non-escaping loan"),
+      "non-return exits do not receive the exact return dependency exemption");
+
+  auto copiedReturn = referenceEntry;
+  copiedReturn.returnType = carrierType;
+  lang::SemanticTypeTraits copiedTraits;
+  copiedTraits.copyable = true;
+  copiedTraits.movable = true;
+  copiedTraits.containsBorrowedState = true;
+  copiedReturn.loans.push_back({.id = 2,
+                                .storedDependency = 1,
+                                .kind = lang::MirLoanKind::Parameter,
+                                .source = 1,
+                                .access = lang::AccessMode::ReadOnly,
+                                .carriers = {1},
+                                .entry = true});
+  copiedReturn.loans.push_back({.id = 3,
+                                .kind = lang::MirLoanKind::Return,
+                                .source = 1,
+                                .access = lang::AccessMode::ReadOnly,
+                                .producedBy = 2,
+                                .escapes = true});
+  copiedReturn.places.push_back({.id = 2,
+                                 .root = lang::MirPlaceRootKind::Loan,
+                                 .loan = 2,
+                                 .type = carrierType,
+                                 .traits = copiedTraits});
+  copiedReturn.values.push_back(
+      {.id = 1,
+       .sourceValue = 1,
+       .info = {.type = carrierType, .traits = copiedTraits},
+       .definitionBlock = 1,
+       .definition = 1});
+  copiedReturn.blocks[0].instructions = {
+      {.id = 1,
+       .kind = lang::MirInstructionKind::Load,
+       .hirValue = 1,
+       .result = 1,
+       .operands = {{.kind = lang::MirOperandKind::Copy,
+                     .place = 2,
+                     .type = carrierType}},
+       .info = {.type = carrierType, .traits = copiedTraits}},
+      {.id = 2,
+       .kind = lang::MirInstructionKind::Borrow,
+       .hirValue = 2,
+       .operands = {{.kind = lang::MirOperandKind::Loan,
+                     .value = 1,
+                     .loan = 1,
+                     .type = carrierType}},
+       .loan = 3,
+       .info = {.type = carrierType, .traits = copiedTraits}},
+      end(3, 2),
+      end(4, 1)};
+  copiedReturn.blocks[0].terminator = {
+      .kind = lang::MirTerminatorKind::Return,
+      .value = lang::MirOperand{.kind = lang::MirOperandKind::Value,
+                                .value = 1,
+                                .type = carrierType},
+      .returnLoan = 3};
+  expect(lang::rebuildMirValueUses(copiedReturn) &&
+             lang::verifyMirBody(copiedReturn).valid(),
+         "a copied readonly carrier retains its abstract dependency until "
+         "physical cleanup retires child-first");
+  if (!lang::verifyMirBody(copiedReturn).valid())
+    for (const auto &error : lang::verifyMirBody(copiedReturn).errors)
+      std::cerr << "copied return proof: " << error.message << '\n';
+  auto liveCopiedEntry = copiedReturn;
+  liveCopiedEntry.blocks[0].instructions.pop_back();
+  expect(hasError(liveCopiedEntry, "non-escaping loan"),
+         "a copied value result does not export the original abstract entry "
+         "lifetime");
+  auto earlyCopiedEntry = copiedReturn;
+  std::swap(earlyCopiedEntry.blocks[0].instructions[2],
+            earlyCopiedEntry.blocks[0].instructions[3]);
+  expect(hasError(earlyCopiedEntry, "ended before its carrier-shell loan"),
+         "copied publication never permits retiring the dependency before its "
+         "physical shell");
+  auto movedCopiedReturn = copiedReturn;
+  movedCopiedReturn.blocks[0].instructions[0].kind =
+      lang::MirInstructionKind::Move;
+  movedCopiedReturn.blocks[0].instructions[0].operands[0].kind =
+      lang::MirOperandKind::Move;
+  expect(!lang::verifyMirBody(movedCopiedReturn).valid(),
+         "deferred copied publication cannot consume a still-borrowed carrier "
+         "shell");
+  auto wrongCopiedResult = copiedReturn;
+  wrongCopiedResult.blocks[0].instructions[1].operands[0].value = 0;
+  (void)lang::rebuildMirValueUses(wrongCopiedResult);
+  expect(!lang::verifyMirBody(wrongCopiedResult).valid(),
+         "deferred publication requires the exact copied SSA value");
+  auto nonreturnCopiedExit = liveCopiedEntry;
+  nonreturnCopiedExit.blocks[0].terminator = {
+      .kind = lang::MirTerminatorKind::Exit};
+  (void)lang::rebuildMirValueUses(nonreturnCopiedExit);
+  expect(hasError(nonreturnCopiedExit, "non-escaping loan"),
+         "provisional copied results do not permit a live dependency on a "
+         "nonreturn exit");
+
+  auto erased = baseline;
+  erased.loans[1].storedDependency = 0;
+  expect(erased != baseline &&
+             lang::MirPrinter().print(erased) !=
+                 lang::MirPrinter().print(baseline) &&
+             lang::MirPrinter().print(baseline).find(
+                 "stored-dependency=loan1") != std::string::npos,
+         "identity equality and deterministic snapshots retain dependency IDs");
 }
 
 void testExclusiveReborrowMirFlow() {
@@ -6283,7 +7227,19 @@ int main() {
         }
       }
     }
-    if (forwardingCall != nullptr && !forwardingCall->operands.empty()) {
+    lang::MirInstruction *forwardingInput = nullptr;
+    if (forwardingCall != nullptr && !forwardingCall->operands.empty() &&
+        forwardingCall->operands.front().kind == lang::MirOperandKind::Value) {
+      for (auto &block : wrongOperandOuter->body.blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.result == forwardingCall->operands.front().value &&
+              instruction.kind == lang::MirInstructionKind::CallInput &&
+              instruction.callInputKind == lang::HirCallInputKind::CopyValue &&
+              instruction.operands.size() == 1 &&
+              instruction.operands.front().kind == lang::MirOperandKind::Copy)
+            forwardingInput = &instruction;
+    }
+    if (forwardingInput != nullptr) {
       const lang::SemanticType type = forwardingCall->operands.front().type;
       const lang::MirPlaceId forgedPlace =
           wrongOperandOuter->body.places.size() + 1;
@@ -6292,16 +7248,20 @@ int main() {
            .root = lang::MirPlaceRootKind::Binding,
            .binding = wrongOperandOuter->parameterBindings.front() + 1000,
            .type = type,
-           .traits = lang::semanticTraits(type),
+           .traits = forwardingInput->info.traits,
+           .sourceValue = forwardingInput->hirValue,
            .initiallyAvailable = true});
-      forwardingCall->operands.front() = {.kind = lang::MirOperandKind::Copy,
-                                          .place = forgedPlace,
-                                          .type = type};
+      forwardingInput->operands.front() = {.kind = lang::MirOperandKind::Copy,
+                                           .place = forgedPlace,
+                                           .type = type};
       (void)lang::rebuildMirValueUses(wrongOperandOuter->body);
     }
-    expect(forwardingCall != nullptr &&
-               lang::verifyMirBody(wrongOperandOuter->body).valid() &&
-               !lang::verifyMirProgram(wrongForwardingOperand).valid(),
+    const auto forgedForwardingBody =
+        lang::verifyMirBody(wrongOperandOuter->body);
+    const auto forgedForwardingProgram =
+        lang::verifyMirProgram(wrongForwardingOperand);
+    expect(forwardingInput != nullptr && forgedForwardingBody.valid() &&
+               !forgedForwardingProgram.valid(),
            "a forwarding summary must prove that the descriptor operand is "
            "the source callable parameter binding");
   }
@@ -6645,6 +7605,16 @@ int main() {
   };
   const auto replaceMoveWithCopy = [](lang::MirBody &body,
                                       lang::MirValueId value) {
+    // A call now consumes an ordered prepared input, not the Move directly.
+    // Preserve that staging and corrupt the actual ownership producer.
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.result == value &&
+            instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.callInputKind == lang::HirCallInputKind::MoveValue &&
+            instruction.operands.size() == 1 &&
+            instruction.operands.front().kind == lang::MirOperandKind::Value)
+          value = instruction.operands.front().value;
     for (lang::MirBlock &block : body.blocks) {
       for (lang::MirInstruction &instruction : block.instructions) {
         if (instruction.result != value ||
@@ -7487,7 +8457,7 @@ int main() {
           deadComputations->remarks.begin(), deadComputations->remarks.end(),
           [](const lang::OptimizationRemark &remark) {
             return remark.kind == lang::OptimizationRemarkKind::Missed &&
-                   remark.message.find("may trap or has observable") !=
+                   remark.message.find("possible trap/defined failure") !=
                        std::string::npos;
           });
   const lang::MirFunctionInstance *promoted =
@@ -7615,6 +8585,10 @@ int main() {
   testDefinedFailureIdentityAndPropagation();
   testScalarDefinedFailureEffectClosure();
   testSynchronizationMirContract();
+  testCarrierShellDependencyMirFlow();
+  testCopiedCarrierPublicationProof();
+  testAbstractStoredReferentReborrow();
+  testLifecycleCarrierAbstractEntry();
   testExclusiveReborrowMirFlow();
   testTwoPhaseStoreMirFlow();
   testTransientBorrowNormalization();

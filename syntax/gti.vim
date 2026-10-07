@@ -23,12 +23,13 @@ syntax keyword gtiRepeat do for while
 syntax keyword gtiClassKeyword class interface struct union nextgroup=gtiClassName skipwhite
 syntax keyword gtiEnumKeyword enum nextgroup=gtiClassKeyword skipwhite
 syntax keyword gtiAccess public private
-syntax keyword gtiNamespaceKeyword namespace nextgroup=gtiNamespaceDeclaration skipwhite
+syntax keyword gtiNamespaceKeyword namespace module nextgroup=gtiNamespaceDeclaration skipwhite
 syntax keyword gtiTypeAliasKeyword using nextgroup=gtiTypeAliasName skipwhite
 syntax keyword gtiConceptKeyword concept nextgroup=gtiConceptName skipwhite
-syntax keyword gtiStorageClass const constexpr extern mut override static virtual
+syntax keyword gtiStorageClass const constexpr export extern mut override static virtual
 syntax keyword gtiOperatorKeyword operator
 syntax match gtiInclude "#include\>"
+syntax keyword gtiInclude import
 syntax keyword gtiStatement break continue return
 syntax keyword gtiOperator alignof and or sizeof
 syntax keyword gtiType auto bool char double expected float int int8_t int16_t int32_t int64_t int8 int16 int32 int64 nullptr_t uint uint8_t uint16_t uint32_t uint64_t uint8 uint16 uint32 uint64 void

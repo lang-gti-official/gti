@@ -1,0 +1,48 @@
+#include <std/algorithm>
+#include <std/string>
+#include <std/vector>
+
+mut int mode = 0;
+
+class Resource {
+  int identity;
+  std::string storage;
+public:
+  Resource(int identity) : identity(identity), storage(std::string("owned")) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  int id() { return this.identity; }
+  ~Resource() {
+    std::println(this.identity);
+    if (mode == 3 && this.identity == 20) {
+      int checked = 1 / (mode - 3);
+    }
+  }
+};
+
+class Mapper {
+  std::string state;
+public:
+  Mapper() : state(std::string("mapper")) {}
+  ~Mapper() { std::println(90); }
+  Resource operator()(Resource& input) {
+    if (mode == 2 && input.id() == 2) {
+      int checked = 1 / (mode - 2);
+    }
+    return Resource(input.id() + 100);
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mode = argc;
+  mut std::vector<Resource> source{};
+  source.reserve(std::size_t(2));
+  source.push_back(Resource(1));
+  source.push_back(Resource(2));
+  mut std::vector<Resource> destination{};
+  destination.reserve(std::size_t(2));
+  destination.push_back(Resource(10));
+  if (mode != 4) { destination.push_back(Resource(20)); }
+  std::transform(source, destination, Mapper());
+  return 0;
+}

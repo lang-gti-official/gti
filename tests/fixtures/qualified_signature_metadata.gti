@@ -1,0 +1,19 @@
+using Read = int(int);
+using Mutable = int(int) mut;
+using Once = int(int) &&;
+class Tag<S> {};
+int choose<R, Args...>(Tag<R(Args...)>& tag) { return 1; }
+int choose<R, Args...>(Tag<R(Args...) mut>& tag) { return 2; }
+int choose<R, Args...>(Tag<R(Args...) &&>& tag) { return 3; }
+class MutablePattern<R(Args...) mut> {
+public:
+  using signature = R(Args...) mut;
+};
+int main() {
+  Tag<Read> read{};
+  Tag<Mutable> write{};
+  Tag<Once> once{};
+  Tag<int(int) mut> same{};
+  MutablePattern<Mutable> pattern{};
+  return choose(read) + choose(write) + choose(once) + choose(same) - 8;
+}

@@ -1,4 +1,5 @@
 #include "gti/runtime_failure.h"
+#include "gti/runtime_thread.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -109,6 +110,68 @@ void reenteringObserver(const gti_failure_record_v1 *, void *) {
   gti_rt_failure_terminate_v1(&nested, nullptr, markerObserver, nullptr);
 }
 
+gti_failure_record_v2 panicRecord(const Fixture &fixture, const char *message,
+                                  std::size_t size) {
+  gti_failure_record_v2 record{.abi_version = GTI_FAILURE_ABI_VERSION_V2,
+                               .code = GTI_FAILURE_CODE_PANIC_V2,
+                               .detail = GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2,
+                               .site_index = 1};
+  std::memcpy(record.artifact_identity, fixture.record.artifact_identity, 32);
+  (void)gti_rt_failure_capture_panic_v2(&record,
+                                        {.data = message, .length = size});
+  return record;
+}
+
+void markerObserverV2(const gti_failure_record_v2 *, void *) {
+  writeStdout("O", 1);
+}
+
+void mutatingObserverV2(const gti_failure_record_v2 *record, void *) {
+  writeStdout("O", 1);
+  const_cast<gti_failure_record_v2 *>(record)->message[0] = 'X';
+}
+
+void throwingObserverV2(const gti_failure_record_v2 *, void *) {
+  writeStdout("O", 1);
+  throw 17;
+}
+
+void reenteringObserverV2(const gti_failure_record_v2 *, void *) {
+  // Deliberately re-enter through the older ABI: arbitration must protect the
+  // active v2 record regardless of the nested entry point's version.
+  reenteringObserver(nullptr, nullptr);
+}
+
+struct PanicWorker {
+  gti_failure_record_v2 record;
+  const gti_failure_artifact_descriptor_v1 *artifact;
+};
+
+void panicWorker(void *opaque) {
+  const auto &context = *static_cast<PanicWorker *>(opaque);
+  gti_runtime_detail::run_managed_task_adapter([&] {
+    gti_rt_failure_terminate_v2(&context.record, context.artifact, nullptr,
+                                nullptr);
+  });
+}
+
+void destroyPanicWorker(void *opaque) {
+  delete static_cast<PanicWorker *>(opaque);
+}
+
+void nestedLegacyPanicWorker(void *opaque) {
+  const auto &context = *static_cast<PanicWorker *>(opaque);
+  gti_runtime_detail::run_managed_task_adapter([&] {
+    auto inner = gti_rt_thread_spawn_v1(panicWorker, new PanicWorker(context),
+                                        destroyPanicWorker);
+    if (inner.status != GTI_THREAD_SPAWN_OK_V1) {
+      std::terminate();
+    }
+    (void)gti_rt_thread_join_v1(&inner.state);
+    writeStdout("unexpected continuation", 23);
+  });
+}
+
 void closeStderr() {
 #if defined(_WIN32)
   (void)SetStdHandle(STD_ERROR_HANDLE, INVALID_HANDLE_VALUE);
@@ -147,6 +210,96 @@ int run(const char *mode) {
   Fixture ordinary(GTI_FAILURE_CODE_INTEGER_OVERFLOW_V1,
                    GTI_FAILURE_DETAIL_ADDITION_V1, 1, source,
                    sizeof(source) - 1);
+
+  if (std::strncmp(mode, "panic_", 6) == 0) {
+    Fixture panic(GTI_FAILURE_CODE_PANIC_V2,
+                  GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2, 3, source,
+                  sizeof(source) - 1);
+    auto record = panicRecord(panic, "cannot format Uuid", 18);
+    if (std::strcmp(mode, "panic_report") == 0) {
+      return static_cast<int>(
+          gti_rt_failure_write_report_v2(&record, &panic.artifact));
+    }
+    if (std::strcmp(mode, "panic_snapshot") == 0) {
+      char message[] = "cannot format Uuid";
+      record = panicRecord(panic, message, sizeof(message) - 1);
+      std::memset(message, 'X', sizeof(message));
+      return static_cast<int>(
+          gti_rt_failure_write_report_v2(&record, &panic.artifact));
+    }
+    if (std::strcmp(mode, "panic_truncated") == 0 ||
+        std::strcmp(mode, "panic_utf8_boundary") == 0) {
+      char message[600];
+      std::memset(message, 'a', sizeof(message));
+      if (std::strcmp(mode, "panic_utf8_boundary") == 0) {
+        message[511] = char(0xCE);
+        message[512] = char(0xBB);
+      }
+      record = panicRecord(panic, message, sizeof(message));
+      return static_cast<int>(
+          gti_rt_failure_write_report_v2(&record, &panic.artifact));
+    }
+    if (std::strcmp(mode, "panic_escaped") == 0) {
+      constexpr char message[] = {
+          'A',        '\0',       '\n',       '\r',       '\t',
+          '"',        '\\',       char(0xC0), char(0xAF), char(0xE2),
+          char(0x80), char(0xAE), char(0xCE), char(0xBB)};
+      record = panicRecord(panic, message, sizeof(message));
+      return static_cast<int>(
+          gti_rt_failure_write_report_v2(&record, &panic.artifact));
+    }
+    if (std::strcmp(mode, "panic_cleanup") == 0 ||
+        std::strcmp(mode, "panic_terminal_cleanup") == 0) {
+      Fixture secondary(GTI_FAILURE_CODE_PANIC_V2,
+                        GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2, 5, "cleanup.gti",
+                        11, 11);
+      const gti_failure_emergency_v2 emergency{
+          .abi_version = GTI_FAILURE_ABI_VERSION_V2,
+          .primary = record,
+          .secondary = panicRecord(secondary, "cleanup failed", 14)};
+      if (std::strcmp(mode, "panic_terminal_cleanup") == 0) {
+        gti_rt_failure_terminate_cleanup_v2(&emergency, &panic.artifact,
+                                            &secondary.artifact);
+      }
+      return static_cast<int>(gti_rt_failure_write_cleanup_report_v2(
+          &emergency, &panic.artifact, &secondary.artifact));
+    }
+    if (std::strcmp(mode, "panic_legacy_join") == 0 ||
+        std::strcmp(mode, "panic_nested_legacy_join") == 0) {
+      auto spawn = gti_rt_thread_spawn_v1(
+          std::strcmp(mode, "panic_legacy_join") == 0 ? panicWorker
+                                                      : nestedLegacyPanicWorker,
+          new PanicWorker{record, &panic.artifact}, destroyPanicWorker);
+      if (spawn.status != GTI_THREAD_SPAWN_OK_V1) {
+        return 99;
+      }
+      if (std::strcmp(mode, "panic_legacy_join") == 0) {
+        (void)gti_rt_thread_join_v1(&spawn.state);
+      } else {
+        // A legacy boundary must terminate, not hand off past its caller's
+        // cleanup protocol and return a worker error to this outer join.
+        (void)gti_rt_thread_join_v2(&spawn.state);
+      }
+      return 98;
+    }
+    gti_failure_observer_v2 observer = markerObserverV2;
+    if (std::strcmp(mode, "panic_terminal_mutation") == 0) {
+      observer = mutatingObserverV2;
+    } else if (std::strcmp(mode, "panic_terminal_exception") == 0) {
+      observer = throwingObserverV2;
+    } else if (std::strcmp(mode, "panic_terminal_reentry") == 0) {
+      observer = reenteringObserverV2;
+    } else if (std::strcmp(mode, "panic_terminal_closed") == 0) {
+      closeStderr();
+    } else if (std::strcmp(mode, "panic_terminal_broken_pipe") == 0) {
+      if (!breakStderrPipe()) {
+        return 99;
+      }
+    } else if (std::strcmp(mode, "panic_terminal_observer") != 0) {
+      return 97;
+    }
+    gti_rt_failure_terminate_v2(&record, &panic.artifact, observer, nullptr);
+  }
 
   if (std::strcmp(mode, "report") == 0) {
     return static_cast<int>(
@@ -203,6 +356,24 @@ int run(const char *mode) {
     ordinary.outcome.detail = GTI_FAILURE_DETAIL_SUBTRACTION_V1;
     return static_cast<int>(
         gti_rt_failure_write_report_v1(&ordinary.record, &ordinary.artifact));
+  }
+  if (std::strcmp(mode, "key_not_found") == 0 ||
+      std::strcmp(mode, "container_argument") == 0 ||
+      std::strcmp(mode, "mutex_lock") == 0 ||
+      std::strcmp(mode, "reserved_14") == 0) {
+    const bool key = std::strcmp(mode, "key_not_found") == 0;
+    const bool mutex = std::strcmp(mode, "mutex_lock") == 0;
+    const bool reserved = std::strcmp(mode, "reserved_14") == 0;
+    Fixture check(reserved ? 14
+                  : key    ? GTI_FAILURE_CODE_KEY_NOT_FOUND_V1
+                  : mutex ? GTI_FAILURE_CODE_INFALLIBLE_HOST_OPERATION_FAILED_V1
+                          : GTI_FAILURE_CODE_INVALID_CONTAINER_ARGUMENT_V1,
+                  key     ? GTI_FAILURE_DETAIL_KEY_LOOKUP_V1
+                  : mutex ? GTI_FAILURE_DETAIL_MUTEX_LOCK_V1
+                          : GTI_FAILURE_DETAIL_CONTAINER_ARGUMENT_V1,
+                  1, "unit.gti", 8);
+    return static_cast<int>(
+        gti_rt_failure_write_report_v1(&check.record, &check.artifact));
   }
   if (std::strcmp(mode, "canonical_outcomes") == 0) {
     const gti_failure_outcome_descriptor_v1 outcomes[] = {

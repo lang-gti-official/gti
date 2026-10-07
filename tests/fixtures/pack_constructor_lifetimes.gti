@@ -1,0 +1,34 @@
+#include <std/string>
+#include <std/vector>
+
+class Token {
+public:
+  int value;
+  int divisor;
+  Token(int initial, int cleanup_divisor) : value(initial), divisor(cleanup_divisor) {}
+  ~Token() {
+    std::println(this.value);
+    int result = 1 / this.divisor;
+  }
+};
+
+class Object {
+public:
+  int number;
+  Object(int divisor, std::string text, Token first, Token second)
+      : number(8 / divisor) {
+    std::println(text);
+  }
+  ~Object() { std::println(7); }
+};
+
+void construct<T, Args...>(Args... args) {
+  T value = T(args...);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Token caller = Token(9, 1);
+  construct<Object>(argc < 3 ? 1 : 0, std::string("payload"),
+                    Token(1, argc == 2 || argc == 4 ? 0 : 1), Token(2, 1));
+  return 0;
+}

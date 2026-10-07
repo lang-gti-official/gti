@@ -1,0 +1,47 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+struct Marker {
+  int number;
+  Marker(int number) : number(number) {}
+};
+
+class Guard {
+public:
+  ~Guard() { std::println(9); }
+};
+
+expected<Marker, int> value_result(int number, bool fail) {
+  if (fail) { return unexpected(7); }
+  return Marker(number);
+}
+
+expected<int, Marker> error_result(int number, bool fail) {
+  if (fail) { return 7; }
+  return unexpected(Marker(number));
+}
+
+std::pair<Marker, Marker> values(int argc) {
+  mut auto first = value_result(1, argc == 2);
+  mut auto second = value_result(2, argc == 3);
+  return std::make_pair(std::move(first).value(),
+                       std::move(second).value());
+}
+
+std::pair<Marker, Marker> errors(int argc) {
+  mut auto first = error_result(1, argc == 5);
+  mut auto second = error_result(2, argc == 6);
+  return std::make_pair(std::move(first).error(),
+                       std::move(second).error());
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  if (argc < 4) {
+    auto result = values(argc);
+    return result.first.number == 1 && result.second.number == 2 ? 0 : 1;
+  }
+  auto result = errors(argc);
+  return result.first.number == 1 && result.second.number == 2 ? 0 : 1;
+}

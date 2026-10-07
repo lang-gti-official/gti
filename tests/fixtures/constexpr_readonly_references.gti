@@ -1,0 +1,69 @@
+#include <std/array>
+
+struct Table {
+  mut int values[3];
+  constexpr Table(int input[3]) : values(input) {}
+  constexpr int& at(int index) { return this.values[index]; }
+};
+
+constexpr int inspect(int& value) { return value + 1; }
+constexpr int& forward(int& value) { return value; }
+constexpr int sum(std::array<int, 3>& values) {
+  mut int result = 0;
+  for (mut std::size_t index = 0; index < values.size(); index++) {
+    result += values.at(index);
+  }
+  return result;
+}
+
+constexpr int work() {
+  Table table = Table({2, 5, 8});
+  int& middle = table.at(1);
+  int& same = forward(middle);
+  std::array<int, 3> values = std::array<int, 3>({3, 6, 9});
+  return inspect(same) + sum(values);
+}
+
+constexpr Table table = Table({4, 7, 10});
+constexpr std::array<int, 3> values = std::array<int, 3>({3, 6, 9});
+static_assert(work() == 24);
+static_assert(table.at(2) == 10);
+static_assert(inspect(table.at(1)) == 8);
+static_assert(values.at(1) == 6);
+static_assert(values.front() == 3 && values.back() == 9);
+static_assert(sum(values) == 18);
+constexpr int observed = forward(values.front());
+static_assert(observed == 3);
+
+constexpr int refresh(int seed) {
+  mut int value = seed;
+  mut int total = 0;
+  for (mut int index = 0; index < 3; index++) {
+    {
+      int& observation = value;
+      total += inspect(observation);
+    }
+    value++;
+  }
+  return total;
+}
+static_assert(refresh(4) == 18);
+
+constexpr uint64_t text_checksum(std::string_view& text) {
+  mut uint64_t total = 0;
+  for (mut std::size_t index = 0; index < text.size(); index++) {
+    total += uint8_t(text[index]);
+  }
+  return total;
+}
+constexpr std::string_view asset = "a\0é";
+static_assert(text_checksum(asset) == 461);
+
+int main() {
+  std::array<int, 3> runtime = std::array<int, 3>({3, 6, 9});
+  std::string_view runtime_text = "a\0é";
+  return work() == 24 && refresh(4) == 18 && sum(runtime) == 18 &&
+         runtime.at(1) == values.at(1) &&
+         runtime.front() == observed && runtime.back() == 9 &&
+         text_checksum(runtime_text) == 461 ? 0 : 1;
+}

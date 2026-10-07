@@ -1,0 +1,32 @@
+#include <std/memory>
+#include <std/vector>
+
+struct Entry {
+  mut std::unique_ptr<int> value;
+  Entry(int value) : value(std::make_unique<int>(value)) {}
+};
+struct Node {
+  mut Entry entry;
+  Node(int value) : entry(Entry(value)) {}
+};
+class Holder {
+  mut std::vector<std::unique_ptr<Node>> nodes{};
+public:
+  Holder() { this.nodes.push_back(std::make_unique<Node>(1)); }
+  void replace(std::unique_ptr<int> value) mut {
+    std::size_t index = 0;
+    this.nodes[index]->entry.value = std::move(value);
+  }
+  int read() {
+    std::size_t index = 0;
+    return *this.nodes[index]->entry.value;
+  }
+};
+int main() {
+  mut Holder owner{};
+  for (mut int value = 2; value < 6; value++) {
+    owner.replace(std::make_unique<int>(value));
+    if (owner.read() != value) { return 1; }
+  }
+  return 0;
+}

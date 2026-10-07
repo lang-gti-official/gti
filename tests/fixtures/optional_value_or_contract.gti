@@ -1,0 +1,22 @@
+#include <std/optional>
+#include <std/string>
+
+// A user-defined copyable payload exercises the successful API independently
+// of scalar and standard-library types.
+struct Record {
+  int value;
+  Record(int input) : value(input) {}
+};
+
+int main() {
+  std::optional<Record> present{Record(7)};
+  std::optional<Record> empty{};
+  Record copied = present.value_or(Record(9));
+  Record fallback = empty.value_or(Record(9));
+  if (copied.value != 7 || fallback.value != 9) { return 1; }
+  mut std::optional<std::string> owner{std::string("tea")};
+  auto clone = owner.clone();
+  owner.reset();
+  if (owner.has_value() || clone.value() != "tea") { return 2; }
+  return 0;
+}

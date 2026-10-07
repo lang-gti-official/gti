@@ -1,0 +1,66 @@
+#include <std/memory>
+
+struct Reading { mut int value = 42; };
+using Erased = void*;
+using Typed = Reading*;
+using Shared = const Reading*;
+
+T default_value<std::default_initializable T>() { return T(); }
+
+class PointerCall {
+public:
+  int operator()(const int* pointer) mut { return pointer == nullptr ? 3 : 7; }
+  int operator()(bool input) && { return input ? 90 : 91; }
+};
+int call_qualified<Operation>(Operation operation, int* pointer) {
+  const int* qualified = pointer;
+  return std::move(operation)(qualified);
+}
+int call_null<Operation>(Operation operation) {
+  const int* empty = nullptr;
+  return std::move(operation)(empty);
+}
+int ordinary_pointer(const int* pointer) { return pointer == nullptr ? 3 : 7; }
+
+void* counted(Reading* value, mut int& count) {
+  count += 1;
+  return std::erase_address(value);
+}
+
+int main() {
+  if (default_value<Typed>() != nullptr || default_value<Erased>() != nullptr) return 10;
+  if (sizeof(Typed) != sizeof(void*) || alignof(Typed) != alignof(void*)) return 11;
+  mut int integer = 7;
+  int* integer_address = &integer;
+  auto allocated_pointer = std::make_unique<int*>(integer_address);
+  auto allocated_null = std::make_unique<int*>();
+  if (allocated_pointer == nullptr || allocated_null == nullptr) return 12;
+  if (call_qualified(PointerCall(), integer_address) != 7 ||
+      call_null(PointerCall()) != 3) return 13;
+  if (ordinary_pointer(integer_address) != 7 || ordinary_pointer(nullptr) != 3) return 14;
+  mut Reading owner{};
+  mut int evaluations = 0;
+  Typed restored = Typed(counted(&owner, evaluations));
+  if (evaluations != 1) return 1;
+  const void* shared = std::erase_address(Shared(restored));
+  const Reading* readonly = std::typed_address<Reading>(shared);
+  if (readonly == nullptr) return 2;
+  void* empty = nullptr;
+  if (Typed(empty) != nullptr) return 3;
+  // Inert conversion/copy/comparison must preserve an expired address without
+  // materializing a native pointer or pretending that it is safe to access.
+  mut const void* expired = nullptr;
+  for (mut int i = 0; i < 2; i++) {
+    const Reading* inert = std::typed_address<Reading>(expired);
+    if (i == 1 && inert == nullptr) return 4;
+    { Reading transient{}; expired = std::erase_address(&transient); }
+  }
+  const Reading* inert = std::typed_address<Reading>(expired);
+  if (inert == nullptr) return 5;
+  Typed witnessed = Typed(Erased(&owner));
+  unsafe {
+    mut Reading& edit = std::assume_mut(witnessed, owner);
+    edit.value = 43;
+  }
+  unsafe { return readonly->value - 43; }
+}

@@ -1,0 +1,50 @@
+#include <std/string>
+#include <std/vector>
+
+class Token {
+  int identity;
+  int cleanup_divisor;
+public:
+  Token(int identity, int cleanup_divisor)
+      : identity(identity), cleanup_divisor(cleanup_divisor) {}
+  ~Token() {
+    std::println(this.identity);
+    int checked = 1 / this.cleanup_divisor;
+  }
+};
+
+class Callback {
+  Token capture;
+public:
+  Callback(Token capture) : capture(std::move(capture)) {}
+  int operator()() && { std::println(1); return 12; }
+};
+
+class Owner {
+  mut Callback callable;
+public:
+  Owner(Callback callable) : callable(std::move(callable)) {}
+  ~Owner() { std::println(9); }
+  int operator()() && {
+    int value = std::move(this.callable)();
+    Token capture{8, 1};
+    Callback replacement{std::move(capture)};
+    this.callable = std::move(replacement);
+    return value;
+  }
+};
+
+int later(int divisor) { std::println(2); return 6 / divisor; }
+int combine(int left, int right) { std::println(3); return left + right; }
+
+int main(int argc, std::vector<std::string> argv) {
+  int old_cleanup_divisor = argc == 2 ? 0 : 1;
+  int later_divisor = argc == 3 ? 0 : 1;
+  Token caller{99, 1};
+  Token capture{7, old_cleanup_divisor};
+  Callback callback{std::move(capture)};
+  Owner owner{std::move(callback)};
+  int value = combine(std::move(owner)(), later(later_divisor));
+  std::println(4);
+  return value - 18;
+}

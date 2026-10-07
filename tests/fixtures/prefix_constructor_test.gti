@@ -1,0 +1,15 @@
+// Test-only trusted capability client; never shipped in the standard library.
+void append_to_empty<T, Args...>(Args... args) {
+  mut auto storage = gti_internal::allocate_prefix_storage<T>(uint64_t(0));
+  gti_internal::prefix_storage_append(storage, args...); // capacity failure
+}
+
+void append_same_type<T>(T value, uint64_t capacity) {
+  mut auto storage = gti_internal::allocate_prefix_storage<T>(capacity);
+  gti_internal::prefix_storage_append(storage, std::move(value)); // direct capacity
+}
+
+void append_same_type_pack<T, Args...>(uint64_t capacity, Args... args) {
+  mut auto storage = gti_internal::allocate_prefix_storage<T>(capacity);
+  gti_internal::prefix_storage_append(storage, args...); // pack capacity
+}

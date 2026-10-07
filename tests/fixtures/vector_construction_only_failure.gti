@@ -1,0 +1,30 @@
+#include <std/optional>
+#include <std/string>
+#include <std/vector>
+
+class Message {
+  std::optional<std::string> text;
+  int number;
+  int divisor;
+public:
+  Message(int initial, int cleanup_divisor)
+      : text(std::optional<std::string>(std::string("owned"))),
+        number(initial), divisor(cleanup_divisor) {}
+  Message(Message& other) = delete;
+  Message(Message&& other) = default;
+  ~Message() {
+    std::println(this.number);
+    int result = 1 / this.divisor;
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Message caller = Message(9, 1);
+  mut std::vector<Message> messages{};
+  messages.push_back(Message(1, 1));
+  messages.push_back(Message(2, argc > 1 ? 0 : 1));
+  messages.push_back(Message(3, argc > 2 ? 0 : 1));
+  messages.reserve(std::size_t(8));
+  messages.erase(std::size_t(1));
+  return 0;
+}

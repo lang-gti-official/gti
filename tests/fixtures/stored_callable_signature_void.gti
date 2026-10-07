@@ -1,0 +1,50 @@
+#include <std/memory>
+
+interface VoidInvoker<R, Args...> { R invoke(Args... args); };
+class VoidSignature<S> {};
+class VoidModel<T, R, Args...> : public VoidInvoker<R, Args...> {
+  T callback;
+public:
+  VoidModel(T callback) : callback(std::move(callback)) {}
+  R invoke(Args... args) override { return this.callback(args...); }
+};
+
+std::unique_ptr<VoidInvoker<R, Args...>> erase_void_signature<R, T, Args...>(
+    T callback, VoidSignature<R(Args...)>& signature) {
+  auto model = std::make_unique<VoidModel<T, R, Args...>>(std::move(callback));
+  return std::upcast_unique<VoidInvoker<R, Args...>, VoidModel<T, R, Args...>>(
+      std::move(model));
+}
+
+mut int call_count = 0;
+
+class ConcreteVoid : public VoidInvoker<void> {
+public:
+  void invoke() override { call_count++; }
+};
+
+class ConcreteArguments : public VoidInvoker<void, int, bool> {
+public:
+  void invoke(int count, bool active) override {
+    if (active) { call_count += count; }
+  }
+};
+
+R forward_void<R, T>(T callback, VoidSignature<R()>& signature) {
+  return callback();
+}
+
+int main() {
+  VoidSignature<void()> signature{};
+  auto callback = []() -> void { call_count++; };
+  forward_void(callback, signature);
+  auto owner = erase_void_signature(std::move(callback), signature);
+  owner->invoke();
+  auto concrete = std::make_unique<ConcreteVoid>();
+  auto erased = std::upcast_unique<VoidInvoker<void>, ConcreteVoid>(std::move(concrete));
+  erased->invoke();
+  auto arguments = std::make_unique<ConcreteArguments>();
+  auto erased_arguments = std::upcast_unique<VoidInvoker<void, int, bool>, ConcreteArguments>(std::move(arguments));
+  erased_arguments->invoke(2, true);
+  return call_count - 5;
+}

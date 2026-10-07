@@ -1,0 +1,45 @@
+enum class lookup_error { missing };
+
+class MutableSource {
+  mut int value;
+public:
+  MutableSource(int value) : value(value) {}
+  expected<int&, lookup_error> find(bool present) mut {
+    if (!present) { return unexpected(lookup_error::missing); }
+    return this.value;
+  }
+};
+
+struct ReadView {
+  int& item;
+  ReadView(int& item) : item(item) {}
+};
+
+struct Envelope {
+  ReadView view;
+  Envelope(ReadView view) : view(view) {}
+};
+
+expected<int&, lookup_error> find_nested(Envelope owner, bool present) {
+  if (!present) { return unexpected(lookup_error::missing); }
+  return owner.view.item;
+}
+
+int main() {
+  mut MutableSource owner{7};
+  {
+    auto found = owner.find(true);
+    if (!found || found.value() != 7) { return 1; }
+  }
+  {
+    auto missing = owner.find(false);
+    if (missing || missing.error() != lookup_error::missing) { return 2; }
+  }
+  int value = 11;
+  Envelope view{ReadView(value)};
+  auto found = find_nested(view, true);
+  if (!found || found.value() != 11) { return 3; }
+  auto missing = find_nested(view, false);
+  if (missing || missing.error() != lookup_error::missing) { return 4; }
+  return 0;
+}

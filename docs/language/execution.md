@@ -80,7 +80,10 @@ are cleaned before its parameters, and parameters are cleaned in reverse
 initialization order.
 
 A final pack expansion contributes its concrete elements at the written pack
-position and evaluates those elements in pack order. Static and virtual target
+position and evaluates those elements in pack order. Owning pack parameters
+have the same per-element cleanup obligations as ordinary by-value parameters:
+unused elements still require cleanup, copying preserves the source owner,
+and moving transfers that owner's obligation. Static and virtual target
 selection does not add another source-visible evaluation. A temporary callable
 or receiver remains live through the invocation and until its enclosing
 full-expression ends unless ownership is transferred to a longer-lived
@@ -233,6 +236,15 @@ return full-expression. If cleanup fails before publication, the initialized
 result is unpublished partial state owned by the failing invocation and
 receives failure cleanup.
 
+A `void` function may use `return expression;` when the expression has exactly
+type `void`. The expression is evaluated once, its full-expression temporaries
+and the callee's locals/parameters are cleaned in the same order as other
+returns, and then control returns without a result value. A defined failure
+during expression evaluation or cleanup follows the ordinary failure edges;
+there is no result destination or publication. A non-void expression remains
+invalid in a void return. This also applies after concrete generic substitution
+and inside void-returning lambdas.
+
 ### 4.2.3 Full Expressions And Cleanup
 
 A **full-expression** is the outer evaluation region associated with one of
@@ -363,6 +375,41 @@ destroyed at its semicolon:
 [[discard]] make_owner();
 ```
 
+### Optional API results
+
+Non-void function-call results must be used or explicitly discarded with
+`[[discard]]`, unless the selected declaration has `[[discardable]]`:
+
+```gti
+[[discardable]] int record(int value) { return value; }
+int main() { record(7); return 0; }
+```
+
+This declaration-level contract marks an optional result, not a pure function
+or a non-failing operation. It is available on non-void functions and methods,
+including generic, static, virtual, operator and extern-C declarations. It
+may be combined with other applicable function attributes; native attributes
+such as `[[link_name(...)]]` use separate attribute groups. Duplicates, arguments
+to the attribute, void returns and non-function declarations are rejected.
+Each overload has its own policy. Virtual calls use the statically selected
+declaration, not the eventual override's annotation. An indirect callable with
+no selected annotated function retains the default non-discardable policy;
+this attribute is not part of a function-pointer or erased-callable type.
+
+`[[discard]]` remains valid on annotated non-void calls. Ignoring a result does
+not skip the call, suppress failure, extend a borrow or disable borrow checks.
+Unused owning results are destroyed at the same full-expression boundary as
+explicitly discarded results. An unused reference does not destroy its referent.
+The compiler trusts the API author's discard policy; the annotation does not
+prove that ignoring an error/status/guard result is appropriate. Error-bearing
+APIs should normally keep the default. `storage<T>::emplace` uses the opt-out
+because insertion is useful independently of its returned element reference.
+
+See `examples/115-discardable-results.gti` for an unrelated user-defined method
+and the storage API, with both consumed and ignored results.
+
+### Program initialization and call ordering
+
 For source units where `main.gti` includes `a.gti` and then `b.gti`, and
 `a.gti` includes `shared.gti`, the program-wide unit order is `shared.gti`,
 `a.gti`, `b.gti`, `main.gti` after the configured prelude roots. Reversing the
@@ -376,11 +423,12 @@ initializer nor argument allocation can overtake an earlier count-conversion
 failure, and argument construction cannot observe uninitialized standard-
 library state.
 
-**Implementation gap:** semantic analysis still conservatively rejects a
-transient borrow and overlapping mutation in either call-argument order. HIR
-maps semantic-selected full-expression roots to concrete drop identities. Its
+Semantic analysis admits an earlier completed mutation followed by a later
+overlapping borrow in an ordinary call or construction when no other live loan
+conflicts. Borrow-first followed by mutation remains invalid. HIR maps
+semantic-selected full-expression roots to concrete drop identities. Its
 bounded ordered-invocation plan now names the receiver and exact scalar,
-reference, and eligible non-borrowed class-value arguments for concrete
+reference, and eligible class-value arguments for concrete
 non-intrinsic ordinary calls. It also covers a concrete ordinary constructor
 with at least one supported argument and an exact target; constructors have no
 receiver. MIR turns those roles into one-use checkpoints and verifies the
@@ -388,6 +436,12 @@ strict receiver when applicable, source-ordered arguments, then `Call` or
 `Construct` chain. Class places are copied at their checkpoint; owned class
 values are moved there, and an exact active temporary obligation is transferred
 at that same checkpoint.
+
+Borrowed-state class arguments use the same exact copy/move checkpoints as
+constructor inputs. An exact fresh borrowed call result additionally retains
+its producer's owner loan and success-edge lifetime before its unique transfer
+to the parameter. Neither transfer nor a nested consuming call retires that
+loan before the enclosing full-expression boundary.
 
 Verified MIR is the production authority for all source bodies. Construction,
 copy or move parameters, prepared call inputs, transfer, lexical cleanup,
@@ -538,9 +592,51 @@ across movement.
 
 ## 4.5 Control Flow
 
+### Function contracts
+
+`[[noreturn]]` declares that a function cannot complete normally. Its body
+must neither reach its end nor execute an ordinary `return`; a return whose
+expression itself never returns is permitted. This is a checked semantic
+contract, not an optimizer assumption about an unchecked user promise. A
+resolved terminal call ends its evaluated path, including when it occurs in
+an initializer, a required call argument or a control-flow condition. A call
+in an unselected short-circuit or conditional operand does not terminate the
+whole expression. The attribute does not introduce a bottom type or permit
+`void` in a value context.
+
+`[[track_caller]]` requests caller-location transport for exact GTI calls.
+The attributes can share a list, as in `[[noreturn, track_caller]]`, or occur
+in consecutive lists. They apply to defined non-polymorphic GTI functions
+and trusted compiler intrinsic declarations, not native declarations,
+virtual dispatch, or operator declarations. Operator-call metadata and native
+operator adapters do not yet preserve these annotation contracts end-to-end;
+an ordinary operator body may still call `std::panic` or another terminal
+function. The hosted entry point has no GTI caller and cannot use
+`track_caller`. A caller-tracked function cannot become a native callback in
+this slice: the foreign signature cannot carry the hidden caller parameter.
+Exact function items retain their identity, including inside source-defined
+owning callable wrappers. An ordinary wrapper or lambda establishes a new
+call site; it does not magically preserve its external caller. Explicit
+tracked wrappers forward the incoming location instead.
+
+Terminal-flow checking retains the existing switch boundary: a `default`
+arm or a semantically exhaustive closed payload-enum switch covers every
+path. Listing all named values of an ordinary integral enum does not prove
+that its underlying value always matches one of them. Terminal wrappers over
+such a switch need a `default` arm or a terminal fallback after the switch.
+
+### Statements
+
 `if`, loops, `switch`, `break`, `continue`, and `return` follow their grammar
 and static control-flow requirements. `continue` in a structural range loop
 executes the selected iterator increment before the next condition test.
+
+An implicit exact named return move executes as the same ownership transfer as
+`return std::move(name);`: the source obligation moves into the result, the
+source is not cleaned up again, and the caller observes one successfully
+published value. Return-expression temporaries and remaining lexical owners
+still drain in reverse construction order before publication. A failure during
+that cleanup cannot publish or duplicate the pending result.
 
 A `switch` selects the exact matching case value or `default`. Adjacent labels
 share an arm. Arms do not fall through implicitly.
@@ -552,11 +648,14 @@ its alternative by copy from a named value, by transfer from an explicit
 `std::move`, or directly from a fresh prvalue construction, before any later
 sibling field expression evaluates. A payload switch evaluates its subject
 once through a read-only observation, selects by the active alternative,
-copies that alternative's fields into immutable arm bindings, and executes the
-selected arm; a class-typed arm binding owns its copy and drops at the arm's
-end. A move-only payload is observed through a tag-only pattern because the
-current pattern family does not consume or borrow its field. An exhaustive
-payload switch has no unmatched execution path.
+binds that alternative's selected fields, and executes the selected arm. An
+ordinary value binding owns an immutable copy and drops it at the arm's end.
+A tag-only pattern observes a move-only payload without extracting it;
+`auto&` instead borrows a field from stable enum storage for the arm, and
+`mut auto&` requires mutable storage and an exclusive loan. The whole enum
+remains the conservative conflict root while a payload loan lives. Temporary
+subjects cannot supply borrowed bindings, and consuming patterns remain
+unsupported. An exhaustive payload switch has no unmatched execution path.
 
 When any alternative contains an active-cleanup class, the enum owns one
 variant-aware lexical cleanup obligation. Payload construction transfers each
@@ -565,8 +664,9 @@ arming the enum value. A failure before publication cleans the produced
 operand through its existing construction obligation; a failure after
 publication, ordinary fallthrough, `return`, `break`, and `continue` all drop
 the enum exactly once. Whole-enum move construction transfers the active
-alternative and disarms the source. Whole-enum move assignment drops the old
-destination alternative exactly once, transfers the source alternative, and
+alternative and disarms the source. When the payloads permit assignment,
+whole-enum move assignment drops the old destination alternative exactly once,
+transfers the source alternative, and
 later destroys only the moved-from staging shell. A unit alternative has no
 payload cleanup to run.
 
@@ -574,8 +674,8 @@ Owning payload enums may remain direct local values, cross a top-level checked
 reference for non-consuming observation, or cross an admitted ordinary
 callable by value. The by-value family covers ordinary source-defined free
 functions, non-polymorphic methods and ordinary constructors, and exact typed
-lambdas. Argument preparation follows the enum's folded copy/move traits: a
-named move transfers its obligation, a fresh variant is consumed directly,
+captureless lambdas. Argument preparation follows the enum's folded copy/move
+traits: a named move transfers its obligation, a fresh variant is consumed directly,
 and an unavailable copy is rejected before lowering. Entry moves the native
 parameter into the callable's lexical enum obligation. An enum result is
 constructed directly in caller-provided storage and is armed only on the
@@ -583,9 +683,10 @@ call's success edge; defined failure cleans active arguments but never cleans
 an unpublished result. These rules preserve one active variant and
 exactly-once cleanup across the boundary.
 
-An ordinary non-generic, non-polymorphic class or struct may own the same
-obligation in a direct field. In-class and constructor initializers publish
-the field only after its enum construction succeeds. A later constructor
+An ordinary non-polymorphic class or struct, including a concrete generic
+instance, may own the same obligation in a direct field. In-class and
+constructor initializers publish the field only after its enum construction
+succeeds. A later constructor
 failure drops exactly the already-published fields in reverse declaration
 order; an unpublished field has no obligation. Generated movement transfers
 the field obligation with its containing value, and direct mutable-field
@@ -594,11 +695,19 @@ replacement. Normal scope exit, `return`, `break`, `continue`, partial
 construction, and defined runtime failure therefore retain exactly one owner
 and one eventual drop.
 
-Generic callable families, polymorphic dispatch, lambda capture of an owning
-payload enum, recursive containment, fixed arrays and other generic-wrapper
-containment, stored borrowed state, and consuming or borrowed match bindings
-remain diagnosed before execution lowering. No native C ABI, stable layout,
-or implicit cleanup for an unsupported wrapper is inferred.
+Concrete generic callables and owning wrappers use the same ordered transport
+and cleanup rules. Containment follows actual fields and declaration-bound
+storage capabilities, including collections and inline optional storage, not
+the spelling of a generic argument. Finite recursive owning-class containment
+is supported, such as an alternative holding a vector of enclosing nodes;
+direct by-value cycles remain ill-formed. Cleanup selects the active variant
+and retains the ordinary first-failure and remaining-sibling cleanup rules.
+
+Polymorphic dispatch, native/runtime callable transport, operators, direct
+lambda capture of an owning payload enum, fixed arrays of direct owning enum
+elements, stored borrowed state, and consuming match bindings remain
+diagnosed before execution lowering. No native C ABI, stable layout, or
+implicit cleanup for an unsupported wrapper is inferred.
 
 A native union retains only overlapping bytes and no active-field tag. A union
 member operation performs the requested native access inside `unsafe`; the
@@ -687,22 +796,27 @@ GTI has an adopted concurrency and memory-model boundary, with rationale in
 exposes owned managed threads through `<std/thread>`, scalar atomics with a
 sequentially consistent default plus explicit legal orders through
 `<std/atomic>`, and owner-tied scoped mutex guards through `<std/mutex>`.
-Condition variables and foreign-thread entry remain unavailable. The
-single-threaded profile remains the default
-executable profile. The focused current source contract is in
-[Concurrency And Atomic Values](concurrency.md).
+The separate unsafe `<std/cthread>` surface provides exact registered manual
+workers, once initialization, manual mutexes, and manual condition variables.
+A safe scoped condition-variable wrapper and arbitrary foreign-thread entry
+remain unavailable. The single-threaded profile remains the default executable
+profile. The focused current source contract is in [Concurrency And Atomic
+Values](concurrency.md).
 
-The compiler now has backend-independent HIR/MIR identities for thread
-spawn/join, atomic load/store/read-modify-write/compare-exchange, and mutex
+The compiler now has backend-independent HIR/MIR identities for managed and
+C-style thread spawn/join, C-style once, manual-mutex and condition operations,
+atomic load/store/read-modify-write/compare-exchange, and scoped-mutex
 lock/unlock. Atomic records retain operation-specific memory orders and MIR
 rejects illegal order combinations. In the single-threaded profile it rejects
 executable synchronization records while permitting only exact private thread,
-atomic, or mutex intrinsics in lowering-marked dormant standard-library
-wrapper bodies. This is why source may import `<std/thread>`, `<std/atomic>`,
-or `<std/mutex>` without using it; calling or constructing any concurrent
-surface still fails semantically before MIR publication. These internal
-records are not source operations. Public wrappers reach them through exact
-trusted private capabilities.
+atomic, mutex, or condition intrinsics in lowering-marked dormant
+standard-library wrapper bodies. This is why source may import `<std/thread>`,
+`<std/atomic>`, `<std/mutex>`, or `<std/cthread>` without using a
+concurrent-only operation; calling or constructing such an operation still
+fails semantically before MIR publication. The profile-independent C-style
+scheduling, sleep, and identity operations create no synchronization edge.
+These internal records are not source operations. Public wrappers reach them
+through exact trusted private capabilities.
 `std::thread` is the normal public managed-thread type. Unlike C++'s class with
 the same spelling, it always joins and exposes no detach operation.
 
@@ -714,8 +828,10 @@ profile spells it `execution-profile = "concurrent"`. The exact
 link flags, host-library behavior, backend code, and incidental use of a host
 thread never infer the selection. Selecting the profile applies the
 transfer/share and global rules below. Implemented managed-thread, atomic, and
-mutex operations also require the selected target/runtime `threads` capability;
-profile selection does not make any other unimplemented operation available.
+scoped-mutex operations, plus unsafe C-style create/join, once, manual-mutex,
+and condition operations, also require the selected target/runtime `threads`
+capability; profile selection does not make any other unimplemented operation
+available.
 
 One **memory location** is a live scalar object or non-overlapping scalar
 subobject. Two accesses conflict when they touch the same location or
@@ -733,20 +849,30 @@ whose contract says so. **Happens-before** is the transitive closure of those
 relations. A compiler effect such as `maySynchronize` is a conservative
 optimization barrier, not proof of a synchronizes-with edge.
 
-The implemented managed-thread, atomic, and mutex subsets provide these
-edges:
+The implemented concurrency subsets provide these edges:
 
 - every evaluation sequenced before successful spawn happens-before task
   entry;
 - task completion happens-before successful explicit or automatic join
   returns or continues cleanup;
+- every evaluation sequenced before successful C-style `thrd_create`
+  happens-before its registered worker entry, and worker completion
+  happens-before successful `thrd_join` continuation;
+- successful `call_once` initialization synchronizes with every normally
+  returning waiter on that flag;
 - release/acquire observations create the synchronization edges specified in
   [the atomic contract](concurrency.md#explicit-memory-orders), every atomic
   operation participates in its object's modification order, and every
   sequentially consistent operation also participates in one program-wide
   sequentially consistent order; and
-- a mutex unlock synchronizes-with the corresponding later successful
-  acquisition of the same mutex.
+- a final manual or scoped mutex unlock synchronizes-with the corresponding
+  later successful acquisition of the same mutex.
+
+A condition wait atomically enrolls the waiter and releases its held manual
+mutex, then reacquires that mutex before returning. Notification alone creates
+no publication edge; shared-data publication occurs through the mutex
+release/acquisition pair. C-style yield, sleep, identity observation, and
+identity comparison create no synchronizes-with edge.
 
 The implemented atomic value domains are fixed-width integers and `bool`.
 Construction, load, store, exchange, strong compare/exchange, and fixed-width
@@ -796,15 +922,17 @@ such a failure during other failure cleanup takes the `GTI-R0014` emergency
 path. The quarantine cannot detach or resume execution.
 
 The model guarantees no fairness. Deadlock, livelock, starvation, priority
-inversion, and permitted blocking are not memory undefined behavior. Native
-threads may enter GTI only through a generated callback boundary after runtime
-attachment, and native operations are not presumed thread-safe from their
+inversion, and permitted blocking are not memory undefined behavior. A native
+worker may enter GTI only through the exact adapter registered for a successful
+`std::thrd_create` operation. Arbitrary foreign-thread attachment and entry are
+not available, and native operations are not presumed thread-safe from their
 signature alone.
 
 ## 4.10 Defined Runtime Failure
 
 A defined runtime failure is a non-resumable GTI control effect raised during
-a well-formed GTI invocation when a dynamic checked condition fails. The
+a well-formed GTI invocation when a dynamic checked condition fails or the
+program explicitly calls `std::panic`. The
 invocation begins before GTI module/static initialization and includes checked
 hosted setup before source `main`, so an initializer or malformed but safely
 detected entry state is covered even when the entry body has not run.
@@ -818,9 +946,21 @@ An ordinary failure carries one immutable fixed-size, versioned, copyable,
 allocation-free record containing:
 
 - one stable `GTI-Rnnnn` code and category;
-- one bounded category-specific detail; and
+- one bounded category-specific detail;
 - a source-site token consisting of a deterministic artifact identity and an
-  artifact-local site index.
+  artifact-local site index; and
+- for explicit panic, a bounded owned message and a truncation flag.
+
+The version-two record stores up to 512 message bytes. Capture completes before
+failure cleanup starts, performs no allocation, and never retains the input
+view or another pointer into storage that cleanup could destroy. A valid UTF-8
+scalar is not split at the capacity boundary; malformed input is preserved as
+bytes for escaped reporting. Capture zeroes unused bytes and sets the truncation
+flag exactly when it did not retain the complete input. Non-panic records have
+zero message length, flags, and bytes. Record copying, propagation, and managed-
+task handoff preserve the entire captured payload. The version-one record
+layout remains frozen; a new record version does not change the immutable
+version-one artifact/site descriptor protocol.
 
 The exceptional `GTI-R0014` case uses a separate fixed-size emergency envelope
 containing exactly the original ordinary record and the first ordinary record
@@ -830,7 +970,7 @@ is process-terminal and is never returned from an embedding boundary.
 An immutable artifact descriptor resolves the token to a logical source unit,
 zero-based half-open UTF-8 byte coordinates `[start, end)`, and a one-based
 source line. Artifact identity is the 256-bit SHA-256 digest of the canonical
-descriptor serialization below and is rendered in reports as 64 lowercase
+descriptor serialization below; its textual encoding is 64 lowercase
 hexadecimal digits. An implementation must reject, rather than silently merge,
 unequal loaded descriptors with the same identity. Equal descriptors may share
 an identity because their site lookup is interchangeable; unequal descriptors
@@ -872,7 +1012,11 @@ failure descriptor, not of unrelated code bytes, and is derived as follows:
 2. The byte stream starts with ASCII `GTI-FAILURE-ARTIFACT-V1` followed by one
    zero byte.
 3. After concrete semantic/HIR discovery but before optimization, one
-   descriptor site is interned for each local checked-failure origin. Origins
+   descriptor site is interned for each local checked-failure origin and each
+   selected caller-location anchor. Caller assignments are a separate mapping
+   from detector assignments: they admit the reporting outcome
+   `panic/explicit_panic` without granting a call local failure authority.
+   Overlapping reporting anchors union their admitted outcomes. Origins
    at the same generic definition anchor coalesce and union their outcome pairs
    rather than creating an instance-specific site. Sites are sorted by unsigned
    UTF-8 bytes of the logical source name, then start, end, then their sorted
@@ -882,7 +1026,8 @@ failure descriptor, not of unrelated code bytes, and is derived as follows:
    Its one-based position is the artifact-local site index; zero is reserved
    for no source site. The stored line is one plus the number of LF bytes
    (`0x0A`) before `start`. Calls and joins that merely propagate a record add
-   no site.
+   no detector site and never rewrite its token. A tracked call may separately
+   carry a caller-location site before any record is created.
    A code is serialized as its unsigned numeric `R` suffix and a detail as its
    length-prefixed ASCII identifier; outcome pairs sort by that number and then
    unsigned detail bytes.
@@ -902,6 +1047,12 @@ host operations; and the source `main` name for a synthetic hosted-entry check.
 The token's exact half-open byte span is recorded. A checked operation in a
 generic body identifies its definition site, and a trusted standard-library
 check identifies its lexical library operation rather than its caller.
+Explicit panic uses the location transported by the `[[track_caller]]`
+contract in Section 4.5: tracked wrappers forward the incoming token, while an
+untracked caller establishes the exact source call anchor. The panic detector
+selects that token when creating the original record. Subsequent propagation
+does not re-site it. This is caller attribution, not a captured call stack;
+ordinary failures in arguments or wrapper bodies keep their own lexical sites.
 
 The initial category vocabulary is:
 
@@ -921,12 +1072,17 @@ The initial category vocabulary is:
 | `GTI-R0012` | `infallible_host_operation_failed` | failure of an explicitly infallible host operation |
 | `GTI-R0013` | `hosted_runtime_contract_failure` | malformed or impossible hosted/runtime state detected before unsafe state is exposed |
 | `GTI-R0014` | `failure_during_cleanup` | second failure during failure cleanup |
+| `GTI-R0015` | `key_not_found` | required associative-container key is absent |
+| `GTI-R0016` | `invalid_container_argument` | invalid argument to a checked container operation |
+| `GTI-R0017` | `panic` | explicit non-resumable termination requested by the program or a source-defined API |
 
 Codes and category meanings are stable identities. Existing codes are never
 renumbered or reused; unassigned codes are reserved. Ordinary records use
-`GTI-R0001` through `GTI-R0013`; their details are stable snake-case
-identifiers from this bounded vocabulary and are printed exactly, rather than
-replaced by backend prose:
+`GTI-R0001` through `GTI-R0013` and `GTI-R0015` through `GTI-R0017`; their
+details are stable snake-case identifiers from this bounded vocabulary.
+Non-panic reports print the detail exactly, rather than replacing it with
+backend prose. Panic reports print the captured message while retaining
+`explicit_panic` in the structured record:
 
 | Category | Stable detail identifiers |
 | --- | --- |
@@ -939,14 +1095,26 @@ replaced by backend prose:
 | `empty_owner_access` | `dereference`, `member_access` |
 | `invalid_expected_access` | `value_on_error`, `error_on_value` |
 | `invalid_storage_state` | `duplicate_construction`, `uninitialized_access`, `relocation_capacity`, `invalid_relocation_source`, `occupied_relocation_destination` |
-| `allocation_failure` | `unique_owner`, `private_storage`, `element_construction`, `hosted_arguments` |
-| `infallible_host_operation_failed` | `stdout_write`, `automatic_join` |
+| `allocation_failure` | `unique_owner`, `shared_owner`, `private_storage`, `element_construction`, `hosted_arguments` |
+| `infallible_host_operation_failed` | `stdout_write`, `automatic_join`, `mutex_lock` |
 | `hosted_runtime_contract_failure` | `negative_argument_count`, `recursive_thread_local_initialization` |
+| `key_not_found` | `key_lookup` |
+| `invalid_container_argument` | `container_argument` |
+| `panic` | `explicit_panic` |
 
 `GTI-R0014` is not stored in an ordinary record and therefore has no ordinary
 detail identifier. It is the effective category of the emergency envelope;
 its report uses the exact bounded primary/secondary detail shape specified
 below.
+
+Associative-container policy remains source-defined: a library computes whether
+a required key exists or an argument satisfies its contract. The private,
+declaration-bound `gti_internal::require_key(bool)` and
+`gti_internal::require_container_argument(bool)` checks turn a false condition
+into the corresponding exact outcome above. A true condition succeeds. These
+checks use the same verified failure edges and deterministic cleanup as other
+defined failures; the backend does not recognize public container names or
+decide their policy.
 
 A public vector or string checks logical size and uses its public detail;
 `invalid_storage_state` denotes a trusted internal invariant failure and must
@@ -959,8 +1127,10 @@ detail, site, and source anchor owned by that callee. The adapter must not
 re-site those records or emit `hosted_arguments` unless a future adapter-owned
 allocation operation is specified.
 
-Only a local checked-failure origin selects a code, detail, and site. A direct
-or virtual GTI call, constructor call, future task join, or callback-forwarding
+Only a local detector creates a code, detail, and site. The explicit panic
+detector may select its verified incoming caller token as described above; a
+reporting-site admission alone never grants detector authority. A direct
+or virtual GTI call, constructor call, managed-task join, or callback-forwarding
 edge may propagate an already formed ordinary record, but it preserves every
 field byte-for-byte and does not add a caller site or transitive category set.
 
@@ -1019,16 +1189,26 @@ There are three containment policies:
   error. Detach is absent from the first task model and requires its own later
   observation/escalation rule.
 
-The current generated callback entered from C under the single-threaded
+The current general generated callback entered from C under the single-threaded
 profile is a terminating containment boundary. It completes the selected GTI
 target's verified cleanup and passes an original defined-failure record to the
 runtime terminal boundary with no callback-local observer; it never returns
 failure through C. Its `noexcept` adapter catches a native exception and
-terminates rather than translating it into a GTI record. An ordinary outbound
-`extern "C"` call is not a containment boundary. Foreign/native-thread callback
-entry and a host/task callback policy remain future concurrent-profile work.
-Native long-jump, abort, or contract violation does not become a GTI
-defined-failure record.
+terminates rather than translating it into a GTI record.
+
+The concurrent `<std/cthread>` worker and once-initializer adapters are exact
+registered exceptions to that single-threaded callback surface. A worker may
+enter only on the native thread registered for its successful `thrd_create`,
+and an initializer may enter only during its exact `call_once` invocation on
+an existing GTI execution thread. A defined failure completes verified cleanup
+and terminates through the runtime boundary; it is not stored for
+`thrd_join`, converted to a join status, or retried by `call_once`. Arbitrary
+foreign/native-thread callback entry and a general host/task callback policy
+remain future concurrent-profile work.
+
+An ordinary outbound `extern "C"` call is not a containment boundary. Native
+long-jump, abort, or contract violation does not become a GTI defined-failure
+record.
 
 An execution environment may select one observer plus host context before an
 invocation. That pair is captured immutably for the invocation and the host
@@ -1049,52 +1229,76 @@ that itself hangs, aborts, long-jumps, or otherwise prevents control from
 returning is a host contract violation for which GTI cannot guarantee a report
 or status.
 
-The hosted runtime emits exactly one UTF-8 report line:
+The hosted runtime emits exactly one UTF-8 report line. Its unstyled form is:
 
 ```text
-GTI runtime failure [<code>] <category> in <artifact> at "<source>":<line>@<start>..<end>: <detail>\n
+<source>:<line>: runtime error[<code>]: <category> in <detail>\n
 ```
 
-`<artifact>` is the record's 64-digit lowercase hexadecimal artifact identity.
-`<line>`, `<start>`, and `<end>` are unsigned base-10 ASCII integers with no
-leading zeroes except the single digit `0`.
-The quoted logical source name preserves only printable Unicode scalar values,
+For explicit panic, the shape is instead:
+
+```text
+<source>:<line>: runtime error[GTI-R0017]: panic: "<message>"\n
+```
+
+Terminal presentation may wrap only the `runtime error[<code>]` heading in
+red ANSI SGR and a reset. Removing those wrappers yields exactly the unstyled
+form above, including the final LF. The hosted runtime defaults to stderr
+terminal detection and honours nonempty `NO_COLOR` and `TERM=dumb`.
+`GTI_COLOR=auto|always|never` selects a runtime override; unknown values use
+auto. Explicit `gti run/test --color` choices override that child's runtime
+setting, without modifying arguments or filtering program output. Styling is
+allocation-free, applies equally to cleanup-emergency reports below, and never
+changes a structured failure record, cleanup, observer or exit status.
+
+A truncated message adds exactly ` [truncated]` after its closing quote and
+before the final LF. The artifact identity and exact byte span remain available
+in the structured record and descriptor; the compact human report does not
+print them. `<line>` is an unsigned base-10 ASCII integer with no leading zeroes
+except the single digit `0`.
+The logical source name and quoted message preserve only printable Unicode
+scalar values,
 using the Unicode 15.1 `General_Category` values `L*`, `M*`, `N*`, `P*`, `S*`,
 and `Zs`; ASCII space is included. Backslash, quote, CR, LF, and tab use the
-exact escapes `\\`, `\"`, `\r`, `\n`, and `\t`. Every other UTF-8 source byte,
+exact escapes `\\`, `\"`, `\r`, `\n`, and `\t`. Every other UTF-8 input byte,
 including a byte from invalid UTF-8 or a scalar outside the allowlist, is
 escaped separately as uppercase `\xHH`. This byte-wise fallback prevents NEL,
 line/paragraph separators, bidi controls, and future Unicode reclassification
 from creating or disguising another physical line. Category/detail identifiers
 come from bounded ASCII runtime tables. An unavailable site uses an all-zero
-artifact identity and `"<runtime>":0@0..0`. The runtime formats without
-allocation. The final `\n` is exactly one LF byte (`0x0A`), independent of host
+artifact identity and the display location `<runtime>:0`. The runtime formats
+without allocation. The final `\n` is exactly one LF byte (`0x0A`), independent of host
 text-mode newline translation.
 Failure to write the report does not change status `70` or recursively report.
 Concurrent terminal failures select one process-wide report/observer winner
 before immediate termination. A normal user `main` may also return 70; the
 report and structured record distinguish that return from failure.
 
-`GTI-R0014` uses the secondary record's artifact and site in the standard
-`in`/`at` fields and the detail `failure during cleanup; primary
-[<primary-code>] in <primary-artifact> at
-"<primary-source>":<line>@<start>..<end>; secondary [<secondary-code>]`.
+`GTI-R0014` uses the secondary record's source and line as its prefix:
+
+```text
+<secondary-source>:<line>: runtime error[GTI-R0014]: failure_during_cleanup; primary [<primary-code>] at <primary-source>:<line>; secondary [<secondary-code>]\n
+```
+
+Each panic record appends ` message="<message>"` and its optional truncation
+marker after its own fields, so a secondary panic cannot overwrite the primary
+reason. Both messages use the same escaped, bounded representation.
 Later secondary failures are suppressed; formatting or write failure causes
 immediate status-70 termination.
 
 `expected<T, E>` is the ordinary recoverable path. Environmental or resource
 conditions that callers can reasonably handle use an API returning
 `expected`: file/socket operations, managed-thread creation and recoverable
-join, and future `try_make_*` allocation are examples. A checked language
-operation or documented type-level-infallible API instead raises defined
-failure. An infallible host convenience API shall map its native error to
-`GTI-R0012`, not discard it, and should have a recoverable sibling when callers
-need control.
+join, `std::allocator::try_storage`, `std::try_make_arena`, and
+`std::try_make_pool` are examples. A checked language operation or documented
+type-level-infallible API instead raises defined failure. An infallible host
+convenience API shall map its native error to `GTI-R0012`, not discard it, and
+should have a recoverable sibling when callers need control.
 
 Consequently wrong-state `expected.value()` and `expected.error()` access uses
 `GTI-R0009`; it never inherits native `bad_expected_access`, assertion, or
 undefined behavior. `make_unique` and private storage map exhaustion to
-`GTI-R0011`, while future recoverable factories return `expected`.
+`GTI-R0011`, while recoverable allocation factories return `expected`.
 
 Compile-time diagnostics, compiler resource exhaustion, IEEE-754 nontrapping
 results, explicit `expected` errors, native error/sentinel values,
@@ -1112,9 +1316,14 @@ catch-all.
 [ADR 007](../decisions/007-defined-runtime-failure.md) records the rationale
 for this normative contract.
 
-**Implementation status:** the runtime exposes the fixed version-one C record,
-site/artifact descriptors, allowed site outcomes, and emergency envelope. Its
-allocation-free reporter implements the exact Unicode-15.1 escaping and
+**Implementation status:** the runtime retains the fixed version-one C boundary
+and exposes version-two records, emergency envelopes, observers, and reporting
+and terminal entry points for bounded panic messages. Site/artifact descriptors
+and their allowed outcomes retain version one. Generated code uses version-two
+failure and managed-task join channels; a legacy native join that cannot carry
+a panic fails closed with the complete version-two terminal report rather than
+discarding its message. The allocation-free reporter implements the exact
+Unicode-15.1 escaping and
 ordinary/emergency line shapes; its hosted terminal primitive protects the
 original record across observer re-entry, mutation, or native exception,
 arbitrates one process-wide winner, completes partial/interrupted report
@@ -1123,9 +1332,9 @@ artifact/site token resolves to the normative runtime sentinel. Semantics and
 HIR carry the stable local failure vocabulary and
 snapshot-local source anchors. The pre-optimization metadata builder now
 constructs the canonical logical source table, one-based artifact-local sites,
-descriptor serialization, and SHA-256 identity; MIR retains exact detector
-site mappings plus distinct direct, virtual, constructor, and callable
-propagation channels. MIR now gives eligible full-expression-root scalar
+descriptor serialization, and SHA-256 identity; MIR retains exact detector and
+separate caller-attribution site mappings plus distinct direct, virtual,
+constructor, and callable propagation channels. MIR now gives eligible full-expression-root scalar
 operations in function and lambda bodies explicit normal/failure successors,
 one fixed-record parameter, reverse-construction failure cleanup, and an exact
 record-preserving propagation endpoint. An exact later scalar ordinary-call
@@ -1146,9 +1355,10 @@ exact report, exits 70, and immediately exits 70 if a native exception crosses
 the generated boundary without forging a GTI record. Program initialization
 executes through the verified `Module/0` schedule inside that containment.
 
-This is not full callback, embedding, or task containment. Double-failure
-control flow and operation families without an explicit MIR propagation and
-cleanup contract remain open. Generated C++ terminal integrity helpers are not
+Managed-task handoff and cleanup double-failure envelopes use this same
+contract. General embedding and arbitrary foreign-thread callback containment
+remain future work, as do operation families without an explicit MIR
+propagation and cleanup contract. Generated C++ terminal integrity helpers are not
 an alternate source-body failure authority. The frontend still rejects
 recursively cleanup-owning namespace globals and static fields.
 
@@ -1173,6 +1383,8 @@ order, but these executable-authority gaps remain:
   families; and
 - cleanup interaction with any future manual object-lifetime operations.
 
-The first four are release blockers for backend-independent 1.0 execution.
-Manual lifetime remains later breadth and cannot weaken the defined contract by
-being absent.
+The first four are systems-readiness goals for complete backend-independent
+execution. The current partial-construction and defined-failure implementation
+must be checked against their wider scope before extending it. General manual
+lifetime is a further goal with explicit initialization, drop and failure
+prerequisites; its current absence cannot weaken the defined contract.

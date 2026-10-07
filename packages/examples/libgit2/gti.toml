@@ -1,0 +1,15 @@
+manifest-version = 1
+
+[package]
+name = "libgit2-smoke"
+version = "0.1.0"
+
+[dependencies]
+libgit2 = { path = "../../libgit2" }
+
+[build]
+allow-build-scripts = ["gti-libgit2@0.1.0"]
+
+[targets.repository-smoke]
+kind = "test"
+root = "src/main.gti"

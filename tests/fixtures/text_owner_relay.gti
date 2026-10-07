@@ -1,0 +1,54 @@
+#include <std/string>
+
+class Label {
+  mut std::string text;
+public:
+  Label(std::string value) : text(std::move(value)) {}
+  std::string_view view() { return this.text.view(); }
+  std::string_view implicit_view() { return text.view(); }
+  c_string c_text() { return this.text.c_string(); }
+  c_string implicit_c_text() { return text.c_string(); }
+  std::string_view shadow(std::string& text) { return text.view(); }
+  void append() mut { this.text.push_back('!'); }
+};
+
+class Envelope {
+  Label label;
+public:
+  Envelope(std::string value) : label(Label(std::move(value))) {}
+  std::string_view view() { return label.implicit_view(); }
+};
+
+class Box<T> {
+  T tag;
+  Envelope item;
+public:
+  Box(T tag, std::string text) : tag(std::move(tag)), item(Envelope(std::move(text))) {}
+  std::string_view view() { return item.view(); }
+};
+
+std::string_view relay(Label& label) { return label.view(); }
+
+int main() {
+  mut Label label{std::string("abc")};
+  {
+    auto view = label.view();
+    auto other = relay(label);
+    auto implicit = label.implicit_view();
+    if (view.size() != 3 || other[1] != 'b' || implicit != view) { return 1; }
+    if (label.c_text() == nullptr || label.implicit_c_text() == nullptr) { return 4; }
+  }
+  label.append();
+  auto final = label.view();
+  if (final.size() != 4 || final[3] != '!') { return 2; }
+  Envelope nested{std::string("nested")};
+  auto text = nested.view();
+  if (text.size() != 6 || text[0] != 'n') { return 3; }
+  Box<int> generic{7, std::string("generic")};
+  if (generic.view() != "generic") { return 5; }
+  std::string external{"parameter"};
+  auto argument_view = label.shadow(external);
+  label.append(); // The parameter, not the receiver, owns this view.
+  if (argument_view != "parameter") { return 6; }
+  return 0;
+}

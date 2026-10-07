@@ -12,6 +12,68 @@ backend or non-body representation input. No new optimizer pass may use AST
 shape, source spelling, HIR replacement tables, emitted C++, or public
 standard-library names as transformation authority.
 
+## Language-Growth Conformance Gate
+
+`optimization/coverage.h` and `optimization/coverage.cpp` own one exhaustive
+vocabulary review gate. Each instruction, operation, intrinsic, terminator,
+place root/projection, operand, body kind, lifecycle event, synchronization
+operation/order, unsafe operation, defined-failure code/detail/propagation,
+analysis kind, transform/proof kind, and safety-check family names its existing
+bounded consumer, conservative barrier, or structurally inapplicable role.
+Both missing-case warning families are errors in that translation unit,
+including for enums without `Count`. Count sentinels, the reserved failure code
+14, and out-of-range values remain unclassified.
+
+This catalog is **not** another effect table, type system, or transform
+authorization. `Supported` means the named consumer covers the family, not
+that every instance is optimizable. `Barrier` describes that consumer's
+conservative treatment; it does not declare new language effects. All purity,
+trapping, memory, ownership, loan, drop, synchronization, and escape facts
+continue to come from `mir_effects` and verified semantic/MIR metadata. In
+particular, registering a new member does not supply its transfer function,
+effect summary, backend representation, or replay proof.
+
+The audit boundary is:
+
+| Surface | Current handling and enforcement |
+| --- | --- |
+| Instruction/operation/intrinsic effects | Existing count-checked effect tables and exact call summaries remain authoritative. Scalar interpreters whitelist typed operations; all other results are overdefined or conservatively invalidated. |
+| CFG, dominance, loops, bodies | Explicit body inventory and terminator routing include normal, invoke, and terminal failure edges. Vocabulary preflight rejects unknown kinds before a default arm can mistake them for exits. |
+| Use-def and operands | Stable value IDs and the existing canonical use rebuild include receiver, instruction, terminator, and edge arguments. Copy/move/address/loan operands retain their effects and cannot become generic scalar substitutes. |
+| Places, alias, escape, ranges | Structural roots/projections and verified exact call escape facts govern memory reasoning. Unknown projections/roots produce `may-alias`, even across apparently different roots; raw and unresolved indirect memory remains conservative. |
+| Failure, cleanup, ownership | Exact outcomes and schedules survive every edit. Only the implemented bounds, storage-state, overflow, and remainder-domain proofs discharge checks; other failure families remain checked and are reported. |
+| Analysis preservation | Every current cache has an explicit invalidation owner. Local safety-cache preservation is independent of preserving the closed-call cache; dropping closed-call facts also invalidates all dependent body proofs. |
+| Editor, identity repair, evidence | Existing typed edits repair derived identity/use/CFG facts, verify atomically, and replay from canonical source MIR. Transform/proof enum growth also requires explicit coverage. |
+| Lowered program and backends | Body verification includes vocabulary admission, so independent replay and the existing lowered-program seal reject unclassified MIR before backend consumption. No backend semantics or new input path is introduced. |
+
+Vocabulary admission runs even when optional full optimizer verification is
+disabled. Direct dominance, CFG, SCCP, loop, alias, and safety entry points also
+fail closed; callers cannot obtain proofs by bypassing the pipeline. O0 still
+runs no transformations and retains identical source/output MIR.
+
+Range transfer also checks authoritative effects before interpreting a
+`Compute`: raw/unsafe access, place/unknown-memory writes, user-code invocation,
+or synchronization clears mutable-memory facts instead of treating the opcode
+as an implicit purity promise. A focused metadata-extension probe verifies
+that such an operation cannot preserve a previously provable array read.
+
+`optimizer_conformance` exercises malformed vocabulary, unknown projections,
+cache preservation, O0 identity, independent replay, and opaque-call barriers
+on an unrelated user record. `optimizer_coverage_growth` compiles temporary
+header overlays that add a new member to each of the seven principal language
+families; the actual classification translation unit must fail exhaustiveness,
+not merely an unrelated effect-table assertion. This guard forces a review on
+enum growth; new fields or changed semantics still require focused cross-phase
+tests and the ordinary MIR verification contract.
+
+Conformance validation used a Release compiler (AppleClang 21, LLVM 22.1.8,
+arm64 macOS). The 49-test optimizer/MIR/lowered/backend/corpus/differential/CLI
+selection passed, including independent replay and optimization-report checks.
+After the final preservation-mask and remark refinements, the nine focused
+conformance/growth/foundation/analyses/safety/runtime/header/backend/pipeline
+tests passed again. Formatting checked 383 C++ files. Linux, Windows, and
+additional native toolchain versions were not exercised in this local run.
+
 ## HIR Constant Analysis
 
 `run(const HirProgram&, OptimizationLevel, TargetInfo)` performs constant
@@ -56,14 +118,60 @@ following deterministic local pipeline:
 and cleanup:
 
 1. `sparse-conditional-constants`;
-2. `discharge-bounds-checks`;
-3. `discharge-storage-state-checks`; and
-4. `discharge-arithmetic-overflow-checks`; and
-5. `discharge-arithmetic-domain-checks`.
+2. `exact-receiver-dispatch`;
+3. `discharge-bounds-checks`;
+4. `discharge-storage-state-checks`;
+5. `discharge-arithmetic-overflow-checks`; and
+6. `discharge-arithmetic-domain-checks`.
 
 Both levels currently derive the same GTI proofs. They still select their
 corresponding native optimization levels. `-O0` and `-O1` do not attach safety
 discharges.
+
+### Bounded Exact-Receiver Dispatch
+
+The `interface-exact-dispatch` update workload is the first devirtualization
+client. `optimization/devirtualization` proves the concrete receiver from
+verified MIR places, confined local loans, initialization dominance, resolved
+inheritance/override identities, and authoritative function effects. It does
+not infer a closed world from the number of implementations or recognize
+public library names. Unrelated user-defined interfaces exercise the same rule.
+
+The admitted receiver is one immutable, complete, initialized local class
+object, optionally seen through one non-escaping read-only local interface
+loan. Its single direct base is a root interface. The exact source-defined,
+read-only override accepts and returns scalars and retains its defined-failure
+channel. The object requires no active/custom cleanup. Formal receivers,
+mutable or projected objects, multiple/escaping loans, complex inheritance,
+borrowed/callable arguments or results, native/recursive/unknown target
+effects, allocation, synchronization, and unsupported failure/cleanup shapes
+remain conservative. This is a deliberately bounded client, not a general
+devirtualizer or interprocedural specialization engine.
+
+`MirEditor::queueExactReceiver` re-derives the proof on a candidate snapshot,
+refines the existing receiver borrow to the concrete place, and changes only
+the selected target/dispatch and corresponding direct-call propagation fact.
+It retains the receiver value and instruction identities, argument evaluation,
+CFG/invoke edges, failure origin, allocations, and cleanup schedules. Stable
+instruction IDs are not used as a substitute for within-block order. Touched
+use facts are rebuilt, the candidate is verified atomically, and all affected
+analysis caches are invalidated. Independent optimization coherence replay
+re-derives the same `devirtualize-call` / `exact-receiver` record from canonical
+source MIR after scalar/branch folding and before safety-check proofs.
+
+The backend consumes the resulting static call and emits an explicitly
+qualified override; it does not discover or authorize devirtualization.
+O0/O1 do not run this pass. Deterministic missed remarks explain the rejected
+receiver, loan, target-effects, inheritance, cleanup, or failure-channel shape.
+Existing closed-call safety analysis stays conservative for virtual method
+declarations; static dispatch does not independently grant a safety discharge.
+The clean `2c8d4561` implementation's paired local-interface benchmark drops
+from 223.175 to 120.008 ms without a material control regression. Exact
+identities, candidate selection, compiler-time/size/memory controls, and the
+arm64 macOS/workload limitations are recorded in the
+[performance campaign](../plans/performance-tooling.md#o-measure-02-exact-head-runtime-facility-campaign-2026-10-01).
+
+### Local Scalar Transformations
 
 The fold pass replaces admitted identity chains and exact non-trapping literal
 computations, then replaces branches whose dominating condition is a proved
@@ -118,6 +226,15 @@ but replaying the dominating true edge restores its proved range before a call
 or checked operation. This envelope is derived only from the existing MIR
 predicate and exact comparison operand; it is not a relational solver or a
 source-name rule.
+
+Block transfer retains a pre-instruction abstract-state snapshot only for the
+instruction named by an `Invoke` terminator. Its failure edge consumes that
+snapshot; normal edges consume the completed block state. Other intermediate
+states have no consumer and are not copied. This is storage/work elimination,
+not reduced proof precision, skipped failure analysis, or a cross-run cache.
+Independent optimization-evidence replay uses the same unchanged transfer
+semantics. An analysis regression contrasts the successful result fact with
+the pre-instruction failure-edge fact.
 
 Exact nonzero integer remainder and bitwise-and with one exact nonnegative mask
 have dedicated interval transfer. Remainder contributes a result-domain
@@ -190,6 +307,49 @@ still clears mutable facts for every later instruction. Recursive SCCs, native
 or virtual calls, owning-argument transfers, synchronization, raw/unsafe
 memory, unsupported cleanup, open call families, and conflicting facts remain
 conservative.
+
+At a complete closed-call boundary, a scalar or object result summary is not
+proof that other caller storage was unchanged. Mutable reference/pointer
+inputs and mutable or consuming receivers invalidate their protected origins
+before independently proved object postconditions are republished. One bounded
+source walk follows staged `CallInput`, `Load`, and identity values and reuses
+the MIR loan's physical source and stored-owner dependencies. Missing,
+unsupported, or cyclic identity fails closed. Invalidation expands aliasing
+once from the actual origins; a `may-alias` relation is not transitive.
+A verified reference's pointer representation is not an additional unknown
+origin: its loan supplies the protected sources. A reference to a borrowed-state
+object still retains both the physical object and its external owner dependency.
+Calls with place writes also invalidate represented global-symbol facts,
+because current effect summaries do not enumerate written globals. Recurrence
+proofs likewise treat possible global writes and synchronization as barriers.
+The existing closed-body admission remains authoritative: supported private
+storage and numeric-conversion effects are interpreted by that analysis, not
+mistaken for opaque calls solely from their coarse effect traits. Native,
+unknown, unsafe, and unsupported call boundaries retain their conservative
+behavior. None of this transports a new scalar-reference postcondition or
+adds a second effects model.
+
+An unhandled call or an unknown-effect compute, drop, or other instruction
+both clears mutable-memory facts and marks that abstract execution path as
+opaque. This marker is retained at control-flow joins; any successful exit
+carrying it prevents an effect-closed summary or recurrence proof. A separately
+proved return value may still be transported, but is never evidence that caller
+memory was unchanged. Caller invalidation still uses the authoritative exact
+invocation effects; opacity is not a separate source of write authority.
+Returning a constant after the barrier does not restore
+effect closure. Cleanup confined to a terminating failure path does not taint
+the distinct normal-return summary. Explicit atomic synchronization and runtime
+intrinsics whose effects lack a supported transfer rule have separate negative fixtures;
+an interpreted private-storage read is not evidence that other runtime calls
+are safe to cross.
+Current authoritative effects classify some native-only owning cleanup as
+opaque, including a cleanup with no source destructor target. A caller cannot
+retain earlier mutable object facts across that boundary merely because the
+callee's scalar return is known. The record-envelope controls cover this
+conservative case separately from an exact chain whose object is constructed
+after the barrier. Refining native cleanup effects requires its own structural
+proof in `mir_effects`; the safety analysis does not infer one from a library
+name or emitted deallocation code.
 
 Discharged checked `+=`, `-=`, and `*=` may emit the equivalent native C++
 compound operator. Remainder and shifts remain on GTI-owned helpers even after
@@ -316,6 +476,12 @@ interior MIR pointer survives invalidation. Memory SSA, inlining,
 devirtualization, and loop or memory transformations remain absent until a
 bounded measured client requires them.
 
+Preserving `ClosedCallSafety` alone does not implicitly preserve the local
+`SafetyChecks` cache. Preservation claims are valid only when the preserved
+analysis's complete inputs, including body-local facts stored in the closed-call
+result, remain unchanged; they are not permission to reuse a stale summary
+after a semantic edit.
+
 Safety-discharge passes hand the controlled MIR editor that same manager-owned
 closed-call snapshot. The editor exact-matches every queued claim against the
 canonical proof and may reuse it for candidate replay only when the complete
@@ -374,6 +540,16 @@ timing or pointer data, so identical inputs produce identical output. GTI proof
 remarks are labelled separately from native Clang/GCC optimization remarks.
 Version 3 adds the `sparse-constant` proof/provenance vocabulary; it does not
 serialize transient lattice, loop, or alias snapshots.
+
+Missed remarks distinguish raw/unsafe memory, open calls, possible
+synchronization, unknown alias effects, cleanup/lifecycle schedules, loan
+dependencies, ownership transfer, allocation, and trapping. Promotion remarks
+also identify escaping places from the alias/escape analysis. The bounds pass
+reports general conservative analysis boundaries once and names unsupported
+failure-discharge code/detail pairs. These explanatory remarks are not extra
+check candidates or claims that a nearby barrier caused an unrelated missing
+proof; safety counts and transformation evidence keep their existing meaning.
+Unknown facts are reported conservatively, never interpreted as purity.
 
 Ordinary compilation captures none of these outputs and remains unchanged when
 the options are absent. The reusable driver provides equivalent opt-in pre-MIR,

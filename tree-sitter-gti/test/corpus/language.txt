@@ -3508,7 +3508,7 @@ float legacy = 0.5;
           (float_literal))))))
 
 ==================
-Consuming qualifier recovery outside operator()
+Consuming receiver qualifiers (operator restrictions checked semantically)
 ==================
 
 class Invalid {
@@ -3528,13 +3528,11 @@ public:
         (type)
         (identifier)
         (parameter_clause)
-        (ERROR)
         (block))
       (operator_declaration
         (type
           (primitive_type))
         (parameter_clause)
-        (ERROR)
         (block
           (return_statement
             (initializer_expression
@@ -3936,7 +3934,8 @@ Bounded native pointer-plus-count arrays
 ==================
 
 extern "C" {
-  [[c_array(count)]] NativeHandle** native_handles(int32_t* count);
+  [[c_array(count)]] [[link_name("gti_native_handles")]]
+  NativeHandle** native_handles(int32_t* count);
   [[c_array(count)]] c_string* native_names(uint32_t* count);
 }
 
@@ -3949,6 +3948,9 @@ extern "C" {
       (native_c_array_attribute
         (identifier)
         (identifier))
+      (native_link_name_attribute
+        (identifier)
+        (string_literal))
       (type
         (user_type
           (identifier))

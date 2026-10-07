@@ -49,6 +49,8 @@ namespace {
     return "promote-place";
   case MirTransformKind::DischargeSafetyCheck:
     return "discharge-safety-check";
+  case MirTransformKind::DevirtualizeCall:
+    return "devirtualize-call";
   case MirTransformKind::Count:
     break;
   }
@@ -77,6 +79,8 @@ namespace {
     return "storage-initialization";
   case MirTransformProofKind::ArithmeticRange:
     return "arithmetic-range";
+  case MirTransformProofKind::ExactReceiver:
+    return "exact-receiver";
   case MirTransformProofKind::Count:
     break;
   }

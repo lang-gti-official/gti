@@ -1,0 +1,85 @@
+{
+  "assimp": {
+    "version": "6.0.5",
+    "revision": "392a658f9c271be965271f45e7521a1b80ea4392",
+    "url": "https://codeload.github.com/assimp/assimp/tar.gz/392a658f9c271be965271f45e7521a1b80ea4392",
+    "sha256": "448f007b0fd0be3dedd106269e5eb10f6a9a6385836bf53ac3a02c7cc29bc1f1",
+    "destination": "assimp/vendor/assimp",
+    "license": "LICENSE",
+    "max-download-bytes": 268435456,
+    "exclude-directories": ["test", "doc", "samples", "port", "tools"]
+  },
+  "glfw": {
+    "version": "3.4",
+    "revision": "7b6aead9fb88b3623e3b3725ebb42670cbe4c579",
+    "url": "https://codeload.github.com/glfw/glfw/tar.gz/7b6aead9fb88b3623e3b3725ebb42670cbe4c579",
+    "sha256": "169d49096e339caabbc12e1762273c5cb9130a535a282ba46cf5c14ab6e55694",
+    "destination": "glfw/vendor/glfw",
+    "license": "LICENSE.md"
+  },
+  "glad": {
+    "version": "2.0.8",
+    "revision": "73db193f853e2ee079bf3ca8a64aa2eaf6459043",
+    "url": "https://codeload.github.com/Dav1dde/glad/tar.gz/73db193f853e2ee079bf3ca8a64aa2eaf6459043",
+    "sha256": "33dbeae44d8315ece57e14eba4b1b4a02ac5406d1c4f49cd20048c91522a6b9a",
+    "destination": "glad/vendor/glad",
+    "license": "LICENSE"
+  },
+  "sqlite3": {
+    "version": "3.53.4",
+    "url": "https://www.sqlite.org/2026/sqlite-amalgamation-3530400.zip",
+    "sha256": "1e71ddf93849c6a6ecf58b827c0692073d2dd7ee40196158068f7b29f422e87d",
+    "destination": "sqlite3/vendor/sqlite3",
+    "license": "sqlite3.h"
+  },
+  "cimgui": {
+    "version": "pinned-master",
+    "revision": "bb4d4848b759e037a6cc26d23be0387a148ac39f",
+    "url": "https://codeload.github.com/cimgui/cimgui/tar.gz/bb4d4848b759e037a6cc26d23be0387a148ac39f",
+    "sha256": "aeecff515891239fd16e37b976928b569f65ec5f6b752dac42ca2ae11b0c38d2",
+    "destination": "cimgui/vendor/cimgui",
+    "license": "LICENSE"
+  },
+  "cli11": {
+    "version": "2.6.2",
+    "revision": "37bb6edc5317e99af72ef48405e65d9ca5218861",
+    "url": "https://github.com/CLIUtils/CLI11/archive/refs/tags/v2.6.2.tar.gz",
+    "sha256": "c6ea6b2e5608b3ea8617999bd5f47420c71b2ebdb8dc4767c1034d1da5785711",
+    "destination": "cli11/vendor/cli11",
+    "license": "LICENSE",
+    "exclude-directories": [".ci", ".github", "docs", "examples", "scripts", "tests", "tools"]
+  },
+  "zlib": {
+    "version": "1.3.2",
+    "revision": "da607da739fa6047df13e66a2af6b8bec7c2a498",
+    "url": "https://zlib.net/fossils/zlib-1.3.2.tar.gz",
+    "sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16",
+    "destination": "zlib/vendor/zlib",
+    "license": "LICENSE"
+  },
+  "libpng": {
+    "version": "1.6.58",
+    "revision": "3061454d980de7d53608f594194cfac722721d2a",
+    "url": "https://codeload.github.com/pnggroup/libpng/tar.gz/3061454d980de7d53608f594194cfac722721d2a",
+    "sha256": "a2569b7553971e36e86c8f75b9d1b5abbe92c436e05169afe3f0072e937f3536",
+    "destination": "libpng/vendor/libpng",
+    "license": "LICENSE"
+  },
+  "libgit2": {
+    "version": "1.9.6",
+    "revision": "26055f5af74ab1cf636d272e8a34315496d3f06f",
+    "url": "https://github.com/libgit2/libgit2/archive/26055f5af74ab1cf636d272e8a34315496d3f06f.zip",
+    "sha256": "c2d3aaf2fe2c3da79ff798ff16a2924118c2cb74821c42e77a0df7070a4a79b1",
+    "destination": "libgit2/vendor/libgit2",
+    "license": "COPYING",
+    "exclude-directories": ["tests", "docs", "examples", "fuzzers"]
+  },
+  "imgui": {
+    "version": "cimgui-matched-submodule",
+    "revision": "f1cc2ae15e53a861a874c3034aae6798fde194ab",
+    "url": "https://codeload.github.com/ocornut/imgui/tar.gz/f1cc2ae15e53a861a874c3034aae6798fde194ab",
+    "sha256": "f30be7f3e2136615b1848a9afb72f6dfd8a60820ddf1c1a85997bf3b722e7cfc",
+    "destination": "cimgui/vendor/cimgui/imgui",
+    "license": "LICENSE.txt"
+  }
+}

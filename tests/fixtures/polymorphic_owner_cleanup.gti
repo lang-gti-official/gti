@@ -1,0 +1,52 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Trace {
+  int identity;
+  int divisor;
+public:
+  Trace(int identity, int divisor) : identity(identity), divisor(divisor) {}
+  ~Trace() {
+    std::println(this.identity);
+    int trace_failure = 1 / this.divisor;
+  }
+};
+
+interface Operation { int call(int divisor); };
+
+class Model : public Operation {
+  Trace first;
+  Trace second;
+  int cleanup_divisor;
+public:
+  Model(int divisor, int field_divisor)
+      : first(Trace(1, 1)), second(Trace(2, field_divisor)), cleanup_divisor(divisor) {}
+  ~Model() {
+    std::println(3);
+    int model_failure = 1 / this.cleanup_divisor;
+  }
+  int call(int divisor) override { return 7 / divisor; }
+};
+
+class Passive : public Operation {
+public:
+  Passive() {}
+  int call(int divisor) override { return divisor; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Trace caller{9, 1};
+  // The cleanup selection belongs to the allocated object, not the assigned
+  // GTI value. Assigning a freshly constructed value must preserve it.
+  mut auto passive = std::make_unique<Passive>();
+  *passive = Passive();
+  auto erased_passive = std::upcast_unique<Operation, Passive>(std::move(passive));
+  if (erased_passive->call(7) != 7) { return 1; }
+  auto model = std::make_unique<Model>(
+      argc == 2 || argc == 5 || argc == 6 ? 0 : 1,
+      argc == 3 || argc == 5 ? 0 : 1);
+  auto owner = std::upcast_unique<Operation, Model>(std::move(model));
+  int divisor = argc == 4 || argc == 6 ? 0 : 1;
+  return owner->call(divisor) - 7;
+}

@@ -163,6 +163,7 @@ representationKind(const lang::SemanticType &type) {
   case lang::SemanticType::TypeParameter:
   case lang::SemanticType::TypePack:
   case lang::SemanticType::TypeName:
+  case lang::SemanticType::FunctionSignature:
   case lang::SemanticType::Unknown:
     return lang::CppMirTypeRepresentationKind::Meta;
   }

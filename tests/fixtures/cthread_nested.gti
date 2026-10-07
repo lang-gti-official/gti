@@ -1,0 +1,23 @@
+#include <std/cthread>
+extern "C" { void* cthread_context(); }
+
+int32_t worker(void* context) {
+  if (context != nullptr) { return 42; }
+  mut std::thrd_t child = 0;
+  mut int32_t result = 0;
+  unsafe {
+    if (std::thrd_create(child, worker, cthread_context()) != std::thrd_success) { return -1; }
+    if (std::thrd_join(child, result) != std::thrd_success) { return -2; }
+  }
+  return result;
+}
+
+int main() {
+  mut std::thrd_t handle = 0;
+  mut int32_t result = 0;
+  unsafe {
+    if (std::thrd_create(handle, worker, nullptr) != std::thrd_success) { return 1; }
+    if (std::thrd_join(handle, result) != std::thrd_success) { return 2; }
+  }
+  return result == 42 ? 0 : 3;
+}

@@ -1,0 +1,84 @@
+#include <std/memory>
+
+interface CloneInvoker<R, Args...> {
+  R invoke(Args... args);
+  std::unique_ptr<CloneInvoker<R, Args...>> clone();
+};
+class CloneSignature<S> {};
+
+class CloneModel<T, R, Args...> : public CloneInvoker<R, Args...> {
+  T callback;
+public:
+  CloneModel(T callback) : callback(std::move(callback)) {}
+  R invoke(Args... args) override { return this.callback(args...); }
+  std::unique_ptr<CloneInvoker<R, Args...>> clone() override {
+    auto model = std::make_unique<CloneModel<T, R, Args...>>(this.callback);
+    return std::upcast_unique<CloneInvoker<R, Args...>, CloneModel<T, R, Args...>>(
+        std::move(model));
+  }
+};
+
+std::unique_ptr<CloneInvoker<R, Args...>> erase_clone<R, T, Args...>(
+    T callback, CloneSignature<R(Args...)>& signature) {
+  auto model = std::make_unique<CloneModel<T, R, Args...>>(std::move(callback));
+  return std::upcast_unique<CloneInvoker<R, Args...>, CloneModel<T, R, Args...>>(
+      std::move(model));
+}
+
+class CloneFunction<R(Args...)> {
+  mut std::unique_ptr<CloneInvoker<R, Args...>> state = nullptr;
+public:
+  CloneFunction() {}
+  CloneFunction<T>(T callback) {
+    CloneSignature<R(Args...)> signature{};
+    this.state = erase_clone(std::move(callback), signature);
+  }
+  bool empty() { return this.state == nullptr; }
+  void reset() mut { this.state.reset(); }
+  void replace<T>(T callback) mut {
+    CloneSignature<R(Args...)> signature{};
+    this.state = erase_clone(std::move(callback), signature);
+  }
+  R operator()(Args... args) { return this.state->invoke(args...); }
+  CloneFunction<R(Args...)> clone() {
+    mut CloneFunction<R(Args...)> copy{};
+    if (!this.empty()) { copy.state = this.state->clone(); }
+    return std::move(copy);
+  }
+};
+
+int main() {
+  int offset = 7;
+  auto callback = [offset](int value) -> int { return value + offset; };
+  CloneSignature<int(int)> signature{};
+  auto original = erase_clone(std::move(callback), signature);
+  auto copy = original->clone();
+  if (copy->invoke(5) != 12) { return 1; }
+  if (original->invoke(2) != 9) { return 2; }
+  auto first = [offset](int value) -> int { return value + offset; };
+  mut CloneFunction<int(int)> wrapper{std::move(first)};
+  auto copied_wrapper = wrapper.clone();
+  wrapper.reset();
+  if (!wrapper.empty() || copied_wrapper(5) != 12) { return 3; }
+  auto replacement = [](int value) -> int { return value + 1; };
+  wrapper.replace(std::move(replacement));
+  if (wrapper.empty() || wrapper(5) != 6) { return 4; }
+  CloneFunction<int(int)> empty{};
+  auto empty_copy = empty.clone();
+  if (!empty_copy.empty()) { return 5; }
+  auto second = [](int value) -> int { return value * 2; };
+  CloneFunction<int(int)> another{std::move(second)};
+  auto another_copy = another.clone();
+  if (another_copy(5) != 10) { return 6; }
+  auto action = []() -> void {};
+  CloneFunction<void()> void_wrapper{std::move(action)};
+  auto void_copy = void_wrapper.clone();
+  void_copy();
+  auto binary = [](int value, bool enabled) -> int {
+    return enabled ? value : 0;
+  };
+  CloneFunction<int(int, bool)> binary_wrapper{std::move(binary)};
+  auto binary_copy = binary_wrapper.clone();
+  if (binary_copy(9, true) != 9 || binary_copy(9, false) != 0) { return 7; }
+  return 0;
+}

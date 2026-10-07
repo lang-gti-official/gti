@@ -1,0 +1,57 @@
+#include <std/list>
+#include <std/memory>
+int main() {
+  mut std::list<int> values{};
+  values.push_back(3);
+  values.push_front(1);
+  values.insert(std::size_t(1), 2);
+  if (values.front() != 1 || values.back() != 3 || values.size() != 3) { return 1; }
+  {
+    mut auto cursor = values.begin();
+    ++cursor;
+    ++cursor;
+    if (*cursor != 3) { return 2; }
+    --cursor;
+    if (*cursor != 2) { return 3; }
+    ++cursor;
+    ++cursor;
+    --cursor;
+    if (*cursor != 3) { return 4; }
+  }
+  values.erase(std::size_t(1));
+  values.push_front(3);
+  values.push_back(1);
+  values.sort();
+  if (values.unique() != 2 || values.size() != 2) { return 5; }
+  mut std::list<int> other{};
+  other.push_back(2);
+  other.push_back(4);
+  values.merge(std::move(other));
+  mut int next_value = 1;
+  for (auto& value : values) {
+    if (value != next_value) { return 6; }
+    next_value++;
+  }
+  values.reverse();
+  if (values.front() != 4 || values.back() != 1) { return 7; }
+  int three = 3;
+  if (values.remove(three) != 1 || values.size() != 3) { return 8; }
+  values.resize(std::size_t(5), 9);
+  if (values.back() != 9) { return 9; }
+  values.resize(std::size_t(1));
+  if (values.front() != 4 || values.back() != 4) { return 10; }
+  values.pop_front();
+  values.pop_back();
+  [[discard]] values.emplace_front(8);
+  [[discard]] values.emplace_back(9);
+  mut std::list<int> swapped{};
+  values.swap(swapped);
+  if (!values.empty() || swapped.front() != 8 || swapped.back() != 9) { return 11; }
+  swapped.clear();
+  mut std::list<std::unique_ptr<int>> owners{};
+  owners.push_back(std::make_unique<int>(7));
+  owners.push_front(std::make_unique<int>(6));
+  owners.reverse();
+  if (*owners.front() != 7 || *owners.back() != 6) { return 12; }
+  return 0;
+}

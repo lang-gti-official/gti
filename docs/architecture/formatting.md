@@ -50,6 +50,9 @@ issues to non-LSP callers.
 | `IndentWidth` | integer `1` through `16` | `2` | Columns per structural indentation level |
 | `UseTab` | `Never`, `ForIndentation`, `Always` | `Never` | Use spaces or tabs for indentation |
 | `BreakBeforeBraces` | `Attach`, `Allman` | `Attach` | Keep block braces attached or place them on their own line |
+| `PackConstructorInitializers` | `BinPack`, `Never` | `BinPack` | Keep initializer lists compact, or unconditionally put each initializer on its own line |
+| `BreakConstructorInitializers` | `BeforeColon`, `AfterColon` | `BeforeColon` | Where an unpacked constructor list starts; applies when packing is `Never` |
+| `ConstructorInitializerIndentWidth` | integer `0` through `16` | `4` | Extra columns beyond the constructor declaration for an unpacked initializer list |
 | `RequiresClausePosition` | `OwnLine`, `SingleLine` | `OwnLine` | Start a trailing `requires` clause on its own line, or keep it on the declaration line |
 | `SpaceBeforeParens` | `Never`, `ControlStatements`, `Always` | `ControlStatements` | Control spacing before call, declaration, and control parentheses |
 | `IndentCaseLabels` | `true`, `false` | `false` | Indent labels inside `switch`, with arm statements one level deeper |
@@ -60,10 +63,10 @@ issues to non-LSP callers.
 | `ReferenceAlignment` | `Left`, `Right`, `Middle` | `Left` | Format GTI borrow markers as `T& name`, `T &name`, or `T & name` |
 | `DisableFormat` | `true`, `false` | `false` | Return the source unchanged |
 
-`UseTab: ForIndentation` and `UseTab: Always` currently have the same effect
-because GTI does not yet emit continuation indentation or alignment padding.
-The distinction is accepted now so those meanings can diverge without changing
-configuration spelling later.
+`UseTab: ForIndentation` and `UseTab: Always` currently have the same effect.
+Indentation uses tabs of `IndentWidth` columns plus spaces for a remainder,
+including constructor continuations. The distinction is accepted now so those
+meanings can diverge without changing configuration spelling later.
 
 `BasedOnStyle: GTI` selects the existing GTI defaults. `BasedOnStyle: LLVM`
 selects the overlapping LLVM defaults, including right-aligned references and
@@ -107,6 +110,9 @@ leaving expression-level bitwise `&` spacing unchanged.
 
 The GTI base style attaches pointer and reference markers to the type:
 `T* pointer` and `T& reference`. Declaration recognition covers standalone
+`unsafe` function modifiers, preserving contract attributes followed by the
+canonical `unsafe static constexpr` prefix without treating `unsafe` as an
+attribute or reordering invalid declarations. It also covers standalone
 function generic parameters, nominal parameter types supplied by another
 source unit, and initialized raw-pointer locals without treating expression
 operators such as `left * right` or `left & right` as declarators.
@@ -117,6 +123,17 @@ preserves inline and multiline `/* ... */` contents, normalizes continuation
 indentation beneath the containing structure, and remains idempotent.
 Formatting does not consult emitted C++ or delegate GTI syntax decisions to a
 native C++ tool.
+
+Designated initializers use one field per line. Collections containing those
+initializers expand with them, retaining a separate brace level for each
+element. Initializer lists already containing source line breaks are kept
+multiline, while short single-line scalar lists, empty braces, and constructor
+arguments such as `std::string{"tea"}` stay compact. Nested call, generic, and
+capture-list commas do not start a new collection element. Trailing commas and
+comments are preserved. This is the default structural layout, not a separate
+configuration option; `IndentWidth` and `UseTab` apply, while
+`BreakBeforeBraces` continues to control statement blocks. Formatting never
+adds missing element braces or statement semicolons to incomplete input.
 
 The formatter shares the compiler's source-text boundary. It validates strict
 UTF-8 and LF/CRLF spelling before structural scanning, preserves an optional
@@ -221,6 +238,45 @@ Lambda capture lists use ordinary comma and assignment spacing. The supported
 owned form is written `[target = std::move(source)]`; formatting preserves the
 initializer expression and is idempotent, while semantic analysis—not the
 formatter—decides whether it is the exact permitted move capture.
+Statement boundaries inside a lambda body are relative to that body's opening
+delimiter, so a lambda used as a call argument receives ordinary one-statement-
+per-line layout even though the surrounding call still has an open parenthesis.
+Semicolons in nested `for` headers remain inline.
+
+## Constructor initializer layout
+
+To put each member initializer on its own line after the colon:
+
+```yaml
+PackConstructorInitializers: Never
+BreakConstructorInitializers: AfterColon
+ConstructorInitializerIndentWidth: 4
+```
+
+```gti
+http_service(std::http::client client, std::http::url base_url) :
+    m_client_(std::move(client)),
+    m_base_url_(base_url.clone()) {}
+```
+
+The continuation width is relative to the constructor declaration, including
+inside namespaces and classes. `BeforeColon` instead starts a new line with
+`: first(...)` and aligns subsequent targets beneath `first`. The constructor
+body returns to declaration indentation; `BreakBeforeBraces` still controls
+its brace, and an empty body remains compact under `Attach`.
+
+`BinPack` retains the existing compact behavior without width-based wrapping.
+Only the two documented packing and colon styles are implemented; fit-based
+packing, `BeforeComma`, and `AfterComma` remain unsupported configuration values.
+
+A structural layout pass identifies constructor parameter clauses, optional
+requirements, initializer targets, separator commas and the body boundary.
+Balanced argument subtrees are opaque to this pass, preserving nested calls,
+generic arguments, collections, and lambdas. Comments and lexical tokens are
+preserved. Incomplete lists without a recognizable body boundary retain the
+ordinary recovery-oriented layout; formatting does not invent missing syntax.
+This mandatory-break policy is independent of line length and uses the same
+formatter/configuration implementation for direct callers and the LSP.
 
 ## Deliberate next phases
 
@@ -233,9 +289,9 @@ The next low-risk style controls can build on the current structural state:
 - include grouping/sorting once source visibility ordering rules are fixed; and
 - format-disable regions with explicit GTI comment markers.
 
-`ColumnLimit`, argument packing, continuation alignment, operator wrapping,
-constructor-initializer wrapping, and consecutive-declaration alignment should
-arrive together with a real layout layer. That layer should build candidate
+`ColumnLimit`, width-sensitive argument and constructor-initializer packing,
+general continuation alignment, operator wrapping, and consecutive-declaration
+alignment should arrive together with a real layout layer. That layer should build candidate
 logical lines, measure display columns, select legal break points, and choose a
 stable minimum-cost layout. Adding isolated string-length checks before that
 model would make formatting nonlocal, fragile, and difficult to keep

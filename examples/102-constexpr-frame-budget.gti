@@ -1,0 +1,24 @@
+#include <std/chrono>
+
+struct AssetWork {
+  std::string_view name;
+  std::chrono::nanoseconds budget;
+  constexpr AssetWork(std::string_view name, int64_t ticks)
+      : name(name), budget(std::chrono::nanoseconds(ticks)) {}
+};
+
+constexpr std::chrono::nanoseconds frame_budget{int64_t(16666667)};
+constexpr AssetWork geometry{"geometry", int64_t(4000000)};
+constexpr AssetWork textures{"textures", int64_t(6000000)};
+static_assert(geometry.budget.count() + textures.budget.count() < frame_budget.count());
+
+// Stored timestamps can also be decomposed at compile time; reading the real
+// clock remains a runtime-only, recoverable operation.
+constexpr std::chrono::system_time_point before_epoch{std::chrono::nanoseconds(int64_t(-1))};
+static_assert(before_epoch.unix_seconds() == int64_t(-1));
+static_assert(before_epoch.subsecond_nanoseconds() == 999999999);
+
+int main() {
+  return frame_budget.count() == int64_t(16666667) &&
+         geometry.budget.count() == int64_t(4000000) ? 0 : 1;
+}

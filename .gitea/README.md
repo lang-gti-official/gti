@@ -1,61 +1,115 @@
 # GTI on Gitea Actions
 
-These workflows are the local-Gitea counterparts to `.github/workflows/`.
-GitHub remains the source of truth for Git data; the Gitea repository is a
-pull mirror used for additional high-capacity builds, tests, and local release
-assets.
+The repository at
+`https://git.internal.howetotech.dev/gti-lang/gti` is GTI's canonical
+Git host. Gitea owns branches, pull requests, CI, tags, nightly builds, stable
+releases, and release assets. The workflows in `.gitea/workflows/` do not rely
+on a GitHub mirror or on GitHub-created tags.
 
-## One-time setup
+## Repository setup
 
-1. Use Gitea 1.26 or newer (prefer the current patched release), then enable
-   Actions for the mirrored repository. Gitea does not enable the
-   Actions repository unit on mirrors by default.
-2. Verify that the instance keeps `.gitea/workflows` before
-   `.github/workflows` in `app.ini` (this is the current default):
-
-   ```ini
-   [actions]
-   WORKFLOW_DIRS = .gitea/workflows,.github/workflows
-   ```
-
-   Gitea loads workflows from the first directory that exists. This ordering
-   selects these Gitea-specific files while still letting repositories without
-   a `.gitea/workflows` directory fall back to their GitHub workflows. Restart
-   Gitea after changing `app.ini`.
+1. Use Gitea 1.26 or newer and enable the Actions repository unit.
+2. Keep `.gitea/workflows` in the instance's configured workflow directories.
+   GTI intentionally ships no alternative-host workflow fallback.
 3. Register a trusted repository runner whose `ubuntu-latest` label maps to
-   the desired host or container, for example `ubuntu-latest:host` or
-   `ubuntu-latest:docker://docker.gitea.com/runner-images:ubuntu-latest`.
-   The static label is intentional: Gitea 1.26 and 1.27 do not support
-   expressions in `runs-on`.
-4. Optionally set `GTI_JOBS` to a positive integer in
-   **Repository settings -> Actions -> Variables**. If it is unset or invalid,
-   each build detects the runner's available processor count. A preinstalled
-   `sccache` is used automatically, including the Gitea Actions cache backend
-   when the runner exposes it.
-5. Allow the workflow token to write releases in the repository's Actions
-   token-permission settings. Build and test jobs remain read-only; only the
-   publish jobs request release write access.
+   the intended host or container. Gitea requires static runner labels for the
+   versions used by this repository.
+4. Optionally set `GTI_JOBS` and `GTI_TEST_JOBS` to positive integers in
+   **Repository settings -> Actions -> Variables**. By default both use the
+   job's available processor count (`nproc`, not `nproc --all`, with macOS/POSIX
+   fallbacks and a one-worker detection fallback). This installation permits
+   full parallelism; runner provisioning must supply its CPU/memory budget.
+   Explicit overrides remain available for other deployments.
+   Jobs install `ccache` and persist only compiler objects, separately for
+   native, sanitizer, and bundled-release profiles. The cache action is pinned
+   to v4.1.0 for the Gitea runner's v1 cache service. Cache failures never skip
+   build or verification gates.
+5. In **Repository settings -> Actions -> General**, allow the workflow token
+   a maximum of `code: write` and `releases: write`. Ordinary CI requests only
+   read access; the two publication jobs explicitly request the write scopes.
 
-The runner environment needs Bash, Git, Python 3 with `venv` and `pip`, and
-Node.js/npm. Linux jobs install CMake 3.20 or newer, a C++20 compiler, and a
-supported LLVM where needed. macOS runners need a C++20 compiler and Homebrew;
-the workflows install CMake and LLVM there where needed. Release builds
-download GTI's pinned LLVM source and therefore also need outbound access to
-GitHub release assets. An Ubuntu runner should be based on Ubuntu 24.04 so
-`llvm-18-dev` is available.
+The runner needs Bash, Git, Python 3 with `venv` and `pip`, and Node.js 20.9 or
+newer with npm.
+Linux jobs install CMake 3.20 or newer, Ninja, a C++20 compiler, and supported
+LLVM packages where needed. Release builds download GTI's pinned upstream LLVM
+source and therefore require outbound access to that upstream release host.
+An Ubuntu runner should be based on Ubuntu 24.04 so `llvm-18-dev` is available.
 
-## Mirror-aware triggers
+The current publication jobs create one archive for the native OS and
+architecture of the runner claiming `ubuntu-latest`. Before advertising
+additional binary platforms from Gitea, register those native runners and add
+statically labelled package jobs for them; source support for a target is not
+evidence that a binary archive was published for it.
 
-- `ci.yml` runs when mirror synchronization updates `main` (and can be run
-  manually).
-- `nightly.yml` runs when the upstream GitHub nightly workflow moves the
-  mirrored `nightly` tag. It never force-pushes into the read-only mirror.
-- `release.yml` runs when a stable `vX.Y.Z` tag arrives from GitHub. It does not
-  run merely because `VERSION` changed, which avoids a duplicate build before
-  the upstream tag exists. Existing mirrored release notes and assets for other
-  platforms are preserved; files with the same native-platform names are
-  replaced by the locally built copies.
+Set `runner.capacity` for the number of concurrent jobs the host is provisioned
+to execute; this installation permits full job capacity. Set `runner.timeout`
+long enough for a cold bundled LLVM/Clang build: earlier logs showed termination
+near three hours. Job concurrency and compiler-process parallelism are separate
+settings. Restart the runner after changing its configuration; repository
+variables cannot alter job capacity or timeout.
 
-Manual nightly and stable runs consume the already-mirrored tag. They fail
-clearly if that tag is missing or moves while packaging, so stale artifacts are
-not published.
+The generic Gitea runner executes a small, race-free ASan/UBSan probe before
+its expensive builds. ThreadSanitizer is a separate runner capability because
+this Docker host rejects its shadow-memory mapping before GTI code runs.
+`GTI_ENABLE_THREAD_SANITIZER_TESTS` defaults to `ON` for local and compatible
+dedicated runners; the generic Gitea workflows set it to `OFF`. Mixed runtime
+matrices still execute their ordinary and ASan/UBSan modes, while dedicated
+TSAN CTests report an explicit skip (return code 77) rather than a false pass.
+
+A dedicated TSAN runner must first pass
+`scripts/check_ci_sanitizers.py --sanitizer thread` in the exact job container,
+then configure without disabling `GTI_ENABLE_THREAD_SANITIZER_TESTS`. Check its
+compiler runtime, kernel, address-space limits, and container seccomp policy
+when the probe reports `ThreadSanitizer: unexpected memory mapping`. Do not use
+privileged containers as a blanket fix. The workflows do not change host ASLR
+or sandbox policy automatically.
+
+After a hostname migration, also check Gitea's configured server `ROOT_URL`,
+runner registration URL, and reverse-proxy routing. The canonical URL is now
+`https://git.internal.howetotech.dev/`; old tagged plugin revisions retain their
+old installer URL. A Git clone alone does not migrate historical release assets.
+The plugin's stable channel requires a successfully published matching version
+and native-platform archive, while nightly requires its archive and `BUILD_ID`.
+With only a Linux runner there is no macOS archive: macOS users need a locally
+built toolchain or an added native macOS package job.
+
+## Workflow authority
+
+- `ci.yml` runs for every push to `main`, every pull request, and manual
+  dispatch. It is the canonical remote CI signal.
+- `release.yml` runs for every `main` commit or by manual dispatch. One bundled
+  build and validation suite supplies both channels. Nightly always gets an
+  archive; stable gets an archive only on a `VERSION` change or exact-commit
+  manual rebuild. Stable is archived before the nightly identity stamp.
+  Stable publication rejects a conflicting immutable `v<VERSION>` tag.
+  Serialized nightly publication skips superseded revisions, then advances
+  the mutable `nightly` tag and Gitea release. Current assets are uploaded before
+  assets outside the new build are pruned. The former separate nightly workflow
+  is removed to avoid compiling and testing the same bundled toolchain twice.
+
+Both publication jobs use Gitea's repository token and publish only after the
+build-tree and installed-toolchain gates pass. A successful push merely starts
+that asynchronous work; local validation remains the pre-push authority.
+
+## GitHub decommission boundary
+
+The tracked code can operate without GitHub, but deleting the old GitHub
+repository is a separate, destructive administration step. Before deletion,
+make an explicit retain-or-discard decision for data that `git push` does not
+copy:
+
+- issues, pull requests, discussions, labels, milestones, and attachments;
+- wiki pages and wiki history;
+- release notes and historical release assets;
+- repository settings, secrets, branch protection, webhooks, and deploy keys;
+- every historical tag not already present in Gitea.
+
+Bulk-pushing historical tags can execute workflow files stored in those old
+tagged commits. Import tags while Actions is temporarily disabled, or use an
+instance-level migration path that suppresses workflow dispatch. Verify the
+Gitea clone, wiki, issue history, tags, latest stable archive, nightly archive,
+and installer before deleting GitHub.
+
+Links to third-party projects hosted on GitHub, including LLVM and vendored
+upstream attribution, are external dependencies rather than GTI repository
+authority and may remain.

@@ -1,0 +1,78 @@
+#include <std/vector>
+#include <std/string>
+
+struct Command {
+  std::string name{};
+  std::vector<Command> subcommands{};
+};
+
+class Token {
+public:
+  int value;
+  Token(int n) : value(n) { std::println(n); }
+  ~Token() { std::println(0 - this.value); }
+};
+
+// An application-defined container, with its own failure/storage policy.
+class Bucket {
+public:
+  mut std::vector<Token> values{};
+  Bucket() {}
+  static Bucket collection_init(uint64_t count) {
+    std::println(count);
+    return Bucket();
+  }
+  static Bucket collection_insert(mut Bucket bucket, Token token) {
+    int checked = 10 / token.value;
+    bucket.values.push_back(std::move(token));
+    return std::move(bucket);
+  }
+};
+
+int mark(int n) { std::println(n); return n; }
+
+class InitFails {
+public:
+  InitFails() {}
+  static InitFails collection_init(uint64_t count) {
+    int check = 1 / (int(count) - 2);
+    return InitFails();
+  }
+  static InitFails collection_insert(InitFails result, int element) {
+    return std::move(result);
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Command root = {
+    .name = std::string("tea"),
+    .subcommands = {
+      {.name = std::string("auth"), .subcommands = {
+        {.name = std::string("login")},
+        {.name = std::string("logout"), .subcommands = {}},
+      }},
+    },
+  };
+  std::println(root.name);
+  std::println(root.subcommands[std::size_t(0)].name);
+  std::println(root.subcommands[std::size_t(0)].subcommands[std::size_t(1)].name);
+  std::vector<int> empty = {};
+  std::println(empty.size());
+  std::vector<std::vector<int>> nested = {{1, 2}, {}, {3}};
+  std::println(nested[std::size_t(0)][std::size_t(1)]);
+  Token named = Token(7);
+  std::vector<Token> moved = {std::move(named)};
+  if (argc == 4) {
+    InitFails failed = {mark(8), mark(9)};
+  }
+  {
+    std::vector<Token> values = {
+      Token(mark(1)), Token(mark(2) / (argc == 2 ? 0 : 1)), Token(mark(3)),
+    };
+  }
+  {
+    Bucket bucket = {Token(4), Token(argc == 3 ? 0 : 5), Token(6)};
+    std::println(bucket.values.size());
+  }
+  return 0;
+}

@@ -1,0 +1,70 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class marker {
+  int32_t tag;
+public:
+  marker(int32_t value) : tag(value) {}
+  ~marker() { std::println(this.tag); }
+};
+
+struct cell {
+  mut int32_t value = 7;
+  mut std::unique_ptr<marker> child = std::unique_ptr<marker>();
+};
+
+int32_t read_scalar(std::unique_ptr<int32_t>& owner) {
+  marker inner = marker(2);
+  return *owner;
+}
+
+int32_t read_cell(std::unique_ptr<cell>& owner) {
+  marker inner = marker(2);
+  return owner->value + (*owner).value;
+}
+
+int32_t exercise(int32_t mode) {
+  marker outer = marker(1);
+  if (mode == 0) {
+    mut auto object = std::make_unique<cell>();
+    (*object).value = 9;
+    if ((*object).value != 9) { return 1; }
+    object->value = 8;
+    if (read_cell(object) != 16) { return 2; }
+    object->child = std::make_unique<marker>(3);
+    return 0;
+  }
+  if (mode == 1) {
+    std::unique_ptr<int32_t> empty = std::unique_ptr<int32_t>();
+    return read_scalar(empty);
+  }
+  if (mode == 2) {
+    mut std::unique_ptr<int32_t> empty = std::unique_ptr<int32_t>();
+    *empty = 9;
+  }
+  if (mode == 3) {
+    std::unique_ptr<cell> empty = std::unique_ptr<cell>();
+    return read_cell(empty);
+  }
+  if (mode == 4) {
+    mut std::unique_ptr<cell> empty = std::unique_ptr<cell>();
+    return empty->value;
+  }
+  if (mode == 5) {
+    mut std::unique_ptr<cell> empty = std::unique_ptr<cell>();
+    // The RHS is constructed first and must be cleaned if the checked
+    // destination cannot be formed.
+    empty->child = std::make_unique<marker>(3);
+  }
+  if (mode == 6) {
+    mut auto owner = std::make_unique<marker>(3);
+    owner.reset();
+    marker& value = *owner;
+  }
+  return 3;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  return exercise(argc - 1);
+}

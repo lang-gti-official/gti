@@ -2,6 +2,7 @@
 #include "gti/mir_editor.h"
 
 #include "gti/mir_effects.h"
+#include "gti/optimization/coverage.h"
 
 #include <algorithm>
 #include <optional>
@@ -302,7 +303,7 @@ MirSccpAnalysis analyzeMirSccp(const MirProgram &program,
                                MirBodyAddress address) {
   MirSccpAnalysis result;
   const MirBody *body = findMirBody(program, address);
-  if (body == nullptr) {
+  if (body == nullptr || !verifyMirOptimizationVocabulary(*body).valid()) {
     return result;
   }
   State entry;

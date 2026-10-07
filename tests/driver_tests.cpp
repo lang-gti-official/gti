@@ -32,6 +32,32 @@ void expect(bool condition, const std::string &message) {
   }
 }
 
+class RecordingProgress final : public lang::ProgressObserver {
+public:
+  std::vector<lang::ProgressPhase> phases;
+  std::vector<lang::ProgressPhase> active;
+  bool balanced = true;
+  std::optional<std::size_t> parsed;
+  std::optional<std::size_t> total;
+  std::optional<std::size_t> loaded;
+  void onProgress(const lang::ProgressEvent &event) noexcept override {
+    if (event.kind == lang::ProgressKind::Begin) {
+      phases.push_back(event.phase);
+      active.push_back(event.phase);
+    } else if (event.kind == lang::ProgressKind::End) {
+      balanced = balanced && !active.empty() && active.back() == event.phase &&
+                 event.elapsed >= std::chrono::nanoseconds{};
+      if (!active.empty())
+        active.pop_back();
+    } else if (event.phase == lang::ProgressPhase::Parsing) {
+      parsed = event.completed;
+      total = event.total;
+    } else if (event.phase == lang::ProgressPhase::Loading) {
+      loaded = event.total;
+    }
+  }
+};
+
 class TemporaryDirectory final {
 public:
   TemporaryDirectory() {
@@ -270,6 +296,39 @@ int main() {
       lang::driver::compileToCpp(request);
   expect(result.succeeded(),
          "the driver should compile a valid whole-program request");
+  RecordingProgress progress;
+  const auto withProgress = lang::driver::compileToCpp(request, &progress);
+  expect(withProgress.succeeded() && result.artifact && withProgress.artifact &&
+             withProgress.artifact->contents == result.artifact->contents,
+         "observing compilation must preserve byte-identical artifacts");
+  expect(
+      progress.phases ==
+              std::vector<lang::ProgressPhase>{lang::ProgressPhase::Loading,
+                                               lang::ProgressPhase::Parsing,
+                                               lang::ProgressPhase::Checking,
+                                               lang::ProgressPhase::HirLowering,
+                                               lang::ProgressPhase::MirLowering,
+                                               lang::ProgressPhase::Optimizing,
+                                               lang::ProgressPhase::Emitting} &&
+          progress.balanced && progress.active.empty() &&
+          progress.parsed == 2 && progress.total == 2 && progress.loaded == 2,
+      "live telemetry must follow the canonical phase order and exact units");
+  const auto broken = temporary.root() / "broken.gti";
+  expect(writeFile(broken, "int main() { return missing; }\n"),
+         "the failed progress fixture should be writable");
+  RecordingProgress failedProgress;
+  const auto failed = lang::driver::compileToCpp(
+      lang::driver::CompilationRequest(broken, request.standardLibrary(),
+                                       target, request.optimization(),
+                                       request.cppStandard()),
+      &failedProgress);
+  expect(!failed.succeeded() && failedProgress.balanced &&
+             failedProgress.active.empty() &&
+             failedProgress.phases ==
+                 std::vector<lang::ProgressPhase>{
+                     lang::ProgressPhase::Loading, lang::ProgressPhase::Parsing,
+                     lang::ProgressPhase::Checking},
+         "semantic failure must end telemetry without claiming later phases");
   expect(!result.preOptimizationMir && !result.postOptimizationMir &&
              !result.optimizationReport,
          "ordinary driver compilation should not capture optimizer output");
@@ -326,6 +385,123 @@ int main() {
          "entering a backend");
 }
 
+void testPackageWarningPolicy() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path app = temporary.root() / "app";
+  const std::filesystem::path library = temporary.root() / "library";
+  const std::filesystem::path leaf = temporary.root() / "leaf";
+  const std::filesystem::path source = app / "main.gti";
+  const std::filesystem::path own = app / "build/gti/deps/not-a-package.gti";
+  const std::filesystem::path librarySource = library / "value.gti";
+  const std::filesystem::path leafSource = leaf / "value.gti";
+  std::filesystem::create_directories(own.parent_path());
+  std::filesystem::create_directories(library);
+  std::filesystem::create_directories(leaf);
+  expect(
+      writeFile(temporary.root() / "prelude.gti", "") &&
+          writeFile(source, "#include <library/value>\n"
+                            "#include \"build/gti/deps/not-a-package.gti\"\n"
+                            "int main() { mut int value = 0; "
+                            "return library::value() + own::value() + value; "
+                            "}\n") &&
+          writeFile(own, "namespace own { int value() { mut int value = 0; "
+                         "return value; } }\n") &&
+          writeFile(librarySource, "#include <leaf/value>\nnamespace library { "
+                                   "int value() { mut int value = 0; "
+                                   "return leaf::value() + value; } }\n") &&
+          writeFile(leafSource,
+                    "namespace leaf { int value() { mut int value = 0; "
+                    "return value; } }\n"),
+      "package-warning source fixtures should be writable");
+  const std::vector<lang::PackageSourceRoot> roots{
+      {.identity = "app@1.0.0",
+       .name = "app",
+       .packageRoot = app,
+       .sourceRoot = app,
+       .dependencies = {{"library", "library@1.0.0"}}},
+      {.identity = "library@1.0.0",
+       .name = "library",
+       .packageRoot = library,
+       .sourceRoot = library,
+       .dependencies = {{"leaf", "leaf@1.0.0"}}},
+      {.identity = "leaf@1.0.0",
+       .name = "leaf",
+       .packageRoot = leaf,
+       .sourceRoot = leaf,
+       .dependencies = {}}};
+  const lang::driver::PackageWarningPolicy hidden(
+      false, "app@1.0.0", {"library@1.0.0", "leaf@1.0.0", "app@1.0.0"});
+  const auto request = [&](lang::driver::PackageWarningPolicy policy = {},
+                           lang::WarningPolicy warnings = {}) {
+    return lang::driver::CompilationRequest(
+        source, lang::standardLibraryLayout(temporary.root()),
+        lang::TargetInfo::host(), lang::OptimizationLevel::O0,
+        lang::CppStandard::Cpp23, roots, {}, {}, std::move(warnings), false,
+        std::move(policy));
+  };
+  const lang::driver::CheckResult visible =
+      lang::driver::checkCompilation(request());
+  expect(visible.succeeded() && visible.diagnostics.size() == 4 &&
+             std::all_of(visible.diagnostics.begin(), visible.diagnostics.end(),
+                         [](const lang::Diagnostic &diagnostic) {
+                           return diagnostic.code == "GTI-S2096";
+                         }),
+         "dependency and selected-package warnings should remain enabled "
+         "by default");
+  const lang::driver::CheckResult suppressed =
+      lang::driver::checkCompilation(request(hidden));
+  expect(
+      suppressed.succeeded() && suppressed.diagnostics.size() == 2 &&
+          std::all_of(
+              suppressed.diagnostics.begin(), suppressed.diagnostics.end(),
+              [&](const lang::Diagnostic &diagnostic) {
+                return diagnostic.primary.source ==
+                           std::filesystem::canonical(source).string() ||
+                       diagnostic.primary.source ==
+                           std::filesystem::canonical(own).string();
+              }),
+      "graph-owned direct/transitive dependency warnings should be hidden "
+      "without classifying a consumer's build/gti/deps spelling as a package");
+  const lang::driver::CheckResult grouped = lang::driver::checkCompilation(
+      request(hidden, lang::WarningPolicy({"unused-mut"})));
+  expect(grouped.succeeded() && grouped.diagnostics.empty(),
+         "package suppression should compose with existing warning groups");
+
+  const lang::driver::CompilationInputs inputs =
+      lang::driver::loadCompilationInputs(request(hidden));
+  lang::Diagnostic diagnostic = lang::makeDiagnostic(
+      "GTI-S2096", lang::DiagnosticPhase::Semantics,
+      {std::filesystem::canonical(librarySource).string(), 0, 1, 1}, "warning");
+  diagnostic.severity = lang::DiagnosticSeverity::Warning;
+  expect(hidden.suppresses(diagnostic, inputs.sourceGraph),
+         "dependency warning ownership should come from the primary source");
+  diagnostic.severity = lang::DiagnosticSeverity::Error;
+  expect(!hidden.suppresses(diagnostic, inputs.sourceGraph),
+         "dependency errors must never be suppressed");
+  diagnostic.severity = lang::DiagnosticSeverity::Warning;
+  diagnostic.related.push_back(
+      {{std::filesystem::canonical(librarySource).string(), 0, 1, 1},
+       "dependency declaration"});
+  diagnostic.primary.source = std::filesystem::canonical(source).string();
+  expect(!hidden.suppresses(diagnostic, inputs.sourceGraph),
+         "a dependency-related note cannot hide a consumer-primary diagnostic");
+  diagnostic.primary.source =
+      std::filesystem::canonical(temporary.root() / "prelude.gti").string();
+  expect(!hidden.suppresses(diagnostic, inputs.sourceGraph),
+         "stdlib/prelude warnings are outside dependency-package suppression");
+  diagnostic.primary.source = (app / "build/gti/deps/unloaded.gti").string();
+  expect(!hidden.suppresses(diagnostic, inputs.sourceGraph),
+         "unloaded/unowned paths must remain visible despite directory names");
+
+  expect(writeFile(librarySource,
+                   "namespace library { int value() { return missing; } }\n"),
+         "the dependency-error fixture should be writable");
+  const lang::driver::CheckResult error =
+      lang::driver::checkCompilation(request(hidden));
+  expect(!error.succeeded() && lang::hasErrorDiagnostics(error.diagnostics),
+         "real dependency errors must retain the frontend failure gate");
+}
+
 void testBackendExceptionBoundary() {
   TemporaryDirectory temporary;
   const std::filesystem::path prelude = temporary.root() / "prelude.gti";
@@ -361,10 +537,15 @@ void testBackendExceptionBoundary() {
              standardDiagnostic->primary.source == canonicalSource.string() &&
              standardDiagnostic->primary.start == 0 &&
              standardDiagnostic->primary.end == 0 &&
-             standardDiagnostic->message.find("throwing-test") !=
+             standardDiagnostic->message.find("backend failed") !=
                  std::string::npos &&
-             standardDiagnostic->message.find("deliberate backend failure") !=
+             standardDiagnostic->message.find("throwing-test") ==
                  std::string::npos &&
+             standardFailure.backendFailureDetails &&
+             standardFailure.backendFailureDetails->find("throwing-test") !=
+                 std::string::npos &&
+             standardFailure.backendFailureDetails->find(
+                 "deliberate backend failure") != std::string::npos &&
              !standardDiagnostic->hints.empty() &&
              standardFailure.sources.find(canonicalSource.string()) != nullptr,
          "a standard backend exception should retain the source snapshot and "
@@ -383,8 +564,9 @@ void testBackendExceptionBoundary() {
                  lang::driver::CompilationStatus::BackendFailure &&
              !unknownFailure.artifact &&
              unknownDiagnostic != unknownFailure.diagnostics.end() &&
-             unknownDiagnostic->message.find("non-standard exception") !=
-                 std::string::npos &&
+             unknownFailure.backendFailureDetails &&
+             unknownFailure.backendFailureDetails->find(
+                 "non-standard exception") != std::string::npos &&
              unknownFailure.sources.find(canonicalSource.string()) != nullptr,
          "a non-standard backend exception should use the same structured "
          "driver failure boundary");
@@ -401,10 +583,11 @@ void testBackendExceptionBoundary() {
              unnamedFailure.status ==
                  lang::driver::CompilationStatus::BackendFailure &&
              unnamedDiagnostic != unnamedFailure.diagnostics.end() &&
-             unnamedDiagnostic->message.find("backend 'unknown'") !=
+             unnamedFailure.backendFailureDetails &&
+             unnamedFailure.backendFailureDetails->find("Backend: unknown") !=
                  std::string::npos &&
-             unnamedDiagnostic->message.find("deliberate backend failure") !=
-                 std::string::npos,
+             unnamedFailure.backendFailureDetails->find(
+                 "deliberate backend failure") != std::string::npos,
          "an exception from backend name metadata should not defeat the "
          "generation exception boundary");
 
@@ -424,7 +607,7 @@ void testBackendExceptionBoundary() {
              unsupportedDiagnostic->phase == lang::DiagnosticPhase::Backend &&
              unsupportedDiagnostic->primary.source ==
                  canonicalSource.string() &&
-             unsupportedDiagnostic->message.find("unsupported-test") !=
+             unsupportedDiagnostic->message.find("unsupported-test") ==
                  std::string::npos &&
              unsupportedDiagnostic->message.find(
                  "missing bounded test capability") != std::string::npos &&
@@ -464,6 +647,24 @@ void testProcessInvocation(const std::filesystem::path &testExecutable) {
              empty.driverDiagnostic->find("test child command is empty") !=
                  std::string::npos,
          "empty process requests should fail before attempting execution");
+
+#if !defined(_WIN32)
+  TemporaryDirectory directory;
+  const lang::driver::ProcessResult configured = lang::driver::invokeProcess(
+      {std::filesystem::absolute(testExecutable).string(),
+       "--process-child-context"},
+      {.outputMode = lang::driver::ProcessOutputMode::Capture,
+       .captureSuccessfulOutput = true,
+       .description = "configured test child",
+       .workingDirectory = directory.root(),
+       .environment = {{"GTI_DRIVER_PROCESS_TEST", "exact value"}}});
+  expect(configured.succeeded() &&
+             configured.output ==
+                 std::filesystem::weakly_canonical(directory.root()).string() +
+                     "\nexact value\n",
+         "the reusable process runner should apply an exact working directory "
+         "and environment overrides in the child only");
+#endif
 }
 
 void testNativeCommandConstruction() {
@@ -509,6 +710,15 @@ void testNativeCommandConstruction() {
 #endif
   expect(command == expected,
          "native command construction should preserve structured input order");
+  const auto debugCommand = lang::driver::NativeToolchain().command(
+      lang::driver::NativeCompileRequest(
+          "custom-c++", "generated.cpp", "program", lang::CppStandard::Cpp23,
+          lang::OptimizationLevel::O0, {}, std::nullopt, true));
+  expect(
+      std::find(debugCommand.begin(), debugCommand.end(), "-g") !=
+              debugCommand.end() &&
+          std::find(command.begin(), command.end(), "-g") == command.end(),
+      "native debug symbols should be selected by the structured debug policy");
   const std::string rendered = lang::driver::renderCommand(command);
   expect(rendered.starts_with("+ custom-c++ -std=c++20 -O3") &&
              rendered.find("\"-Iruntime include\"") != std::string::npos &&
@@ -555,6 +765,29 @@ void testNativeCommandConstruction() {
                   "native source.cpp", "-o", "native object.o"}),
          "native C++ source compilation should preserve the resolved standard, "
          "include, argument, source, and output policy");
+
+  const lang::driver::NativeCppCompileRequest objcRequest(
+      "selected-clang++", "Foundation bridge.mm", "bridge.o",
+      lang::CppStandard::Cpp20, lang::OptimizationLevel::O2, {"native include"},
+      {"-fobjc-arc"}, {.triple = "arm64-apple-macos", .sysroot = "SDK"});
+  expect(lang::driver::NativeToolchain().command(objcRequest) ==
+             std::vector<std::string>(
+                 {"selected-clang++", "-std=c++20", "-O2",
+                  "--target=arm64-apple-macos", "--sysroot=SDK",
+                  "-Inative include", "-fobjc-arc", "-x", "objective-c++", "-c",
+                  "Foundation bridge.mm", "-o", "bridge.o"}),
+         "Objective-C++ bridge compilation should preserve policy and select "
+         "its language without changing the final generated C++ language");
+  expect(lang::driver::NativeToolchain().preprocessCommand(objcRequest,
+                                                           "deps.d") ==
+             std::vector<std::string>(
+                 {"selected-clang++", "-std=c++20", "-O2",
+                  "--target=arm64-apple-macos", "--sysroot=SDK",
+                  "-Inative include", "-fobjc-arc", "-x", "objective-c++", "-E",
+                  "-MD", "-MF", "deps.d", "Foundation bridge.mm", "-o",
+                  "bridge.o"}),
+         "Objective-C++ cache dependency discovery must use the same language, "
+         "ARC, target, standard, and include policy as compilation");
 
   lang::driver::NativeInputs orderedInputs;
   orderedInputs.libraryDirectories = {"native lib"};
@@ -740,6 +973,39 @@ void testNativeCCompilerFailure() {
 }
 
 void testNativeCppCompilerFailure() {
+  // Library callers can construct native inputs without manifest resolution.
+  // Reject both application and composed bridges before creating artifacts or
+  // invoking even an intentionally missing compiler.
+  for (bool dependency : {false, true}) {
+    TemporaryDirectory rejected;
+    lang::driver::NativeInputs inputs;
+    if (dependency) {
+      lang::driver::NativeDependencyGroup group;
+      group.packageIdentity = "bridge@1.0.0";
+      group.cppSources = {rejected.root() / "bridge.mm"};
+      inputs.dependencyGroups.push_back(std::move(group));
+    } else {
+      inputs.cppSources = {rejected.root() / "bridge.mm"};
+    }
+    const auto result =
+        lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
+            lang::driver::CompilationRequest(
+                rejected.root() / "missing.gti",
+                lang::standardLibraryLayout(rejected.root()),
+                {.os = "linux", .vendor = "unknown", .arch = "x86_64"},
+                lang::OptimizationLevel::O0, lang::CppStandard::Cpp23),
+            {.standardLibrary = lang::standardLibraryLayout(rejected.root())},
+            rejected.root() / "generated.cpp", rejected.root() / "program",
+            "missing-compiler", std::move(inputs), false, false, false));
+    expect(result.status == lang::driver::ExecutableBuildStatus::
+                                ToolchainConfigurationFailure &&
+               result.driverDiagnostic &&
+               result.driverDiagnostic->find("macOS") != std::string::npos &&
+               result.cppCompilations.empty() && result.nativeCommand.empty() &&
+               !std::filesystem::exists(rejected.root() / "generated.cpp"),
+           "direct driver clients must not bypass the macOS Objective-C++ "
+           "boundary");
+  }
   TemporaryDirectory temporary;
   const std::filesystem::path include = temporary.root() / "include";
   std::filesystem::create_directories(include / "gti");
@@ -871,6 +1137,60 @@ void testOrderedExecutableBuildCommand() {
          "executable builds should place compiled C objects before the runtime "
          "and authoritative ordered project operands without duplicating split "
          "metadata categories");
+  expect(result.backendDiagnosticLog &&
+             result.backendDiagnosticLog->succeeded() &&
+             readFile(result.backendDiagnosticLog->path).find("Command:") !=
+                 std::string::npos &&
+             readFile(result.backendDiagnosticLog->path)
+                     .find("missing-native-compiler") != std::string::npos &&
+             result.generatedSourceRetained,
+         "a native invocation failure should preserve its exact command, "
+         "driver failure and representation as developer evidence");
+  if (result.backendDiagnosticLog && result.backendDiagnosticLog->succeeded()) {
+    std::filesystem::remove(result.backendDiagnosticLog->path);
+    std::filesystem::remove(result.backendDiagnosticLog->path.parent_path());
+  }
+}
+
+void testDiagnosticLogs() {
+  constexpr std::string_view evidence("raw\0evidence", 12);
+  const auto first = lang::driver::writeDiagnosticLog(evidence);
+  const auto second = lang::driver::writeDiagnosticLog("other evidence");
+  expect(
+      first.succeeded() && second.succeeded() && first.path != second.path &&
+          readFile(first.path) == evidence &&
+          readFile(second.path) == "other evidence",
+      "diagnostic logs should preserve exact bytes in distinct retained paths");
+#if !defined(_WIN32)
+  if (first.succeeded()) {
+    const auto otherPermissions =
+        std::filesystem::perms::group_all | std::filesystem::perms::others_all;
+    expect(
+        (std::filesystem::status(first.path).permissions() &
+         otherPermissions) == std::filesystem::perms::none &&
+            (std::filesystem::status(first.path.parent_path()).permissions() &
+             otherPermissions) == std::filesystem::perms::none,
+        "backend evidence directories and logs should be owner-only");
+  }
+  TemporaryDirectory temporary;
+  const auto blocker = temporary.root() / "not-a-directory";
+  expect(writeFile(blocker, "preserve this file"),
+         "the log-failure fixture should be writable");
+  {
+    ScopedEnvironment badTemporaryRoot("TMPDIR", blocker.string());
+    const auto failed = lang::driver::writeDiagnosticLog("unsaved evidence");
+    expect(!failed.succeeded() && failed.path.empty() && failed.error &&
+               readFile(blocker) == "preserve this file",
+           "log preservation failure must report failure without an invented "
+           "saved path or overwriting unrelated files");
+  }
+#endif
+  for (const auto *log : {&first, &second}) {
+    if (log->succeeded()) {
+      std::filesystem::remove(log->path);
+      std::filesystem::remove(log->path.parent_path());
+    }
+  }
 }
 
 void testManagedOutputSafety() {
@@ -882,6 +1202,65 @@ void testManagedOutputSafety() {
   const std::filesystem::path externalOutput =
       temporary.root() / "external/program";
   std::filesystem::create_directory(project);
+  const lang::driver::ManagedOutputPolicy managed{.trustedRoot = project,
+                                                  .outputRoot = managedRoot};
+  const std::filesystem::path existingExecutable =
+      managedRoot / "dev/host/existing";
+  const std::optional<std::string> missingExecutable =
+      lang::driver::managedExecutableDiagnostic(managed, existingExecutable);
+  expect(missingExecutable &&
+             missingExecutable->find("does not exist") != std::string::npos,
+         "a build-skipping run should reject a missing managed executable");
+  std::filesystem::create_directories(existingExecutable.parent_path());
+  expect(writeFile(existingExecutable, "existing executable\n"),
+         "the existing managed executable fixture should be writable");
+#if !defined(_WIN32)
+  const std::optional<std::string> nonExecutableDiagnostic =
+      lang::driver::managedExecutableDiagnostic(managed, existingExecutable);
+  expect(nonExecutableDiagnostic && nonExecutableDiagnostic->find(
+                                        "not executable") != std::string::npos,
+         "a build-skipping run should reject a regular file without execute "
+         "permissions");
+  std::error_code permissionError;
+  std::filesystem::permissions(
+      existingExecutable, std::filesystem::perms::owner_exec,
+      std::filesystem::perm_options::add, permissionError);
+  expect(!permissionError,
+         "the existing managed executable fixture should be executable");
+#endif
+  expect(
+      !lang::driver::managedExecutableDiagnostic(managed, existingExecutable),
+      "a regular executable inside the symlink-free managed subtree should "
+      "be runnable without rebuilding");
+
+  const std::filesystem::path directoryArtifact =
+      managedRoot / "dev/host/not-an-executable";
+  std::filesystem::create_directory(directoryArtifact);
+  const std::optional<std::string> directoryDiagnostic =
+      lang::driver::managedExecutableDiagnostic(managed, directoryArtifact);
+  expect(directoryDiagnostic && directoryDiagnostic->find(
+                                    "not a regular file") != std::string::npos,
+         "a build-skipping run should reject a directory in place of its "
+         "managed executable");
+
+  const std::filesystem::path externalExecutable =
+      temporary.root() / "external-existing";
+  expect(writeFile(externalExecutable, "external executable\n"),
+         "the external executable fixture should be writable");
+  const std::filesystem::path symlinkedExecutable =
+      managedRoot / "dev/host/symlinked";
+  std::error_code executableSymlinkError;
+  std::filesystem::create_symlink(externalExecutable, symlinkedExecutable,
+                                  executableSymlinkError);
+  if (!executableSymlinkError) {
+    const std::optional<std::string> symlinkedDiagnostic =
+        lang::driver::managedExecutableDiagnostic(managed, symlinkedExecutable);
+    expect(symlinkedDiagnostic &&
+               symlinkedDiagnostic->find("symbolic-link managed output ") !=
+                   std::string::npos,
+           "a build-skipping run should reject a symbolic-link managed "
+           "executable rather than following it outside the project");
+  }
 
   const lang::driver::ExecutableBuildResult outside =
       lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
@@ -980,6 +1359,9 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
   ScopedEnvironment clearDeveloperDirectory("DEVELOPER_DIR");
   ScopedEnvironment clearLdLibraryPath("LD_LIBRARY_PATH");
   ScopedEnvironment clearDyldLibraryPath("DYLD_LIBRARY_PATH");
+  ScopedEnvironment clearDyldFrameworkPath("DYLD_FRAMEWORK_PATH");
+  ScopedEnvironment clearDyldFallbackFrameworkPath(
+      "DYLD_FALLBACK_FRAMEWORK_PATH");
   ScopedEnvironment clearMsvcIncludePath("INCLUDE");
   ScopedEnvironment clearMsvcLibraryPath("LIB");
   expect(std::getenv("COMPILER_PATH") == nullptr &&
@@ -1063,18 +1445,25 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
       nativeCompiler = wrapper.string();
     }
   }
-  const auto build = [&](lang::OptimizationLevel optimization,
-                         lang::driver::NativeInputs nativeInputs = {},
-                         bool keepCpp = false,
-                         lang::CppStandard standard = lang::CppStandard::Cpp23,
-                         lang::TargetInfo target = lang::TargetInfo::host()) {
-    return lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
-        lang::driver::CompilationRequest(source, toolchain.standardLibrary,
-                                         std::move(target), optimization,
-                                         standard),
-        toolchain, generated, output, nativeCompiler, std::move(nativeInputs),
-        keepCpp, true, false, managed, std::nullopt, cache));
-  };
+  const auto build =
+      [&](lang::OptimizationLevel optimization,
+          lang::driver::NativeInputs nativeInputs = {}, bool keepCpp = false,
+          lang::CppStandard standard = lang::CppStandard::Cpp23,
+          lang::TargetInfo target = lang::TargetInfo::host(),
+          lang::driver::PackageWarningPolicy packageWarnings = {},
+          lang::WarningPolicy warnings = {},
+          lang::RawPointerAuditMode rawPointerAudit =
+              lang::RawPointerAuditMode::Off) {
+        return lang::driver::buildExecutable(
+            lang::driver::ExecutableBuildRequest(
+                lang::driver::CompilationRequest(
+                    source, toolchain.standardLibrary, std::move(target),
+                    optimization, standard, {}, {}, {}, std::move(warnings),
+                    false, std::move(packageWarnings), rawPointerAudit),
+                toolchain, generated, output, nativeCompiler,
+                std::move(nativeInputs), keepCpp, true, false, managed,
+                std::nullopt, cache));
+      };
 
   const lang::driver::ExecutableBuildResult first =
       build(lang::OptimizationLevel::O0);
@@ -1133,6 +1522,46 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
              std::filesystem::is_regular_file(output),
          "an unchanged build should verify and restore the cached executable "
          "without invoking any native compilation");
+
+  std::string warnAuditKey;
+  for (const auto mode :
+       {lang::RawPointerAuditMode::Warn, lang::RawPointerAuditMode::Strict}) {
+    const auto audited =
+        build(lang::OptimizationLevel::O0, {}, false, lang::CppStandard::Cpp23,
+              lang::TargetInfo::host(), {}, {}, mode);
+    expect(audited.succeeded() &&
+               audited.cache.status == lang::driver::BuildCacheStatus::Miss &&
+               audited.cache.key != firstKey &&
+               audited.cache.key != warnAuditKey,
+           "each audit policy requires its own frontend/cache identity");
+    warnAuditKey = audited.cache.key;
+    const auto auditHit =
+        build(lang::OptimizationLevel::O0, {}, false, lang::CppStandard::Cpp23,
+              lang::TargetInfo::host(), {}, {}, mode);
+    expect(auditHit.succeeded() &&
+               auditHit.cache.status == lang::driver::BuildCacheStatus::Hit &&
+               auditHit.cache.key == audited.cache.key,
+           "unchanged audit policy may reuse its verified artifact");
+  }
+
+  const lang::driver::ExecutableBuildResult warningPolicyChange = build(
+      lang::OptimizationLevel::O0, {}, false, lang::CppStandard::Cpp23,
+      lang::TargetInfo::host(),
+      lang::driver::PackageWarningPolicy(false, "app@1.0.0", {"dep@1.0.0"}));
+  expect(warningPolicyChange.succeeded() &&
+             warningPolicyChange.cache.status ==
+                 lang::driver::BuildCacheStatus::Miss &&
+             warningPolicyChange.cache.key != firstKey,
+         "changing dependency-warning policy must perform frontend analysis "
+         "instead of reusing a cached diagnostic presentation");
+  const lang::driver::ExecutableBuildResult groupPolicyChange =
+      build(lang::OptimizationLevel::O0, {}, false, lang::CppStandard::Cpp23,
+            lang::TargetInfo::host(), {}, lang::WarningPolicy({"unused-mut"}));
+  expect(groupPolicyChange.succeeded() &&
+             groupPolicyChange.cache.status ==
+                 lang::driver::BuildCacheStatus::Miss &&
+             groupPolicyChange.cache.key != firstKey,
+         "warning-group policy must invalidate the same cached presentation");
 
   expect(writeFile(leaf, "int leaf_value() { return 1; }\n"),
          "the transitive cache invalidation fixture should be writable");
@@ -1436,18 +1865,149 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
          "the link-input reason");
   std::filesystem::remove(resolvedArchive);
 
-  lang::driver::NativeInputs frameworkInput;
-  frameworkInput.frameworks.emplace_back("CoreFoundation");
+  const auto buildWithFramework = [&]() {
+    lang::driver::NativeInputs inputs;
+    inputs.frameworks.emplace_back("CoreFoundation");
+    return build(lang::OptimizationLevel::O0, std::move(inputs));
+  };
+#if defined(__APPLE__)
   const lang::driver::ExecutableBuildResult frameworkBuild =
-      build(lang::OptimizationLevel::O0, std::move(frameworkInput));
-  expect(frameworkBuild.cache.status ==
+      buildWithFramework();
+  expect(
+      frameworkBuild.succeeded() &&
+          frameworkBuild.cache.status == lang::driver::BuildCacheStatus::Miss &&
+          frameworkBuild.cache.key != firstKey && frameworkBuild.nativeProcess,
+      "a framework selected by the Apple linker should join cache identity "
+      "through its exact traced link input");
+  const lang::driver::ExecutableBuildResult frameworkHit = buildWithFramework();
+  expect(frameworkHit.succeeded() &&
+             frameworkHit.cache.status == lang::driver::BuildCacheStatus::Hit &&
+             frameworkHit.cache.key == frameworkBuild.cache.key &&
+             !frameworkHit.nativeProcess,
+         "an unchanged traced Apple framework should restore the cached "
+         "executable without relinking");
+
+  lang::driver::NativeInputs missingFrameworkInputs;
+  missingFrameworkInputs.frameworks.emplace_back(
+      "GTIFrameworkThatMustNotExistForCacheTesting");
+  const lang::driver::ExecutableBuildResult missingFrameworkBuild =
+      build(lang::OptimizationLevel::O0, std::move(missingFrameworkInputs));
+  expect(missingFrameworkBuild.cache.status ==
                  lang::driver::BuildCacheStatus::Bypassed &&
-             frameworkBuild.cache.detail &&
-             frameworkBuild.cache.detail->find(
-                 "name-resolved frameworks require framework search "
-                 "resolution") != std::string::npos,
-         "frameworks resolve through undeclared search roots to a bundle and "
-         "must keep bypassing");
+             missingFrameworkBuild.cache.detail &&
+             missingFrameworkBuild.cache.detail->find(
+                 "framework resolution probe failed") != std::string::npos,
+         "a framework whose exact linker input cannot be resolved should "
+         "bypass rather than trusting its name");
+
+  // A compiler wrapper supplies a private framework search root that the
+  // driver cannot infer. The real linker map remains authoritative: changing
+  // the selected text stub must change the cache key even though the framework
+  // name, wrapper executable, and GTI sources are unchanged.
+  const lang::driver::ProcessResult sdkProbe = lang::driver::invokeProcess(
+      {"/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-path"},
+      {.outputMode = lang::driver::ProcessOutputMode::Capture,
+       .captureSuccessfulOutput = true,
+       .description = "test macOS SDK discovery"});
+  std::string sdkPath = sdkProbe.output;
+  while (!sdkPath.empty() &&
+         std::isspace(static_cast<unsigned char>(sdkPath.back())) != 0) {
+    sdkPath.pop_back();
+  }
+  const std::filesystem::path systemFrameworkStub =
+      std::filesystem::path(sdkPath) /
+      "System/Library/Frameworks/CoreFoundation.framework/CoreFoundation.tbd";
+  const std::filesystem::path privateFrameworkStub =
+      temporary.root() /
+      "Frameworks/CoreFoundation.framework/CoreFoundation.tbd";
+  std::filesystem::create_directories(privateFrameworkStub.parent_path());
+  copyError.clear();
+  if (sdkProbe.succeeded() && !sdkPath.empty()) {
+    std::filesystem::copy_file(systemFrameworkStub, privateFrameworkStub,
+                               copyError);
+  }
+  const bool frameworkFixtureReady =
+      sdkProbe.succeeded() && !sdkPath.empty() && !copyError &&
+      std::filesystem::is_regular_file(privateFrameworkStub);
+  expect(frameworkFixtureReady,
+         "the framework cache test should copy the selected SDK text stub");
+  const std::filesystem::path frameworkWrapper =
+      temporary.root() / "native-framework-cxx-wrapper";
+  std::error_code wrapperError;
+  std::filesystem::create_symlink(testExecutable, frameworkWrapper,
+                                  wrapperError);
+  if (wrapperError) {
+    wrapperError.clear();
+    std::filesystem::copy_file(testExecutable, frameworkWrapper, wrapperError);
+  }
+  expect(!wrapperError,
+         "the framework-selecting native compiler wrapper should be creatable");
+  const std::string previousNativeCompiler = nativeCompiler;
+  if (frameworkFixtureReady && !wrapperError) {
+    nativeCompiler = frameworkWrapper.string();
+    const lang::driver::ExecutableBuildResult privateFrameworkBuild =
+        buildWithFramework();
+    const lang::driver::ExecutableBuildResult privateFrameworkHit =
+        buildWithFramework();
+    expect(privateFrameworkBuild.succeeded() &&
+               privateFrameworkBuild.cache.status ==
+                   lang::driver::BuildCacheStatus::Miss &&
+               privateFrameworkHit.succeeded() &&
+               privateFrameworkHit.cache.status ==
+                   lang::driver::BuildCacheStatus::Hit &&
+               privateFrameworkHit.cache.key == privateFrameworkBuild.cache.key,
+           "the linker-traced private framework should be reusable while its "
+           "selected text stub is unchanged");
+    const std::string originalStub = readFile(privateFrameworkStub);
+    std::string changedStub = originalStub;
+    const std::size_t firstLineEnd = changedStub.find('\n');
+    if (firstLineEnd != std::string::npos) {
+      changedStub.insert(firstLineEnd + 1, "# GTI cache identity change\n");
+    }
+    expect(firstLineEnd != std::string::npos &&
+               writeFile(privateFrameworkStub, changedStub),
+           "the private framework text stub should remain mutable");
+    const lang::driver::ExecutableBuildResult privateFrameworkChange =
+        buildWithFramework();
+    if (!(privateFrameworkChange.succeeded() &&
+          privateFrameworkChange.cache.status ==
+              lang::driver::BuildCacheStatus::Miss &&
+          privateFrameworkChange.cache.key !=
+              privateFrameworkBuild.cache.key)) {
+      std::cerr << "framework mutation status="
+                << static_cast<int>(privateFrameworkChange.status) << " cache="
+                << static_cast<int>(privateFrameworkChange.cache.status)
+                << " old-key=" << privateFrameworkBuild.cache.key
+                << " new-key=" << privateFrameworkChange.cache.key << " detail="
+                << privateFrameworkChange.cache.detail.value_or("none")
+                << " diagnostic="
+                << privateFrameworkChange.driverDiagnostic.value_or("none")
+                << " native="
+                << (privateFrameworkChange.nativeProcess
+                        ? privateFrameworkChange.nativeProcess->output
+                        : "none")
+                << '\n';
+    }
+    expect(privateFrameworkChange.succeeded() &&
+               privateFrameworkChange.cache.status ==
+                   lang::driver::BuildCacheStatus::Miss &&
+               privateFrameworkChange.cache.key !=
+                   privateFrameworkBuild.cache.key,
+           "changing the exact framework link input selected by the linker "
+           "should invalidate the whole-program cache");
+  }
+  nativeCompiler = previousNativeCompiler;
+#else
+  const lang::driver::ExecutableBuildResult frameworkBuild =
+      buildWithFramework();
+  expect(
+      frameworkBuild.cache.status == lang::driver::BuildCacheStatus::Bypassed &&
+          frameworkBuild.cache.detail &&
+          frameworkBuild.cache.detail->find("Apple linker resolution trace") !=
+              std::string::npos,
+      "framework cache identity should remain unavailable without an Apple "
+      "linker trace");
+#endif
 
   {
     ScopedEnvironment injectedIncludePath("CPATH",
@@ -2143,6 +2703,8 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
 // fact that moved.
 void testBuildReportRecordRoundTrip() {
   lang::driver::BuildProvenance recorded;
+  recorded.debugInfo = true;
+  recorded.rawPointerAudit = lang::RawPointerAuditMode::Strict;
   recorded.producerExecutable = {.canonicalPath = "/opt/gti/bin/gti",
                                  .bytes = 128,
                                  .sha256 = std::string(64, 'a')};
@@ -2191,6 +2753,15 @@ void testBuildReportRecordRoundTrip() {
        .kind = lang::SourceDependencyKind::Prelude,
        .includeSpelling = "prelude.gti",
        .includeOccurrence = 0});
+  for (const auto kind : {lang::SourceDependencyKind::Import,
+                          lang::SourceDependencyKind::ExportImport}) {
+    recorded.source.dependencies.push_back(
+        {.source = 1,
+         .target = 2,
+         .kind = kind,
+         .includeSpelling = "dependency.main",
+         .includeOccurrence = 1});
+  }
   recorded.nativeCompilerExecutable = {.canonicalPath = "/usr/bin/c++",
                                        .bytes = 512,
                                        .sha256 = std::string(64, 'f')};
@@ -2243,6 +2814,26 @@ void testBuildReportRecordRoundTrip() {
          "a round-tripped record should compare equal to its source");
   expect(lang::driver::serializeBuildProvenanceJson(*parsed) == serialized,
          "re-serializing a parsed record should reproduce the sidecar");
+  expect(parsed->debugInfo, "build reports should preserve debug policy");
+  expect(parsed->rawPointerAudit == lang::RawPointerAuditMode::Strict,
+         "build reports preserve raw pointer audit policy");
+  auto changedAudit = *parsed;
+  changedAudit.rawPointerAudit = lang::RawPointerAuditMode::Off;
+  expect(!lang::driver::compareBuildProvenance(recorded, changedAudit).empty(),
+         "verification detects audit policy changes");
+  std::string oldReport = serialized;
+  const auto auditStart = oldReport.find("  \"raw_pointer_audit\":");
+  oldReport.erase(auditStart,
+                  oldReport.find('\n', auditStart) - auditStart + 1);
+  const auto oldParsed =
+      lang::driver::parseBuildProvenanceJson(oldReport, parseError);
+  expect(oldParsed &&
+             oldParsed->rawPointerAudit == lang::RawPointerAuditMode::Off,
+         "reports without the additive audit field default off");
+  auto changedDebug = *parsed;
+  changedDebug.debugInfo = false;
+  expect(!lang::driver::compareBuildProvenance(recorded, changedDebug).empty(),
+         "debug policy drift must be observable to verification");
 
   // The driver owns the staged link output and the dependency-file operand,
   // and both carry a per-invocation identity. Comparing them literally would
@@ -2488,13 +3079,18 @@ void testResourcesAndArtifactOwnership() {
 
 int main(int argc, char *argv[]) {
   lang::installCrashHandlers(argc > 0 ? argv[0] : "gti_driver_tests");
-  if (argc > 0 &&
-      std::filesystem::path(argv[0]).stem() == "native-cxx-wrapper") {
+  const std::filesystem::path invocation = argc > 0 ? argv[0] : "";
+  if (argc > 0 && (invocation.stem() == "native-cxx-wrapper" ||
+                   invocation.stem() == "native-framework-cxx-wrapper")) {
     std::vector<std::string> command{"c++"};
     const std::vector<std::string> sanitizerArguments =
         activeSanitizerArguments();
     command.insert(command.end(), sanitizerArguments.begin(),
                    sanitizerArguments.end());
+    if (invocation.stem() == "native-framework-cxx-wrapper") {
+      command.emplace_back("-F" +
+                           (invocation.parent_path() / "Frameworks").string());
+    }
     for (int index = 1; index < argc; ++index) {
       command.emplace_back(argv[index]);
     }
@@ -2517,6 +3113,12 @@ int main(int argc, char *argv[]) {
   }
   if (argc > 1 && std::string_view(argv[1]) == "--process-child-exit") {
     return 23;
+  }
+  if (argc > 1 && std::string_view(argv[1]) == "--process-child-context") {
+    std::cout << std::filesystem::current_path().string() << '\n';
+    const char *value = std::getenv("GTI_DRIVER_PROCESS_TEST");
+    std::cout << (value != nullptr ? value : "<missing>") << '\n';
+    return 0;
   }
   if (argc > 1 && std::string_view(argv[1]) == "--render-command-child") {
     const std::vector<std::string_view> expected{
@@ -2553,6 +3155,7 @@ int main(int argc, char *argv[]) {
 
   testAnalysisConfigurationResolution();
   testCompilationRequestAndTargetPropagation();
+  testPackageWarningPolicy();
   testBackendExceptionBoundary();
   testProcessInvocation(std::filesystem::absolute(argv[0]));
   testNativeCommandConstruction();
@@ -2560,6 +3163,7 @@ int main(int argc, char *argv[]) {
   testNativeCCompilerFailure();
   testNativeCppCompilerFailure();
   testOrderedExecutableBuildCommand();
+  testDiagnosticLogs();
   testManagedOutputSafety();
   testWholeProgramBuildCache(std::filesystem::absolute(argv[0]));
   testNativeDependencyDiscoveryPrimitives();

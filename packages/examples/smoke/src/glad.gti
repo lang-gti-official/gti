@@ -1,0 +1,7 @@
+#include <glad/glad>
+
+int main() {
+  // No display or GL context is needed to inspect the initial loader state.
+  if (gl::gti_glad_is_loaded() != 0) { return 1; }
+  return 0;
+}

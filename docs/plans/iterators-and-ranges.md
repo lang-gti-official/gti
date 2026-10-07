@@ -57,6 +57,13 @@ sentinel. The ordinary input family now also includes `std::find`, `std::count`,
 and `std::for_each`; the last combines repeated exact callable invocation with
 one exact moved return. These prove the existing exact operator, owner-loan,
 and callable transport protocols but do not complete the range-first surface.
+The algorithm-breadth slice adds sequence search/comparison, bounds, extrema,
+sortedness, whole-range contains/count/replacement, and confined output-copy
+families. Array cursors, mutable array/list/deque traversal, bidirectional list,
+signed-jump deque, and forward set cursors now exercise these general APIs.
+See [current contracts](../language/ranges.md#searching-and-rewriting-containers).
+Associated iterator result types, mutable cursor escape, and general in-place
+subranges remain separate work; no new compiler-known container name was added.
 
 The first implementation is intentionally smaller than C++20 Ranges. It does
 not introduce lazy views, argument-dependent lookup, customization-point
@@ -787,16 +794,16 @@ for a repeatable callable. The generic whole-range predicate family,
 `for_each`, and `fill` use these concepts; concrete reanalysis replaces private
 symbolic endpoint carriers before HIR/MIR.
 
-### Current public blocker matrix
+### Public capability goals and prerequisites
 
-| Module | Public function family | Status | True blocker category |
+| Module | Public function family | Status | Capability evidence or prerequisite goal |
 | --- | --- | --- | --- |
 | `<std/algorithm>` | `find`, `count` | Implemented | Exact iterator/sentinel/dereference/equality contracts plus declaration-linked `first` return ownership now suffice. |
 | `<std/algorithm>` | `for_each` | Implemented | Repeated exact `void(T&)` invocation now composes with one exact moved callable return. |
 | `<std/algorithm>` | complete-range `all_of`, `any_of`, `none_of`, `count_if`, `for_each` | Implemented | Structural read endpoints plus exact range-predicate/operation relations accept nominal ranges and fixed arrays without public-name recognition. |
 | `<std/algorithm>` | `copy` | Implemented | `std::output_iterator` (mut dereference plus increment) drives the destination; the advanced mutable cursor is not returned because mutable owner-tied cursors cannot escape returns. |
-| `<std/algorithm>` | `fill`, `transform`, `reverse`, `sort` | `fill` is generic complete-range; the others have vector whole-owner forms | The exact mutable-range relation gives `fill` its element type and one exclusive borrow. Iterator-pair in-place forms remain blocked because `begin_mut()` plus `end()` in one call is an ownership conflict. The other rewrites still copy elements because indexed move-out awaits place-aware initialization tracking. |
-| `<std/algorithm>` | `sort(compare)` | Deferred | The default-`<` partition sort landed first; the comparator overload follows once a confined two-reference-argument comparator client is proven. |
+| `<std/algorithm>` | `fill`, `transform`, `reverse`, `sort` | `fill` is generic complete-range; the others have vector whole-owner forms | The exact mutable-range relation gives `fill` its element type and one exclusive borrow. Iterator-pair in-place forms require a coherent endpoint/borrow contract: `begin_mut()` plus `end()` in one call currently conflicts. Indexed move-out and restoration require place-aware initialization tracking before the other rewrites can transfer elements. |
+| `<std/algorithm>` | `sort(compare)` | Implemented for vector | The confined two-reference-argument comparator relation supplies a repeatable exact bool callable. |
 | `<std/utility>` | `swap`, `exchange` | Declaration only | Moving a value out through `mut T&`, then restoring that place on all paths, is not expressible. |
 | `<std/iterator>` | signed `advance`, signed `next`, `prev` | Implemented | `std::bidirectional_iterator` steps `advance` in both directions for value-state cursors (owner-tied cursors cannot pass through `mut Iterator&`), and `std::random_access_iterator` jumps the by-value `next`. |
 | `<std/functional>` | primary `hash<T>::operator()` | Declaration only | GTI has no public hashability/customization contract for arbitrary `T`; a generic body would require public-name or backend magic. |
@@ -929,12 +936,14 @@ authoritative until a dedicated optimization architecture is adopted.
 
 ### Phase 3: Standard containers — vector mutable iteration implemented
 
-- The first source-defined `std::vector<T>` slice is implemented for movable
-  elements, including variadic in-place construction, indexed insertion and
-  erasure, read-only iteration, and compiler-confined mutable iteration.
+- The source-defined `std::vector<T>` slice accepts move-constructible
+  elements without requiring assignment, including variadic in-place
+  construction, indexed insertion and erasure, read-only iteration, and
+  compiler-confined mutable iteration.
 - Read-only iterators are implemented for `std::vector` and owning strings;
-  mutable `std::vector` iteration is implemented, while a public `std::array`
-  iterator surface remains separate from built-in fixed-array traversal.
+  mutable `std::vector`, `std::list`, `std::deque`, and `std::array` iteration
+  is implemented; nominal array cursors remain separate from built-in
+  fixed-array traversal.
 - Add read-only iteration to `std::string_view`.
 - Structural invalidation, mutable element access, nested readers, early exits,
   and owned temporary vector ranges are covered by compiler and runtime tests.

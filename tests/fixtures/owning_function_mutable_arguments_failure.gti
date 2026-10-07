@@ -1,0 +1,25 @@
+#include <std/functional>
+#include <std/string>
+#include <std/vector>
+
+class Token {
+  int identity;
+public:
+  Token(int identity) : identity(identity) {}
+  ~Token() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Token caller{9};
+  Token token{1};
+  auto target = [token = std::move(token)](mut int& value, int divisor) -> void {
+    value += token.read();
+    std::println(value);
+    int result = value / divisor;
+  };
+  std::move_only_function<void(mut int&, int)> callback{std::move(target)};
+  mut int value = 6;
+  callback(value, argc == 1 ? 1 : 0);
+  return value - 7;
+}

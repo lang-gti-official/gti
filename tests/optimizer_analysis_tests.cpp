@@ -834,6 +834,61 @@ int32_t union_overlap_read() {
          "previous fact instead of discharging a later bounds check");
 }
 
+void testSafetyInvokeSnapshot() {
+  using namespace lang;
+  const auto frontend = Frontend().analyze("invoke-state.gti", R"(
+int32_t read_after_add() {
+  int32_t values[2] = {7, 8};
+  mut uint64_t index = 0;
+  uint64_t next = index + 1;
+  return values[next];
+}
+)");
+  const auto *function = findMirFunction(frontend, "read_after_add");
+  expect(frontend.canGenerateCode() && function,
+         "invoke snapshot fixture lowers");
+  if (!frontend.canGenerateCode() || !function)
+    return;
+  const MirBodyAddress address{.kind = MirBodyKind::Function,
+                               .owner = function->id};
+  const auto hasBounds = [](const MirSafetyAnalysis &analysis) {
+    return std::any_of(analysis.proofs.begin(), analysis.proofs.end(),
+                       [](const MirSafetyProof &proof) {
+                         return proof.discharge.family ==
+                                MirSafetyCheckFamily::Bounds;
+                       });
+  };
+  expect(hasBounds(analyzeMirSafetyChecks(frontend.mir, address)),
+         "successful addition publishes the in-bounds index fact");
+
+  // Analysis-only CFG probe: route the failure edge to the read so its state
+  // is observable. Production failure cleanup normally terminates instead.
+  // Swap both edges, retaining the same CFG shape and stable identities.
+  auto failurePath = frontend.mir;
+  auto *body = findMirBody(failurePath, address);
+  bool swapped = false;
+  for (auto &block : body->blocks) {
+    if (block.terminator.kind != MirTerminatorKind::Invoke)
+      continue;
+    const auto instruction =
+        std::find_if(block.instructions.begin(), block.instructions.end(),
+                     [&](const auto &i) {
+                       return i.id == block.terminator.invokeInstruction &&
+                              i.kind == MirInstructionKind::Compute &&
+                              i.operation == MirOperation::Add;
+                     });
+    if (instruction == block.instructions.end())
+      continue;
+    std::swap(block.terminator.target, block.terminator.elseTarget);
+    std::swap(block.terminator.targetArguments, block.terminator.elseArguments);
+    swapped = true;
+    break;
+  }
+  expect(swapped, "probe locates the checked addition Invoke");
+  expect(swapped && !hasBounds(analyzeMirSafetyChecks(failurePath, address)),
+         "failure edge cannot inherit the successful addition's result fact");
+}
+
 void testSparseConditionalConstants() {
   const std::string source = R"(
 int32_t selected(bool choose) {
@@ -911,6 +966,7 @@ int main() {
   testAliasAwareSafetyInvalidation();
   testConservativeSafetyEdgesAndUnionOverlap();
   testSparseConditionalConstants();
+  testSafetyInvokeSnapshot();
   if (failures != 0) {
     std::cerr << failures << " optimizer analysis test(s) failed\n";
     return 1;

@@ -1,20 +1,26 @@
 # GTI
 
 <p align="center">
-  <a href="https://github.com/LukeHHA/gti/actions/workflows/ci.yml"><img src="https://github.com/LukeHHA/gti/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
-  <a href="https://github.com/LukeHHA/gti/actions/workflows/release.yml"><img src="https://github.com/LukeHHA/gti/actions/workflows/release.yml/badge.svg" alt="Release status"></a>
-  <a href="https://github.com/LukeHHA/gti/releases/latest"><img src="https://img.shields.io/github/v/release/LukeHHA/gti?sort=semver" alt="Latest release"></a>
-  <a href="https://github.com/LukeHHA/gti/blob/main/LICENSE"><img src="https://img.shields.io/github/license/LukeHHA/gti" alt="MIT license"></a>
+  <a href="https://git.internal.howetotech.dev/gti-lang/gti/actions/workflows/ci.yml"><img src="https://git.internal.howetotech.dev/gti-lang/gti/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
+  <a href="https://git.internal.howetotech.dev/gti-lang/gti/actions/workflows/release.yml"><img src="https://git.internal.howetotech.dev/gti-lang/gti/actions/workflows/release.yml/badge.svg?branch=main" alt="Release status"></a>
+  <a href="https://git.internal.howetotech.dev/gti-lang/gti/src/branch/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
 </p>
 
 <p align="center">
   <img src="assets/branding/gti-icon.png" alt="GTI language icon" width="160">
 </p>
 
-GTI is an experimental, statically typed language with C++-familiar syntax. It
-keeps explicit control, value semantics, deterministic cleanup, native code
-generation, and predictable performance while giving ownership, conversions,
-failure, and source visibility smaller rules.
+GTI is an independent, experimental, statically typed systems language with
+strong C++ syntax familiarity. It keeps explicit control, value semantics,
+deterministic cleanup, native code generation, and predictable performance while
+giving ownership, conversions,
+failure, and source visibility smaller rules. The goal is a fully usable systems
+language with excellent safety and a standard library expressed in ordinary GTI
+over general language facilities and necessary compiler/runtime mechanisms.
+
+GTI is not a C++ wrapper. Its syntax is intentionally familiar, but its ownership,
+lifetime, failure, and execution semantics are its own. C++ generation is the
+reference compiler's current implementation strategy, not the language contract.
 
 The released compiler checks a complete GTI source graph, builds typed HIR and
 MIR, lowers it through a C++ backend, and invokes a native C++ compiler:
@@ -60,11 +66,21 @@ int main() {
 
 ## What GTI currently provides
 
+For a readable overview of recent capabilities and fixes, see the
+[changelog](CHANGELOG.md).
+
+The [reference website source](https://git.internal.howetotech.dev/gti-lang/gti-reference)
+lives in its own organisation repository, including the
+[import/export reference](https://git.internal.howetotech.dev/gti-lang/gti-reference/src/branch/main/content/language/modules/page.mdx).
+See [reference documentation ownership](docs/architecture/reference-documentation.md)
+for the compiler API boundary and why the former in-tree website was removed.
+
 - Explicit fixed-width integer types, checked conversions and indexing, and
   immutable-by-default bindings, plus explicit wrapping, saturating, and
   checked-result add/subtract/multiply operations, direct base-10
   `std::print`/`std::println`, owning `std::to_string` conversion, and
-  recoverable sequential integral formatting through `<std/format>`.
+  recoverable sequential heterogeneous formatting for booleans, characters,
+  integers, binary32 floats, and owned or borrowed text through `<std/format>`.
 - Exact IEEE-754 binary32 `float` and binary64 `double`, with width-selecting
   literals, deterministic promotion and conversion, frontend constant
   evaluation, and bit-exact native emission.
@@ -137,9 +153,9 @@ approved support libraries (`LLVMSupport`, `LLVMTargetParser`, and
 [ADR 006](docs/decisions/006-llvm-support-adoption.md) for the boundary.
 
 ```sh
-git clone https://github.com/LukeHHA/gti.git
+git clone https://git.internal.howetotech.dev/gti-lang/gti.git gti
 cd gti
-cmake -S . -B build -G Ninja
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
 
 ./build/gti examples/01-basics.gti -o /tmp/gti-basics
@@ -166,9 +182,20 @@ GTI's build graph or artifact semantics:
 
 ```sh
 cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER_LAUNCHER=sccache \
   -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
 ```
+
+Test-enabled builds always use a GTI compiler executable built with host
+optimization because many tests compile GTI programs repeatedly. This does
+not remove the GTI `-O0` cases exercised by the test matrix.
+Single-configuration builds default to `Release`; an explicit `Debug`
+configuration is rejected while
+`BUILD_TESTING=ON` or `GTI_BUILD_FUZZERS=ON`. Use `RelWithDebInfo` for
+optimized, debuggable test runs, or create a separate `Debug` tree with both
+testing and fuzzers disabled for debugger-only work. `Release`,
+`RelWithDebInfo`, and `MinSizeRel` are the supported test configurations.
 
 First-party C and C++ sources use the exact clang-format release recorded in
 `.clang-format-version`. Verify or apply the repository format with:
@@ -241,10 +268,9 @@ Manifest-driven executable and test targets use `gti.toml`; `gti build` builds
 one selected target and `gti test` runs all declared test targets or one named
 test. A project can seed configuration flags with
 `defines = ["FEATURE"]` under `[build]`, and a repeatable `-D NAME` on
-`build`/`check`/`run`/`test` adds invocation-specific flags. The [Build System and
-CLI](https://github.com/LukeHHA/gti/wiki/Build-System-and-CLI) manual page
-documents direct options, project profiles, outputs, and current project-mode
-boundaries.
+`build`/`check`/`run`/`test` adds invocation-specific flags. The [build and
+driver documentation](docs/architecture/build-and-driver.md) covers direct
+options, project profiles, outputs, and current project-mode boundaries.
 
 Local multi-package development is available without a registry or network.
 A workspace root declares `[workspace].members`; packages declare source-only
@@ -257,7 +283,28 @@ Pinned git dependencies are declared as
 `gti fetch` acquires them and writes `gti.lock`, builds verify the recorded
 checksums before loading source, and `--offline`/`--locked` keep compilation
 network-free. Branch and tag selectors are deliberately rejected, and a
-registry remains a later phase.
+registry is available through `gti add libc` and version requirements such as
+`libc = "^0.1.0"`. `gti fetch` prefers compatible exact lock entries and verifies
+downloaded archives; registry-backed builds and editor analysis never fetch
+implicitly. `gti publish --dry-run` validates a source package without uploading,
+and `gti publish --name libc` publishes a Git-tracked package inventory. The
+[registry documentation](docs/architecture/build-and-driver.md#source-package-registries)
+describes configuration, publication, cache integrity and the bootstrap limits.
+
+On macOS, `gti registry login` prompts for your Gitea username/password and an
+optional 2FA code, creates a package-read token and saves only that token in
+Keychain. Use `gti registry login --publish` for package-write access, or
+`--token`/`--token-stdin` to supply an existing token;
+`gti add`/`fetch`/`publish` then use it automatically. `gti registry status`
+shows the source without showing the secret, and `gti registry logout` removes
+the saved credential. Configured `token-env` variables override saved login
+for CI; an explicitly empty value disables it. Other hosts currently use
+environment tokens, without a plaintext fallback.
+
+The language server reads this same resolved package graph without fetching or
+building. Once `gti fetch` has materialized a locked Git or registry dependency, package
+diagnostics, hover, definition, semantic tokens, and member completion use it;
+unsaved GTI dependency buffers override the stored source for editor analysis.
 
 Project `build`, `run`, and `test` commands use a verified local whole-program
 cache under `build/gti/cache/v2`. An unchanged eligible build restores the
@@ -266,14 +313,27 @@ native C/C++ sources — including a dependency package's — declared include a
 library search directories, exact archive/object link files, and `-l` names
 that resolve to exactly one content-complete file inside a declared search
 directory participate in the cache through compiler dependency discovery and
-full-tree identity; opaque native argument vectors, frameworks, `-l` names
-that resolve outside the declared search directories or ambiguously within
-them, non-content-complete link inputs (thin archives, linker scripts, shared
-libraries), time-and-date preprocessor macros, and dependency-injecting
-environment search paths conservatively bypass. Use
+full-tree identity. On Apple hosts, frameworks participate when a linker-map
+probe identifies and hashes the exact selected framework text stub or binary;
+an unavailable or ambiguous trace still bypasses. Opaque native argument
+vectors, `-l` names that resolve outside the declared search directories or
+ambiguously within them, non-content-complete link inputs (thin archives,
+linker scripts, shared libraries), time-and-date preprocessor macros, and
+dependency-injecting environment search paths conservatively bypass. Use
 `--verbose` to see the cache identity and hit/miss/bypass reason, or
 `--no-cache` to bypass both lookup and publication for verification. Direct
 `gti file.gti` compilation and `gti check` remain uncached.
+
+`gti run --no-build [-- <arguments>]` launches the already-published executable
+for the selected package, target, and profile without fetching dependencies,
+running build scripts, compiling, or consulting the cache. It rejects missing
+or unsafe managed artifacts and deliberately does not claim the executable is
+fresh; use ordinary `gti run` when source changes must be reflected.
+
+Build status and diagnostics use colour automatically in terminals. Use
+`gti build --color=never` to disable it, `--color=always` to retain it in captured
+output, or set `NO_COLOR=1` to disable automatic colour. Redirected output is
+plain by default; JSON output and your program's output are not decorated.
 
 `gti build --all` builds every declared target concurrently with a bounded job
 count (`--jobs <count>`), deterministic name-ordered output, and byte-identical
@@ -327,7 +387,17 @@ without preventing later tests from running.
 
 Use `gti init` to initialize an existing directory. It preserves an existing
 `src/main.gti` and refuses to replace an existing `gti.toml`; `--name <name>`
-overrides the package name derived from the directory.
+overrides the package name derived from the directory. Add `--git` to create a
+standalone Git repository and a canonical `.gitignore` containing `/build/`:
+
+```sh
+gti init --git
+gti init path/to/project --name project --git
+```
+
+The option refuses to modify an existing `.git` entry or `.gitignore`.
+Repository-local Git environment overrides such as `GIT_DIR` or
+`GIT_WORK_TREE` must be unset, so initialization cannot target another repository.
 
 Create an editable formatter configuration in the current directory with
 `gti format init`, or pass an existing destination directory explicitly. The
@@ -358,7 +428,11 @@ language server, standard library, runtime, and native Tree-sitter parser:
 
 ```lua
 return {
-  { "LukeHHA/gti", version = "*" },
+  {
+    "https://git.internal.howetotech.dev/gti-lang/gti.git",
+    name = "gti",
+    version = "*",
+  },
 }
 ```
 
@@ -366,14 +440,59 @@ Run `:Lazy sync`, restart Neovim, and open a `.gti` file. Mason and
 `nvim-lspconfig` are not required. `:GTIInfo` reports the active plugin,
 toolchain, LSP, and parser versions.
 
-See [Neovim and LSP](https://github.com/LukeHHA/gti/wiki/Neovim-and-LSP) for
-installation details, semantic features, formatting, Tree-sitter,
-rainbow-delimiters support, external toolchains, and troubleshooting.
+Use the complete `https://` URL for Gitea, and write `version = "*"` without
+a backslash. The selected tag must have a matching toolchain archive under
+Gitea Releases; syncing Git tags does not create or copy release binaries.
+Older tags from before the hostname migration still contain the old installer.
+The current Linux-only runner cannot publish macOS binaries. On macOS, build
+locally and set `GTI_PATH` and `GTI_LSP_PATH` to those executables (and
+`GTI_TREE_SITTER_PATH` to the built parser), or provision a native macOS runner.
+When supplying your own toolchain, set `build = false` in the Lazy spec to
+disable its release-download hook.
+
+### Local macOS installation without a release runner
+
+From this checkout, run:
+
+```sh
+python3 scripts/install_neovim_local.py --dry-run --replace-config
+python3 scripts/install_neovim_local.py --replace-config
+```
+
+Requires Python 3.10+, Neovim 0.11+, CMake, Ninja, a supported installed LLVM
+(including libclang), and the Xcode command-line tools. It discovers Homebrew
+LLVM 18–22 (skipping unsupported newer versions and checking retained Homebrew
+versions) or accepts `--llvm-dir /path/to/lib/cmake/llvm`; it installs no prerequisites
+automatically. Builds use all detected CPUs at normal priority by default
+(`--jobs N` to limit parallelism).
+
+The script builds compiler/LSP/parser, stages the complete `gti_toolchain`
+component, verifies a checksummed local archive with the Neovim plugin smoke
+test, then activates it with the same installer used for downloaded releases.
+It writes `lua/plugins/gti.lua` under Neovim's active config directory, pointing
+Lazy at this checkout with downloads disabled. An existing different config
+requires `--replace-config` and is backed up beside the original. Use `--config`
+for another Lazy spec location. It never edits `init.lua` or installs Lazy;
+your configuration must already import that plugins directory.
+
+Restart Neovim, run `:Lazy sync`, open a `.gti` file, and check `:GTIInfo`.
+Re-run the script after pulling changes. This system-LLVM build uses the same
+editor layout but is not an official release. Installation bundles matching
+non-Apple runtime libraries, their licenses, and loader-relative references,
+so the installed compiler and LSP survive Homebrew upgrades or cleanup. The
+toolchain can be relocated on a compatible Mac with the same architecture and
+macOS requirements; this does not create a universal binary or change its
+deployment target. Keep supported LLVM installed to rebuild and use the system-
+LLVM developer SDK. `--build-dir` may reuse a Release/LSP-enabled build
+from this checkout without switching its CMake generator.
+
+See the [LSP architecture](docs/architecture/lsp.md) for the implemented
+semantic, formatting, snapshot, and protocol boundaries.
 
 ## Documentation
 
-- The [GTI Wiki](https://github.com/LukeHHA/gti/wiki) is the user-facing
-  language and toolchain manual.
+- The [documentation map](docs/index.md) indexes the language, architecture,
+  decisions, and active implementation plans.
 - [`examples/`](examples/README.md) contains numbered programs for implemented
   features.
 - [`examples/gti-vs-cpp/`](examples/gti-vs-cpp/README.md) contains paired,
@@ -390,12 +509,18 @@ inputs, not promises that a feature has shipped.
 
 ## Repository map
 
+Optional native bindings for GLFW, GLAD, SQLite3, cimgui, zlib, libpng, Assimp and libgit2 live
+under [`packages/`](packages/README.md). Prepare the pinned sources with
+`python3 packages/prepare.py`, then use them as GTI path dependencies. They are
+separate from the standard library and require no compiler-specific handling.
+
 | Path | Responsibility |
 | --- | --- |
 | `include/gti/`, `src/compiler/` | compiler frontend, semantic model, HIR, MIR, optimization, and backend |
 | `include/gti/driver/`, `src/driver/` | reusable compilation, project, artifact, and native toolchain driver |
 | `src/cli/`, `src/lsp/` | command-line and language-server entry points |
 | `stdlib/`, `runtime/` | public GTI library source, private capabilities, and narrow host runtime |
+| `packages/` | optional native-library bindings, pinned source preparation and package consumers |
 | `tree-sitter-gti/`, `queries/gti/` | parser and Neovim structural queries |
 | `tests/`, `examples/` | verification and user programs |
 | `docs/` | compiler architecture, language specification, decisions, plans, and agent routing |
@@ -404,9 +529,8 @@ inputs, not promises that a feature has shipped.
 
 The current engineering direction is maintained in the
 [`systems-readiness roadmap`](docs/plans/roadmap-to-1.0.md). The
-[Wiki roadmap](https://github.com/LukeHHA/gti/wiki/Current-Limitations-and-Roadmap)
-provides a user-facing summary of released limitations and may be updated on a
-different cadence.
+[language restriction ledger](docs/plans/language-alignment.md) records current
+limitations separately from that outcome roadmap.
 
 Development now prioritizes coherent user-facing systems capabilities over
 expanding restriction machinery in isolation. The `1.0` label is a soft,
@@ -417,8 +541,7 @@ ownership, safety, semantic-authority, and backend-independence work remains
 the foundation for those outcomes.
 
 The project began as a personal compiler-learning experiment and was extended
-substantially with Codex. The longer context is preserved in
-[Project Background](https://github.com/LukeHHA/gti/wiki/Project-Background).
+substantially with Codex.
 
 ## License
 

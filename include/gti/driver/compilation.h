@@ -8,6 +8,7 @@
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 #include "gti/program_request.h"
+#include "gti/progress.h"
 #include "gti/source_graph.h"
 #include "gti/standard_library.h"
 #include "gti/target.h"
@@ -55,25 +56,58 @@ struct OptimizationOutputRequest {
   }
 };
 
+// Consumer-owned diagnostic presentation policy. Package identities come from
+// the resolved workspace, never from directory names or a dependency's profile.
+// Unowned, selected-package, standard-library and native diagnostics remain
+// visible. The compiler still analyzes every package under unchanged semantics.
+class PackageWarningPolicy final {
+public:
+  PackageWarningPolicy() = default;
+  PackageWarningPolicy(bool dependencyWarnings,
+                       std::string selectedPackageIdentity,
+                       std::vector<std::string> dependencyPackageIdentities);
+
+  [[nodiscard]] bool dependencyWarnings() const;
+  [[nodiscard]] const std::string &selectedPackage() const;
+  [[nodiscard]] const std::vector<std::string> &dependencyPackages() const;
+  [[nodiscard]] bool suppresses(const Diagnostic &diagnostic,
+                                const SourceGraph &sources) const;
+
+private:
+  bool emitDependencyWarnings = true;
+  std::string selectedIdentity;
+  std::vector<std::string> dependencyIdentities;
+};
+
 class CompilationRequest final {
 public:
-  CompilationRequest(std::filesystem::path entry,
-                     StandardLibraryLayout standardLibrary, TargetInfo target,
-                     OptimizationLevel optimization, CppStandard cppStandard,
-                     std::vector<PackageSourceRoot> packageSourceRoots = {},
-                     ConfigurationFlags configurationFlags = {},
-                     OptimizationOutputRequest optimizationOutputs = {},
-                     ProgramRequest program = {});
+  CompilationRequest(
+      std::filesystem::path entry, StandardLibraryLayout standardLibrary,
+      TargetInfo target, OptimizationLevel optimization,
+      CppStandard cppStandard,
+      std::vector<PackageSourceRoot> packageSourceRoots = {},
+      ConfigurationFlags configurationFlags = {},
+      OptimizationOutputRequest optimizationOutputs = {},
+      WarningPolicy warningPolicy = {}, bool debugInfo = false,
+      PackageWarningPolicy packageWarnings = {},
+      RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
+      ProgramRequest program = {});
 
   [[nodiscard]] const std::filesystem::path &entry() const;
   [[nodiscard]] const StandardLibraryLayout &standardLibrary() const;
   [[nodiscard]] const TargetInfo &target() const;
   [[nodiscard]] OptimizationLevel optimization() const;
   [[nodiscard]] CppStandard cppStandard() const;
+  [[nodiscard]] bool debugInfo() const;
+  [[nodiscard]] RawPointerAuditMode rawPointerAudit() const;
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
   [[nodiscard]] const OptimizationOutputRequest &optimizationOutputs() const;
   [[nodiscard]] const ProgramRequest &program() const;
+  [[nodiscard]] const WarningPolicy &warnings() const;
+  [[nodiscard]] const PackageWarningPolicy &packageWarnings() const;
+  [[nodiscard]] bool requiresEntryPoint() const;
+  [[nodiscard]] CompilationRequest forExecutable() const;
 
 private:
   std::filesystem::path entryPath;
@@ -85,6 +119,11 @@ private:
   ConfigurationFlags configuredFlags;
   OptimizationOutputRequest requestedOptimizationOutputs;
   ProgramRequest requestedProgram;
+  WarningPolicy warningPolicy;
+  PackageWarningPolicy packageWarningPolicy;
+  bool entryPointRequired = false;
+  bool sourceDebugInfo = false;
+  RawPointerAuditMode rawPointerAuditMode = RawPointerAuditMode::Off;
 };
 
 enum class CompilationStatus {
@@ -116,6 +155,10 @@ struct CompilationResult {
   std::optional<std::string> preOptimizationMir;
   std::optional<std::string> postOptimizationMir;
   std::optional<OptimizationReport> optimizationReport;
+  // Developer evidence, separate from the backend-neutral user diagnostic.
+  // The CLI preserves this text in a log; library callers may inspect it
+  // without depending on the selected backend's spelling in a diagnostic.
+  std::optional<std::string> backendFailureDetails;
 
   [[nodiscard]] bool succeeded() const {
     return status == CompilationStatus::Success && artifact.has_value();
@@ -137,28 +180,38 @@ struct CheckResult {
   }
 };
 
-[[nodiscard]] CheckResult checkCompilation(const CompilationRequest &request);
+[[nodiscard]] CheckResult
+checkCompilation(const CompilationRequest &request,
+                 ProgressObserver *progress = nullptr);
 
 [[nodiscard]] CompilationInputs
-loadCompilationInputs(const CompilationRequest &request);
+loadCompilationInputs(const CompilationRequest &request,
+                      ProgressObserver *progress = nullptr);
 
 // Run the canonical whole-program pipeline with a caller-provided backend.
 // Backend exceptions are translated into structured compilation failures at
 // this driver boundary rather than escaping into individual CLI/library
 // callers.
 [[nodiscard]] CompilationResult
-compileWithBackend(const CompilationRequest &request, Backend &backend);
-
-[[nodiscard]] CompilationResult compileToCpp(const CompilationRequest &request);
-
-[[nodiscard]] CompilationResult compileToCpp(const CompilationRequest &request,
-                                             CompilationInputs inputs);
+compileWithBackend(const CompilationRequest &request, Backend &backend,
+                   ProgressObserver *progress = nullptr);
 
 [[nodiscard]] CompilationResult
-compileToNativeHeader(const CompilationRequest &request);
+compileToCpp(const CompilationRequest &request,
+             ProgressObserver *progress = nullptr);
+
+[[nodiscard]] CompilationResult
+compileToCpp(const CompilationRequest &request, CompilationInputs inputs,
+             ProgressObserver *progress = nullptr);
+
+[[nodiscard]] CompilationResult
+compileToNativeHeader(const CompilationRequest &request,
+                      ProgressObserver *progress = nullptr);
 
 // Serializes the verified optimized MIR snapshot that executable backends
 // consume, in the deterministic versioned text format owned by `MirPrinter`.
-[[nodiscard]] CompilationResult compileToMir(const CompilationRequest &request);
+[[nodiscard]] CompilationResult
+compileToMir(const CompilationRequest &request,
+             ProgressObserver *progress = nullptr);
 
 } // namespace lang::driver

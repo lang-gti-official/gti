@@ -38,7 +38,9 @@ std::string typeRefSpelling(const TypeRef &type) {
   if (type.genericValueExpression) {
     return arrayExtentSpelling(*type.genericValueExpression);
   }
-  std::string result = type.pointeeConst ? "const " : "";
+  std::string result =
+      !type.pointers.empty() && type.pointers.front().pointeeConst ? "const "
+                                                                   : "";
   result += pathSpelling(type.name);
   if (!type.arguments.empty()) {
     result += '<';
@@ -50,10 +52,10 @@ std::string typeRefSpelling(const TypeRef &type) {
     }
     result += '>';
   }
-  if (type.pointer) {
-    result += '*';
-  }
-  if (type.outerPointer) {
+  for (std::size_t index = 0; index < type.pointers.size(); ++index) {
+    if (index != 0 && type.pointers[index].pointeeConst) {
+      result += " const";
+    }
     result += '*';
   }
   for (const ArrayExtentExprPtr &extent : type.arrayExtents) {

@@ -107,6 +107,10 @@ std::string_view sourceDependencyKindName(SourceDependencyKind kind) {
     return "standard-library";
   case SourceDependencyKind::Package:
     return "package";
+  case SourceDependencyKind::Import:
+    return "import";
+  case SourceDependencyKind::ExportImport:
+    return "export-import";
   }
   return "include";
 }
@@ -124,6 +128,12 @@ parseSourceDependencyKindName(std::string_view name) {
   }
   if (name == "package") {
     return SourceDependencyKind::Package;
+  }
+  if (name == "import") {
+    return SourceDependencyKind::Import;
+  }
+  if (name == "export-import") {
+    return SourceDependencyKind::ExportImport;
   }
   return std::nullopt;
 }
@@ -786,7 +796,10 @@ void compareNativeCommand(std::vector<BuildProvenanceDifference> &differences,
 std::string serializeBuildProvenanceJson(const BuildProvenance &provenance) {
   std::ostringstream stream;
   stream << "{\n  \"schema\": " << provenance.schema
-         << ",\n  \"producer\": {\n    \"executable\": ";
+         << ",\n  \"debug_info\": " << (provenance.debugInfo ? "true" : "false")
+         << ",\n  \"raw_pointer_audit\": ";
+  writeJsonString(stream, rawPointerAuditModeName(provenance.rawPointerAudit));
+  stream << ",\n  \"producer\": {\n    \"executable\": ";
   writeBuildFileJson(stream, provenance.producerExecutable);
   stream << ",\n    \"compiler_build\": {\"state\":";
   writeJsonString(stream,
@@ -931,6 +944,23 @@ parseBuildProvenanceJson(std::string_view text, std::string &errorMessage) {
     return std::nullopt;
   }
   provenance.schema = currentBuildProvenanceSchema;
+  if (document->member("raw_pointer_audit") != nullptr) {
+    std::string mode;
+    if (!requireString(*document, "raw_pointer_audit", "report", mode,
+                       errorMessage))
+      return std::nullopt;
+    const auto parsed = parseRawPointerAuditMode(mode);
+    if (!parsed) {
+      errorMessage = "report.raw_pointer_audit must be off, warn, or strict";
+      return std::nullopt;
+    }
+    provenance.rawPointerAudit = *parsed;
+  }
+  if (document->member("debug_info") != nullptr &&
+      !requireBoolean(*document, "debug_info", "report", provenance.debugInfo,
+                      errorMessage)) {
+    return std::nullopt;
+  }
 
   const JsonValue *producer = nullptr;
   if (!requireMember(*document, "producer", JsonValue::Kind::Object, "report",
@@ -1179,7 +1209,13 @@ compareBuildProvenance(const BuildProvenance &recorded,
   std::vector<BuildProvenanceDifference> differences;
   compareValue(differences, "report", "schema", std::to_string(recorded.schema),
                std::to_string(observed.schema));
+  compareValue(differences, "build policy", "debug info",
+               recorded.debugInfo ? "true" : "false",
+               observed.debugInfo ? "true" : "false");
   compareProject(differences, recorded.project, observed.project);
+  compareValue(differences, "build policy", "raw pointer audit",
+               std::string(rawPointerAuditModeName(recorded.rawPointerAudit)),
+               std::string(rawPointerAuditModeName(observed.rawPointerAudit)));
   compareFile(differences, "producer executable", recorded.producerExecutable,
               observed.producerExecutable);
   compareValue(

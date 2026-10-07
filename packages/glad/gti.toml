@@ -1,0 +1,13 @@
+manifest-version = 1
+
+[package]
+name = "gti-glad"
+version = "0.1.0"
+
+[package.native]
+include-dirs = ["native", "native/generated/include"]
+c-sources = ["native/generated/src/gl.c", "native/adapter.c"]
+
+[[package.native.platforms]]
+os = "linux"
+libraries = ["dl"]

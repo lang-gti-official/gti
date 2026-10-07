@@ -1,0 +1,30 @@
+#include <std/string>
+#include <std/vector>
+
+class Option {
+  int value;
+public:
+  Option(int value) : value(value) { std::println(value); }
+  Option(Option& other) = default;
+  Option(Option&& other) = default;
+};
+
+[[discardable]] Option make_option(int divisor) { return Option(12 / divisor); }
+
+class App {
+public:
+  ~App() { std::println(9); }
+  [[discardable]] Option add_flag(int divisor) mut { return make_option(divisor); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut App app{};
+  for (mut int index = 0; index < 2; index++) {
+    int divisor = argc == 2 && index == 1 ? 0 : index + 1;
+    if (index == 0) { [[discard]] app.add_flag(divisor); }
+    else { app.add_flag(divisor); }
+  }
+  make_option(argc == 3 ? 0 : 3);
+  std::println(8);
+  return 0;
+}

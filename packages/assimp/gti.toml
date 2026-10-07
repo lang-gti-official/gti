@@ -1,0 +1,16 @@
+manifest-version = 1
+
+[package]
+name = "gti-assimp"
+version = "0.1.0"
+
+[package.build-script]
+source = "build.gti"
+inputs = ["vendor/assimp", "vendor/zlib"]
+
+[dependencies]
+zlib = { path = "../zlib" }
+
+[package.native]
+include-dirs = ["native", "vendor/assimp/include"]
+c-sources = ["native/adapter.c"]

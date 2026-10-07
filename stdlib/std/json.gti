@@ -1,0 +1,1681 @@
+#include <std/string>
+#include <std/vector>
+
+// A strict, owned JSON document model.  The implementation is ordinary GTI:
+// no public JSON name has compiler recognition and parsed values never borrow
+// the source buffer.
+namespace std {
+namespace json {
+
+enum class kind {
+  null_value,
+  boolean,
+  number,
+  string,
+  array,
+  object,
+};
+
+enum class errc {
+  unexpected_end,
+  unexpected_token,
+  trailing_characters,
+  invalid_number,
+  invalid_escape,
+  invalid_unicode,
+  duplicate_key,
+  nesting_limit,
+  document_too_large,
+  string_too_large,
+  node_limit,
+  missing_key,
+  type_mismatch,
+  number_out_of_range,
+};
+
+class error {
+  errc error_code;
+  bool located;
+  size_t source_offset;
+  size_t source_line;
+  size_t source_column;
+  mut std::string value_path;
+
+public:
+  error(errc code)
+      : error_code(code), located(false), source_offset(0), source_line(0),
+        source_column(0), value_path(std::string("")) {}
+
+  error(errc code, size_t offset, size_t line, size_t column,
+        std::string path)
+      : error_code(code), located(true), source_offset(offset),
+        source_line(line), source_column(column),
+        value_path(std::move(path)) {}
+
+  error(errc code, bool has_location, size_t offset, size_t line,
+        size_t column, std::string path)
+      : error_code(code), located(has_location), source_offset(offset),
+        source_line(line), source_column(column),
+        value_path(std::move(path)) {}
+
+  error(error& other) = delete;
+  error(error&& other) = default;
+
+  errc code() {
+    return this.error_code;
+  }
+
+  bool has_source_location() {
+    return this.located;
+  }
+
+  size_t byte_offset() {
+    return this.source_offset;
+  }
+
+  size_t line() {
+    return this.source_line;
+  }
+
+  size_t column() {
+    return this.source_column;
+  }
+
+  std::string& path() {
+    return this.value_path;
+  }
+
+  void prepend_path(string_view prefix) mut {
+    mut std::string result = std::string(prefix);
+    result.append(this.value_path.view());
+    this.value_path.swap(result);
+  }
+
+  string_view description() {
+    switch (this.error_code) {
+    case errc::unexpected_end:
+      return "unexpected end of JSON input";
+    case errc::unexpected_token:
+      return "unexpected JSON token";
+    case errc::trailing_characters:
+      return "characters follow the JSON value";
+    case errc::invalid_number:
+      return "invalid JSON number";
+    case errc::invalid_escape:
+      return "invalid JSON string escape";
+    case errc::invalid_unicode:
+      return "invalid Unicode in JSON string";
+    case errc::duplicate_key:
+      return "duplicate JSON object key";
+    case errc::nesting_limit:
+      return "JSON nesting limit exceeded";
+    case errc::document_too_large:
+      return "JSON document is too large";
+    case errc::string_too_large:
+      return "JSON string is too large";
+    case errc::node_limit:
+      return "JSON node limit exceeded";
+    case errc::missing_key:
+      return "JSON object key is missing";
+    case errc::type_mismatch:
+      return "JSON value has the wrong kind";
+    case errc::number_out_of_range:
+      return "JSON number is outside the requested range";
+    }
+    return "JSON error";
+  }
+
+};
+
+class parse_options {
+  mut size_t maximum_depth = 128;
+  mut size_t maximum_nodes = 1000000;
+  mut size_t maximum_string_bytes = 16777216;
+  mut size_t maximum_document_bytes = 67108864;
+
+public:
+  parse_options() {}
+
+  void set_max_depth(size_t maximum) mut {
+    this.maximum_depth = maximum;
+  }
+
+  void set_max_nodes(size_t maximum) mut {
+    this.maximum_nodes = maximum;
+  }
+
+  void set_max_string_bytes(size_t maximum) mut {
+    this.maximum_string_bytes = maximum;
+  }
+
+  void set_max_document_bytes(size_t maximum) mut {
+    this.maximum_document_bytes = maximum;
+  }
+
+  size_t max_depth() {
+    return this.maximum_depth;
+  }
+
+  size_t max_nodes() {
+    return this.maximum_nodes;
+  }
+
+  size_t max_string_bytes() {
+    return this.maximum_string_bytes;
+  }
+
+  size_t max_document_bytes() {
+    return this.maximum_document_bytes;
+  }
+};
+
+namespace detail {
+bool is_digit(char value) {
+  uint8_t code = uint8_t(value);
+  return code >= uint8_t(48) && code <= uint8_t(57);
+}
+
+int32_t hex_digit(char value) {
+  uint8_t code = uint8_t(value);
+  if (code >= uint8_t(48) && code <= uint8_t(57)) {
+    return int32_t(code - uint8_t(48));
+  }
+  if (code >= uint8_t(97) && code <= uint8_t(102)) {
+    return int32_t(code - uint8_t(97)) + 10;
+  }
+  if (code >= uint8_t(65) && code <= uint8_t(70)) {
+    return int32_t(code - uint8_t(65)) + 10;
+  }
+  return -1;
+}
+
+bool continuation(uint8_t value) {
+  return value >= uint8_t(128) && value <= uint8_t(191);
+}
+
+// Returns the byte width of the next valid UTF-8 scalar, or zero when the
+// sequence is malformed, overlong, surrogate-encoded, or out of range.
+size_t utf8_width(string_view input, size_t offset) {
+  uint8_t first = uint8_t(input[offset]);
+  if (first <= uint8_t(127)) {
+    return 1;
+  }
+  if (first >= uint8_t(194) && first <= uint8_t(223)) {
+    if (offset + 1 >= input.size()) {
+      return 0;
+    }
+    if (!continuation(uint8_t(input[offset + 1]))) {
+      return 0;
+    }
+    return 2;
+  }
+  if (first >= uint8_t(224) && first <= uint8_t(239)) {
+    if (offset + 2 >= input.size()) {
+      return 0;
+    }
+    uint8_t second = uint8_t(input[offset + 1]);
+    uint8_t third = uint8_t(input[offset + 2]);
+    if (!continuation(second) || !continuation(third)) {
+      return 0;
+    }
+    if (first == uint8_t(224) && second < uint8_t(160)) {
+      return 0;
+    }
+    if (first == uint8_t(237) && second > uint8_t(159)) {
+      return 0;
+    }
+    return 3;
+  }
+  if (first >= uint8_t(240) && first <= uint8_t(244)) {
+    if (offset + 3 >= input.size()) {
+      return 0;
+    }
+    uint8_t second = uint8_t(input[offset + 1]);
+    uint8_t third = uint8_t(input[offset + 2]);
+    uint8_t fourth = uint8_t(input[offset + 3]);
+    if (!continuation(second) || !continuation(third) ||
+        !continuation(fourth)) {
+      return 0;
+    }
+    if (first == uint8_t(240) && second < uint8_t(144)) {
+      return 0;
+    }
+    if (first == uint8_t(244) && second > uint8_t(143)) {
+      return 0;
+    }
+    return 4;
+  }
+  return 0;
+}
+
+bool valid_utf8(string_view input) {
+  mut size_t offset = 0;
+  while (offset < input.size()) {
+    size_t width = utf8_width(input, offset);
+    if (width == 0) {
+      return false;
+    }
+    offset = offset + width;
+  }
+  return true;
+}
+
+bool valid_number_text(string_view input) {
+  if (input.empty()) {
+    return false;
+  }
+  mut size_t offset = 0;
+  if (input[offset] == '-') {
+    offset++;
+    if (offset == input.size()) {
+      return false;
+    }
+  }
+  if (input[offset] == '0') {
+    offset++;
+    if (offset < input.size() && is_digit(input[offset])) {
+      return false;
+    }
+  } else {
+    uint8_t first_digit = uint8_t(input[offset]);
+    if (first_digit < uint8_t(49) || first_digit > uint8_t(57)) {
+      return false;
+    }
+    while (offset < input.size() && is_digit(input[offset])) {
+      offset++;
+    }
+  }
+  if (offset < input.size() && input[offset] == '.') {
+    offset++;
+    if (offset == input.size() || !is_digit(input[offset])) {
+      return false;
+    }
+    while (offset < input.size() && is_digit(input[offset])) {
+      offset++;
+    }
+  }
+  if (offset < input.size() &&
+      (input[offset] == 'e' || input[offset] == 'E')) {
+    offset++;
+    if (offset < input.size() &&
+        (input[offset] == '+' || input[offset] == '-')) {
+      offset++;
+    }
+    if (offset == input.size() || !is_digit(input[offset])) {
+      return false;
+    }
+    while (offset < input.size() && is_digit(input[offset])) {
+      offset++;
+    }
+  }
+  return offset == input.size();
+}
+
+std::string pointer_for_key(string_view key) {
+  mut std::string result = std::string("/");
+  for (mut size_t index = 0; index < key.size(); index++) {
+    if (key[index] == '~') {
+      result.append("~0");
+    } else if (key[index] == '/') {
+      result.append("~1");
+    } else {
+      result.push_back(key[index]);
+    }
+  }
+  return std::move(result);
+}
+
+std::string pointer_for_index(size_t index) {
+  mut std::string result = std::string("/");
+  mut std::string index_text = std::to_string(index);
+  result.append(index_text.view());
+  return std::move(result);
+}
+}
+
+namespace detail {
+struct object_data {
+  mut std::vector<std::string> names{};
+  mut std::vector<value> values{};
+};
+
+enum class value_data {
+  null_value,
+  boolean(bool input),
+  number(std::string text),
+  string(std::string text),
+  array(std::vector<value> items),
+  object(object_data members),
+};
+}
+
+class value {
+  mut detail::value_data data;
+
+  value(detail::value_data input) : data(std::move(input)) {}
+
+  detail::value_data replace_data(detail::value_data replacement) mut {
+    detail::value_data previous = std::move(this.data);
+    this.data = std::move(replacement);
+    return std::move(previous);
+  }
+
+  std::string& scalar_text() {
+    while (true) {
+      switch (this.data) {
+        case detail::value_data::number(auto& text): return text;
+        case detail::value_data::string(auto& text): return text;
+        default: gti_internal::index_bounds_check(size_t(0), size_t(0)); break;
+      }
+    }
+  }
+
+  std::vector<value>& array_values() {
+    while (true) {
+      switch (this.data) {
+        case detail::value_data::array(auto& items): return items;
+        default: gti_internal::index_bounds_check(size_t(0), size_t(0)); break;
+      }
+    }
+  }
+
+  mut std::vector<value>& array_values() mut {
+    while (true) {
+      switch (this.data) {
+        case detail::value_data::array(mut auto& items): return items;
+        default: gti_internal::index_bounds_check(size_t(0), size_t(0)); break;
+      }
+    }
+  }
+
+  detail::object_data& object_data() {
+    while (true) {
+      switch (this.data) {
+        case detail::value_data::object(auto& members): return members;
+        default: gti_internal::index_bounds_check(size_t(0), size_t(0)); break;
+      }
+    }
+  }
+
+  mut detail::object_data& object_data() mut {
+    while (true) {
+      switch (this.data) {
+        case detail::value_data::object(mut auto& members): return members;
+        default: gti_internal::index_bounds_check(size_t(0), size_t(0)); break;
+      }
+    }
+  }
+
+  size_t find_key(string_view key) {
+    for (mut size_t index = 0; index < this.object_data().names.size(); index++) {
+      if (this.object_data().names[index] == key) {
+        return index;
+      }
+    }
+    return this.object_data().names.size();
+  }
+
+public:
+  value(value& other) = delete;
+  value(value&& other) = default;
+
+  static value null() {
+    return value(detail::value_data::null_value);
+  }
+
+  static value boolean(bool input) {
+    return value(detail::value_data::boolean(input));
+  }
+
+  static expected<value, error> string(string_view input) {
+    if (!detail::valid_utf8(input)) {
+      return unexpected(error(errc::invalid_unicode));
+    }
+    return value(detail::value_data::string(std::string(input)));
+  }
+
+  static expected<value, error> number_text(string_view input) {
+    if (!detail::valid_number_text(input)) {
+      return unexpected(error(errc::invalid_number));
+    }
+    return value(detail::value_data::number(std::string(input)));
+  }
+
+  static value integer(int64_t input) {
+    return value(detail::value_data::number(std::to_string(input)));
+  }
+
+  static value unsigned_integer(uint64_t input) {
+    return value(detail::value_data::number(std::to_string(input)));
+  }
+
+  static value array() {
+    return value(detail::value_data::array(std::vector<value>()));
+  }
+
+  static value object() {
+    return value(detail::value_data::object(detail::object_data()));
+  }
+
+  kind type() {
+    switch (this.data) {
+      case detail::value_data::null_value: return kind::null_value;
+      case detail::value_data::boolean: return kind::boolean;
+      case detail::value_data::number: return kind::number;
+      case detail::value_data::string: return kind::string;
+      case detail::value_data::array: return kind::array;
+      case detail::value_data::object: return kind::object;
+    }
+  }
+
+  bool is_null() {
+    return this.type() == kind::null_value;
+  }
+
+  bool is_boolean() {
+    return this.type() == kind::boolean;
+  }
+
+  bool is_number() {
+    return this.type() == kind::number;
+  }
+
+  bool is_string() {
+    return this.type() == kind::string;
+  }
+
+  bool is_array() {
+    return this.type() == kind::array;
+  }
+
+  bool is_object() {
+    return this.type() == kind::object;
+  }
+
+  expected<bool, error> as_boolean() {
+    if (!this.is_boolean()) {
+      return unexpected(error(errc::type_mismatch));
+    }
+    switch (this.data) {
+      case detail::value_data::boolean(input): return input;
+      default: return unexpected(error(errc::type_mismatch));
+    }
+  }
+
+  expected<std::string, error> as_string() {
+    if (!this.is_string()) {
+      return unexpected(error(errc::type_mismatch));
+    }
+    return this.scalar_text().clone();
+  }
+
+  expected<std::string, error> as_number_text() {
+    if (!this.is_number()) {
+      return unexpected(error(errc::type_mismatch));
+    }
+    return this.scalar_text().clone();
+  }
+
+  expected<uint64_t, error> as_uint64() {
+    if (!this.is_number()) {
+      return unexpected(error(errc::type_mismatch));
+    }
+    if (this.scalar_text().empty() || this.scalar_text()[0] == '-') {
+      return unexpected(error(errc::number_out_of_range));
+    }
+
+    mut uint64_t result = uint64_t(0);
+    for (mut size_t index = 0; index < this.scalar_text().size(); index++) {
+      uint8_t code = uint8_t(this.scalar_text()[index]);
+      if (code < uint8_t(48) || code > uint8_t(57)) {
+        return unexpected(error(errc::number_out_of_range));
+      }
+      uint64_t digit = uint64_t(code - uint8_t(48));
+      if (result >
+          (uint64_t(18446744073709551615) - digit) / uint64_t(10)) {
+        return unexpected(error(errc::number_out_of_range));
+      }
+      result = result * uint64_t(10) + digit;
+    }
+    return result;
+  }
+
+  expected<int64_t, error> as_int64() {
+    if (!this.is_number()) {
+      return unexpected(error(errc::type_mismatch));
+    }
+    if (this.scalar_text().empty()) {
+      return unexpected(error(errc::number_out_of_range));
+    }
+
+    mut bool negative = false;
+    mut size_t offset = 0;
+    if (this.scalar_text()[0] == '-') {
+      negative = true;
+      offset = 1;
+    }
+    if (offset == this.scalar_text().size()) {
+      return unexpected(error(errc::number_out_of_range));
+    }
+
+    mut uint64_t magnitude = uint64_t(0);
+    mut uint64_t limit = uint64_t(9223372036854775807);
+    if (negative) {
+      limit = uint64_t(9223372036854775808);
+    }
+    while (offset < this.scalar_text().size()) {
+      uint8_t code = uint8_t(this.scalar_text()[offset]);
+      if (code < uint8_t(48) || code > uint8_t(57)) {
+        return unexpected(error(errc::number_out_of_range));
+      }
+      uint64_t digit = uint64_t(code - uint8_t(48));
+      if (magnitude > (limit - digit) / uint64_t(10)) {
+        return unexpected(error(errc::number_out_of_range));
+      }
+      magnitude = magnitude * uint64_t(10) + digit;
+      offset++;
+    }
+
+    if (!negative) {
+      return int64_t(magnitude);
+    }
+    if (magnitude == uint64_t(9223372036854775808)) {
+      return int64_t(-9223372036854775807 - 1);
+    }
+    return -int64_t(magnitude);
+  }
+
+  expected<double, error> as_double() {
+    if (!this.is_number()) {
+      return unexpected(error(errc::type_mismatch));
+    }
+
+    mut size_t offset = 0;
+    mut bool negative = false;
+    if (this.scalar_text()[offset] == '-') {
+      negative = true;
+      offset++;
+    }
+
+    mut double result = 0.0d;
+    mut int32_t decimal_exponent = 0;
+    mut int32_t significant_digits = 0;
+    mut bool significant = false;
+    while (offset < this.scalar_text().size() &&
+           detail::is_digit(this.scalar_text()[offset])) {
+      uint8_t digit = uint8_t(uint8_t(this.scalar_text()[offset]) - uint8_t(48));
+      if (digit != uint8_t(0)) {
+        significant = true;
+      }
+      if (significant) {
+        if (significant_digits < 18) {
+          result = result * 10.0d + double(digit);
+          significant_digits++;
+        } else if (decimal_exponent < 1000) {
+          decimal_exponent++;
+        }
+      }
+      offset++;
+    }
+
+    if (offset < this.scalar_text().size() && this.scalar_text()[offset] == '.') {
+      offset++;
+      while (offset < this.scalar_text().size() &&
+             detail::is_digit(this.scalar_text()[offset])) {
+        uint8_t digit =
+            uint8_t(uint8_t(this.scalar_text()[offset]) - uint8_t(48));
+        if (!significant && digit == uint8_t(0)) {
+          if (decimal_exponent > -1000) {
+            decimal_exponent--;
+          }
+        } else {
+          significant = true;
+          if (significant_digits < 18) {
+            result = result * 10.0d + double(digit);
+            significant_digits++;
+            if (decimal_exponent > -1000) {
+              decimal_exponent--;
+            }
+          }
+        }
+        offset++;
+      }
+    }
+
+    mut bool exponent_negative = false;
+    mut int32_t exponent = 0;
+    if (offset < this.scalar_text().size() &&
+        (this.scalar_text()[offset] == 'e' ||
+         this.scalar_text()[offset] == 'E')) {
+      offset++;
+      if (this.scalar_text()[offset] == '+' || this.scalar_text()[offset] == '-') {
+        exponent_negative = this.scalar_text()[offset] == '-';
+        offset++;
+      }
+      while (offset < this.scalar_text().size()) {
+        uint8_t digit =
+            uint8_t(uint8_t(this.scalar_text()[offset]) - uint8_t(48));
+        if (exponent < 1000) {
+          exponent = exponent * 10 + int32_t(digit);
+          if (exponent > 1000) {
+            exponent = 1000;
+          }
+        }
+        offset++;
+      }
+    }
+
+    mut int64_t effective_exponent = int64_t(decimal_exponent);
+    if (exponent_negative) {
+      effective_exponent = effective_exponent - int64_t(exponent);
+    } else {
+      effective_exponent = effective_exponent + int64_t(exponent);
+    }
+    if (result == 0.0d) {
+      if (negative) {
+        result = -result;
+      }
+      return result;
+    }
+    if (effective_exponent > int64_t(400)) {
+      return unexpected(error(errc::number_out_of_range));
+    }
+    if (effective_exponent < int64_t(-400)) {
+      result = 0.0d;
+    } else {
+      mut int64_t step = int64_t(0);
+      mut int64_t steps = effective_exponent;
+      if (steps < int64_t(0)) {
+        steps = -steps;
+      }
+      while (step < steps) {
+        if (effective_exponent < int64_t(0)) {
+          result = result / 10.0d;
+        } else {
+          result = result * 10.0d;
+        }
+        step++;
+      }
+    }
+    if (result != result || result - result != 0.0d) {
+      return unexpected(error(errc::number_out_of_range));
+    }
+    if (negative) {
+      result = -result;
+    }
+    return result;
+  }
+
+  bool contains(string_view key) {
+    if (!this.is_object()) {
+      return false;
+    }
+    return this.find_key(key) != this.object_data().names.size();
+  }
+
+  size_t size() {
+    if (this.is_array()) {
+      return this.array_values().size();
+    }
+    if (this.is_object()) {
+      return this.object_data().values.size();
+    }
+    return 0;
+  }
+
+  expected<value&, error> get(string_view key) {
+    if (!this.is_object()) {
+      return unexpected(error(errc::type_mismatch));
+    }
+    size_t index = this.find_key(key);
+    if (index == this.object_data().names.size()) {
+      mut std::string path = detail::pointer_for_key(key);
+      mut error failure = error(errc::missing_key, false, size_t(0),
+                                size_t(0), size_t(0), std::move(path));
+      return unexpected(std::move(failure));
+    }
+    return this.object_data().values[index];
+  }
+
+  expected<std::string, error> get_string(string_view key) {
+    if (!this.is_object()) {
+      return unexpected(error(errc::type_mismatch));
+    }
+    size_t index = this.find_key(key);
+    if (index == this.object_data().names.size()) {
+      mut std::string path = detail::pointer_for_key(key);
+      mut error failure = error(errc::missing_key, false, size_t(0),
+                                size_t(0), size_t(0), std::move(path));
+      return unexpected(std::move(failure));
+    }
+    mut expected<std::string, error> converted =
+        this.object_data().values[index].as_string();
+    if (!converted) {
+      errc code = converted.error().code();
+      mut std::string path = detail::pointer_for_key(key);
+      mut error failure = error(code, false, size_t(0), size_t(0),
+                                size_t(0), std::move(path));
+      return unexpected(std::move(failure));
+    }
+    return std::move(converted).value();
+  }
+
+  expected<bool, error> get_boolean(string_view key) {
+    if (!this.is_object()) {
+      return unexpected(error(errc::type_mismatch));
+    }
+    size_t index = this.find_key(key);
+    if (index == this.object_data().names.size()) {
+      mut std::string path = detail::pointer_for_key(key);
+      mut error failure = error(errc::missing_key, false, size_t(0),
+                                size_t(0), size_t(0), std::move(path));
+      return unexpected(std::move(failure));
+    }
+    mut expected<bool, error> converted =
+        this.object_data().values[index].as_boolean();
+    if (!converted) {
+      errc code = converted.error().code();
+      mut std::string path = detail::pointer_for_key(key);
+      mut error failure = error(code, false, size_t(0), size_t(0),
+                                size_t(0), std::move(path));
+      return unexpected(std::move(failure));
+    }
+    return converted.value();
+  }
+
+  expected<int64_t, error> get_int64(string_view key) {
+    if (!this.is_object()) {
+      return unexpected(error(errc::type_mismatch));
+    }
+    size_t index = this.find_key(key);
+    if (index == this.object_data().names.size()) {
+      mut std::string path = detail::pointer_for_key(key);
+      mut error failure = error(errc::missing_key, false, size_t(0),
+                                size_t(0), size_t(0), std::move(path));
+      return unexpected(std::move(failure));
+    }
+    mut expected<int64_t, error> converted =
+        this.object_data().values[index].as_int64();
+    if (!converted) {
+      errc code = converted.error().code();
+      mut std::string path = detail::pointer_for_key(key);
+      mut error failure = error(code, false, size_t(0), size_t(0),
+                                size_t(0), std::move(path));
+      return unexpected(std::move(failure));
+    }
+    return converted.value();
+  }
+
+  expected<uint64_t, error> get_uint64(string_view key) {
+    if (!this.is_object()) {
+      return unexpected(error(errc::type_mismatch));
+    }
+    size_t index = this.find_key(key);
+    if (index == this.object_data().names.size()) {
+      mut std::string path = detail::pointer_for_key(key);
+      mut error failure = error(errc::missing_key, false, size_t(0),
+                                size_t(0), size_t(0), std::move(path));
+      return unexpected(std::move(failure));
+    }
+    mut expected<uint64_t, error> converted =
+        this.object_data().values[index].as_uint64();
+    if (!converted) {
+      errc code = converted.error().code();
+      mut std::string path = detail::pointer_for_key(key);
+      mut error failure = error(code, false, size_t(0), size_t(0),
+                                size_t(0), std::move(path));
+      return unexpected(std::move(failure));
+    }
+    return converted.value();
+  }
+
+  expected<double, error> get_double(string_view key) {
+    if (!this.is_object()) {
+      return unexpected(error(errc::type_mismatch));
+    }
+    size_t index = this.find_key(key);
+    if (index == this.object_data().names.size()) {
+      mut std::string path = detail::pointer_for_key(key);
+      mut error failure = error(errc::missing_key, false, size_t(0),
+                                size_t(0), size_t(0), std::move(path));
+      return unexpected(std::move(failure));
+    }
+    mut expected<double, error> converted =
+        this.object_data().values[index].as_double();
+    if (!converted) {
+      errc code = converted.error().code();
+      mut std::string path = detail::pointer_for_key(key);
+      mut error failure = error(code, false, size_t(0), size_t(0),
+                                size_t(0), std::move(path));
+      return unexpected(std::move(failure));
+    }
+    return converted.value();
+  }
+
+  value& at(string_view key) {
+    if (!this.is_object()) {
+      gti_internal::index_bounds_check(size_t(0), size_t(0));
+    }
+    size_t index = this.find_key(key);
+    gti_internal::index_bounds_check(index, this.object_data().values.size());
+    return this.object_data().values[index];
+  }
+
+  mut value& at(string_view key) mut {
+    if (!this.is_object()) {
+      gti_internal::index_bounds_check(size_t(0), size_t(0));
+    }
+    size_t index = this.find_key(key);
+    gti_internal::index_bounds_check(index, this.object_data().values.size());
+    return this.object_data().values[index];
+  }
+
+  value& at(size_t index) {
+    if (!this.is_array()) {
+      gti_internal::index_bounds_check(size_t(0), size_t(0));
+    }
+    return this.array_values()[index];
+  }
+
+  mut value& at(size_t index) mut {
+    if (!this.is_array()) {
+      gti_internal::index_bounds_check(size_t(0), size_t(0));
+    }
+    return this.array_values()[index];
+  }
+
+  std::vector<value>& elements() {
+    if (!this.is_array()) {
+      gti_internal::index_bounds_check(size_t(0), size_t(0));
+    }
+    return this.array_values();
+  }
+
+  mut std::vector<value>& elements() mut {
+    if (!this.is_array()) {
+      gti_internal::index_bounds_check(size_t(0), size_t(0));
+    }
+    return this.array_values();
+  }
+
+  size_t object_size() {
+    if (!this.is_object()) {
+      return 0;
+    }
+    return this.object_data().names.size();
+  }
+
+  std::string& key_at(size_t index) {
+    if (!this.is_object()) {
+      gti_internal::index_bounds_check(size_t(0), size_t(0));
+    }
+    return this.object_data().names[index];
+  }
+
+  value& value_at(size_t index) {
+    if (!this.is_object()) {
+      gti_internal::index_bounds_check(size_t(0), size_t(0));
+    }
+    return this.object_data().values[index];
+  }
+
+  mut value& value_at(size_t index) mut {
+    if (!this.is_object()) {
+      gti_internal::index_bounds_check(size_t(0), size_t(0));
+    }
+    return this.object_data().values[index];
+  }
+
+  expected<void, error> set(string_view key, mut value input) mut {
+    if (!this.is_object()) {
+      return unexpected(error(errc::type_mismatch));
+    }
+    if (!detail::valid_utf8(key)) {
+      return unexpected(error(errc::invalid_unicode));
+    }
+    size_t index = this.find_key(key);
+    if (index < this.object_data().names.size()) {
+      this.object_data().values[index].swap(input);
+      return;
+    }
+    this.object_data().names.push_back(std::string(key));
+    this.object_data().values.push_back(std::move(input));
+    return;
+  }
+
+  expected<void, error> set(string_view key, string_view input) mut {
+    value created = ?value::string(input);
+    return this.set(key, std::move(created));
+  }
+
+  expected<void, error> set(string_view key, bool input) mut {
+    return this.set(key, value::boolean(input));
+  }
+
+  expected<void, error> set(string_view key, int64_t input) mut {
+    return this.set(key, value::integer(input));
+  }
+
+  expected<void, error> set(string_view key, uint64_t input) mut {
+    return this.set(key, value::unsigned_integer(input));
+  }
+
+  expected<void, error> push(value input) mut {
+    if (!this.is_array()) {
+      return unexpected(error(errc::type_mismatch));
+    }
+    this.array_values().push_back(std::move(input));
+    return;
+  }
+
+  expected<void, error> push(string_view input) mut {
+    value created = ?value::string(input);
+    return this.push(std::move(created));
+  }
+
+  expected<void, error> push(bool input) mut {
+    return this.push(value::boolean(input));
+  }
+
+  expected<void, error> push(int64_t input) mut {
+    return this.push(value::integer(input));
+  }
+
+  expected<void, error> push(uint64_t input) mut {
+    return this.push(value::unsigned_integer(input));
+  }
+
+  void swap(mut value& other) mut {
+    detail::value_data previous = std::move(this.data);
+    this.data = other.replace_data(std::move(previous));
+  }
+
+  value clone() {
+    switch (this.data) {
+      case detail::value_data::null_value: return value::null();
+      case detail::value_data::boolean(input): return value::boolean(input);
+      case detail::value_data::number(auto& text):
+        return value(detail::value_data::number(text.clone()));
+      case detail::value_data::string(auto& text):
+        return value(detail::value_data::string(text.clone()));
+      case detail::value_data::array(auto& items):
+        mut std::vector<value> copied = std::vector<value>();
+        for (mut size_t index = 0; index < items.size(); index++) {
+          copied.push_back(items[index].clone());
+        }
+        return value(detail::value_data::array(std::move(copied)));
+      case detail::value_data::object(auto& members):
+        mut detail::object_data copied{};
+        for (mut size_t index = 0; index < members.names.size(); index++) {
+          copied.names.push_back(members.names[index].clone());
+          copied.values.push_back(members.values[index].clone());
+        }
+        return value(detail::value_data::object(std::move(copied)));
+    }
+  }
+};
+
+namespace detail {
+class parser {
+  string_view source;
+  size_t maximum_depth;
+  size_t maximum_nodes;
+  size_t maximum_string_bytes;
+  size_t maximum_document_bytes;
+  mut size_t offset = 0;
+  mut size_t current_line = 1;
+  mut size_t current_column = 1;
+  mut size_t nodes = 0;
+
+  bool at_end() {
+    return this.offset >= this.source.size();
+  }
+
+  char peek() {
+    return this.source[this.offset];
+  }
+
+  char advance() mut {
+    char current = this.source[this.offset];
+    this.offset++;
+    if (current == '\n') {
+      this.current_line++;
+      this.current_column = 1;
+    } else {
+      this.current_column++;
+    }
+    return current;
+  }
+
+  void skip_whitespace() mut {
+    while (!this.at_end()) {
+      char current = this.peek();
+      if (current != ' ' && current != '\t' && current != '\n' &&
+          current != '\r') {
+        return;
+      }
+      [[discard]] this.advance();
+    }
+  }
+
+  error make_error(errc code, string_view path) {
+    mut std::string owned_path = std::string(path);
+    mut error result = error(code, this.offset, this.current_line,
+                             this.current_column, std::move(owned_path));
+    return std::move(result);
+  }
+
+  bool consume_literal(string_view literal) mut {
+    if (literal.size() > this.source.size() - this.offset) {
+      return false;
+    }
+    for (mut size_t index = 0; index < literal.size(); index++) {
+      if (this.source[this.offset + index] != literal[index]) {
+        return false;
+      }
+    }
+    for (mut size_t index = 0; index < literal.size(); index++) {
+      [[discard]] this.advance();
+    }
+    return true;
+  }
+
+  int32_t read_hex_quad() mut {
+    mut int32_t result = 0;
+    for (mut size_t index = 0; index < 4; index++) {
+      if (this.at_end()) {
+        return -2;
+      }
+      int32_t digit = detail::hex_digit(this.peek());
+      if (digit < 0) {
+        return -1;
+      }
+      result = result * 16 + digit;
+      [[discard]] this.advance();
+    }
+    return result;
+  }
+
+  void append_code_point(mut std::string& output, int32_t point) {
+    if (point <= 127) {
+      output.push_back(char(uint8_t(point)));
+      return;
+    }
+    if (point <= 2047) {
+      output.push_back(char(uint8_t(192 + point / 64)));
+      output.push_back(char(uint8_t(128 + point % 64)));
+      return;
+    }
+    if (point <= 65535) {
+      output.push_back(char(uint8_t(224 + point / 4096)));
+      output.push_back(char(uint8_t(128 + (point / 64) % 64)));
+      output.push_back(char(uint8_t(128 + point % 64)));
+      return;
+    }
+    output.push_back(char(uint8_t(240 + point / 262144)));
+    output.push_back(char(uint8_t(128 + (point / 4096) % 64)));
+    output.push_back(char(uint8_t(128 + (point / 64) % 64)));
+    output.push_back(char(uint8_t(128 + point % 64)));
+  }
+
+  expected<std::string, error> parse_string(string_view path) mut {
+    [[discard]] this.advance();
+    mut std::string output = std::string("");
+
+    while (!this.at_end()) {
+      char current = this.peek();
+      if (current == '"') {
+        [[discard]] this.advance();
+        return std::move(output);
+      }
+      if (uint8_t(current) < uint8_t(32)) {
+        return unexpected(this.make_error(errc::invalid_unicode, path));
+      }
+
+      if (current != '\\') {
+        size_t width = detail::utf8_width(this.source, this.offset);
+        if (width == 0) {
+          return unexpected(this.make_error(errc::invalid_unicode, path));
+        }
+        if (output.size() + width > this.maximum_string_bytes) {
+          return unexpected(this.make_error(errc::string_too_large, path));
+        }
+        for (mut size_t index = 0; index < width; index++) {
+          output.push_back(this.advance());
+        }
+        continue;
+      }
+
+      [[discard]] this.advance();
+      if (this.at_end()) {
+        return unexpected(this.make_error(errc::unexpected_end, path));
+      }
+      char escaped = this.advance();
+      switch (escaped) {
+      case '"':
+        output.push_back('"');
+        break;
+      case '\\':
+        output.push_back('\\');
+        break;
+      case '/':
+        output.push_back('/');
+        break;
+      case 'b':
+        output.push_back(char(uint8_t(8)));
+        break;
+      case 'f':
+        output.push_back(char(uint8_t(12)));
+        break;
+      case 'n':
+        output.push_back('\n');
+        break;
+      case 'r':
+        output.push_back('\r');
+        break;
+      case 't':
+        output.push_back('\t');
+        break;
+      case 'u': {
+        int32_t first = this.read_hex_quad();
+        if (first == -2) {
+          return unexpected(this.make_error(errc::unexpected_end, path));
+        }
+        if (first < 0) {
+          return unexpected(this.make_error(errc::invalid_escape, path));
+        }
+        mut int32_t point = first;
+        if (first >= 55296 && first <= 56319) {
+          if (this.at_end()) {
+            return unexpected(this.make_error(errc::unexpected_end, path));
+          }
+          if (this.peek() != '\\') {
+            return unexpected(this.make_error(errc::invalid_unicode, path));
+          }
+          if (this.source.size() - this.offset < 2) {
+            return unexpected(this.make_error(errc::unexpected_end, path));
+          }
+          if (this.source[this.offset + 1] != 'u') {
+            return unexpected(this.make_error(errc::invalid_unicode, path));
+          }
+          [[discard]] this.advance();
+          [[discard]] this.advance();
+          int32_t second = this.read_hex_quad();
+          if (second == -2) {
+            return unexpected(this.make_error(errc::unexpected_end, path));
+          }
+          if (second < 56320 || second > 57343) {
+            return unexpected(this.make_error(errc::invalid_unicode, path));
+          }
+          point = 65536 + (first - 55296) * 1024 + (second - 56320);
+        } else if (first >= 56320 && first <= 57343) {
+          return unexpected(this.make_error(errc::invalid_unicode, path));
+        }
+        this.append_code_point(output, point);
+        break;
+      }
+      default:
+        return unexpected(this.make_error(errc::invalid_escape, path));
+      }
+
+      if (output.size() > this.maximum_string_bytes) {
+        return unexpected(this.make_error(errc::string_too_large, path));
+      }
+    }
+    return unexpected(this.make_error(errc::unexpected_end, path));
+  }
+
+  expected<value, error> parse_number(string_view path) mut {
+    size_t begin = this.offset;
+    if (this.peek() == '-') {
+      [[discard]] this.advance();
+      if (this.at_end()) {
+        return unexpected(this.make_error(errc::invalid_number, path));
+      }
+    }
+
+    if (this.peek() == '0') {
+      [[discard]] this.advance();
+      if (!this.at_end() && detail::is_digit(this.peek())) {
+        return unexpected(this.make_error(errc::invalid_number, path));
+      }
+    } else {
+      uint8_t first = uint8_t(this.peek());
+      if (first < uint8_t(49) || first > uint8_t(57)) {
+        return unexpected(this.make_error(errc::invalid_number, path));
+      }
+      while (!this.at_end() && detail::is_digit(this.peek())) {
+        [[discard]] this.advance();
+      }
+    }
+
+    if (!this.at_end() && this.peek() == '.') {
+      [[discard]] this.advance();
+      if (this.at_end() || !detail::is_digit(this.peek())) {
+        return unexpected(this.make_error(errc::invalid_number, path));
+      }
+      while (!this.at_end() && detail::is_digit(this.peek())) {
+        [[discard]] this.advance();
+      }
+    }
+
+    if (!this.at_end() && (this.peek() == 'e' || this.peek() == 'E')) {
+      [[discard]] this.advance();
+      if (!this.at_end() && (this.peek() == '+' || this.peek() == '-')) {
+        [[discard]] this.advance();
+      }
+      if (this.at_end() || !detail::is_digit(this.peek())) {
+        return unexpected(this.make_error(errc::invalid_number, path));
+      }
+      while (!this.at_end() && detail::is_digit(this.peek())) {
+        [[discard]] this.advance();
+      }
+    }
+
+    mut std::string text = std::string("");
+    text.reserve(this.offset - begin);
+    for (mut size_t index = begin; index < this.offset; index++) {
+      text.push_back(this.source[index]);
+    }
+    return value::number_text(text.view());
+  }
+
+  std::string child_key_path(string_view parent, string_view key) {
+    mut std::string result = std::string(parent);
+    mut std::string suffix = detail::pointer_for_key(key);
+    result.append(suffix.view());
+    return std::move(result);
+  }
+
+  std::string child_index_path(string_view parent, size_t index) {
+    mut std::string result = std::string(parent);
+    mut std::string suffix = detail::pointer_for_index(index);
+    result.append(suffix.view());
+    return std::move(result);
+  }
+
+  expected<value, error> parse_value(size_t depth, string_view path) mut {
+    if (depth > this.maximum_depth) {
+      return unexpected(this.make_error(errc::nesting_limit, path));
+    }
+    if (this.nodes >= this.maximum_nodes) {
+      return unexpected(this.make_error(errc::node_limit, path));
+    }
+    this.nodes++;
+
+    if (this.at_end()) {
+      return unexpected(this.make_error(errc::unexpected_end, path));
+    }
+    char current = this.peek();
+    if (current == '"') {
+      std::string text = ?this.parse_string(path);
+      return value::string(text.view());
+    }
+    if (current == '-' || detail::is_digit(current)) {
+      return this.parse_number(path);
+    }
+    if (current == 'n') {
+      if (this.source.size() - this.offset < size_t(4)) {
+        return unexpected(this.make_error(errc::unexpected_end, path));
+      }
+      if (!this.consume_literal("null")) {
+        return unexpected(this.make_error(errc::unexpected_token, path));
+      }
+      return value::null();
+    }
+    if (current == 't') {
+      if (this.source.size() - this.offset < size_t(4)) {
+        return unexpected(this.make_error(errc::unexpected_end, path));
+      }
+      if (!this.consume_literal("true")) {
+        return unexpected(this.make_error(errc::unexpected_token, path));
+      }
+      return value::boolean(true);
+    }
+    if (current == 'f') {
+      if (this.source.size() - this.offset < size_t(5)) {
+        return unexpected(this.make_error(errc::unexpected_end, path));
+      }
+      if (!this.consume_literal("false")) {
+        return unexpected(this.make_error(errc::unexpected_token, path));
+      }
+      return value::boolean(false);
+    }
+    if (current == '[') {
+      [[discard]] this.advance();
+      mut value result = value::array();
+      this.skip_whitespace();
+      if (!this.at_end() && this.peek() == ']') {
+        [[discard]] this.advance();
+        return std::move(result);
+      }
+
+      mut size_t index = 0;
+      while (true) {
+        mut std::string child_path = this.child_index_path(path, index);
+        value child = ?this.parse_value(depth + 1, child_path.view());
+        ?result.push(std::move(child));
+        index++;
+        this.skip_whitespace();
+        if (this.at_end()) {
+          return unexpected(this.make_error(errc::unexpected_end, path));
+        }
+        if (this.peek() == ']') {
+          [[discard]] this.advance();
+          return std::move(result);
+        }
+        if (this.peek() != ',') {
+          return unexpected(this.make_error(errc::unexpected_token, path));
+        }
+        [[discard]] this.advance();
+        this.skip_whitespace();
+        if (!this.at_end() && this.peek() == ']') {
+          return unexpected(this.make_error(errc::unexpected_token, path));
+        }
+      }
+    }
+    if (current == '{') {
+      [[discard]] this.advance();
+      mut value result = value::object();
+      this.skip_whitespace();
+      if (!this.at_end() && this.peek() == '}') {
+        [[discard]] this.advance();
+        return std::move(result);
+      }
+
+      while (true) {
+        if (this.at_end()) {
+          return unexpected(this.make_error(errc::unexpected_end, path));
+        }
+        if (this.peek() != '"') {
+          return unexpected(this.make_error(errc::unexpected_token, path));
+        }
+        std::string key = ?this.parse_string(path);
+        mut std::string child_path = this.child_key_path(path, key.view());
+        if (result.contains(key.view())) {
+          return unexpected(
+              this.make_error(errc::duplicate_key, child_path.view()));
+        }
+        this.skip_whitespace();
+        if (this.at_end()) {
+          return unexpected(this.make_error(errc::unexpected_end,
+                                            child_path.view()));
+        }
+        if (this.peek() != ':') {
+          return unexpected(this.make_error(errc::unexpected_token,
+                                            child_path.view()));
+        }
+        [[discard]] this.advance();
+        this.skip_whitespace();
+        value child = ?this.parse_value(depth + 1, child_path.view());
+        ?result.set(key.view(), std::move(child));
+        this.skip_whitespace();
+        if (this.at_end()) {
+          return unexpected(this.make_error(errc::unexpected_end, path));
+        }
+        if (this.peek() == '}') {
+          [[discard]] this.advance();
+          return std::move(result);
+        }
+        if (this.peek() != ',') {
+          return unexpected(this.make_error(errc::unexpected_token, path));
+        }
+        [[discard]] this.advance();
+        this.skip_whitespace();
+        if (!this.at_end() && this.peek() == '}') {
+          return unexpected(this.make_error(errc::unexpected_token, path));
+        }
+      }
+    }
+    return unexpected(this.make_error(errc::unexpected_token, path));
+  }
+
+public:
+  parser(string_view input, parse_options& options)
+      : source(input), maximum_depth(options.max_depth()),
+        maximum_nodes(options.max_nodes()),
+        maximum_string_bytes(options.max_string_bytes()),
+        maximum_document_bytes(options.max_document_bytes()) {}
+
+  expected<value, error> parse_document() mut {
+    mut std::string root_path = std::string("");
+    if (this.source.size() > this.maximum_document_bytes) {
+      return unexpected(
+          this.make_error(errc::document_too_large, root_path.view()));
+    }
+    this.skip_whitespace();
+    value root = ?this.parse_value(size_t(1), root_path.view());
+    this.skip_whitespace();
+    if (!this.at_end()) {
+      return unexpected(
+          this.make_error(errc::trailing_characters, root_path.view()));
+    }
+    return std::move(root);
+  }
+};
+
+char hex_character(uint8_t value) {
+  switch (value) {
+  case uint8_t(0):
+    return '0';
+  case uint8_t(1):
+    return '1';
+  case uint8_t(2):
+    return '2';
+  case uint8_t(3):
+    return '3';
+  case uint8_t(4):
+    return '4';
+  case uint8_t(5):
+    return '5';
+  case uint8_t(6):
+    return '6';
+  case uint8_t(7):
+    return '7';
+  case uint8_t(8):
+    return '8';
+  case uint8_t(9):
+    return '9';
+  case uint8_t(10):
+    return 'a';
+  case uint8_t(11):
+    return 'b';
+  case uint8_t(12):
+    return 'c';
+  case uint8_t(13):
+    return 'd';
+  case uint8_t(14):
+    return 'e';
+  case uint8_t(15):
+    return 'f';
+  }
+  return '0';
+}
+
+void append_indentation(mut std::string& output, uint8_t width,
+                        size_t depth) {
+  size_t count = size_t(width) * depth;
+  for (mut size_t index = 0; index < count; index++) {
+    output.push_back(' ');
+  }
+}
+
+void append_escaped_string(mut std::string& output, string_view input) {
+  output.push_back('"');
+  for (mut size_t index = 0; index < input.size(); index++) {
+    char current = input[index];
+    if (current == '"') {
+      output.append("\\\"");
+    } else if (current == '\\') {
+      output.append("\\\\");
+    } else if (current == '\n') {
+      output.append("\\n");
+    } else if (current == '\r') {
+      output.append("\\r");
+    } else if (current == '\t') {
+      output.append("\\t");
+    } else if (uint8_t(current) == uint8_t(8)) {
+      output.append("\\b");
+    } else if (uint8_t(current) == uint8_t(12)) {
+      output.append("\\f");
+    } else if (uint8_t(current) < uint8_t(32)) {
+      uint8_t code = uint8_t(current);
+      output.append("\\u00");
+      output.push_back(hex_character(uint8_t(code / uint8_t(16))));
+      output.push_back(hex_character(uint8_t(code % uint8_t(16))));
+    } else {
+      output.push_back(current);
+    }
+  }
+  output.push_back('"');
+}
+
+void append_value(mut std::string& output, value& input, bool pretty,
+                  uint8_t indentation, size_t depth) {
+  if (input.is_null()) {
+    output.append("null");
+    return;
+  }
+  if (input.is_boolean()) {
+    mut expected<bool, error> converted = input.as_boolean();
+    if (converted.value()) {
+      output.append("true");
+    } else {
+      output.append("false");
+    }
+    return;
+  }
+  if (input.is_number()) {
+    mut expected<std::string, error> converted = input.as_number_text();
+    mut std::string text = std::move(converted).value();
+    output.append(text.view());
+    return;
+  }
+  if (input.is_string()) {
+    mut expected<std::string, error> converted = input.as_string();
+    mut std::string text = std::move(converted).value();
+    append_escaped_string(output, text.view());
+    return;
+  }
+  if (input.is_array()) {
+    output.push_back('[');
+    size_t count = input.size();
+    if (count > 0 && pretty) {
+      output.push_back('\n');
+    }
+    for (mut size_t index = 0; index < count; index++) {
+      if (pretty) {
+        append_indentation(output, indentation, depth + 1);
+      }
+      append_value(output, input.at(index), pretty, indentation, depth + 1);
+      if (index + 1 < count) {
+        output.push_back(',');
+      }
+      if (pretty) {
+        output.push_back('\n');
+      }
+    }
+    if (count > 0 && pretty) {
+      append_indentation(output, indentation, depth);
+    }
+    output.push_back(']');
+    return;
+  }
+
+  output.push_back('{');
+  size_t count = input.object_size();
+  if (count > 0 && pretty) {
+    output.push_back('\n');
+  }
+  for (mut size_t index = 0; index < count; index++) {
+    if (pretty) {
+      append_indentation(output, indentation, depth + 1);
+    }
+    append_escaped_string(output, input.key_at(index).view());
+    output.push_back(':');
+    if (pretty) {
+      output.push_back(' ');
+    }
+    append_value(output, input.value_at(index), pretty, indentation,
+                 depth + 1);
+    if (index + 1 < count) {
+      output.push_back(',');
+    }
+    if (pretty) {
+      output.push_back('\n');
+    }
+  }
+  if (count > 0 && pretty) {
+    append_indentation(output, indentation, depth);
+  }
+  output.push_back('}');
+}
+}
+
+expected<value, error> parse(string_view source, parse_options& options) {
+  mut detail::parser reader = detail::parser(source, options);
+  return reader.parse_document();
+}
+
+expected<value, error> parse(string_view source) {
+  mut parse_options options = parse_options();
+  return parse(source, options);
+}
+
+std::string stringify(value& input) {
+  mut std::string result = std::string("");
+  detail::append_value(result, input, false, uint8_t(0), size_t(0));
+  return std::move(result);
+}
+
+std::string stringify_pretty(value& input, uint8_t indentation = 2) {
+  mut std::string result = std::string("");
+  detail::append_value(result, input, true, indentation, size_t(0));
+  return std::move(result);
+}
+
+// Applications specialize this class for their own nominal model types.  The
+// empty primary is deliberately explicit: there is no reflection, implicit
+// field mapping, key renaming, or exception-based conversion fallback.
+class codec<T> {
+public:
+  expected<T, error> decode(value& input);
+  expected<value, error> encode(T& input);
+};
+
+expected<T, error> decode<T>(string_view source) {
+  value document = ?parse(source);
+  codec<T> mapping{};
+  return mapping.decode(document);
+}
+
+expected<value, error> encode<T>(T& input) {
+  codec<T> mapping{};
+  return mapping.encode(input);
+}
+
+expected<std::vector<T>, error> decode_array<std::movable T>(
+    string_view source) {
+  value document = ?parse(source);
+  if (!document.is_array()) {
+    return unexpected(error(errc::type_mismatch));
+  }
+
+  mut std::vector<T> result = std::vector<T>();
+  result.reserve(document.size());
+  codec<T> mapping{};
+  for (mut size_t index = 0; index < document.size(); index++) {
+    mut expected<T, error> decoded = mapping.decode(document.at(index));
+    if (!decoded) {
+      mut error failure = std::move(decoded).error();
+      mut std::string prefix = detail::pointer_for_index(index);
+      failure.prepend_path(prefix.view());
+      return unexpected(std::move(failure));
+    }
+    result.push_back(std::move(decoded).value());
+  }
+  return std::move(result);
+}
+
+}
+}

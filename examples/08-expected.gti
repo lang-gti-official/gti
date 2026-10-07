@@ -13,7 +13,23 @@ expected<int, std::string_view> adjusted_score(bool should_fail) {
   return score + 1;
 }
 
+enum class score_error { unavailable };
+
+score_error map_score_error(std::string_view message) {
+  return score_error::unavailable;
+}
+
+// Map a library error explicitly before propagating it as our application error.
+// The mapper runs only on failure; a named result needs std::move(result).
+expected<int, score_error> application_score(bool should_fail) {
+  return ?load_score(should_fail).transform_error(map_score_error);
+}
+
 int main() {
+  auto failure = application_score(true);
+  if (failure.has_value() || failure.error() != score_error::unavailable) {
+    return 1;
+  }
   expected<int, std::string_view> score = adjusted_score(false);
   if (!score) {
     std::println(score.error());

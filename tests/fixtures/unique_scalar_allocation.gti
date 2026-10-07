@@ -1,0 +1,68 @@
+#include <std/memory>
+
+enum class choice { first, second };
+using callback = (int32_t) -> int32_t;
+extern "C" { int32_t gti_test_call_scalar_callback(callback function, int32_t value); }
+int32_t echo(int32_t value) { return value; }
+
+using byte = uint8_t;
+using code_unit = char;
+byte to_byte(char value) { return byte(value); }
+code_unit to_code_unit(uint8_t value) { return char(value); }
+
+bool roundtrip<std::equality_comparable T>(T value) {
+  mut auto owner = std::make_unique<T>(value);
+  if (*owner != value) { return false; }
+  *owner = value;
+  auto moved = std::move(owner);
+  if (*moved != value) { return false; }
+  return true;
+}
+
+bool defaulted<std::equality_comparable T>(T zero) {
+  auto owner = std::make_unique<T>();
+  return *owner == zero;
+}
+
+int main() {
+  if (!roundtrip(int8_t(-8)) || !roundtrip(int16_t(-16)) ||
+      !roundtrip(int32_t(-32)) || !roundtrip(int64_t(-64)) ||
+      !roundtrip(uint8_t(8)) || !roundtrip(uint16_t(16)) ||
+      !roundtrip(uint32_t(32)) || !roundtrip(uint64_t(64)) ||
+      !roundtrip(float(1.5)) || !roundtrip(double(2.5)) ||
+      !roundtrip(true) || !roundtrip('x') || !roundtrip(char(uint8_t(255))) ||
+      !roundtrip(choice::second)) {
+    return 1;
+  }
+  if (!defaulted(int8_t(0)) || !defaulted(int16_t(0)) ||
+      !defaulted(int32_t(0)) || !defaulted(int64_t(0)) ||
+      !defaulted(uint8_t(0)) || !defaulted(uint16_t(0)) ||
+      !defaulted(uint32_t(0)) || !defaulted(uint64_t(0)) ||
+      !defaulted(float(0)) || !defaulted(double(0)) ||
+      !defaulted(false) || !defaulted('\0')) {
+    return 2;
+  }
+  int32_t* address = nullptr;
+  auto pointer = std::make_unique<int32_t*>(address);
+  auto null_pointer = std::make_unique<int32_t*>();
+  auto null_value = std::make_unique<nullptr_t>(nullptr);
+  callback empty_callback = nullptr;
+  mut auto callback_owner = std::make_unique<callback>(empty_callback);
+  // The owner itself is nonempty even when its stored pointer value is null.
+  // References to raw pointers retain GTI's separate rejected-use boundary.
+  if (pointer == nullptr || null_pointer == nullptr || *null_value != nullptr ||
+      callback_owner == nullptr || *callback_owner != nullptr) {
+    return 3;
+  }
+  callback function = echo;
+  *callback_owner = function;
+  callback copied = *callback_owner;
+  unsafe { if (gti_test_call_scalar_callback(copied, 42) != 42) { return 6; } }
+  mut auto reusable = std::make_unique<int32_t>(7);
+  reusable.reset();
+  if (reusable != nullptr) { return 4; }
+  reusable = std::make_unique<int32_t>(9);
+  if (*reusable != 9) { return 5; }
+  if (to_byte(to_code_unit(uint8_t(255))) != uint8_t(255)) { return 7; }
+  return 0;
+}

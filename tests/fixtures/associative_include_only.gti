@@ -1,0 +1,13 @@
+#include <std/map>
+#include <std/unordered_map>
+
+// Concrete signature dependencies must exist even when the generic owner is
+// never instantiated. This is deliberately not a pair/map construction test.
+struct SignatureValue<T> { T value; };
+class UnusedOwner<T> {
+public:
+  SignatureValue<int> result();
+  void accept(SignatureValue<bool> value);
+};
+
+int main() { return 0; }

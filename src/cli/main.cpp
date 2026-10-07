@@ -1,20 +1,30 @@
+#include "build_progress.h"
 #include "gti/bindgen/bindgen.h"
 #include "gti/diagnostic.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/bindgen_import.h"
 #include "gti/driver/build.h"
 #include "gti/driver/build_report.h"
+#include "gti/driver/build_script.h"
 #include "gti/driver/compilation.h"
+#include "gti/driver/dependencies.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"
 #include "gti/driver/project.h"
+#include "gti/driver/registry.h"
 #include "gti/executable_path.h"
 #include "gti/support.h"
 #include "gti/target.h"
 #include "project_presentation.h"
+#include "registry_input.h"
+#include "terminal_style.h"
+
+#include <llvm/Support/ConvertUTF.h>
+#include <llvm/Support/Unicode.h>
 
 #include <algorithm>
 #include <charconv>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -35,8 +45,76 @@ namespace {
 #endif
 
 constexpr std::string_view version = GTI_VERSION;
+lang::cli::TerminalStyle terminalStyle;
+using lang::cli::Style;
+std::optional<std::string> runtimeColorOverride;
+lang::cli::ProgressMode progressMode = lang::cli::ProgressMode::Auto;
+bool progressSelected = false;
+
+std::vector<std::pair<std::string, std::string>> programColorEnvironment() {
+  if (runtimeColorOverride) {
+    return {{"GTI_COLOR", *runtimeColorOverride}};
+  }
+  return {};
+}
+
+// Called only at option boundaries, never for another option's operand or
+// arguments following '--'. Explicit CLI policy overrides NO_COLOR.
+enum class ColorArgument { NotColor, Accepted, Invalid };
+ColorArgument parseColorArgument(int argc, char *argv[], int &index) {
+  const std::string_view argument = argv[index];
+  std::string_view value;
+  if (argument == "--color") {
+    if (++index >= argc) {
+      std::cerr << "gti: --color requires auto, always, or never\n";
+      return ColorArgument::Invalid;
+    }
+    value = argv[index];
+  } else if (argument.starts_with("--color=")) {
+    value = argument.substr(8);
+  } else {
+    return ColorArgument::NotColor;
+  }
+  if (!terminalStyle.setMode(value)) {
+    std::cerr << "gti: invalid --color value '" << value
+              << "'; expected auto, always, or never\n";
+    return ColorArgument::Invalid;
+  }
+  runtimeColorOverride = value;
+  return ColorArgument::Accepted;
+}
+
+ColorArgument parseProgressArgument(int argc, char *argv[], int &index) {
+  const std::string_view argument = argv[index];
+  std::string_view value;
+  if (argument == "--progress") {
+    if (++index >= argc) {
+      std::cerr << "gti: --progress requires auto, plain, or never\n";
+      return ColorArgument::Invalid;
+    }
+    value = argv[index];
+  } else if (argument.starts_with("--progress=")) {
+    value = argument.substr(11);
+  } else {
+    return ColorArgument::NotColor;
+  }
+  if (value == "auto") {
+    progressMode = lang::cli::ProgressMode::Auto;
+  } else if (value == "plain") {
+    progressMode = lang::cli::ProgressMode::Plain;
+  } else if (value == "never") {
+    progressMode = lang::cli::ProgressMode::Never;
+  } else {
+    std::cerr << "gti: invalid --progress value '" << value
+              << "'; expected auto, plain, or never\n";
+    return ColorArgument::Invalid;
+  }
+  progressSelected = true;
+  return ColorArgument::Accepted;
+}
 
 struct Options {
+  std::optional<lang::RawPointerAuditMode> rawPointerAudit;
   std::filesystem::path input;
   std::filesystem::path output;
   std::optional<std::string> cxx;
@@ -47,6 +125,7 @@ struct Options {
   std::optional<std::filesystem::path> buildReport;
   std::vector<std::string> compilerArguments;
   lang::ConfigurationFlags configurationFlags;
+  std::vector<std::string> disabledWarnings;
   lang::CppStandard standard = lang::CppStandard::Cpp23;
   lang::OptimizationLevel optimization = lang::OptimizationLevel::O0;
   lang::ExecutionProfile executionProfile =
@@ -56,6 +135,7 @@ struct Options {
   bool emitMir = false;
   bool emitNativeHeader = false;
   bool keepCpp = false;
+  bool debugInfo = false;
   bool optimizationRemarks = false;
   bool verbose = false;
 };
@@ -81,6 +161,7 @@ enum class ProjectCommand {
 };
 
 struct ProjectOptions {
+  std::optional<lang::RawPointerAuditMode> rawPointerAudit;
   ProjectCommand command = ProjectCommand::Build;
   std::optional<std::string> package;
   std::optional<std::string> target;
@@ -95,20 +176,39 @@ struct ProjectOptions {
   std::optional<lang::OptimizationLevel> optimization;
   std::optional<lang::ExecutionProfile> executionProfile;
   std::optional<bool> keepCpp;
+  std::optional<bool> debugInfo;
   std::optional<std::filesystem::path> buildReport;
   bool emitMir = false;
   bool buildAll = false;
   std::optional<int> jobs;
   std::vector<std::string> programArguments;
   lang::ConfigurationFlags configurationFlags;
+  std::vector<std::string> disabledWarnings;
   bool verbose = false;
   bool useCache = true;
+  bool noBuild = false;
   bool offline = false;
   bool locked = false;
 };
 
 struct FetchOptions {
   bool offline = false;
+  bool locked = false;
+};
+
+struct RegistryOptions {
+  std::string package;
+  std::string requirement;
+  std::string registry = "official";
+  bool dryRun = false;
+};
+
+struct RegistryAuthenticationOptions {
+  std::string action;
+  std::string registry = "official";
+  bool tokenStdin = false;
+  bool token = false;
+  bool publish = false;
 };
 
 struct ScaffoldOptions {
@@ -116,6 +216,7 @@ struct ScaffoldOptions {
       lang::driver::ProjectScaffoldMode::NewPackage;
   std::filesystem::path destination;
   std::optional<std::string> packageName;
+  bool initializeGit = false;
 };
 
 struct MetadataOptions {
@@ -148,15 +249,21 @@ constexpr int exitCode(ExitStatus status) { return static_cast<int>(status); }
 
 void printUsage(std::ostream &stream) {
   stream
-      << "Usage: gti <source.gti> [options] [-- <c++ compiler arguments>]\n"
+      << "Usage: gti <source.gti> [options] [-- <native compiler arguments>]\n"
          "       gti build [target] [options]\n"
          "       gti check [target] [--profile <name> | --release]\n"
          "       gti run [target] [options] [-- <program arguments>]\n"
          "       gti test [target] [options]\n"
          "       gti verify --build-report <path> [options]\n"
          "       gti new <path> [--name <name>]\n"
-         "       gti init [path] [--name <name>]\n"
-         "       gti fetch [--offline]\n"
+         "       gti init [path] [--name <name>] [--git]\n"
+         "       gti add <package[@requirement]> [--registry <name>]\n"
+         "       gti fetch [--offline] [--locked]\n"
+         "       gti publish [--registry <name>] [--name <name>] [--dry-run]\n"
+         "       gti registry login [name] [--publish | --token | "
+         "--token-stdin]\n"
+         "       gti registry logout [name]\n"
+         "       gti registry status [name]\n"
          "       gti clean\n"
          "       gti metadata [--format json] [--package <name>]\n"
          "       gti format init [directory]\n"
@@ -165,23 +272,39 @@ void printUsage(std::ostream &stream) {
          "[-U <macro>] [--allow <pattern>] [--deny <pattern>] "
          "[--rename <from>=<to>] [--array-return <fn>=<count>]\n"
          "\n"
+         "Global presentation options:\n"
+         "      --color=auto|always|never\n"
+         "                       Terminal colour (default auto; honours "
+         "NO_COLOR).\n"
+         "\n"
          "Direct compiler options:\n"
          "  -o, --output <path>  Set the executable or emitted artifact path.\n"
-         "      --emit-cpp       Emit C++ without building an executable.\n"
+         "      --emit-cpp       Emit the backend representation without "
+         "building an executable.\n"
          "      --emit-mir       Emit the deterministic verified-MIR "
          "serialization.\n"
          "      --emit-native-header\n"
          "                       Emit a C17 and C++20/C++23 compatible C ABI "
          "header.\n"
-         "      --keep-cpp       Keep the generated C++ beside the "
+         "      --keep-cpp       Keep the backend representation beside the "
          "executable.\n"
-         "      --cxx <path>     Select the native C++ compiler.\n"
+         "  -g, --debug-info     Emit GTI source line mappings and native "
+         "debug symbols.\n"
+         "      --no-debug-info  Disable source-level debug info.\n"
+         "      --cxx <path>     Select the native compiler.\n"
          "      --std <version>  Select c++20 or c++23 (default: c++23).\n"
          "      --execution-profile <name>\n"
          "                       Select single-threaded (default) or "
          "concurrent semantics.\n"
+         "      --raw-pointer-audit=off|warn|strict\n"
+         "                       Audit unsafe pointer obligations (default: "
+         "off).\n"
          "  -O0, -O1, -O2, -O3  Select the optimization level (default: -O0).\n"
          "  -D <name>            Define a valueless configuration flag.\n"
+         "  -Wno-<group>         Disable a warning group (for example, "
+         "-Wno-unused-mut).\n"
+         "      --disable-warning <group>\n"
+         "                       Disable a warning group; may be repeated.\n"
          "      --time-trace <path>  Write a compile-time profile as Chrome "
          "Trace JSON.\n"
          "      --dump-mir-before <path>\n"
@@ -198,6 +321,9 @@ void printUsage(std::ostream &stream) {
          "sidecar.\n"
          "  -v, --verbose        Print the native compiler command and "
          "output.\n"
+         "      --progress <mode>\n"
+         "                       Build progress: auto (default), plain, "
+         "never.\n"
          "\n"
          "Project build options:\n"
          "      --package <name> Select a package from the active workspace.\n"
@@ -209,26 +335,39 @@ void printUsage(std::ostream &stream) {
          "      --release        Shorthand for --profile release.\n"
          "      --all            Build every declared target (gti build "
          "only).\n"
-         "      --jobs <count>   Bound concurrent target builds with --all.\n"
-         "      --cxx <path>     Override the native C++ compiler.\n"
+         "      --jobs <count>   Bound native build-script and --all jobs.\n"
+         "      --cxx <path>     Override the native compiler.\n"
          "      --cc <path>      Override the native C compiler.\n"
          "      --std <version>  Override c++20 or c++23.\n"
          "      --execution-profile <name>\n"
          "                       Override single-threaded or concurrent "
          "semantics.\n"
+         "      --raw-pointer-audit=off|warn|strict\n"
+         "                       Override the profile's raw pointer audit "
+         "policy.\n"
          "  -O0, -O1, -O2, -O3  Override the profile optimization level.\n"
          "  -D <name>            Add a valueless project configuration flag.\n"
+         "  -Wno-<group>         Disable an additional warning group.\n"
+         "      --disable-warning <group>\n"
+         "                       Disable an additional warning group.\n"
          "      --build-report <path>\n"
          "                       Write a build provenance sidecar (gti build); "
          "select the record to reproduce (gti verify).\n"
          "      --emit-mir       Emit the deterministic verified-MIR "
          "serialization instead of building.\n"
-         "      --keep-cpp       Retain generated C++ in the intermediate "
+         "      --keep-cpp       Retain the backend representation in the "
+         "intermediate "
          "directory.\n"
-         "      --no-keep-cpp    Remove generated C++ after a successful "
+         "      --no-keep-cpp    Remove the backend representation after a "
+         "successful "
          "build.\n"
+         "  -g, --debug-info     Emit GTI source line mappings and native "
+         "debug symbols.\n"
+         "      --no-debug-info  Disable the profile's debug-info setting.\n"
          "      --no-cache       Build without reading or updating the "
          "project cache.\n"
+         "      --no-build       Run an existing managed executable without "
+         "checking or rebuilding it (gti run only).\n"
          "      --offline        Never run git; only already fetched "
          "dependencies resolve.\n"
          "      --locked         Require gti.lock coverage without acquiring "
@@ -252,8 +391,8 @@ void printUsage(std::ostream &stream) {
          "      --deny <name|prefix*>\n"
          "                       Never import matching declarations.\n"
          "      --rename <c-name>=<gti-name>\n"
-         "                       Spell an imported type or constant\n"
-         "                       differently; functions cannot be renamed.\n"
+         "                       Select a different GTI source name; renamed\n"
+         "                       functions retain their C link symbol.\n"
          "      --array-return <function>=<count>\n"
          "                       Annotate a pointer-plus-count result with\n"
          "                       [[c_array(count)]].\n"
@@ -265,16 +404,21 @@ void printUsage(std::ostream &stream) {
          "Project commands:\n"
          "  new                  Create a new executable package.\n"
          "  init                 Initialize an existing directory as a "
-         "package.\n"
-         "  check                Analyze a target without C++ emission or "
+         "package; --git also creates a repository and .gitignore.\n"
+         "  check                Analyze a target without backend emission or "
          "native compilation.\n"
-         "  run                  Build and run a target; arguments after -- "
-         "belong to the program.\n"
+         "  run                  Build and run a target, or use --no-build to "
+         "launch its existing artifact; arguments after -- belong to the "
+         "program.\n"
          "  test                 Build and run all test targets, or one named "
          "test target.\n"
          "  verify               Rebuild a recorded --build-report and report "
          "every recorded fact that no longer matches.\n"
-         "  fetch                Acquire pinned git dependencies and write "
+         "  add                  Add a registry dependency and update the "
+         "exact lock.\n"
+         "  publish              Publish a validated immutable source "
+         "package.\n"
+         "  fetch                Acquire declared dependencies and write "
          "gti.lock.\n"
          "  clean                Remove the active workspace's build/gti "
          "subtree.\n"
@@ -340,6 +484,21 @@ bool parseExecutionProfileOption(std::string_view value,
   return true;
 }
 
+bool addDisabledWarning(std::string_view group,
+                        std::vector<std::string> &disabledWarnings,
+                        std::string_view option) {
+  if (group.empty()) {
+    std::cerr << "gti: " << option << " requires a warning group\n";
+    return false;
+  }
+  if (!lang::isKnownWarningGroup(group)) {
+    std::cerr << "gti: unknown warning group '" << group << "'\n";
+    return false;
+  }
+  disabledWarnings.emplace_back(group);
+  return true;
+}
+
 std::filesystem::path
 defaultExecutablePath(const std::filesystem::path &input) {
   std::string filename = input.stem().string();
@@ -364,6 +523,18 @@ defaultNativeHeaderPath(const std::filesystem::path &input) {
 
 ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
   for (int index = 1; index < argc; ++index) {
+    const auto progress = parseProgressArgument(argc, argv, index);
+    if (progress == ColorArgument::Invalid)
+      return ArgumentResult::ExitFailure;
+    if (progress == ColorArgument::Accepted)
+      continue;
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
     const std::string argument = argv[index];
 
     if (argument == "--") {
@@ -427,6 +598,28 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
       options.executionProfileSelected = true;
       continue;
     }
+    if (argument == "--raw-pointer-audit" ||
+        argument.starts_with("--raw-pointer-audit=")) {
+      std::string_view value;
+      if (argument == "--raw-pointer-audit") {
+        if (++index >= argc) {
+          std::cerr
+              << "gti: --raw-pointer-audit requires off, warn, or strict\n";
+          return ArgumentResult::ExitFailure;
+        }
+        value = argv[index];
+      } else {
+        value = std::string_view(argument).substr(
+            std::string_view("--raw-pointer-audit=").size());
+      }
+      if (options.rawPointerAudit ||
+          !(options.rawPointerAudit = lang::parseRawPointerAuditMode(value))) {
+        std::cerr << "gti: --raw-pointer-audit must be off, warn, or strict "
+                     "and specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      continue;
+    }
     if (argument == "-D") {
       if (++index >= argc) {
         std::cerr << "gti: missing configuration flag name after -D\n";
@@ -438,6 +631,24 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
         return ArgumentResult::ExitFailure;
       }
       options.configurationFlags.emplace_back(argv[index]);
+      continue;
+    }
+    if (argument == "--disable-warning") {
+      if (++index >= argc) {
+        std::cerr << "gti: missing warning group after --disable-warning\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (!addDisabledWarning(argv[index], options.disabledWarnings,
+                              "--disable-warning")) {
+        return ArgumentResult::ExitFailure;
+      }
+      continue;
+    }
+    if (argument.starts_with("-Wno-")) {
+      if (!addDisabledWarning(std::string_view(argument).substr(5),
+                              options.disabledWarnings, "-Wno-<group>")) {
+        return ArgumentResult::ExitFailure;
+      }
       continue;
     }
     if (argument == "--emit-mir") {
@@ -500,6 +711,11 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
       options.keepCpp = true;
       continue;
     }
+    if (argument == "-g" || argument == "--debug-info" ||
+        argument == "--no-debug-info") {
+      options.debugInfo = argument != "--no-debug-info";
+      continue;
+    }
     if (argument == "-v" || argument == "--verbose") {
       options.verbose = true;
       continue;
@@ -522,6 +738,11 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
   }
   if (options.input.extension() != ".gti") {
     std::cerr << "gti: input file must use the .gti extension\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if (options.debugInfo && (options.emitMir || options.emitNativeHeader)) {
+    std::cerr << "gti: debug info requires executable or backend "
+                 "representation output\n";
     return ArgumentResult::ExitFailure;
   }
   if ((options.emitCpp || options.emitNativeHeader || options.emitMir) &&
@@ -630,6 +851,18 @@ bool buildsExecutable(ProjectCommand command) {
 ArgumentResult parseProjectArguments(int argc, char *argv[],
                                      ProjectOptions &options) {
   for (int index = 2; index < argc; ++index) {
+    const auto progress = parseProgressArgument(argc, argv, index);
+    if (progress == ColorArgument::Invalid)
+      return ArgumentResult::ExitFailure;
+    if (progress == ColorArgument::Accepted)
+      continue;
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
     const std::string argument = argv[index];
     if (argument == "-h" || argument == "--help") {
       printUsage(std::cout);
@@ -720,7 +953,7 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       continue;
     }
     if (argument == "--jobs") {
-      if (options.command != ProjectCommand::Build) {
+      if (!buildsExecutable(options.command)) {
         std::cerr << "gti: --jobs is not supported by gti "
                   << projectCommandName(options.command) << '\n';
         return ArgumentResult::ExitFailure;
@@ -802,6 +1035,28 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       options.executionProfile = profile;
       continue;
     }
+    if (argument == "--raw-pointer-audit" ||
+        argument.starts_with("--raw-pointer-audit=")) {
+      std::string_view value;
+      if (argument == "--raw-pointer-audit") {
+        if (++index >= argc) {
+          std::cerr
+              << "gti: --raw-pointer-audit requires off, warn, or strict\n";
+          return ArgumentResult::ExitFailure;
+        }
+        value = argv[index];
+      } else {
+        value = std::string_view(argument).substr(
+            std::string_view("--raw-pointer-audit=").size());
+      }
+      if (options.rawPointerAudit ||
+          !(options.rawPointerAudit = lang::parseRawPointerAuditMode(value))) {
+        std::cerr << "gti: --raw-pointer-audit must be off, warn, or strict "
+                     "and specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      continue;
+    }
     if (argument == "-D") {
       if (++index >= argc) {
         std::cerr << "gti: missing configuration flag name after -D\n";
@@ -813,6 +1068,24 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
         return ArgumentResult::ExitFailure;
       }
       options.configurationFlags.emplace_back(argv[index]);
+      continue;
+    }
+    if (argument == "--disable-warning") {
+      if (++index >= argc) {
+        std::cerr << "gti: missing warning group after --disable-warning\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (!addDisabledWarning(argv[index], options.disabledWarnings,
+                              "--disable-warning")) {
+        return ArgumentResult::ExitFailure;
+      }
+      continue;
+    }
+    if (argument.starts_with("-Wno-")) {
+      if (!addDisabledWarning(std::string_view(argument).substr(5),
+                              options.disabledWarnings, "-Wno-<group>")) {
+        return ArgumentResult::ExitFailure;
+      }
       continue;
     }
     if (argument == "-O0" || argument == "-O1" || argument == "-O2" ||
@@ -847,6 +1120,16 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       options.keepCpp = false;
       continue;
     }
+    if (argument == "-g" || argument == "--debug-info" ||
+        argument == "--no-debug-info") {
+      if (!buildsExecutable(options.command)) {
+        std::cerr << "gti: debug-info overrides are not valid for gti "
+                  << projectCommandName(options.command) << '\n';
+        return ArgumentResult::ExitFailure;
+      }
+      options.debugInfo = argument != "--no-debug-info";
+      continue;
+    }
     if (argument == "--no-cache") {
       if (!buildsExecutable(options.command)) {
         std::cerr << "gti: --no-cache is not valid for gti "
@@ -854,6 +1137,18 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
         return ArgumentResult::ExitFailure;
       }
       options.useCache = false;
+      continue;
+    }
+    if (argument == "--no-build") {
+      if (options.command != ProjectCommand::Run) {
+        std::cerr << "gti: --no-build is supported only by gti run\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (options.noBuild) {
+        std::cerr << "gti: --no-build may be specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.noBuild = true;
       continue;
     }
     if (argument == "--offline") {
@@ -894,16 +1189,16 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
     std::cerr << "gti: --emit-mir and --keep-cpp cannot be used together\n";
     return ArgumentResult::ExitFailure;
   }
+  if (options.emitMir && options.debugInfo.value_or(false)) {
+    std::cerr << "gti: --emit-mir and debug info cannot be used together\n";
+    return ArgumentResult::ExitFailure;
+  }
   if (options.buildAll && options.target) {
     std::cerr << "gti: --all cannot be combined with a target selection\n";
     return ArgumentResult::ExitFailure;
   }
   if (options.buildAll && options.emitMir) {
     std::cerr << "gti: --all and --emit-mir cannot be used together\n";
-    return ArgumentResult::ExitFailure;
-  }
-  if (options.jobs && !options.buildAll) {
-    std::cerr << "gti: --jobs requires --all\n";
     return ArgumentResult::ExitFailure;
   }
   if (options.buildReport && options.emitMir) {
@@ -913,6 +1208,16 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
   if (options.buildReport && options.buildAll) {
     std::cerr << "gti: --build-report describes one target and cannot be "
                  "combined with --all\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if (options.noBuild &&
+      (options.cxx || options.cc || options.standard || options.optimization ||
+       options.executionProfile || options.rawPointerAudit || options.keepCpp ||
+       options.debugInfo || options.jobs ||
+       !options.configurationFlags.empty() ||
+       !options.disabledWarnings.empty() || !options.useCache)) {
+    std::cerr << "gti: --no-build cannot be combined with compiler, build, "
+                 "cache, or configuration overrides\n";
     return ArgumentResult::ExitFailure;
   }
   if (options.command == ProjectCommand::Verify) {
@@ -936,6 +1241,13 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
 ArgumentResult parseFetchArguments(int argc, char *argv[],
                                    FetchOptions &options) {
   for (int index = 2; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
     const std::string argument = argv[index];
     if (argument == "-h" || argument == "--help") {
       printUsage(std::cout);
@@ -945,7 +1257,125 @@ ArgumentResult parseFetchArguments(int argc, char *argv[],
       options.offline = true;
       continue;
     }
+    if (argument == "--locked") {
+      options.locked = true;
+      continue;
+    }
     std::cerr << "gti: unknown fetch option '" << argument << "'\n";
+    return ArgumentResult::ExitFailure;
+  }
+  return ArgumentResult::Run;
+}
+
+ArgumentResult parseRegistryArguments(int argc, char *argv[],
+                                      RegistryOptions &options, bool publish) {
+  for (int index = 2; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
+    const std::string argument = argv[index];
+    if (argument == "-h" || argument == "--help") {
+      printUsage(std::cout);
+      return ArgumentResult::ExitSuccess;
+    }
+    if (publish && argument == "--dry-run") {
+      options.dryRun = true;
+      continue;
+    }
+    if (argument == "--registry" || (publish && argument == "--name")) {
+      if (++index >= argc) {
+        std::cerr << "gti: " << argument << " needs a value\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (argument == "--registry") {
+        options.registry = argv[index];
+      } else {
+        options.package = argv[index];
+      }
+      continue;
+    }
+    if (!publish && !argument.starts_with('-') && options.package.empty()) {
+      const auto at = argument.find('@');
+      options.package = argument.substr(0, at);
+      if (at != argument.npos) {
+        options.requirement = argument.substr(at + 1);
+        if (options.requirement.empty()) {
+          std::cerr << "gti: missing package version requirement after '@'\n";
+          return ArgumentResult::ExitFailure;
+        }
+      }
+      continue;
+    }
+    std::cerr << "gti: unknown " << (publish ? "publish" : "add")
+              << " argument '" << argument << "'\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if (!publish && options.package.empty()) {
+    std::cerr << "gti: add requires one package name\n";
+    return ArgumentResult::ExitFailure;
+  }
+  return ArgumentResult::Run;
+}
+
+ArgumentResult
+parseRegistryAuthenticationArguments(int argc, char *argv[],
+                                     RegistryAuthenticationOptions &options) {
+  if (argc < 3) {
+    std::cerr << "gti: registry requires login, logout, or status\n";
+    return ArgumentResult::ExitFailure;
+  }
+  options.action = argv[2];
+  if (options.action == "--help" || options.action == "-h") {
+    printUsage(std::cout);
+    return ArgumentResult::ExitSuccess;
+  }
+  if (options.action != "login" && options.action != "logout" &&
+      options.action != "status") {
+    std::cerr << "gti: registry requires login, logout, or status\n";
+    return ArgumentResult::ExitFailure;
+  }
+  bool nameSelected = false;
+  for (int index = 3; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
+    const std::string_view argument = argv[index];
+    if (argument == "--help" || argument == "-h") {
+      printUsage(std::cout);
+      return ArgumentResult::ExitSuccess;
+    }
+    if (argument == "--token-stdin" && options.action == "login" &&
+        !options.tokenStdin) {
+      options.tokenStdin = true;
+    } else if (argument == "--token" && options.action == "login" &&
+               !options.token) {
+      options.token = true;
+    } else if (argument == "--publish" && options.action == "login" &&
+               !options.publish) {
+      options.publish = true;
+    } else if (!argument.starts_with('-') && !nameSelected &&
+               lang::driver::validRegistryName(argument)) {
+      options.registry = argument;
+      nameSelected = true;
+    } else {
+      // Unknown operands may be mistakenly supplied secrets; never echo them.
+      std::cerr << "gti: invalid registry argument; tokens are accepted only "
+                   "through hidden input or --token-stdin\n";
+      return ArgumentResult::ExitFailure;
+    }
+  }
+  if ((options.token && options.tokenStdin) ||
+      (options.publish && (options.token || options.tokenStdin))) {
+    std::cerr << "gti: choose password login (optionally --publish), --token, "
+                 "or --token-stdin\n";
     return ArgumentResult::ExitFailure;
   }
   return ArgumentResult::Run;
@@ -953,6 +1383,13 @@ ArgumentResult parseFetchArguments(int argc, char *argv[],
 
 ArgumentResult parseCleanArguments(int argc, char *argv[]) {
   for (int index = 2; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
     const std::string argument = argv[index];
     if (argument == "-h" || argument == "--help") {
       printUsage(std::cout);
@@ -967,6 +1404,13 @@ ArgumentResult parseCleanArguments(int argc, char *argv[]) {
 ArgumentResult parseMetadataArguments(int argc, char *argv[],
                                       MetadataOptions &options) {
   for (int index = 2; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
     const std::string argument = argv[index];
     if (argument == "-h" || argument == "--help") {
       printUsage(std::cout);
@@ -1020,6 +1464,13 @@ parseFormatConfigInitArguments(int argc, char *argv[],
 
   bool destinationSelected = false;
   for (int index = 3; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
     const std::string argument = argv[index];
     if (argument == "-h" || argument == "--help") {
       printUsage(std::cout);
@@ -1043,6 +1494,13 @@ parseFormatConfigInitArguments(int argc, char *argv[],
 ArgumentResult parseScaffoldArguments(int argc, char *argv[],
                                       ScaffoldOptions &options) {
   for (int index = 2; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
     const std::string argument = argv[index];
     if (argument == "-h" || argument == "--help") {
       printUsage(std::cout);
@@ -1058,6 +1516,19 @@ ArgumentResult parseScaffoldArguments(int argc, char *argv[],
         return ArgumentResult::ExitFailure;
       }
       options.packageName = argv[index];
+      continue;
+    }
+    if (argument == "--git") {
+      if (options.mode !=
+          lang::driver::ProjectScaffoldMode::ExistingDirectory) {
+        std::cerr << "gti: --git is supported only by gti init\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (options.initializeGit) {
+        std::cerr << "gti: --git may be specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.initializeGit = true;
       continue;
     }
     if (!argument.empty() && argument.front() == '-') {
@@ -1101,80 +1572,116 @@ std::string_view severityName(lang::DiagnosticSeverity severity) {
   return "error";
 }
 
+// Render source bytes as terminal text while retaining the compiler's byte
+// spans. Tabs have a fixed four-column stop; control bytes cannot inject ANSI
+// commands into a diagnostic. LLVM supplies Unicode column widths.
+void reportSourceExcerpt(const lang::SourceSpan &span,
+                         const lang::SourceManager &sources, Style style) {
+  const auto location = sources.locate(span);
+  const auto line = sources.line(span);
+  if (line.empty())
+    return;
+  const auto begin =
+      std::clamp(span.start, location.lineStart, location.lineEnd) -
+      location.lineStart;
+  const auto end = std::clamp(span.end, location.lineStart, location.lineEnd) -
+                   location.lineStart;
+  std::string display;
+  std::size_t columns = 0, markerStart = 0, markerEnd = 0;
+  for (std::size_t offset = 0; offset < line.size();) {
+    const auto start = offset;
+    const auto *cursor =
+        reinterpret_cast<const llvm::UTF8 *>(line.data() + offset);
+    const auto *limit =
+        reinterpret_cast<const llvm::UTF8 *>(line.data() + line.size());
+    // On malformed UTF-8, escape one byte at a time. An illegal continuation
+    // must not absorb an adjacent ASCII character or misplace the underline.
+    offset += std::max(1U, llvm::getUTF8SequenceSize(cursor, limit));
+    const auto bytes = line.substr(start, offset - start);
+    const auto before = columns;
+    if (bytes == "\t") {
+      const auto width = 4 - columns % 4;
+      display.append(width, ' ');
+      columns += width;
+    } else {
+      const int width = llvm::sys::unicode::columnWidthUTF8(
+          llvm::StringRef(bytes.data(), bytes.size()));
+      if (width < 0) {
+        constexpr char hex[] = "0123456789abcdef";
+        for (const unsigned char byte : bytes) {
+          display += "\\x";
+          display += hex[byte >> 4];
+          display += hex[byte & 15];
+          columns += 4;
+        }
+      } else {
+        display.append(bytes);
+        columns += static_cast<std::size_t>(width);
+      }
+    }
+    if (offset <= begin)
+      markerStart = columns;
+    else if (start <= begin)
+      markerStart = before;
+    if (start < end)
+      markerEnd = columns;
+  }
+  const auto number = std::to_string(location.line);
+  std::cerr << ' ' << number << " | " << display << '\n'
+            << std::string(number.size() + 2, ' ') << "| "
+            << std::string(markerStart, ' ')
+            << terminalStyle.code(std::cerr, style) << '^';
+  if (markerEnd > markerStart + 1)
+    std::cerr << std::string(markerEnd - markerStart - 1, '~');
+  std::cerr << terminalStyle.code(std::cerr, Style::Reset) << '\n';
+}
+
 void reportLocation(const lang::SourceSpan &span, std::string_view level,
                     std::string_view message,
                     const lang::SourceManager &sources) {
   const lang::SourceLocation location = sources.locate(span);
   std::cerr << (span.source.empty() ? "<source>" : span.source) << ':'
-            << location.line << ':' << location.column << ": " << level << ": "
-            << message << '\n';
+            << location.line << ':' << location.column << ": "
+            << terminalStyle.code(std::cerr, Style::Note) << level
+            << terminalStyle.code(std::cerr, Style::Reset) << ": " << message
+            << '\n';
 
-  const std::string_view sourceLine = sources.line(span);
-  if (sourceLine.empty()) {
-    return;
-  }
-
-  const std::string lineNumber = std::to_string(location.line);
-  std::cerr << ' ' << lineNumber << " | " << sourceLine << '\n';
-  std::cerr << std::string(lineNumber.size() + 2, ' ') << "| ";
-
-  const std::size_t start = std::min(span.start, location.lineEnd);
-  for (std::size_t index = location.lineStart; index < start; ++index) {
-    const std::string *source = sources.find(span.source);
-    std::cerr << (source != nullptr && (*source)[index] == '\t' ? '\t' : ' ');
-  }
-  const std::size_t end =
-      std::min(location.lineEnd,
-               std::max(span.end, std::min(span.start + 1, location.lineEnd)));
-  std::cerr << '^';
-  if (end > start + 1) {
-    std::cerr << std::string(end - start - 1, '~');
-  }
-  std::cerr << '\n';
+  reportSourceExcerpt(span, sources, Style::Note);
 }
 
 void reportDiagnostic(const lang::Diagnostic &diagnostic,
                       const lang::SourceManager &sources) {
+  const Style style = diagnostic.severity == lang::DiagnosticSeverity::Error
+                          ? Style::Error
+                      : diagnostic.severity == lang::DiagnosticSeverity::Warning
+                          ? Style::Warning
+                          : Style::Note;
   const lang::SourceLocation location = sources.locate(diagnostic.primary);
   std::cerr << (diagnostic.primary.source.empty() ? "<source>"
                                                   : diagnostic.primary.source)
             << ':' << location.line << ':' << location.column << ": "
+            << terminalStyle.code(std::cerr, style)
             << severityName(diagnostic.severity);
   if (!diagnostic.code.empty()) {
     std::cerr << '[' << diagnostic.code << ']';
   }
-  std::cerr << ": " << diagnostic.message << '\n';
+  std::cerr << terminalStyle.code(std::cerr, Style::Reset) << ": "
+            << diagnostic.message << '\n';
 
-  const std::string_view sourceLine = sources.line(diagnostic.primary);
-  if (!sourceLine.empty()) {
-    const std::string lineNumber = std::to_string(location.line);
-    std::cerr << ' ' << lineNumber << " | " << sourceLine << '\n';
-    std::cerr << std::string(lineNumber.size() + 2, ' ') << "| ";
-    const std::string *source = sources.find(diagnostic.primary.source);
-    const std::size_t start =
-        std::min(diagnostic.primary.start, location.lineEnd);
-    for (std::size_t index = location.lineStart; index < start; ++index) {
-      std::cerr << (source != nullptr && (*source)[index] == '\t' ? '\t' : ' ');
-    }
-    const std::size_t end = std::min(
-        location.lineEnd,
-        std::max(diagnostic.primary.end,
-                 std::min(diagnostic.primary.start + 1, location.lineEnd)));
-    std::cerr << '^';
-    if (end > start + 1) {
-      std::cerr << std::string(end - start - 1, '~');
-    }
-    std::cerr << '\n';
-  }
+  reportSourceExcerpt(diagnostic.primary, sources, style);
 
   for (const lang::RelatedDiagnostic &related : diagnostic.related) {
     reportLocation(related.span, "note", related.message, sources);
   }
   for (const std::string &hint : diagnostic.hints) {
-    std::cerr << "help: " << hint << '\n';
+    std::cerr << terminalStyle.code(std::cerr, Style::Note)
+              << "help:" << terminalStyle.code(std::cerr, Style::Reset) << ' '
+              << hint << '\n';
   }
   for (const lang::FixIt &fix : diagnostic.fixes) {
-    std::cerr << "help: " << fix.message << '\n';
+    std::cerr << terminalStyle.code(std::cerr, Style::Note)
+              << "help:" << terminalStyle.code(std::cerr, Style::Reset) << ' '
+              << fix.message << '\n';
   }
 }
 
@@ -1183,6 +1690,154 @@ void reportDiagnostics(const std::vector<lang::Diagnostic> &diagnostics,
   for (const lang::Diagnostic &diagnostic : diagnostics) {
     reportDiagnostic(diagnostic, sources);
   }
+}
+
+int runRegistryAuthentication(const RegistryAuthenticationOptions &options) {
+  using namespace lang::driver;
+  try {
+    auto store = systemRegistryCredentialStore();
+    auto providers = configuredRegistries(store);
+    auto &registry = providers->get(options.registry);
+    const auto info = registry.authentication();
+    if (!info) {
+      throw RegistryError("GTI-B1725",
+                          "This registry backend does not support login.");
+    }
+    if (options.action == "login") {
+      if (!store->available()) {
+        throw RegistryError("GTI-B1724",
+                            "Secure registry credential storage is "
+                            "not available on this host; use "
+                            "the configured token-env variable.");
+      }
+      if (!options.tokenStdin) {
+        std::cerr << "Logging in to " << info->target.endpoint << " ("
+                  << info->target.realm << ")\n";
+      }
+      if (options.token || options.tokenStdin) {
+        loginRegistry(
+            registry, *store,
+            {.secret = lang::cli::readRegistryToken(options.tokenStdin)});
+      } else {
+        if (!info->passwordLogin) {
+          throw RegistryError("GTI-B1725",
+                              "This registry does not support "
+                              "username/password login; use --token instead.");
+        }
+        RegistryPasswordLogin login;
+        login.username = lang::cli::readRegistryUsername();
+        login.password =
+            lang::cli::readRegistrySecret("Password (input hidden): ");
+        login.oneTimeCode = lang::cli::readRegistrySecret(
+            "2FA code (input hidden; leave empty if disabled): ", true);
+        login.permission = options.publish ? RegistryLoginPermission::Publish
+                                           : RegistryLoginPermission::Read;
+        loginRegistryWithPassword(registry, *store, login);
+      }
+      std::cout << "Saved " << options.registry << " credential in "
+                << store->name() << ".\n";
+    } else if (options.action == "logout") {
+      logoutRegistry(registry, *store);
+      std::cout << "Removed stored " << options.registry
+                << " credential. "
+                   "The server token has not been revoked.\n";
+    } else {
+      const auto selected = resolveRegistryCredential(*info, *store);
+      std::cout << options.registry << ": " << info->target.endpoint << " ("
+                << info->target.realm << ")\nCredential: ";
+      if (selected.source == RegistryCredentialSource::Environment) {
+        std::cout << "environment (" << info->tokenEnvironment << ")"
+                  << (selected.credential ? "" : " — empty; anonymous");
+      } else if (selected.source == RegistryCredentialSource::Stored) {
+        std::cout << store->name();
+      } else {
+        std::cout << "anonymous"
+                  << (store->available() ? ""
+                                         : " (secure storage unavailable)");
+      }
+      std::cout << '\n';
+    }
+    if (options.action != "status" &&
+        std::getenv(info->tokenEnvironment.c_str())) {
+      std::cout << "Environment override " << info->tokenEnvironment
+                << " remains set; unset it to use stored credentials.\n";
+    }
+    return exitCode(ExitStatus::Success);
+  } catch (const RegistryError &error) {
+    const auto diagnostic =
+        lang::makeDiagnostic(error.code, lang::DiagnosticPhase::Driver,
+                             lang::SourceSpan{}, error.what());
+    reportDiagnostics({diagnostic}, {});
+    return exitCode(ExitStatus::Compilation);
+  }
+}
+
+struct DiagnosticSummary {
+  std::size_t errors = 0;
+  std::size_t warnings = 0;
+};
+
+DiagnosticSummary
+summarizeDiagnostics(const std::vector<lang::Diagnostic> &diagnostics) {
+  DiagnosticSummary summary;
+  for (const lang::Diagnostic &diagnostic : diagnostics) {
+    if (diagnostic.severity == lang::DiagnosticSeverity::Error) {
+      ++summary.errors;
+    } else if (diagnostic.severity == lang::DiagnosticSeverity::Warning) {
+      ++summary.warnings;
+    }
+  }
+  return summary;
+}
+
+void addDiagnosticSummary(DiagnosticSummary &destination,
+                          const DiagnosticSummary &source) {
+  destination.errors += source.errors;
+  destination.warnings += source.warnings;
+}
+
+void reportDiagnosticSummary(std::ostream &stream,
+                             const DiagnosticSummary &summary) {
+  // Keep the summary payload contiguous: build --all reads child counts.
+  const Style style = summary.errors     ? Style::Error
+                      : summary.warnings ? Style::Warning
+                                         : Style::Success;
+  stream << terminalStyle.code(stream, style)
+         << "Diagnostics: " << summary.errors
+         << (summary.errors == 1 ? " error, " : " errors, ") << summary.warnings
+         << (summary.warnings == 1 ? " warning" : " warnings")
+         << terminalStyle.code(stream, Style::Reset) << '\n';
+}
+
+std::optional<DiagnosticSummary>
+parseDiagnosticSummary(std::string_view output) {
+  constexpr std::string_view prefix = "Diagnostics: ";
+  const std::size_t start = output.rfind(prefix);
+  if (start == std::string_view::npos) {
+    return std::nullopt;
+  }
+  std::string_view fields = output.substr(start + prefix.size());
+  DiagnosticSummary summary;
+  const auto parseCount = [&](std::size_t &value) {
+    const char *begin = fields.data();
+    const char *end = begin + fields.size();
+    const auto [next, error] = std::from_chars(begin, end, value);
+    if (error != std::errc{} || next == begin) {
+      return false;
+    }
+    fields.remove_prefix(static_cast<std::size_t>(next - begin));
+    return true;
+  };
+  if (!parseCount(summary.errors) ||
+      !(fields.starts_with(" error, ") || fields.starts_with(" errors, "))) {
+    return std::nullopt;
+  }
+  fields.remove_prefix(fields.starts_with(" errors, ") ? 9 : 8);
+  if (!parseCount(summary.warnings) ||
+      !(fields.starts_with(" warning") || fields.starts_with(" warnings"))) {
+    return std::nullopt;
+  }
+  return summary;
 }
 
 bool writeFile(const std::filesystem::path &path, std::string_view contents) {
@@ -1300,8 +1955,27 @@ void reportCapturedOutput(std::string_view output, std::string_view heading) {
   }
 }
 
+void reportBackendDiagnosticLog(const lang::driver::DiagnosticLogResult &log) {
+  if (log.succeeded()) {
+    std::cerr << "gti: backend diagnostics saved at " << log.path.string()
+              << '\n';
+  } else {
+    std::cerr << "gti: failed to save backend diagnostics: "
+              << log.error.message() << '\n';
+  }
+}
+
+void reportSavedRepresentation(
+    const lang::driver::ExecutableBuildResult &result) {
+  if (result.generatedSourceRetained) {
+    std::cerr << "gti: backend 'c++' representation saved at "
+              << result.generatedSource.string() << '\n';
+  }
+}
+
 int reportCompilationFailure(
-    const lang::driver::CompilationResult &compilation) {
+    const lang::driver::CompilationResult &compilation, bool verbose,
+    const lang::driver::DiagnosticLogResult *savedLog = nullptr) {
   if (!compilation.succeeded()) {
     switch (compilation.status) {
     case lang::driver::CompilationStatus::FrontendFailure:
@@ -1319,11 +1993,36 @@ int reportCompilationFailure(
       break;
     }
   }
+  if (compilation.backendFailureDetails) {
+    const auto log = savedLog == nullptr
+                         ? lang::driver::writeDiagnosticLog(
+                               *compilation.backendFailureDetails)
+                         : *savedLog;
+    reportBackendDiagnosticLog(log);
+    // If preservation fails, never hide the only remaining developer evidence.
+    if (verbose || !log.succeeded()) {
+      reportCapturedOutput(*compilation.backendFailureDetails,
+                           "gti: backend diagnostics:\n");
+    }
+  }
+  DiagnosticSummary summary = summarizeDiagnostics(compilation.diagnostics);
+  summary.errors = std::max<std::size_t>(summary.errors, 1);
+  std::cerr.flush();
+  reportDiagnosticSummary(std::cout, summary);
   return exitCode(ExitStatus::Compilation);
 }
 
 int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
                       bool verbose) {
+  const DiagnosticSummary diagnosticSummary =
+      summarizeDiagnostics(result.compilation.diagnostics);
+  const auto finishFailure = [&](int status) {
+    DiagnosticSummary summary = diagnosticSummary;
+    summary.errors = std::max<std::size_t>(summary.errors, 1);
+    std::cerr.flush();
+    reportDiagnosticSummary(std::cout, summary);
+    return status;
+  };
   if (result.compilation.succeeded() &&
       !result.compilation.diagnostics.empty()) {
     reportDiagnostics(result.compilation.diagnostics,
@@ -1368,11 +2067,10 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
       std::cerr << *compilation.process.driverDiagnostic << '\n';
     }
     if (verbose || !compilation.process.succeeded()) {
-      const std::string prefix =
-          compilation.process.succeeded()
-              ? std::string{}
-              : "gti: native C compiler diagnostics for '" +
-                    compilation.source.string() + "':\n";
+      const std::string prefix = compilation.process.succeeded()
+                                     ? std::string{}
+                                     : "gti: native source diagnostics for '" +
+                                           compilation.source.string() + "':\n";
       reportCapturedOutput(compilation.process.output, prefix);
     }
   }
@@ -1385,11 +2083,10 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
       std::cerr << *compilation.process.driverDiagnostic << '\n';
     }
     if (verbose || !compilation.process.succeeded()) {
-      const std::string prefix =
-          compilation.process.succeeded()
-              ? std::string{}
-              : "gti: native C++ compiler diagnostics for '" +
-                    compilation.source.string() + "':\n";
+      const std::string prefix = compilation.process.succeeded()
+                                     ? std::string{}
+                                     : "gti: native source diagnostics for '" +
+                                           compilation.source.string() + "':\n";
       reportCapturedOutput(compilation.process.output, prefix);
     }
   }
@@ -1399,77 +2096,82 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
   if (result.driverDiagnostic) {
     std::cerr << *result.driverDiagnostic << '\n';
   }
-  if (result.nativeProcess && (verbose || !result.nativeProcess->succeeded())) {
+  if (result.nativeProcess &&
+      (verbose || (result.backendDiagnosticLog &&
+                   !result.backendDiagnosticLog->succeeded()))) {
     reportCapturedOutput(result.nativeProcess->output,
                          result.nativeProcess->succeeded()
                              ? std::string_view{}
-                             : "gti: native C++ compiler diagnostics:\n");
+                             : "gti: backend diagnostics:\n");
   }
 
   switch (result.status) {
   case lang::driver::ExecutableBuildStatus::Success:
     return exitCode(ExitStatus::Success);
   case lang::driver::ExecutableBuildStatus::CompilationFailure:
-    return reportCompilationFailure(result.compilation);
+    return reportCompilationFailure(
+        result.compilation, verbose,
+        result.backendDiagnosticLog ? &*result.backendDiagnosticLog : nullptr);
   case lang::driver::ExecutableBuildStatus::OutputDirectoryFailure:
-    return exitCode(ExitStatus::Io);
+    return finishFailure(exitCode(ExitStatus::Io));
   case lang::driver::ExecutableBuildStatus::GeneratedArtifactFailure:
     std::cerr << (result.artifactWriteStatus ==
                           lang::driver::ArtifactWriteStatus::OpenFailure
-                      ? "gti: failed to open generated C++ file: "
-                      : "gti: failed to write generated C++ file: ")
+                      ? "gti: failed to open backend representation file: "
+                      : "gti: failed to write backend representation file: ")
               << result.generatedSource << '\n';
-    return exitCode(ExitStatus::Io);
+    return finishFailure(exitCode(ExitStatus::Io));
   case lang::driver::ExecutableBuildStatus::ToolchainConfigurationFailure:
     if (result.resourceError) {
       std::cerr
           << (*result.resourceError ==
                       lang::driver::ToolchainResourceError::RuntimeFilesMissing
                   ? "gti: native runtime files were not found\n"
-                  : "gti: C++20 expected compatibility header was not "
+                  : "gti: backend compatibility header was not "
                     "found\n");
     }
-    return exitCode(ExitStatus::ToolchainConfiguration);
+    return finishFailure(exitCode(ExitStatus::ToolchainConfiguration));
   case lang::driver::ExecutableBuildStatus::NativeCCompilerFailure: {
     const lang::driver::NativeCCompilationResult &compilation =
         result.cCompilations.back();
-    std::cerr << "gti: native C compiler failed for "
+    std::cerr << "gti: native source compiler failed for "
               << compilation.source.string() << " with exit code "
-              << compilation.process.exitCode << '\n'
-              << "gti: generated C++ retained at "
-              << result.generatedSource.string() << '\n';
-    return compilation.process.exitCode;
+              << compilation.process.exitCode << '\n';
+    reportSavedRepresentation(result);
+    return finishFailure(compilation.process.exitCode);
   }
   case lang::driver::ExecutableBuildStatus::NativeCppCompilerFailure: {
     const lang::driver::NativeCppCompilationResult &compilation =
         result.cppCompilations.back();
-    std::cerr << "gti: native C++ compiler failed for "
+    std::cerr << "gti: native source compiler failed for "
               << compilation.source.string() << " with exit code "
-              << compilation.process.exitCode << '\n'
-              << "gti: generated C++ retained at "
-              << result.generatedSource.string() << '\n';
-    return compilation.process.exitCode;
+              << compilation.process.exitCode << '\n';
+    reportSavedRepresentation(result);
+    return finishFailure(compilation.process.exitCode);
   }
   case lang::driver::ExecutableBuildStatus::NativeObjectPublicationFailure:
-    std::cerr << "gti: generated C++ retained at "
-              << result.generatedSource.string() << '\n';
-    return exitCode(ExitStatus::Io);
+    reportSavedRepresentation(result);
+    return finishFailure(exitCode(ExitStatus::Io));
   case lang::driver::ExecutableBuildStatus::NativeCompilerFailure:
-    std::cerr << "gti: native C++ compiler failed with exit code "
-              << result.nativeProcess->exitCode << '\n'
-              << "gti: generated C++ retained at "
-              << result.generatedSource.string() << '\n';
-    return result.nativeProcess->exitCode;
+    std::cerr
+        << terminalStyle.code(std::cerr, Style::Error)
+        << "gti: backend failed while compiling and linking the executable "
+        << "(exit code " << result.nativeProcess->exitCode << ')'
+        << terminalStyle.code(std::cerr, Style::Reset) << '\n';
+    reportSavedRepresentation(result);
+    if (result.backendDiagnosticLog) {
+      reportBackendDiagnosticLog(*result.backendDiagnosticLog);
+    }
+    return finishFailure(result.nativeProcess->exitCode);
   case lang::driver::ExecutableBuildStatus::ArtifactPublicationFailure:
-    std::cerr << "gti: generated C++ retained at "
-              << result.generatedSource.string() << '\n';
-    return exitCode(ExitStatus::Io);
+    reportSavedRepresentation(result);
+    return finishFailure(exitCode(ExitStatus::Io));
   case lang::driver::ExecutableBuildStatus::ArtifactPathConflict:
-    return exitCode(ExitStatus::Usage);
+    return finishFailure(exitCode(ExitStatus::Usage));
   case lang::driver::ExecutableBuildStatus::BuildReportCaptureFailure:
-    return exitCode(ExitStatus::Io);
+    return finishFailure(exitCode(ExitStatus::Io));
   }
-  return exitCode(ExitStatus::Compilation);
+  return finishFailure(exitCode(ExitStatus::Compilation));
 }
 
 int runDirect(const Options &options, const char *driver) {
@@ -1480,18 +2182,31 @@ int runDirect(const Options &options, const char *driver) {
       lang::driver::RuntimeProfile::Hosted, options.configurationFlags);
   const lang::TargetInfo &target = configuration.target();
 
+  // Keep emit-only direct invocations silent by default for existing tooling.
+  // Explicit --progress also enables observation for these modes.
+  lang::cli::BuildProgress progress(
+      terminalStyle, progressMode, options.input.filename().string(),
+      "direct, " + lang::driver::targetTriple(target),
+      lang::cli::optimizationNumber(options.optimization), options.verbose,
+      progressSelected ||
+          !(options.emitCpp || options.emitMir || options.emitNativeHeader));
+
   if (options.emitCpp || options.emitNativeHeader || options.emitMir) {
     const lang::driver::CompilationRequest request(
         options.input, toolchain.standardLibrary, target, options.optimization,
         options.standard, {}, configuration.configurationFlags(),
-        optimizationOutputRequest(options));
+        optimizationOutputRequest(options),
+        lang::WarningPolicy(options.disabledWarnings), options.debugInfo, {},
+        options.rawPointerAudit.value_or(lang::RawPointerAuditMode::Off));
     const lang::driver::CompilationResult compilation =
         options.emitNativeHeader
-            ? lang::driver::compileToNativeHeader(request)
-            : (options.emitMir ? lang::driver::compileToMir(request)
-                               : lang::driver::compileToCpp(request));
+            ? lang::driver::compileToNativeHeader(request, progress.observer())
+            : (options.emitMir
+                   ? lang::driver::compileToMir(request, progress.observer())
+                   : lang::driver::compileToCpp(request, progress.observer()));
+    progress.suspend();
     if (!compilation.succeeded()) {
-      return reportCompilationFailure(compilation);
+      return reportCompilationFailure(compilation, options.verbose);
     }
     reportDiagnostics(compilation.diagnostics, compilation.sources);
     const int optimizationOutputStatus =
@@ -1507,14 +2222,20 @@ int runDirect(const Options &options, const char *driver) {
                 << collision->string() << "' with emitted "
                 << (options.emitNativeHeader
                         ? "native header"
-                        : (options.emitMir ? "MIR output" : "C++ output"))
+                        : (options.emitMir ? "MIR output"
+                                           : "backend representation output"))
                 << " '" << options.output.string() << "'\n";
       return exitCode(ExitStatus::Usage);
     }
     if (!writeFile(options.output, artifact.contents)) {
       return exitCode(ExitStatus::Io);
     }
-    std::cout << "Emitted " << options.output << '\n';
+    std::cout << terminalStyle.code(std::cout, Style::Success) << "Emitted"
+              << terminalStyle.code(std::cout, Style::Reset) << ' '
+              << options.output << '\n';
+    reportDiagnosticSummary(std::cout,
+                            summarizeDiagnostics(compilation.diagnostics));
+    progress.finish(true);
     return exitCode(ExitStatus::Success);
   }
 
@@ -1525,21 +2246,28 @@ int runDirect(const Options &options, const char *driver) {
   lang::driver::NativeInputs nativeInputs;
   nativeInputs.trailingArguments = options.compilerArguments;
   const lang::driver::ExecutableBuildResult result =
-      lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
-          lang::driver::CompilationRequest(
-              options.input, toolchain.standardLibrary, target,
-              options.optimization, options.standard, {},
-              configuration.configurationFlags(),
-              optimizationOutputRequest(options)),
-          toolchain, generatedSource, options.output,
-          lang::driver::discoverNativeCompiler(options.cxx),
-          std::move(nativeInputs), options.keepCpp, false, options.verbose,
-          std::nullopt, std::nullopt, std::nullopt,
-          options.buildReport
-              ? std::optional<lang::driver::BuildReportRequest>(
-                    {.output = *options.buildReport,
-                     .producerExecutable = lang::executablePath(driver)})
-              : std::nullopt));
+      lang::driver::buildExecutable(
+          lang::driver::ExecutableBuildRequest(
+              lang::driver::CompilationRequest(
+                  options.input, toolchain.standardLibrary, target,
+                  options.optimization, options.standard, {},
+                  configuration.configurationFlags(),
+                  optimizationOutputRequest(options),
+                  lang::WarningPolicy(options.disabledWarnings),
+                  options.debugInfo, {},
+                  options.rawPointerAudit.value_or(
+                      lang::RawPointerAuditMode::Off)),
+              toolchain, generatedSource, options.output,
+              lang::driver::discoverNativeCompiler(options.cxx),
+              std::move(nativeInputs), options.keepCpp, false, options.verbose,
+              std::nullopt, std::nullopt, std::nullopt,
+              options.buildReport
+                  ? std::optional<lang::driver::BuildReportRequest>(
+                        {.output = *options.buildReport,
+                         .producerExecutable = lang::executablePath(driver)})
+                  : std::nullopt),
+          progress.observer());
+  progress.suspend();
   const int status = reportBuildResult(result, options.verbose);
   if (status != exitCode(ExitStatus::Success)) {
     return status;
@@ -1562,13 +2290,18 @@ int runDirect(const Options &options, const char *driver) {
     }
   }
 
-  std::cout << "Built " << options.output << '\n';
+  std::cout << terminalStyle.code(std::cout, Style::Success) << "Built"
+            << terminalStyle.code(std::cout, Style::Reset) << ' '
+            << options.output << '\n';
   if (options.buildReport) {
     std::cout << "Build report " << *options.buildReport << '\n';
   }
   if (options.keepCpp) {
-    std::cout << "Kept C++ " << generatedSource << '\n';
+    std::cout << "Kept backend representation " << generatedSource << '\n';
   }
+  reportDiagnosticSummary(std::cout,
+                          summarizeDiagnostics(result.compilation.diagnostics));
+  progress.finish(true);
   return exitCode(ExitStatus::Success);
 }
 
@@ -1591,11 +2324,11 @@ void reportProjectPlan(const lang::driver::ProjectBuildPlan &plan,
             << plan.profileName() << ", "
             << lang::driver::targetTriple(plan.target()) << "]\n"
             << "gti: configuration -O"
-            << lang::cli::optimizationNumber(plan.optimization()) << ", "
-            << lang::cli::cppStandardName(plan.cppStandard())
+            << lang::cli::optimizationNumber(plan.optimization())
             << ", execution-profile="
             << lang::executionProfileName(plan.target().executionProfile)
-            << ", keep-cpp=" << (plan.keepCpp() ? "true" : "false") << '\n';
+            << ", keep-representation=" << (plan.keepCpp() ? "true" : "false")
+            << ", debug-info=" << (plan.debugInfo() ? "true" : "false") << '\n';
   if (!plan.configurationFlags().empty()) {
     std::cerr << "gti: defines";
     for (const std::string &flag : plan.configurationFlags()) {
@@ -1612,9 +2345,35 @@ void reportProjectPlan(const lang::driver::ProjectBuildPlan &plan,
 
 void reportProjectSuccess(std::ostream &stream, std::string_view action,
                           const lang::driver::ProjectBuildPlan &plan) {
-  stream << action << ' ' << plan.targetName() << " [" << plan.profileName()
-         << ", " << lang::driver::targetTriple(plan.target()) << "] -> "
+  stream << terminalStyle.code(stream, Style::Success) << action
+         << terminalStyle.code(stream, Style::Reset) << ' ' << plan.targetName()
+         << " [" << plan.profileName() << ", "
+         << lang::driver::targetTriple(plan.target()) << "] -> "
          << plan.output().string() << '\n';
+}
+
+int invokeProjectProgram(const lang::driver::ProjectBuildPlan &plan,
+                         const ProjectOptions &options, bool skippedBuild) {
+  std::vector<std::string> command{plan.output().string()};
+  command.insert(command.end(), options.programArguments.begin(),
+                 options.programArguments.end());
+  std::cerr << terminalStyle.code(std::cerr, Style::Note)
+            << (skippedBuild ? "Running existing" : "Running")
+            << terminalStyle.code(std::cerr, Style::Reset) << ' '
+            << plan.output().string();
+  if (skippedBuild) {
+    std::cerr << " (--no-build)";
+  }
+  std::cerr << '\n';
+  const lang::driver::ProcessResult process = lang::driver::invokeProcess(
+      command, {.outputMode = lang::driver::ProcessOutputMode::Inherit,
+                .captureSuccessfulOutput = false,
+                .description = "program",
+                .environment = programColorEnvironment()});
+  if (process.driverDiagnostic) {
+    std::cerr << *process.driverDiagnostic << '\n';
+  }
+  return process.exitCode;
 }
 
 // Resolves the project command's selected target. Omitting `--target`
@@ -1691,12 +2450,17 @@ projectProvenance(const lang::driver::ProjectBuildPlan &plan) {
           .modelIdentity = plan.projectModelIdentity()};
 }
 
-int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
-                     const ProjectOptions &options,
-                     const lang::driver::ToolchainLayout &toolchain,
-                     const char *driver = nullptr,
-                     std::optional<lang::driver::BuildProvenance>
-                         *capturedProvenance = nullptr) {
+int buildProjectPlan(
+    const lang::driver::ProjectBuildPlan &plan, const ProjectOptions &options,
+    const lang::driver::ToolchainLayout &toolchain,
+    const lang::SourceManager *diagnosticSources = nullptr,
+    const char *driver = nullptr,
+    std::optional<lang::driver::BuildProvenance> *capturedProvenance = nullptr,
+    DiagnosticSummary *capturedDiagnostics = nullptr) {
+  lang::cli::BuildProgress progress(
+      terminalStyle, progressMode, plan.targetName(),
+      plan.profileName() + ", " + lang::driver::targetTriple(plan.target()),
+      lang::cli::optimizationNumber(plan.optimization()), options.verbose);
   // Configuration precedence: an explicit command-line option, then the
   // manifest's declared toolchain for the selected target, then the existing
   // environment/default discovery order. A declared toolchain deliberately
@@ -1720,8 +2484,61 @@ int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
                   [](const lang::driver::NativeDependencyGroup &group) {
                     return !group.cSources.empty();
                   });
-  if (!plan.nativeInputs().cSources.empty() || dependencyCSources) {
+  if (!plan.buildScripts().empty() || !plan.nativeInputs().cSources.empty() ||
+      dependencyCSources) {
     cCompiler = lang::driver::discoverCCompiler(selectedCc);
+  }
+  const std::string cppCompiler =
+      lang::driver::discoverNativeCompiler(selectedCxx);
+  lang::driver::NativeInputs nativeInputs = plan.nativeInputs();
+  if (!plan.buildScripts().empty()) {
+    const unsigned defaultJobs =
+        std::min(4u, std::max(1u, std::thread::hardware_concurrency()));
+    const std::string hostCppCompiler =
+        lang::driver::targetTriple(plan.target()) ==
+                lang::driver::targetTriple(lang::TargetInfo::host())
+            ? cppCompiler
+            : lang::driver::discoverNativeCompiler();
+    const lang::driver::BuildScriptExecutionResult scripts = [&] {
+      const lang::ProgressScope scriptProgress(
+          progress.observer(), lang::ProgressPhase::NativeDependency);
+      return lang::driver::executeBuildScripts(
+          plan, {.cCompiler = cCompiler.value_or("cc"),
+                 .cppCompiler = cppCompiler,
+                 .hostCppCompiler = hostCppCompiler,
+                 .compilerIdentity = std::string(version),
+                 .hostToolchain = toolchain,
+                 .jobs = options.jobs ? static_cast<unsigned>(*options.jobs)
+                                      : defaultJobs,
+                 .verbose = options.verbose});
+    }();
+    if (!scripts.succeeded()) {
+      progress.suspend();
+      const lang::SourceManager emptySources;
+      const lang::SourceManager &sources =
+          scripts.diagnosticSources      ? *scripts.diagnosticSources
+          : diagnosticSources == nullptr ? emptySources
+                                         : *diagnosticSources;
+      reportDiagnostics(scripts.diagnostics, sources);
+      DiagnosticSummary summary = summarizeDiagnostics(scripts.diagnostics);
+      summary.errors = std::max<std::size_t>(summary.errors, 1);
+      if (capturedDiagnostics != nullptr) {
+        *capturedDiagnostics = summary;
+      }
+      std::cerr.flush();
+      reportDiagnosticSummary(std::cout, summary);
+      return exitCode(ExitStatus::Compilation);
+    }
+    nativeInputs = *scripts.nativeInputs;
+    for (const lang::driver::BuildScriptOutcome &outcome : scripts.outcomes) {
+      if (options.verbose && !outcome.output.empty()) {
+        std::cerr << outcome.output;
+      }
+      std::cerr << terminalStyle.code(std::cerr, Style::Success)
+                << (outcome.reused ? "Reused" : "Built")
+                << terminalStyle.code(std::cerr, Style::Reset)
+                << " native dependency " << outcome.packageIdentity << '\n';
+    }
   }
   std::optional<lang::driver::BuildCachePolicy> cache;
   if (options.useCache) {
@@ -1747,22 +2564,30 @@ int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
   }
 
   const lang::driver::ExecutableBuildResult result =
-      lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
-          lang::driver::CompilationRequest(
-              plan.entry(), toolchain.standardLibrary, plan.target(),
-              plan.optimization(), plan.cppStandard(), plan.packageSources(),
-              plan.configurationFlags(), {}, plan.programRequest()),
-          toolchain, plan.generatedSource(), plan.output(),
-          lang::driver::discoverNativeCompiler(selectedCxx),
-          plan.nativeInputs(), plan.keepCpp(), true, options.verbose,
-          lang::driver::ManagedOutputPolicy{.trustedRoot = plan.workspaceRoot(),
-                                            .outputRoot = plan.workspaceRoot() /
-                                                          "build" / "gti"},
-          std::move(cCompiler), std::move(cache), std::move(buildReport)));
+      lang::driver::buildExecutable(
+          lang::driver::ExecutableBuildRequest(
+              lang::driver::CompilationRequest(
+                  plan.entry(), toolchain.standardLibrary, plan.target(),
+                  plan.optimization(), plan.cppStandard(),
+                  plan.packageSources(), plan.configurationFlags(), {},
+                  plan.warnings(), plan.debugInfo(), plan.packageWarnings(),
+                  plan.rawPointerAudit(), plan.programRequest()),
+              toolchain, plan.generatedSource(), plan.output(), cppCompiler,
+              nativeInputs, plan.keepCpp(), true, options.verbose,
+              lang::driver::ManagedOutputPolicy{
+                  .trustedRoot = plan.workspaceRoot(),
+                  .outputRoot = plan.workspaceRoot() / "build" / "gti"},
+              std::move(cCompiler), std::move(cache), std::move(buildReport)),
+          progress.observer());
+  progress.suspend();
   const int status = reportBuildResult(result, options.verbose);
+  if (capturedDiagnostics != nullptr) {
+    *capturedDiagnostics = summarizeDiagnostics(result.compilation.diagnostics);
+  }
   if (capturedProvenance != nullptr) {
     *capturedProvenance = result.provenance;
   }
+  progress.finish(status == exitCode(ExitStatus::Success));
   return status;
 }
 
@@ -1782,8 +2607,11 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
   overrides.executionProfile = options.executionProfile;
+  overrides.rawPointerAudit = options.rawPointerAudit;
   overrides.keepCpp = options.keepCpp;
+  overrides.debugInfo = options.debugInfo;
   overrides.configurationFlags = options.configurationFlags;
+  overrides.warningPolicy = lang::WarningPolicy(options.disabledWarnings);
   const ProjectTargetSelection selection = selectProjectTarget(options);
   if (!selection.target) {
     return selection.failure;
@@ -1810,9 +2638,19 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
               << boundedJobs << " parallel jobs\n";
   }
 
+  const bool childColor =
+      terminalStyle.enabled(std::cout) || terminalStyle.enabled(std::cerr);
+  lang::cli::BuildProgress progress(terminalStyle, progressMode, "all targets",
+                                    options.profile, 0, options.verbose);
   const auto childCommand = [&](const lang::driver::ProjectBuildPlan &plan) {
-    std::vector<std::string> command{driver, "build", plan.targetName(),
-                                     "--profile", options.profile};
+    std::vector<std::string> command{
+        driver,   "build", plan.targetName(), "--profile", options.profile,
+        "--jobs", "1"};
+    // Children are captured, so resolve auto against the parent's destinations.
+    command.emplace_back(childColor ? "--color=always" : "--color=never");
+    // Captured child telemetry would not be live and would make replay depend
+    // on elapsed times. The parent reports the actual target wait instead.
+    command.emplace_back("--progress=never");
     if (options.package) {
       command.emplace_back("--package");
       command.push_back(*options.package);
@@ -1842,12 +2680,24 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
       command.emplace_back(
           lang::executionProfileName(*options.executionProfile));
     }
+    if (options.rawPointerAudit) {
+      command.emplace_back(
+          "--raw-pointer-audit=" +
+          std::string(lang::rawPointerAuditModeName(*options.rawPointerAudit)));
+    }
     if (options.keepCpp) {
       command.emplace_back(*options.keepCpp ? "--keep-cpp" : "--no-keep-cpp");
+    }
+    if (options.debugInfo) {
+      command.emplace_back(*options.debugInfo ? "--debug-info"
+                                              : "--no-debug-info");
     }
     for (const std::string &flag : options.configurationFlags) {
       command.emplace_back("-D");
       command.push_back(flag);
+    }
+    for (const std::string &group : options.disabledWarnings) {
+      command.emplace_back("-Wno-" + group);
     }
     if (!options.useCache) {
       command.emplace_back("--no-cache");
@@ -1874,31 +2724,54 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
   }
 
   int firstFailure = exitCode(ExitStatus::Success);
+  DiagnosticSummary diagnosticSummary;
   for (std::size_t index = 0; index < targetCount; ++index) {
+    lang::ProgressScope targetProgress(
+        progress.observer(), lang::ProgressPhase::Targets,
+        "waiting for " + resolution.plans[index].targetName() + " [" +
+            std::to_string(index + 1) + "/" + std::to_string(targetCount) +
+            "]");
     const lang::driver::ProcessResult result = running[index].wait();
+    targetProgress.finish();
     if (nextToStart < targetCount) {
       startNext();
     }
     const lang::driver::ProjectBuildPlan &plan = resolution.plans[index];
+    if (const std::optional<DiagnosticSummary> childSummary =
+            parseDiagnosticSummary(result.output)) {
+      addDiagnosticSummary(diagnosticSummary, *childSummary);
+    } else if (!result.succeeded()) {
+      ++diagnosticSummary.errors;
+    }
     if (result.succeeded()) {
-      std::cout << result.output;
+      std::cout << (!childColor || terminalStyle.enabled(std::cout)
+                        ? result.output
+                        : lang::cli::withoutStyles(result.output));
       continue;
     }
-    std::cerr << result.output;
+    std::cerr << (!childColor || terminalStyle.enabled(std::cerr)
+                      ? result.output
+                      : lang::cli::withoutStyles(result.output));
     if (result.driverDiagnostic) {
       std::cerr << *result.driverDiagnostic << '\n';
     }
-    std::cerr << "gti: build --all: target '" << plan.targetName()
-              << "' failed with exit code " << result.exitCode << '\n';
+    std::cerr << "gti: build --all: target '" << plan.targetName() << "' "
+              << terminalStyle.code(std::cerr, Style::Error) << "failed"
+              << terminalStyle.code(std::cerr, Style::Reset)
+              << " with exit code " << result.exitCode << '\n';
     if (firstFailure == exitCode(ExitStatus::Success)) {
       firstFailure = result.exitCode;
     }
   }
   if (firstFailure == exitCode(ExitStatus::Success)) {
-    std::cout << "Built " << targetCount
-              << (targetCount == 1 ? " target" : " targets") << " ["
-              << options.profile << "]\n";
+    std::cout << terminalStyle.code(std::cout, Style::Success) << "Built"
+              << terminalStyle.code(std::cout, Style::Reset) << ' '
+              << targetCount << (targetCount == 1 ? " target" : " targets")
+              << " [" << options.profile << "]\n";
   }
+  std::cerr.flush();
+  reportDiagnosticSummary(std::cout, diagnosticSummary);
+  progress.finish(firstFailure == exitCode(ExitStatus::Success));
   return firstFailure;
 }
 
@@ -1957,8 +2830,11 @@ int runProject(const ProjectOptions &options, const char *driver) {
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
   overrides.executionProfile = options.executionProfile;
+  overrides.rawPointerAudit = options.rawPointerAudit;
   overrides.keepCpp = options.keepCpp;
+  overrides.debugInfo = options.debugInfo;
   overrides.configurationFlags = options.configurationFlags;
+  overrides.warningPolicy = lang::WarningPolicy(options.disabledWarnings);
   const ProjectTargetSelection selection = selectProjectTarget(options);
   if (!selection.target) {
     return selection.failure;
@@ -1968,7 +2844,8 @@ int runProject(const ProjectOptions &options, const char *driver) {
           *currentDirectory, options.target, options.profile, *selection.target,
           std::move(overrides), options.package,
           {.requireLock = true,
-           .allowAcquisition = !(options.offline || options.locked)},
+           .allowAcquisition =
+               !(options.offline || options.locked || options.noBuild)},
           lang::driver::RuntimeProfile::Hosted, projectToolchainPolicy(options),
           {.cCompiler = options.cc.has_value()}));
   if (!resolution.succeeded()) {
@@ -1987,6 +2864,19 @@ int runProject(const ProjectOptions &options, const char *driver) {
   if (options.verbose) {
     reportProjectPlan(plan, options.command);
   }
+  if (options.noBuild) {
+    const lang::driver::ManagedOutputPolicy managed{
+        .trustedRoot = plan.workspaceRoot(),
+        .outputRoot = plan.workspaceRoot() / "build" / "gti"};
+    if (const std::optional<std::string> diagnostic =
+            lang::driver::managedExecutableDiagnostic(managed, plan.output())) {
+      std::cerr << *diagnostic << '\n'
+                << "gti: build target '" << plan.targetName()
+                << "' before using --no-build\n";
+      return exitCode(ExitStatus::Io);
+    }
+    return invokeProjectProgram(plan, options, true);
+  }
   {
     std::ostream &bindgenStream =
         options.command == ProjectCommand::Run ? std::cerr : std::cout;
@@ -2000,13 +2890,22 @@ int runProject(const ProjectOptions &options, const char *driver) {
       lang::driver::discoverToolchainLayout(driver);
 
   if (options.command == ProjectCommand::Build && options.emitMir) {
+    lang::cli::BuildProgress progress(
+        terminalStyle, progressMode, plan.targetName(),
+        plan.profileName() + ", " + lang::driver::targetTriple(plan.target()),
+        lang::cli::optimizationNumber(plan.optimization()), options.verbose);
     const lang::driver::CompilationResult compilation =
-        lang::driver::compileToMir(lang::driver::CompilationRequest(
-            plan.entry(), toolchain.standardLibrary, plan.target(),
-            plan.optimization(), plan.cppStandard(), plan.packageSources(),
-            plan.configurationFlags(), {}, plan.programRequest()));
+        lang::driver::compileToMir(
+            lang::driver::CompilationRequest(
+                plan.entry(), toolchain.standardLibrary, plan.target(),
+                plan.optimization(), plan.cppStandard(), plan.packageSources(),
+                plan.configurationFlags(), {}, plan.warnings(), false,
+                plan.packageWarnings(), plan.rawPointerAudit(),
+                plan.programRequest()),
+            progress.observer());
+    progress.suspend();
     if (!compilation.succeeded()) {
-      return reportCompilationFailure(compilation);
+      return reportCompilationFailure(compilation, options.verbose);
     }
     reportDiagnostics(compilation.diagnostics, compilation.sources);
     std::filesystem::path output = plan.output();
@@ -2024,33 +2923,57 @@ int runProject(const ProjectOptions &options, const char *driver) {
     if (directoryError || !writeFile(output, compilation.artifact->contents)) {
       return exitCode(ExitStatus::Io);
     }
-    std::cout << "Emitted MIR " << plan.targetName() << " ["
-              << plan.profileName() << ", "
+    std::cout << terminalStyle.code(std::cout, Style::Success) << "Emitted MIR"
+              << terminalStyle.code(std::cout, Style::Reset) << ' '
+              << plan.targetName() << " [" << plan.profileName() << ", "
               << lang::driver::targetTriple(plan.target()) << "] -> "
               << output.string() << '\n';
+    reportDiagnosticSummary(std::cout,
+                            summarizeDiagnostics(compilation.diagnostics));
+    progress.finish(true);
     return exitCode(ExitStatus::Success);
   }
 
   if (options.command == ProjectCommand::Check) {
-    const lang::driver::CheckResult result =
-        lang::driver::checkCompilation(lang::driver::CompilationRequest(
+    lang::cli::BuildProgress progress(
+        terminalStyle, progressMode, plan.targetName(),
+        plan.profileName() + ", " + lang::driver::targetTriple(plan.target()),
+        lang::cli::optimizationNumber(plan.optimization()), options.verbose);
+    const lang::driver::CheckResult result = lang::driver::checkCompilation(
+        lang::driver::CompilationRequest(
             plan.entry(), toolchain.standardLibrary, plan.target(),
             plan.optimization(), plan.cppStandard(), plan.packageSources(),
-            plan.configurationFlags(), {}, plan.programRequest()));
+            plan.configurationFlags(), {}, plan.warnings(), false,
+            plan.packageWarnings(), plan.rawPointerAudit(),
+            plan.programRequest())
+            .forExecutable(),
+        progress.observer());
+    progress.suspend();
     if (!result.succeeded()) {
       reportDiagnostics(result.diagnostics, result.sources);
+      DiagnosticSummary summary = summarizeDiagnostics(result.diagnostics);
+      summary.errors = std::max<std::size_t>(summary.errors, 1);
+      std::cerr.flush();
+      reportDiagnosticSummary(std::cout, summary);
       return exitCode(ExitStatus::Compilation);
     }
     reportDiagnostics(result.diagnostics, result.sources);
-    std::cout << "Checked " << plan.targetName() << " [" << plan.profileName()
-              << ", " << lang::driver::targetTriple(plan.target()) << "] -> "
+    std::cout << terminalStyle.code(std::cout, Style::Success) << "Checked"
+              << terminalStyle.code(std::cout, Style::Reset) << ' '
+              << plan.targetName() << " [" << plan.profileName() << ", "
+              << lang::driver::targetTriple(plan.target()) << "] -> "
               << plan.entry().string() << '\n';
+    reportDiagnosticSummary(std::cout,
+                            summarizeDiagnostics(result.diagnostics));
+    progress.finish(true);
     return exitCode(ExitStatus::Success);
   }
 
   std::optional<lang::driver::BuildProvenance> provenance;
+  DiagnosticSummary diagnosticSummary;
   const int status =
-      buildProjectPlan(plan, options, toolchain, driver, &provenance);
+      buildProjectPlan(plan, options, toolchain, &resolution.sources, driver,
+                       &provenance, &diagnosticSummary);
   if (status != exitCode(ExitStatus::Success)) {
     return status;
   }
@@ -2072,22 +2995,13 @@ int runProject(const ProjectOptions &options, const char *driver) {
     statusStream << "Build report " << options.buildReport->string() << '\n';
   }
   if (plan.keepCpp()) {
-    statusStream << "Kept C++ " << plan.generatedSource().string() << '\n';
+    statusStream << "Kept backend representation "
+                 << plan.generatedSource().string() << '\n';
   }
+  reportDiagnosticSummary(statusStream, diagnosticSummary);
 
   if (options.command == ProjectCommand::Run) {
-    std::vector<std::string> command{plan.output().string()};
-    command.insert(command.end(), options.programArguments.begin(),
-                   options.programArguments.end());
-    statusStream << "Running " << plan.output().string() << '\n';
-    const lang::driver::ProcessResult process = lang::driver::invokeProcess(
-        command, {.outputMode = lang::driver::ProcessOutputMode::Inherit,
-                  .captureSuccessfulOutput = false,
-                  .description = "program"});
-    if (process.driverDiagnostic) {
-      std::cerr << *process.driverDiagnostic << '\n';
-    }
-    return process.exitCode;
+    return invokeProjectProgram(plan, options, false);
   }
   return exitCode(ExitStatus::Success);
 }
@@ -2132,8 +3046,12 @@ int runProjectVerify(const ProjectOptions &options, const char *driver) {
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
   overrides.executionProfile = options.executionProfile;
+  overrides.rawPointerAudit =
+      options.rawPointerAudit.value_or(recorded->rawPointerAudit);
   overrides.keepCpp = options.keepCpp;
+  overrides.debugInfo = options.debugInfo.value_or(recorded->debugInfo);
   overrides.configurationFlags = options.configurationFlags;
+  overrides.warningPolicy = lang::WarningPolicy(options.disabledWarnings);
   // The record names the target it was built for. Reproducing it on the
   // build host would verify a different build, so the recorded triple is
   // parsed back and selected exactly as `gti build --target` selected it.
@@ -2184,8 +3102,8 @@ int runProjectVerify(const ProjectOptions &options, const char *driver) {
   const lang::driver::ToolchainLayout toolchain =
       lang::driver::discoverToolchainLayout(driver);
   std::optional<lang::driver::BuildProvenance> rebuilt;
-  const int status =
-      buildProjectPlan(plan, options, toolchain, driver, &rebuilt);
+  const int status = buildProjectPlan(plan, options, toolchain,
+                                      &resolution.sources, driver, &rebuilt);
   if (status != exitCode(ExitStatus::Success)) {
     std::cerr << "gti: the recorded build no longer completes; '"
               << reportPath.string() << "' cannot be reproduced\n";
@@ -2233,8 +3151,11 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
   overrides.executionProfile = options.executionProfile;
+  overrides.rawPointerAudit = options.rawPointerAudit;
   overrides.keepCpp = options.keepCpp;
+  overrides.debugInfo = options.debugInfo;
   overrides.configurationFlags = options.configurationFlags;
+  overrides.warningPolicy = lang::WarningPolicy(options.disabledWarnings);
   const ProjectTargetSelection selection = selectProjectTarget(options);
   if (!selection.target) {
     return selection.failure;
@@ -2265,32 +3186,45 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   std::size_t passed = 0;
   std::size_t failed = 0;
   int firstFailure = exitCode(ExitStatus::Success);
+  DiagnosticSummary diagnosticSummary;
   for (const lang::driver::ProjectBuildPlan &plan : resolution.plans) {
     if (options.verbose) {
       reportProjectPlan(plan, ProjectCommand::Test);
     }
-    std::cerr << "Building test " << plan.targetName() << '\n';
-    const int buildStatus = buildProjectPlan(plan, options, toolchain);
+    std::cerr << terminalStyle.code(std::cerr, Style::Note) << "Building test"
+              << terminalStyle.code(std::cerr, Style::Reset) << ' '
+              << plan.targetName() << '\n';
+    DiagnosticSummary buildSummary;
+    const int buildStatus =
+        buildProjectPlan(plan, options, toolchain, &resolution.sources, nullptr,
+                         nullptr, &buildSummary);
     if (buildStatus != exitCode(ExitStatus::Success)) {
       return buildStatus;
     }
+    addDiagnosticSummary(diagnosticSummary, buildSummary);
 
     reportProjectSuccess(std::cerr, "Built", plan);
     if (plan.keepCpp()) {
-      std::cerr << "Kept C++ " << plan.generatedSource().string() << '\n';
+      std::cerr << "Kept backend representation "
+                << plan.generatedSource().string() << '\n';
     }
-    std::cerr << "Testing " << plan.targetName() << '\n';
+    std::cerr << terminalStyle.code(std::cerr, Style::Note) << "Testing"
+              << terminalStyle.code(std::cerr, Style::Reset) << ' '
+              << plan.targetName() << '\n';
     const lang::driver::ProcessResult process = lang::driver::invokeProcess(
         {plan.output().string()},
         {.outputMode = lang::driver::ProcessOutputMode::Inherit,
          .captureSuccessfulOutput = false,
-         .description = "test target '" + plan.targetName() + "'"});
+         .description = "test target '" + plan.targetName() + "'",
+         .environment = programColorEnvironment()});
     if (process.driverDiagnostic) {
       std::cerr << *process.driverDiagnostic << '\n';
     }
     if (process.succeeded()) {
       ++passed;
-      std::cerr << "Passed " << plan.targetName() << '\n';
+      std::cerr << terminalStyle.code(std::cerr, Style::Success) << "Passed"
+                << terminalStyle.code(std::cerr, Style::Reset) << ' '
+                << plan.targetName() << '\n';
       continue;
     }
 
@@ -2298,15 +3232,21 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
     if (firstFailure == exitCode(ExitStatus::Success)) {
       firstFailure = process.exitCode;
     }
-    std::cerr << "Failed " << plan.targetName() << " (exit code "
-              << process.exitCode << ")\n";
+    std::cerr << terminalStyle.code(std::cerr, Style::Error) << "Failed"
+              << terminalStyle.code(std::cerr, Style::Reset) << ' '
+              << plan.targetName() << " (exit code " << process.exitCode
+              << ")\n";
   }
 
-  std::cerr << "Test result: " << passed << " passed";
+  std::cerr << "Test result: " << terminalStyle.code(std::cerr, Style::Success)
+            << passed << " passed"
+            << terminalStyle.code(std::cerr, Style::Reset);
   if (failed != 0) {
-    std::cerr << ", " << failed << " failed";
+    std::cerr << ", " << terminalStyle.code(std::cerr, Style::Error) << failed
+              << " failed" << terminalStyle.code(std::cerr, Style::Reset);
   }
   std::cerr << '\n';
+  reportDiagnosticSummary(std::cerr, diagnosticSummary);
   return firstFailure;
 }
 
@@ -2323,7 +3263,10 @@ int runFetch(const FetchOptions &options) {
   lang::driver::WorkspaceResolutionResult resolution =
       lang::driver::resolveProjectWorkspace(
           *currentDirectory, std::nullopt,
-          {.requireLock = false, .allowAcquisition = !options.offline});
+          {.requireLock = options.locked,
+           .allowAcquisition = !options.offline,
+           .acquireRegistry = !options.offline,
+           .materializeRegistry = true});
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     return exitCode(ExitStatus::Compilation);
@@ -2338,7 +3281,8 @@ int runFetch(const FetchOptions &options) {
   std::error_code existsError;
   const bool lockExists =
       std::filesystem::is_regular_file(lockPath, existsError) && !existsError;
-  if (lock.packages.empty() && !lockExists) {
+  const auto packageCount = lock.packages.size() + lock.registryPackages.size();
+  if (packageCount == 0 && !lockExists) {
     std::cout << "No git dependencies to lock\n";
     return exitCode(ExitStatus::Success);
   }
@@ -2347,6 +3291,12 @@ int runFetch(const FetchOptions &options) {
     std::cout << "Locked " << package.name << '@' << package.version << " git+"
               << package.url << '#' << package.revision << '\n';
   }
+  for (const auto &package : lock.registryPackages) {
+    std::cout << "Locked " << package.package << '@' << package.version
+              << " registry " << package.registry << '\n';
+  }
+  const std::string dependencyDescription =
+      lock.registryPackages.empty() ? " git dependenc" : " dependenc";
 
   const std::string rendered = lang::driver::renderDependencyLock(lock);
   if (lockExists) {
@@ -2354,21 +3304,24 @@ int runFetch(const FetchOptions &options) {
     const std::string current{std::istreambuf_iterator<char>(existing),
                               std::istreambuf_iterator<char>()};
     if (existing && current == rendered) {
-      std::cout << "gti.lock is up to date (" << lock.packages.size()
-                << (lock.packages.size() == 1 ? " git dependency"
-                                              : " git dependencies")
+      std::cout << "gti.lock is up to date (" << packageCount
+                << dependencyDescription << (packageCount == 1 ? "y" : "ies")
                 << ")\n";
       return exitCode(ExitStatus::Success);
     }
+  }
+  if (options.locked) {
+    std::cerr << "gti: --locked refuses to change gti.lock; run `gti fetch` "
+                 "without --locked to reconcile it\n";
+    return exitCode(ExitStatus::Compilation);
   }
   std::string writeError;
   if (!lang::driver::writeDependencyLock(workspace.root(), lock, writeError)) {
     std::cerr << "gti: failed to write gti.lock: " << writeError << '\n';
     return exitCode(ExitStatus::Io);
   }
-  std::cout << "Wrote " << lockPath.string() << " (" << lock.packages.size()
-            << (lock.packages.size() == 1 ? " git dependency"
-                                          : " git dependencies")
+  std::cout << "Wrote " << lockPath.string() << " (" << packageCount
+            << dependencyDescription << (packageCount == 1 ? "y" : "ies")
             << ")\n";
   return exitCode(ExitStatus::Success);
 }
@@ -2415,15 +3368,25 @@ int runMetadata(const MetadataOptions &options) {
 }
 
 int runScaffold(const ScaffoldOptions &options) {
+  std::optional<lang::driver::ProjectScaffoldGit> git;
+  if (options.initializeGit) {
+    git = lang::driver::ProjectScaffoldGit{
+        .executable = lang::driver::discoverGitExecutable()};
+  }
   const lang::driver::ProjectScaffoldResult result =
       lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
-          options.mode, options.destination, options.packageName));
+          options.mode, options.destination, options.packageName,
+          std::move(git)));
   if (!result.succeeded()) {
     reportDiagnostics(result.diagnostics, {});
-    return result.status ==
-                   lang::driver::ProjectScaffoldStatus::FilesystemFailure
-               ? exitCode(ExitStatus::Io)
-               : exitCode(ExitStatus::Usage);
+    if (result.status ==
+        lang::driver::ProjectScaffoldStatus::FilesystemFailure) {
+      return exitCode(ExitStatus::Io);
+    }
+    if (result.status == lang::driver::ProjectScaffoldStatus::ToolFailure) {
+      return exitCode(ExitStatus::ToolchainConfiguration);
+    }
+    return exitCode(ExitStatus::Usage);
   }
 
   std::cout << (options.mode == lang::driver::ProjectScaffoldMode::NewPackage
@@ -2431,6 +3394,9 @@ int runScaffold(const ScaffoldOptions &options) {
                     : "Initialized")
             << " package '" << result.packageName << "' at "
             << result.packageRoot.string() << '\n';
+  if (result.initializedGit) {
+    std::cout << "Initialized Git repository and wrote .gitignore\n";
+  }
   return exitCode(ExitStatus::Success);
 }
 
@@ -2453,6 +3419,13 @@ int runFormatConfigInit(const FormatConfigInitOptions &options) {
 int runBindgen(int argc, char *argv[]) {
   BindgenCliOptions options;
   for (int index = 2; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return exitCode(ExitStatus::Usage);
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
     const std::string_view argument = argv[index];
     if (argument == "-o" || argument == "--output") {
       if (index + 1 >= argc) {
@@ -2721,6 +3694,30 @@ int runBindgen(int argc, char *argv[]) {
 
 int main(int argc, char *argv[]) {
   lang::installCrashHandlers(argc > 0 ? argv[0] : "gti");
+  // Permit presentation options before a subcommand, without scanning through
+  // operands (e.g. an output file literally named --progress=never).
+  int first = 1;
+  for (; first < argc; ++first) {
+    const auto progress = parseProgressArgument(argc, argv, first);
+    if (progress == ColorArgument::Invalid) {
+      return exitCode(ExitStatus::Usage);
+    }
+    if (progress == ColorArgument::Accepted) {
+      continue;
+    }
+    const auto color = parseColorArgument(argc, argv, first);
+    if (color == ColorArgument::Invalid) {
+      return exitCode(ExitStatus::Usage);
+    }
+    if (color == ColorArgument::NotColor) {
+      break;
+    }
+  }
+  std::vector<char *> arguments{argv[0]};
+  arguments.insert(arguments.end(), argv + first, argv + argc);
+  arguments.push_back(nullptr);
+  argc = static_cast<int>(arguments.size()) - 1;
+  argv = arguments.data();
   const std::string_view command =
       argc > 1 ? std::string_view(argv[1]) : std::string_view{};
   if (command == "build" || command == "check" || command == "run" ||
@@ -2749,6 +3746,49 @@ int main(int argc, char *argv[]) {
       return runProjectBuildAll(options, argv[0]);
     }
     return runProject(options, argv[0]);
+  }
+
+  if (command == "registry") {
+    RegistryAuthenticationOptions options;
+    const auto parsed =
+        parseRegistryAuthenticationArguments(argc, argv, options);
+    if (parsed == ArgumentResult::ExitSuccess) {
+      return exitCode(ExitStatus::Success);
+    }
+    if (parsed == ArgumentResult::ExitFailure) {
+      return exitCode(ExitStatus::Usage);
+    }
+    return runRegistryAuthentication(options);
+  }
+
+  if (command == "add" || command == "publish") {
+    RegistryOptions options;
+    const auto parsed =
+        parseRegistryArguments(argc, argv, options, command == "publish");
+    if (parsed == ArgumentResult::ExitSuccess) {
+      return exitCode(ExitStatus::Success);
+    }
+    if (parsed == ArgumentResult::ExitFailure) {
+      return exitCode(ExitStatus::Usage);
+    }
+    const auto directory = workingDirectory();
+    if (!directory) {
+      return exitCode(ExitStatus::Io);
+    }
+    const auto result =
+        command == "add"
+            ? lang::driver::addRegistryDependency(*directory, options.package,
+                                                  options.requirement,
+                                                  options.registry)
+            : lang::driver::publishRegistryPackage(*directory, options.registry,
+                                                   options.package,
+                                                   options.dryRun);
+    if (!result.succeeded()) {
+      reportDiagnostics(result.diagnostics, result.sources);
+      return exitCode(ExitStatus::Compilation);
+    }
+    std::cout << result.summary << '\n';
+    return exitCode(ExitStatus::Success);
   }
 
   if (command == "fetch") {

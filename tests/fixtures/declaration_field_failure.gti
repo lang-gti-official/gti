@@ -1,0 +1,77 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+extern "C" { void gti_test_fail_scalar_allocation(int32_t enabled); }
+mut int32_t phase = 0;
+mut int32_t calls = 0;
+mut int32_t sequence = 0;
+
+class Resource {
+  int32_t id;
+public:
+  Resource(int32_t value) : id(value) {
+    if (phase == 3 && value == 2) {
+      int32_t divisor = 0;
+      int32_t constructor_failure = 7 / divisor;
+    }
+  }
+  ~Resource() { std::println(this.id); }
+};
+
+std::unique_ptr<Resource> acquire(int32_t id) {
+  calls += 1;
+  sequence = sequence * 10 + id;
+  if ((phase == 1 && id == 1) || (phase == 2 && id == 2)) {
+    unsafe { gti_test_fail_scalar_allocation(1); }
+  }
+  return std::make_unique<Resource>(id);
+}
+
+class Application {
+  std::unique_ptr<Resource> first = acquire(1);
+  std::unique_ptr<Resource> second = acquire(2);
+public:
+  Application(Resource argument = Resource(8)) {
+    if (phase == 4) {
+      int32_t divisor = 0;
+      int32_t body_failure = 11 / divisor;
+    }
+  }
+  ~Application() { std::println(10); }
+};
+
+class Override {
+  std::unique_ptr<Resource> first = acquire(1);
+  std::unique_ptr<Resource> second = acquire(2);
+public:
+  Override() : second(acquire(3)) {}
+};
+
+class GenericResource {
+public:
+  GenericResource() {}
+  ~GenericResource() { std::println(11); }
+};
+
+class GenericOwner<T> {
+  std::unique_ptr<T> empty = std::unique_ptr<T>();
+  std::unique_ptr<T> resource = std::make_unique<T>();
+public:
+  GenericOwner() {}
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  phase = int32_t(argc - 1);
+  Resource caller{9};
+  if (phase == 6) {
+    GenericOwner<GenericResource> generic{};
+    return 0;
+  }
+  if (phase == 5) {
+    Override overridden{};
+    return calls == 2 && sequence == 13 ? 0 : 1;
+  }
+  Application application{Resource(8)};
+  return calls == 2 && sequence == 12 ? 0 : 1;
+}

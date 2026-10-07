@@ -1,0 +1,37 @@
+#include <std/string>
+
+class Token {
+  int identity;
+public:
+  Token(int identity) : identity(identity) {}
+  ~Token() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+class Owner<Stored> {
+  Stored stored;
+public:
+  Owner(Stored value) : stored(std::move(value)) {}
+  void accept<Args...>(Args... args) { std::println(8); }
+};
+
+Owner<T> own<T>(T value) { return Owner<T>(std::move(value)); }
+
+int main() {
+  auto stored = []() -> int { return 1; };
+  auto owner = own(std::move(stored));
+  owner.accept();
+  owner.accept(7);
+  owner.accept(7, 9);
+  auto passive = []() -> int { return 2; };
+  owner.accept(std::move(passive));
+  Token first{1};
+  auto one = [first = std::move(first)]() -> int { return first.read(); };
+  owner.accept(std::move(one));
+  Token second{2};
+  auto left = [second = std::move(second)]() -> int { return second.read(); };
+  Token third{3};
+  auto right = [third = std::move(third)]() -> int { return third.read(); };
+  owner.accept(std::move(left), 7, std::move(right));
+  return 0;
+}

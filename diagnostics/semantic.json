@@ -1,0 +1,101 @@
+[
+  {
+    "id": "IgnoredReturnValue",
+    "code": "GTI-S2009",
+    "phase": "Semantics",
+    "severity": "Error",
+    "group": "unused-result",
+    "format": "Function return value must be used or explicitly discarded with '[[discard]]'.",
+    "arguments": 0
+  },
+  {
+    "id": "UnknownConfigurationFlag",
+    "code": "GTI-S2075",
+    "phase": "Semantics",
+    "severity": "Warning",
+    "group": "configuration",
+    "format": "Configuration flag '{0}' is referenced but defined nowhere in this compilation.",
+    "arguments": 1
+  },
+  {
+    "id": "UnreachableStatement",
+    "code": "GTI-S2095",
+    "phase": "Semantics",
+    "severity": "Warning",
+    "group": "unreachable-code",
+    "format": "Statement is unreachable.",
+    "arguments": 0
+  },
+  {
+    "id": "UnnecessaryMutableBinding",
+    "code": "GTI-S2096",
+    "phase": "Semantics",
+    "severity": "Warning",
+    "group": "unused-mut",
+    "format": "Mutable binding '{0}' is never used mutably.",
+    "arguments": 1
+  },
+  {
+    "id": "InvalidExpectedCombinator",
+    "code": "GTI-S2097",
+    "phase": "Semantics",
+    "severity": "Error",
+    "group": "expected",
+    "format": "expected::{0} requires one exact mapper with signature '{1}'.",
+    "arguments": 2
+  },
+  {
+    "id": "InvalidModuleExport",
+    "code": "GTI-S2098",
+    "phase": "Semantics",
+    "severity": "Error",
+    "group": "modules",
+    "format": "{0}",
+    "arguments": 1
+  },
+  {
+    "id": "InvalidFunctionContract",
+    "code": "GTI-S2099",
+    "phase": "Semantics",
+    "severity": "Error",
+    "group": "function-contract",
+    "format": "{0}",
+    "arguments": 1
+  },
+  {
+    "id": "UnnecessaryUnsafeBlock",
+    "code": "GTI-S2100",
+    "phase": "Semantics",
+    "severity": "Warning",
+    "group": "unused-unsafe",
+    "format": "This unsafe block contains no operation requiring unsafe permission.",
+    "arguments": 0
+  },
+  {
+    "id": "RawAuditViolation",
+    "code": "GTI-S2101",
+    "phase": "Semantics",
+    "severity": "Warning",
+    "group": "raw-pointer-violation",
+    "format": "{0}",
+    "arguments": 1
+  },
+  {
+    "id": "RawAuditPotential",
+    "code": "GTI-S2102",
+    "phase": "Semantics",
+    "severity": "Warning",
+    "group": "raw-pointer-potential",
+    "format": "{0}",
+    "arguments": 1
+  },
+  {
+    "id": "RawAuditIncomplete",
+    "code": "GTI-S2103",
+    "phase": "Semantics",
+    "severity": "Warning",
+    "group": "raw-pointer-incomplete",
+    "format": "{0}",
+    "arguments": 1
+  }
+]

@@ -1,0 +1,48 @@
+#include <std/string>
+
+class Marker {
+public:
+  Marker() {}
+  ~Marker() { std::println(9); }
+};
+
+class Path {
+  Marker marker{};
+  mut std::string text{};
+public:
+  Path(std::string text) : text(std::move(text)) {}
+  Path append(char part) && {
+    this.text.push_back(part);
+    return std::move(this);
+  }
+  Path operator/(char part) {
+    std::println(1);
+    Path result{this.text.clone()};
+    return std::move(result).append(part);
+  }
+  Path operator/(char part) && {
+    std::println(2);
+    this.text.push_back(part);
+    return std::move(this);
+  }
+  void print() { std::println(this.text.view()); }
+};
+
+class Box<T> {
+public:
+  mut T value;
+  Box(T value) : value(std::move(value)) {}
+  T take() && { return std::move(this.value); }
+  Box<T> identity<U>(U ignored) && { return std::move(this); }
+};
+
+int main() {
+  Path root{std::string("a")};
+  Path path = root / 'b' / 'c' / 'd';
+  root.print();
+  path.print();
+  Box<Path> box{std::move(path)};
+  Path extracted = std::move(box).identity<int>(0).take();
+  extracted.print();
+  return 0;
+}

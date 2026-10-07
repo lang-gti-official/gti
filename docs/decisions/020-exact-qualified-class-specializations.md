@@ -59,6 +59,18 @@ same specialization independently.
 
 ## Consequences
 
+The later headerless `class Name<R(Args...)>` form in `L-CALL-02` describes a
+generic definition's public argument shape. L-CALL-02 additionally permits a
+same-package family with one definition per signature receiver qualifier. This
+is a disjoint partition: duplicate qualifiers are rejected even if their other
+components differ, and an ordinary primary cannot overlap the family. It is
+needed for source-defined mutable and consuming callback policy without naming
+public wrappers in the compiler. GTI resolves the qualifier, binders, and exact
+matching before HIR; there is still no partial-specialization ranking. The
+C++ representation may use a partial-specialization spelling to preserve that
+already-resolved shape for classes requiring native template representation.
+That representation does not introduce additional GTI source selection rules.
+
 - Libraries can expose a generic customization surface and applications can
   provide exact implementations for their own nominal types without a new
   keyword.

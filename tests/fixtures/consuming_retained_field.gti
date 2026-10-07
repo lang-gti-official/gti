@@ -1,0 +1,96 @@
+#include <std/string>
+#include <std/vector>
+
+class Token {
+  int identity;
+public:
+  Token(int identity) : identity(identity) {}
+  ~Token() { std::println(this.identity); }
+};
+
+class Callback {
+  Token capture;
+public:
+  Callback(Token capture) : capture(std::move(capture)) {}
+  ~Callback() { std::println(6); }
+  int operator()(int divisor) && {
+    std::println(1);
+    return 12 / divisor;
+  }
+};
+
+class Owner<Callable> {
+  int identity;
+  mut Callable callable;
+public:
+  Owner(int identity, Callable callable)
+      : identity(identity), callable(std::move(callable)) {}
+  ~Owner() { std::println(this.identity); }
+  int operator()(int divisor) && {
+    return std::move(this.callable)(divisor);
+  }
+};
+
+class Extract<Callable> {
+  mut Callable callable;
+public:
+  Extract(Callable callable) : callable(std::move(callable)) {}
+  ~Extract() { std::println(8); }
+  int operator()(int divisor) && {
+    Callable extracted = std::move(this.callable);
+    std::println(1);
+    return 12 / divisor; // Explicit extraction keeps callee-local ownership.
+  }
+};
+
+int later(int divisor) {
+  std::println(2);
+  return 6 / divisor;
+}
+
+int combine(int left, int right) {
+  std::println(3);
+  return left + right;
+}
+
+int run_extraction(int body_divisor, int later_divisor) {
+  Token capture{7};
+  Callback callback{std::move(capture)};
+  Extract<Callback> owner{std::move(callback)};
+  int value = combine(std::move(owner)(body_divisor), later(later_divisor));
+  std::println(5);
+  return value - 18;
+}
+
+int run_nested(int body_divisor, int later_divisor) {
+  Token capture{7};
+  Callback callback{std::move(capture)};
+  Owner<Callback> inner{8, std::move(callback)};
+  Owner<Owner<Callback>> owner{10, std::move(inner)};
+  int value = combine(std::move(owner)(body_divisor), later(later_divisor));
+  std::println(5);
+  return value - 18;
+}
+
+int run_single(int body_divisor, int later_divisor) {
+  Token capture{7};
+  Callback callback{std::move(capture)};
+  Owner<Callback> owner{8, std::move(callback)};
+  int value = combine(std::move(owner)(body_divisor), later(later_divisor));
+  std::println(5);
+  return value - 18;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  int mode = argc - 1;
+  int body_divisor = mode == 1 || mode == 4 || mode == 7 ? 0 : 1;
+  int later_divisor = mode == 2 || mode == 5 || mode == 8 ? 0 : 1;
+  Token caller{99};
+  if (mode >= 6) {
+    return run_extraction(body_divisor, later_divisor);
+  }
+  if (mode >= 3) {
+    return run_nested(body_divisor, later_divisor);
+  }
+  return run_single(body_divisor, later_divisor);
+}

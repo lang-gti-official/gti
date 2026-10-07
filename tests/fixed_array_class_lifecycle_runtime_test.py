@@ -79,7 +79,9 @@ def main() -> int:
                     or "mir_lifetime_slot<std::array<std::array<::__gti_program::leaf, 2>, 2>, true> global_grid"
                     not in generated_text
                     or "global_grid.get()[" not in generated_text
-                    or ".destroy_fixed_array_with_failure<2, 2>("
+                    or "mir_array_cleanup_with_failure_v1<2>((element)"
+                    not in generated_text
+                    or "mir_array_cleanup_with_failure_v1<3>((__gti_cleanup_value)"
                     not in generated_text
                 ):
                     sys.stderr.write(
@@ -99,7 +101,7 @@ def main() -> int:
         )
         if (
             rejected.returncode != 65
-            or rejected.stdout != ""
+            or rejected.stdout != "Diagnostics: 1 error, 0 warnings\n"
             or "error[GTI-S2015]" not in rejected.stderr
             or "requires a default-initializable element type"
             not in rejected.stderr

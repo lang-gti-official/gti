@@ -23,8 +23,9 @@ a native dependency may internally use host threads.
 That paragraph records the adoption-time context. The current implementation
 now exposes owned managed threads, scalar atomics with sequentially consistent
 defaults plus explicit accepted orders and integer fetch operations, and
-owner-tied scoped mutex guards under the opt-in concurrent profile; condition
-variables and foreign-thread entry remain outstanding. Current source semantics live in
+owner-tied scoped mutex guards under the opt-in concurrent profile. Unsafe
+manual C-style mutexes and conditions also exist; safe scoped condition
+variables and general foreign-thread entry remain outstanding. Current source semantics live in
 [the concurrency language contract](../language/concurrency.md).
 
 That implementation accident cannot become the language memory model. Before

@@ -83,17 +83,44 @@ struct TypeRef {
     return nativeFunctionParameterCount.has_value();
   }
 
+  [[nodiscard]] static TypeRef
+  functionSignature(TypeRef returnType, std::vector<TypeRef> parameters) {
+    TypeRef type(returnType.name);
+    type.functionSignatureParameterCount = parameters.size();
+    type.arguments = std::move(parameters);
+    type.arguments.emplace_back(std::move(returnType));
+    return type;
+  }
+
+  [[nodiscard]] bool isFunctionSignature() const {
+    return functionSignatureParameterCount.has_value();
+  }
+
   NamePath name;
   std::vector<TypeRef> arguments;
-  std::optional<Token> pointeeConst;
-  std::optional<Token> pointer;
-  std::optional<Token> outerPointer;
+  struct PointerLayer {
+    Token star;
+    // Qualifies this layer's pointee, including another pointer object.
+    std::optional<Token> pointeeConst;
+  };
+  // Innermost first, matching written declarator order. Every layer retains
+  // its own source token and permission; depth is not a nominal ABI exception.
+  std::vector<PointerLayer> pointers;
   std::vector<ArrayExtentExprPtr> arrayExtents;
   std::optional<Token> reference;
+  // Explicit access on a function-signature reference parameter component.
+  std::optional<Token> referenceMutability;
   // A native C function type stores its parameter types followed by its
   // return type in `arguments`. It is admitted only as a named `using` target;
   // ordinary function declarations continue to use FunctionDecl.
   std::optional<std::size_t> nativeFunctionParameterCount;
+  // A GTI signature describes a call, not a stored function pointer. Like
+  // native function syntax, arguments hold parameters followed by the result.
+  std::optional<std::size_t> functionSignatureParameterCount;
+  // Written receiver capability of signature metadata: absent, `mut`, or `&&`.
+  std::optional<Token> functionSignatureQualifier;
+  // A type-list expansion, distinct from a named value parameter pack.
+  std::optional<Token> packExpansion;
   GenericArgumentSyntax genericArgumentSyntax = GenericArgumentSyntax::Type;
   ArrayExtentExprPtr genericValueExpression;
 };
@@ -354,9 +381,14 @@ struct CompilerConstraintBinding {
   std::string name;
 };
 
+class MemberRequirement;
+
+// A constraint leaf is either a named concept application or an exact member
+// requirement. The latter's arguments are the receiver referent and result.
 struct ConceptApplication {
   NamePath name;
   std::vector<TypeRef> arguments;
+  std::shared_ptr<const MemberRequirement> memberRequirement;
 };
 
 enum class ConstraintExpressionKind {
@@ -395,6 +427,21 @@ struct RequiresClause {
 struct NativeCArrayAttribute {
   Token attribute;
   Token countParameter;
+};
+
+struct FunctionAttribute {
+  Token name;
+  std::optional<Token> argument;
+};
+
+struct NativeLinkNameAttribute {
+  Token attribute;
+  Token symbol;
+
+  [[nodiscard]] std::string_view name() const {
+    const auto *value = std::get_if<std::string>(&symbol.literal);
+    return value == nullptr ? std::string_view{} : std::string_view(*value);
+  }
 };
 
 struct PureSpecifier {
@@ -506,6 +553,7 @@ class Index;
 class IndexSet;
 class Lambda;
 class LayoutQuery;
+class MemberRequirement;
 class LiteralExpr;
 class Logical;
 class PackFold;
@@ -570,6 +618,7 @@ public:
   virtual void visitIndexSetExpr(const IndexSet &expr) = 0;
   virtual void visitLambdaExpr(const Lambda &expr) = 0;
   virtual void visitLayoutQueryExpr(const LayoutQuery &expr) = 0;
+  virtual void visitMemberRequirementExpr(const MemberRequirement &expr) = 0;
   virtual void visitLiteralExpr(const LiteralExpr &expr) = 0;
   virtual void visitLogicalExpr(const Logical &expr) = 0;
   virtual void visitPackFoldExpr(const PackFold &expr) = 0;
@@ -598,6 +647,7 @@ enum class ExprKind : std::uint8_t {
   IndexSet,
   Lambda,
   LayoutQuery,
+  MemberRequirement,
   LiteralExpr,
   Logical,
   PackFold,
@@ -779,9 +829,15 @@ public:
     documentationMarkdown_ = std::move(documentation);
   }
 
+  [[nodiscard]] const std::optional<Token> &exportKeyword() const {
+    return exportKeyword_;
+  }
+  void setExportKeyword(Token keyword) { exportKeyword_ = std::move(keyword); }
+
 private:
   std::optional<SourceSpan> extent_;
   std::optional<std::string> documentationMarkdown_;
+  std::optional<Token> exportKeyword_;
 };
 
 template <StmtKind Kind> class StmtOfKind : public Stmt {
@@ -996,9 +1052,11 @@ private:
 
 class DirectInitializer final : public ExprOfKind<ExprKind::DirectInitializer> {
 public:
-  DirectInitializer(Token brace, ExprList arguments, Token closingBrace)
+  DirectInitializer(Token brace, ExprList arguments, Token closingBrace,
+                    std::vector<Token> designators = {})
       : brace_(std::move(brace)), arguments_(std::move(arguments)),
-        closingBrace_(std::move(closingBrace)) {}
+        closingBrace_(std::move(closingBrace)),
+        designators_(std::move(designators)) {}
   DirectInitializer(DirectInitializer &&) = default;
   DirectInitializer(const DirectInitializer &) = delete;
   DirectInitializer &operator=(DirectInitializer &&) = default;
@@ -1011,12 +1069,16 @@ public:
 
   [[nodiscard]] const Token &brace() const { return brace_; }
   [[nodiscard]] const ExprList &arguments() const { return arguments_; }
+  [[nodiscard]] const std::vector<Token> &designators() const {
+    return designators_;
+  }
   [[nodiscard]] const Token &closingBrace() const { return closingBrace_; }
 
 private:
   Token brace_;
   ExprList arguments_;
   Token closingBrace_;
+  std::vector<Token> designators_;
 };
 
 class PackFold final : public ExprOfKind<ExprKind::PackFold> {
@@ -1282,6 +1344,50 @@ private:
   TypeRef type_;
 };
 
+// A bounded unevaluated exact instance-member signature query. Neither
+// the synthetic receiver nor the member invocation creates runtime storage.
+class MemberRequirement final : public ExprOfKind<ExprKind::MemberRequirement> {
+public:
+  MemberRequirement(Token keyword, TypeRef receiver, Token binding,
+                    Token receiverUse, Token member, TypeRef result,
+                    std::vector<TypeRef> parameters = {},
+                    std::vector<Token> bindings = {},
+                    std::vector<Token> arguments = {},
+                    std::optional<Token> unsafeKeyword = std::nullopt)
+      : keyword_(std::move(keyword)), receiver_(std::move(receiver)),
+        binding_(std::move(binding)), receiverUse_(std::move(receiverUse)),
+        member_(std::move(member)), result_(std::move(result)),
+        parameters_(std::move(parameters)), bindings_(std::move(bindings)),
+        arguments_(std::move(arguments)),
+        unsafeKeyword_(std::move(unsafeKeyword)) {}
+
+  void accept(ExprVisitor &visitor) const override {
+    visitor.visitMemberRequirementExpr(*this);
+  }
+  const Token &keyword() const { return keyword_; }
+  const TypeRef &receiver() const { return receiver_; }
+  const Token &binding() const { return binding_; }
+  const Token &receiverUse() const { return receiverUse_; }
+  const Token &member() const { return member_; }
+  const TypeRef &result() const { return result_; }
+  const std::vector<TypeRef> &parameters() const { return parameters_; }
+  const std::vector<Token> &bindings() const { return bindings_; }
+  const std::vector<Token> &arguments() const { return arguments_; }
+  const std::optional<Token> &unsafeKeyword() const { return unsafeKeyword_; }
+
+private:
+  Token keyword_;
+  TypeRef receiver_;
+  Token binding_;
+  Token receiverUse_;
+  Token member_;
+  TypeRef result_;
+  std::vector<TypeRef> parameters_;
+  std::vector<Token> bindings_;
+  std::vector<Token> arguments_;
+  std::optional<Token> unsafeKeyword_;
+};
+
 class LiteralExpr final : public ExprOfKind<ExprKind::LiteralExpr> {
 public:
   explicit LiteralExpr(Literal value) : value_(std::move(value)) {}
@@ -1471,6 +1577,11 @@ private:
 class Variable final : public ExprOfKind<ExprKind::Variable> {
 public:
   explicit Variable(Token name) : name_(std::move(name)) {}
+  Variable(Token name, Token patternAuto, Token patternReference,
+           std::optional<Token> patternMutability)
+      : name_(std::move(name)), patternAuto_(std::move(patternAuto)),
+        patternReference_(std::move(patternReference)),
+        patternMutability_(std::move(patternMutability)) {}
   Variable(Variable &&) = default;
   Variable(const Variable &) = delete;
   Variable &operator=(Variable &&) = default;
@@ -1482,9 +1593,18 @@ public:
   }
 
   [[nodiscard]] const Token &name() const { return name_; }
+  [[nodiscard]] bool isReferencePattern() const {
+    return patternReference_.has_value();
+  }
+  [[nodiscard]] bool isMutablePattern() const {
+    return patternMutability_.has_value();
+  }
 
 private:
   Token name_;
+  std::optional<Token> patternAuto_;
+  std::optional<Token> patternReference_;
+  std::optional<Token> patternMutability_;
 };
 
 class BlockStmt final : public StmtOfKind<StmtKind::BlockStmt> {
@@ -1655,11 +1775,13 @@ public:
             Token name, std::optional<TypeRef> exactSpecialization,
             std::vector<GenericParameter> genericParameters,
             std::vector<BaseSpecifier> bases, StmtList members,
-            bool forwardDeclaration = false)
+            bool forwardDeclaration = false,
+            std::vector<TypeRef> genericArgumentPatterns = {})
       : attributes_(std::move(attributes)), keyword_(std::move(keyword)),
         kind_(kind), name_(std::move(name)),
         exactSpecialization_(std::move(exactSpecialization)),
         genericParameters_(std::move(genericParameters)),
+        genericArgumentPatterns_(std::move(genericArgumentPatterns)),
         bases_(std::move(bases)), members_(std::move(members)),
         forwardDeclaration_(forwardDeclaration) {}
 
@@ -1682,6 +1804,12 @@ public:
   [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
     return genericParameters_;
   }
+  // A patterned primary declares the shapes of its public arguments, not a
+  // flat list of already-resolved binders. Semantic analysis owns binding the
+  // names inside these types; retain the original type syntax and spans here.
+  [[nodiscard]] const std::vector<TypeRef> &genericArgumentPatterns() const {
+    return genericArgumentPatterns_;
+  }
   [[nodiscard]] const std::vector<BaseSpecifier> &bases() const {
     return bases_;
   }
@@ -1697,6 +1825,7 @@ private:
   Token name_;
   std::optional<TypeRef> exactSpecialization_;
   std::vector<GenericParameter> genericParameters_;
+  std::vector<TypeRef> genericArgumentPatterns_;
   std::vector<BaseSpecifier> bases_;
   StmtList members_;
   bool forwardDeclaration_ = false;
@@ -1875,21 +2004,26 @@ private:
 
 class ExpressionStmt final : public StmtOfKind<StmtKind::ExpressionStmt> {
 public:
-  explicit ExpressionStmt(ExprPtr expression,
-                          std::optional<Token> discardAttribute = std::nullopt)
-      : expression_(std::move(expression)),
+  ExpressionStmt(Token expressionStart, ExprPtr expression,
+                 std::optional<Token> discardAttribute = std::nullopt)
+      : expressionStart_(std::move(expressionStart)),
+        expression_(std::move(expression)),
         discardAttribute_(std::move(discardAttribute)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitExpressionStmt(*this);
   }
 
+  [[nodiscard]] const Token &expressionStart() const {
+    return expressionStart_;
+  }
   [[nodiscard]] const ExprPtr &expression() const { return expression_; }
   [[nodiscard]] const std::optional<Token> &discardAttribute() const {
     return discardAttribute_;
   }
 
 private:
+  Token expressionStart_;
   ExprPtr expression_;
   std::optional<Token> discardAttribute_;
 };
@@ -1995,7 +2129,10 @@ public:
       LanguageLinkage linkage = LanguageLinkage::Gti,
       std::optional<Token> constexprKeyword = std::nullopt,
       std::optional<RequiresClause> requiresClause = std::nullopt,
-      std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt)
+      std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
+      std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
+      std::optional<Token> unsafeKeyword = std::nullopt,
+      std::vector<FunctionAttribute> functionAttributes = {})
       : returnType_(std::move(returnType)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)), body_(std::move(body)),
@@ -2009,7 +2146,10 @@ public:
         pureSpecifier_(std::move(pureSpecifier)), linkage_(linkage),
         constexprKeyword_(std::move(constexprKeyword)),
         requiresClause_(std::move(requiresClause)),
-        nativeCArray_(std::move(nativeCArray)) {}
+        nativeCArray_(std::move(nativeCArray)),
+        nativeLinkName_(std::move(nativeLinkName)),
+        unsafeKeyword_(std::move(unsafeKeyword)),
+        functionAttributes_(std::move(functionAttributes)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitFunctionDecl(*this);
@@ -2069,6 +2209,29 @@ public:
   nativeCArray() const {
     return nativeCArray_;
   }
+  [[nodiscard]] const std::optional<NativeLinkNameAttribute> &
+  nativeLinkName() const {
+    return nativeLinkName_;
+  }
+  [[nodiscard]] const std::optional<Token> &unsafeKeyword() const {
+    return unsafeKeyword_;
+  }
+  [[nodiscard]] const std::vector<FunctionAttribute> &
+  functionAttributes() const {
+    return functionAttributes_;
+  }
+  [[nodiscard]] const FunctionAttribute *
+  findFunctionAttribute(std::string_view name) const {
+    for (const FunctionAttribute &attribute : functionAttributes_) {
+      if (attribute.name.lexeme == name) {
+        return &attribute;
+      }
+    }
+    return nullptr;
+  }
+  [[nodiscard]] bool hasFunctionAttribute(std::string_view name) const {
+    return findFunctionAttribute(name) != nullptr;
+  }
 
 private:
   TypeRef returnType_;
@@ -2088,6 +2251,9 @@ private:
   std::optional<Token> constexprKeyword_;
   std::optional<RequiresClause> requiresClause_;
   std::optional<NativeCArrayAttribute> nativeCArray_;
+  std::optional<NativeLinkNameAttribute> nativeLinkName_;
+  std::optional<Token> unsafeKeyword_;
+  std::vector<FunctionAttribute> functionAttributes_;
 };
 
 class IfStmt final : public StmtOfKind<StmtKind::IfStmt> {
@@ -2286,12 +2452,13 @@ public:
                std::optional<Token> staticKeyword = std::nullopt,
                bool rangeBinding = false,
                std::optional<Token> constexprKeyword = std::nullopt,
-               bool rangeOwner = false, bool rangeIterator = false)
+               bool rangeOwner = false, bool rangeIterator = false,
+               std::optional<Token> mutKeyword = std::nullopt)
       : mutability_(mutability), type_(std::move(type)), name_(std::move(name)),
         initializer_(std::move(initializer)),
         staticKeyword_(std::move(staticKeyword)), rangeBinding_(rangeBinding),
         constexprKeyword_(std::move(constexprKeyword)), rangeOwner_(rangeOwner),
-        rangeIterator_(rangeIterator) {}
+        rangeIterator_(rangeIterator), mutKeyword_(std::move(mutKeyword)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitVariableDecl(*this);
@@ -2317,6 +2484,9 @@ public:
   [[nodiscard]] const std::optional<Token> &constexprKeyword() const {
     return constexprKeyword_;
   }
+  [[nodiscard]] const std::optional<Token> &mutKeyword() const {
+    return mutKeyword_;
+  }
 
 private:
   Mutability mutability_;
@@ -2328,6 +2498,7 @@ private:
   std::optional<Token> constexprKeyword_;
   bool rangeOwner_ = false;
   bool rangeIterator_ = false;
+  std::optional<Token> mutKeyword_;
 };
 
 class StructuredBindingDecl final

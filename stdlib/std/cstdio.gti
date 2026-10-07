@@ -1,5 +1,6 @@
 #include <std/string>
 #include <std/memory>
+#include <std/span>
 
 namespace gti_internal {
 [[no_transfer, no_share]] class file_handle {
@@ -33,6 +34,9 @@ int64_t gti_rt_write_stdout_bytes_v1(gti_internal::text_view value);
 int64_t gti_rt_write_stderr_bytes_v1(gti_internal::text_view value);
 int32_t gti_rt_flush_stdout_v1();
 int32_t gti_rt_flush_stderr_v1();
+int64_t gti_rt_write_file_some_v1(int64_t descriptor, const uint8_t* input, uint64_t length);
+int64_t gti_rt_write_stdout_some_v1(const uint8_t* input, uint64_t length);
+int64_t gti_rt_write_stderr_some_v1(const uint8_t* input, uint64_t length);
 int64_t gti_rt_read_stdin_bytes_v1(uint8_t* output, uint64_t capacity);
 int64_t gti_rt_open_file_v1(gti_internal::text_view path, uint32_t mode);
 int64_t gti_rt_read_file_v1(int64_t descriptor, uint8_t* output,
@@ -229,6 +233,44 @@ public:
     return std::move(result);
   }
 
+  /// Reads into initialized caller-owned bytes; zero means EOF for a nonempty buffer.
+  expected<size_t, io_errc> read_some(mut mutable_span<uint8_t>& output) mut {
+    if (output.empty()) { return size_t(0); }
+    if (!this.handle.is_valid()) { return unexpected(io_errc::invalid_stream); }
+    size_t capacity = output.size();
+    mut int64_t count = -1;
+    unsafe {
+      count = gti_internal::runtime::gti_rt_read_file_v1(
+          this.handle.get(), &output[size_t(0)], uint64_t(capacity));
+    }
+    if (count < 0 || uint64_t(count) > capacity) {
+      return unexpected(io_errc::read_failed);
+    }
+    return size_t(count);
+  }
+
+  /// Writes at most one prefix; callers may retry the unconsumed suffix.
+  expected<size_t, io_errc> write_some(span<uint8_t>& input) mut {
+    if (input.empty()) { return size_t(0); }
+    if (!this.handle.is_valid()) { return unexpected(io_errc::invalid_stream); }
+    size_t length = input.size();
+    mut int64_t count = -1;
+    unsafe {
+      count = gti_internal::runtime::gti_rt_write_file_some_v1(
+          this.handle.get(), &input[size_t(0)], uint64_t(length));
+    }
+    if (count < 0 || uint64_t(count) > length) {
+      return unexpected(io_errc::write_failed);
+    }
+    return size_t(count);
+  }
+
+  /// File writes have no library buffer; this does not promise disk durability.
+  expected<void, io_errc> flush() mut {
+    if (!this.handle.is_valid()) { return unexpected(io_errc::invalid_stream); }
+    return;
+  }
+
   /// Writes one complete counted byte sequence.
   ///
   /// Success returns the input size. The input may contain embedded zero
@@ -299,6 +341,65 @@ expected<int32_t, io_errc> getchar() {
     return unexpected(io_errc::end_of_file);
   }
   return unexpected(io_errc::read_failed);
+}
+
+/// Reads standard input through, but not including, `delimiter`.
+///
+/// End of file returns the final unterminated line when at least one byte was
+/// read. End of file before any byte returns `io_errc::end_of_file`.
+expected<string, io_errc> getline(char delimiter) {
+  mut string result = string("");
+  while (true) {
+    int32_t value = gti_internal::runtime::read_stdin_byte();
+    if (value == -1) {
+      if (result.empty()) {
+        return unexpected(io_errc::end_of_file);
+      }
+      return std::move(result);
+    }
+    if (value < 0) {
+      return unexpected(io_errc::read_failed);
+    }
+
+    char byte = char(uint8_t(value));
+    if (byte == delimiter) {
+      return std::move(result);
+    }
+    result.push_back(byte);
+  }
+}
+
+/// Reads one newline-delimited line from standard input.
+expected<string, io_errc> getline() {
+  return getline('\n');
+}
+
+/// Reads `stream` through, but not including, `delimiter`.
+///
+/// End of file returns the final unterminated line when at least one byte was
+/// read. End of file before any byte returns `io_errc::end_of_file`.
+expected<string, io_errc> getline(mut FILE& stream, char delimiter) {
+  mut string result = string("");
+  while (true) {
+    mut auto next = stream.get();
+    if (!next) {
+      if (next.error() == io_errc::end_of_file && !result.empty()) {
+        return std::move(result);
+      }
+      return unexpected(next.error());
+    }
+
+    char byte = char(uint8_t(next.value()));
+    if (byte == delimiter) {
+      return std::move(result);
+    }
+    result.push_back(byte);
+  }
+}
+
+/// Reads one newline-delimited line from `stream`.
+expected<string, io_errc> getline(mut FILE& stream) {
+  return getline(stream, '\n');
 }
 
 /// Reads at most `maximum` bytes from standard input into an owned string.

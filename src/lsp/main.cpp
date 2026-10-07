@@ -1,5 +1,5 @@
 #include "gti/driver/compilation.h"
-#include "gti/driver/manifest.h"
+#include "gti/driver/project_facts.h"
 #include "gti/format_config.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
@@ -444,6 +444,21 @@ bool supportsDiagnosticData(const JsonValue *params) {
                     false);
 }
 
+bool supportsDiagnosticTag(const JsonValue *params, lang::DiagnosticTag tag) {
+  const JsonValue *valueSet = member(
+      member(publishDiagnosticsCapabilities(params), "tagSupport"), "valueSet");
+  const JsonArray *values =
+      valueSet == nullptr ? nullptr : valueSet->getAsArray();
+  if (values == nullptr) {
+    return false;
+  }
+  const std::int64_t expected = static_cast<std::int64_t>(tag);
+  return std::any_of(values->begin(), values->end(),
+                     [expected](const JsonValue &value) {
+                       return value.getAsInteger() == expected;
+                     });
+}
+
 const JsonValue *codeActionCapabilities(const JsonValue *params) {
   return member(member(member(params, "capabilities"), "textDocument"),
                 "codeAction");
@@ -695,8 +710,12 @@ LspDiagnostic convertDiagnostic(const lang::Diagnostic &diagnostic,
   return result;
 }
 
-std::string diagnosticMessage(const lang::Diagnostic &diagnostic) {
+std::string diagnosticMessage(const lang::Diagnostic &diagnostic,
+                              bool fixAvailable = false) {
   std::string message = diagnostic.message;
+  if (fixAvailable) {
+    message += " (fix available)";
+  }
   for (const std::string &hint : diagnostic.hints) {
     message += "\nhelp: " + hint;
   }
@@ -721,7 +740,10 @@ void mergeDiagnosticRelatedInformation(LspDiagnostic &target,
 }
 
 JsonValue diagnosticJson(const LspDiagnostic &published,
-                         bool includeRelatedInformation, bool includeData) {
+                         bool includeRelatedInformation, bool includeData,
+                         bool includeFixAvailability,
+                         bool includeUnnecessaryTag,
+                         bool includeDeprecatedTag) {
   const lang::Diagnostic &diagnostic = published.diagnostic;
   JsonObject result{
       {"range",
@@ -735,8 +757,20 @@ JsonValue diagnosticJson(const LspDiagnostic &published,
     result["code"] = diagnostic.code;
   }
 
-  const std::string message = diagnosticMessage(diagnostic);
+  const std::string message = diagnosticMessage(
+      diagnostic, includeFixAvailability && !published.fixes.empty());
   result["message"] = message;
+
+  JsonArray tags;
+  for (const lang::DiagnosticTag tag : diagnostic.tags) {
+    if ((tag == lang::DiagnosticTag::Unnecessary && includeUnnecessaryTag) ||
+        (tag == lang::DiagnosticTag::Deprecated && includeDeprecatedTag)) {
+      tags.push_back(static_cast<int>(tag));
+    }
+  }
+  if (!tags.empty()) {
+    result["tags"] = std::move(tags);
+  }
 
   if (includeRelatedInformation && !published.related.empty()) {
     JsonArray relatedInformation;
@@ -758,6 +792,9 @@ JsonValue diagnosticJson(const LspDiagnostic &published,
     JsonObject data;
     const std::string_view phase = lang::phaseName(diagnostic.phase);
     data["phase"] = std::string(phase);
+    if (!diagnostic.group.empty()) {
+      data["group"] = diagnostic.group;
+    }
     if (!diagnostic.hints.empty()) {
       JsonArray hints;
       for (const std::string &hint : diagnostic.hints) {
@@ -794,7 +831,8 @@ bool diagnosticIntersects(const LspDiagnostic &diagnostic,
 }
 
 bool diagnosticRequested(const LspDiagnostic &diagnostic,
-                         const JsonValue *requestedDiagnostics) {
+                         const JsonValue *requestedDiagnostics,
+                         bool includeFixAvailability) {
   const JsonArray *requestedValues = requestedDiagnostics != nullptr
                                          ? requestedDiagnostics->getAsArray()
                                          : nullptr;
@@ -819,7 +857,9 @@ bool diagnosticRequested(const LspDiagnostic &diagnostic,
       continue;
     }
     if (stringMember(&requested, "message") !=
-        diagnosticMessage(diagnostic.diagnostic)) {
+        diagnosticMessage(diagnostic.diagnostic,
+                          includeFixAvailability &&
+                              !diagnostic.fixes.empty())) {
       continue;
     }
     return true;
@@ -829,7 +869,9 @@ bool diagnosticRequested(const LspDiagnostic &diagnostic,
 
 JsonValue codeActionJson(const CodeActionCandidate &candidate,
                          bool documentChanges, bool includeRelatedInformation,
-                         bool includeDiagnosticData, bool includePreferred) {
+                         bool includeDiagnosticData, bool includePreferred,
+                         bool includeUnnecessaryTag,
+                         bool includeDeprecatedTag) {
   const std::string title =
       candidate.fix.fix.message.empty()
           ? (candidate.diagnostic.diagnostic.code.empty()
@@ -838,7 +880,8 @@ JsonValue codeActionJson(const CodeActionCandidate &candidate,
           : candidate.fix.fix.message;
   JsonArray diagnostics;
   diagnostics.push_back(diagnosticJson(
-      candidate.diagnostic, includeRelatedInformation, includeDiagnosticData));
+      candidate.diagnostic, includeRelatedInformation, includeDiagnosticData,
+      true, includeUnnecessaryTag, includeDeprecatedTag));
   JsonObject action{{"title", title},
                     {"kind", "quickfix"},
                     {"diagnostics", std::move(diagnostics)}};
@@ -922,6 +965,36 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
       tokens[index - 1].kind == LEFT_BRACKET &&
       tokens[index + 1].kind == LEFT_PAREN &&
       tokens[index + 2].kind == IDENTIFIER &&
+      tokens[index + 3].kind == RIGHT_PAREN &&
+      tokens[index + 4].kind == RIGHT_BRACKET &&
+      tokens[index + 5].kind == RIGHT_BRACKET) {
+    return SemanticClassification{Decorator, 0};
+  }
+
+  // Attribute spelling is lexical. The owner argument is deliberately left to
+  // compiler occurrences so definition/rename and parameter tokens share its
+  // resolved symbol identity, including on recovered declarations.
+  if (token.lexeme == "borrowed_from" && index + 1 < tokens.size() &&
+      tokens[index + 1].kind == LEFT_PAREN) {
+    std::size_t begin = index;
+    while (begin > 0 &&
+           (tokens[begin - 1].kind == IDENTIFIER ||
+            tokens[begin - 1].kind == THIS || tokens[begin - 1].kind == COMMA ||
+            tokens[begin - 1].kind == LEFT_PAREN ||
+            tokens[begin - 1].kind == RIGHT_PAREN)) {
+      --begin;
+    }
+    if (begin >= 2 && tokens[begin - 2].kind == LEFT_BRACKET &&
+        tokens[begin - 1].kind == LEFT_BRACKET) {
+      return SemanticClassification{Decorator, 0};
+    }
+  }
+
+  if (token.lexeme == "link_name" && index >= 2 && index + 5 < tokens.size() &&
+      tokens[index - 2].kind == LEFT_BRACKET &&
+      tokens[index - 1].kind == LEFT_BRACKET &&
+      tokens[index + 1].kind == LEFT_PAREN &&
+      tokens[index + 2].kind == STRING_LITERAL &&
       tokens[index + 3].kind == RIGHT_PAREN &&
       tokens[index + 4].kind == RIGHT_BRACKET &&
       tokens[index + 5].kind == RIGHT_BRACKET) {
@@ -1071,6 +1144,7 @@ SemanticClassification classificationForSymbol(const lang::SymbolRecord &symbol,
     type = Variable;
     break;
   case lang::SymbolKind::Parameter:
+  case lang::SymbolKind::RequirementParameter:
   case lang::SymbolKind::ValueParameter:
     type = Parameter;
     break;
@@ -1101,6 +1175,7 @@ SemanticClassification classificationForSymbol(const lang::SymbolRecord &symbol,
   case lang::SymbolKind::GlobalVariable:
   case lang::SymbolKind::LocalVariable:
   case lang::SymbolKind::Parameter:
+  case lang::SymbolKind::RequirementParameter:
   case lang::SymbolKind::LambdaCapture:
     if (!symbol.mutableBinding) {
       modifiers |= Readonly;
@@ -1460,6 +1535,7 @@ struct AnalysisRequest {
   std::string source;
   std::optional<std::int64_t> version;
   std::uint64_t generation = 0;
+  std::uint64_t includeDiscoveryGeneration = 0;
   std::unordered_map<std::string, std::string> sourceOverrides;
   std::unordered_map<std::string, std::uint64_t> documentGenerations;
   lang::lsp::FrontendSourceSnapshot frontendSources;
@@ -1528,13 +1604,96 @@ struct DiagnosticPublication {
   std::vector<LspDiagnostic> diagnostics;
 };
 
+// Immutable driver-owned inputs for one editor analysis. Project resolution is
+// deliberately read-only: it never fetches, builds, or mutates the workspace.
+// A discovery miss preserves standalone-file behavior; every other project
+// failure is retained as a structured diagnostic while frontend recovery
+// continues without inventing a partial package graph.
+struct ProjectAnalysisInputs {
+  lang::RawPointerAuditMode rawPointerAudit = lang::RawPointerAuditMode::Off;
+  lang::driver::AnalysisConfiguration configuration;
+  std::vector<lang::PackageSourceRoot> packageSourceRoots;
+  lang::WarningPolicy warnings;
+  lang::driver::PackageWarningPolicy packageWarnings;
+  lang::SourceManager sources;
+  std::vector<lang::Diagnostic> diagnostics;
+  bool requireEntryPoint = false;
+  std::vector<lang::IncludeSearchRoot> includeSearchRoots;
+};
+
+ProjectAnalysisInputs resolveProjectAnalysisInputs(
+    const std::filesystem::path &entryPath,
+    std::optional<lang::ExecutionProfile> executionProfileOverride,
+    std::optional<lang::RawPointerAuditMode> rawPointerAuditOverride) {
+  const lang::TargetInfo host = lang::TargetInfo::host();
+  ProjectAnalysisInputs result{
+      .rawPointerAudit =
+          rawPointerAuditOverride.value_or(lang::RawPointerAuditMode::Off),
+      .configuration = lang::driver::AnalysisConfiguration(
+          host,
+          executionProfileOverride.value_or(
+              lang::ExecutionProfile::SingleThreaded),
+          lang::driver::RuntimeProfile::Hosted)};
+
+  lang::driver::ProjectFactsResult project =
+      lang::driver::resolveProjectFacts(entryPath.parent_path());
+  if (!project.succeeded()) {
+    if (project.status != lang::driver::ProjectFactsStatus::DiscoveryFailure) {
+      result.sources = std::move(project.sources);
+      result.diagnostics = std::move(project.diagnostics);
+    } else {
+      result.includeSearchRoots.push_back(
+          {entryPath.parent_path(), std::nullopt, {}});
+    }
+    return result;
+  }
+
+  const lang::driver::ProjectFacts &facts = *project.facts;
+  const std::optional<lang::driver::AnalysisConfiguration>
+      projectConfiguration =
+          facts.analysisConfiguration(facts.defaultProfileName(), host,
+                                      lang::driver::RuntimeProfile::Hosted);
+  if (projectConfiguration) {
+    result.configuration = *projectConfiguration;
+  } else {
+    result.configuration = lang::driver::AnalysisConfiguration(
+        host, lang::ExecutionProfile::SingleThreaded,
+        lang::driver::RuntimeProfile::Hosted, facts.configurationFlags());
+  }
+  if (executionProfileOverride) {
+    result.configuration = lang::driver::AnalysisConfiguration(
+        result.configuration.target(), *executionProfileOverride,
+        lang::driver::RuntimeProfile::Hosted,
+        result.configuration.configurationFlags());
+  }
+  result.packageSourceRoots = facts.packageSourceRoots();
+  if (const auto *profile = facts.findProfile(facts.defaultProfileName())) {
+    result.rawPointerAudit =
+        rawPointerAuditOverride.value_or(profile->rawPointerAudit);
+    result.warnings = profile->warningPolicy;
+    result.packageWarnings = facts.packageWarnings(profile->name);
+  }
+  result.includeSearchRoots = lang::driver::projectIncludeSearchRoots(facts);
+  for (const auto &target : facts.targets()) {
+    if (canonicalPath(target.root) == canonicalPath(entryPath)) {
+      result.requireEntryPoint = true;
+      break;
+    }
+  }
+  return result;
+}
+
 class LanguageServer {
 public:
-  explicit LanguageServer(lang::StandardLibraryLayout standardLibrary,
-                          std::optional<lang::ExecutionProfile>
-                              executionProfileOverride = std::nullopt)
+  explicit LanguageServer(
+      lang::StandardLibraryLayout standardLibrary,
+      std::optional<lang::ExecutionProfile> executionProfileOverride =
+          std::nullopt,
+      std::optional<lang::RawPointerAuditMode> rawPointerAuditOverride =
+          std::nullopt)
       : standardLibrary(std::move(standardLibrary)),
         executionProfileOverride(executionProfileOverride),
+        rawPointerAuditOverride(rawPointerAuditOverride),
         frontendTracePath(frontendTracePathFromEnvironment()),
         analysisWorker(std::optional<unsigned>{frontendWorkerStackSize},
                        [this] { runAnalysisWorker(); }),
@@ -1651,6 +1810,10 @@ private:
         supportsWatchedFilesDynamicRegistration(params);
     diagnosticRelatedInformation = supportsDiagnosticRelatedInformation(params);
     diagnosticData = supportsDiagnosticData(params);
+    diagnosticUnnecessaryTag =
+        supportsDiagnosticTag(params, lang::DiagnosticTag::Unnecessary);
+    diagnosticDeprecatedTag =
+        supportsDiagnosticTag(params, lang::DiagnosticTag::Deprecated);
     codeActionLiterals = supportsCodeActionLiterals(params);
     preferredCodeActions = supportsPreferredCodeActions(params);
     hierarchicalDocumentSymbols = supportsHierarchicalDocumentSymbols(params);
@@ -1711,6 +1874,7 @@ private:
   // to the cache's global LRU instead of destroying ASTs on the protocol
   // thread while the editor is sending a change.
   void invalidateFrontendSourceLocked(std::string_view canonicalPath) {
+    ++includeDiscoveryGeneration;
     frontendSnapshots.invalidate(canonicalPath);
   }
 
@@ -1873,7 +2037,7 @@ private:
     {
       const std::lock_guard lock(stateMutex);
       std::unordered_set<std::string> affected;
-      bool manifestChanged = false;
+      bool projectModelChanged = false;
       for (const JsonValue &change : *changedFiles) {
         const std::string clientUri = stringMember(&change, "uri");
         if (clientUri.empty()) {
@@ -1882,8 +2046,9 @@ private:
         const std::string uri = documentKeyFromUri(clientUri);
         const std::optional<std::filesystem::path> changedPath =
             filePathFromUri(clientUri);
-        if (changedPath && changedPath->filename() == "gti.toml") {
-          manifestChanged = true;
+        if (changedPath && (changedPath->filename() == "gti.toml" ||
+                            changedPath->filename() == "gti.lock")) {
+          projectModelChanged = true;
           continue;
         }
         // Dirty open buffers remain authoritative over filesystem events.
@@ -1897,7 +2062,7 @@ private:
         affected.insert(uri);
         invalidateDependentsLocked(uri, affected, requests);
       }
-      if (manifestChanged) {
+      if (projectModelChanged) {
         requests.clear();
         for (const auto &[documentUri, documentSource] : documents) {
           (void)documentSource;
@@ -1927,6 +2092,7 @@ private:
     JsonArray watchers;
     watchers.push_back(JsonObject{{"globPattern", "**/*.gti"}});
     watchers.push_back(JsonObject{{"globPattern", "**/gti.toml"}});
+    watchers.push_back(JsonObject{{"globPattern", "**/gti.lock"}});
     JsonArray registrations;
     registrations.push_back(JsonObject{
         {"id", "gti-source-watcher"},
@@ -2570,7 +2736,8 @@ private:
             if (diagnostic.uri != uri ||
                 diagnostic.source != document->second ||
                 !diagnosticIntersects(diagnostic, *requestedRange) ||
-                !diagnosticRequested(diagnostic, requestedDiagnostics)) {
+                !diagnosticRequested(diagnostic, requestedDiagnostics,
+                                     codeActionLiterals)) {
               continue;
             }
             for (std::size_t index = 0; index < diagnostic.fixes.size();
@@ -2600,7 +2767,7 @@ private:
                        targetVersion == documentVersions.end()
                            ? std::nullopt
                            : std::optional<std::int64_t>(targetVersion->second),
-                   .preferred = index == 0});
+                   .preferred = fix.fix.preferred});
             }
           }
         }
@@ -2608,9 +2775,10 @@ private:
     }
 
     for (const CodeActionCandidate &candidate : candidates) {
-      actions.push_back(codeActionJson(candidate, workspaceDocumentChanges,
-                                       diagnosticRelatedInformation,
-                                       diagnosticData, preferredCodeActions));
+      actions.push_back(codeActionJson(
+          candidate, workspaceDocumentChanges, diagnosticRelatedInformation,
+          diagnosticData, preferredCodeActions, diagnosticUnnecessaryTag,
+          diagnosticDeprecatedTag));
     }
     sendJson(response(id, JsonValue(std::move(actions))));
   }
@@ -2661,7 +2829,8 @@ private:
     sendJson(response(id, JsonValue(std::move(edits))));
   }
 
-  DocumentAnalysis analyzeDocument(const AnalysisRequest &request) const {
+  DocumentAnalysis analyzeDocument(const AnalysisRequest &request,
+                                   const ProjectAnalysisInputs &project) const {
     const std::string &uri = request.uri;
     const std::string &source = request.source;
     DocumentAnalysis result;
@@ -2681,7 +2850,9 @@ private:
     const std::string rootPath = canonicalPath(*filePath).string();
     result.rootPath = rootPath;
     lang::FrontendOptions frontendOptions;
+    frontendOptions.rawPointerAudit = project.rawPointerAudit;
     frontendOptions.analyzeRecoveredProgram = true;
+    frontendOptions.requireEntryPoint = project.requireEntryPoint;
     // HIR performs the compiler's concrete generic-instance reanalysis. The
     // LSP retains it only so editor diagnostics agree with `gti check`; MIR
     // remains code-generation work and is not built for editor snapshots.
@@ -2690,33 +2861,20 @@ private:
     frontendOptions.cache = request.frontendSources.cache;
     frontendOptions.sourceGenerations = request.frontendSources.generations;
     frontendOptions.sourceDigests = request.frontendSources.digests;
-    lang::ExecutionProfile executionProfile =
-        lang::ExecutionProfile::SingleThreaded;
-    lang::ConfigurationFlags configurationFlags;
-    const lang::driver::ManifestDiscoveryResult discovery =
-        lang::driver::discoverProjectManifest(filePath->parent_path());
-    if (discovery.succeeded()) {
-      const lang::driver::ManifestLoadResult manifest =
-          lang::driver::loadProjectManifest(*discovery.path);
-      if (manifest.succeeded()) {
-        configurationFlags = manifest.manifest->build().defines;
-        if (const lang::driver::ProjectProfile *profile =
-                manifest.manifest->findProfile("dev")) {
-          executionProfile = profile->executionProfile;
-        }
-      }
+    frontendOptions.target = project.configuration.target();
+    frontendOptions.configurationFlags =
+        project.configuration.configurationFlags();
+    frontendOptions.includeSearchRoots = project.includeSearchRoots;
+    for (const lang::Diagnostic &diagnostic : project.diagnostics) {
+      result.diagnostics.push_back(convertDiagnostic(
+          diagnostic, project.sources, rootPath, uri, source));
     }
-    const lang::driver::AnalysisConfiguration configuration(
-        lang::TargetInfo::host(),
-        executionProfileOverride.value_or(executionProfile),
-        lang::driver::RuntimeProfile::Hosted, std::move(configurationFlags));
-    frontendOptions.target = configuration.target();
-    frontendOptions.configurationFlags = configuration.configurationFlags();
     const SteadyClock::time_point frontendStart = SteadyClock::now();
     result.frontend = std::make_shared<const lang::FrontendResult>(
         lang::Frontend(frontendOptions)
             .analyze(*filePath, source, {standardLibrary.prelude},
-                     request.sourceOverrides, {standardLibrary.root}));
+                     request.sourceOverrides, {standardLibrary.root},
+                     project.packageSourceRoots));
     result.frontendElapsedMicroseconds = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             SteadyClock::now() - frontendStart)
@@ -2741,6 +2899,11 @@ private:
       }
     }
     for (const lang::Diagnostic &diagnostic : analysis.diagnostics) {
+      if (project.warnings.suppresses(diagnostic) ||
+          project.packageWarnings.suppresses(diagnostic,
+                                             analysis.sourceGraph)) {
+        continue;
+      }
       result.diagnostics.push_back(convertDiagnostic(
           diagnostic, analysis.sources, rootPath, uri, source));
     }
@@ -2754,6 +2917,7 @@ private:
                             .source = documents.at(uri),
                             .version = version,
                             .generation = generation};
+    request.includeDiscoveryGeneration = includeDiscoveryGeneration;
     for (const auto &[documentUri, documentSource] : documents) {
       const std::optional<std::filesystem::path> path =
           filePathFromUri(documentUri);
@@ -2774,7 +2938,12 @@ private:
                                   std::unordered_set<std::string> &affected,
                                   std::vector<AnalysisRequest> &requests) {
     for (const auto &[rootUri, dependencies] : dependenciesByRoot) {
-      if (rootUri == changedUri || !dependencies.contains(changedUri)) {
+      const auto snapshot = analysisSnapshots.find(rootUri);
+      const bool discovering =
+          snapshot != analysisSnapshots.end() &&
+          snapshot->second.frontend->includeSuggestionsRequested;
+      if (rootUri == changedUri ||
+          (!dependencies.contains(changedUri) && !discovering)) {
         continue;
       }
       if (const auto previous = diagnosticsByRoot.find(rootUri);
@@ -3006,13 +3175,20 @@ private:
         lang::FrontendWorkMetrics workMetrics;
         const SteadyClock::time_point frontendStart = SteadyClock::now();
         try {
+          ProjectAnalysisInputs project = resolveProjectAnalysisInputs(
+              request.entryPath, executionProfileOverride,
+              rawPointerAuditOverride);
           completion = lang::LanguageQueries().complete(
               {.entryPath = request.entryPath,
                .source = request.source,
                .byteOffset = request.byteOffset,
+               .target = project.configuration.target(),
+               .configurationFlags = project.configuration.configurationFlags(),
+               .rawPointerAudit = project.rawPointerAudit,
                .preludePaths = {standardLibrary.prelude},
                .sourceOverrides = request.sourceOverrides,
                .standardLibraryRoots = {standardLibrary.root},
+               .packageSourceRoots = project.packageSourceRoots,
                .workMetrics = &workMetrics,
                .cache = request.frontendSources.cache,
                .sourceGenerations = request.frontendSources.generations,
@@ -3098,10 +3274,25 @@ private:
         }
       }
 
-      // Compiler work is isolated inside the crash guard; publication runs
-      // here, outside it, so shared state is only touched on a normally
-      // unwound path. See docs/architecture/lsp.md.
-      GuardedAnalysis guarded = runIsolatedAnalysis(request);
+      // Driver resolution runs on the worker but outside the crash guard. The
+      // guard remains the narrow compiler-only boundary documented in the LSP
+      // architecture, and neither step holds shared state.
+      GuardedAnalysis guarded;
+      try {
+        ProjectAnalysisInputs project;
+        if (const std::optional<std::filesystem::path> path =
+                filePathFromUri(request.uri)) {
+          project = resolveProjectAnalysisInputs(
+              *path, executionProfileOverride, rawPointerAuditOverride);
+        }
+        guarded = runIsolatedAnalysis(request, project);
+      } catch (const std::exception &error) {
+        guarded.status = GuardedAnalysisStatus::Failed;
+        guarded.failure = error.what();
+      } catch (...) {
+        guarded.status = GuardedAnalysisStatus::Failed;
+        guarded.failure = "unknown exception during project resolution";
+      }
       switch (guarded.status) {
       case GuardedAnalysisStatus::Completed:
         recordFrontendWork("analysis", request.uri, request.generation,
@@ -3160,12 +3351,13 @@ private:
   // none crosses LLVM's no-exception frame. Publication happens afterwards
   // on the normal path, where unwinding and locking behave normally.
   [[nodiscard]] GuardedAnalysis
-  runIsolatedAnalysis(const AnalysisRequest &request) const {
+  runIsolatedAnalysis(const AnalysisRequest &request,
+                      const ProjectAnalysisInputs &project) const {
     GuardedAnalysis result;
     const bool completed = lang::runGuarded([&] {
       try {
-        result.analysis =
-            std::make_unique<DocumentAnalysis>(analyzeDocument(request));
+        result.analysis = std::make_unique<DocumentAnalysis>(
+            analyzeDocument(request, project));
         result.status = GuardedAnalysisStatus::Completed;
       } catch (const std::exception &error) {
         result.status = GuardedAnalysisStatus::Failed;
@@ -3200,7 +3392,9 @@ private:
         return;
       }
 
-      bool dependencyChanged = false;
+      bool dependencyChanged =
+          analysis.frontend && analysis.frontend->includeSuggestionsRequested &&
+          request.includeDiscoveryGeneration != includeDiscoveryGeneration;
       for (const std::string &dependency : analysis.dependencies) {
         if (!documents.contains(dependency)) {
           continue;
@@ -3327,13 +3521,17 @@ private:
               std::to_string(static_cast<int>(diagnostic.diagnostic.phase)) +
               ':' +
               std::to_string(static_cast<int>(diagnostic.diagnostic.severity)) +
-              '\n' + std::to_string(span.start) + ':' +
-              std::to_string(span.end) + '\n' +
-              diagnosticMessage(diagnostic.diagnostic);
+              ':' + diagnostic.diagnostic.group + '\n' +
+              std::to_string(span.start) + ':' + std::to_string(span.end) +
+              '\n' + diagnosticMessage(diagnostic.diagnostic);
+          for (const lang::DiagnosticTag tag : diagnostic.diagnostic.tags) {
+            key += "\ntag:" + std::to_string(static_cast<int>(tag));
+          }
           for (const LspFixIt &fix : diagnostic.fixes) {
             key += '\n' + fix.uri + ':' + std::to_string(fix.fix.span.start) +
                    ':' + std::to_string(fix.fix.span.end) + ':' +
-                   fix.fix.replacement + ':' + fix.fix.message;
+                   fix.fix.replacement + ':' + fix.fix.message + ':' +
+                   (fix.fix.preferred ? "preferred" : "nonpreferred");
           }
           const auto [found, inserted] =
               diagnosticIndexes.emplace(key, publication.diagnostics.size());
@@ -3359,8 +3557,10 @@ private:
       JsonArray diagnostics;
       diagnostics.reserve(publication.diagnostics.size());
       for (const LspDiagnostic &diagnostic : publication.diagnostics) {
-        diagnostics.push_back(diagnosticJson(
-            diagnostic, diagnosticRelatedInformation, diagnosticData));
+        diagnostics.push_back(
+            diagnosticJson(diagnostic, diagnosticRelatedInformation,
+                           diagnosticData, codeActionLiterals,
+                           diagnosticUnnecessaryTag, diagnosticDeprecatedTag));
       }
       publishDiagnostics(publication.uri, std::move(diagnostics),
                          publication.version);
@@ -3495,6 +3695,7 @@ private:
 
   lang::StandardLibraryLayout standardLibrary;
   std::optional<lang::ExecutionProfile> executionProfileOverride;
+  std::optional<lang::RawPointerAuditMode> rawPointerAuditOverride;
   std::optional<std::filesystem::path> frontendTracePath;
   mutable std::mutex frontendTraceMutex;
   lang::lsp::FrontendSnapshotState frontendSnapshots;
@@ -3510,6 +3711,7 @@ private:
   std::unordered_map<std::string, std::unordered_set<std::string>>
       dependenciesByRoot;
   std::unordered_map<std::string, std::uint64_t> analysisGenerations;
+  std::uint64_t includeDiscoveryGeneration = 0;
   std::unordered_map<std::string, AnalysisSnapshot> analysisSnapshots;
   std::unordered_map<std::string, CachedSemanticTokens> semanticTokenCache;
   std::unordered_map<std::string, AnalysisRequest> pendingAnalyses;
@@ -3532,6 +3734,8 @@ private:
   bool watchedFilesDynamicRegistration = false;
   bool diagnosticRelatedInformation = false;
   bool diagnosticData = false;
+  bool diagnosticUnnecessaryTag = false;
+  bool diagnosticDeprecatedTag = false;
   bool codeActionLiterals = false;
   bool preferredCodeActions = false;
   bool hierarchicalDocumentSymbols = false;
@@ -3549,6 +3753,7 @@ int main(int argc, char *argv[]) {
     return 0;
   }
   std::optional<lang::ExecutionProfile> executionProfile;
+  std::optional<lang::RawPointerAuditMode> rawPointerAudit;
   for (int index = 1; index < argc; ++index) {
     const std::string_view argument = argv[index];
     if (argument == "--execution-profile") {
@@ -3569,12 +3774,34 @@ int main(int argc, char *argv[]) {
       }
       continue;
     }
+    if (argument == "--raw-pointer-audit" ||
+        argument.starts_with("--raw-pointer-audit=")) {
+      std::string_view value;
+      if (argument == "--raw-pointer-audit") {
+        if (++index >= argc) {
+          std::cerr
+              << "gti_lsp: --raw-pointer-audit requires off, warn, or strict\n";
+          return 64;
+        }
+        value = argv[index];
+      } else {
+        value =
+            argument.substr(std::string_view("--raw-pointer-audit=").size());
+      }
+      if (rawPointerAudit ||
+          !(rawPointerAudit = lang::parseRawPointerAuditMode(value))) {
+        std::cerr << "gti_lsp: --raw-pointer-audit must be off, warn, or "
+                     "strict and specified only once\n";
+        return 64;
+      }
+      continue;
+    }
     std::cerr << "gti_lsp: unknown option '" << argument << "'\n";
     return 64;
   }
   return LanguageServer(
              lang::discoverStandardLibrary(argc > 0 ? argv[0] : "gti_lsp",
                                            GTI_BUILD_STDLIB_ROOT),
-             executionProfile)
+             executionProfile, rawPointerAudit)
       .run();
 }

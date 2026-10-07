@@ -1,9 +1,9 @@
-// Namespaces may be nested and referred to with `::` qualification.
-namespace engine {
-namespace graphics {
+// A namespace path is shorthand for nested blocks:
+// namespace engine { namespace graphics { ... } }
+// The same namespaces may be reopened using either spelling.
+namespace engine::graphics {
 void render() {
   std::println("rendering through a qualified name");
-}
 }
 }
 

@@ -1,0 +1,17 @@
+#include <std/vector>
+#include <std/memory>
+
+struct Entry { mut int value; Entry(int v) : value(v) {} };
+
+void replace(mut std::vector<std::unique_ptr<Entry>>& entries) {
+  auto item = std::make_unique<Entry>(3);
+  if (entries.empty()) { entries.push_back(std::move(item)); }
+  else { entries[std::size_t(0)] = std::move(item); }
+}
+
+int main() {
+  mut std::vector<std::unique_ptr<Entry>> entries{};
+  replace(entries);
+  replace(entries);
+  return entries[std::size_t(0)]->value - 3;
+}

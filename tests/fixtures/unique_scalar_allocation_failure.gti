@@ -1,0 +1,27 @@
+#include <std/memory>
+
+extern "C" { void gti_test_fail_scalar_allocation(int32_t enabled); }
+
+class marker {
+  int32_t tag;
+public:
+  marker(int32_t value) : tag(value) {}
+  ~marker() { std::println(this.tag); }
+};
+
+int32_t produce_scalar() {
+  std::println("argument");
+  return 7;
+}
+
+int32_t allocate(marker parameter) {
+  marker inner = marker(2);
+  unsafe { gti_test_fail_scalar_allocation(1); }
+  auto owner = std::make_unique<int32_t>(produce_scalar());
+  return *owner;
+}
+
+int main() {
+  marker outer = marker(1);
+  return allocate(marker(3));
+}

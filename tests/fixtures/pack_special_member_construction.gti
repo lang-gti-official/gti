@@ -1,0 +1,41 @@
+#include <std/string>
+#include <std/vector>
+
+class Payload {
+  int number;
+  std::string text;
+public:
+  Payload(int initial) : number(initial), text(std::string("payload")) {}
+  Payload(Payload& other) = delete;
+  Payload(Payload&& other) = default;
+  ~Payload() { std::println(this.number); }
+  int value() { return this.number; }
+};
+
+struct Copyable {
+  int number;
+  Copyable(int initial) : number(initial) {}
+};
+
+T construct<T, Args...>(Args... args) {
+  return T(args...);
+}
+
+void copies<T, Args...>(Args... args) {
+  T first = T(args...);
+  T second = T(args...);
+}
+
+int inspect(Payload payload, int divisor) {
+  return payload.value() / divisor;
+}
+
+int later(int divisor) { return 1 / divisor; }
+
+int main(int argc, std::vector<std::string> argv) {
+  Payload caller = Payload(9);
+  copies<Copyable>(Copyable(3));
+  int value = inspect(construct<Payload>(Payload(7)),
+                      argc == 2 ? 0 : later(argc == 3 ? 0 : 1));
+  return value - 7;
+}

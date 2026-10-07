@@ -1,0 +1,16 @@
+manifest-version = 1
+
+[package]
+name = "native-opengl-window"
+version = "0.1.0"
+
+[dependencies]
+glfw = { path = "../../glfw" }
+glad = { path = "../../glad" }
+
+[build]
+allow-build-scripts = ["gti-glfw@0.1.0"]
+
+[targets.window]
+kind = "executable"
+root = "src/main.gti"

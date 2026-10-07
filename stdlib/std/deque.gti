@@ -1,0 +1,247 @@
+#include <std/vector>
+#include <std/memory>
+
+namespace std {
+namespace detail {
+enum class deque_in_place { value };
+struct deque_node<T> {
+  mut T value;
+  deque_node(T value) : value(std::move(value)) {}
+  deque_node<Args...>(deque_in_place tag, Args... args) : value(T(args...)) {}
+};
+class deque_slot<T> {
+  mut unique_ptr<deque_node<T>> owner = unique_ptr<deque_node<T>>();
+public:
+  deque_slot() {}
+  unique_ptr<deque_node<T>> take() mut {
+    auto previous = std::move(this.owner);
+    this.owner = unique_ptr<deque_node<T>>();
+    return std::move(previous);
+  }
+  void put(unique_ptr<deque_node<T>> value) mut { this.owner = std::move(value); }
+  void reset() mut { this.owner.reset(); }
+  T& get() { return this.owner->value; }
+  mut T& get() mut { return this.owner->value; }
+};
+class deque_sentinel {
+  size_t limit;
+public:
+  deque_sentinel(size_t limit) : limit(limit) {}
+  size_t position() { return this.limit; }
+};
+class deque_iterator<T> {
+  vector<deque_slot<T>>& slots;
+  size_t head;
+  size_t length;
+  mut size_t position;
+public:
+  deque_iterator(vector<deque_slot<T>>& slots, size_t head, size_t length, size_t position)
+      : slots(slots), head(head), length(length), position(position) {}
+  T& operator*() {
+    gti_internal::index_bounds_check(this.position, this.length);
+    return this.slots[(this.head + this.position) % this.slots.size()].get();
+  }
+  T& operator->() { return *this; }
+  void operator++() mut {
+    gti_internal::index_bounds_check(this.position, this.length);
+    this.position++;
+  }
+  void operator--() mut { this.position--; }
+  bool operator!=(deque_sentinel& end) { return this.position != end.position(); }
+  bool operator==(deque_sentinel& end) { return this.position == end.position(); }
+  bool operator!=(deque_iterator<T>& other) { return this.position != other.position; }
+  bool operator==(deque_iterator<T>& other) { return this.position == other.position; }
+  void operator+=(ptrdiff_t offset) mut {
+    this.position = size_t(ptrdiff_t(this.position) + offset);
+  }
+  void operator-=(ptrdiff_t offset) mut {
+    this.position = size_t(ptrdiff_t(this.position) - offset);
+  }
+  ptrdiff_t operator-(deque_sentinel& end) {
+    return ptrdiff_t(end.position()) - ptrdiff_t(this.position);
+  }
+};
+class deque_mut_iterator<T> {
+  mut vector<deque_slot<T>>& slots;
+  size_t head;
+  size_t length;
+  mut size_t position;
+public:
+  deque_mut_iterator(mut vector<deque_slot<T>>& slots, size_t head, size_t length)
+      : slots(slots), head(head), length(length), position(0) {}
+  T& operator*() {
+    gti_internal::index_bounds_check(this.position, this.length);
+    return this.slots[(this.head + this.position) % this.slots.size()].get();
+  }
+  mut T& operator*() mut {
+    gti_internal::index_bounds_check(this.position, this.length);
+    return this.slots[(this.head + this.position) % this.slots.size()].get();
+  }
+  void operator++() mut {
+    gti_internal::index_bounds_check(this.position, this.length);
+    this.position++;
+  }
+  bool operator!=(deque_sentinel& end) { return this.position != end.position(); }
+};
+}
+
+/// Circular indexed sequence. Each element has one stable exclusive owner;
+/// growth moves owner handles, never T. Both ends are amortized constant time.
+class deque<T> {
+  mut vector<detail::deque_slot<T>> slots{};
+  mut size_t head = 0;
+  mut size_t length = 0;
+
+  size_t physical(size_t index) { return (this.head + index) % this.slots.size(); }
+  void ensure_room() mut {
+    if (this.length < this.slots.size()) { return; }
+    mut size_t capacity = this.slots.size() * 2;
+    if (capacity == 0) { capacity = 8; }
+    mut vector<detail::deque_slot<T>> replacement{};
+    replacement.resize(capacity);
+    for (mut size_t index = 0; index < this.length; index++) {
+      size_t position = this.physical(index);
+      replacement[index].put(this.slots[position].take());
+    }
+    this.slots.swap(replacement);
+    this.head = 0;
+  }
+  void insert_node(size_t index, unique_ptr<detail::deque_node<T>> node) mut {
+    gti_internal::index_bounds_check(index, this.length + 1);
+    this.ensure_room();
+    for (mut size_t position = this.length; position > index; position--) {
+      size_t source = this.physical(position - 1);
+      size_t destination = this.physical(position);
+      auto shifted = this.slots[source].take();
+      this.slots[destination].put(std::move(shifted));
+    }
+    size_t destination = this.physical(index);
+    this.slots[destination].put(std::move(node));
+    this.length++;
+  }
+
+public:
+  deque() {}
+  static deque<T> collection_init(uint64_t count) { return deque<T>(); }
+  static deque<T> collection_insert(mut deque<T> collection, T element) requires std::movable<T> {
+    collection.push_back(std::move(element));
+    return std::move(collection);
+  }
+  deque(deque<T>& other) = delete;
+  deque(deque<T>&& other) = default;
+  size_t size() { return this.length; }
+  bool empty() { return this.length == 0; }
+  T& at(size_t index) {
+    gti_internal::index_bounds_check(index, this.length);
+    return this.slots[this.physical(index)].get();
+  }
+  mut T& at(size_t index) mut {
+    gti_internal::index_bounds_check(index, this.length);
+    return this.slots[this.physical(index)].get();
+  }
+  T& operator[](size_t index) { return this.at(index); }
+  mut T& operator[](size_t index) mut { return this.at(index); }
+  T& front() { return this.at(size_t(0)); }
+  mut T& front() mut { return this.at(size_t(0)); }
+  T& back() {
+    gti_internal::index_bounds_check(size_t(0), this.length);
+    return this.at(this.length - 1);
+  }
+  mut T& back() mut {
+    gti_internal::index_bounds_check(size_t(0), this.length);
+    return this.at(this.length - 1);
+  }
+  void push_back(T value) mut requires std::movable<T> {
+    this.ensure_room();
+    size_t position = this.physical(this.length);
+    this.slots[position].put(std::make_unique<detail::deque_node<T>>(std::move(value)));
+    this.length++;
+  }
+  void push_front(T value) mut requires std::movable<T> {
+    this.ensure_room();
+    size_t position = (this.head + this.slots.size() - 1) % this.slots.size();
+    this.slots[position].put(std::make_unique<detail::deque_node<T>>(std::move(value)));
+    this.head = position;
+    this.length++;
+  }
+  mut T& emplace_back<Args...>(Args... args) mut {
+    this.ensure_room();
+    size_t position = this.physical(this.length);
+    this.slots[position].put(std::make_unique<detail::deque_node<T>>(
+        detail::deque_in_place::value, args...));
+    this.length++;
+    return this.slots[position].get();
+  }
+  mut T& emplace_front<Args...>(Args... args) mut {
+    this.ensure_room();
+    size_t position = (this.head + this.slots.size() - 1) % this.slots.size();
+    this.slots[position].put(std::make_unique<detail::deque_node<T>>(
+        detail::deque_in_place::value, args...));
+    this.head = position;
+    this.length++;
+    return this.slots[position].get();
+  }
+  void insert(size_t index, T value) mut requires std::movable<T> {
+    gti_internal::index_bounds_check(index, this.length + 1);
+    this.insert_node(index, std::make_unique<detail::deque_node<T>>(std::move(value)));
+  }
+  mut T& emplace<Args...>(size_t index, Args... args) mut {
+    gti_internal::index_bounds_check(index, this.length + 1);
+    this.insert_node(index, std::make_unique<detail::deque_node<T>>(
+        detail::deque_in_place::value, args...));
+    return this.at(index);
+  }
+  void erase(size_t index) mut {
+    gti_internal::index_bounds_check(index, this.length);
+    mut size_t position = this.physical(index);
+    auto removed = this.slots[position].take();
+    for (mut size_t next = index + 1; next < this.length; next++) {
+      size_t source = this.physical(next);
+      auto shifted = this.slots[source].take();
+      this.slots[position].put(std::move(shifted));
+      position = source;
+    }
+    this.length--;
+  }
+  void pop_front() mut {
+    if (this.empty()) { return; }
+    this.slots[this.head].reset();
+    this.head = (this.head + 1) % this.slots.size();
+    this.length--;
+  }
+  void pop_back() mut {
+    if (this.empty()) { return; }
+    size_t position = this.physical(this.length - 1);
+    this.slots[position].reset();
+    this.length--;
+  }
+  void clear() mut {
+    while (!this.empty()) { this.pop_back(); }
+    this.head = 0;
+  }
+  void resize(size_t requested) mut requires std::default_initializable<T> {
+    while (this.length > requested) { this.pop_back(); }
+    while (this.length < requested) { [[discard]] this.emplace_back(); }
+  }
+  void resize(size_t requested, T value) mut requires std::copyable<T> {
+    while (this.length > requested) { this.pop_back(); }
+    while (this.length < requested) { this.push_back(value); }
+  }
+  void swap(mut deque<T>& other) mut {
+    this.slots.swap(other.slots);
+    size_t head = this.head;
+    size_t length = this.length;
+    this.head = other.head;
+    this.length = other.length;
+    other.head = head;
+    other.length = length;
+  }
+  detail::deque_iterator<T> begin() {
+    return detail::deque_iterator<T>(this.slots, this.head, this.length, size_t(0));
+  }
+  detail::deque_sentinel end() { return detail::deque_sentinel(this.length); }
+  detail::deque_mut_iterator<T> begin_mut() mut {
+    return detail::deque_mut_iterator<T>(this.slots, this.head, this.length);
+  }
+};
+}

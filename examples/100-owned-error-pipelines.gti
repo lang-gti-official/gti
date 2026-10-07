@@ -1,0 +1,39 @@
+#include <std/json>
+#include <std/string>
+
+// A CLI keeps failures recoverable while translating a library error into
+// its own owning application error. Nothing here relies on implicit copying.
+class ConfigError {
+  std::string description;
+public:
+  ConfigError(std::string description) : description(std::move(description)) {}
+  // Implicit this retains the same checked owner dependency as this.description.
+  std::string_view message() { return description.view(); }
+};
+
+ConfigError config_error(std::json::error error) {
+  mut std::string message = std::string(error.description());
+  message.append(" at ");
+  message.append(error.path().view());
+  return ConfigError(std::move(message));
+}
+
+expected<std::string, ConfigError> read_name(std::string_view source) {
+  std::json::value document =
+      ?std::json::parse(source).transform_error(config_error);
+  return ?document.get_string("name").transform_error(config_error);
+}
+
+int main() {
+  auto good = read_name("{\"name\":\"tea\"}");
+  if (!good) {
+    std::println(good.error().message());
+    return 1;
+  }
+  std::println(good.value());
+
+  auto missing = read_name("{}");
+  if (missing) { return 2; }
+  std::println(missing.error().message());
+  return 0;
+}

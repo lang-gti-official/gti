@@ -1,0 +1,32 @@
+#include <std/string>
+#include <std/vector>
+
+struct Marker {
+  int number;
+  Marker(int number) : number(number) {}
+};
+class Guard {
+public:
+  ~Guard() { std::println("caller cleaned"); }
+};
+expected<Marker, Marker> alternative(bool success) {
+  if (success) { return Marker(1); }
+  return unexpected(Marker(2));
+}
+Marker checked(int divisor) { return Marker(10 / divisor); }
+expected<Marker, int> wrapped(int divisor) { return checked(divisor); }
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard = Guard();
+  if (argc == 1) {
+    auto result = alternative(false);
+    Marker copy = result.value();
+    return copy.number;
+  }
+  if (argc == 2) {
+    auto result = alternative(true);
+    Marker copy = result.error();
+    return copy.number;
+  }
+  auto result = wrapped(0);
+  return result.has_value() ? 1 : 2;
+}

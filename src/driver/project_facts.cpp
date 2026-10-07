@@ -5,6 +5,28 @@
 
 namespace lang::driver {
 
+std::vector<IncludeSearchRoot>
+projectIncludeSearchRoots(const ProjectFacts &facts) {
+  const auto &selected = facts.selectedPackage();
+  IncludeSearchRoot own{selected.packageRoot, std::nullopt, {}};
+  for (const auto &package : facts.packages()) {
+    if (package.identity != selected.identity) {
+      const auto relative =
+          package.packageRoot.lexically_relative(selected.packageRoot);
+      if (!relative.empty() && *relative.begin() != ".." && relative != ".") {
+        own.excludedDirectories.push_back(package.packageRoot);
+      }
+    }
+  }
+  std::vector<IncludeSearchRoot> roots{std::move(own)};
+  for (const auto &dependency : selected.dependencies) {
+    if (const auto *package = facts.findPackage(dependency.targetIdentity)) {
+      roots.push_back({package->sourceRoot, dependency.alias, {}});
+    }
+  }
+  return roots;
+}
+
 namespace {
 
 // The profile a project command selects when none is named. Derived from the
@@ -114,6 +136,22 @@ const std::string &ProjectFacts::modelIdentity() const {
   return resolvedModelIdentity;
 }
 
+PackageWarningPolicy
+ProjectFacts::packageWarnings(std::string_view profileName) const {
+  const ProjectFactsProfile *profile = findProfile(profileName);
+  if (profile == nullptr) {
+    return {};
+  }
+  std::vector<std::string> dependencies;
+  for (const ProjectFactsPackage &package : resolvedPackages) {
+    if (package.identity != selectedIdentity) {
+      dependencies.push_back(package.identity);
+    }
+  }
+  return PackageWarningPolicy(profile->dependencyWarnings, selectedIdentity,
+                              std::move(dependencies));
+}
+
 ProjectFacts projectFactsFromWorkspace(const ProjectWorkspace &workspace) {
   ProjectFacts facts;
   facts.resolvedWorkspaceRoot = workspace.root();
@@ -138,7 +176,10 @@ ProjectFacts projectFactsFromWorkspace(const ProjectWorkspace &workspace) {
         ProjectFactsProfile{.name = profile.name,
                             .optimization = profile.optimization,
                             .cppStandard = profile.cppStandard,
-                            .executionProfile = profile.executionProfile});
+                            .executionProfile = profile.executionProfile,
+                            .rawPointerAudit = profile.rawPointerAudit,
+                            .warningPolicy = profile.warningPolicy,
+                            .dependencyWarnings = profile.dependencyWarnings});
   }
 
   facts.resolvedTargets.reserve(manifest.targets().size());
@@ -161,9 +202,9 @@ resolveProjectFacts(const std::filesystem::path &startDirectory,
   // The read-only policy `gti metadata` uses: a stored checkout is still
   // checksum-verified and gti.lock remains the coverage authority, but no git
   // process runs and nothing is acquired.
-  WorkspaceResolutionResult resolved =
-      resolveProjectWorkspace(startDirectory, requestedPackage,
-                              {.allowAcquisition = false}, manifestFeatures);
+  WorkspaceResolutionResult resolved = resolveProjectWorkspace(
+      startDirectory, requestedPackage, {.allowAcquisition = false},
+      std::nullopt, manifestFeatures);
   result.sources = std::move(resolved.sources);
   result.diagnostics = std::move(resolved.diagnostics);
   if (!resolved.succeeded()) {

@@ -1,0 +1,75 @@
+#include <std/string>
+
+extern "C" {
+  uint64_t native_c_string_length(c_string value);
+  uint8_t native_c_string_zero_at(c_string value, uint64_t index);
+}
+
+c_string relay(c_string value) {
+  return value;
+}
+
+int main() {
+  mut std::string empty = std::string();
+  {
+    c_string value = empty.c_string();
+    if (value == nullptr || native_c_string_length(value) != uint64_t(0) ||
+        native_c_string_zero_at(value, uint64_t(0)) != uint8_t(1)) {
+      return 1;
+    }
+  }
+
+  mut std::string text = std::string("ab");
+  text.reserve(std::size_t(16));
+  {
+    c_string value = relay(text.c_string());
+    if (native_c_string_length(value) != uint64_t(2) ||
+        native_c_string_zero_at(value, uint64_t(2)) != uint8_t(1)) {
+      return 2;
+    }
+  }
+  text.push_back('c');
+  text.append("de");
+  {
+    c_string value = text.try_c_string();
+    if (value == nullptr || native_c_string_length(value) != uint64_t(5) ||
+        native_c_string_zero_at(value, uint64_t(5)) != uint8_t(1)) {
+      return 3;
+    }
+  }
+
+  mut std::string embedded = std::string("ab\0cd");
+  {
+    c_string unchecked = embedded.c_string();
+    c_string checked = embedded.try_c_string();
+    if (checked != nullptr || native_c_string_length(unchecked) != uint64_t(2) ||
+        native_c_string_zero_at(unchecked, uint64_t(5)) != uint8_t(1)) {
+      return 4;
+    }
+  }
+  embedded.pop_back();
+  {
+    c_string unchecked = embedded.c_string();
+    if (native_c_string_zero_at(unchecked, uint64_t(4)) != uint8_t(1)) {
+      return 5;
+    }
+  }
+  embedded.resize(std::size_t(2));
+  embedded.shrink_to_fit();
+  {
+    c_string checked = embedded.try_c_string();
+    if (checked == nullptr || native_c_string_length(checked) != uint64_t(2) ||
+        native_c_string_zero_at(checked, uint64_t(2)) != uint8_t(1)) {
+      return 6;
+    }
+  }
+  embedded.clear();
+  {
+    c_string checked = embedded.try_c_string();
+    if (checked == nullptr || native_c_string_length(checked) != uint64_t(0) ||
+        native_c_string_zero_at(checked, uint64_t(0)) != uint8_t(1)) {
+      return 7;
+    }
+  }
+  return 0;
+}

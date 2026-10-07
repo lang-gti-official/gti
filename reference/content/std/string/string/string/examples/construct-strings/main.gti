@@ -1,8 +1,0 @@
-#include <std/string>
-
-int main() {
-  mut std::string source = std::string("range");
-  std::string copy = std::string(source.begin(), source.end());
-  std::println(copy);
-  return 0;
-}

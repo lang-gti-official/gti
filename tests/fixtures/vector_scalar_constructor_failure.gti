@@ -1,0 +1,77 @@
+#include <std/optional>
+#include <std/string>
+#include <std/vector>
+
+mut int scenario = 0;
+
+class Marker {
+  int number;
+public:
+  Marker(int value) : number(value) {}
+  ~Marker() { std::println(this.number); }
+};
+
+class Entry {
+  Marker marker;
+  std::optional<std::string> text;
+  int number;
+  mut const int* original_address = nullptr;
+public:
+  Entry(int value, int divisor) : marker(Marker(value + 10)),
+      text(std::optional<std::string>(std::string("owned"))), number(value) {
+    unsafe { this.original_address = &this.number; }
+    std::println(value);
+    int checked = 12 / divisor; // constructor failure
+  }
+  ~Entry() {
+    std::println(this.number * 100);
+    bool fail = (scenario == 2 && this.number == 2) ||
+                (scenario == 3 && this.number == 1) || scenario == 4;
+    int divisor = fail ? 0 : 1;
+    int checked = 12 / divisor; // cleanup failure
+  }
+  bool stable_address() {
+    unsafe { return this.original_address == &this.number; }
+  }
+};
+
+int argument(int label, int value) {
+  std::println(label);
+  int divisor = scenario == 5 && label == 404 ? 0 : 1;
+  return value / divisor; // later argument failure
+}
+
+class PrimitiveInputs {
+public:
+  PrimitiveInputs(bool ready, char label, double ratio, uint64_t size) {
+    int divisor = ready && label == 'x' && ratio == 1.5 && size == uint64_t(3) ? 1 : 0;
+    int checked = 1 / divisor;
+  }
+};
+
+class Pair {
+  int left;
+  int right;
+public:
+  Pair(int first, int second) : left(first), right(second) {}
+  int sum() { return this.left + this.right; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  scenario = argc - 1;
+  Marker caller{900};
+  mut std::vector<Pair> pairs{};
+  [[discard]] pairs.emplace_back(2, 3);
+  if (pairs[std::size_t(0)].sum() != 5) { return 12; }
+  mut std::vector<PrimitiveInputs> primitives{};
+  [[discard]] primitives.emplace_back(true, 'x', double(1.5), uint64_t(3));
+  mut std::vector<Entry> entries{};
+  entries.reserve(std::size_t(2));
+  [[discard]] entries.emplace_back(argument(401, 1), argument(402, 1));
+  if (!entries[std::size_t(0)].stable_address()) { return 10; }
+  int divisor = scenario == 1 || scenario == 3 ? 0 : 1;
+  [[discard]] entries.emplace_back(argument(403, 2), argument(404, divisor));
+  if (!entries[std::size_t(1)].stable_address()) { return 11; }
+  std::println(300);
+  return 0;
+}

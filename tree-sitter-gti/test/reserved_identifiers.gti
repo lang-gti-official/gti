@@ -17,7 +17,6 @@ int co_yield = 1;
 int decltype = 1;
 int dynamic_cast = 1;
 int explicit = 1;
-int export = 1;
 int friend = 1;
 int goto = 1;
 int inline = 1;
