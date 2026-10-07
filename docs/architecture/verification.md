@@ -68,6 +68,17 @@ The full lifecycle suite still awaits reconciliation of the state-bearing base
 constructor implementation. Neither these focused results
 nor the published draft checkpoint establishes full acceptance.
 
+After reconciling canonical main through `7604c36a`, all thirteen focused
+manual-lifetime, carrier, sparse/resource storage, prefix construction,
+relocation, borrowed-composition, cleanup-mutation, executable-closure and
+detached LoweredProgram contracts pass (21.43 seconds). Conditional-capability
+runtime/LSP and the incoming call-result, expected-return, consuming-assignment
+and class-field native matrices also pass. The class-field unit inventory now
+passes with exact generated constructor targets, prepared-argument activation,
+and malformed nested executable-schedule checks instead of targetless-default
+assumptions. Complete corpus inventories, the combined base schedule,
+installed consumers and broad campaign validation remain outstanding.
+
 ## Source-defined process byte provider (S-ALLOC-07 checkpoint)
 
 The pre-reconciliation storage-cost probe uses frozen optimized compiler,
