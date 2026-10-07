@@ -259,6 +259,11 @@ int main() {
   Callback callback = [](int32_t value) -> int32_t { return value; };
   return 0;
 }
+)");
+  expect(!lambda.canGenerateCode() && hasCode(lambda, "GTI-S2003"),
+         "capturing or non-capturing lambdas should not silently acquire a C "
+         "callback lifetime or calling convention");
+}
 
 // Groundwork for general foreign invocation: transport already has exact
 // native shape, but it must not silently acquire a static GTI call target.
@@ -331,12 +336,6 @@ int main() { unsafe { return obtain_transform()(7); } }
                          "foreign-declaration parser recovery");
   }
 }
-)");
-  expect(!lambda.canGenerateCode() && hasCode(lambda, "GTI-S2003"),
-         "capturing or non-capturing lambdas should not silently acquire a C "
-         "callback lifetime or calling convention");
-}
-
 void testExecutionProfileBoundary() {
   const std::string declarations = R"(
 using Callback = (int32_t) -> int32_t;
