@@ -33,9 +33,38 @@ files under `docs/plans/`. The documents under
 [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
-## Active: 2026-10-07 Issue-Closure Campaign
+## Stabilization Reset: 2026-10-08
 
-**Status: partially integrated; final combined verification remains pending.**
+The owner paused new issue-campaign work to finish the existing lifetime/storage
+and payload-enum features, consolidate their handoffs, run the complete suite,
+and release. Concurrency is at most the release owner plus **two other agents
+in total**, with no child agents. Integration and validation have one owner;
+other agents must not launch duplicate full builds or independent releases.
+
+The unfinished-work inventory is:
+
+| Work | Preserved state and release disposition |
+| --- | --- |
+| General object lifetimes, source sparse storage, conditional unsafe capabilities (PR #94) | Implemented candidate; combined corpus, installed-consumer and full-suite acceptance required before completion. |
+| Source process byte provider (PR #104) | Published implementation is an ancestor of #94; confirm integration before closing its redundant PR. |
+| Generic payload enums (PR #110) | Complete implementation and preflight handoff reconciled into #94; use the shared final validation and one integration, not a second release. |
+| Constructor campaign (PR #125) | Loop reinitialization, owned constructor packs and stable base stages already included in #94. The later computed scalar base-argument extension remains preserved separately; general preparation frames are still proposed. |
+| Other campaign checkpoints (#114, #118, #124, #128) | Published partial-campaign work, not final combined acceptance. Preserve for explicit release-scope selection or the resumed campaign; do not silently claim their open issues fixed. |
+| Operator/borrowed-view relay (PR #127) | Preserved draft with a known failing map-key-view matrix; not ready for integration. |
+| Source string-view rewrite (PR #109) | Proposal/review-first, including separate unpublished Claude edits. Not approved for automatic adoption or required as a release prerequisite. |
+
+The legacy `feature-interactions` edits are already incorporated (or superseded
+by additive improvements). The `issues-30-33` test commit and dirty lowering
+guard have exact patch-equivalent implementations in the candidate. Preserve
+those recovery trees without reapplying them. The detached Claude `gti-base`
+emitter edits contain temporary tracing, not a missing semantic fix; retain them
+as debugging scratch, outside the release. Unrelated primary-checkout edits and
+generated application artifacts remain untouched. No branch/worktree cleanup is
+needed to establish release acceptance.
+
+## Paused: 2026-10-07 Issue-Closure Campaign
+
+**Status: partially integrated; paused by the stabilization reset above.**
 The initial inventory is the 50 open issues #51, #53–#93 (excluding #94),
 #95–#100, #103 and #105. Issue #103 additionally requires resolving every
 one of F10, F14, F16, F17, S01, S02, S04, S06, S09, S12 and S15; closing or
