@@ -3042,6 +3042,11 @@ if(Python3_Interpreter_FOUND)
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/unsafe_function_lsp_test.py"
                    "$<TARGET_FILE:gti_lsp>")
+    add_test(NAME diagnostic_recovery_lsp
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${PROJECT_SOURCE_DIR}/tests/diagnostic_recovery_lsp_test.py"
+                     "$<TARGET_FILE:gti_lsp>")
+    set_tests_properties(diagnostic_recovery_lsp PROPERTIES TIMEOUT 60)
     add_test(NAME runtime_object_layout_lsp
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/runtime_object_layout_lsp_test.py"

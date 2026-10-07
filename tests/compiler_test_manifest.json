@@ -602,6 +602,30 @@
       "suite": "diagnostics"
     },
     {
+      "name": "testUnknownFunctionAttributeClassification",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testUnknownTypeCascadeSuppression",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testRecoveryFindingDiagnostics",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testGenericArgumentDiagnosticGuidance",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testConversionDiagnosticGuidance",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testRawAuditDiagnosticPublication",
+      "suite": "diagnostics"
+    },
+    {
       "name": "testSemanticDiagnostics",
       "suite": "diagnostics"
     },

@@ -285,6 +285,36 @@ Unknown initializer or binary-operand types are poison from their owning
 lookup/type error, not evidence for an additional assignment or operator
 mismatch. Unrelated, fully known type errors remain reportable.
 
+For invalid payload-pattern bindings, known variant names still inform
+recovery-only return-flow coverage. These facts never become a valid exhaustive
+switch in the semantic model or enable code generation. All-returning arms
+avoid a false missing-return error; an arm that breaks or a missing variant
+still permits a genuine fallthrough diagnostic. A rejected required constexpr
+initializer has no executable initialization step to validate for runtime
+storage effects; its evaluation error remains authoritative. Ordinary runtime
+initializer dependencies still receive `GTI-S2068`.
+
+The external C-symbol catalog owns duplicate external-symbol declarations;
+GTI overload validation still owns mixed-linkage and distinct-link-name
+conflicts. Unsupported borrowed fields receive `GTI-S2045` at the field,
+without the obsolete single-reference limit or repeats at constructions that
+depend on that rejected field. This does not admit fallible-borrow fields.
+Exact native callback conversion failures use `GTI-S2076` and candidate
+signature notes rather than an internal unknown-type argument mismatch.
+Direct and transitive raw lifetime checks share publication for an identical
+access, message, origin and context; different accesses/origins remain distinct,
+and audit off/warn/strict modes keep their existing meaning.
+
+Explicit function value slots are resolved from the target's generic parameter
+kind, so a runtime identifier or a type written there receives `GTI-S2026` at
+the written argument. Explicitly bound types are not conflicting *inferred*
+types; actual argument mismatches retain their exact type diagnostic. Missing
+value inference describes the supplied arguments rather than claiming that
+every call supplied an array extent. Conversion guidance never assumes an
+arbitrary target constructor exists. An exact public safe read-only `view()`
+accessor may be suggested from ordinary member facts, including user-defined
+types; it is not a fix-it and does not waive the view's lifetime obligations.
+
 `GTI-S2094` owns an executable request without a resolved global `main`
 definition in its entry source unit. It is opt-in executable policy, checked
 after successful syntax and semantics and before HIR/backend work. Point at
