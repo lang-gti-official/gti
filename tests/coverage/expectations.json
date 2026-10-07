@@ -1768,9 +1768,8 @@
     },
     "a13-mir-field-symbol-order": {
       "deterministic": "--emit-mir",
-      "finding": "A13",
       "issue": 59,
-      "outcome": "nondeterministic",
+      "outcome": "pass",
       "runs": 20
     },
     "a14-generated-ctor-field-in-user-ctor": {
@@ -1784,9 +1783,8 @@
       "outcome": "ice"
     },
     "a16-relay-copyable-lambda": {
-      "finding": "A16",
       "issue": 62,
-      "outcome": "backend"
+      "outcome": "pass"
     },
     "a17-narrow-negative-array-literal": {
       "issue": 63,
@@ -1899,14 +1897,12 @@
       "outcome": "ice"
     },
     "a32-optional-emplace-move-only-function": {
-      "finding": "A32",
       "issue": 77,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a32-vector-push-back-move-only-function": {
-      "finding": "A32",
       "issue": 77,
-      "outcome": "backend"
+      "outcome": "pass"
     },
     "a33-unnecessary-mut-deref-store": {
       "finding": "A33",

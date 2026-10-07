@@ -3214,6 +3214,7 @@ private:
 
   void recordClassTypeIdentities();
 
+  void recordClassFieldSymbols();
   void recordClassTypes();
 
   [[nodiscard]] static bool
