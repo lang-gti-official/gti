@@ -115,10 +115,13 @@ void checkAllocationMutations(const lang::FrontendResult &frontend) {
       }
   expect(count >= 4 && copy && move,
          "unrelated passive/owning types exercise generated copy and move");
+  std::cout << "Generated allocation: " << count << " operations, " << count * 7
+            << " rejected mutations\n";
 }
 
 void checkFieldMutations(const lang::FrontendResult &frontend) {
   std::size_t count = 0;
+  std::size_t accessMutations = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
     if (function.body.rangeIterations.empty())
       continue;
@@ -149,9 +152,8 @@ void checkFieldMutations(const lang::FrontendResult &frontend) {
         if (!rejected) {
           const auto lowered = gti_test::lowerProgram(
               frontend, malformed, malformed, lang::TargetInfo::host());
-          lang::CppMirBodyEmissionMap rows(
-              lang::buildCppMirBodyEmissionMapRows(lowered,
-                                                   lang::CppStandard::Cpp20));
+          lang::CppMirBodyEmissionMap rows(lang::buildCppMirBodyEmissionMapRows(
+              lowered, lang::CppStandard::Cpp20));
           lang::CppMirBodyEmitter emitter(malformed, rows);
           rejected = !emitter
                           .analyze({.kind = lang::MirBodyKind::Function,
@@ -162,9 +164,60 @@ void checkFieldMutations(const lang::FrontendResult &frontend) {
                          "type fails closed");
       }
     }
+    for (const auto &range : function.body.rangeIterations) {
+      for (int mutation = 0; mutation != 2; ++mutation) {
+        auto malformed = frontend.mir;
+        auto &body = const_cast<lang::MirFunctionInstance *>(
+                         malformed.findFunctionInstance(function.id))
+                         ->body;
+        auto &changed = body.rangeIterations[range.id - 1];
+        if (mutation == 0)
+          changed.element = 0;
+        else
+          body.loans[range.rangeLoan - 1].access = lang::AccessMode::Mutable;
+        expect(
+            !lang::verifyMirProgram(malformed).valid(),
+            "wrong element address, carrier or owner-loan access fails closed");
+      }
+    }
+    // Merely changing an unused place annotation is not an access grant.
+    // Forge the executing receiver borrow instead: it must not gain mutable
+    // authority from the enclosing read-only range loan.
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Borrow &&
+            instruction.loan != 0 && instruction.operands.size() == 1 &&
+            instruction.operands.front().kind ==
+                lang::MirOperandKind::BorrowRead &&
+            function.body.findLoan(*instruction.loan)->access ==
+                lang::AccessMode::ReadOnly &&
+            function.body.findPlace(instruction.operands.front().place)
+                    ->access == lang::AccessMode::ReadOnly) {
+          ++accessMutations;
+          auto malformed = frontend.mir;
+          auto &body = const_cast<lang::MirFunctionInstance *>(
+                           malformed.findFunctionInstance(function.id))
+                           ->body;
+          auto &changed =
+              *std::find_if(body.findBlock(block.id)->instructions.begin(),
+                            body.findBlock(block.id)->instructions.end(),
+                            [&](const auto &candidate) {
+                              return candidate.id == instruction.id;
+                            });
+          changed.operands.front().kind = lang::MirOperandKind::BorrowWrite;
+          body.loans[*instruction.loan - 1].access = lang::AccessMode::Mutable;
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "executing receiver cannot upgrade a read-only range borrow");
+        }
   }
   expect(count >= 2,
          "range fields retain explicit typed reference dereference paths");
+  expect(
+      accessMutations != 0,
+      "an executing read-only borrow exercises the access-upgrade rejection");
+  std::cout << "Range field: " << count << " addresses, " << count * 4
+            << " rejected shape mutations, " << accessMutations
+            << " rejected executing access upgrades\n";
 }
 
 void checkNegative(const std::string &prefix, const std::string &extra) {
@@ -207,17 +260,14 @@ int main() {
   checkAllocationMutations(allocation);
   const auto source = readFixture("indexed_view_relay");
   const auto prefix = source.substr(0, source.find("int main()"));
-  checkNegative(prefix,
-                "std::string_view bad(){Records local{}; return "
-                "local.at(std::size_t(0));}");
+  checkNegative(prefix, "std::string_view bad(){Records local{}; return "
+                        "local.at(std::size_t(0));}");
   checkNegative(prefix,
                 "std::string_view bad(){return Records().at(std::size_t(0));}");
-  checkNegative(prefix,
-                "[[borrowed_from(first)]] Record& bad(Records& first, "
-                "Records& second){return second[std::size_t(0)];}");
-  checkNegative(prefix,
-                "void bad(){mut Records records{}; std::string_view "
-                "held=records.at(std::size_t(0)); records.add(); "
-                "std::println(held);}");
+  checkNegative(prefix, "[[borrowed_from(first)]] Record& bad(Records& first, "
+                        "Records& second){return second[std::size_t(0)];}");
+  checkNegative(prefix, "void bad(){mut Records records{}; std::string_view "
+                        "held=records.at(std::size_t(0)); records.add(); "
+                        "std::println(held);}");
   return failures == 0 ? 0 : 1;
 }

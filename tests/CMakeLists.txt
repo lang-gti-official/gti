@@ -11,6 +11,10 @@ set_tests_properties(operator_relay_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME existing_value_allocation_failure_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/existing_value_allocation_failure_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(existing_value_allocation_failure_runtime PROPERTIES TIMEOUT 180)
+if(TARGET gti_lsp)
+  add_test(NAME operator_relay_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/operator_relay_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+endif()
 
 add_executable(gti_native_c_scalar_target_tests native_c_scalar_target_tests.cpp)
 target_link_libraries(gti_native_c_scalar_target_tests PRIVATE gti_compiler)
