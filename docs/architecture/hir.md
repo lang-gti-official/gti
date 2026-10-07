@@ -270,6 +270,16 @@ Processing a field, call, operator, constructor, destructor, lambda, return, or
 parameter type can discover another concrete instance. A fixed pass over the
 initial declarations is therefore incorrect.
 
+Canonical discovery is bounded to 64 new-instance levels along one request
+chain and 16,384 distinct class/function/constructor/destructor instances per
+HIR request (ordinary or staged constant closure). Reusing an exact instance
+does not consume another discovery level. The bounds are deterministic compiler
+resource limits, not a proof that polymorphic recursion terminates: a runtime
+condition does not stop concrete body discovery. Exceeding a bound reports
+`GTI-S2105` at the requesting source, relates the declaration, and stops the
+worklist before reanalyzing deeper bodies. Ordered depth/provenance bookkeeping
+belongs to discovery, never to instance identity or backend representation.
+
 Declaration seeding also closes over nondependent type components in generic
 function and constructor signatures, fields, and bases. A concrete return such
 as `pair<size_t, bool>` needs a class-instance identity even if its generic
