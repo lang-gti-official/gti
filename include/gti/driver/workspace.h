@@ -97,6 +97,9 @@ public:
   [[nodiscard]] const ResolvedProjectPackage *
   findPackage(std::string_view identity) const;
   [[nodiscard]] std::vector<PackageSourceRoot> packageSourceRoots() const;
+  // Program-wide manifest flags from the selected package and its transitive
+  // dependency closure; unrelated workspace members do not contribute.
+  [[nodiscard]] ConfigurationFlags configurationFlags() const;
   [[nodiscard]] std::string modelIdentity() const;
 
 private:

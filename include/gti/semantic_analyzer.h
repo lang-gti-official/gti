@@ -57,7 +57,8 @@ public:
       const SourceGraph *sourceGraph = nullptr, bool toolingOccurrences = true,
       FrontendWorkMetrics *workMetrics = nullptr,
       const SourceManager *sources = nullptr,
-      RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off);
+      RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
+      bool requireFunctionDefinitions = false);
   ~SemanticVisitor();
 
   SemanticVisitor(const SemanticVisitor &) = delete;
