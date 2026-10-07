@@ -1,0 +1,4 @@
+// INVALID: a namespace alias must declare a single identifier.
+namespace engine::graphics { int32_t f() { return 1; } }
+namespace gfx::lib = engine::graphics;
+int main() { return gfx::lib::f() - 1; }

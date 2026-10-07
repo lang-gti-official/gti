@@ -1,0 +1,9 @@
+extern "C" {
+  int32_t takes_string(std::string text); //!ERR
+  bool flag_out(); //!ERR
+  int32_t defined_here(int32_t v) { return v; } //!ERR
+}
+
+int main() {
+  return 0;
+}

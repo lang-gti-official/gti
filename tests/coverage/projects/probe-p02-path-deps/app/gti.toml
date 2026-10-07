@@ -1,0 +1,17 @@
+manifest-version = 1
+
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+m = { path = "../mid" }
+corelib = { path = "../base" }
+
+[targets.app]
+kind = "executable"
+root = "src/main.gti"
+
+[targets.app-tests]
+kind = "test"
+root = "tests/stats_test.gti"

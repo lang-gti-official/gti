@@ -1,0 +1,34 @@
+// INVALID: dependent static assertions that pass for some concrete instances
+// and fail for others (class value parameter, function type parameter, and a
+// method of a generic class), each reported once per failing instance.
+class Packet<uint64_t Capacity> {
+  static_assert(Capacity > 0, "a packet needs storage");
+public:
+  uint64_t capacity() { return Capacity; }
+};
+
+int32_t only_small<T>() {
+  static_assert(sizeof(T) <= 4, "only small types");
+  return 1;
+}
+
+class Grid<T, uint64_t W, uint64_t H> {
+public:
+  uint64_t cells() {
+    static_assert(W * H <= 64, "grid too large");
+    return W * H;
+  }
+};
+
+int main() {
+  Packet<4> ok{};
+  Packet<0> empty{};
+  Packet<0> empty_again{};
+  int32_t a = only_small<int32_t>();
+  int32_t b = only_small<int64_t>();
+  int32_t c = only_small<double>();
+  Grid<int32_t, 4, 4> small{};
+  Grid<int32_t, 16, 16> big{};
+  return int32_t(ok.capacity() + empty.capacity() + empty_again.capacity() +
+                 small.cells() + big.cells()) + a + b + c;
+}

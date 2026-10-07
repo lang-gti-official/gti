@@ -1,0 +1,90 @@
+// Generic class methods with their own generic parameters and trailing
+// requirements, constructor-local generic parameters with requirements and
+// fixed-array extent inference, and a structural class contract used from a
+// destructor.
+#include <std/vector>
+
+concept measurable<T> = requires(T& value) { { value.weight() } -> int32_t; };
+concept stockable<T> = measurable<T> && std::movable<T>;
+
+mut int32_t released_weight = 0;
+
+class Crate {
+  int32_t mass;
+
+public:
+  Crate(int32_t mass) : mass(mass) {}
+  int32_t weight() { return this.mass; }
+};
+
+class Shelf<stockable T> {
+  mut std::vector<T> items;
+  int32_t limit;
+
+public:
+  Shelf(int32_t limit) : items(std::vector<T>()), limit(limit) {}
+
+  // Constructor-local generic: inferred from a fixed array; its extent is
+  // inferred as well.
+  Shelf<uint64_t N>(int32_t seeds[N], int32_t limit) requires std::copyable<T>
+      : items(std::vector<T>()), limit(limit) {}
+
+  bool add(T item) mut {
+    if (this.load() + item.weight() > this.limit) { return false; }
+    this.items.push_back(std::move(item));
+    return true;
+  }
+
+  int32_t load() {
+    mut int32_t sum = 0;
+    for (auto& item : this.items) { sum += item.weight(); }
+    return sum;
+  }
+
+  // A method-level generic with its own numeric constraint.
+  U scaled_load<std::numeric U>(U factor) { return U(U(this.load()) * factor); }
+
+  // A method-level generic with a trailing structural requirement.
+  int32_t compare_with<Other>(Other& other) requires measurable<Other> {
+    return this.load() - other.weight();
+  }
+
+  std::size_t count() { return this.items.size(); }
+
+  ~Shelf() {
+    released_weight += this.load();
+  }
+};
+
+class Tagged {
+  int32_t tag;
+
+public:
+  Tagged<T>(T value, int32_t tag) requires std::copyable<T> : tag(tag) {}
+  int32_t get() { return this.tag; }
+};
+
+int main() {
+  {
+    mut Shelf<Crate> shelf = Shelf<Crate>(10);
+    if (!shelf.add(Crate(4))) { return 1; }
+    if (!shelf.add(Crate(5))) { return 2; }
+    if (shelf.add(Crate(2))) { return 3; }
+    if (shelf.load() != 9 || shelf.count() != std::size_t(2)) { return 4; }
+    if (shelf.scaled_load(int64_t(1000000000)) != 9000000000) { return 5; }
+    if (shelf.scaled_load(0.5d) != 4.5d) { return 6; }
+    Crate heavy = Crate(20);
+    if (shelf.compare_with(heavy) != -11) { return 7; }
+
+    int32_t seeds[3] = {1, 2, 3};
+    Shelf<Crate> seeded = Shelf<Crate>(seeds, 50);
+    if (seeded.count() != std::size_t(0)) { return 8; }
+  }
+  std::println(released_weight);
+  if (released_weight != 9) { return 9; }
+
+  Tagged a = Tagged(3.5d, 1);
+  Tagged b = Tagged(true, 2);
+  if (a.get() + b.get() != 3) { return 10; }
+  return 0;
+}

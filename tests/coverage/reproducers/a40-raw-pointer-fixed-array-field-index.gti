@@ -1,0 +1,9 @@
+// A40: indexing a fixed-array field through a raw pointer is a backend ICE.
+struct Frame {
+  mut int32_t slots[4] = {1, 2, 3, 4};
+};
+int main() {
+  mut Frame frame{};
+  Frame* f = &frame;
+  unsafe { return f->slots[1] - 2; }
+}

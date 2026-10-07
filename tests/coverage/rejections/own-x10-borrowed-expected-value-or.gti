@@ -1,0 +1,18 @@
+// INVALID: value_or is unavailable on expected<T&, E> (expected.md:111).
+enum class errc { missing };
+class Table {
+  int value_ = 3;
+public:
+  Table() {}
+  expected<int&, errc> find(bool ok) {
+    if (!ok) { return unexpected(errc::missing); }
+    return this.value_;
+  }
+};
+int main() {
+  Table table{};
+  int fallback = 9;
+  auto found = table.find(false);
+  int& chosen = found.value_or(fallback);
+  return chosen;
+}

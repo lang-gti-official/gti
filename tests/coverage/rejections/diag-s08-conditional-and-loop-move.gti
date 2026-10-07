@@ -1,0 +1,30 @@
+#include <std/memory>
+
+struct Widget {
+  mut int v = 0;
+  Widget(int v) : v(v) {}
+  ~Widget() {}
+};
+
+int consume(std::unique_ptr<Widget> w) { return w->v; }
+
+int branchy(bool flag) {
+  mut std::unique_ptr<Widget> w = std::make_unique<Widget>(3);
+  if (flag) {
+    int r = consume(std::move(w));
+  }
+  return w->v; //!ERR
+}
+
+int loopy() {
+  mut std::unique_ptr<Widget> w = std::make_unique<Widget>(4);
+  mut int total = 0;
+  for (mut int i = 0; i < 2; i++) {
+    total += consume(std::move(w)); //!ERR
+  }
+  return total;
+}
+
+int main() {
+  return branchy(true) + loopy();
+}

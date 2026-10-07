@@ -1,0 +1,10 @@
+export module top;
+export import right;
+export import left;
+
+namespace top {
+  export int both() {
+    core::Pair pair = left::make();
+    return right::combined(pair);
+  }
+}

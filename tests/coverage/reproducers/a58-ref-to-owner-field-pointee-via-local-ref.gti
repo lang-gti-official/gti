@@ -1,0 +1,22 @@
+// A58: a reference to a unique_ptr field's pointee through a local reference is a MIR ICE.
+// ICE (MIR construction): binding a reference to the pointee of a
+// unique_ptr field reached through a local reference. The same binding
+// through a function parameter, or directly from the owner, compiles.
+// Reached in practice as `Shape& s = *entry.second;` over
+// std::map<K, std::unique_ptr<Shape>> elements.
+#include <std/memory>
+class Box {
+public:
+  int v;
+  Box(int v) : v(v) {}
+};
+struct Holder {
+  std::unique_ptr<Box> owned;
+  Holder(int v) : owned(std::make_unique<Box>(v)) {}
+};
+int main() {
+  Holder h = Holder(2);
+  Holder& r = h;
+  Box& b = *r.owned;
+  return b.v == 2 ? 0 : 1;
+}

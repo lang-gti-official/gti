@@ -1,0 +1,13 @@
+// Invalid: an opaque handle has no pointee representation, so unsafe does not
+// enable arithmetic, indexing or dereference.
+[[c_opaque]] struct DirStream;
+extern "C" {
+  DirStream* opendir(c_string path);
+}
+int main() {
+  unsafe {
+    DirStream* stream = opendir(".");
+    DirStream* next = stream + 1;
+    return next == nullptr ? 0 : 1;
+  }
+}

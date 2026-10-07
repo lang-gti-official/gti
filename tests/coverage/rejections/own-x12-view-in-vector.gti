@@ -1,0 +1,9 @@
+// INVALID: dynamic views cannot be nested in a dynamic container.
+#include <std/string>
+#include <std/vector>
+int main() {
+  std::string owner = std::string("abc");
+  mut std::vector<std::string_view> views{};
+  views.push_back(owner.view());
+  return 0;
+}

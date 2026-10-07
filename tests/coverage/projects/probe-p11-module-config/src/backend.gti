@@ -1,0 +1,20 @@
+export module backend;
+#include "shared.gti"
+
+#ifdef MAIN_LOCAL
+#error "an importer's source-local flag entered the module"
+#endif
+
+namespace engine {
+#ifdef FAST
+  export int backend_speed() { return 100 + shared::mode(); }
+#else
+  export int backend_speed() { return shared::mode(); }
+#endif
+
+#ifdef EXTRA
+  export int extra() { return 7; }
+#endif
+}
+
+#define BACKEND_LOCAL

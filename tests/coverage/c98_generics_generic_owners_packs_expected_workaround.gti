@@ -1,0 +1,81 @@
+// Generic code combining move-only owners with packs, fixed-array storage
+// and expected propagation: forwarding a mixed pack (including a unique
+// owner) to emplace_back, a value-generic ring of unique owners, and `?`
+// inside a loop of a generic function.
+#include <std/memory>
+#include <std/vector>
+
+mut int32_t destroyed = 0;
+
+class Part {
+  int32_t id;
+  std::unique_ptr<int32_t> payload;
+
+public:
+  Part(int32_t id, std::unique_ptr<int32_t> payload) : id(id), payload(std::move(payload)) {}
+  ~Part() { destroyed++; }
+  int32_t value() { return this.id + *this.payload; }
+};
+
+void add_part<Args...>(mut std::vector<Part>& parts, Args... args) {
+  [[discard]] parts.emplace_back(args...);
+}
+
+class Ring<std::movable T, uint64_t N> {
+  mut T slots[N];
+  mut uint64_t next = 0;
+
+public:
+  Ring(T fill) : slots({}) {}
+  void put(T item) mut {
+    this.slots[this.next % N] = std::move(item);
+    this.next++;
+  }
+  T& at(uint64_t index) { return this.slots[index]; }
+};
+
+enum class parse_errc { negative };
+
+expected<T, parse_errc> checked<std::numeric T>(T value) {
+  if (value < 0) { return unexpected(parse_errc::negative); }
+  return value;
+}
+
+expected<T, parse_errc> sum_checked<std::numeric T, uint64_t N>(T values[N]) {
+  mut T total = T(0);
+  for (mut uint64_t i = 0; i < N; i++) {
+    T v = ?checked(values[i]);
+    total = T(total + v);
+  }
+  return total;
+}
+
+int main() {
+  {
+    mut std::vector<Part> parts = std::vector<Part>();
+    add_part(parts, 1, std::make_unique<int32_t>(10));
+    std::unique_ptr<int32_t> named = std::make_unique<int32_t>(20);
+    add_part(parts, 2, std::move(named));
+    if (parts.size() != std::size_t(2)) { return 1; }
+    if (parts[std::size_t(0)].value() + parts[std::size_t(1)].value() != 33) { return 2; }
+  }
+  if (destroyed != 2) { return 3; }
+
+  mut Ring<std::unique_ptr<int32_t>, 2> ring =
+      Ring<std::unique_ptr<int32_t>, 2>(std::unique_ptr<int32_t>());
+  ring.put(std::make_unique<int32_t>(1));
+  ring.put(std::make_unique<int32_t>(2));
+  ring.put(std::make_unique<int32_t>(3));
+  if (*ring.at(uint64_t(0)) != 3 || *ring.at(uint64_t(1)) != 2) { return 4; }
+
+  int16_t good[3] = {1, 2, 3};
+  // Workaround for the narrow negative array-literal backend failure.
+  mut int16_t bad[3] = {1, 2, 3};
+  bad[1] = -2;
+  auto ok = sum_checked(good);
+  auto failed = sum_checked(bad);
+  if (!ok.has_value() || ok.value() != 6) { return 5; }
+  if (failed.has_value()) { return 6; }
+  std::println(destroyed);
+  return 0;
+}

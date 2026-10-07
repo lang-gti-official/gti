@@ -1,0 +1,6 @@
+constexpr int limit = 10;
+
+int main() {
+  limit = 11; //!ERR
+  return limit;
+}

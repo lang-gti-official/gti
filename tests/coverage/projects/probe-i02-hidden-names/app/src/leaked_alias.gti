@@ -1,0 +1,5 @@
+import lib;
+// util is lib's dependency alias, not app's; re-exports never leak aliases.
+import util;
+
+int main() { return util::next(41) - 42; }

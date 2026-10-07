@@ -1,0 +1,4 @@
+#include "global_a.gti"
+#include "global_b.gti"
+
+int main() { return config::limit - 10; }

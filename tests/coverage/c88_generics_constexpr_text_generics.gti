@@ -1,0 +1,83 @@
+// Literal-backed constexpr text inspection feeding array extents, value
+// generic arguments, generic `if constexpr` selection and static assertions,
+// plus runtime execution of the same helpers on runtime text.
+#include <std/string>
+
+constexpr uint64_t count_char(std::string_view text, char wanted) {
+  mut uint64_t n = 0;
+  for (mut uint64_t i = 0; i < text.size(); i++) {
+    if (uint8_t(text[i]) == uint8_t(wanted)) { n++; }
+  }
+  return n;
+}
+
+constexpr uint64_t field_count(std::string_view header) {
+  if (header.empty()) { return 0; }
+  return count_char(header, ',') + 1;
+}
+
+constexpr uint32_t checksum(std::string_view text) {
+  mut uint32_t sum = 0;
+  for (mut uint64_t i = 0; i < text.size(); i++) {
+    sum = (sum * 31 + uint32_t(uint8_t(text[i]))) % 65521;
+  }
+  return sum;
+}
+
+struct Column {
+  std::string_view name;
+  uint64_t width;
+  constexpr Column(std::string_view name, uint64_t width) : name(name), width(width) {}
+  constexpr bool is_key() { return this.name.size() > 0 && uint8_t(this.name[0]) == uint8_t('#'); }
+};
+
+class Row<uint64_t Fields> {
+  mut int32_t values[Fields];
+
+public:
+  Row() : values({}) {}
+  uint64_t fields() { return Fields; }
+  void set(uint64_t index, int32_t value) mut { this.values[index] = value; }
+  int32_t sum() {
+    mut int32_t total = 0;
+    for (mut uint64_t i = 0; i < Fields; i++) { total += this.values[i]; }
+    return total;
+  }
+};
+
+constexpr std::string_view header = "id,name,age,city";
+constexpr uint64_t header_fields = field_count(header);
+constexpr Column key_column = Column("#id", uint64_t(8));
+constexpr Column plain_column = Column("name", uint64_t(16));
+
+static_assert(header_fields == 4, "four columns expected");
+static_assert(field_count("") == 0);
+static_assert(count_char("a\0b\0c", '\0') == 2);
+static_assert(key_column.is_key() && !plain_column.is_key());
+static_assert(checksum("abc") == 30833);
+
+int32_t describe<uint64_t N>() {
+  if constexpr (N > 3) { return 1; }
+  else { return 0; }
+}
+
+int main() {
+  mut Row<header_fields> row = Row<header_fields>();
+  for (mut uint64_t i = 0; i < row.fields(); i++) { row.set(i, int32_t(i) + 1); }
+  if (row.sum() != 10) { return 1; }
+
+  int32_t labels[header_fields] = {};
+  if (labels.size() != 4) { return 2; }
+  if (describe<header_fields>() != 1) { return 3; }
+
+  // The same function at runtime on owned, runtime-built text.
+  mut std::string dynamic = std::string("x,y");
+  dynamic.push_back(',');
+  dynamic.push_back('z');
+  uint64_t runtime_fields = field_count(dynamic.view());
+  std::println(runtime_fields);
+  if (runtime_fields != 3) { return 4; }
+  if (checksum(dynamic.view()) != checksum("x,y,z")) { return 5; }
+  std::println(checksum("abc"));
+  return 0;
+}

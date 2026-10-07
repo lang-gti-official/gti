@@ -1,0 +1,13 @@
+// A49: passing an owning payload enum call result directly as an argument is a backend ICE.
+class Res {
+public:
+  Res() {}
+  ~Res() {}
+};
+enum class Shape { rect(int32_t w), owned(Res r) };
+Shape make() { return Shape::rect(3); }
+void take(Shape s) {}
+int main() {
+  take(make());
+  return 0;
+}

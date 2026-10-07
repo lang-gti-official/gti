@@ -1,0 +1,10 @@
+// INVALID: the same payload alternative is matched twice.
+enum class Cmd { stop, go(int32_t speed) };
+int32_t run(Cmd c) {
+  switch (c) {
+  case Cmd::stop: return 0;
+  case Cmd::go(s): return s;
+  case Cmd::go(t): return t + 1;
+  }
+}
+int main() { return run(Cmd::stop); }

@@ -1,0 +1,8 @@
+// A37: binding libc strlen with the allowlisted uint64_t/c_string spelling fails in
+// native C++ because the generated program includes <cstring>.
+extern "C" {
+  uint64_t strlen(c_string text);
+}
+int main() {
+  return strlen("hello") == uint64_t(5) ? 0 : 1;
+}

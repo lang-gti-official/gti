@@ -1,0 +1,118 @@
+// Scoped enums declared in a `namespace a::b` shorthand block, used as class
+// fields, class-scoped aliases, static constexpr members, vector elements and
+// switch subjects inside mut methods; grouped case labels, default arms,
+// break inside loops, and explicit underlying-value extraction.
+#include <std/format>
+#include <std/vector>
+
+namespace net::proto {
+enum class Phase : uint8_t { idle = 1, connecting, open, closing, closed = 9 };
+enum class Event { dial, ack, data, hangup, reset };
+}
+
+namespace net {
+class Connection {
+public:
+  using phase_type = proto::Phase;
+  static constexpr proto::Phase initial = proto::Phase::idle;
+  static mut int32_t transitions = 0;
+private:
+  mut phase_type phase = proto::Phase::idle;
+  mut int32_t bytes = 0;
+public:
+  Connection() {}
+
+  phase_type current() { return this.phase; }
+  int32_t received() { return this.bytes; }
+
+  bool apply(proto::Event e) mut {
+    phase_type before = this.phase;
+    switch (this.phase) {
+    case proto::Phase::idle:
+      if (e == proto::Event::dial) { this.phase = proto::Phase::connecting; }
+      break;
+    case proto::Phase::connecting:
+      switch (e) {
+      case proto::Event::ack:
+        this.phase = proto::Phase::open;
+        break;
+      case proto::Event::hangup:
+      case proto::Event::reset:
+        this.phase = proto::Phase::closed;
+        break;
+      default:
+        break;
+      }
+      break;
+    case proto::Phase::open:
+      switch (e) {
+      case proto::Event::data:
+        this.bytes += 10;
+        break;
+      case proto::Event::hangup:
+        this.phase = proto::Phase::closing;
+        break;
+      case proto::Event::reset:
+        this.phase = proto::Phase::closed;
+        break;
+      default:
+        return false;
+      }
+      break;
+    case proto::Phase::closing:
+    case proto::Phase::closed:
+      if (e == proto::Event::ack) { this.phase = proto::Phase::closed; }
+      break;
+    }
+    if (before != this.phase) {
+      transitions += 1;
+      return true;
+    }
+    return e == proto::Event::data;
+  }
+};
+}
+
+int32_t phase_code(net::Connection::phase_type p) {
+  switch (p) {
+  case net::proto::Phase::idle: return 0;
+  case net::proto::Phase::connecting: return 1;
+  case net::proto::Phase::open: return 2;
+  case net::proto::Phase::closing: return 3;
+  case net::proto::Phase::closed: return 4;
+  }
+  return -1;
+}
+
+int main() {
+  mut net::Connection c = net::Connection();
+  if (c.current() != net::Connection::initial) { return 1; }
+
+  mut std::vector<net::proto::Event> script{};
+  script.push_back(net::proto::Event::data);    // ignored while idle
+  script.push_back(net::proto::Event::dial);
+  script.push_back(net::proto::Event::ack);
+  script.push_back(net::proto::Event::data);
+  script.push_back(net::proto::Event::data);
+  script.push_back(net::proto::Event::dial);    // rejected while open
+  script.push_back(net::proto::Event::hangup);
+  script.push_back(net::proto::Event::ack);
+  script.push_back(net::proto::Event::data);
+
+  mut int32_t accepted = 0;
+  mut int32_t trace = 0;
+  for (auto& e : script) {
+    if (c.apply(e)) { accepted += 1; }
+    trace = trace * 10 + phase_code(c.current());
+    if (c.current() == net::proto::Phase::closed) { break; }
+  }
+  // phases after each step: idle, connecting, open, open, open, open, closing, closed
+  if (trace != 1222234) { std::println("trace {}", trace); return 2; }
+  if (accepted != 7) { std::println("accepted {}", accepted); return 3; }
+  if (net::Connection::transitions != 4) { return 4; }
+  if (c.received() != 20) { return 5; }
+  if (std::to_underlying<uint8_t, net::proto::Phase>(c.current()) != uint8_t(9)) { return 6; }
+  if (std::to_underlying<uint8_t, net::proto::Phase>(net::proto::Phase::open) != uint8_t(3)) { return 7; }
+  std::println("phase {} accepted {}", c.current(), accepted);
+  return 0;
+}

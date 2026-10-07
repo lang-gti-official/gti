@@ -1,0 +1,7 @@
+namespace ui {
+  class Button {
+  public:
+    int id = 1;
+    Button() {}
+  };
+}

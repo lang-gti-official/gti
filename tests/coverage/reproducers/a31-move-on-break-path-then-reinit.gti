@@ -1,0 +1,20 @@
+// A31: a move on a loop's break path followed by reinitialization after the loop is a
+// MIR ICE (ownership event disagrees with its destination place).
+class Own {
+  int v;
+public:
+  Own(int v) : v(v) {}
+  Own(Own& o) = delete;
+  Own(Own&& o) = default;
+  int get() { return this.v; }
+};
+void sink(Own p) {}
+int main() {
+  mut Own last = Own(1);
+  while (true) {
+    sink(std::move(last));
+    break;
+  }
+  last = Own(2);
+  return last.get() == 2 ? 0 : 1;
+}

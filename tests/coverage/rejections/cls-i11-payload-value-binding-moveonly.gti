@@ -1,0 +1,16 @@
+// INVALID: value binding of a move-only (cleanup-owning) class payload.
+class Res {
+  int32_t id;
+public:
+  Res(int32_t id) : id(id) {}
+  ~Res() {}
+  int32_t get() { return this.id; }
+};
+enum class Box { empty, full(Res r) };
+int main() {
+  Box b = Box::full(Res(3));
+  switch (b) {
+  case Box::full(r): return r.get() - 3;
+  case Box::empty: return 1;
+  }
+}

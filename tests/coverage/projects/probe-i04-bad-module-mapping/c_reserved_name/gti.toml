@@ -1,0 +1,12 @@
+manifest-version = 1
+
+[package]
+name = "c_reserved_name"
+version = "0.1.0"
+
+[modules]
+import = "src/geo.gti"
+
+[targets.app]
+kind = "executable"
+root = "src/main.gti"

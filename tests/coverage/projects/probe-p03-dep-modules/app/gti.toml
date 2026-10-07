@@ -1,0 +1,15 @@
+manifest-version = 1
+
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+lib = { path = "../lib" }
+
+[modules]
+geo = "src/geo.gti"
+
+[targets.app]
+kind = "executable"
+root = "src/main.gti"

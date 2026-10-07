@@ -1,0 +1,4 @@
+export module self;
+import "self.gti";
+
+export int self_value() { return 4; }

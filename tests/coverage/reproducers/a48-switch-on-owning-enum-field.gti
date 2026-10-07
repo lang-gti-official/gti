@@ -1,0 +1,21 @@
+// A48: switching on 'obj.field' holding an owning payload enum is a backend ICE.
+class Res {
+public:
+  Res() {}
+  ~Res() {}
+};
+enum class Shape { rect(int32_t w), owned(Res r) };
+class Slot {
+public:
+  Shape shape;
+  Slot(Shape shape) : shape(std::move(shape)) {}
+};
+int main() {
+  Slot s = Slot(Shape::rect(3));
+  switch (s.shape) {
+  case Shape::rect:
+    return 0;
+  case Shape::owned:
+    return 1;
+  }
+}

@@ -1,0 +1,26 @@
+import frontend;
+import backend;
+#include "shared.gti"
+#define MAIN_LOCAL
+
+#ifdef BACKEND_LOCAL
+#error "a module-local flag escaped into the entry unit"
+#endif
+
+int main() {
+  if (engine::frontend_speed() != 102) {
+    return 1;
+  }
+  if (engine::backend_speed() != 101 || shared::mode() != 1) {
+    return 2;
+  }
+#ifdef EXTRA
+  if (engine::extra() != 7) {
+    return 3;
+  }
+  std::println("p11 module configuration ok (EXTRA)");
+#else
+  std::println("p11 module configuration ok");
+#endif
+  return 0;
+}

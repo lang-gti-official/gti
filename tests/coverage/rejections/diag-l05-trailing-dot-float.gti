@@ -1,0 +1,4 @@
+int main() {
+  float f = 1.; //!ERR
+  return f > 0.5 ? 0 : 1;
+}

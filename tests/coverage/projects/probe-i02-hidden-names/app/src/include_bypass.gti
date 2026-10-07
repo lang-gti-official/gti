@@ -1,0 +1,3 @@
+#include <lib/api>
+
+int main() { return lib::internal_helper() - 40; }

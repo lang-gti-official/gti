@@ -1,0 +1,6 @@
+#include "../src/scorers.gti"
+
+int main() {
+  tool::Squarer squarer{};
+  return squarer.score(7) == 49 ? 0 : 1;
+}

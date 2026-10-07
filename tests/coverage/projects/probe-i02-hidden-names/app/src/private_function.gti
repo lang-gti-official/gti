@@ -1,0 +1,3 @@
+import lib;
+
+int main() { return lib::internal_helper() - 40; }

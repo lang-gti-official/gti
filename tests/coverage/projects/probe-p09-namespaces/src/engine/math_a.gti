@@ -1,0 +1,18 @@
+namespace engine::math {
+  using scalar = int32_t;
+
+  static int helper() { return 1; }
+
+  scalar add(scalar a, scalar b) { return a + b; }
+  int from_a() { return helper(); }
+
+  class Counter {
+  public:
+    static mut int created = 0;
+    static int limit = 10;
+    Counter() {}
+    static void bump() { created = created + 1; }
+  };
+}
+
+namespace em = engine::math;

@@ -1,0 +1,33 @@
+export module main;
+#include <tracelib/log>
+#include <std/string>
+#include <std/vector>
+
+namespace lib {
+  int lib_init = trace::record(2);
+
+  export int initialized() { return lib_init; }
+
+  export std::string joined(std::vector<std::string>& args) {
+    mut std::string out{};
+    mut bool first = true;
+    for (std::string& item : args) {
+      if (!first) {
+        out.append("|");
+      }
+      out.append(item.view());
+      first = false;
+    }
+    return out;
+  }
+
+  export int count_empty(std::vector<std::string>& args) {
+    mut int count = 0;
+    for (std::string& item : args) {
+      if (item.size() == uint64_t(0)) {
+        count = count + 1;
+      }
+    }
+    return count;
+  }
+}

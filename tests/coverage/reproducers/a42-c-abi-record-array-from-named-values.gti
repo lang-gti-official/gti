@@ -1,0 +1,10 @@
+// A42: the [[c_abi]] record variant.
+[[c_abi]] struct NativeAddress {
+  mut int stamp;
+};
+extern "C" { NativeAddress empty_native(); }
+int main() {
+  NativeAddress native = empty_native();
+  NativeAddress entries[2] = {native, native};
+  return entries[1].stamp;
+}

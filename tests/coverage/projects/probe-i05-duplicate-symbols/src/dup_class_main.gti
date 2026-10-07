@@ -1,0 +1,7 @@
+#include "class_a.gti"
+#include "class_b.gti"
+
+int main() {
+  ui::Button button{};
+  return 0;
+}

@@ -1,0 +1,21 @@
+// A46: 'g[a][b] = g[c][d] + 1' through chained user subscripts is a MIR ICE.
+class Row {
+  mut int32_t cells[4] = {};
+public:
+  Row() {}
+  int32_t& operator[](std::size_t c) { return this.cells[c]; }
+  mut int32_t& operator[](std::size_t c) mut { return this.cells[c]; }
+};
+class Grid {
+  mut Row rows[3] = {};
+public:
+  Grid() {}
+  Row& operator[](std::size_t r) { return this.rows[r]; }
+  mut Row& operator[](std::size_t r) mut { return this.rows[r]; }
+};
+int main() {
+  mut Grid g = Grid();
+  g[std::size_t(0)][std::size_t(3)] = 7;
+  g[std::size_t(2)][std::size_t(0)] = g[std::size_t(0)][std::size_t(3)] + 1;
+  return g[std::size_t(2)][std::size_t(0)] - 8;
+}

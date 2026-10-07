@@ -1,0 +1,8 @@
+// A07: an unknown function attribute is misparsed as a class attribute (GTI-P0001 on
+// 'void') instead of GTI-S2099 naming the attribute.
+[[noretrun]]
+void stop() {}
+
+int main() {
+  return 0;
+}

@@ -1,0 +1,8 @@
+export module right;
+#include "../trace.gti"
+export import core;
+
+namespace right {
+  int right_step = trace::record(3);
+  export int combined(core::Pair& pair) { return pair.sum() + right_step; }
+}

@@ -1,0 +1,99 @@
+// `if constexpr` dispatch in generic functions and generic class methods:
+// member-requirement queries, layout queries on T, value-parameter recursion,
+// else-if chains, loops containing compile-time branches, and dependent
+// static assertions evaluated per instance.
+#include <std/string>
+
+struct Celsius {
+  int32_t value = 0;
+  int32_t kelvin() { return this.value + 273; }
+};
+
+struct Label {
+  int32_t code = 0;
+  int32_t length() { return 5; }
+};
+
+struct Plain {
+  int32_t x = 0;
+};
+
+int32_t describe<T>(T& value) {
+  if constexpr (requires(T& v) { { v.kelvin() } -> int32_t; }) {
+    return value.kelvin();
+  } else if constexpr (requires(T& v) { { v.length() } -> int32_t; }) {
+    return value.length() * 100;
+  } else {
+    return -1;
+  }
+}
+
+int32_t width_class<T>() {
+  static_assert(sizeof(T) <= 8, "only small scalars");
+  if constexpr (sizeof(T) == 1) { return 8; }
+  else if constexpr (sizeof(T) == 2) { return 16; }
+  else if constexpr (sizeof(T) == 4) { return 32; }
+  else { return 64; }
+}
+
+constexpr uint64_t fib<uint64_t N>() {
+  if constexpr (N < 2) { return N; }
+  else { return fib<N - 1>() + fib<N - 2>(); }
+}
+
+int32_t sum_with_branch<uint64_t N>(int32_t values[N]) {
+  mut int32_t total = 0;
+  for (mut uint64_t i = 0; i < N; i++) {
+    if constexpr (N > 2) {
+      total += values[i] * 2;
+    } else {
+      total += values[i];
+    }
+  }
+  return total;
+}
+
+class Store<T> {
+  T item;
+
+public:
+  Store(T item) : item(item) {}
+  int32_t score() {
+    if constexpr (requires(T& v) { { v.kelvin() } -> int32_t; }) {
+      return this.item.kelvin();
+    } else {
+      return 0;
+    }
+  }
+};
+
+static_assert(fib<10>() == 55);
+
+int main() {
+  Celsius c{.value = 27};
+  Label l{.code = 1};
+  Plain p{.x = 9};
+  if (describe(c) != 300) { return 1; }
+  if (describe(l) != 500) { return 2; }
+  if (describe(p) != -1) { return 3; }
+
+  if (width_class<int8_t>() != 8) { return 4; }
+  if (width_class<uint16_t>() != 16) { return 5; }
+  if (width_class<float>() != 32) { return 6; }
+  if (width_class<double>() != 64) { return 7; }
+  if (width_class<char>() != 8) { return 8; }
+
+  constexpr uint64_t f = fib<12>();
+  int32_t table[f] = {};
+  if (table.size() != 144) { return 9; }
+
+  if (sum_with_branch({1, 2, 3}) != 12) { return 10; }
+  if (sum_with_branch({1, 2}) != 3) { return 11; }
+
+  Store<Celsius> sc = Store<Celsius>(c);
+  Store<Plain> sp = Store<Plain>(p);
+  if (sc.score() != 300 || sp.score() != 0) { return 12; }
+  std::println(describe(c));
+  std::println(fib<20>());
+  return 0;
+}
