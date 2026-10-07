@@ -4991,8 +4991,7 @@ directTemporaryBorrowForSlot(const MirBody &body, const MirPlace &slot) {
     return {};
   }
   for (const MirValue &value : body.values) {
-    if (value.sourceValue != slot.sourceValue ||
-        value.info.type != slot.type) {
+    if (value.sourceValue != slot.sourceValue || value.info.type != slot.type) {
       continue;
     }
     const DirectTemporaryBorrow temporary =

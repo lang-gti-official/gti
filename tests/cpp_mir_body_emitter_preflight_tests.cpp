@@ -4777,12 +4777,12 @@ int main() {
 
   const lang::CppMirBodyEmissionMap map(
       buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
-  expect(!lang::cppMirNeedsTerminalSubscriptBoundaryWrapper(frontend.mir, map,
-                                                            0) &&
-             !lang::cppMirNeedsTerminalSubscriptBoundaryWrapper(
-                 frontend.mir, map,
-                 frontend.mir.functionInstances().size() + 1),
-         "unresolved targets cannot require a subscript boundary");
+  expect(
+      !lang::cppMirNeedsTerminalSubscriptBoundaryWrapper(frontend.mir, map,
+                                                         0) &&
+          !lang::cppMirNeedsTerminalSubscriptBoundaryWrapper(
+              frontend.mir, map, frontend.mir.functionInstances().size() + 1),
+      "unresolved targets cannot require a subscript boundary");
   std::size_t selectedBoundaries = 0;
   std::size_t readOnlyInstances = 0;
   for (const lang::MirFunctionInstance &function :
