@@ -31,6 +31,16 @@ its entry source unit; a global `main` may forward to a namespaced function.
 Missing entry definitions are diagnosed as `GTI-S2094` before backend/native
 compilation. Library analysis and emit-only requests do not require an entry.
 
+A closed executable request also requires a definition for each selected
+ordinary GTI call target, including calls discovered by concrete generic
+analysis and overloaded operators. Calls to bodyless ordinary declarations
+are diagnosed as `GTI-S2106` at the call, with the declaration related. Unused
+declarations and abstract virtual contracts remain valid. Foreign C declarations,
+registered runtime bindings and compiler intrinsic declarations have their own
+implementation contracts and do not require GTI bodies. Fragment analysis may
+resolve bodyless signatures without claiming that the fragment is executable;
+it does not authorize a native artifact with unresolved GTI calls.
+
 The parameter names are not significant, and either by-value binding may use
 ordinary `mut`. Aliases that resolve to the exact signature types are valid.
 Other arities and parameter types are ill-formed; in particular, GTI does not
@@ -75,6 +85,12 @@ Reaching the closing brace of either `main` form returns zero. Parameters and
 their owned contents receive ordinary deterministic cleanup when `main`
 returns.
 
+After this cleanup, the hosted entry boundary converts the returned `int` to
+a portable process status: values from 0 through 255 are preserved; every
+other value becomes status 1. In particular, a nonzero return can never become
+success through native status truncation. This conversion applies only at the
+hosted boundary, not to ordinary GTI function results.
+
 If checked hosted setup or user execution raises a defined runtime failure, the
 hosted program boundary completes required GTI cleanup, reports the structured
 record, and terminates with status 70 as specified in
@@ -113,6 +129,13 @@ A project may seed it for every target/profile plan in `gti.toml`:
 [build]
 defines = ["DEBUG", "USE_EPOLL"]
 ```
+
+For a project invocation, manifest flags are the sorted, deduplicated union
+from the selected package and its transitive dependencies. They seed the one
+program-wide configuration, not package-private configurations; use distinct
+flag names to avoid unintended interactions. Unrelated workspace members do
+not contribute flags. Direct one-file compilation does not resolve dependency
+manifests.
 
 CLI flags are added to manifest flags. Source directives are then applied in
 load order, so a later source `#undef` can deliberately remove either input.

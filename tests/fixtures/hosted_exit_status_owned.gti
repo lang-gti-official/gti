@@ -1,0 +1,24 @@
+#include <std/string>
+#include <std/vector>
+
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() { std::println("cleanup"); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Cleanup cleanup{};
+  if (argv.size() != std::size_t(argc)) { return 2; }
+  switch (argc) {
+  case 1: return 0;
+  case 2: return 1;
+  case 3: return 255;
+  case 4: return 256;
+  case 5: return 300;
+  case 6: return -1;
+  case 7: return 2147483647;
+  case 8: return -2147483648;
+  default: return 17 / (argc - 9);
+  }
+}
