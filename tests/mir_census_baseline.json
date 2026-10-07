@@ -35,7 +35,7 @@
     "121-programmable-allocators.gti": 551,
     "122-native-function-invocation.gti": 29,
     "123-native-c-scalars.gti": 31,
-    "124-nested-raw-pointers.gti": 26,
+    "124-nested-raw-pointers.gti": 29,
     "13-ownership.gti": 46,
     "14-operators.gti": 38,
     "15-variadic-generics.gti": 36,
@@ -122,5 +122,5 @@
     "98-shared-ownership.gti": 361,
     "99-borrowed-expected.gti": 353
   },
-  "total": 16156
+  "total": 16159
 }
