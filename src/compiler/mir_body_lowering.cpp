@@ -10,10 +10,11 @@ namespace lang {
 namespace {
 
 [[nodiscard]] bool isMirFixedWidthIntegerType(const SemanticType &type) {
-  return type == SemanticType::Int8 || type == SemanticType::Int16 ||
-         type == SemanticType::Int32 || type == SemanticType::Int64 ||
-         type == SemanticType::UInt8 || type == SemanticType::UInt16 ||
-         type == SemanticType::UInt32 || type == SemanticType::UInt64;
+  return type.kind == SemanticType::Int8 || type.kind == SemanticType::Int16 ||
+         type.kind == SemanticType::Int32 || type.kind == SemanticType::Int64 ||
+         type.kind == SemanticType::UInt8 ||
+         type.kind == SemanticType::UInt16 ||
+         type.kind == SemanticType::UInt32 || type.kind == SemanticType::UInt64;
 }
 
 [[nodiscard]] std::optional<SemanticType>
@@ -4998,6 +4999,7 @@ private:
                         .dispatch = value.dispatch,
                         .dispatchOwner = value.dispatchOwner,
                         .functionTarget = value.functionTarget,
+                        .nativeCalleeType = value.nativeCalleeType,
                         .threadTaskAdapter = value.threadTaskAdapter,
                         .constructorTarget = value.constructorTarget,
                         .constructorKind = value.constructorKind,
@@ -5048,7 +5050,8 @@ private:
           return;
         }
         sourceReceiver =
-            retainedReceiver
+            value.nativeCalleeType ? valueOperand(receiver.value)
+            : retainedReceiver
                 ? receiverOperand(receiverSource->operands.front(), access)
             : temporaryReceiver
                 ? temporaryBorrowOperand(receiver.value, access, receiver.type,
@@ -5096,8 +5099,9 @@ private:
           (value.intrinsic == IntrinsicKind::ExpectedValue ||
            value.intrinsic == IntrinsicKind::ExpectedError);
       MirOperand operand =
-          retainedReceiver ? receiverOperand(receiverSource->operands.front(),
-                                             AccessMode::Mutable)
+          value.nativeCalleeType ? valueOperand(*receiver)
+          : retainedReceiver ? receiverOperand(receiverSource->operands.front(),
+                                               AccessMode::Mutable)
           : expectedTemporaryExtraction
               ? temporaryBorrowOperand(
                     *receiver, AccessMode::ReadOnly, receiverSource->info.type,
@@ -5115,8 +5119,9 @@ private:
             input->info.type.kind == SemanticType::Lambda &&
             dropObligationForValue(*receiver) != 0;
         const HirCallInputKind kind =
-            retainedReceiver ? HirCallInputKind::RetainedReceiver
-            : movedClosure   ? HirCallInputKind::MoveValue
+            value.nativeCalleeType ? HirCallInputKind::Value
+            : retainedReceiver     ? HirCallInputKind::RetainedReceiver
+            : movedClosure         ? HirCallInputKind::MoveValue
             : input != nullptr && input->info.category == ValueCategory::Place
                 ? (access == AccessMode::Mutable
                        ? HirCallInputKind::MutableBorrow

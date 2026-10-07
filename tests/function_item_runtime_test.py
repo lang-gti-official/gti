@@ -64,7 +64,7 @@ def main() -> int:
         ]
         identities = [
             re.search(
-                r"info\(type\(\d+;class=\d+;enum=\d+;parameter=\d+;"
+                r"info\(type\(\d+;class=\d+;enum=\d+;parameter=\d+;native-c=0;"
                 r"function=(\d+);",
                 line,
             )

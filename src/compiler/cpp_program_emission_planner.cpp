@@ -117,8 +117,31 @@ public:
         .cAbiTextView = loweredProgramContainsCAbiTextView(),
     };
     CppProgramEmissionPlan plan;
-    capture(plan, CppProgramTextRole::SupportPreamble,
-            [&] { writeCppSupportPreamble(output, supportFeatures); });
+    capture(plan, CppProgramTextRole::SupportPreamble, [&] {
+      writeCppSupportPreamble(output, supportFeatures);
+      // Native declarations must implement the selected GTI target, not just
+      // have equal-width arguments. Refuse a mismatched compiler data model.
+      const TargetInfo &target = loweredProgram.target();
+      const auto nativeLong = target.nativeCScalar(NativeCScalarKind::Long);
+      const auto nativeChar = target.nativeCScalar(NativeCScalarKind::Char);
+      const auto fixed64 = target.fixedCScalarIdentity(TargetScalarKind::Int64);
+      if (!nativeLong || !nativeChar || !fixed64) {
+        throw std::logic_error("verified target has no native C scalar ABI");
+      }
+      output
+          << "static_assert(sizeof(long) == " << nativeLong->layout.sizeBytes
+          << " && alignof(long) == " << nativeLong->layout.abiAlignmentBytes
+          << ", \"native compiler long ABI differs from the GTI target\");\n";
+      output << "static_assert(std::is_signed_v<char> == "
+             << (nativeChar->valueKind == TargetScalarKind::Int8 ? "true"
+                                                                 : "false")
+             << ", \"native compiler char signedness differs from the GTI "
+                "target\");\n";
+      output << "static_assert(std::is_same_v<std::int64_t, "
+             << nativeCScalarDeclarationName(*fixed64)
+             << ">, \"native compiler int64_t identity differs from the GTI "
+                "target\");\n";
+    });
     capture(plan, CppProgramTextRole::FailureAndLifecycleSupport, [&] {
       writeCppFailureArtifactDescriptor(output, mir.failureMetadata());
     });
@@ -7411,7 +7434,14 @@ public:
       if (index != 0) {
         output << ", ";
       }
-      output << "__gti_callback_arg_" << index;
+      if (adapter.type.nativeFunctionParameterTypes()[index].kind ==
+          SemanticType::StringView) {
+        output << "std::string_view(__gti_callback_arg_" << index
+               << ".data, static_cast<std::size_t>(__gti_callback_arg_" << index
+               << ".length))";
+      } else {
+        output << "__gti_callback_arg_" << index;
+      }
     }
   }
 

@@ -1,5 +1,61 @@
 # Compiler Verification
 
+## Native scalar, recursive pointer and callable integration
+
+The combined candidate uses a Release compiler on macOS arm64 with LLVM
+22.1.8. Focused scalar checks cover six selected target profiles, including
+native callback signatures and forged scalar identity in callee metadata.
+Native-header, native-record, bindgen, raw-pointer and callback pipeline gates
+pass. The callback runtime matrix passes seven C++20/C++23 optimization and
+sanitizer configurations; both recursive-pointer runtime matrices pass eight.
+Independent C fixtures exercise immediate slot writeback, retained slots,
+repeated aliases, native pointer arrays and callbacks with C scalar arguments.
+
+The nested-pointer LSP gate checks per-layer qualifier hover, native call
+navigation, unsaved invalid-to-valid recovery, UTF-16 diagnostic locations,
+formatted-source reanalysis and idempotence. Tree-sitter passes all 73 corpus
+cases, highlight/locals/rainbow queries and all 186 shipped sources.
+
+All 85 selected compiler, backend, MIR, optimizer, native ABI, pointer and
+corpus gates are accounted for as passing. The first run passed 82; the three
+remaining gates passed after correcting test-only bookkeeping: example 124
+has 29 unique bodies, a helper-local constant is not a template default, and
+the function-item identity decoder must consume the added native-scalar field.
+Production compiler sources were unchanged between that run and the reruns.
+The complete CLI, project workflow and LSP protocol gates also pass after
+updating importer-spelling expectations and replacing obsolete bool-rejection
+fixtures with the still-rejected GTI `char`. Formatting checks all 457
+first-party C/C++ files. This is selected local evidence, not a full registered
+suite, Linux/Windows execution or active installed-toolchain validation.
+
+The unrelated existing passive native-record forwarding/discard failure is
+tracked in [issue 105](https://git.internal.howetotech.dev/gti-lang/gti/issues/105);
+it reproduces on the independent 0.380.0 callback release too.
+
+## Native function-pointer invocation
+
+The C-08A candidate uses an optimized Release/Ninja compiler on macOS arm64,
+AppleClang and LLVM 22.1.8. `native_callback_pipeline` checks semantic selection,
+HIR/MIR, generic specialization, exact call signatures, conservative foreign
+effects, ten forged MIR variants, compiler-owned hover/signature/definition
+queries, and existing callback formatting/thread-entry boundaries.
+
+`native_indirect_runtime` independently compiles a C17 fixture and executes
+local, field and returned callbacks, nested factory results, nullable transport,
+callee-before-argument mutation, raw-address writeback, counted text, passive
+record arguments/results, fixed and trailing-pack generic forwarding, and a
+GTI counted-text adapter. C++20/C++23 O0/O1/O3 plus O1 ASan/UBSan all pass with
+elision disabled. The failure fixture verifies target cleanup followed by the
+existing terminating callback firewall, without running caller cleanup.
+Example 122 passes the same matrix. Its reviewed inventory adds 29 MIR bodies
+and 142 LoweredProgram declarations, 29 bodies and three generated items after
+the native-scalar prelude reconciliation.
+
+Foreign variables and broader foreign-thread entry are not introduced. This is
+local candidate evidence, not Linux/Windows execution or installed-consumer
+validation. The native-scalar/nested-pointer composition is covered by the
+combined evidence above.
+
 ## Optional raw audit and combined reconciliation
 
 The 2026-10-06 candidate separates mandatory language checking from optional
