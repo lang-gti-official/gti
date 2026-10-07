@@ -2541,7 +2541,13 @@ auto SemanticVisitor::Impl::analyzeInitializer(const ExprPtr &expr,
   const Expr *enclosingExpression = contextualInitializerExpression;
   contextualInitializerType = expectedType;
   contextualInitializerExpression = expr.get();
-  SemanticType result = analyzeExpectedCallableResult(expr, expectedType);
+  const auto literal = integerConstant(expr.get());
+  SemanticType result =
+      isIntegral(expectedType) && isContextualIntegerLiteral(expr.get()) &&
+              (!isInteger(expectedType) ||
+               (literal && integerFits(expectedType, *literal)))
+          ? analyzeContextualIntegerOperand(expr, expectedType)
+          : analyzeExpectedCallableResult(expr, expectedType);
   if (allowExactNullConstruction && expr &&
       expectedType.kind == SemanticType::Class &&
       result == SemanticType::NullPtr) {
