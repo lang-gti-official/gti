@@ -3929,6 +3929,235 @@ do not expose C++ object layout as GTI semantics.
   identify the new application capabilities, public resource/lifetime contract,
   remaining unsafe obligations, allocator/container examples and validation.
 
+### S-ALLOC-06: General Object Lifetimes And Source-Defined Storage
+
+- **State/role:** planned implementation campaign, following completed
+  `S-ALLOC-04/05`. This brief records the owner's accepted direction; the API
+  spellings below are illustrative, not claims of implemented support.
+- **Outcome:** an application can implement inline typed storage and an
+  unrelated pool/container using public GTI facilities, without teaching the
+  compiler its type name. Reimplement `std::storage<T>` policy on those same
+  facilities while preserving its safe interface and Phase 2 integration.
+- **Handoff:** continue from the agent's existing memory/lifetime context.
+  This is a generalization of the completed work, not a restart of Phase 2.
+  Reconcile current source before using historical progress descriptions.
+
+#### Why This Campaign Exists
+
+Phase 2 successfully separated resource selection and region release from
+typed element ownership. However, the public sparse-storage class still
+delegates slot tracking, construction, destruction, relocation and shifts to
+specialized private storage operations. External-region adoption also obtains
+its initialization bitmap from the process heap. A public class written in GTI
+is not yet a fully source-defined implementation if its algorithms and state
+remain inside those operations.
+
+The direction is not to remove all compiler support or rewrite everything on
+top of `malloc`. Byte allocation, object lifetime and checked borrowing are
+different responsibilities. A libc or OS provider can obtain bytes; it cannot
+select a GTI constructor, execute GTI cleanup or establish a checked reference.
+General object-lifetime operations remain legitimate compiler capabilities.
+Expose them through public, C++-familiar APIs, with narrow private mechanisms
+where needed, and put expressible storage policy in ordinary GTI.
+
+The reference backend must implement this contract, not derive GTI's meaning
+from native placement construction, destructors or byte copying. Another
+backend should implement general layout/lifetime/effect operations rather than
+recreate a separate family of container algorithms. Source definition reduces
+that specialized backend surface; it does not eliminate backend work for
+object representation and cleanup.
+
+#### Existing Foundations To Preserve And Reuse
+
+Audit source and tests before adding anything. Current foundations include
+runtime `layout_of<T>()` for permitted ordinary owning and immovable types,
+erased/typed address conversions, public `borrowed_from` contracts and
+owner-anchored `assume_ref`/`assume_mut`, unsafe members and structural
+requirements, generated cleanup-transfer movement, final-address construction
+and rollback, and destructor-bearing borrowed carriers whose dependencies
+remain live through cleanup. These are foundations, not missing features.
+
+Preserve move-only resource leases, simultaneous allocations from one resource,
+safe reset/move rejection beneath live leases, owner-tied element references,
+fixed-address immovable objects, allocation failure, constructor failure
+identity, partial-member rollback and exactly-once release through the original
+resource. Do not add hidden reference counting, allocator propagation, broad
+interior mutability or custom C++ move semantics to accomplish this campaign.
+
+#### General Public Capabilities
+
+**1. Typed uninitialized storage.** Provide a general facility, illustratively
+`std::uninitialized<T>`, with the selected size/alignment of `T` but no initial
+live `T`. Creating the carrier must not invoke a `T` constructor; dropping an
+uninitialized carrier must not invoke a `T` destructor. Safe reads and checked
+references require a live object, established by a safe wrapper or an explicit
+unsafe assertion. Prove the capability with inline storage as well as heap
+regions. A byte array alone is insufficient unless the language also supplies
+the required alignment, representation and lifetime contract.
+
+Separate ownership of the storage carrier from ownership of a live payload.
+Specify address formation, copying/movement, failure and cleanup precisely;
+moving a carrier containing a live object must not silently byte-copy an
+immovable or owning payload. Do not infer that every public manual-storage
+wrapper is movable merely because its representation contains bytes. Choose
+the smallest coherent structural contract, asking the owner if this requires
+a materially new movement or lifetime policy. It need not introduce new syntax
+or a second optional/variant ownership model.
+
+**2. Final-address construction.** Expose a general unsafe operation resembling
+`std::construct_at<T>(address, args...)`. Semantics selects the actual GTI
+constructor, including permitted immovable types, and records argument
+preparation, transfer and failure facts. Reuse the existing MIR constructor
+preflight and partial-construction machinery; do not create a second native
+constructor path. Caller obligations include suitable writable extent,
+alignment, vacancy and nonconflicting access. The complete object becomes live
+only after success. Failure cleans initialized subobjects and prepared owning
+arguments under existing rules and retains the original failure identity.
+
+**3. Destruction without deallocation.** Expose a general unsafe operation
+resembling `std::destroy_at(address)`. It runs the actual GTI destructor and
+field cleanup, ends the object lifetime, and does not release its bytes.
+Describe exactly when the cleanup obligation is consumed, including destructor
+failure and secondary failure. Source bookkeeping must follow that established
+contract; marking a slot before or after destruction is not an arbitrary
+implementation choice when destruction can fail. Preserve existing failure
+containment and cleanup ordering.
+
+**4. Ownership transfer between locations.** Expose the established relocation
+capability through a general unsafe operation resembling
+`std::relocate_at(destination, source)`. Distinguish it from ordinary move
+construction where GTI's contracts differ. Define initialized source,
+uninitialized destination, overlap restrictions, source lifetime retirement,
+destination publication and failure/rollback boundaries. On successful
+destructive relocation exactly one destination owns the cleanup obligation;
+the old source does not remain a second live owner. Keep existing structural
+eligibility rules, including immovable exclusions. Do not authorize arbitrary
+`memcpy` of owning types, inherit C++ relocation assumptions, or add custom
+copy/move bodies as an unrelated prerequisite.
+
+These names are proposals. Prefer the existing source conventions and reuse
+existing typed identities/operations where they express the contract. A public
+library function backed by a narrow intrinsic is acceptable. Bind any intrinsic
+by trusted declaration identity, never by a public spelling such as
+`std::construct_at` or by recognition of a particular application container.
+
+#### Safe And Unsafe Boundary
+
+Mandatory typing, access modes, safe ownership, checked loans/escape and
+HIR/MIR verification remain in force. Unsafe callers assume raw validity,
+alignment, initialization, vacancy, aliasing and truthful owner association.
+The compiler need not prove an arbitrary allocator algorithm. Optional raw
+auditing stays off by default; Off/Warn must not change executable semantics
+or reject code solely because a bounded raw query cannot establish validity.
+
+For a safe source-defined accessor, check bounds and the source-owned live
+state, calculate the slot address, then use the existing unsafe owner-witness
+bridge to return a checked reference. That reference borrows the actual typed
+owner, not merely the resource that supplied its region. The assertion is the
+unsafe implementation's obligation; subsequent checked lifetime protection is
+the compiler's responsibility. Preserve physical carrier storage versus
+external resource dependency distinctions and shared/exclusive access modes.
+
+Do not require compiler-owned runtime initialization flags for every raw object.
+Flags are appropriate policy for safe sparse storage. A general manual lifetime
+operation need not maintain a hidden bitmap for arbitrary unsafe application
+code. Equally, do not weaken `std::storage<T>` checks merely to remove its private
+representation.
+
+#### Responsibility And Migration Map
+
+| Fact or operation | Authority after migration |
+| --- | --- |
+| Object layout and structural lifecycle eligibility | Semantics/concrete type facts; backend-selected representation |
+| Constructor/destructor selection, ownership transfer, failure and cleanup | Existing semantic/HIR facts and verified MIR lifecycle engine |
+| Capacity, live-slot map, bounds checks, shifting and growth algorithms | Ordinary GTI storage/container source |
+| Byte-region acquisition, alignment guarantee and matching release | Source-selected resource plus its narrow host/provider adapter |
+| Raw-to-checked association | Explicit unsafe assertion; checked owner/access/endpoint facts thereafter |
+| Resource and element loan origins/endpoints | General borrowing semantics, preserved and independently verified in MIR |
+
+Inventory sparse and prefix storage, optional storage, unique ownership and
+other overlapping clients before implementing. The named migration is sparse
+`std::storage<T>` and its existing resource clients; do not promise migration of
+every container. General operations should subsume sparse slot-specific
+construction/destruction/relocation/shift paths. Record why any remaining
+capability is a distinct invariant, rather than retaining a nominal exception
+for each wrapper. Prefix and other clients must not regress; their further
+migration may be recorded separately if outside this coherent slice.
+
+Put slot bookkeeping, validated address calculation, clear/drop sequencing,
+shifting and relocation loops in GTI source. Preserve argument preparation and
+consumption, reverse destruction, release ordering and failed-growth behavior.
+Keep metadata allocation explicit in source and resource-controlled or
+source-selectable, not an incidental backend heap request. Specify metadata
+extent/alignment, release authority and recoverable failure before publication;
+avoid circular dependence on the storage implementation being built. Retain
+public API compatibility where possible; ask before choosing a new observable
+metadata-resource policy or silently adding costs to allocation.
+
+For process allocation, libc is a viable provider adapter if it meets extent,
+alignment, zero-size and matching-release contracts. It is not mandatory to
+replace a correct current provider during this campaign. Never release aligned
+C++ allocations through `free`, or libc allocations through native `delete`.
+Do not promise universal constexpr layout or stable foreign object ABI.
+
+#### Reviewable Implementation Order
+
+1. Audit the existing implementation and list reused, generalized and retired
+   operations. State the public contracts and identify unresolved semantic
+   choices requiring owner approval; do not reopen accepted Phase 2 decisions.
+2. Deliver the smallest general lifetime vertical slice, including inline
+   uninitialized storage, unrelated owning/immovable types and construction/
+   destruction failure. Keep semantic, HIR/MIR, effects, backend, diagnostics
+   and affected tooling coherent at each published checkpoint.
+3. Add general relocation with existing eligibility and failure rules. Prove
+   cleanup transfer independently of a nominal standard-library owner.
+4. Migrate sparse storage and resource integration to source-owned algorithms
+   and metadata policy. Use parity evidence before retiring specialized paths;
+   do not leave permanent parallel implementations of the same behavior.
+5. Close unrelated application pool/container evidence, regression and
+   performance checks, runnable examples, canonical documentation, installed
+   consumption and PR integration. Record remaining structural limits honestly.
+
+#### Completion Evidence Required
+
+- A user-defined inline-storage owner and an unrelated pool/container use the
+  public facilities without compiler changes for their type names. Demonstrate
+  safe checked access around encapsulated unsafe internals; primitive-only
+  probes or private-prelude fixtures are not the application acceptance gate.
+- Positive/negative cases cover owning and immovable construction, empty/live
+  state, slot reuse, movement, structural relocation eligibility, shared and
+  exclusive access, owner/resource escape and invalidation, zero capacity,
+  alignment, overflow and recoverable byte/metadata allocation failure.
+- Runtime traces prove exactly-once cleanup, reverse destruction, prepared
+  argument failure, partial construction, destructor failure and original
+  failure identity. Failed growth preserves the original contents/ownership;
+  elements die before their region is released through the original provider.
+- Independent MIR mutations reject forged constructor, lifecycle, access,
+  transfer, cleanup and failure metadata. Backends consume verified facts
+  rather than rediscovering them from public names or C++ traits.
+- Use an optimized GTI compiler for all compilation/analysis evidence. Run
+  affected native standard/optimization, no-elide and sanitizer matrices,
+  Off/Warn parity, broader production gates and installed-consumer checks.
+  Measure representative storage/resource workloads and investigate new hidden
+  allocation, cleanup or compile-time costs rather than assuming a source
+  rewrite is automatically cheaper.
+- Ship runnable inline-storage and unrelated pool/container examples, with
+  example index/corpus/census registration. Update affected LSP, formatter,
+  Tree-sitter, diagnostics and public-source inventories as required by the
+  actual surface. Follow the existing evaluator direction if constant
+  execution is touched; constexpr expansion is not an incidental promise.
+- Update canonical ownership/raw-pointer, stdlib, runtime, IR and ADR 022
+  descriptions as implementation lands. This planned brief does not change
+  current semantics. Report migrated source policy, removed specialized paths,
+  remaining justified compiler mechanisms, unsafe obligations and evidence.
+
+**Scope control:** this is not a new lifetime syntax, custom copy/move campaign,
+general interior-mutability campaign, allocator-traits framework, whole-stdlib
+rewrite or second backend. Ask before materially new semantics; routine
+implementation choices remain delegated. Follow the normal repository PR
+lifecycle and local-main synchronization, without installing the toolchain
+unless requested.
+
 ### S-FREE-01: Freestanding Target Profile
 
 - **State/role:** later breadth; `S-LAYOUT-01`, `D-LANG-01`, and `D-FAIL-01`
