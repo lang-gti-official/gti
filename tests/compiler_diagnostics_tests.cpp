@@ -2423,7 +2423,81 @@ private:
          "mutable-reference semantics");
 }
 
+void testGenericAdvisorySoundness() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  for (const std::string_view name : {"a20-unnecessary-mut-per-instance",
+                                      "a24-unreachable-warning-per-instance",
+                                      "a33-unnecessary-mut-deref-store"}) {
+    const auto result = lang::Frontend().analyze(
+        root / "tests/coverage/reproducers" / (std::string(name) + ".gti"),
+        std::nullopt, {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+    expect(result.canGenerateCode() && result.diagnostics.empty(),
+           std::string(name) +
+               " must not receive specialization-dependent advice");
+  }
+  const auto dereference =
+      lang::Frontend().analyze("user-dereference-mut.gti", R"(
+struct Counter {
+  mut int value;
+  Counter(int initial) : value(initial) {}
+  mut int& operator*() mut { return this.value; }
+  int& operator*() { return this.value; }
+};
+int main() { mut Counter counter{1}; *counter = 7; return *counter == 7 ? 0 : 1; }
+)");
+  expect(dereference.canGenerateCode() && dereference.diagnostics.empty(),
+         "an unrelated user-defined mutable dereference receiver retains mut");
+  const auto callable =
+      lang::Frontend().analyze("generic-callable-mut-use.gti", R"(
+void invoke<Function>(Function function) {
+  mut int value = 1;
+  function(value);
+}
+void bump(mut int& value) { value++; }
+int main() { invoke(bump); return 0; }
+)");
+  expect(callable.canGenerateCode() && callable.diagnostics.empty(),
+         "a mutable place passed to an unresolved callable has no unsafe "
+         "removal fix");
+  const std::string independentSource = R"(
+T identity<T>(T value) { mut int unused = 1; return value; }
+int main() { return identity(0); }
+)";
+  const auto independent = lang::Frontend().analyze(
+      "generic-independent-mut.gti", independentSource);
+  expect(independent.canGenerateCode() && independent.diagnostics.size() == 1,
+         "a declaration-wide unused mutable local retains one primary warning");
+  if (independent.diagnostics.size() == 1) {
+    const auto &warning = independent.diagnostics.front();
+    const auto offset = independentSource.find("mut");
+    expect(warning.code == "GTI-S2096" &&
+               warning.severity == lang::DiagnosticSeverity::Warning &&
+               warning.primary.start == offset &&
+               warning.primary.end == offset + 3 && warning.fixes.size() == 1 &&
+               warning.fixes.front().span == warning.primary &&
+               warning.fixes.front().replacement.empty(),
+           "the retained generic warning has an exact keyword-only safe edit");
+    std::string corrected = independentSource;
+    corrected.erase(offset, 3);
+    const auto fixed =
+        lang::Frontend().analyze("generic-independent-mut.gti", corrected);
+    expect(fixed.canGenerateCode() && fixed.diagnostics.empty(),
+           "applying the retained removal fix preserves compilation");
+  }
+  const auto unreachable =
+      lang::Frontend().analyze("generic-independent-tail.gti", R"(
+void stop<T>(T value) { return; int after = 1; }
+int main() { stop(1); stop(true); return 0; }
+)");
+  expect(
+      unreachable.canGenerateCode() && unreachable.diagnostics.size() == 1 &&
+          unreachable.diagnostics.front().code == "GTI-S2095" &&
+          unreachable.diagnostics.front().related.empty(),
+      "a declaration-wide unreachable tail is warned once, not per instance");
+}
+
 constexpr NamedTest kTests[] = {
+    {"testGenericAdvisorySoundness", testGenericAdvisorySoundness},
     {"testSemanticVisitorRequestReuse", testSemanticVisitorRequestReuse},
     {"testSemanticDiagnostics", testSemanticDiagnostics},
     {"testOwnershipAndMissingIncludeDiagnostics",

@@ -598,6 +598,10 @@
       "suite": "constexpr"
     },
     {
+      "name": "testGenericAdvisorySoundness",
+      "suite": "diagnostics"
+    },
+    {
       "name": "testSemanticVisitorRequestReuse",
       "suite": "diagnostics"
     },

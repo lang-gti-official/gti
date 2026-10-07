@@ -3094,6 +3094,10 @@ if(Python3_Interpreter_FOUND)
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/cthread_lsp_test.py"
                      "$<TARGET_FILE:gti_lsp>")
+    add_test(NAME generic_advisory_lsp
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${PROJECT_SOURCE_DIR}/tests/generic_advisory_lsp_test.py"
+                     "$<TARGET_FILE:gti_lsp>")
     add_test(
       NAME source_text_lsp
       COMMAND "${Python3_EXECUTABLE}"

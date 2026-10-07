@@ -47,6 +47,13 @@ well-formed but produces warning `GTI-S2096`. Removing that token is a
 semantics-preserving quick fix. The compiler is conservative at boundaries it
 cannot prove: generated range/reference bindings and compiler-trusted library
 implementation locals do not receive this advisory warning.
+Mutable operator receivers count like ordinary method receivers. A fixed
+mutable-reference argument in a pack fold also counts during primary generic
+analysis. Passing a mutable place to an unresolved callable conservatively
+retains `mut`, because its concrete parameter may require writable access.
+Advice is declaration-wide: one concrete `if constexpr` branch does not make
+shared source unreachable for other specializations. Independent unused
+mutable locals and unconditional unreachable tails still receive warnings.
 
 `T&` denotes a non-null read-only borrow of `T`. `mut T&` denotes a non-null
 writable borrow. Reference binding and escape are subject to the ownership
