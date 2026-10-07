@@ -10765,9 +10765,16 @@ bool constructorRollbackCovered(const MirConstructorInstance &constructor,
   }
 }
 
-[[nodiscard]] bool
-passiveConstructorFieldInitializers(const MirProgram &program,
-                                    const MirBody &body) {
+[[nodiscard]] bool passiveConstructorFieldInitializersImpl(
+    const MirProgram &program, const MirBody &body,
+    std::unordered_set<const MirBody *> &visiting) {
+  if (!visiting.insert(&body).second)
+    return false;
+  struct VisitScope {
+    std::unordered_set<const MirBody *> &visiting;
+    const MirBody *body;
+    ~VisitScope() { visiting.erase(body); }
+  } scope{visiting, &body};
   if (!body.failureRecords.empty() ||
       std::any_of(body.blocks.begin(), body.blocks.end(),
                   [](const MirBlock &block) {
@@ -10782,6 +10789,36 @@ passiveConstructorFieldInitializers(const MirProgram &program,
         return false;
       }
       switch (instruction.kind) {
+      case MirInstructionKind::Call:
+      case MirInstructionKind::Construct: {
+        const auto *nested =
+            uniqueClassInstanceForType(program, instruction.info.type);
+        if (!instruction.result || instruction.destination ||
+            instruction.receiver || instruction.functionTarget ||
+            instruction.constructorTarget || instruction.lambdaTarget ||
+            instruction.bodyTarget || instruction.callableInvocation ||
+            instruction.loan || instruction.ownership ||
+            instruction.operation != MirOperation::None ||
+            instruction.intrinsic != IntrinsicKind::None ||
+            !instruction.operands.empty() ||
+            !instruction.parameterTypes.empty() ||
+            !instruction.callableArguments.empty() ||
+            !instruction.lifecycle.empty() || instruction.successResultDrop ||
+            instruction.successResultDestination ||
+            (instruction.kind == MirInstructionKind::Construct &&
+             instruction.constructorKind != ConstructorKind::Ordinary) ||
+            nested == nullptr || !nested->bases.empty() ||
+            nested->polymorphic || nested->unionLayout || nested->cAbiRecord ||
+            nested->compilerCapability != CompilerCapabilityTypeKind::None ||
+            nested->requiresActiveCleanup || nested->requiresActiveDropState ||
+            nested->traits.containsBorrowedState ||
+            nested->defaultConstructor != SpecialMemberStatus::Generated ||
+            nested->destructorStatus != SpecialMemberStatus::Generated ||
+            !passiveConstructorFieldInitializersImpl(
+                program, nested->fieldInitializers, visiting))
+          return false;
+        break;
+      }
       case MirInstructionKind::Lifecycle:
         break;
       case MirInstructionKind::Compute: {
@@ -10848,6 +10885,13 @@ passiveConstructorFieldInitializers(const MirProgram &program,
     }
   }
   return true;
+}
+
+[[nodiscard]] bool
+passiveConstructorFieldInitializers(const MirProgram &program,
+                                    const MirBody &body) {
+  std::unordered_set<const MirBody *> visiting;
+  return passiveConstructorFieldInitializersImpl(program, body, visiting);
 }
 
 // An ordinary native constructor may delegate construction of a state-bearing
@@ -13493,7 +13537,10 @@ passiveGeneratedDefaultFieldInitialize(const MirProgram &program,
       !passiveConstructorFieldInitializers(program, type->fieldInitializers) ||
       !failureConstructorEmptyDefaultFieldType(program, type->type,
                                                EmptyFieldUse::Assignment) ||
-      producer == nullptr || producer->kind != MirInstructionKind::Call ||
+      producer == nullptr ||
+      (producer->kind != MirInstructionKind::Call &&
+       (producer->kind != MirInstructionKind::Construct ||
+        producer->constructorKind != ConstructorKind::Ordinary)) ||
       producer->result != id || producer->functionTarget ||
       producer->constructorTarget || producer->bodyTarget ||
       producer->lambdaTarget || producer->callableInvocation ||
@@ -25690,7 +25737,12 @@ classSsaLifetimeSlot(const MirProgram &program,
                                       : nullptr;
     const MirValue *result =
         consumer->result ? body.findValue(*consumer->result) : nullptr;
-    if (cleanupFreeArray || callee == nullptr ||
+    if (cleanupFreeArray ||
+        (callee == nullptr &&
+         (!defaultConstructionProducer ||
+          classInstance->defaultConstructor != SpecialMemberStatus::Generated ||
+          !passiveConstructorFieldInitializers(
+              program, classInstance->fieldInitializers))) ||
         classInstance->requiresActiveDropState ||
         classInstance->traits.containsBorrowedState ||
         value->info.traits.containsBorrowedState ||
@@ -32655,7 +32707,9 @@ private:
         }
       }
     }
-    if (instruction.kind == MirInstructionKind::Call && instruction.result &&
+    if ((instruction.kind == MirInstructionKind::Call ||
+         instruction.kind == MirInstructionKind::Construct) &&
+        instruction.result &&
         passiveGeneratedDefaultFieldInitialize(program, facts.body,
                                                *instruction.result)) {
       writeIndent();
@@ -45337,7 +45391,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       }
       if (pendingStaged.empty() &&
-          ((instruction.kind == MirInstructionKind::Call &&
+          (((instruction.kind == MirInstructionKind::Call ||
+             instruction.kind == MirInstructionKind::Construct) &&
             instruction.result &&
             passiveGeneratedDefaultFieldInitialize(program_, body,
                                                    *instruction.result)) ||

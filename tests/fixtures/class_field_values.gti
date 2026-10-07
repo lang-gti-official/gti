@@ -23,13 +23,14 @@ public:
 
 class Holder {
 public:
-  mut Pair values{};
+  mut Value first = Value();
+  mut Value second = Value();
   mut UserValue user = UserValue(1);
   Holder() {}
   void replace(Value value) mut {
-    this.values.first = value;
-    this.values.second = make_value(11);
-    this.values.first = this.values.second;
+    this.first = value;
+    this.second = make_value(11);
+    this.first = this.second;
   }
 };
 
@@ -39,30 +40,45 @@ public:
   ExplicitDefault() : value(Value()) {}
 };
 
+class NestedDefault {
+public:
+  Pair values{};
+  NestedDefault() {}
+};
+
 struct Item {
   int port = 80;
   Value value{};
 };
 
+struct Box {
+  mut Pair values{};
+};
+
 int main() {
-  mut Holder holder = Holder();
+  mut Box holder{};
+  mut Holder methods = Holder();
   Value copy = {.number = 3};
   holder.values.first = copy;
   holder.values.second = holder.values.first;
   if (holder.values.second.number != 3) { return 1; }
   holder.values.first = make_value(5);
+  holder.values.first = Value();
+  if (holder.values.first.number != 7) { return 4; }
   holder.values.second = make_value(6);
-  holder.user = UserValue(6);
+  methods.user = UserValue(6);
   Value moved = {.number = 9};
   holder.values.first = std::move(moved);
   if (holder.values.first.number != 9 || holder.values.second.number != 6 ||
-      holder.user.number != 6) { return 2; }
-  holder.replace(copy);
+      methods.user.number != 6) { return 2; }
+  methods.replace(copy);
   ExplicitDefault explicit_default = ExplicitDefault();
+  NestedDefault nested_default = NestedDefault();
   Item omitted = {.port = 1};
   Item explicit_value = {.port = 2, .value = {.number = 13}};
-  if (holder.values.first.number != 11 || holder.values.second.number != 11 ||
-      explicit_default.value.number != 7 || omitted.value.number != 7 ||
+  if (methods.first.number != 11 || methods.second.number != 11 ||
+      explicit_default.value.number != 7 || nested_default.values.first.number != 7 ||
+      nested_default.values.second.number != 7 || omitted.value.number != 7 ||
       explicit_value.value.number != 13) { return 3; }
   return 0;
 }
