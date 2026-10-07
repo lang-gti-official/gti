@@ -4354,9 +4354,11 @@ Field publication arms rollback only after successful construction; implicit
 scalar/null/expected initialization uses existing semantic conversion rules.
 This is not the separate omitted-field/default-policy work. Focused generated
 schedule, cleanup, ownership and backend tests are being reconciled with the
-new representation. Raising passive expected publication and the state-bearing
-base-constructor path remain acceptance work; this checkpoint is not ready for
-integration until those tests and the final combined gates pass.
+new representation. Raising passive expected publication now passes its
+eight-mode native matrix with representation-only payload staging and no
+premature wrapper construction. The state-bearing base-constructor path remains
+acceptance work; this checkpoint is not ready for integration until those tests
+and the final combined gates pass.
 
 #### Why This Campaign Exists
 

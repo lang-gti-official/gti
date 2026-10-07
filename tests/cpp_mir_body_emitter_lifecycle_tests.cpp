@@ -5059,6 +5059,39 @@ int main() {
     const lang::CppMirBodyEmitter forgedEmitter(forged, map);
     expect(!forgedEmitter.supportsFailureBodyText(address), reasons[mutation]);
   }
+  if (emitter.supportsFailureBodyText(address)) {
+    const auto optimizations = lang::OptimizationPipeline().run(
+        frontend.hir, lang::OptimizationLevel::O0);
+    const auto artifact =
+        gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+    lang::MirPlaceId destination = 0;
+    for (const auto &block : entry->body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.id == publicationId)
+          destination = instruction.destination.value_or(0);
+    const auto entryMarker = artifact.contents.find(
+        "function-instance " + std::to_string(entry->id) + "\n");
+    const std::string declaration =
+        " __gti_mir_p_" + std::to_string(destination) + ";\n";
+    const auto end = artifact.contents.find(declaration, entryMarker);
+    const auto start = end == std::string::npos
+                           ? std::string::npos
+                           : artifact.contents.rfind('\n', end);
+    const std::string line =
+        start == std::string::npos
+            ? std::string{}
+            : artifact.contents.substr(start + 1, end - start - 1);
+    expect(
+        destination && entryMarker != std::string::npos &&
+            line.find("mir_lifetime_slot<") != std::string::npos &&
+            artifact.contents.find("__gti_mir_p_" +
+                                       std::to_string(destination) +
+                                       ".construct(std::move(__gti_mir_v_" +
+                                       std::to_string(payload) + ".get()));",
+                                   entryMarker) != std::string::npos,
+        "checked passive Expected publication declares an uninitialized "
+        "wrapper lifetime slot, never an eagerly default-constructed wrapper");
+  }
 }
 
 void testReferenceReturnFailureAbi() {
@@ -10297,6 +10330,7 @@ void testNestedOwnedFieldAssignment() {
   expect(lang::CppMirBodyEmitter(fresh.mir, freshMap).analyzeProgram().ready(),
          "a fresh class value can restore an exact mutable owned field");
   std::size_t restoredFields = 0;
+  std::size_t passiveFields = 0;
   for (const auto &function : fresh.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
       for (const auto &instruction : block.instructions) {
@@ -10310,15 +10344,43 @@ void testNestedOwnedFieldAssignment() {
             destination->projections.size() != 1 ||
             destination->type.kind != lang::SemanticType::Class)
           continue;
-        ++restoredFields;
-        expect(instruction.replacementPair != 0 &&
-                   instruction.lifecycle.size() == 1 &&
-                   instruction.lifecycle.front().kind ==
-                       lang::MirLifecycleEventKind::Replace &&
-                   instruction.lifecycle.front().target == 0,
-               "receiver restoration keeps paired cleanup and the containing "
-               "object's sole field cleanup authority");
-        for (int mutation = 0; mutation != 4; ++mutation) {
+        const auto *owner = function.owner
+                                ? fresh.mir.findClassInstance(*function.owner)
+                                : nullptr;
+        const lang::MirClassFieldInfo *selectedField = nullptr;
+        if (owner) {
+          for (const auto &field : owner->declaredFields) {
+            if (field.symbol == destination->projections.front().field &&
+                field.type == destination->type)
+              selectedField = &field;
+          }
+        }
+        expect(selectedField != nullptr,
+               "receiver assignment must select an exact declared field "
+               "before classifying its cleanup obligation");
+        if (!selectedField)
+          continue;
+        const bool owning = selectedField->requiresActiveCleanup;
+        if (owning) {
+          ++restoredFields;
+          expect(instruction.replacementPair != 0 &&
+                     instruction.lifecycle.size() == 1 &&
+                     instruction.lifecycle.front().kind ==
+                         lang::MirLifecycleEventKind::Replace &&
+                     instruction.lifecycle.front().target == 0,
+                 "receiver restoration keeps paired cleanup and the containing "
+                 "object's sole field cleanup authority");
+        } else {
+          ++passiveFields;
+          expect(instruction.replacementPair == 0 &&
+                     instruction.lifecycle.empty(),
+                 "passive descriptor assignment must not invent owning "
+                 "replacement cleanup or lifetime publication");
+        }
+        // Access and representation authority apply to every class field.
+        // Only an owning field has cleanup/publication records to remove;
+        // selecting by those records would hide a missing-cleanup regression.
+        for (int mutation = 0; mutation != (owning ? 4 : 2); ++mutation) {
           auto malformed = fresh.mir;
           auto *changed = const_cast<lang::MirFunctionInstance *>(
               malformed.findFunctionInstance(function.id));
@@ -10361,6 +10423,9 @@ void testNestedOwnedFieldAssignment() {
   }
   expect(restoredFields == 1,
          "dependent fixture exercises exactly one fresh owned field restore");
+  expect(passiveFields != 0,
+         "source allocator descriptors must exercise passive field assignment "
+         "without weakening the owning restoration checks");
 }
 
 void testNestedBorrowedFieldProjection() {
