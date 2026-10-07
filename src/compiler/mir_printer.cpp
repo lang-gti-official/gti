@@ -263,7 +263,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v91 valid=" << program.valid() << '\n';
+    output << "mir-v92 valid=" << program.valid() << '\n';
     const auto &target = program.target();
     output << "target os=" << target.os << " vendor=" << target.vendor
            << " arch=" << target.arch
@@ -337,7 +337,9 @@ public:
     output << "integral-enums " << program.integralEnums().size() << '\n';
     for (const MirIntegralEnum &enumeration : program.integralEnums()) {
       output << "integral-enum @" << enumeration.declaration
-             << " source-unit=" << enumeration.sourceUnit << " underlying=";
+             << " source-unit=" << enumeration.sourceUnit << " type=";
+      type(enumeration.type);
+      output << " underlying=";
       type(enumeration.underlyingType);
       output << '\n';
     }

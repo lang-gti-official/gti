@@ -696,7 +696,7 @@ storagePayloadTraits(const MirProgram &program, const SemanticType &type,
   if (!traits)
     return std::nullopt;
   if (type.kind == SemanticType::Enum) {
-    if (const auto *enumeration = program.findPayloadEnum(type.enumId))
+    if (const auto *enumeration = program.findPayloadEnum(type))
       return enumeration->traits;
   }
   const auto include = [&](const SemanticType &component,
@@ -5207,7 +5207,7 @@ verifyMirProgramBorrowContracts(const MirProgram &program) {
 [[nodiscard]] MirVerificationResult
 verifyMirPayloadEnums(const MirProgram &program) {
   MirVerificationResult result;
-  std::unordered_set<EnumId> declarations;
+  std::vector<SemanticType> declarations;
   const auto typeRequiresActiveCleanup =
       [&](const SemanticType &type, const auto &query) -> std::optional<bool> {
     switch (type.kind) {
@@ -5245,7 +5245,7 @@ verifyMirPayloadEnums(const MirProgram &program) {
                  : std::optional<bool>{found->requiresActiveCleanup};
     }
     case SemanticType::Enum: {
-      const MirPayloadEnum *enumeration = program.findPayloadEnum(type.enumId);
+      const MirPayloadEnum *enumeration = program.findPayloadEnum(type);
       return enumeration == nullptr
                  ? std::optional<bool>{false}
                  : std::optional<bool>{enumeration->requiresActiveCleanup};
@@ -5269,10 +5269,12 @@ verifyMirPayloadEnums(const MirProgram &program) {
 
   for (const MirPayloadEnum &enumeration : program.payloadEnums()) {
     bool exact = enumeration.declaration != 0 && enumeration.sourceUnit != 0 &&
-                 declarations.insert(enumeration.declaration).second &&
+                 std::find(declarations.begin(), declarations.end(),
+                           enumeration.type) == declarations.end() &&
                  enumeration.type.kind == SemanticType::Enum &&
                  enumeration.type.enumId == enumeration.declaration &&
                  !enumeration.variants.empty();
+    declarations.push_back(enumeration.type);
     bool active = false;
     for (std::size_t variantIndex = 0;
          variantIndex < enumeration.variants.size(); ++variantIndex) {
@@ -5324,7 +5326,7 @@ verifyMirPayloadEnums(const MirProgram &program) {
         }
         const MirPayloadEnum *enumeration =
             instruction.enumOwner
-                ? program.findPayloadEnum(*instruction.enumOwner)
+                ? program.findPayloadEnum(mirInstructionEnumType(instruction))
                 : nullptr;
         const MirPayloadEnumVariant *variant =
             enumeration != nullptr && instruction.enumVariant &&
@@ -5332,7 +5334,18 @@ verifyMirPayloadEnums(const MirProgram &program) {
                 ? &enumeration->variants[*instruction.enumVariant]
                 : nullptr;
         bool exact = enumeration != nullptr && variant != nullptr &&
+                     enumeration->declaration == *instruction.enumOwner &&
                      variant->variantIndex == *instruction.enumVariant;
+        if (!exact) {
+          result.errors.push_back(
+              {.bodyKind = address.kind,
+               .owner = address.owner,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message = "payload-enum instruction differs from its "
+                          "verified variant table"});
+          continue;
+        }
         if (instruction.operation == MirOperation::PayloadConstruct) {
           const MirValue *value = instruction.result
                                       ? body->findValue(*instruction.result)
@@ -5478,7 +5491,10 @@ verifyMirPayloadEnums(const MirProgram &program) {
               exact = exact && field->projections.empty() &&
                       field->type == value->info.type &&
                       (relation == PlaceRelation::Equal ||
-                       relation == PlaceRelation::LeftStrictPrefix) &&
+                       relation == PlaceRelation::LeftStrictPrefix ||
+                       (subject != nullptr &&
+                        mirCanonicalPlaceContains(*body, subject->id,
+                                                  field->id))) &&
                       field->access == value->info.access &&
                       loan.access == value->info.access &&
                       loan.producedBy == instruction.hirValue &&
@@ -8291,7 +8307,7 @@ exactScalarUniqueAllocationContract(const MirProgram &program,
   case SemanticType::RawPointer:
     break;
   case SemanticType::Enum:
-    if (pointee.enumId == 0 || program.findPayloadEnum(pointee.enumId)) {
+    if (pointee.enumId == 0 || program.findPayloadEnum(pointee)) {
       return false;
     }
     [[fallthrough]];
@@ -10065,7 +10081,7 @@ verifyMirProgramContracts(const MirProgram &program) {
           const MirIntegralEnum *enumeration =
               argument != nullptr &&
                       argument->info.type.kind == SemanticType::Enum
-                  ? program.findIntegralEnum(argument->info.type.enumId)
+                  ? program.findIntegralEnum(argument->info.type)
                   : nullptr;
           if (instruction.kind != MirInstructionKind::Call ||
               !instruction.result || instruction.receiver ||
@@ -10554,7 +10570,7 @@ verifyMirProgramContracts(const MirProgram &program) {
       return unknown ? std::nullopt : std::optional<bool>{false};
     }
     case SemanticType::Enum: {
-      const MirPayloadEnum *enumeration = program.findPayloadEnum(type.enumId);
+      const MirPayloadEnum *enumeration = program.findPayloadEnum(type);
       return enumeration == nullptr
                  ? std::optional<bool>{false}
                  : std::optional<bool>{enumeration->requiresActiveCleanup};
@@ -10616,16 +10632,20 @@ verifyMirProgramContracts(const MirProgram &program) {
       }
     }
   }
-  std::unordered_set<EnumId> integralEnumIds;
+  std::vector<SemanticType> integralEnumIds;
   for (const MirIntegralEnum &enumeration : program.integralEnums()) {
     if (enumeration.declaration == 0 || enumeration.sourceUnit == 0 ||
-        !integralEnumIds.insert(enumeration.declaration).second ||
-        program.findPayloadEnum(enumeration.declaration) != nullptr ||
+        enumeration.type.kind != SemanticType::Enum ||
+        enumeration.type.enumId != enumeration.declaration ||
+        std::find(integralEnumIds.begin(), integralEnumIds.end(),
+                  enumeration.type) != integralEnumIds.end() ||
+        program.findPayloadEnum(enumeration.type) != nullptr ||
         !constantIntegerDomain(enumeration.underlyingType)) {
       result.errors.push_back(
           {.message = "integral-enum metadata has no unique exact integer "
                       "representation"});
     }
+    integralEnumIds.push_back(enumeration.type);
   }
   appendVerification(result, verifyMirPayloadEnums(program));
   for (std::size_t index = 0; index < program.classInstances().size();
@@ -11801,7 +11821,7 @@ verifyMirProgramContracts(const MirProgram &program) {
         return traits && !traits->containsBorrowedState;
       }
       case SemanticType::Enum:
-        return program.findPayloadEnum(type.enumId) == nullptr;
+        return program.findPayloadEnum(type) == nullptr;
       case SemanticType::Class: {
         const auto traits = concretePackElementTraits(program, type);
         return traits &&
@@ -12296,7 +12316,20 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
            validArguments(type.lambdaEnclosingClassTypes) &&
            validArguments(type.lambdaEnclosingFunctionTypes);
   };
+  const auto validEnumIdentity = [&](const auto &self,
+                                     const SemanticType &type) -> bool {
+    if (type.kind == SemanticType::Enum &&
+        program.findPayloadEnum(type) == nullptr &&
+        program.findIntegralEnum(type) == nullptr)
+      return false;
+    return std::all_of(
+        type.arguments.begin(), type.arguments.end(),
+        [&](const SemanticType &argument) { return self(self, argument); });
+  };
   const auto checkProgramType = [&](const SemanticType &type) {
+    if (!validEnumIdentity(validEnumIdentity, type))
+      result.errors.push_back(
+          {.message = "MIR enum type has no exact concrete enum catalog row"});
     if (!validScalarIdentity(validScalarIdentity, type)) {
       result.errors.push_back(
           {.message = "MIR native C scalar identity disagrees with the "
@@ -12366,6 +12399,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
     checkProgramType(adapter.resultType);
   }
   for (const auto &enumeration : program.integralEnums()) {
+    checkProgramType(enumeration.type);
     checkProgramType(enumeration.underlyingType);
   }
   for (const auto &enumeration : program.payloadEnums()) {
@@ -12387,6 +12421,13 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
     appendVerification(result, verifyMirBody(*body, address.owner));
     const auto check = [&](const SemanticType &type,
                            MirInstructionId instruction = 0) {
+      if (!validEnumIdentity(validEnumIdentity, type))
+        result.errors.push_back(
+            {.bodyKind = address.kind,
+             .owner = address.owner,
+             .instruction = instruction,
+             .message =
+                 "MIR enum type has no exact concrete enum catalog row"});
       if (!validScalarIdentity(validScalarIdentity, type)) {
         result.errors.push_back(
             {.bodyKind = address.kind,

@@ -110,6 +110,7 @@ module.exports = grammar({
     [$._expression_not_comma, $._generic_member_function],
     [$._postfix_expression, $._generic_member_function],
     [$._array_extent_expression, $._qualified_identifier],
+    [$._qualified_identifier, $.generic_scoped_identifier],
   ],
 
   rules: {
@@ -337,8 +338,9 @@ module.exports = grammar({
     enum_declaration: ($) =>
       seq(
         "enum",
-        "class",
+        optional("class"),
         field("name", $.identifier),
+        optional(field("type_parameters", $.generic_parameter_clause)),
         optional(seq(":", field("underlying_type", $.type))),
         "{",
         repeat(seq($.enumerator, ",")),
@@ -904,10 +906,10 @@ module.exports = grammar({
       ),
 
     user_type: ($) =>
-      seq(
+      prec.dynamic(1, seq(
         field("name", $._qualified_identifier),
         optional(field("arguments", $.type_argument_clause)),
-      ),
+      )),
 
     type_argument_clause: ($) =>
       seq(
@@ -1325,6 +1327,7 @@ module.exports = grammar({
 
     primary_expression: ($) =>
       choice(
+        $.generic_scoped_identifier,
         $.literal,
         $._qualified_identifier,
         $.unexpected_expression,
@@ -1398,6 +1401,14 @@ module.exports = grammar({
           "::",
           field("name", $.identifier),
         ),
+      ),
+
+    generic_scoped_identifier: ($) =>
+      seq(
+        field("scope", choice($.identifier, $.scoped_identifier)),
+        field("type_arguments", $.type_argument_clause),
+        "::",
+        field("name", $.identifier),
       ),
 
     do_while_statement: ($) =>

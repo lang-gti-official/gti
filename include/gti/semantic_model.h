@@ -768,6 +768,7 @@ struct EnumTypeInfo {
   const EnumDecl *declaration = nullptr;
   std::string qualifiedName;
   std::vector<std::string> namespaceScope;
+  std::vector<GenericParameterInfo> genericParameters;
   SemanticType underlyingType = SemanticType::Int32;
   std::vector<EnumeratorInfo> enumerators;
   bool payload = false;
@@ -776,6 +777,7 @@ struct EnumTypeInfo {
 
 struct ResolvedEnumeratorInfo {
   EnumId owner = 0;
+  SemanticType type = SemanticType::Unknown;
   const EnumeratorDecl *declaration = nullptr;
   EnumConstant value;
   std::size_t variantIndex = 0;
@@ -783,6 +785,7 @@ struct ResolvedEnumeratorInfo {
 
 struct ResolvedPayloadConstructionInfo {
   EnumId owner = 0;
+  SemanticType type = SemanticType::Unknown;
   const EnumeratorDecl *declaration = nullptr;
   std::size_t variantIndex = 0;
   std::vector<SemanticType> parameterTypes;
@@ -797,6 +800,7 @@ struct PayloadBindingInfo {
 
 struct ResolvedPayloadPatternInfo {
   EnumId owner = 0;
+  SemanticType type = SemanticType::Unknown;
   const EnumeratorDecl *declaration = nullptr;
   std::size_t variantIndex = 0;
   std::vector<PayloadBindingInfo> bindings;
@@ -1631,6 +1635,11 @@ public:
 
   [[nodiscard]] const EnumTypeInfo *findEnumType(EnumId id) const;
 
+  // Exact declaration-owned signatures retained by semantic substitution.
+  // Snapshot consumers do not re-run generic substitution or infer it from HIR.
+  [[nodiscard]] std::optional<EnumTypeInfo>
+  enumTypeFor(const SemanticType &type) const;
+
   [[nodiscard]] const ResolvedEnumeratorInfo *
   findEnumerator(const QualifiedName &expression) const;
 
@@ -1873,6 +1882,8 @@ private:
 
   void recordEnumType(const EnumDecl &declaration, EnumTypeInfo info);
 
+  void recordEnumInstanceType(SemanticType type, EnumTypeInfo info);
+
   void record(const QualifiedName &expression, ResolvedEnumeratorInfo info);
 
   void recordSwitchCase(const Expr &expression, SwitchCaseValue value);
@@ -2034,6 +2045,7 @@ private:
   std::vector<ExactClassSpecializationRecord> exactClassSpecializations;
   std::unordered_map<const TypeAliasDecl *, TypeAliasInfo> typeAliases;
   std::unordered_map<const EnumDecl *, EnumTypeInfo> enumTypes;
+  std::vector<std::pair<SemanticType, EnumTypeInfo>> enumInstanceTypes;
   std::unordered_map<EnumId, const EnumDecl *> enumTypesById;
   std::unordered_map<const QualifiedName *, ResolvedEnumeratorInfo> enumerators;
   std::unordered_map<const Expr *, SwitchCaseValue> switchCases;

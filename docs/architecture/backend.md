@@ -31,6 +31,15 @@ concrete instances and typed values, MIR owns executable control flow and
 effects, `LoweredProgram` owns the complete backend-neutral program contract,
 and each backend owns target representation.
 
+Payload enum representation rows carry the complete semantic enum type, not
+only an `EnumId`. Definition naming, dependency scheduling, construction,
+matching and lifecycle lookup distinguish every exact instance. Verification
+rejects missing or conflicting concrete rows; generic primaries cannot serve as
+a fallback representation. Passive aggregate enum results use verified folded
+traits, while an owning enum argument produced by a call reuses that call's
+proved success-only result slot and ordinary ordered transfer/failure cleanup.
+No AST/HIR-only enum execution route is introduced.
+
 Signature-pattern primaries retain both their resolved public argument shapes
 and binder projections in sealed lowered declarations. Native template carriers
 spell a primary with the public arity and one patterned definition; GTI has
@@ -71,7 +80,7 @@ statement spans against the **optimized** MIR's retained HIR identities.
 Each `LoweredBody::sourceLocations` row owns its source path/span and exact
 block/instruction identity; instruction zero identifies a terminator. These
 optional rows are verified and sealed with the lowered contract (printer
-version 11), survive destruction of AST/HIR, and are never executable,
+version 12), survive destruction of AST/HIR, and are never executable,
 ownership, type, or optimization authority. The default contract has no rows.
 
 The C++ backend consumes only those lowered rows. Body/template planning emits
@@ -99,7 +108,7 @@ remain later slices; this metadata does not bypass MIR verification.
 ## Backend Contract
 
 Terminal and caller-tracking contracts are sealed declaration facts, also
-checked against the embedded MIR. Lowered-program serialization version 11
+checked against the embedded MIR. Lowered-program serialization version 12
 includes both flags and optional source debug locations. The C++ representation
 passes an explicit artifact-local caller-site parameter through supported
 tracked signatures and calls. An

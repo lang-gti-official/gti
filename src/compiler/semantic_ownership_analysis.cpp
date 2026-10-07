@@ -193,7 +193,10 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
         !enums[type.enumId - 1].payload) {
       break;
     }
-    for (const auto &[_, enumerator] : enums[type.enumId - 1].enumerators) {
+    const auto concrete = enumTypeFor(type);
+    if (!concrete)
+      break;
+    for (const auto &enumerator : concrete->enumerators) {
       if (std::any_of(enumerator.payloadTypes.begin(),
                       enumerator.payloadTypes.end(),
                       [&](const SemanticType &payload) {
@@ -327,7 +330,10 @@ auto SemanticVisitor::Impl::typeCapabilities(
     }
     ConcurrencyCapabilities result{.transferCapable = true,
                                    .shareCapable = true};
-    for (const auto &[_, enumerator] : enums[type.enumId - 1].enumerators) {
+    const auto concrete = enumTypeFor(type);
+    if (!concrete)
+      return {};
+    for (const auto &enumerator : concrete->enumerators) {
       for (const SemanticType &payload : enumerator.payloadTypes) {
         const ConcurrencyCapabilities component =
             typeCapabilities(payload, visiting);
@@ -565,7 +571,10 @@ auto SemanticVisitor::Impl::typeTraits(
     SemanticTypeTraits traits = semanticTraits(type);
     traits.relocation = RelocationKind::Structural;
     ActiveCleanupQuery cleanupQuery;
-    for (const auto &[_, enumerator] : enums[type.enumId - 1].enumerators) {
+    const auto concrete = enumTypeFor(type);
+    if (!concrete)
+      return traits;
+    for (const auto &enumerator : concrete->enumerators) {
       for (const SemanticType &payload : enumerator.payloadTypes) {
         const SemanticTypeTraits component = typeTraits(payload, visiting);
         if (component.ownership == OwnershipKind::Unique ||

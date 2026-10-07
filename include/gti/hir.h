@@ -409,6 +409,7 @@ struct HirEnumerator {
 
 struct HirEnum {
   EnumId declaration = 0;
+  SemanticType type = SemanticType::Unknown;
   SourceUnitId sourceUnit = 0;
   const EnumDecl *source = nullptr;
   std::string qualifiedName;

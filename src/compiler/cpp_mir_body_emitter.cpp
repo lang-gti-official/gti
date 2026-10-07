@@ -96,7 +96,7 @@ std::string cppMirCleanupValueExpression(const MirProgram &program,
            "; })";
   }
   if (type.type.kind == SemanticType::Enum) {
-    const auto *enumeration = program.findPayloadEnum(type.type.enumId);
+    const auto *enumeration = program.findPayloadEnum(type.type);
     if (enumeration == nullptr)
       throw std::logic_error("MIR payload cleanup lost its variant table");
     std::string expression =
@@ -967,10 +967,12 @@ expectedTypeRepresentation(const SemanticType &type) {
 // receiving local declares value-initialized and the publication assigns.
 // A plain enum is scalar-like. A payload enum's variant record keeps that
 // boundary default-constructible and move-assignable only when every
-// copied variant field is itself scalar or a view, so this proof demands
-// exactly that from the copied enum row, plus the enum's own type row.
+// copied variant field has passive, movable storage with no retained borrow
+// or active cleanup. Prove those structural facts from exact MIR and copied
+// representation rows, rather than selecting nominal library types.
 [[nodiscard]] bool
-cppMirEnumBoundaryRow(const CppMirBodyEmissionMap &representations,
+cppMirEnumBoundaryRow(const MirProgram &program,
+                      const CppMirBodyEmissionMap &representations,
                       const SemanticType &type) {
   if (type.kind != SemanticType::Enum) {
     return false;
@@ -981,21 +983,44 @@ cppMirEnumBoundaryRow(const CppMirBodyEmissionMap &representations,
   if (typeRow == representations.types().end() || typeRow->spelling.empty()) {
     return false;
   }
-  const auto enumRow = std::find_if(representations.enums().begin(),
-                                    representations.enums().end(),
-                                    [&](const CppMirEnumRepresentation &row) {
-                                      return row.owner == type.enumId;
-                                    });
+  const auto enumRow = std::find_if(
+      representations.enums().begin(), representations.enums().end(),
+      [&](const CppMirEnumRepresentation &row) { return row.type == type; });
   if (enumRow == representations.enums().end()) {
     return false;
   }
+  if (const auto *payload = program.findPayloadEnum(type);
+      payload != nullptr &&
+      (payload->requiresActiveCleanup || !payload->traits.movable ||
+       !payload->traits.moveAssignable ||
+       payload->traits.containsBorrowedState))
+    return false;
   for (const CppMirPayloadVariantRepresentation &variant :
        enumRow->payloadVariants) {
     for (const SemanticType &field : variant.fieldTypes) {
       const std::optional<CppMirTypeRepresentationKind> kind =
           expectedTypeRepresentation(field);
-      if (!kind || (*kind != CppMirTypeRepresentationKind::Scalar &&
-                    *kind != CppMirTypeRepresentationKind::StringView)) {
+      const auto fieldRow = std::find_if(
+          representations.types().begin(), representations.types().end(),
+          [&](const auto &row) { return row.type == field; });
+      if (!kind || fieldRow == representations.types().end() ||
+          fieldRow->spelling.empty())
+        return false;
+      if (*kind == CppMirTypeRepresentationKind::Class) {
+        const auto instance = std::find_if(
+            program.classInstances().begin(), program.classInstances().end(),
+            [&](const auto &candidate) { return candidate.type == field; });
+        if (instance == program.classInstances().end() ||
+            instance->requiresActiveCleanup || !instance->traits.movable ||
+            !instance->traits.moveAssignable ||
+            instance->traits.containsBorrowedState)
+          return false;
+      } else if (*kind != CppMirTypeRepresentationKind::Scalar &&
+                 *kind != CppMirTypeRepresentationKind::StringView &&
+                 *kind != CppMirTypeRepresentationKind::RawPointer &&
+                 *kind != CppMirTypeRepresentationKind::NullPointer &&
+                 (*kind != CppMirTypeRepresentationKind::Enum ||
+                  program.findIntegralEnum(field) == nullptr)) {
         return false;
       }
     }
@@ -1014,7 +1039,7 @@ cppMirEnumBoundaryRow(const CppMirBodyEmissionMap &representations,
   if (type.kind != SemanticType::Enum) {
     return false;
   }
-  const MirPayloadEnum *payload = program.findPayloadEnum(type.enumId);
+  const MirPayloadEnum *payload = program.findPayloadEnum(type);
   if (payload == nullptr || !payload->requiresActiveCleanup ||
       payload->traits.drop != DropKind::Lexical || !payload->traits.movable) {
     return false;
@@ -1029,7 +1054,7 @@ cppMirEnumBoundaryRow(const CppMirBodyEmissionMap &representations,
   const auto enumRow = std::find_if(representations.enums().begin(),
                                     representations.enums().end(),
                                     [&](const CppMirEnumRepresentation &row) {
-                                      return row.owner == type.enumId &&
+                                      return row.type == type &&
                                              row.requiresActiveCleanup &&
                                              row.traits == payload->traits;
                                     });
@@ -5428,7 +5453,7 @@ transferredConstructorArgumentForResult(const MirBody &body,
   const MirValue *value = body.findValue(valueId);
   const MirPayloadEnum *enumeration =
       value != nullptr && value->info.type.kind == SemanticType::Enum
-          ? program.findPayloadEnum(value->info.type.enumId)
+          ? program.findPayloadEnum(value->info.type)
           : nullptr;
   if (enumeration == nullptr || !enumeration->requiresActiveCleanup ||
       !enumeration->traits.movable ||
@@ -5601,7 +5626,7 @@ payloadEnumArgumentMoveStage(const MirProgram &program, const MirBody &body,
   const MirValue *movedValue = body.findValue(movedValueId);
   const MirPayloadEnum *enumeration =
       movedValue != nullptr && movedValue->info.type.kind == SemanticType::Enum
-          ? program.findPayloadEnum(movedValue->info.type.enumId)
+          ? program.findPayloadEnum(movedValue->info.type)
           : nullptr;
   const MirInstruction *move =
       movedValue == nullptr ? nullptr
@@ -5759,12 +5784,16 @@ payloadEnumArgumentMoveStageForStagedValue(const MirProgram &program,
   return result.stage == stage ? result : PayloadEnumArgumentMoveStage{};
 }
 
-// A freshly constructed active variant has no named source obligation. MIR
-// either transfers its value-rooted drop directly out at CallInput or reparents
-// that drop into the prepared-parameter obligation selected by the ordinary
-// call schedule. The C++ boundary consumes the exact lifetime-slot object; the
-// slot's moved-from representation shell is retired immediately after the call
-// on both success and defined failure.
+[[nodiscard]] const MirPlace *
+payloadEnumCallResultSlot(const MirProgram &program, const MirBody &body,
+                          MirValueId valueId);
+
+// A freshly constructed or returned active variant has no named source
+// obligation. MIR either transfers its value-rooted drop directly out at
+// CallInput or reparents that drop into the prepared-parameter obligation
+// selected by the ordinary call schedule. The C++ boundary consumes the exact
+// lifetime-slot object; the slot's moved-from representation shell is retired
+// immediately after the call on both success and defined failure.
 [[nodiscard]] PayloadEnumFreshArgumentStage
 payloadEnumFreshArgumentStageForStagedValue(const MirProgram &program,
                                             const MirBody &body,
@@ -5789,12 +5818,16 @@ payloadEnumFreshArgumentStageForStagedValue(const MirProgram &program,
   const MirPayloadEnum *enumeration =
       sourceValue != nullptr &&
               sourceValue->info.type.kind == SemanticType::Enum
-          ? program.findPayloadEnum(sourceValue->info.type.enumId)
+          ? program.findPayloadEnum(sourceValue->info.type)
           : nullptr;
   const MirInstruction *producer =
       sourceValue == nullptr ? nullptr
                              : findInstruction(body, sourceValue->definition);
-  const MirPlace *slot = payloadEnumValueSlot(program, body, sourceValueId);
+  const MirPlace *constructed =
+      payloadEnumValueSlot(program, body, sourceValueId);
+  const MirPlace *called =
+      payloadEnumCallResultSlot(program, body, sourceValueId);
+  const MirPlace *slot = constructed != nullptr ? constructed : called;
   const MirLifecycleEvent &transfer = stage->lifecycle.front();
   const MirDropObligation *drop = body.findDropObligation(transfer.source);
   const MirDropObligation *preparedDrop =
@@ -5816,17 +5849,10 @@ payloadEnumFreshArgumentStageForStagedValue(const MirProgram &program,
       staged->info.traits != enumeration->traits || sourceValue == nullptr ||
       sourceValue->info.type != enumeration->type ||
       sourceValue->info.traits != enumeration->traits || producer == nullptr ||
-      producer->kind != MirInstructionKind::Compute ||
-      producer->operation != MirOperation::PayloadConstruct ||
-      !producer->result || *producer->result != sourceValueId ||
-      producer->destination || producer->receiver ||
+      (constructed == nullptr && called == nullptr) || !producer->result ||
+      *producer->result != sourceValueId || producer->destination ||
       producer->info.type != enumeration->type ||
       producer->info.traits != enumeration->traits ||
-      producer->enumOwner != enumeration->declaration ||
-      !producer->enumVariant ||
-      *producer->enumVariant >= enumeration->variants.size() ||
-      !producer->localFailureSites.empty() ||
-      !producer->definedFailure.empty() ||
       stage->operands.front().type != enumeration->type ||
       stage->info.type != enumeration->type ||
       stage->info.traits != enumeration->traits || slot == nullptr ||
@@ -5973,7 +5999,7 @@ payloadEnumMoveValueSlot(const MirProgram &program, const MirBody &body,
   const MirValue *value = body.findValue(valueId);
   const MirPayloadEnum *enumeration =
       value != nullptr && value->info.type.kind == SemanticType::Enum
-          ? program.findPayloadEnum(value->info.type.enumId)
+          ? program.findPayloadEnum(value->info.type)
           : nullptr;
   const MirInstruction *move =
       value == nullptr ? nullptr : findInstruction(body, value->definition);
@@ -6131,7 +6157,7 @@ payloadEnumDirectFreshArgument(const MirProgram &program, const MirBody &body,
   const MirValue *value = body.findValue(valueId);
   const MirPayloadEnum *enumeration =
       value != nullptr && value->info.type.kind == SemanticType::Enum
-          ? program.findPayloadEnum(value->info.type.enumId)
+          ? program.findPayloadEnum(value->info.type)
           : nullptr;
   const MirInstruction *producer =
       value == nullptr ? nullptr : findInstruction(body, value->definition);
@@ -6245,7 +6271,7 @@ payloadEnumFreshReturnPublication(const MirProgram &program,
   const MirValue *value = body.findValue(valueId);
   const MirPayloadEnum *enumeration =
       value != nullptr && value->info.type.kind == SemanticType::Enum
-          ? program.findPayloadEnum(value->info.type.enumId)
+          ? program.findPayloadEnum(value->info.type)
           : nullptr;
   const MirInstruction *producer =
       value == nullptr ? nullptr : findInstruction(body, value->definition);
@@ -6402,7 +6428,7 @@ payloadEnumCallResultSlot(const MirProgram &program, const MirBody &body,
   const MirValue *value = body.findValue(valueId);
   const MirPayloadEnum *enumeration =
       value != nullptr && value->info.type.kind == SemanticType::Enum
-          ? program.findPayloadEnum(value->info.type.enumId)
+          ? program.findPayloadEnum(value->info.type)
           : nullptr;
   const MirInstruction *call =
       value == nullptr ? nullptr : findInstruction(body, value->definition);
@@ -6531,10 +6557,9 @@ owningPayloadEnumAssignmentSlot(const MirProgram &program, const MirBody &body,
 [[nodiscard]] const MirDropObligation *
 owningPayloadEnumBindingDrop(const MirProgram &program, const MirBody &body,
                              const MirPlace &place) {
-  const MirPayloadEnum *enumeration =
-      place.type.kind == SemanticType::Enum
-          ? program.findPayloadEnum(place.type.enumId)
-          : nullptr;
+  const MirPayloadEnum *enumeration = place.type.kind == SemanticType::Enum
+                                          ? program.findPayloadEnum(place.type)
+                                          : nullptr;
   if (enumeration == nullptr || !enumeration->requiresActiveCleanup ||
       !enumeration->traits.movable ||
       enumeration->traits.drop != DropKind::Lexical ||
@@ -10724,7 +10749,7 @@ passiveConstructorFieldInitializers(const MirProgram &program,
             instruction.operation == MirOperation::Literal ||
             (instruction.operation == MirOperation::EnumConstant &&
              instruction.info.type.kind == SemanticType::Enum &&
-             program.findPayloadEnum(instruction.info.type.enumId) == nullptr &&
+             program.findPayloadEnum(instruction.info.type) == nullptr &&
              instruction.info.traits.drop == DropKind::Trivial);
         const bool passiveAggregate =
             instruction.operation == MirOperation::Aggregate &&
@@ -10762,7 +10787,7 @@ passiveConstructorFieldInitializers(const MirProgram &program,
             source->symbol == 0 || !source->projections.empty() ||
             source->access != AccessMode::ReadOnly ||
             source->type.kind != SemanticType::Enum ||
-            program.findPayloadEnum(source->type.enumId) != nullptr ||
+            program.findPayloadEnum(source->type) != nullptr ||
             source->traits.drop != DropKind::Trivial ||
             source->type != instruction.info.type ||
             source->type != instruction.operands.front().type)
@@ -10894,7 +10919,7 @@ enum class EmptyFieldUse { Construction, Assignment };
                self(self, error.arguments.front());
       return passiveConstructorAggregateType(error) &&
              (error.kind != SemanticType::Enum ||
-              program.findPayloadEnum(error.enumId) == nullptr);
+              program.findPayloadEnum(error) == nullptr);
     };
     return mirTypeRelocationIsDefinedFailureFree(program, type.arguments[1]) &&
            (passiveError(passiveError, type.arguments[1]) ||
@@ -10915,7 +10940,7 @@ enum class EmptyFieldUse { Construction, Assignment };
     return true;
   }
   if (type.kind == SemanticType::Enum) {
-    const MirPayloadEnum *enumeration = program.findPayloadEnum(type.enumId);
+    const MirPayloadEnum *enumeration = program.findPayloadEnum(type);
     return enumeration != nullptr && enumeration->type == type &&
            enumeration->requiresActiveCleanup &&
            enumeration->traits.drop == DropKind::Lexical &&
@@ -12868,7 +12893,7 @@ passiveCopiedCallInput(const MirProgram &program, const MirBody &body,
             return representation &&
                    (*representation == CppMirTypeRepresentationKind::Scalar ||
                     (*representation == CppMirTypeRepresentationKind::Enum &&
-                     program.findPayloadEnum(type.enumId) == nullptr));
+                     program.findPayloadEnum(type) == nullptr));
           });
   if (stage.kind != MirInstructionKind::CallInput || !stage.result ||
       stage.callInputKind != HirCallInputKind::CopyValue ||
@@ -13143,7 +13168,7 @@ payloadEnumConstructorFieldPublication(const MirProgram &program,
   const MirValue *value = body.findValue(valueId);
   const MirPayloadEnum *enumeration =
       value != nullptr && value->info.type.kind == SemanticType::Enum
-          ? program.findPayloadEnum(value->info.type.enumId)
+          ? program.findPayloadEnum(value->info.type)
           : nullptr;
   const MirInstruction *producer =
       value == nullptr ? nullptr : findInstruction(body, value->definition);
@@ -15867,7 +15892,7 @@ cleanupFreeExpectedReceiver(const MirBody &body, const MirInstruction &call) {
       !representation ||
       (*representation != CppMirTypeRepresentationKind::Scalar &&
        (*representation != CppMirTypeRepresentationKind::Enum ||
-        program.findPayloadEnum(call.info.type.enumId) != nullptr)) ||
+        program.findPayloadEnum(call.info.type) != nullptr)) ||
       call.destination || call.successResultDrop ||
       call.successResultDestination || !call.receiver ||
       call.receiver->kind != MirOperandKind::Value ||
@@ -15923,7 +15948,7 @@ directExpectedScalarExtraction(const MirProgram &program, const MirBody &body,
                            CppMirTypeRepresentationKind::Scalar ||
                        *representation == CppMirTypeRepresentationKind::Void ||
                        (*representation == CppMirTypeRepresentationKind::Enum &&
-                        program.findPayloadEnum(type.enumId) == nullptr));
+                        program.findPayloadEnum(type) == nullptr));
              });
 }
 
@@ -19611,8 +19636,9 @@ public:
     for (std::size_t index = 0; index < representations.enums().size();
          ++index) {
       const CppMirEnumRepresentation &row = representations.enums()[index];
-      const MirPayloadEnum *payloadEnum = program.findPayloadEnum(row.owner);
-      if (row.owner == 0 || row.spelling.empty() ||
+      const MirPayloadEnum *payloadEnum = program.findPayloadEnum(row.type);
+      if (row.owner == 0 || row.type.kind != SemanticType::Enum ||
+          row.type.enumId != row.owner || row.spelling.empty() ||
           row.underlyingType == SemanticType::Unknown) {
         add(CppMirBodyEmissionIssueKind::InvalidRepresentationRow, 0, 0,
             "enum row has an invalid owner, underlying type, or spelling");
@@ -19620,13 +19646,16 @@ public:
       if (std::find_if(representations.enums().begin(),
                        representations.enums().begin() + index,
                        [&](const CppMirEnumRepresentation &prior) {
-                         return prior.owner == row.owner;
+                         return prior.type == row.type;
                        }) != representations.enums().begin() + index) {
         add(CppMirBodyEmissionIssueKind::DuplicateEnumRepresentation, 0, 0,
             "copied map contains duplicate enum rows");
       }
       if (payloadEnum == nullptr) {
-        if (!row.payloadVariants.empty() || row.requiresActiveCleanup ||
+        const auto *integralEnum = program.findIntegralEnum(row.type);
+        if (integralEnum == nullptr ||
+            integralEnum->underlyingType != row.underlyingType ||
+            !row.payloadVariants.empty() || row.requiresActiveCleanup ||
             row.traits.drop != DropKind::Trivial) {
           add(CppMirBodyEmissionIssueKind::InvalidRepresentationRow, 0, 0,
               "non-payload enum row carries payload lifecycle facts");
@@ -19915,19 +19944,18 @@ private:
     }
   }
 
-  [[nodiscard]] const CppMirEnumRepresentation *findEnum(EnumId owner) const {
+  [[nodiscard]] const CppMirEnumRepresentation *
+  findEnum(const SemanticType &type) const {
     const auto found = std::find_if(
         representations.enums().begin(), representations.enums().end(),
-        [owner](const CppMirEnumRepresentation &row) {
-          return row.owner == owner;
-        });
+        [&](const CppMirEnumRepresentation &row) { return row.type == type; });
     return found == representations.enums().end() ? nullptr : &*found;
   }
 
   const CppMirEnumRepresentation *
-  requireEnum(EnumId owner, MirBlockId block = 0,
+  requireEnum(const SemanticType &type, MirBlockId block = 0,
               MirInstructionId instruction = 0) {
-    const CppMirEnumRepresentation *row = findEnum(owner);
+    const CppMirEnumRepresentation *row = findEnum(type);
     if (row == nullptr) {
       add(CppMirBodyEmissionIssueKind::MissingEnumRepresentation, block,
           instruction,
@@ -20633,7 +20661,8 @@ private:
     switch (instruction.operation) {
     case MirOperation::EnumConstant:
       if (instruction.enumOwner) {
-        requireEnum(*instruction.enumOwner, block.id, instruction.id);
+        requireEnum(mirInstructionEnumType(instruction), block.id,
+                    instruction.id);
       }
       break;
     case MirOperation::Aggregate:
@@ -20712,7 +20741,8 @@ private:
                         instruction.id);
       const CppMirEnumRepresentation *enumeration =
           instruction.enumOwner
-              ? requireEnum(*instruction.enumOwner, block.id, instruction.id)
+              ? requireEnum(mirInstructionEnumType(instruction), block.id,
+                            instruction.id)
               : nullptr;
       if (enumeration != nullptr && instruction.enumVariant) {
         const auto variant =
@@ -21195,7 +21225,7 @@ private:
       }
       requireType(target.value->type, block.id, 0);
       if (target.value->enumOwner != 0) {
-        requireEnum(target.value->enumOwner, block.id, 0);
+        requireEnum(target.value->type, block.id, 0);
       }
     }
     if (terminator.kind == MirTerminatorKind::Invoke ||
@@ -23903,7 +23933,7 @@ valueRootedMoveAssignmentSlot(const MirProgram &program,
   const bool receiverPayloadFieldDestination = [&] {
     const MirPayloadEnum *enumeration =
         value->info.type.kind == SemanticType::Enum
-            ? program.findPayloadEnum(value->info.type.enumId)
+            ? program.findPayloadEnum(value->info.type)
             : nullptr;
     if (destination == nullptr || enumeration == nullptr ||
         enumeration->type != value->info.type ||
@@ -26513,7 +26543,7 @@ storageReadFailureHelperSpelling(IntrinsicKind intrinsic) {
           : nullptr;
   const MirIntegralEnum *enumeration =
       argument != nullptr && argument->info.type.kind == SemanticType::Enum
-          ? program.findIntegralEnum(argument->info.type.enumId)
+          ? program.findIntegralEnum(argument->info.type)
           : nullptr;
   return instruction.kind == MirInstructionKind::Call && instruction.result &&
          !instruction.receiver && !instruction.functionTarget &&
@@ -29079,7 +29109,7 @@ private:
     const CppMirEnumRepresentation *enumRow = nullptr;
     if (extract.enumOwner) {
       for (const CppMirEnumRepresentation &row : representations.enums()) {
-        if (row.owner == *extract.enumOwner) {
+        if (row.type == mirInstructionEnumType(extract)) {
           enumRow = &row;
         }
       }
@@ -29447,7 +29477,8 @@ private:
                 : PayloadEnumFreshReturnPublication{};
         const CppMirEnumRepresentation *enumRow = nullptr;
         for (const CppMirEnumRepresentation &row : representations.enums()) {
-          if (instruction.enumOwner && row.owner == *instruction.enumOwner) {
+          if (instruction.enumOwner &&
+              row.type == mirInstructionEnumType(instruction)) {
             enumRow = &row;
           }
         }
@@ -29666,7 +29697,7 @@ private:
       if (instruction.enumOwner) {
         for (const CppMirEnumRepresentation &candidate :
              representations.enums()) {
-          if (candidate.owner == *instruction.enumOwner) {
+          if (candidate.type == mirInstructionEnumType(instruction)) {
             enumRow = &candidate;
           }
         }
@@ -29759,7 +29790,7 @@ private:
       const CppMirEnumRepresentation *enumRow = nullptr;
       if (instruction.enumOwner) {
         for (const CppMirEnumRepresentation &row : representations.enums()) {
-          if (row.owner == *instruction.enumOwner) {
+          if (row.type == mirInstructionEnumType(instruction)) {
             enumRow = &row;
           }
         }
@@ -37469,7 +37500,7 @@ private:
       const CppMirEnumRepresentation *payloadRow = nullptr;
       if (terminator.value->type.kind == SemanticType::Enum) {
         for (const CppMirEnumRepresentation &row : representations.enums()) {
-          if (row.owner == terminator.value->type.enumId &&
+          if (row.type == terminator.value->type &&
               !row.payloadVariants.empty()) {
             payloadRow = &row;
           }
@@ -39799,7 +39830,7 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
         constructor.initializers[initializerIndex];
     if (bodyOrderedOwner && scalarParameterType(initializer.targetType) &&
         (initializer.targetType.kind != SemanticType::Enum ||
-         program.findPayloadEnum(initializer.targetType.enumId) == nullptr))
+         program.findPayloadEnum(initializer.targetType) == nullptr))
       continue;
     if (initializer.kind != ConstructorInitializerTargetKind::Field ||
         initializer.storesReference || initializer.ownedParameter ||
@@ -43108,7 +43139,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            // ordinary out-parameter; the scalar-payload demand keeps the
            // boundary default-constructible on every shipped standard.
            !(*returnKind == CppMirTypeRepresentationKind::Enum &&
-             cppMirEnumBoundaryRow(representations_, function->returnType)) &&
+             cppMirEnumBoundaryRow(program_, representations_,
+                                   function->returnType)) &&
            !exactPassiveExpectedResult)) {
         {
           return false;
@@ -43274,7 +43306,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
              lambda->returnType.kind == SemanticType::CString)) ||
            *returnKind == CppMirTypeRepresentationKind::StringView ||
            (*returnKind == CppMirTypeRepresentationKind::Enum &&
-            cppMirEnumBoundaryRow(representations_, lambda->returnType)) ||
+            cppMirEnumBoundaryRow(program_, representations_,
+                                  lambda->returnType)) ||
            exactPassiveExpectedResult);
       if (!passiveResult) {
         return false;
@@ -43870,7 +43903,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     const MirPayloadEnum *bindingPayloadEnum =
         place.root == MirPlaceRootKind::Binding && place.projections.empty() &&
                 place.type.kind == SemanticType::Enum
-            ? program_.findPayloadEnum(place.type.enumId)
+            ? program_.findPayloadEnum(place.type)
             : nullptr;
     if (bindingPayloadEnum != nullptr &&
         bindingPayloadEnum->requiresActiveCleanup &&
@@ -46040,7 +46073,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (instruction.enumOwner) {
             for (const CppMirEnumRepresentation &candidate :
                  representations_.enums()) {
-              if (candidate.owner == *instruction.enumOwner) {
+              if (candidate.type == mirInstructionEnumType(instruction)) {
                 enumRow = &candidate;
               }
             }
@@ -46270,7 +46303,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (instruction.enumOwner) {
             for (const CppMirEnumRepresentation &row :
                  representations_.enums()) {
-              if (row.owner == *instruction.enumOwner) {
+              if (row.type == mirInstructionEnumType(instruction)) {
                 enumRow = &row;
               }
             }
@@ -46745,7 +46778,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         const MirPayloadEnum *owningPayloadEnum =
             movedSource->type.kind == SemanticType::Enum
-                ? program_.findPayloadEnum(movedSource->type.enumId)
+                ? program_.findPayloadEnum(movedSource->type)
                 : nullptr;
         if (owningPayloadEnum != nullptr &&
             owningPayloadEnum->requiresActiveCleanup &&
@@ -46787,7 +46820,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         const MirPayloadEnum *owningPayloadEnum =
             staged.type.kind == SemanticType::Enum
-                ? program_.findPayloadEnum(staged.type.enumId)
+                ? program_.findPayloadEnum(staged.type)
                 : nullptr;
         if (owningPayloadEnum != nullptr &&
             owningPayloadEnum->requiresActiveCleanup) {
@@ -47406,7 +47439,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               return true;
             const MirPayloadEnum *owningPayloadEnum =
                 operand.type.kind == SemanticType::Enum
-                    ? program_.findPayloadEnum(operand.type.enumId)
+                    ? program_.findPayloadEnum(operand.type)
                     : nullptr;
             if (owningPayloadEnum != nullptr &&
                 owningPayloadEnum->requiresActiveCleanup) {
@@ -48050,8 +48083,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                       owningPayloadEnumValueSlot(
                           program_, body, *instruction.result) != nullptr;
                 } else {
-                  returnReady = cppMirEnumBoundaryRow(representations_,
-                                                      target->returnType);
+                  returnReady = cppMirEnumBoundaryRow(
+                      program_, representations_, target->returnType);
                 }
                 break;
               default:
@@ -49336,7 +49369,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             target.value->enumOwner != 0) {
           const CppMirEnumRepresentation *enumRow = nullptr;
           for (const CppMirEnumRepresentation &row : representations_.enums()) {
-            if (row.owner == target.value->enumOwner) {
+            if (row.type == target.value->type) {
               enumRow = &row;
             }
           }
@@ -49380,7 +49413,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       const MirPayloadEnum *returnPayloadEnum =
           body.returnType.kind == SemanticType::Enum
-              ? program_.findPayloadEnum(body.returnType.enumId)
+              ? program_.findPayloadEnum(body.returnType)
               : nullptr;
       const bool activePayloadEnumReturn =
           returnPayloadEnum != nullptr &&
@@ -49944,7 +49977,7 @@ initializerScheduleFromAnalysis(const MirProgram &program_,
         if (instruction->enumOwner) {
           for (const CppMirEnumRepresentation &candidate :
                representations_.enums()) {
-            if (candidate.owner == *instruction->enumOwner) {
+            if (candidate.type == mirInstructionEnumType(*instruction)) {
               enumRow = &candidate;
             }
           }

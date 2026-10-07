@@ -70,6 +70,15 @@ whole-program plan verification or be published to the backend. Normal
 
 IDs are stable only inside one `HirProgram`; zero means no identity.
 
+Enum discovery keys each row by its complete semantic type: primary enum
+identity plus canonical type/value arguments. Semantic substitution supplies
+the exact alternative signatures and folded lifecycle facts. Generic primaries
+are not concrete representation rows. Discovery publishes a concrete enum row
+before visiting its payloads, then recursively discovers every alternative's
+concrete class/enum dependencies, including alternatives never constructed in
+source. This permits finite recursive owning sums without inventing a second
+generic type system or omitting an unused alternative from layout.
+
 Consuming `expected<T, E>` combinators receive their exact operation, mapper
 identity, and result type from semantics. `transform_error`, `transform`, and
 `and_then` share one expansion into a state test,

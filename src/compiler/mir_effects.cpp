@@ -1319,7 +1319,7 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
                          .requiresActiveCleanup = true};
     }
     if (selected.kind == SemanticType::Enum) {
-      const auto *enumeration = program.findPayloadEnum(selected.enumId);
+      const auto *enumeration = program.findPayloadEnum(selected);
       if (enumeration == nullptr)
         return std::nullopt;
       MirDropType result{.type = selected,
@@ -1361,7 +1361,7 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
               alternative.kind == SemanticType::CString ||
               alternative.kind == SemanticType::StringView ||
               (alternative.kind == SemanticType::Enum &&
-               program.findPayloadEnum(alternative.enumId) == nullptr);
+               program.findPayloadEnum(alternative) == nullptr);
           if (passive) {
             child = MirDropType{.type = alternative};
           } else {
@@ -1421,7 +1421,7 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
           value.kind == SemanticType::CString ||
           value.kind == SemanticType::StringView ||
           (value.kind == SemanticType::Enum &&
-           program.findPayloadEnum(value.enumId) == nullptr)) {
+           program.findPayloadEnum(value) == nullptr)) {
         return MirDropType{.type = selected, .requiresActiveCleanup = true};
       }
       if (selected.kind == SemanticType::Storage ||
@@ -1588,7 +1588,7 @@ RelocationKind mirTypeRelocationKind(const MirProgram &program,
       return result;
     }
     if (candidate.kind == SemanticType::Enum) {
-      if (const auto *enumeration = program.findPayloadEnum(candidate.enumId)) {
+      if (const auto *enumeration = program.findPayloadEnum(candidate)) {
         if (!enums.insert(candidate.enumId).second)
           return RelocationKind::Unavailable;
         auto result = RelocationKind::Structural;

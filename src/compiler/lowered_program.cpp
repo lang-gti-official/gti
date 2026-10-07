@@ -28,10 +28,15 @@ LoweredProgram::findClassDeclaration(ClassId id) const {
 
 const LoweredEnumDeclaration *
 LoweredProgram::findEnumDeclaration(EnumId id) const {
+  return findEnumDeclaration(SemanticType::enumType(id));
+}
+
+const LoweredEnumDeclaration *
+LoweredProgram::findEnumDeclaration(const SemanticType &type) const {
   for (const LoweredDeclaration &declaration : declarations_) {
     if (const auto *payload =
             std::get_if<LoweredEnumDeclaration>(&declaration.payload);
-        payload != nullptr && payload->id == id) {
+        payload != nullptr && payload->type == type) {
       return payload;
     }
   }

@@ -6796,7 +6796,18 @@ consumer, and release refreshes remain outstanding for the full campaign.
   `std::variant` wrapper without making that library type source semantics.
 - **Remaining scope:** Add direct enum lambda capture, consuming payload
   bindings, fixed-array and direct result-alternative transport, generic
-  payload declarations, and deterministic layout in separately proven families.
+  payload declaration completion gates, and deterministic layout in separately proven families.
+  The general generic-declaration campaign is active in
+  `codex/generic-payload-enums`. The candidate retains ordinary semantic binders
+  and exact substituted alternative signatures, including defaults, type/value
+  arguments and a final metadata pack. Concrete construction/matching, HIR
+  discovery, verified lifecycle and detached representation use the complete
+  enum type rather than the primary declaration alone. Forward defaults,
+  alias payload validation and nominal deduction have focused regressions.
+  Runtime/tooling/corpus validation and upstream reconciliation remain delivery
+  gates. This campaign is not an `expected` implementation. The owner's spelling
+  amendment makes `class` optional with identical scoped semantics for both
+  declaration forms.
 - **Non-goals:** Implicit conversions, open variants, making `std::variant`
   compiler magic, or treating the separately implemented passive native union
   as a tagged sum or C ABI union.
