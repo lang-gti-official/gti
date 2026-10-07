@@ -97,6 +97,31 @@ void negative(const std::string &name, const std::string &source,
 } // namespace
 
 int main() {
+  positive("by-value guard moves retain their formal provenance", R"gti(
+void consume(Guard guard) {
+  auto first = std::move(guard);
+  auto second = std::move(first);
+}
+int main() {
+  Resource resource{};
+  consume(Guard(resource));
+  return observed - 7;
+}
+)gti");
+
+  positive("entry owner movement through exclusive branches", R"gti(
+void consume(Guard guard, bool branch) {
+  if (branch) { auto left = std::move(guard); }
+  else { auto right = std::move(guard); }
+}
+int main() {
+  Resource resource{};
+  consume(Guard(resource), true);
+  consume(Guard(resource), false);
+  return observed - 14;
+}
+)gti");
+
   {
     const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                          "fixtures/nested_borrow_fields.gti";

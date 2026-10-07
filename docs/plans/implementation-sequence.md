@@ -3800,6 +3800,12 @@ do not expose C++ object layout as GTI semantics.
   otherwise, and the example arena reclaims space only by whole reset; and the
   optional audit reports many analysis-limitation findings inside provider
   implementations.
+  A follow-up audit found a missed composition: moving a by-value cleanup-bound
+  parameter through local bindings lost its formal MIR provenance and raised
+  an ICE. The correction retains that entry identity while independently
+  verifying every local carrier's exact lifecycle transfer; it does not relax
+  borrowed-owner lifetime rules. The audit also corrected unsafe member
+  requirement advice that incorrectly demanded a safe implementation.
   Explicit nested constructors now
   compose formal-to-field dependency paths, with generic three-level and
   reordered two-origin tests, and backend nested publication is admitted.
