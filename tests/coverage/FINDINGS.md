@@ -170,7 +170,7 @@ gated, because they report rather than assert.
 
 | Finding | Resolution |
 | --- | --- |
-| A06 | Canonical HIR discovery stops at 64 new-instance levels or 16,384 distinct instances with located GTI-S2105; exact recursion and finite chains through the boundary remain valid. The original growing Box recursion rejects in about 4.5 seconds on the optimized macOS arm64 build, within its unchanged 20-second gate limit. |
+| A06 | Canonical HIR discovery stops at 64 new-instance levels or 16,384 distinct generic instances with located GTI-S2105; ordinary roots, exact recursion and finite chains through the depth boundary remain valid. The original growing Box recursion rejects in about 4.5 seconds on the optimized macOS arm64 build, within its unchanged 20-second gate limit. |
 | A54 | Alias identities remain available during registration; target constraints are obligatorily rechecked after complete class/member/lifecycle publication, including unused aliases. |
 | A57 | Non-dependent range types remain exact, while numeric loan IDs are compared within the correct concrete reanalysis domain. Access/loan/carrier/protocol mutations remain rejected. Every silent invalid-HIR result now produces a located internal diagnostic. |
 | F1 | HIR verification now compares concrete generic range facts and stable loan provenance rather than declaration-level types and per-analysis loan IDs. |

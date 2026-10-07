@@ -277,13 +277,16 @@ parameter type can discover another concrete instance. A fixed pass over the
 initial declarations is therefore incorrect.
 
 Canonical discovery is bounded to 64 new-instance levels along one request
-chain and 16,384 distinct class/function/constructor/destructor instances per
+chain and 16,384 distinct generic class/function/constructor/destructor instances per
 HIR request (ordinary or staged constant closure). Reusing an exact instance
 does not consume another discovery level. The bounds are deterministic compiler
 resource limits, not a proof that polymorphic recursion terminates: a runtime
 condition does not stop concrete body discovery. Exceeding a bound reports
 `GTI-S2105` at the requesting source, relates the declaration, and stops the
-worklist before reanalyzing deeper bodies. Ordered depth/provenance bookkeeping
+worklist before reanalyzing deeper bodies. The inventory includes generic-owner
+members and empty-pack generic declarations; ordinary declaration roots do not
+consume it. Ancestry remains intact when generic discovery reaches a new
+nongeneric instance, rather than resetting at a bridge. Ordered depth/provenance bookkeeping
 belongs to discovery, never to instance identity or backend representation.
 
 Declaration seeding also closes over nondependent type components in generic

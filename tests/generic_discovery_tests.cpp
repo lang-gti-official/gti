@@ -190,11 +190,48 @@ int main() { return exact(1, 200) - 200; }
              .canGenerateCode(),
          "exact recursive calls reuse a canonical instance");
 }
+void checkInventoryLimits() {
+  // Stop at the owning HIR phase instead of building irrelevant MIR bodies.
+  const lang::Frontend frontend({.stopAfter = lang::FrontendPhase::Hir,
+                                 .toolingOccurrences = false,
+                                 .suggestIncludes = false});
+  std::string ordinary;
+  for (std::size_t index = 0; index != 16385; ++index)
+    ordinary += "void ordinary_" + std::to_string(index) + "() {}\n";
+  ordinary += "int main() { return 0; }\n";
+  const auto flat = frontend.analyze("ordinary-inventory.gti", ordinary);
+  expect(flat.hirValid && flat.hir.functionInstances().size() == 16386,
+         "more than the generic inventory bound remains valid for flat "
+         "ordinary roots");
+
+  std::string generic = "void item<uint64_t N>() {}\nint main() {\n";
+  for (std::size_t index = 0; index != 16385; ++index)
+    generic += "item<" + std::to_string(index) + ">();\n";
+  const std::size_t lastSite = generic.rfind("item<16384>");
+  generic += "return 0; }\n";
+  const auto excessive = frontend.analyze("generic-inventory.gti", generic);
+  bool bounded = false;
+  for (const auto &diagnostic : excessive.diagnostics)
+    bounded =
+        bounded ||
+        (diagnostic.code == "GTI-S2105" &&
+         diagnostic.message.find("distinct-instance") != std::string::npos &&
+         diagnostic.message.find("16384") != std::string::npos &&
+         std::filesystem::path(diagnostic.primary.source).filename() ==
+             "generic-inventory.gti" &&
+         diagnostic.primary.start >= lastSite &&
+         diagnostic.primary.end > diagnostic.primary.start);
+  expect(
+      !excessive.hirValid && bounded &&
+          excessive.hir.functionInstances().size() == 16385,
+      "the first excess generic instance is diagnosed at its requesting call");
+}
 } // namespace
 
 int main() {
   checkAliases();
   checkRanges();
   checkLimits();
+  checkInventoryLimits();
   return failures == 0 ? 0 : 1;
 }
