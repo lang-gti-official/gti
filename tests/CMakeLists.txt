@@ -680,6 +680,15 @@ add_executable("gti_lowered_program_tests"
                "${PROJECT_SOURCE_DIR}/tests/lowered_program_contract_client.cpp")
 target_link_libraries("gti_lowered_program_tests" PRIVATE gti_compiler)
 add_test(NAME lowered_program_contract COMMAND gti_lowered_program_tests)
+add_executable(gti_field_symbol_identity_tests field_symbol_identity_tests.cpp)
+target_link_libraries(gti_field_symbol_identity_tests PRIVATE gti_compiler)
+add_test(NAME field_symbol_identity COMMAND gti_field_symbol_identity_tests)
+add_executable(gti_constructor_transport_tests constructor_transport_tests.cpp)
+target_link_libraries(gti_constructor_transport_tests PRIVATE gti_compiler)
+add_test(NAME constructor_transport COMMAND gti_constructor_transport_tests)
+add_test(NAME generic_callable_transport_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/generic_callable_transport_runtime_test.py" "$<TARGET_FILE:gti>")
+set_tests_properties(generic_callable_transport_runtime PROPERTIES TIMEOUT 360)
 
 add_executable("gti_lowered_program_census"
                "${PROJECT_SOURCE_DIR}/tests/lowered_program_census.cpp"
@@ -778,7 +787,15 @@ add_test(NAME field_array_empty_state COMMAND gti_field_array_empty_state_tests)
 add_executable(gti_passive_fixed_array_tests passive_fixed_array_tests.cpp)
 target_link_libraries(gti_passive_fixed_array_tests PRIVATE gti_cpp_backend)
 add_test(NAME passive_fixed_array_values COMMAND gti_passive_fixed_array_tests)
+add_executable(gti_class_field_value_tests class_field_value_tests.cpp)
+target_link_libraries(gti_class_field_value_tests PRIVATE gti_cpp_backend)
+add_test(NAME class_field_values COMMAND gti_class_field_value_tests)
 if(Python3_Interpreter_FOUND)
+  add_test(NAME class_field_value_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/class_field_value_runtime_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(class_field_value_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME passive_fixed_array_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/passive_fixed_array_runtime_test.py"
@@ -1399,6 +1416,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}/examples/07-generics.gti"
   )
+  add_test(NAME mir_field_determinism
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/determinism_test.py"
+      "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}/tests/coverage/reproducers/a13-mir-field-symbol-order.gti" --mir-runs 30)
+  add_test(NAME mir_associative_determinism
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/determinism_test.py"
+      "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}/examples/87-associative-containers.gti" --mir-runs 6)
+  set_tests_properties(mir_field_determinism mir_associative_determinism PROPERTIES TIMEOUT 180)
   add_test(
     NAME compiler_debug_tooling
     COMMAND "${Python3_EXECUTABLE}"
@@ -2156,6 +2180,11 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/function_items.gti"
   )
   set_tests_properties(function_item_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME generic_contract_runtime
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/generic_contract_runtime_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(generic_contract_runtime PROPERTIES TIMEOUT 300)
   add_test(
     NAME function_signature_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -3104,6 +3133,11 @@ if(Python3_Interpreter_FOUND)
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/unsafe_function_lsp_test.py"
                    "$<TARGET_FILE:gti_lsp>")
+    add_test(NAME diagnostic_recovery_lsp
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${PROJECT_SOURCE_DIR}/tests/diagnostic_recovery_lsp_test.py"
+                     "$<TARGET_FILE:gti_lsp>")
+    set_tests_properties(diagnostic_recovery_lsp PROPERTIES TIMEOUT 60)
     add_test(NAME runtime_object_layout_lsp
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/runtime_object_layout_lsp_test.py"
@@ -3119,6 +3153,14 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME cthread_lsp
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/cthread_lsp_test.py"
+                     "$<TARGET_FILE:gti_lsp>")
+    add_test(NAME generic_advisory_lsp
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${PROJECT_SOURCE_DIR}/tests/generic_advisory_lsp_test.py"
+                     "$<TARGET_FILE:gti_lsp>")
+    add_test(NAME generic_contract_lsp
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${PROJECT_SOURCE_DIR}/tests/generic_contract_lsp_test.py"
                      "$<TARGET_FILE:gti_lsp>")
     add_test(
       NAME source_text_lsp
