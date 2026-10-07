@@ -7,7 +7,9 @@ from lambda_pack_invocation_runtime_test import main
 
 if __name__ == "__main__":
     reproducers = Path(__file__).parent / "coverage" / "reproducers"
-    originals = ("a28-range-element-field-overloaded-operator",
+    originals = ("a28-map-range-for-key-view",
+                 "a28-range-element-field-ref-method",
+                 "a28-range-element-field-overloaded-operator",
                  "a34-view-relay-through-subscript",
                  "a56-make-unique-same-type",
                  "a56-make-unique-string-from-string")
