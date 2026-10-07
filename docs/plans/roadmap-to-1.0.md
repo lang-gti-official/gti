@@ -113,13 +113,21 @@ Before 1.0, public GTI must be able to support these representative workloads:
 4. a renderer or game-style update loop using mutable containers, iteration,
    domain arithmetic, files, time, and allocation;
 5. a compiler-style AST or protocol modeled with payload enums and exhaustive
-   matching; and
+   matching;
 6. a nontrivial fallible pipeline using ergonomic, cleanup-correct `expected`
-   propagation.
+   propagation; and
+7. a trusted native gameplay module that a C or C++ engine host can load,
+   invoke repeatedly through generated versioned C wrappers, receive a
+   contained GTI failure from, destroy, unload, and reload without depending
+   on ordinary GTI or generated C++ ABI.
 
 Each workload may land as several bounded vertical slices. It is not a reason
 to hard-code a public library name or to bypass the accepted ownership,
-semantic, IR, and backend contracts.
+semantic, IR, and backend contracts. The dependency-ordered delivery and exact
+engine handoff gate for item 7 live in the
+[engine embedding campaign](implementation-sequence.md#engine-embedding-delivery-campaign).
+That bounded C wrapper does not contradict the explicit non-requirement for a
+stable native ABI for ordinary GTI values.
 
 ### Outcome-first scheduling
 

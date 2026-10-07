@@ -791,7 +791,8 @@ private:
 
 std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   std::ostringstream output;
-  output << "lowered-program-v11\n";
+  output << (program.embeddingPlan() ? "lowered-program-v12\n"
+                                     : "lowered-program-v11\n");
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="
@@ -800,6 +801,31 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
          << targetEndiannessName(program.target().dataLayout.endianness())
          << " pointer-width=" << program.target().dataLayout.pointerWidthBits()
          << '\n';
+  if (const std::optional<LoweredEmbeddingPlan> &embedding =
+          program.embeddingPlan()) {
+    output << "program-kind library embedding-abi=" << embedding->abiVersion
+           << " exports=" << embedding->exports.size() << '\n';
+    for (const LoweredEmbeddingExport &selected : embedding->exports) {
+      output << "embedding-export symbol=" << std::quoted(selected.symbol)
+             << " function=" << std::quoted(selected.qualifiedName)
+             << " declaration=" << selected.declaration
+             << " instance=" << selected.function << " return=";
+      DeclarationPayloadPrinter(output).semanticType(selected.returnType);
+      output << " parameters=[";
+      for (std::size_t index = 0; index < selected.parameterTypes.size();
+           ++index) {
+        if (index != 0) {
+          output << ',';
+        }
+        DeclarationPayloadPrinter(output).semanticType(
+            selected.parameterTypes[index]);
+      }
+      output << "] request=" << std::quoted(selected.requestSource.source)
+             << ':' << selected.requestSource.start << ':'
+             << selected.requestSource.end << ':' << selected.requestSource.line
+             << '\n';
+    }
+  }
   for (std::size_t index = 0; index < targetScalarKindCount; ++index) {
     const auto kind = static_cast<TargetScalarKind>(index);
     const std::optional<TargetTypeLayout> layout =
