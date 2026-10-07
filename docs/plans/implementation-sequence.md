@@ -7068,6 +7068,12 @@ consumer, and release refreshes remain outstanding for the full campaign.
   A non-mutating preview identifies the two emitter resolutions: retain the
   passive-default assignment proof together with the stricter ordinary
   construction guard, and consistently use the passive-default helper.
+  Subsequent reconciliation with canonical PR126 retains deterministic field
+  identity and exact-owner callable transport; all 12 focused overlap gates
+  pass, including the enum matrix and both censuses. Tree-sitter regeneration
+  has no diff, all 76 corpus cases and 187 shipped sources parse, and
+  highlight/locals/source-text checks pass with the correct rebuilt worktree
+  parser rather than another worktree's shared cached grammar.
   Combined full-suite/coverage-corpus
   validation and upstream release integration remain delivery gates. This
   campaign is not an `expected` implementation. The owner's spelling
