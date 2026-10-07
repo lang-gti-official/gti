@@ -57,7 +57,7 @@ had no regression protection.
 | --- | --- |
 | Resolved, now gated as passing | F8, F9, F11, F12, F13, F15 (its `(a + b).value()` form), S03, S05, S07, S10, S11 |
 | Improved | S08: the 40-link chain compiles in about 1.2s (was 6.5s) |
-| Still reproduced, gated as known | F10, F14, F16, F17, S01, S02, S04, S06, S09, S12, S15 |
+| Still reproduced, gated as known | F10, F14, F16, F17, S01, S02, S04, S06, S09, S12, S15, tracked together in [#103](https://git.internal.howetotech.dev/gti-lang/gti/issues/103) (F14's wrong diagnostic is now GTI-S2015 rather than GTI-S2046) |
 | Still reproduced, new reproducers | F7 ([#51](https://git.internal.howetotech.dev/gti-lang/gti/issues/51)): the original `std::optional` reproducer passes because `optional` gained bodies, but declaration-only `std::weak_ptr` members and any user-declared GTI function without a body still fail at the native link |
 | Not gated (resource or tooling inputs) | F18, F19, F20, S13, S14 |
 
