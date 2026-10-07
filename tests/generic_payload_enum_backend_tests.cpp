@@ -364,5 +364,45 @@ int main() {
              "checked place emission");
     }
   }
+  for (const std::string declaration :
+       {"enum E { item(P value), empty };",
+        "enum Family<T> { item(T value), empty }; using E = Family<P>;"}) {
+    const auto passive = lang::Frontend().analyze(
+        "passive-class-enum-publications.gti", std::string(R"(
+class P {
+  mut int number = 0;
+public:
+  P(int number) : number(number) {}
+  int get() { return this.number; }
+};
+)") + declaration + R"(
+int main() {
+  E fresh = E::item(P(7));
+  P source = P(9);
+  E copied = E::item(source);
+  switch (fresh) {
+    case E::item(value): if (value.get() != 7) { return 1; } break;
+    case E::empty: return 2;
+  }
+  switch (copied) {
+    case E::item(auto& value): return value.get() - 9;
+    case E::empty: return 3;
+  }
+}
+)");
+    expect(passive.canGenerateCode(),
+           "passive class enum construction, copy and copied extraction "
+           "retain exact MIR identities");
+    if (!passive.canGenerateCode()) {
+      for (const auto &diagnostic : passive.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      continue;
+    }
+    for (const auto standard :
+         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+      expect(!gti_test::emitCpp(passive, standard).contents.empty(),
+             "fused passive class publications do not invent SSA storage");
+    }
+  }
   return failures == 0 ? 0 : 1;
 }

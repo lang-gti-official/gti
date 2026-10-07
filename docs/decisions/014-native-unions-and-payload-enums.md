@@ -81,8 +81,8 @@ optional storage. Generic argument identity is not ownership containment;
 concrete fields and declaration-bound storage capabilities supply the owning
 facts that HIR and MIR preserve and verify.
 
-Polymorphic callable transport, direct enum lambda capture, direct array or
-non-class payloads, stored borrowed state, consuming patterns, and a stable source layout
+Polymorphic callable transport, direct enum lambda capture, direct fixed-array
+or owning non-class payloads, stored borrowed state, consuming patterns, and a stable source layout
 remain outside this decision. The C++ backend may use `std::variant` plus a
 private disengaged representation state because all language decisions are
 complete before emission; that state is not a source alternative and a future

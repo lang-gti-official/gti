@@ -27514,9 +27514,13 @@ public:
         continue;
       }
       if (value.info.type.kind == SemanticType::Class) {
-        if (inlinePayloadClassCopy(facts.body, value.id)) {
-          // The existing exact copy-to-variant proof owns this value at its
-          // consumer; it has no independent native SSA object.
+        if (inlinePayloadClassConstruction(facts.body, value.id) ||
+            inlinePayloadClassCopy(facts.body, value.id) ||
+            inlinePayloadClassExtract(facts.body, value.id)) {
+          // These existing exact producer/consumer proofs construct the
+          // class at its variant or copied-pattern binding publication.
+          // Their instruction emitters fuse those operations there, so an
+          // independent SSA object would invent a second lifetime identity.
           continue;
         }
         if (nativeExpectedValueOrResult(program, facts.body, value.id)) {

@@ -199,6 +199,50 @@ int main() {
   }
 }
 """, 0, "9\n"),
+        "generic-passive-class-publications": ("""
+class P {
+  mut int32_t number = 0;
+public:
+  P(int32_t number) : number(number) {}
+  int32_t get() { return this.number; }
+};
+enum Family<T> { item(T value), empty };
+int main() {
+  Family<P> fresh = Family<P>::item(P(7));
+  P source = P(9);
+  Family<P> copied = Family<P>::item(source);
+  switch (fresh) {
+    case Family<P>::item(value): if (value.get() != 7) { return 1; } break;
+    case Family<P>::empty: return 2;
+  }
+  switch (copied) {
+    case Family<P>::item(auto& value): return value.get() - 9;
+    case Family<P>::empty: return 3;
+  }
+}
+""", 0, ""),
+        "nongeneric-passive-class-publications": ("""
+class P {
+  mut int32_t number = 0;
+public:
+  P(int32_t number) : number(number) {}
+  int32_t get() { return this.number; }
+};
+enum E { item(P value), empty };
+int main() {
+  E fresh = E::item(P(7));
+  P source = P(9);
+  E copied = E::item(source);
+  switch (fresh) {
+    case E::item(value): if (value.get() != 7) { return 1; } break;
+    case E::empty: return 2;
+  }
+  switch (copied) {
+    case E::item(auto& value): return value.get() - 9;
+    case E::empty: return 3;
+  }
+}
+""", 0, ""),
         "receiver-pattern-loans": ("""
 #include <std/vector>
 enum Buffer<std::move_constructible T> { data(std::vector<T> values) };

@@ -3303,6 +3303,20 @@ and premature field activation. Generic field and transport mutations retain the
 independent preflight gates. The Tree-sitter corpus and capture tests own editor grammar and
 highlighting.
 
+`generic_enum_declaration` owns generic payload declaration binders, defaults,
+exact nominal identity, invalid applications, optional `class` spelling, and
+retained instance-signature reset. `generic_payload_enum_backend` verifies
+exact concrete enum rows and construction/matching through detached lowering,
+including forged type/instance metadata. `generic_enum_instances_runtime`
+checks generic and nongeneric transport, owning and passive field publication,
+borrowed/copied patterns, finite owning recursion, cleanup and failure rollback
+under both C++ standards at O0/O1/O3, no-elide construction, and ASan/UBSan.
+`generic_enum_lsp` covers concrete/default/alias signatures, qualified
+completion and dirty dependency reanalysis, including rejection of stale
+diagnostics republished with a newer document version. Example 129 and the
+MIR/lowered censuses demonstrate a source-defined message queue without
+special treatment of a result-library type.
+
 Recursive owning sums additionally use `recursive_payload_sum_runtime` for
 finite generic containment, reverse sibling cleanup, partially constructed
 owners/alternatives, and destructor failure. `borrowed_payload_pattern_runtime`
