@@ -4974,6 +4974,13 @@ directTemporaryArgumentForValue(const MirBody &body, MirValueId valueId) {
 
 [[nodiscard]] DirectTemporaryBorrow
 directTemporaryBorrowForValue(const MirBody &body, MirValueId valueId) {
+  const MirValue *value = body.findValue(valueId);
+  // Both receiver and argument proofs require an exact class temporary.
+  // Scalars cannot satisfy that contract; do not scan every call in the body
+  // to rediscover the same necessary exclusion for each scalar value.
+  if (value == nullptr || value->info.type.kind != SemanticType::Class) {
+    return {};
+  }
   const DirectTemporaryBorrow receiver =
       directTemporaryReceiverForValue(body, valueId);
   return receiver ? receiver : directTemporaryArgumentForValue(body, valueId);
@@ -4981,7 +4988,17 @@ directTemporaryBorrowForValue(const MirBody &body, MirValueId valueId) {
 
 [[nodiscard]] DirectTemporaryBorrow
 directTemporaryBorrowForSlot(const MirBody &body, const MirPlace &slot) {
+  // A successful directTemporaryBorrow proves these exact slot/value facts.
+  // Restrict candidates before the expensive call/lifecycle proof, retaining
+  // that complete proof for every potentially matching materialization.
+  if (slot.type.kind != SemanticType::Class ||
+      slot.access != AccessMode::Mutable || slot.sourceValue == 0) {
+    return {};
+  }
   for (const MirValue &value : body.values) {
+    if (value.sourceValue != slot.sourceValue || value.info.type != slot.type) {
+      continue;
+    }
     const DirectTemporaryBorrow temporary =
         directTemporaryBorrowForValue(body, value.id);
     if (temporary.slot == &slot) {
@@ -42951,7 +42968,15 @@ bool cppMirNeedsFailureFreeBoundaryWrapper(
 bool cppMirNeedsTerminalSubscriptBoundaryWrapper(
     const MirProgram &program, const CppMirBodyEmissionMap &representations,
     HirFunctionInstanceId function) {
-  if (function == 0) {
+  const MirFunctionInstance *target = program.findFunctionInstance(function);
+  // containedSubscriptMember can only select this exact structural family.
+  // Most failure-capable functions are not subscript members and must not
+  // trigger a whole-program projection scan just to establish that fact.
+  if (target == nullptr || !target->overloadedOperator ||
+      *target->overloadedOperator != OverloadedOperator::Subscript ||
+      !target->owner || target->parameterTypes.size() != 1 ||
+      target->linkage != LanguageLinkage::Gti ||
+      target->definitionKind != MirFunctionInstance::DefinitionKind::Source) {
     return false;
   }
   const auto selectsFunction = [&](const MirBody &body, const MirPlace *place,
