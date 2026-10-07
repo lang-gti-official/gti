@@ -34,6 +34,52 @@ int main() {
     }
   }
   expect(passiveUnions == 1, "fixture contains one independent passive union");
+  std::size_t unionFieldSchedules = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    for (const auto &block : constructor.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Construct ||
+            instruction.constructorTarget)
+          continue;
+        const auto found = std::find_if(
+            frontend.mir.classInstances().begin(),
+            frontend.mir.classInstances().end(), [&](const auto &owner) {
+              return owner.unionLayout && owner.type == instruction.info.type;
+            });
+        if (found == frontend.mir.classInstances().end())
+          continue;
+        ++unionFieldSchedules;
+        expect(
+            lang::CppMirBodyEmitter(frontend.mir, rows)
+                .supportsFailureBodyText(
+                    {lang::MirBodyKind::Constructor, constructor.id}),
+            "generated constructor preserves passive union field publication");
+        for (int mutation = 0; mutation != 5; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *owner = const_cast<lang::MirClassInstance *>(
+              malformed.findClassInstance(found->id));
+          if (mutation == 0)
+            owner->defaultConstructor = lang::SpecialMemberStatus::Deleted;
+          if (mutation == 1)
+            owner->moveAssignment = lang::SpecialMemberStatus::Deleted;
+          if (mutation == 2)
+            owner->requiresActiveCleanup = true;
+          if (mutation == 3)
+            owner->unionLayout->fields.front().type =
+                lang::SemanticType::UInt32;
+          if (mutation == 4)
+            owner->unionLayout->fields.front().field = 0;
+          expect(!lang::CppMirBodyEmitter(malformed, rows)
+                      .supportsFailureBodyText(
+                          {lang::MirBodyKind::Constructor, constructor.id}),
+                 "passive union default publication retains lifecycle/layout "
+                 "proofs");
+        }
+      }
+    }
+  }
+  expect(unionFieldSchedules == 1,
+         "fixture exercises one generated passive-union field schedule");
   std::size_t arrays = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
