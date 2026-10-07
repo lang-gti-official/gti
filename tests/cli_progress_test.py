@@ -5,13 +5,38 @@ import errno
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
 import time
 
 
+def assert_neutral_native_detail(output):
+    marker = "Native  compiling and linking"
+    lines = [line for line in output.splitlines() if marker in line]
+    assert lines, output
+    for line in lines:
+        detail = line.split(marker, 1)[1]
+        # Timings are expected on slow builds; only a backend/tool label is
+        # forbidden here. A bare '(' assertion made this gate load-dependent.
+        assert re.fullmatch(r"(?: \([0-9]+(?:\.[0-9]+)?s(?: elapsed)?\))?", detail), line
+
+
+def test_native_detail_policy():
+    for detail in ("", " (1.46s)", " (10.00s elapsed)"):
+        assert_neutral_native_detail("    Native  compiling and linking" + detail)
+    for label in ("c++", "cpp", "clang++", "g++", "c++20"):
+        try:
+            assert_neutral_native_detail(f"    Native  compiling and linking ({label})")
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(f"accepted explicit backend label: {label}")
+
+
 def main():
+    test_native_detail_policy()
     gti = str(Path(sys.argv[1]).resolve())
     env = dict(os.environ, TERM="xterm-256color")
     env.pop("NO_COLOR", None)
@@ -53,7 +78,7 @@ def main():
         assert "Finished" not in built.stdout and "Built progress" in built.stdout
         assert "Publishing  executable and build cache" not in built.stderr
         assert "C++" not in built.stdout + built.stderr
-        assert "compiling and linking (" not in built.stderr
+        assert_neutral_native_detail(built.stderr)
         assert "Kept backend representation" in built.stdout
         executable = next(path for path in (root / "build").rglob("progress*")
                           if path.is_file() and path.name in ["progress", "progress.exe"])
