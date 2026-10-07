@@ -285,7 +285,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
              .requiredCapability = signature.requiredCapability,
              .selectedCapability = signature.selectedCapability,
              .functionTarget = signature.functionTarget,
-             .lambdaTarget = signature.lambdaTarget});
+             .lambdaTarget = signature.lambdaTarget,
+             .nativeCalleeType = signature.nativeCalleeType});
       }
       lowered.forwardings.reserve(parameter.forwardings.size());
       for (const HirCallableForwarding &forwarding : parameter.forwardings) {

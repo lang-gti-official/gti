@@ -4149,8 +4149,9 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
       source == nullptr ? nullptr : findInstruction(body, source->definition);
   const bool functionCallProducer =
       producer != nullptr && producer->kind == MirInstructionKind::Call &&
-      producer->functionTarget && !producer->constructorTarget &&
-      !producer->lambdaTarget && !producer->bodyTarget &&
+      (producer->functionTarget || producer->nativeCalleeType) &&
+      !producer->constructorTarget && !producer->lambdaTarget &&
+      !producer->bodyTarget &&
       // A resolved nominal operator() is an ordinary function-target call.
       // Its receiver capability is checked by call admission; it does not
       // change the exact result-slot/consumer proof below.
@@ -4541,6 +4542,9 @@ stagedClassResultForResult(const MirBody &body, MirValueId stagedId) {
   const bool directCallableCall = definition != nullptr &&
                                   callableValueInvocation(*definition) &&
                                   definition->result == valueId;
+  const bool directNativeCall =
+      definition != nullptr && definition->kind == MirInstructionKind::Call &&
+      definition->nativeCalleeType && definition->result == valueId;
   const bool directDefaultConstruction =
       definition != nullptr && definition->kind == MirInstructionKind::Call &&
       definition->result && *definition->result == valueId &&
@@ -4560,8 +4564,9 @@ stagedClassResultForResult(const MirBody &body, MirValueId stagedId) {
       expectedOwnedClassExtractionDestination(body, valueId);
   const StagedClassResult staged = stagedClassResultForSource(body, valueId);
   if (!directConstruct && !directMove && !directCopy && !directFunctionCall &&
-      !directCallableCall && !directDefaultConstruction && !restoringExchange &&
-      ownedExpectedExtraction == nullptr && staged.producer != definition) {
+      !directCallableCall && !directNativeCall && !directDefaultConstruction &&
+      !restoringExchange && ownedExpectedExtraction == nullptr &&
+      staged.producer != definition) {
     return nullptr;
   }
   if (ownedExpectedExtraction != nullptr) {
@@ -22125,22 +22130,27 @@ passiveCAbiCallAssignmentResult(const MirProgram &program, const MirBody &body,
       call != nullptr && call->functionTarget
           ? program.findFunctionInstance(*call->functionTarget)
           : nullptr;
+  const bool native =
+      call != nullptr && isMirNativeIndirectCall(program, body, *call);
   if (value == nullptr ||
       passiveCAbiRecordInstance(program, value->info.type) == nullptr ||
       value->info.traits.drop != DropKind::Trivial ||
       value->info.traits.containsBorrowedState || call == nullptr ||
       call->kind != MirInstructionKind::Call || !call->result ||
-      *call->result != valueId || call->destination || call->receiver ||
-      call->constructorTarget || call->lambdaTarget || call->bodyTarget ||
-      call->callableInvocation || call->intrinsic != IntrinsicKind::None ||
+      *call->result != valueId || call->destination ||
+      (call->receiver && !native) || call->constructorTarget ||
+      call->lambdaTarget || call->bodyTarget ||
+      (call->callableInvocation && !native) ||
+      call->intrinsic != IntrinsicKind::None ||
       !call->localFailureSites.empty() ||
       !call->definedFailure.localOrigins.empty() ||
       call->definedFailure.propagation != FailurePropagationKind::None ||
-      target == nullptr || target->returnType != value->info.type ||
-      !((target->linkage == LanguageLinkage::C) ||
-        (target->linkage == LanguageLinkage::Gti &&
-         target->definitionKind == MirDefinitionKind::Source &&
-         !target->mayRaiseDefinedFailure))) {
+      (!native &&
+       (target == nullptr || target->returnType != value->info.type ||
+        !((target->linkage == LanguageLinkage::C) ||
+          (target->linkage == LanguageLinkage::Gti &&
+           target->definitionKind == MirDefinitionKind::Source &&
+           !target->mayRaiseDefinedFailure))))) {
     return {};
   }
 
@@ -36421,7 +36431,7 @@ private:
              << typeSpelling(instruction.info.type) << "{};\n";
       return;
     }
-    if (!instruction.functionTarget) {
+    if (!instruction.functionTarget && !instruction.nativeCalleeType) {
       throw std::logic_error(
           "verified MIR direct call lost its exact target declaration");
     }
@@ -36443,7 +36453,7 @@ private:
         instruction.functionTarget
             ? program.findFunctionInstance(*instruction.functionTarget)
             : nullptr;
-    if (instruction.receiver) {
+    if (instruction.receiver && !instruction.nativeCalleeType) {
       // Staged through a CallInput, or borrowed directly on the receiver
       // operand (a self-member call); both name the spellable place.
       const MirInstruction *staged =
@@ -37010,17 +37020,24 @@ private:
       if (instruction.info.type != SemanticType::Void)
         output << "auto __gti_native_result = ";
     }
-    const std::string calleeSpelling = selectedBodySpelling();
-    output << (instruction.dispatch == CallDispatch::Virtual
-                   ? unqualifiedBodySpelling(calleeSpelling)
-                   : std::string_view(calleeSpelling));
+    if (instruction.nativeCalleeType) {
+      output << '(';
+      emitOperand(*instruction.receiver);
+      output << ')';
+    } else {
+      const std::string calleeSpelling = selectedBodySpelling();
+      output << (instruction.dispatch == CallDispatch::Virtual
+                     ? unqualifiedBodySpelling(calleeSpelling)
+                     : std::string_view(calleeSpelling));
+    }
     if (target != nullptr) {
       emitThreadTaskTemplateArgument(*target);
       emitCallablePackTemplateArguments(facts.body, *target);
     }
     output << '(';
     const bool cBoundary =
-        target != nullptr && target->linkage == LanguageLinkage::C;
+        instruction.nativeCalleeType ||
+        (target != nullptr && target->linkage == LanguageLinkage::C);
     // The C prototype takes ::gti_c_string_view; the shared operand writer
     // marshals views and expands an exact trailing concrete GTI pack.
     (void)emitCallOperands(target, cBoundary, false);
@@ -46929,6 +46946,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       }
       case MirInstructionKind::Call: {
+        if (instruction.nativeCalleeType) {
+          if (!isMirNativeIndirectCall(program_, body, instruction) ||
+              !typeRow(*instruction.nativeCalleeType) ||
+              !typeRow(instruction.info.type) ||
+              !valueOperand(*instruction.receiver) ||
+              !std::all_of(instruction.operands.begin(),
+                           instruction.operands.end(), valueOperand))
+            return false;
+          continue;
+        }
         if (simdIntrinsic(instruction.intrinsic)) {
           if (instruction.operands.size() != 3 || instruction.result ||
               instruction.receiver || instruction.functionTarget)
@@ -48020,7 +48047,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               const bool functionItemReady =
                   operand.type.hasFunctionItemShape() &&
                   valueOperand(operand) && typeRow(operand.type);
-              if (!lambdaReady && !classReady && !functionItemReady) {
+              const bool nativeReady = operand.type.hasNativeFunctionShape() &&
+                                       valueOperand(operand) &&
+                                       typeRow(operand.type);
+              if (!lambdaReady && !classReady && !functionItemReady &&
+                  !nativeReady) {
                 callableArgumentsReady = false;
                 break;
               }
