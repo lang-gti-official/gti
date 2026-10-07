@@ -10511,9 +10511,12 @@ int main() {
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   std::size_t scheduledNullOwnerFields = 0;
   for (const auto &constructor : frontend.hir.constructorInstances()) {
-    const auto *owner = frontend.hir.findClassInstance(constructor.owner);
-    if (!binding || !owner || owner->type != binding->type ||
-        !constructor.generatedDefault)
+    const auto owner = std::find_if(
+        frontend.hir.classInstances().begin(),
+        frontend.hir.classInstances().end(),
+        [&](const auto &item) { return item.id == constructor.owner; });
+    if (!binding || owner == frontend.hir.classInstances().end() ||
+        owner->type != binding->type || !constructor.generatedDefault)
       continue;
     for (const auto &initializer : constructor.initializers) {
       const auto *value =

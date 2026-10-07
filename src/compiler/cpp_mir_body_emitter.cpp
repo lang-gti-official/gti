@@ -19191,6 +19191,10 @@ expectedPayloadReturnSlot(const MirProgram &program,
              : ExpectedPayloadReturnSlot{};
 }
 
+[[nodiscard]] bool passiveConstructedExpectedSlotPlace(
+    const MirProgram &program, const CppMirBodyEmissionMap &representations,
+    const MirBody &body, const MirPlace &place);
+
 [[nodiscard]] bool
 lifetimeSlotPlace(const MirProgram &program,
                   const CppMirBodyEmissionMap &representations,
@@ -19449,6 +19453,9 @@ lifetimeSlotPlace(const MirProgram &program,
     return true;
   }
   if (expectedPassivePayloadInitialize(body, place))
+    return true;
+  if (passiveConstructedExpectedSlotPlace(program, representations, body,
+                                          place))
     return true;
   return std::any_of(
       body.values.begin(), body.values.end(), [&](const MirValue &value) {
@@ -25901,6 +25908,36 @@ classSsaLifetimeSlot(const MirProgram &program,
                                     .consumer = consumer,
                                     .consumerKind =
                                         ClassSsaSlotConsumerKind::CallArgument};
+}
+
+// The same proof that emits a checked payload publication must also select
+// uninitialized storage for its wrapper. Default-constructing a native
+// Expected here would execute its payload constructor before MIR's Invoke.
+[[nodiscard]] bool passiveConstructedExpectedSlotPlace(
+    const MirProgram &program, const CppMirBodyEmissionMap &representations,
+    const MirBody &body, const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Binding || place.binding == 0 ||
+      !place.projections.empty() || place.type.kind != SemanticType::Expected)
+    return false;
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions) {
+      if (instruction.kind != MirInstructionKind::Initialize ||
+          !instruction.destination || instruction.operands.size() != 1 ||
+          instruction.operands.front().kind != MirOperandKind::Value)
+        continue;
+      const auto *destination = body.findPlace(*instruction.destination);
+      if (!destination || destination->root != MirPlaceRootKind::Binding ||
+          destination->binding != place.binding ||
+          destination->type != place.type || !destination->projections.empty())
+        continue;
+      const auto staging = classSsaLifetimeSlot(
+          program, representations, body, instruction.operands.front().value);
+      if (staging.consumer == &instruction &&
+          staging.consumerKind ==
+              ClassSsaSlotConsumerKind::ExpectedInitialization)
+        return true;
+    }
+  return false;
 }
 
 // A Return loan on a slot-backed class result is dependency metadata. The

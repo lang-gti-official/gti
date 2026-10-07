@@ -52,6 +52,22 @@ shipped-source parses, highlight/locals/rainbow queries and focused formatter/LS
 round trips. These results precede the next current-main reconciliation and
 do not replace final combined verification.
 
+The generated-constructor acceptance checkpoint passes all 63 ownership cases
+with the optimized compiler. Focused backend cases also pass for exact default
+schedule obligations, target/owner and base-target erasure mutations, passive
+and owning declaration-field rollback, staged field replacement and checked
+passive construction into `expected`. Native testing is an independent gate:
+the initial emission-only expected test passed while native compilation caught
+a wrapper storage-declaration mismatch. Declaration and publication now share
+the same exact lifetime-slot proof; all three passive expected fixtures pass
+the eight-mode native matrix (25.98 seconds), including first-failure ordering,
+caller cleanup, no elision and sanitizers. The nested-field regression now
+classifies cleanup from declared-field facts, preserving access checks for
+passive descriptors and cleanup-pair mutations for owning fields; it passes.
+The full lifecycle suite still awaits reconciliation of the state-bearing base
+constructor implementation. Neither these focused results
+nor the published draft checkpoint establishes full acceptance.
+
 ## Source-defined process byte provider (S-ALLOC-07 checkpoint)
 
 The pre-reconciliation storage-cost probe uses frozen optimized compiler,
