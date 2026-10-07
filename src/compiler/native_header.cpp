@@ -357,9 +357,19 @@ private:
   }
 
   std::string cppType(const SemanticType &type) const {
+    if (type.nativeCScalar != NativeCScalarKind::None) {
+      if (SemanticType::nativeCScalarType(type.nativeCScalar,
+                                          program.target()) != type) {
+        throw std::logic_error(
+            "invalid native C scalar identity reached native header");
+      }
+      return std::string(nativeCScalarDeclarationName(type.nativeCScalar));
+    }
     switch (type.kind) {
     case SemanticType::Void:
       return "void";
+    case SemanticType::Bool:
+      return "bool";
     case SemanticType::Int8:
       return "std::int8_t";
     case SemanticType::Int16:
@@ -404,9 +414,19 @@ private:
   }
 
   std::string cType(const SemanticType &type) const {
+    if (type.nativeCScalar != NativeCScalarKind::None) {
+      if (SemanticType::nativeCScalarType(type.nativeCScalar,
+                                          program.target()) != type) {
+        throw std::logic_error(
+            "invalid native C scalar identity reached native header");
+      }
+      return std::string(nativeCScalarDeclarationName(type.nativeCScalar));
+    }
     switch (type.kind) {
     case SemanticType::Void:
       return "void";
+    case SemanticType::Bool:
+      return "_Bool";
     case SemanticType::Int8:
       return "int8_t";
     case SemanticType::Int16:

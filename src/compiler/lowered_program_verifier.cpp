@@ -557,6 +557,10 @@ verifyLoweredProgram(const LoweredProgram &program) {
     addIssue(issues, LoweredProgramIssueKind::UnsupportedTarget,
              "lowered program has an unsupported target data layout");
   }
+  if (program.target_ != program.mir_.target()) {
+    addIssue(issues, LoweredProgramIssueKind::FrontendMismatch,
+             "lowered target and MIR target ABI facts differ");
+  }
   if (program.target_.executionProfile != program.mir_.executionProfile()) {
     addIssue(issues, LoweredProgramIssueKind::FrontendMismatch,
              "lowered target and MIR execution profiles differ");

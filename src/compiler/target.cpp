@@ -165,6 +165,51 @@ std::optional<NativeCScalarKind> parseNativeCScalarKind(std::string_view name) {
   return std::nullopt;
 }
 
+std::string_view nativeCScalarDeclarationName(NativeCScalarKind kind) {
+  switch (kind) {
+  case NativeCScalarKind::Bool:
+    return "_Bool";
+  case NativeCScalarKind::Char:
+    return "char";
+  case NativeCScalarKind::SignedChar:
+    return "signed char";
+  case NativeCScalarKind::UnsignedChar:
+    return "unsigned char";
+  case NativeCScalarKind::Short:
+    return "short";
+  case NativeCScalarKind::UnsignedShort:
+    return "unsigned short";
+  case NativeCScalarKind::Int:
+    return "int";
+  case NativeCScalarKind::UnsignedInt:
+    return "unsigned int";
+  case NativeCScalarKind::Long:
+    return "long";
+  case NativeCScalarKind::UnsignedLong:
+    return "unsigned long";
+  case NativeCScalarKind::LongLong:
+    return "long long";
+  case NativeCScalarKind::UnsignedLongLong:
+    return "unsigned long long";
+  case NativeCScalarKind::Float:
+    return "float";
+  case NativeCScalarKind::Double:
+    return "double";
+  case NativeCScalarKind::Size:
+    return "size_t";
+  case NativeCScalarKind::Ptrdiff:
+    return "ptrdiff_t";
+  case NativeCScalarKind::Intptr:
+    return "intptr_t";
+  case NativeCScalarKind::Uintptr:
+    return "uintptr_t";
+  case NativeCScalarKind::None:
+  case NativeCScalarKind::Count:
+    return {};
+  }
+  return {};
+}
+
 std::optional<TargetCScalarInfo>
 TargetInfo::nativeCScalar(NativeCScalarKind kind) const {
   if (!supported()) {

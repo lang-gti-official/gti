@@ -12251,6 +12251,98 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
     return result;
   }
 
+  const auto validScalarIdentity = [&](const auto &self,
+                                       const SemanticType &type) -> bool {
+    if (type.nativeCScalar != NativeCScalarKind::None &&
+        SemanticType::nativeCScalarType(type.nativeCScalar, program.target()) !=
+            type) {
+      return false;
+    }
+    const auto validArguments = [&](const auto &arguments) {
+      return std::all_of(
+          arguments.begin(), arguments.end(),
+          [&](const auto &argument) { return self(self, argument); });
+    };
+    return validArguments(type.arguments) &&
+           validArguments(type.lambdaEnclosingClassTypes) &&
+           validArguments(type.lambdaEnclosingFunctionTypes);
+  };
+  const auto checkProgramType = [&](const SemanticType &type) {
+    if (!validScalarIdentity(validScalarIdentity, type)) {
+      result.errors.push_back(
+          {.message = "MIR native C scalar identity disagrees with the "
+                      "selected target"});
+    }
+  };
+  const auto checkTypes = [&](const auto &types) {
+    for (const SemanticType &type : types) {
+      checkProgramType(type);
+    }
+  };
+  for (const auto &function : program.functionInstances()) {
+    checkProgramType(function.returnType);
+    checkTypes(function.typeArguments);
+    checkTypes(function.parameterTypes);
+    for (const auto &parameter : function.callableParameters) {
+      checkProgramType(parameter.callableType);
+      for (const auto &signature : parameter.signatures) {
+        checkProgramType(signature.returnType);
+        checkTypes(signature.parameterTypes);
+      }
+    }
+  }
+  for (const auto &instance : program.classInstances()) {
+    checkProgramType(instance.type);
+    for (const auto &field : instance.declaredFields) {
+      checkProgramType(field.type);
+    }
+    for (const auto &field : instance.fields) {
+      checkProgramType(field.type);
+    }
+    for (const auto &field : instance.fieldDropOrder) {
+      checkProgramType(field.type);
+    }
+    if (instance.cAbiLayout) {
+      for (const auto &field : instance.cAbiLayout->fields) {
+        checkProgramType(field.type);
+      }
+    }
+    if (instance.unionLayout) {
+      for (const auto &field : instance.unionLayout->fields) {
+        checkProgramType(field.type);
+      }
+    }
+  }
+  for (const auto &constructor : program.constructorInstances()) {
+    checkTypes(constructor.typeArguments);
+    checkTypes(constructor.parameterTypes);
+    for (const auto &initializer : constructor.initializers) {
+      checkProgramType(initializer.targetType);
+    }
+  }
+  for (const auto &lambda : program.lambdaInstances()) {
+    checkProgramType(lambda.type);
+    checkProgramType(lambda.returnType);
+    checkTypes(lambda.parameterTypes);
+    checkTypes(lambda.captureTypes);
+  }
+  for (const auto &adapter : program.nativeCallbackAdapters()) {
+    checkProgramType(adapter.type);
+  }
+  for (const auto &adapter : program.threadTaskAdapters()) {
+    checkProgramType(adapter.taskType);
+    checkProgramType(adapter.resultType);
+  }
+  for (const auto &enumeration : program.integralEnums()) {
+    checkProgramType(enumeration.underlyingType);
+  }
+  for (const auto &enumeration : program.payloadEnums()) {
+    checkProgramType(enumeration.type);
+    for (const auto &variant : enumeration.variants) {
+      checkTypes(variant.payloadTypes);
+    }
+  }
+
   for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
     const MirBody *body = findMirBody(program, address);
     if (body == nullptr) {
@@ -12261,6 +12353,91 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
       continue;
     }
     appendVerification(result, verifyMirBody(*body, address.owner));
+    const auto check = [&](const SemanticType &type,
+                           MirInstructionId instruction = 0) {
+      if (!validScalarIdentity(validScalarIdentity, type)) {
+        result.errors.push_back(
+            {.bodyKind = address.kind,
+             .owner = address.owner,
+             .instruction = instruction,
+             .message = "MIR native C scalar identity disagrees with the "
+                        "selected target"});
+      }
+    };
+    const auto checkDrop = [&](const auto &self,
+                               const MirDropType &drop) -> void {
+      check(drop.type);
+      if (drop.fixedArray) {
+        check(drop.fixedArray->leafType);
+      }
+      for (const auto &child : drop.aggregate) {
+        self(self, child);
+      }
+    };
+    check(body->returnType);
+    for (const auto &value : body->values) {
+      check(value.info.type);
+    }
+    for (const auto &iteration : body->rangeIterations) {
+      check(iteration.rangeType);
+      check(iteration.iteratorType);
+      check(iteration.sentinelType);
+      check(iteration.elementType);
+    }
+    for (const auto &obligation : body->dropObligations) {
+      checkDrop(checkDrop, obligation.dropType);
+    }
+    for (const MirPlace &place : body->places) {
+      check(place.type);
+    }
+    for (const MirBlock &block : body->blocks) {
+      for (const auto &parameter : block.parameters) {
+        check(parameter.type);
+      }
+      for (const MirInstruction &instruction : block.instructions) {
+        check(instruction.info.type, instruction.id);
+        check(instruction.dispatchOwner, instruction.id);
+        if (instruction.objectLayoutType) {
+          check(*instruction.objectLayoutType, instruction.id);
+        }
+        if (instruction.receiver) {
+          check(instruction.receiver->type, instruction.id);
+        }
+        for (const auto &operand : instruction.operands) {
+          check(operand.type, instruction.id);
+        }
+        for (const auto &type : instruction.parameterTypes) {
+          check(type, instruction.id);
+        }
+        for (const auto &type : instruction.closureCaptureTypes) {
+          check(type, instruction.id);
+        }
+        if (instruction.elementCleanup) {
+          checkDrop(checkDrop, *instruction.elementCleanup);
+        }
+        if (instruction.replacementCleanup) {
+          checkDrop(checkDrop, *instruction.replacementCleanup);
+        }
+      }
+      const auto &terminator = block.terminator;
+      if (terminator.value) {
+        check(terminator.value->type);
+      }
+      for (const auto &operand : terminator.targetArguments) {
+        check(operand.type);
+      }
+      for (const auto &operand : terminator.elseArguments) {
+        check(operand.type);
+      }
+      for (const auto &target : terminator.switchTargets) {
+        if (target.value) {
+          check(target.value->type);
+        }
+        for (const auto &operand : target.arguments) {
+          check(operand.type);
+        }
+      }
+    }
   }
   appendVerification(result, verifyMirProgramContracts(program));
   appendVerification(result, verifyMirEffectSummaries(program));

@@ -409,6 +409,15 @@ private:
   }
 
   [[nodiscard]] static std::string scalarSpelling(const NativeType &type) {
+    if (type.scalarIdentity != NativeCScalarKind::None) {
+      return std::string(nativeCScalarKindName(type.scalarIdentity));
+    }
+    if (type.kind == NativeTypeKind::Bool) {
+      return "c_bool";
+    }
+    if (type.kind == NativeTypeKind::Char) {
+      return "c_char";
+    }
     if (type.kind == NativeTypeKind::Floating) {
       return type.bitWidth == 64 ? "double" : "float";
     }
@@ -417,6 +426,10 @@ private:
   }
 
   [[nodiscard]] static bool admittedScalar(const NativeType &type) {
+    if (type.kind == NativeTypeKind::Bool ||
+        type.kind == NativeTypeKind::Char) {
+      return true;
+    }
     if (type.kind == NativeTypeKind::Integer) {
       return type.bitWidth == 8 || type.bitWidth == 16 || type.bitWidth == 32 ||
              type.bitWidth == 64;
@@ -471,13 +484,8 @@ private:
       }
       return unsupportedType("'void' is only a result type");
     case NativeTypeKind::Bool:
-      return unsupportedType(
-          "'bool' is not a GTI C ABI scalar; use a fixed-width integer in "
-          "the header");
     case NativeTypeKind::Char:
-      return unsupportedType(
-          "plain 'char' is not a GTI C ABI scalar; use int8_t/uint8_t, or "
-          "'const char*' for strings");
+      return supportedType(scalarSpelling(*direct));
     case NativeTypeKind::Integer:
     case NativeTypeKind::Floating:
       if (!admittedScalar(*direct)) {
@@ -591,17 +599,11 @@ private:
           "C handle out parameters");
     }
     if (pointee->kind == NativeTypeKind::Char) {
-      if (use == TypeUse::RecordField) {
-        return unsupportedType(
-            "a 'char' pointer field has no GTI [[c_abi]] representation; "
-            "c_string crosses only function and callback boundaries");
-      }
-      if (pointer.constPointee) {
+      if (pointer.constPointee && use != TypeUse::RecordField) {
         return supportedType("c_string");
       }
-      return unsupportedType("a writable 'char*' has no GTI C ABI "
-                             "representation; 'const char*' maps to "
-                             "c_string");
+      return supportedType(std::string(pointer.constPointee ? "const " : "") +
+                           "c_char*");
     }
     const std::string qualifier = pointer.constPointee ? "const " : "";
     if (pointee->kind == NativeTypeKind::Void) {

@@ -263,7 +263,12 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v90 valid=" << program.valid() << '\n';
+    output << "mir-v91 valid=" << program.valid() << '\n';
+    const auto &target = program.target();
+    output << "target os=" << target.os << " vendor=" << target.vendor
+           << " arch=" << target.arch
+           << " pointer-width=" << target.dataLayout.pointerWidthBits()
+           << " execution-profile=" << number(target.executionProfile) << '\n';
     for (const MirNativeCallbackAdapter &adapter :
          program.nativeCallbackAdapters()) {
       output << "native-callback @" << adapter.id
@@ -724,7 +729,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v76\n";
+    output << "mir-body-v77\n";
     body(value, 0);
     return output.str();
   }
@@ -950,7 +955,8 @@ private:
   void type(const SemanticType &value) {
     output << "type(" << number(value.kind) << ";class=" << value.classId
            << ";enum=" << value.enumId
-           << ";parameter=" << value.genericParameterId;
+           << ";parameter=" << value.genericParameterId
+           << ";native-c=" << static_cast<unsigned>(value.nativeCScalar);
     if (value.functionId != 0) {
       output << ";function=" << value.functionId;
     }

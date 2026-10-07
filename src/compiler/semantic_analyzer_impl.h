@@ -993,6 +993,7 @@ private:
     bool compilerPrivate = false;
     CompilerCapabilityTypeKind compilerCapability =
         CompilerCapabilityTypeKind::None;
+    NativeCScalarKind nativeCScalar = NativeCScalarKind::None;
   };
 
   struct ExactClassSpecialization {
@@ -3331,11 +3332,11 @@ private:
   numericConversionMayFail(const SemanticType &source,
                            const SemanticType &target);
 
-  [[nodiscard]] static SemanticType
+  [[nodiscard]] SemanticType
   compoundIntermediateType(TokenKind operation, const SemanticType &target,
                            const SemanticType &right,
                            const Expr *leftExpression,
-                           const Expr *rightExpression);
+                           const Expr *rightExpression) const;
 
   void addCompoundConversionFailure(DefinedFailureOperation &operation,
                                     TokenKind token, const SemanticType &target,
@@ -4000,8 +4001,8 @@ private:
 
   [[nodiscard]] static SemanticType promotedInteger(SemanticType type);
 
-  [[nodiscard]] static SemanticType widerInteger(SemanticType left,
-                                                 SemanticType right);
+  [[nodiscard]] SemanticType widerInteger(SemanticType left,
+                                          SemanticType right) const;
 
   [[nodiscard]] static bool canConvertToUnsigned(SemanticType originalType,
                                                  const Expr *expression,
@@ -4011,10 +4012,10 @@ private:
 
   [[nodiscard]] static bool isExpectedVoid(const SemanticType &type);
 
-  [[nodiscard]] static SemanticType numericResult(SemanticType left,
-                                                  SemanticType right,
-                                                  const Expr *leftExpression,
-                                                  const Expr *rightExpression);
+  [[nodiscard]] SemanticType numericResult(SemanticType left,
+                                           SemanticType right,
+                                           const Expr *leftExpression,
+                                           const Expr *rightExpression) const;
 
   [[nodiscard]] bool isOwnershipAssignable(const SemanticType &target,
                                            const SemanticType &value,

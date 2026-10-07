@@ -337,7 +337,9 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
         return false;
       }
     }
-    if (pattern.kind != argument.kind || pattern.classId != argument.classId ||
+    if (pattern.kind != argument.kind ||
+        pattern.nativeCScalar != argument.nativeCScalar ||
+        pattern.classId != argument.classId ||
         pattern.enumId != argument.enumId ||
         pattern.arguments.size() != argument.arguments.size()) {
       return true;
@@ -379,8 +381,9 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
         pattern.kind == SemanticType::Array &&
         pattern.arrayLengthParameterId != 0 &&
         isTargetValueParameter(pattern.arrayLengthParameterId);
-    if (pattern.kind != actual.kind || pattern.classId != actual.classId ||
-        pattern.enumId != actual.enumId ||
+    if (pattern.kind != actual.kind ||
+        pattern.nativeCScalar != actual.nativeCScalar ||
+        pattern.classId != actual.classId || pattern.enumId != actual.enumId ||
         pattern.genericParameterId != actual.genericParameterId ||
         pattern.functionId != actual.functionId ||
         pattern.lambdaId != actual.lambdaId ||
@@ -3263,6 +3266,14 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
     if (!type.arguments.empty()) {
       report(type.name.last(),
              "gti_internal::c_string does not take generic arguments.",
+             "GTI-S2054");
+    }
+    return;
+  }
+  if (compilerCapability == CompilerCapabilityTypeKind::NativeCScalar) {
+    if (!type.arguments.empty()) {
+      report(type.name.last(),
+             "A native C scalar type does not take generic arguments.",
              "GTI-S2054");
     }
     return;
@@ -6723,6 +6734,7 @@ auto SemanticVisitor::Impl::validateRuntimeBinding(const FunctionDecl &function)
 
 auto SemanticVisitor::Impl::isCAbiScalar(const SemanticType &type) -> bool {
   switch (type.kind) {
+  case SemanticType::Bool:
   case SemanticType::Int8:
   case SemanticType::Int16:
   case SemanticType::Int32:

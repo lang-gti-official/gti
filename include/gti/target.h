@@ -89,6 +89,8 @@ enum class NativeCScalarKind : std::uint8_t {
 };
 
 [[nodiscard]] std::string_view nativeCScalarKindName(NativeCScalarKind kind);
+[[nodiscard]] std::string_view
+nativeCScalarDeclarationName(NativeCScalarKind kind);
 [[nodiscard]] std::optional<NativeCScalarKind>
 parseNativeCScalarKind(std::string_view name);
 

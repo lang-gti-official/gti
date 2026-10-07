@@ -8,6 +8,9 @@ public:
       : semantics(semantics) {}
 
   [[nodiscard]] std::string print(const SemanticType &type) const {
+    if (type.nativeCScalar != NativeCScalarKind::None) {
+      return std::string(nativeCScalarKindName(type.nativeCScalar));
+    }
     switch (type.kind) {
     case SemanticType::Unknown:
       return "unknown";

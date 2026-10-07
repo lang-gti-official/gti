@@ -2287,6 +2287,10 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
                  classDecl->genericParameters().empty() &&
                  classDecl->name().lexeme == "c_string") {
         compilerCapability = CompilerCapabilityTypeKind::CString;
+      } else if (trustedPreludeCapabilityScope &&
+                 classDecl->genericParameters().empty() &&
+                 parseNativeCScalarKind(classDecl->name().lexeme)) {
+        compilerCapability = CompilerCapabilityTypeKind::NativeCScalar;
       } else if (trustedThreadCapabilityScope &&
                  classDecl->genericParameters().empty() &&
                  classDecl->name().lexeme == "thread_handle") {
@@ -2327,26 +2331,30 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       } else {
         capabilityPolicies = registerClassAttributes(*classDecl);
       }
-      classes.push_back(
-          ClassInfo{.id = id,
-                    .sourceUnit = currentSourceUnit,
-                    .declaration = classDecl,
-                    .name = classDecl->name(),
-                    .kind = classDecl->kind(),
-                    .namespaceScope = scope,
-                    .signatureFamilyPrimary = familyPrimary,
-                    .genericParameters = std::move(genericParameters),
-                    .cAbiRecord = capabilityPolicies.cAbiRecord,
-                    .cAbiAttribute = capabilityPolicies.cAbiSource,
-                    .cOpaqueHandle = capabilityPolicies.cOpaqueHandle,
-                    .cOpaqueAttribute = capabilityPolicies.cOpaqueSource,
-                    .transferPolicy = capabilityPolicies.transfer,
-                    .sharePolicy = capabilityPolicies.share,
-                    .transferPolicySource = capabilityPolicies.transferSource,
-                    .sharePolicySource = capabilityPolicies.shareSource,
-                    .compilerPrivate =
-                        compilerPrivateDeclaration(currentSourceUnit, scope),
-                    .compilerCapability = compilerCapability});
+      classes.push_back(ClassInfo{
+          .id = id,
+          .sourceUnit = currentSourceUnit,
+          .declaration = classDecl,
+          .name = classDecl->name(),
+          .kind = classDecl->kind(),
+          .namespaceScope = scope,
+          .signatureFamilyPrimary = familyPrimary,
+          .genericParameters = std::move(genericParameters),
+          .cAbiRecord = capabilityPolicies.cAbiRecord,
+          .cAbiAttribute = capabilityPolicies.cAbiSource,
+          .cOpaqueHandle = capabilityPolicies.cOpaqueHandle,
+          .cOpaqueAttribute = capabilityPolicies.cOpaqueSource,
+          .transferPolicy = capabilityPolicies.transfer,
+          .sharePolicy = capabilityPolicies.share,
+          .transferPolicySource = capabilityPolicies.transferSource,
+          .sharePolicySource = capabilityPolicies.shareSource,
+          .compilerPrivate =
+              compilerPrivateDeclaration(currentSourceUnit, scope),
+          .compilerCapability = compilerCapability,
+          .nativeCScalar =
+              compilerCapability == CompilerCapabilityTypeKind::NativeCScalar
+                  ? *parseNativeCScalarKind(classDecl->name().lexeme)
+                  : NativeCScalarKind::None});
       if (familyPrimary != 0) {
         auto &members = classInfo(familyPrimary).signatureFamilyMembers;
         if (members.empty()) {
