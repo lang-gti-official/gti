@@ -48,6 +48,13 @@ def main():
 
         def receive(predicate):
             def selected(item):
+                if (item.get("method") == "textDocument/publishDiagnostics"
+                        and item["params"]["uri"] == declaration_uri
+                        and item["params"].get("version") == 5):
+                    # The repaired declaration and consumer are both valid.
+                    # No stale parser error may be relabelled as version 5,
+                    # even in an intermediate aggregation publication.
+                    assert not has_error_diagnostics(item["params"]), item
                 if predicate(item):
                     return True
                 if item.get("method") == "textDocument/publishDiagnostics":
@@ -67,14 +74,17 @@ def main():
             assert "error" not in reply, reply
             return reply.get("result")
 
-        def publication(document, version):
+        def publication(document, version, has_errors=None):
+            def matches(item):
+                return (item["uri"] == document and item.get("version") == version
+                        and (has_errors is None or
+                             has_error_diagnostics(item) == has_errors))
             for index, item in enumerate(pending_publications):
-                if item["uri"] == document and item.get("version") == version:
+                if matches(item):
                     return pending_publications.pop(index)
             return receive(lambda item:
                 item.get("method") == "textDocument/publishDiagnostics"
-                and item["params"]["uri"] == document
-                and item["params"].get("version") == version)["params"]
+                and matches(item["params"]))["params"]
 
         def open_document(document, source):
             session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",
@@ -161,7 +171,7 @@ def main():
             changed = spelled.replace("U = int64_t", "U = bool")
             change(declaration_uri, changed, 3)
             assert not has_error_diagnostics(publication(declaration_uri, 3))
-            rejected = publication(uri, 1)
+            rejected = publication(uri, 1, has_errors=True)
             assert has_error_diagnostics(rejected), rejected
             fixed = SOURCE.replace("item(1, int64_t(2))", "item(1, true)")
             change(uri, fixed, 2)
@@ -171,10 +181,10 @@ def main():
 
             broken = changed.replace("U detail)", "U detail")
             change(declaration_uri, broken, 4)
-            assert has_error_diagnostics(publication(declaration_uri, 4))
+            assert has_error_diagnostics(publication(declaration_uri, 4, has_errors=True))
             publication(uri, 2)
             change(declaration_uri, changed, 5)
-            recovered = publication(declaration_uri, 5)
+            recovered = publication(declaration_uri, 5, has_errors=False)
             assert not has_error_diagnostics(recovered), recovered
             assert not has_error_diagnostics(publication(uri, 2))
             assert_hover(uri, fixed, "item(1", "int32_t payload, bool detail")

@@ -69,7 +69,8 @@ int main() { return 0; }
   const std::string callSource =
       "enum Message<T> { idle, item(T payload) }; "
       "using Count = Message<int>; "
-      "int main() { auto result = Count::item(7); return 0; }";
+      "int main() { auto result = Count::item(7); "
+      "auto direct = Message<bool>::item(true); return 0; }";
   const auto callResult =
       lang::Frontend().analyze("enum-hover.gti", callSource);
   const auto offset = callSource.find("item(7");
@@ -78,6 +79,12 @@ int main() { return 0; }
   expect(variantHover && variantHover->signature.find(
                              "::item(int32_t payload)") != std::string::npos,
          "generic variant hover uses the exact occurrence signature");
+  const auto formattedCall = lang::Formatter().format(callSource);
+  expect(lang::Formatter().format(formattedCall) == formattedCall &&
+             lang::Frontend()
+                 .analyze("formatted-enum-instance.gti", formattedCall)
+                 .canGenerateCode(),
+         "generic owner syntax survives idempotent formatting and reanalysis");
   if (!variantHover ||
       variantHover->signature.find("::item(") == std::string::npos) {
     const auto *occurrence = callResult.semantics.database().findOccurrence(

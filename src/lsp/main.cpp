@@ -3509,6 +3509,15 @@ private:
       }
       std::sort(roots.begin(), roots.end());
       for (const std::string &root : roots) {
+        // Retained snapshots keep their storage until replacement, but their
+        // diagnostics cannot be relabelled with a newer document version.
+        const auto snapshot = analysisSnapshots.find(root);
+        const auto generation = analysisGenerations.find(root);
+        if (snapshot == analysisSnapshots.end() ||
+            generation == analysisGenerations.end() ||
+            snapshot->second.generation != generation->second) {
+          continue;
+        }
         const std::vector<LspDiagnostic> &diagnostics =
             diagnosticsByRoot.at(root);
         for (const LspDiagnostic &diagnostic : diagnostics) {
