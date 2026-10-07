@@ -4592,9 +4592,17 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   if (callee->overloads.size() == 1) {
     const CallableCandidate &candidate = callee->overloads.front();
     CallableCandidate resolved = candidate;
+    const std::size_t contextualDiagnostics = diagnostics.size();
     bool valid = contextualizeFunctionItemArguments(
         candidate, explicitTypeArguments, explicitValueArguments,
         expr.arguments(), argumentAnalysis, true);
+    if (!valid && diagnostics.size() != contextualDiagnostics) {
+      // Context selection already owns this failure. A function item's type
+      // has no source spelling, so a subsequent request to write F explicitly
+      // is neither an independent error nor an actionable repair.
+      currentType = SemanticType::Unknown;
+      return;
+    }
     valid = applyFunctionTypeArguments(resolved, explicitTypeArguments,
                                        explicitValueArguments, argumentTypes,
                                        expr.arguments(), expr.paren()) &&
@@ -7058,6 +7066,16 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
   }
 
   if (valid) {
+    // The fixed prefix's mutable-reference access is independent of the pack
+    // element type. Preserve that source use even in primary analysis, where
+    // no concrete element calls exist yet.
+    for (std::size_t index = 0; index < packIndex; ++index) {
+      const SemanticType &parameter = candidate.parameterTypes[index];
+      if (parameter.kind == SemanticType::Reference &&
+          parameter.referenceAccess == AccessMode::Mutable) {
+        recordMutableBindingUse(call->arguments()[index]);
+      }
+    }
     semanticModel.record(expr, std::move(fold));
     ResolvedCallInfo symbolic{.function = candidate.id,
                               .declaration = candidate.declaration,

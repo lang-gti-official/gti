@@ -388,6 +388,15 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
              "GTI-S2046");
       valid = false;
     }
+    // An unresolved callable may take this place by mutable reference. Until
+    // an exact declaration supplies its access contract, removing mut is not
+    // a declaration-wide semantics-preserving edit.
+    if (const auto *info =
+            semanticModel.findExpression(*call.arguments()[index]);
+        info != nullptr && info->category == ValueCategory::Place &&
+        info->access == AccessMode::Mutable) {
+      recordMutableBindingUse(call.arguments()[index]);
+    }
   }
   if (!valid) {
     currentType = SemanticType::Unknown;
@@ -1810,7 +1819,9 @@ auto SemanticVisitor::Impl::hasConstraintFailure(
 
 auto SemanticVisitor::Impl::reportConstraintFailure(
     const Token &site, const ConstraintFailure &failure) -> void {
-  reporter.reportConstraintFailure(site, failure);
+  reporter.reportConstraintFailure(
+      site, failure,
+      [&](const SemanticType &type) { return typeSpelling(type); });
 }
 
 auto SemanticVisitor::Impl::attachConstraintCallContext(
@@ -5673,6 +5684,9 @@ auto SemanticVisitor::Impl::resolveSymbolicOperator(
   validateMutableCallArgumentLoans(selected.parameterTypes, arguments, token);
   validateCallPlaceExclusivity(selected.parameterTypes, arguments, token,
                                receiverPlace, receiverAccess, false);
+  if (receiverAccess == AccessMode::Mutable) {
+    recordMutableBindingUse(receiverPlace.root);
+  }
 
   ResolvedOperatorInfo resolved{
       .kind = kind,
@@ -6123,6 +6137,9 @@ auto SemanticVisitor::Impl::resolveOperator(
   validateCallPlaceExclusivityImpl(ordinaryParameters, ordinaryArguments, token,
                                    receiverPlace, callReceiverAccess,
                                    receiverProduction.has_value());
+  if (receiverPlace && callReceiverAccess == AccessMode::Mutable) {
+    recordMutableBindingUse(receiverPlace->root);
+  }
 
   ResolvedOperatorInfo resolved{
       .function = selected.id,

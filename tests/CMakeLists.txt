@@ -2177,6 +2177,11 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/function_items.gti"
   )
   set_tests_properties(function_item_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME generic_contract_runtime
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/generic_contract_runtime_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(generic_contract_runtime PROPERTIES TIMEOUT 300)
   add_test(
     NAME function_signature_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -3140,6 +3145,14 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME cthread_lsp
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/cthread_lsp_test.py"
+                     "$<TARGET_FILE:gti_lsp>")
+    add_test(NAME generic_advisory_lsp
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${PROJECT_SOURCE_DIR}/tests/generic_advisory_lsp_test.py"
+                     "$<TARGET_FILE:gti_lsp>")
+    add_test(NAME generic_contract_lsp
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${PROJECT_SOURCE_DIR}/tests/generic_contract_lsp_test.py"
                      "$<TARGET_FILE:gti_lsp>")
     add_test(
       NAME source_text_lsp

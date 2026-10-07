@@ -1109,7 +1109,11 @@ auto SemanticVisitor::Impl::analyze(const StmtList &statements) -> void {
       reachable = summarizeFlow(statement.get()).canFallThrough;
     } else {
       if (!hasUnreachableTail) {
-        if (statement != nullptr && statement->extent()) {
+        // One specialization's selected constexpr branch cannot make shared
+        // source unreachable. Declaration-wide tails are diagnosed by primary
+        // analysis; concrete reanalysis still checks the tail's semantics.
+        if (!instanceAnalysisActive && statement != nullptr &&
+            statement->extent()) {
           Diagnostic diagnostic = makeDiagnostic(
               DiagnosticId::UnreachableStatement, *statement->extent());
           diagnostic.tags.push_back(DiagnosticTag::Unnecessary);
@@ -5963,7 +5967,30 @@ auto SemanticVisitor::Impl::resolveMember(const SemanticType &objectType,
 
 auto SemanticVisitor::Impl::typeSpelling(const SemanticType &type) const
     -> std::string {
-  return semantic_spelling::typeSpelling(semanticModel, type);
+  // Registration may report before FunctionInfo is complete. Supply the
+  // canonical declaration record to the same printer used by finished models.
+  return SemanticTypePrinter(semanticModel)
+      .print(type, [&](GenericParameterId id) {
+        for (const auto &[declaration, parameters] :
+             functionGenericParameters) {
+          if (const auto *parameter = findGenericParameter(parameters, id)) {
+            return parameter;
+          }
+        }
+        for (const auto &[declaration, parameters] :
+             constructorGenericParameters) {
+          if (const auto *parameter = findGenericParameter(parameters, id)) {
+            return parameter;
+          }
+        }
+        for (const auto &owner : classes) {
+          if (const auto *parameter =
+                  findGenericParameter(owner.genericParameters, id)) {
+            return parameter;
+          }
+        }
+        return static_cast<const GenericParameterInfo *>(nullptr);
+      });
 }
 
 auto SemanticVisitor::Impl::tracksValueState(const Symbol &symbol) const
