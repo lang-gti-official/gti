@@ -22,7 +22,8 @@ def main():
         scratch = Path(temporary)
         native = scratch / "native.o"
         run(["cc", "-std=c17", "-c", str(repository / "tests/coverage/native/passive_records.c"), "-o", str(native)])
-        sources = [fixtures / "passive_fixed_array_values.gti"] + [
+        sources = [fixtures / "passive_fixed_array_values.gti",
+                   fixtures / "passive_fixed_array_parameter.gti"] + [
             repository / f"tests/coverage/reproducers/{name}.gti"
             for name in (
                 "a17-narrow-negative-array-literal",
@@ -56,7 +57,7 @@ def main():
             path.write_text(source)
             rejected = run([str(compiler), str(path), "--emit-cpp", "-o", str(scratch / "bad.cpp")], expected=65)
             assert code in rejected.stderr and "GTI-B0001" not in rejected.stderr, rejected
-    print("passive fixed arrays: 42 native cases, sanitizer, and four safety negatives passed")
+    print("passive fixed arrays: 48 native cases, sanitizer, and four safety negatives passed")
 
 
 if __name__ == "__main__":

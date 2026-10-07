@@ -558,6 +558,13 @@ the containing constructor and fixed-array construction retain their original
 MIR Invoke, success activation, transfer, and rollback schedules. A union with
 active cleanup, user lifecycle, or mismatched field/layout metadata does not
 enter this representation proof.
+An immediately consumed by-value `CallInput` may copy a cleanup-free fixed-array
+aggregate from its exact value-rooted slot. Generated element copying is
+observation-free, while the source retains its original full-expression drop;
+this is not a consuming transfer. Exact source/stage/parameter identities,
+cleanup-free copyability, and same-block adjacent consumption authorize the
+representation alias. Owning or borrowed elements, intervening argument work,
+and a transfer of the retained source obligation do not enter this proof.
 Targetless `Construct` and `Call` default producers can also publish into the
 same exact prepared-parameter slot: omitted brace-default fields in designated
 construction retain CallInput activation, consuming handoff and failure cleanup.
