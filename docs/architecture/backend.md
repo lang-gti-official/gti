@@ -444,6 +444,17 @@ Unsupported operations, places, lifetimes, failure edges, or representation
 facts reject the complete program before output; there is no AST/HIR body
 fallback.
 
+Computed scalar base arguments use an admitted constructor-preparation
+partition rather than reconstructed expressions. Its immutable body plan
+includes preparation and gated-base text templates from the same MIR writer.
+The program planner selects a native delegation carrier, while the final text
+writer only renders the approved templates. Exact MIR values and local scalar
+places survive the split, including parameter mutation and conditional joins;
+global state is not restored from an old snapshot. Gate-target discovery is
+cached once per immutable program, not repeated as an all-constructor scan
+for every body. The current frame/gate boundaries and remaining ownership/loan
+prerequisites are recorded in the MIR architecture and implementation sequence.
+
 Admission queries reject structurally inapplicable values before performing
 body-wide ownership searches or instruction lookups. In particular, Expected
 class-extraction receiver searches require an Expected-typed receiver, their

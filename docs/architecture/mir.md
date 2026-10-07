@@ -1930,9 +1930,27 @@ remain visible in the derived constructor's summary and to the optimizer.
 
 The C++ backend fuses observation-free scalar parameter/literal prefixes into
 the exact native base initializer, using its status overload when fallible,
-and branches on the retained result before executing derived MIR. Its independent
-prefix proof rejects any checked operation or other effect; those require a
-pre-native-base MIR preparation runner, not reconstructed C++ expressions.
+and branches on the retained result before executing derived MIR. Computed
+numeric arguments instead use an exact pre-native-base MIR partition. The
+immutable body plan carries preparation text produced by the same scalar MIR
+writer, retaining checked detectors, ordered direct calls, branch/block
+arguments, original failure records, and the exact `InitializeBase` endpoint.
+A scalar preparation carrier crosses a native delegating-constructor boundary;
+the resumed body imports its SSA values and skips the already executed prefix.
+An independently proved gated base constructor skips all source initialization
+and disarms declared cleanup when preparation fails. It creates only an
+unobservable native scalar shell; caller and derived cleanup still follow the
+original MIR failure graph. A successful prefix enters the selected base once,
+before any derived field publication. This includes failure-free source bases,
+not just constructors already carrying a defined-failure status ABI.
+The current preparation family has nongeneric owners, nonborrowed numeric
+constructor parameters and a scalar-state base with no state-bearing ancestor. Receiver
+access, owned/borrowed preparation inputs, non-scalar base state and their
+transfer/loan/empty-shell schedules require the corresponding extended frame
+and gate proofs; they are not reconstructed as C++ expressions or silently
+accepted through extra native moves. Source-template carrier identities also
+need an extended generic-owner plan. Existing owning derived-field rollback
+and exact private empty representations remain required.
 Passive
 field defaults include plain read-only enum values. For the selected
 aggregate schedule, observable base cleanup runs at the explicit MIR `Drop`

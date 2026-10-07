@@ -5636,11 +5636,20 @@ The constructor-lifecycle issue campaign extends that shared stage to exact
 scalar parameter/literal arguments, owning derived fields, and declared
 base/derived cleanup, with native-prefix and explicit base-drop proofs. The
 five original A45 forms and an unrelated resource-bearing inheritance fixture
-are the focused acceptance inputs. This is not closure of the full base
-initializer goal: `Base(s + 1)` and other checked/effectful argument evaluation
-need a verified pre-native-base MIR preparation runner carrying the selected
-scalar values and original failure record before native base entry. Owning or
-borrowed base arguments additionally need that runner's transfer/loan contracts.
+are the focused acceptance inputs. The pre-native-base MIR preparation runner
+now executes checked scalar arithmetic, ordered direct calls and scalar CFG
+before native base entry, carries the selected values and original failure
+record, and resumes the original base/field rollback graph. `Base(s + 1)` is
+covered independently of a fallible base body. Its first structural gate uses
+nongeneric owners, a scalar-state base without a state-bearing ancestor, and nonborrowed
+numeric constructor inputs. Broader preparation is still a named prerequisite:
+owned inputs need a parameter frame preserving their exact transfer/drop states,
+borrowed inputs need retained origin/access/loan endpoints, and owning or nested
+base state needs a recursively checked inactive native-shell gate.
+Source-template owners need a carrier identity/declaration proof before their
+generic representations share the preparation schedule. No additional
+C++ move, source-expression reconstruction or base placement replacement may
+stand in for those proofs.
 Historical entry-active declaration-field rollback tokens cannot precede a
 fallible base; declaration-default construction must use the typed constructor
 schedule that arms each field after its successful initializer. The concurrent

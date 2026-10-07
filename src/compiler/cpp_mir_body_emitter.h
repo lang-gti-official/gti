@@ -474,10 +474,10 @@ cppMirFailureConstructorEmptyStateTypeEligible(const MirProgram &program,
 cppMirFailureConstructorEmptyFieldsEligible(const MirProgram &program,
                                             HirClassInstanceId instance);
 
-// An exact selected base initializer whose argument prefix contains only
-// scalar parameter copy-loads and literals. Native fusion preserves those
-// observation-free reads; checked/effectful prefixes need an executable
-// pre-native-base MIR preparation runner and are not silently reconstructed.
+// An exact selected base initializer. Native fusion preserves observation-free
+// scalar parameter copy-loads/literals. A prepared binding instead selects
+// the admitted executable pre-base partition below; it never reconstructs
+// checked or effectful source expressions in the native initializer list.
 struct CppMirConstructedFieldInitializerArgument {
   SemanticType type = SemanticType::Unknown;
   std::optional<std::size_t> parameter;
@@ -491,7 +491,26 @@ struct CppMirBaseParameterInitializerBinding {
   HirConstructorInstanceId constructor = 0;
   std::vector<std::size_t> parameters;
   std::vector<CppMirConstructedFieldInitializerArgument> arguments;
+  bool prepared = false;
 };
+// Exact pre-base MIR partition. No source expressions are reconstructed by
+// its representation writer; scalar values and places cross the native
+// delegation boundary through a pointer-free preparation carrier.
+struct CppMirBasePreparation {
+  MirInstructionId stage = 0;
+  MirBlockId stageBlock = 0;
+  std::vector<MirBlockId> blocks;
+  std::vector<MirInstructionId> instructions;
+  std::vector<MirValueId> values;
+  std::vector<MirValueId> carriedValues;
+  std::vector<MirPlaceId> places;
+};
+[[nodiscard]] bool
+cppMirBaseGateEligible(const MirProgram &program,
+                       const MirConstructorInstance &constructor);
+[[nodiscard]] std::optional<CppMirBasePreparation>
+cppMirBasePreparation(const MirProgram &program,
+                      const MirConstructorInstance &constructor);
 [[nodiscard]]
 std::optional<std::vector<CppMirBaseParameterInitializerBinding>>
 cppMirBaseParameterInitializerBindings(
@@ -706,6 +725,9 @@ private:
   const CppMirBodyEmissionMap &representations_;
   CppMirBodyEmissionMetrics *metrics_ = nullptr;
   std::span<const LoweredBody> debugBodies_;
+  // Exact immutable-program cache. Discover preparation targets once rather
+  // than scanning every constructor body again for each emitted constructor.
+  mutable std::optional<std::vector<HirConstructorInstanceId>> baseGateTargets_;
 };
 
 } // namespace lang
