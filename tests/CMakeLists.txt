@@ -573,6 +573,24 @@ add_test(NAME bindgen_pipeline COMMAND gti_bindgen_tests)
 add_executable("gti_native_record_tests" "${PROJECT_SOURCE_DIR}/tests/native_record_tests.cpp")
 target_link_libraries("gti_native_record_tests" PRIVATE gti_cpp_backend)
 add_test(NAME native_record_pipeline COMMAND gti_native_record_tests)
+add_executable(gti_call_result_publication_tests call_result_publication_tests.cpp)
+target_link_libraries(gti_call_result_publication_tests PRIVATE gti_cpp_backend)
+add_test(NAME call_result_publication COMMAND gti_call_result_publication_tests)
+add_test(NAME call_result_publication_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/call_result_publication_runtime_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(call_result_publication_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_class_return_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_class_return_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_class_return_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME consuming_call_assignment_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/consuming_call_assignment_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(consuming_call_assignment_runtime PROPERTIES TIMEOUT 240)
 
 add_executable("gti_native_header_tests" "${PROJECT_SOURCE_DIR}/tests/native_header_tests.cpp")
 target_link_libraries("gti_native_header_tests" PRIVATE gti_cpp_backend)
@@ -770,7 +788,15 @@ add_test(NAME field_array_empty_state COMMAND gti_field_array_empty_state_tests)
 add_executable(gti_passive_fixed_array_tests passive_fixed_array_tests.cpp)
 target_link_libraries(gti_passive_fixed_array_tests PRIVATE gti_cpp_backend)
 add_test(NAME passive_fixed_array_values COMMAND gti_passive_fixed_array_tests)
+add_executable(gti_class_field_value_tests class_field_value_tests.cpp)
+target_link_libraries(gti_class_field_value_tests PRIVATE gti_cpp_backend)
+add_test(NAME class_field_values COMMAND gti_class_field_value_tests)
 if(Python3_Interpreter_FOUND)
+  add_test(NAME class_field_value_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/class_field_value_runtime_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(class_field_value_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME passive_fixed_array_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/passive_fixed_array_runtime_test.py"
