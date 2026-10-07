@@ -63,6 +63,19 @@ had no regression protection.
 
 ## Test-gap audit (A-series, 0.379.2)
 
+### Fixed-array construction repair
+
+A17 (#63), A42 (#85), and A52 (#93) are resolved and their six original
+reproducers now require native success. Signed literal elements preserve their
+contextual type, passive record copies construct final array storage without
+extra default construction, and verified passive union movement is
+failure-free. The C ABI reproducer links an independent C17 fixture rather
+than merely passing emission. The focused array gate also checks no-default
+records, observable default-constructor counts, representability/unsafe
+negatives, malformed publication/type proofs, both C++ standards at O0/O1/O3,
+and ASan/UBSan. Other A-series outcomes below remain historical until their
+own fixes land; this is not full-campaign verification.
+
 A third campaign looked for areas where the existing suites do not reach, using
 features added since the 0.329.0 audit. Seven probes each wrote ordinary,
 self-checking programs and must-reject programs for one area:
@@ -114,7 +127,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A14 | [#60](https://git.internal.howetotech.dev/gti-lang/gti/issues/60) C++ backend ICE: constructor-less struct field initializer inside a class with a user constructor | ice | `reproducers/a14-generated-ctor-field-in-user-ctor` |
 | A15 | [#61](https://git.internal.howetotech.dev/gti-lang/gti/issues/61) ICE: local declared inside a dependent if constexpr branch (absent lowered symbol) | ice | `reproducers/a15-dependent-if-constexpr-local` |
 | A16 | [#62](https://git.internal.howetotech.dev/gti-lang/gti/issues/62) Documented relay<T> example fails in the C++ backend for a copyable lambda | backend | `reproducers/a16-relay-copyable-lambda` |
-| A17 | [#63](https://git.internal.howetotech.dev/gti-lang/gti/issues/63) Negative literal in an int8_t/int16_t fixed-array initializer emits invalid C++ | backend | `reproducers/a17-narrow-negative-array-literal` |
+| A17 | [#63](https://git.internal.howetotech.dev/gti-lang/gti/issues/63) Contextual signed fixed-array literals | resolved: pass | `reproducers/a17-narrow-negative-array-literal` |
 | A18 | [#64](https://git.internal.howetotech.dev/gti-lang/gti/issues/64) Function item rejected as a callable argument invoked with a parameter pack | rejected | `reproducers/a18-function-item-pack-invoke` |
 | A19 | [#65](https://git.internal.howetotech.dev/gti-lang/gti/issues/65) Trailing requires-clause facts are ignored when validating a dependent compound argument | rejected | `reproducers/a19-trailing-clause-dependent-compound` |
 | A20 | [#66](https://git.internal.howetotech.dev/gti-lang/gti/issues/66) Advisory warnings decided from one generic instance are wrong (GTI-S2096, GTI-S2095) | bad-diagnostic | `reproducers/a20-unnecessary-mut-per-instance` |
@@ -139,7 +152,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A39 | [#82](https://git.internal.howetotech.dev/gti-lang/gti/issues/82) C++ backend ICE: taking the address of a struct-typed field inside a constructor body | ice | `reproducers/a39-ctor-address-of-struct-field` |
 | A40 | [#83](https://git.internal.howetotech.dev/gti-lang/gti/issues/83) C++ backend ICE: indexing a fixed-array field through a raw pointer | ice | `reproducers/a40-c-abi-record-pointer-array-field`<br>`reproducers/a40-raw-pointer-fixed-array-field-index` |
 | A41 | [#84](https://git.internal.howetotech.dev/gti-lang/gti/issues/84) Unresolved fixed-array forwarding through storage::emplace or vector::emplace_back; invalid HIR is now diagnosed | ice (located GTI-B0001, no longer silent) | `reproducers/a41-storage-emplace-fixed-array-silent`<br>`reproducers/a41-vector-emplace-back-fixed-array-silent` |
-| A42 | [#85](https://git.internal.howetotech.dev/gti-lang/gti/issues/85) ICE: fixed array of a passive struct or [[c_abi]] record initialized from named values | ice | `reproducers/a42-c-abi-record-array-from-named-values`<br>`reproducers/a42-struct-array-from-named-values`<br>`reproducers/a42-struct-array-two-named-values` |
+| A42 | [#85](https://git.internal.howetotech.dev/gti-lang/gti/issues/85) Fixed arrays of named passive records | resolved: pass | `reproducers/a42-c-abi-record-array-from-named-values`<br>`reproducers/a42-struct-array-from-named-values`<br>`reproducers/a42-struct-array-two-named-values` |
 | A43 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a43-callback-argument-unknown-type` |
 | A44 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a44-raw-audit-duplicate-warning` |
 | A45 | [#86](https://git.internal.howetotech.dev/gti-lang/gti/issues/86) Derived classes with state-bearing bases: GTI-B0003, backend ICEs, and an undefined Base::Base() at link | ice, link, rejected | `reproducers/a45-base-plus-string-field-unsupported`<br>`reproducers/a45-base-state-rollback-unsupported`<br>`reproducers/a45-derived-destructor-explicit-base`<br>`reproducers/a45-derived-destructor-generated-ctor`<br>`reproducers/a45-literal-base-argument` |
@@ -149,7 +162,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A49 | [#90](https://git.internal.howetotech.dev/gti-lang/gti/issues/90) C++ backend ICE: an owning payload enum call result passed directly as an argument | ice | `reproducers/a49-owning-enum-call-result-argument` |
 | A50 | [#91](https://git.internal.howetotech.dev/gti-lang/gti/issues/91) C++ backend ICE: designated construction omitting a field whose default is 'Inner inner{};' | ice | `reproducers/a50-designated-omitted-brace-default` |
 | A51 | [#92](https://git.internal.howetotech.dev/gti-lang/gti/issues/92) Structured binding over a fixed array of class elements: ICE, or invalid C++ emitted | backend, ice | `reproducers/a51-binding-over-class-array`<br>`reproducers/a51-binding-over-class-array-invalid-cpp` |
-| A52 | [#93](https://git.internal.howetotech.dev/gti-lang/gti/issues/93) ICE: fixed arrays of passive unions, or of structs with a union field | ice | `reproducers/a52-struct-with-union-array`<br>`reproducers/a52-union-array` |
+| A52 | [#93](https://git.internal.howetotech.dev/gti-lang/gti/issues/93) Fixed arrays of passive unions and union-containing records | resolved: pass | `reproducers/a52-struct-with-union-array`<br>`reproducers/a52-union-array` |
 | A53 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Diagnostics suggest invalid fixes and misdescribe explicit generic arguments | bad-diagnostic | `reproducers/a53-operator-temporary-ref-diagnostic` |
 | A54 | [#95](https://git.internal.howetotech.dev/gti-lang/gti/issues/95) Resolved: alias constraints inspect completed class facts | pass | `reproducers/a54-alias-constrained-generic-class-argument`<br>`reproducers/a54-alias-constrained-generic-user-class` |
 | A55 | [#96](https://git.internal.howetotech.dev/gti-lang/gti/issues/96) C++ backend ICE: list/deque/queue emplacement forwarding a move-only constructor argument | ice | `reproducers/a55-ctor-pack-move-only-field-init`<br>`reproducers/a55-list-emplace-move-only-argument` |
