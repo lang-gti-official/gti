@@ -3736,7 +3736,7 @@ private:
         appendExtraction(IntrinsicKind::ExpectedValue, valueType);
     const HirValueId successValue =
         valueType == SemanticType::Void ? HirValueId{0}
-        : borrowedSuccess ? successExtraction
+        : borrowedSuccess               ? successExtraction
                           : appendTransport(successExtraction, valueType);
     const HirValueId errorExtraction =
         appendExtraction(IntrinsicKind::ExpectedError, errorType);
@@ -4847,6 +4847,7 @@ private:
     if (const auto *call = exprAs<Call>(raw)) {
       if (const ResolvedCallInfo *resolved = model.findCall(*call)) {
         value.nativeCalleeType = resolved->nativeCalleeType;
+        value.callableBoundary = resolved->callableBoundary;
         if (value.nativeCalleeType)
           value.callableInvocation = CallableInvocationCapability::Read;
         value.intrinsic = resolved->intrinsic;
@@ -5352,13 +5353,20 @@ private:
         }
       }
     }
-    if (value.nativeCalleeType && !value.operands.empty() &&
-        value.operands.size() == value.parameterTypes.size() + 1) {
+    if (value.nativeCalleeType && !value.operands.empty()) {
       value.receiver = value.operands.front();
       const std::vector<HirValueId> arguments(value.operands.begin() + 1,
                                               value.operands.end());
-      if (auto planned = orderedArguments(arguments, value.parameterTypes, body,
-                                          arguments.size())) {
+      const bool expandsPack =
+          std::any_of(arguments.begin(), arguments.end(), [&](HirValueId id) {
+            const HirValue *argument = body.findValue(id);
+            return argument && argument->kind == HirValueKind::PackExpansion;
+          });
+      if (expandsPack) {
+        // MIR's shared pack schedule stages this value receiver before
+        // expanding the concrete trailing argument pack.
+      } else if (auto planned = orderedArguments(
+                     arguments, value.parameterTypes, body, arguments.size())) {
         value.callPlan = HirCallPlan{
             .receiver = HirCallReceiver{.value = *value.receiver,
                                         .kind = HirCallInputKind::Value,

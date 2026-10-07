@@ -675,11 +675,17 @@ auto SemanticVisitor::Impl::analyzeNativeIndirectCall(
   validateCallPlaceExclusivityImpl(ordinaryParameters, ordinaryArguments,
                                    call.paren());
   valid = validateCallableReturn(call, *result) && valid;
-  valid = validateCallableCapability(call, CallableInvocationCapability::Read) &&
-          valid;
+  valid =
+      validateCallableCapability(call, CallableInvocationCapability::Read) &&
+      valid;
   if (valid) {
     ResolvedCallInfo resolved{
         .nativeCalleeType = calleeType,
+        .callableBoundary =
+            callableParameterContract(call.callee()) == nullptr
+                ? std::nullopt
+                : std::optional{callableParameterContract(call.callee())
+                                    ->boundary},
         .returnType = *result,
         .parameterTypes = {parameters.begin(), parameters.end()}};
     semanticModel.record(call, resolved);

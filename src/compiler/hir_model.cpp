@@ -166,21 +166,34 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const auto parameters = signature.nativeFunctionParameterTypes();
       const auto *callee =
           value.receiver ? body.findValue(*value.receiver) : nullptr;
+      const bool expandedArguments =
+          value.receiver && value.operands.size() > 1 &&
+          value.operands.front() == *value.receiver &&
+          std::any_of(value.operands.begin() + 1, value.operands.end(),
+                      [&](HirValueId id) {
+                        const HirValue *argument = body.findValue(id);
+                        return argument &&
+                               argument->kind == HirValueKind::PackExpansion &&
+                               argument->info.type.kind ==
+                                   SemanticType::TypePack &&
+                               argument->info.type.concretePack;
+                      });
+      const bool orderedPlan =
+          value.receiver && value.callPlan && value.callPlan->receiver &&
+          value.callPlan->receiver->value == *value.receiver &&
+          value.callPlan->receiver->type == signature &&
+          value.callPlan->receiver->kind == HirCallInputKind::Value &&
+          value.callPlan->arguments.size() == parameters.size();
       if (value.kind != HirValueKind::Call ||
           !signature.hasNativeFunctionShape() || !callee ||
           callee->info.type != signature || value.functionTarget ||
           value.constructorTarget || value.lambdaTarget ||
-          value.nativeCallbackAdapter || !value.callPlan ||
-          !value.callPlan->receiver ||
-          value.callPlan->receiver->value != *value.receiver ||
-          value.callPlan->receiver->type != signature ||
-          value.callPlan->receiver->kind != HirCallInputKind::Value ||
+          value.nativeCallbackAdapter || (!orderedPlan && !expandedArguments) ||
           value.unsafeOperation != UnsafeOperationKind::ForeignPointerCall ||
           value.info.type != *signature.nativeFunctionReturnType() ||
           value.parameterTypes.size() != parameters.size() ||
           !std::equal(parameters.begin(), parameters.end(),
-                      value.parameterTypes.begin()) ||
-          value.callPlan->arguments.size() != parameters.size()) {
+                      value.parameterTypes.begin())) {
         result.errors.emplace_back(
             "native indirect invocation lost its exact signature and callee "
             "plan");
