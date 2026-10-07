@@ -19,6 +19,9 @@ public:
   }
 };
 
+struct Coordinate { mut int32_t x = 0; };
+union NativeWord { mut int32_t integer; mut float real; };
+
 int main() {
   mut int values[4] = {1, 2, 3, 4};
   values[2] = 10;
@@ -26,9 +29,20 @@ int main() {
   int grid[2][2] = {{1, 2}, {3, 4}};
   Pair<int> pair = Pair<int>(7, 8);
   SampleCount count = values.size();
+  int8_t bytes[2] = {-128, -2};
+  Coordinate origin{.x = 9};
+  Coordinate coordinates[2] = {origin, origin};
+  NativeWord words[2] = {};
+  // Unions are passive, but choosing and interpreting a member remains unsafe.
+  unsafe {
+    if (words[1].integer != 0) {
+      return 1;
+    }
+  }
 
   if (count == 4 and sum(values) == 17 and grid[1][0] == 3 and
-      pair.first() == 7) {
+      pair.first() == 7 and bytes[0] == -128 and
+      coordinates[1].x == 9) {
     std::println("fixed arrays keep their bounds");
     return 0;
   }
