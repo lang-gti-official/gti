@@ -7669,7 +7669,8 @@ int main() {
           hasDiagnostic(invalid.diagnostics,
                         "wrong number of explicit value arguments") &&
           hasDiagnostic(invalid.diagnostics,
-                        "type arguments must appear before value") &&
+                        "A function value generic argument must be an "
+                        "in-scope uint64_t compile-time value") &&
           hasDiagnostic(
               invalid.diagnostics,
               "Non-generic functions do not take generic arguments") &&
@@ -7683,6 +7684,28 @@ int main() {
       "contextual arrays and explicit value arguments should reject duplicate "
       "generic shapes, missing array context, invalid argument kinds/counts, "
       "and ambiguous overloads at the GTI layer");
+
+  // Resolution knows that the written 'int' occupies a value slot. Retain
+  // PR111's owning value-kind diagnostic rather than the old syntactic-order
+  // message; accepting the program or moving its anchor to the whole call
+  // would still fail this regression.
+  const auto wrongValueKind = std::find_if(
+      invalid.diagnostics.begin(), invalid.diagnostics.end(),
+      [](const lang::Diagnostic &diagnostic) {
+        return diagnostic.code == "GTI-S2026" &&
+               diagnostic.message ==
+                   "A function value generic argument must be an in-scope "
+                   "uint64_t compile-time value.";
+      });
+  const auto valueKindOffset = invalidSource.find("int>({1, 2})");
+  expect(wrongValueKind != invalid.diagnostics.end() &&
+             valueKindOffset != std::string::npos &&
+             wrongValueKind->primary.source.ends_with(
+                 "invalid-contextual-arrays.gti") &&
+             wrongValueKind->primary.start == valueKindOffset &&
+             wrongValueKind->primary.end == valueKindOffset + 3,
+         "a type in an explicit value slot has the exact owning diagnostic "
+         "and written-argument span");
 
   const auto wrongExtent =
       std::find_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
