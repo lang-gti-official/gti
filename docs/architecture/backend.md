@@ -1862,8 +1862,11 @@ analysis. Constant in-bounds array-element field chains use the same type/field
 rows for binding, receiver and raw-pointer roots; no extra object is materialized.
 
 Structured fixed-array decomposition retains its semantically chosen ordinal
-as a MIR constant index as well as the evaluated index value. A passive class
-array copy with one adjacent binding initialization constructs that destination
+as a MIR constant index as well as the evaluated index value. A fixed-array
+projection whose index is a literal must agree with that literal; verification
+rejects a contradictory constant ordinal instead of trusting an unchecked
+backend shortcut. A passive class array copy with one adjacent binding
+initialization constructs that destination
 directly from its exact source array. The source's Read/Available ownership
 event, generated copy/move/destruction traits and destination activation/drop
 identity must all match. There is no default-initialized array SSA temporary,

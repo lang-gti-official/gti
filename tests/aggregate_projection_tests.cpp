@@ -17,7 +17,41 @@ int main() {
     if (!frontend.canGenerateCode())
       continue;
     const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
-    for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &function : frontend.mir.functionInstances()) {
+      for (const auto &place : function.body.places) {
+        const auto index = std::find_if(
+            place.projections.begin(), place.projections.end(),
+            [](const auto &projection) {
+              return projection.kind == lang::MirProjectionKind::Index &&
+                     projection.index && projection.constantIndex;
+            });
+        if (index == place.projections.end())
+          continue;
+        const auto *indexValue = function.body.findValue(index->index);
+        const auto *indexBlock =
+            indexValue ? function.body.findBlock(indexValue->definitionBlock)
+                       : nullptr;
+        if (!indexBlock ||
+            !std::any_of(
+                indexBlock->instructions.begin(),
+                indexBlock->instructions.end(), [&](const auto &definition) {
+                  return definition.id == indexValue->definition &&
+                         definition.operation == lang::MirOperation::Literal &&
+                         definition.literal &&
+                         std::get_if<std::uint64_t>(&*definition.literal);
+                }))
+          continue;
+        auto malformed = frontend.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        changed->body.places[place.id - 1]
+            .projections[static_cast<std::size_t>(index -
+                                                  place.projections.begin())]
+            .constantIndex = *index->constantIndex ^ 1;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "constant projection ordinal cannot contradict its literal "
+               "index value");
+      }
       for (const auto &block : function.body.blocks)
         for (const auto &instruction : block.instructions) {
           const bool copy =
@@ -97,6 +131,7 @@ int main() {
                      "and ownership facts");
           }
         }
+    }
     try {
       const auto cpp = gti_test::emitCppText(frontend);
       expect(
@@ -109,7 +144,7 @@ int main() {
       expect(false, error.what());
     }
   }
-  expect(copies == 1 && moves == 1 && addresses == 2,
+  expect(copies == 2 && moves == 1 && addresses == 2,
          "fixtures prove independent copying, owning movement and checked "
          "address formation");
   if (failures)

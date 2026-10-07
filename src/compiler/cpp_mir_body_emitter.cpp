@@ -47201,7 +47201,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             !fixedArrayValueDestinationSlot(program_, body, instruction) &&
             instruction.result &&
             !classSsaLifetimeSlot(program_, representations_, body,
-                                  *instruction.result)) {
+                                  *instruction.result) &&
+            constructorFieldMoveInitialize(body, *instruction.result) ==
+                nullptr &&
+            !(address.kind == MirBodyKind::Constructor &&
+              stagedConstructorFieldPublication(program_, body, address.owner,
+                                                instruction) != nullptr)) {
           // An owning array cannot fall back to a default-constructed scalar
           // SSA object when its exact publication/lifetime proof is absent.
           return false;

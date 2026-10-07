@@ -3,6 +3,19 @@ extern "C" {
   int32_t constructed_count();
 }
 
+class Value {
+public:
+  int32_t n;
+  Value(int32_t n) : n(n) {}
+};
+
+class ArrayOwner {
+  Value values[1];
+public:
+  ArrayOwner(Value input[1]) : values(std::move(input)) {}
+  int32_t read() { return this.values[0].n; }
+};
+
 struct Range {
   mut int32_t lo;
   mut int32_t hi;
@@ -19,6 +32,10 @@ int main() {
   // Structured binding owns an independent copy, not references to ranges.
   ranges[0].lo = 99;
   if (first.lo != 0) { return 2; }
+  // Existing constructor-field array publication is a distinct exact proof.
+  Value input[1] = {Value(9)};
+  ArrayOwner owner{input};
+  if (owner.read() != 9) { return 4; }
   // Copy construction must not invent ordinary/default construction.
   return constructed_count() == 2 ? 0 : 3;
 }
