@@ -5,12 +5,24 @@ struct Pair<T, U> {
   Pair(T first, U second) : first(first), second(second) {}
 };
 
+struct Interval {
+  mut int lo;
+  int hi;
+  Interval(int lo, int hi) : lo(lo), hi(hi) {}
+  int width() { return this.hi - this.lo; }
+};
+
 int main() {
   int dimensions[2] = {1920, 1080};
   auto [width, height] = dimensions;
 
   auto [score, ready] = Pair<int, bool>(7, true);
-  if (width == 1920 && height == 1080 && score == 7 && ready) {
+  // Class arrays need no default constructor: the hidden owner is a copy.
+  mut Interval intervals[2] = {Interval(0, 1), Interval(5, 8)};
+  auto [first, second] = intervals;
+  intervals[0].lo = 99;
+  if (width == 1920 && height == 1080 && score == 7 && ready &&
+      first.lo == 0 && first.width() == 1 && second.width() == 3) {
     std::println("structured bindings worked");
     return 0;
   }
