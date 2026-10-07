@@ -107,8 +107,8 @@ public:
 
   [[nodiscard]] const std::vector<ProjectFactsTarget> &targets() const;
 
-  // Package-level `[build] defines`, the same flags the build path seeds a
-  // compilation with before CLI overrides apply.
+  // Selected-package and transitive-dependency `[build] defines`, the same
+  // program-wide flags the build path seeds before CLI overrides apply.
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
 
   // The analysis configuration for one declared profile, assembled exactly as
