@@ -746,7 +746,7 @@ int main() {
   expectOpaqueHandleFailure(
       "opaque-by-value.gti",
       "[[c_opaque]] struct Bad; Bad value; int main() { return 0; }",
-      "may be used only behind one raw pointer");
+      "may be used only behind raw pointers");
   expectOpaqueHandleFailure(
       "opaque-record-conflict.gti",
       "[[c_abi, c_opaque]] struct Bad; int main() { return 0; }",

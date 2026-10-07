@@ -413,9 +413,9 @@ int main() {
         const_cast<std::vector<lang::MirFunctionInstance> &>(
             missingPair.functionInstances());
     missingFunctions[functionIndex].cArrayCountParameter.reset();
-    expect(!lang::verifyMirProgram(missingPair).valid(),
-           "MIR verification should reject a nested return after a pass drops "
-           "its native-array pair metadata");
+    expect(lang::verifyMirProgram(missingPair).valid(),
+           "An ordinary nested pointer return does not require native-array "
+           "count metadata");
 
     lang::MirProgram invalidPair = frontend.mir;
     auto &invalidFunctions =

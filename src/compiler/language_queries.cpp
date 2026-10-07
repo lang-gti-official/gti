@@ -21,6 +21,16 @@ namespace lang {
 SignaturePrinter::SignaturePrinter(const SemanticModel &semantics)
     : semantics(semantics), types(semantics) {}
 
+std::string SignaturePrinter::nativeCall(const ResolvedCallInfo &selected,
+                                         std::string_view name) const {
+  std::string result = "unsafe " + types.print(selected.returnType) + " ";
+  result += name;
+  result += '(';
+  appendParameters(result, selected.parameterTypes, nullptr, false);
+  result += ')';
+  return result;
+}
+
 [[nodiscard]] std::string
 SignaturePrinter::function(const FunctionInfo &info,
                            const ResolvedCallInfo *selected) const {
@@ -693,6 +703,10 @@ public:
     switch (occurrence->kind) {
     case SemanticOccurrenceKind::SelectedCall: {
       const ResolvedCallInfo &selected = *occurrence->selectedCall;
+      if (selected.nativeCalleeType) {
+        result.signature = signatures.nativeCall(selected, occurrence->name);
+        break;
+      }
       const FunctionInfo *function = semantics.findFunction(selected.function);
       if (function != nullptr) {
         result.signature = signatures.function(*function, &selected);
@@ -1068,17 +1082,24 @@ public:
     if (selected->kind == SemanticOccurrenceKind::SelectedCall &&
         selected->selectedCall) {
       const ResolvedCallInfo &resolved = *selected->selectedCall;
-      const FunctionInfo *function = semantics.findFunction(resolved.function);
-      if (function == nullptr) {
-        return std::nullopt;
+      if (resolved.nativeCalleeType) {
+        result.label = signatures.nativeCall(resolved, selected->name);
+        result.parameterLabels =
+            signatures.parameterLabels(resolved.parameterTypes, nullptr, false);
+      } else {
+        const FunctionInfo *function =
+            semantics.findFunction(resolved.function);
+        if (function == nullptr) {
+          return std::nullopt;
+        }
+        result.label = signatures.function(*function, &resolved);
+        result.parameterLabels = signatures.parameterLabels(
+            resolved.parameterTypes,
+            function->declaration == nullptr
+                ? nullptr
+                : &function->declaration->parameters(),
+            false);
       }
-      result.label = signatures.function(*function, &resolved);
-      result.parameterLabels =
-          signatures.parameterLabels(resolved.parameterTypes,
-                                     function->declaration == nullptr
-                                         ? nullptr
-                                         : &function->declaration->parameters(),
-                                     false);
     } else if (selected->kind == SemanticOccurrenceKind::SelectedConstruction &&
                selected->selectedConstruction) {
       const ResolvedConstructionInfo &resolved =

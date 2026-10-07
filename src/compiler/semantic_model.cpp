@@ -1467,7 +1467,11 @@ void SemanticModel::record(const Expr &expression, ExpressionInfo info) {
 
 void SemanticModel::recordDefinedFailure(const Expr &expression,
                                          DefinedFailureOperation operation) {
-  if (operation.empty()) {
+  // A concrete reanalysis can prove that a deferred generic operation has no
+  // GTI failure channel. Preserve that explicit empty fact in the overlay;
+  // erasing it would expose the base model's deferred propagation again.
+  if (operation.empty() &&
+      (base == nullptr || base->findDefinedFailure(expression) == nullptr)) {
     definedFailures.erase(&expression);
     return;
   }

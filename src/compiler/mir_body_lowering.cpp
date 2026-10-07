@@ -4999,6 +4999,7 @@ private:
                         .dispatch = value.dispatch,
                         .dispatchOwner = value.dispatchOwner,
                         .functionTarget = value.functionTarget,
+                        .nativeCalleeType = value.nativeCalleeType,
                         .threadTaskAdapter = value.threadTaskAdapter,
                         .constructorTarget = value.constructorTarget,
                         .constructorKind = value.constructorKind,
@@ -5049,7 +5050,8 @@ private:
           return;
         }
         sourceReceiver =
-            retainedReceiver
+            value.nativeCalleeType ? valueOperand(receiver.value)
+            : retainedReceiver
                 ? receiverOperand(receiverSource->operands.front(), access)
             : temporaryReceiver
                 ? temporaryBorrowOperand(receiver.value, access, receiver.type,
@@ -5097,8 +5099,9 @@ private:
           (value.intrinsic == IntrinsicKind::ExpectedValue ||
            value.intrinsic == IntrinsicKind::ExpectedError);
       MirOperand operand =
-          retainedReceiver ? receiverOperand(receiverSource->operands.front(),
-                                             AccessMode::Mutable)
+          value.nativeCalleeType ? valueOperand(*receiver)
+          : retainedReceiver ? receiverOperand(receiverSource->operands.front(),
+                                               AccessMode::Mutable)
           : expectedTemporaryExtraction
               ? temporaryBorrowOperand(
                     *receiver, AccessMode::ReadOnly, receiverSource->info.type,
@@ -5116,8 +5119,9 @@ private:
             input->info.type.kind == SemanticType::Lambda &&
             dropObligationForValue(*receiver) != 0;
         const HirCallInputKind kind =
-            retainedReceiver ? HirCallInputKind::RetainedReceiver
-            : movedClosure   ? HirCallInputKind::MoveValue
+            value.nativeCalleeType ? HirCallInputKind::Value
+            : retainedReceiver     ? HirCallInputKind::RetainedReceiver
+            : movedClosure         ? HirCallInputKind::MoveValue
             : input != nullptr && input->info.category == ValueCategory::Place
                 ? (access == AccessMode::Mutable
                        ? HirCallInputKind::MutableBorrow

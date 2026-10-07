@@ -4207,6 +4207,21 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       analyzeContextualCallArguments(expr.arguments());
   std::vector<SemanticType> &argumentTypes = argumentAnalysis.types;
 
+  if (calleeType.kind == SemanticType::NativeFunction) {
+    if (argumentAnalysis.hasDeferred()) {
+      const auto parameters = calleeType.nativeFunctionParameterTypes();
+      if (!finishContextualCallArguments(
+              std::vector<SemanticType>(parameters.begin(), parameters.end()),
+              expr.arguments(), argumentAnalysis, expr.paren(),
+              "Native function pointer")) {
+        currentType = SemanticType::Unknown;
+        return;
+      }
+    }
+    analyzeNativeIndirectCall(expr, calleeType, argumentTypes);
+    return;
+  }
+
   if (calleeType.kind == SemanticType::Lambda) {
     if (argumentAnalysis.hasDeferred()) {
       std::vector<SemanticType> parameters(

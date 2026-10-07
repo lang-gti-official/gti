@@ -6733,8 +6733,10 @@ auto SemanticVisitor::Impl::nativeFunctionBoundaryTypeAllowed(
   if (returnPosition && type == SemanticType::Void) {
     return true;
   }
-  if (isCAbiScalar(type) || type == SemanticType::CString ||
-      type == SemanticType::StringView) {
+  if (type == SemanticType::StringView) {
+    return !returnPosition;
+  }
+  if (isCAbiScalar(type) || type == SemanticType::CString) {
     return true;
   }
   if (type.kind == SemanticType::NativeFunction) {
