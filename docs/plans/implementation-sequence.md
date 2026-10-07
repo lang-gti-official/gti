@@ -7026,8 +7026,16 @@ consumer, and release refreshes remain outstanding for the full campaign.
   discovery, verified lifecycle and detached representation use the complete
   enum type rather than the primary declaration alone. Forward defaults,
   alias payload validation and nominal deduction have focused regressions.
-  Runtime/tooling/corpus validation and upstream reconciliation remain delivery
-  gates. This campaign is not an `expected` implementation. The owner's spelling
+  The original 22-fixture native matrix passes all 176 configurations with
+  19 source-rejection cases; added generic/nongeneric owning-field fixtures
+  pass all 16 native configurations. Exact instance LSP signatures and fresh
+  dependency diagnostics pass the focused protocol gate. Original A47, A48,
+  and A49 reproducers also pass all 24 native configurations. S15 plain-class
+  payload emission and its generic/nongeneric publication fixtures pass focused
+  native checks. Final review found cross-nominal default-ordering and exact
+  concrete enum layout-traversal gaps, which are being repaired. Combined corpus/full-suite
+  validation and upstream release integration remain delivery gates. This
+  campaign is not an `expected` implementation. The owner's spelling
   amendment makes `class` optional with identical scoped semantics for both
   declaration forms.
 - **Non-goals:** Implicit conversions, open variants, making `std::variant`

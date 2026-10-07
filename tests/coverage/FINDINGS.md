@@ -73,6 +73,13 @@ than recognizing a particular enum or wrapper. Focused generic and nongeneric
 cases also check mutation, exact active-payload cleanup, and failure rollback.
 This is focused evidence; full combined-campaign validation remains separate.
 
+S15 (#103) is also repaired: the passive-class SSA prelude now respects the
+same exact fused construction and extraction proofs as admission and body
+emission. Its original reproducer prints `1` and exits successfully; generic
+and nongeneric cases cover fresh class payloads, named copies, and copied or
+borrowed patterns across all eight native configurations. Its gate now requires
+native success rather than an internal compiler error.
+
 ### Fixed-array construction repair
 
 A17 (#63), A42 (#85), and A52 (#93) are resolved and their six original
@@ -964,7 +971,9 @@ by value deliberately.
 
 ## S15 — ICE: a payload enum carrying a class without a destructor
 
-`reproducers/s15-payload-enum-plain-class.gti`
+`reproducers/s15-payload-enum-plain-class.gti` — repaired by the generic enum
+composition campaign; now gated as passing. The following records the original
+failure, not the current compiler behavior.
 
 ```gti
 class P { mut int32_t n = 0; public: P(int32_t n) : n(n) {} };

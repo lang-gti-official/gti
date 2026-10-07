@@ -2290,7 +2290,7 @@
     "s15-payload-enum-plain-class": {
       "finding": "S15",
       "issue": 103,
-      "outcome": "ice"
+      "outcome": "pass"
     }
   }
 }
