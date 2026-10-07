@@ -338,6 +338,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testComposedCarrierFunctionTransfer",
+      "suite": "ownership"
+    },
+    {
       "name": "testStoredCarrierReturnProvenance",
       "suite": "ownership"
     },

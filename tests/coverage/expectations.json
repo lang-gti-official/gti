@@ -2016,17 +2016,17 @@
     "a47-mut-payload-binding-through-mut-ref": {
       "finding": "A47",
       "issue": 88,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a48-switch-on-owning-enum-field": {
       "finding": "A48",
       "issue": 89,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a49-owning-enum-call-result-argument": {
       "finding": "A49",
       "issue": 90,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a50-designated-omitted-brace-default": {
       "finding": "A50",
@@ -2253,7 +2253,7 @@
     "s15-payload-enum-plain-class": {
       "finding": "S15",
       "issue": 103,
-      "outcome": "ice"
+      "outcome": "pass"
     }
   }
 }

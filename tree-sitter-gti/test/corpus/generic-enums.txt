@@ -1,0 +1,159 @@
+==================
+Scoped enum with optional class spelling
+==================
+
+enum State : uint8_t { idle, ready = 4 };
+enum class Other { first, second };
+
+---
+
+(source_file
+  (enum_declaration
+    (identifier)
+    (type
+      (primitive_type))
+    (enumerator
+      (identifier))
+    (enumerator
+      (identifier)
+      (primary_expression
+        (literal
+          (integer_literal)))))
+  (enum_declaration
+    (identifier)
+    (enumerator
+      (identifier))
+    (enumerator
+      (identifier))))
+
+==================
+Generic payload enum declarations
+==================
+
+enum Message<T, U = T, uint64_t N = 3> {
+  empty,
+  item(T value, U detail),
+};
+enum class Box<T> { value(T item) };
+
+---
+
+(source_file
+  (enum_declaration
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier))
+      (generic_parameter
+        (identifier)
+        (type
+          (user_type
+            (identifier))))
+      (generic_parameter
+        (identifier)
+        (integer_literal)))
+    (enumerator
+      (identifier))
+    (enumerator
+      (identifier)
+      (parameter_clause
+        (parameter
+          (type
+            (user_type
+              (identifier)))
+          (identifier))
+        (parameter
+          (type
+            (user_type
+              (identifier)))
+          (identifier)))))
+  (enum_declaration
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (enumerator
+      (identifier)
+      (parameter_clause
+        (parameter
+          (type
+            (user_type
+              (identifier)))
+          (identifier))))))
+
+==================
+Concrete generic enum construction and matching
+==================
+
+int main() {
+  auto event = messages::Message<int>::item(7);
+  switch (event) {
+    case messages::Message<int>::empty: return 0;
+    case messages::Message<int>::item(auto& item): return item;
+  }
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block
+      (variable_declaration
+        (type)
+        (identifier)
+        (initializer_expression
+          (call_expression
+            (primary_expression
+              (generic_scoped_identifier
+                (scoped_identifier
+                  (identifier)
+                  (identifier))
+                (type_argument_clause
+                  (type
+                    (primitive_type)))
+                (identifier)))
+            (argument_list
+              (primary_expression
+                (literal
+                  (integer_literal)))))))
+      (switch_statement
+        (primary_expression
+          (identifier))
+        (switch_body
+          (case_label
+            (primary_expression
+              (generic_scoped_identifier
+                (scoped_identifier
+                  (identifier)
+                  (identifier))
+                (type_argument_clause
+                  (type
+                    (primitive_type)))
+                (identifier))))
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (integer_literal)))))
+          (case_label
+            (call_expression
+              (primary_expression
+                (generic_scoped_identifier
+                  (scoped_identifier
+                    (identifier)
+                    (identifier))
+                  (type_argument_clause
+                    (type
+                      (primitive_type)))
+                  (identifier)))
+              (argument_list
+                (payload_reference_pattern
+                  (identifier)))))
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (identifier)))))))))

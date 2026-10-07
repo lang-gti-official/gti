@@ -23,6 +23,7 @@ if(Python3_Interpreter_FOUND)
     generated_base_constructor_runtime generic_algorithm_breadth
     generic_callable_adapter_runtime generic_callable_transport_runtime generic_contract_runtime
     hosted_constructor_identity_runtime
+    generic_enum_instances_runtime
     hosted_exit_status_runtime
     http_url_operators immovable_storage_runtime integral_enum_formatting_runtime
     lambda_pack_invocation_runtime nested_borrow_fields nested_guarded_expected_runtime

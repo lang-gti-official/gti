@@ -408,9 +408,12 @@ struct SemanticType {
     return type;
   }
 
-  [[nodiscard]] static SemanticType enumType(EnumId id) {
-    SemanticType type(Enum);
+  [[nodiscard]] static SemanticType
+  enumType(EnumId id, std::vector<SemanticType> arguments = {},
+           std::vector<CompileTimeValue> valueArguments = {}) {
+    SemanticType type(Enum, std::move(arguments));
     type.enumId = id;
+    type.valueArguments = std::move(valueArguments);
     return type;
   }
 

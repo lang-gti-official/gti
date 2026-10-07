@@ -160,16 +160,17 @@ MirLowerer::lowerProgram(const HirProgram &source,
     if (!enumeration.payload) {
       result.program.integralEnums_.push_back(
           {.declaration = enumeration.declaration,
+           .type = enumeration.type,
            .sourceUnit = enumeration.sourceUnit,
            .underlyingType = enumeration.underlyingType});
       continue;
     }
-    MirPayloadEnum lowered{
-        .declaration = enumeration.declaration,
-        .sourceUnit = enumeration.sourceUnit,
-        .type = SemanticType::enumType(enumeration.declaration),
-        .traits = enumeration.traits,
-        .requiresActiveCleanup = enumeration.requiresActiveCleanup};
+    MirPayloadEnum lowered{.declaration = enumeration.declaration,
+                           .sourceUnit = enumeration.sourceUnit,
+                           .type = enumeration.type,
+                           .traits = enumeration.traits,
+                           .requiresActiveCleanup =
+                               enumeration.requiresActiveCleanup};
     lowered.variants.reserve(enumeration.enumerators.size());
     for (const HirEnumerator &variant : enumeration.enumerators) {
       lowered.variants.push_back({.variantIndex = variant.variantIndex,

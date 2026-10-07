@@ -2,6 +2,14 @@
 # moving their target ownership out of the root project file.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 
+add_executable(gti_generic_enum_declaration_tests generic_enum_declaration_tests.cpp)
+target_link_libraries(gti_generic_enum_declaration_tests PRIVATE gti_compiler)
+add_test(NAME generic_enum_declaration COMMAND gti_generic_enum_declaration_tests)
+
+add_executable(gti_generic_payload_enum_backend_tests generic_payload_enum_backend_tests.cpp)
+target_link_libraries(gti_generic_payload_enum_backend_tests PRIVATE gti_cpp_backend)
+add_test(NAME generic_payload_enum_backend COMMAND gti_generic_payload_enum_backend_tests)
+
 add_executable(gti_native_c_scalar_target_tests native_c_scalar_target_tests.cpp)
 target_link_libraries(gti_native_c_scalar_target_tests PRIVATE gti_compiler)
 add_test(NAME native_c_scalar_target COMMAND gti_native_c_scalar_target_tests)
@@ -2076,6 +2084,11 @@ if(Python3_Interpreter_FOUND)
         COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/integral_enum_lsp_test.py"
           "$<TARGET_FILE:gti_lsp>")
+      add_test(NAME generic_enum_lsp
+        COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/generic_enum_lsp_test.py"
+          "$<TARGET_FILE:gti_lsp>")
+      set_tests_properties(generic_enum_lsp PROPERTIES TIMEOUT 180)
     endif()
     add_test(
       NAME issues_117_120_regressions
@@ -2788,6 +2801,13 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti>"
     )
     set_tests_properties(generic_payload_enum_runtime PROPERTIES TIMEOUT 300)
+    add_test(
+      NAME generic_enum_instances_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/generic_enum_instances_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(generic_enum_instances_runtime PROPERTIES TIMEOUT 600)
     add_test(
       NAME ordered_borrow_composition_runtime
       COMMAND "${Python3_EXECUTABLE}"

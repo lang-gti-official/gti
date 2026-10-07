@@ -63,7 +63,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v94`, `mir-body-v79`).
+instruction, body, and caller-assignment facts (`mir-v95`, `mir-body-v80`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -236,18 +236,19 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v94`/`mir-body-v79`, with
-`lowered-program-v14` declaration metadata. Version 94 additionally records
+The combined deterministic serialization is currently `mir-v95`/`mir-body-v80`,
+with `lowered-program-v15` declaration metadata. It retains exact concrete
+integral and payload enum identities, including their type/value arguments,
+alternative fields and lifecycle facts. Version 95 also records
 generated-default constructor identity explicitly on each constructor instance
 and the independent generated-schedule obligation on concrete class rows;
-backends must not infer that identity from its parameter count. Version 14
-retains that obligation in detached class declarations, so removing both a
-constructor row and its selected target cannot authorize a native default call.
-The preceding
-revision retired sparse capability/intrinsic and initialized-slot proof
-identities and preserved deterministic per-function NUL-result policy. Older
-version descriptions below record their original additions, not an alternative
-current schema.
+backends must not infer that identity from its parameter count. Version 15
+retains both exact enum identity and that obligation in detached declarations,
+so removing both a constructor row and its selected target cannot authorize a
+native default call. The combined revision preserves the retirement of sparse
+capability/intrinsic and initialized-slot proof identities and deterministic
+per-function NUL-result policy. Older version descriptions below record their
+original additions, not an alternative current schema.
 
 Concrete class rows retain transfer/share policy and any substituted unsafe
 capability condition. The verifier checks that a conditional policy retains
@@ -255,7 +256,7 @@ its condition and that its result agrees with the payload's concrete MIR
 capabilities; nominal facts remain frontend-owned, while real builtin aggregate
 components compose those facts. Removing the condition or changing the derived
 capability is invalid MIR. The declaration catalog preserves the generic
-condition in `lowered-program-v13`, and optimization replay includes these facts.
+condition in `lowered-program-v15`, and optimization replay includes these facts.
 
 MIR also copies the artifact program kind and a pointer-free
 `MirEmbeddingPlan`. Each canonical row names the exact source
@@ -268,8 +269,16 @@ plan as immutable non-body policy. `LoweredProgramBuilder` exact-compares the
 semantic/HIR/MIR chain and copies the rows into `LoweredEmbeddingPlan`, where
 future wrapper and header backends can consume one sealed source of truth.
 
-The combined schema preserves embedding rows for dormant library snapshots
+Exact generic enum identity and dormant embedding rows share the current
+combined schema, which preserves embedding rows for dormant library snapshots
 and uses the same current version for executable and library programs.
+Storage ownership and conditional capability verification query enum traits by
+the full concrete `SemanticType`, including type/value arguments. A primary
+enum declaration ID does not identify a generic instance. Payload catalogs
+provide the authoritative ownership, borrowing and concurrency facts folded
+from actual alternative fields; nominal generic metadata does not become a
+stored component. Missing exact rows remain invalid rather than granting a
+storage or capability exemption.
 The program header retains the selected target's identity, pointer width and
 execution profile. Every serialized type retains its native C primitive
 discriminator separately from its numeric kind; equal-width `long` and
@@ -507,6 +516,28 @@ derives and compares the complete recipe. Borrowed `PayloadExtract` values are
 places, not owning copies: the verifier checks the exact selected switch edge,
 payload type/access, and source loan; backends spell an address into that original
 variant. Loan conflicts conservatively protect the whole matched enum.
+Projected payload reborrows name their immediate live parent loan as the
+`Borrow` operand, rather than a read of the parent's value. Identity-only
+canonical containment follows place-valued reference forwarding while still
+checking the selected variant/field. A shared local child may reborrow a shared
+parent without gaining mutable access; parent activity, CFG containment,
+non-escape and child-before-parent endpoints remain mandatory and independently
+verified.
+
+Canonical storage identity preserves the concrete executable place and its
+field projections through address-preserving place-valued SSA operations.
+This is distinct from a lifetime dependency origin, which may deliberately
+refer to an enclosing owner. A call's receiver is not automatically its result
+storage. Traversal is bounded by the place/value/loan graph it follows;
+cyclic forged forwarding remains ambiguous and is rejected. Exact enum
+relocation traversal similarly distinguishes concrete instances rather than
+treating every occurrence of a generic primary as the same recursive type.
+
+Canonical checked-place forwarding does not cross `RawDereference` or
+`RawIndex`. Such projections designate pointee storage, not the storage holding
+the pointer; a read-only carrier shell therefore does not make the raw pointee
+read-only. Ordinary pointer type/access and lexical unsafe obligations remain
+separate from checked loan ancestry.
 Program v74/body v64 serialize signature receiver capability in semantic type
 metadata. Read-only, mutable, and consuming signatures cannot share a serialized
 identity. The lowered declaration seal includes the same field in

@@ -66,6 +66,9 @@ cppFunctionHasFailureResultChannel(const LoweredProgram &program,
 [[nodiscard]] std::optional<std::string>
 cppConcreteClassName(const LoweredProgram &program, const SemanticType &type);
 
+[[nodiscard]] std::optional<std::string>
+cppConcreteEnumName(const LoweredProgram &program, const SemanticType &type);
+
 // The fully qualified form of cppConcreteClassName in the emitted program
 // namespace. This is the semantic type spelling used by fields, signatures,
 // MIR places, and calls once GTI has selected a concrete class instance.

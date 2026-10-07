@@ -124,6 +124,8 @@ public:
 
   [[nodiscard]] bool
   requiresActiveCleanupFor(const SemanticType &type) const override;
+  [[nodiscard]] std::optional<EnumTypeInfo>
+  enumTypeFor(const SemanticType &type) const override;
 
   void attachDeclarationDocumentation(SymbolId symbol, const Stmt &declaration);
 
@@ -953,6 +955,7 @@ private:
   };
 
   struct ClassInfo {
+    enum class DefaultsState { Unresolved, Resolving, Resolved, Invalid };
     ClassId id = 0;
     SourceUnitId sourceUnit = 0;
     const ClassDecl *declaration = nullptr;
@@ -967,6 +970,7 @@ private:
     std::vector<SemanticType> exactTypeArguments;
     std::vector<CompileTimeValue> exactValueArguments;
     std::vector<GenericParameterInfo> genericParameters;
+    DefaultsState defaultsState = DefaultsState::Unresolved;
     std::vector<SemanticType> genericArgumentPatterns;
     bool argumentPatternsResolving = false;
     bool argumentPatternsResolved = false;
@@ -1043,11 +1047,14 @@ private:
   };
 
   struct EnumInfo {
+    enum class DefaultsState { Unresolved, Resolving, Resolved, Invalid };
     EnumId id = 0;
     SourceUnitId sourceUnit = 0;
     const EnumDecl *declaration = nullptr;
     Token name;
     std::vector<std::string> namespaceScope;
+    std::vector<GenericParameterInfo> genericParameters;
+    DefaultsState defaultsState = DefaultsState::Unresolved;
     SemanticType underlyingType = SemanticType::Int32;
     std::unordered_map<std::string, EnumeratorRecord> enumerators;
     bool payload = false;
@@ -2396,6 +2403,11 @@ private:
   resolveClassArguments(ClassId classId, const std::vector<TypeRef> &arguments,
                         const Token &site,
                         std::string diagnosticCode = "GTI-S2026");
+  ResolvedClassArguments
+  resolveNominalArguments(const std::vector<GenericParameterInfo> &parameters,
+                          const Token &name,
+                          const std::vector<TypeRef> &arguments,
+                          const Token &site, std::string diagnosticCode);
 
   void
   analyzeConstructorCall(const Expr &construction, ClassId classId,
@@ -2570,11 +2582,14 @@ private:
   hasStableBorrowStorage(const ExprPtr &expression,
                          std::unordered_set<const Expr *> &visiting) const;
 
-  std::vector<GenericParameterInfo>
-  makeGenericParameters(const std::vector<GenericParameter> &parameters,
-                        const Token &declarationName,
-                        const std::vector<std::string> &fromScope,
-                        bool allowStructural = false);
+  std::vector<GenericParameterInfo> makeGenericParameters(
+      const std::vector<GenericParameter> &parameters,
+      const Token &declarationName, const std::vector<std::string> &fromScope,
+      bool allowStructural = false, bool resolveDefaults = true);
+  void resolveGenericParameterDefaults(
+      const std::vector<GenericParameter> &parameters,
+      std::vector<GenericParameterInfo> &result,
+      const std::vector<std::string> &fromScope);
 
   [[nodiscard]] std::shared_ptr<const GenericValueExpression>
   normalizeGenericValueDefault(const ArrayExtentExpr &expression,
@@ -2654,6 +2669,12 @@ private:
 
   [[nodiscard]] GenericSubstitution
   classSubstitution(const SemanticType &objectType) const;
+  [[nodiscard]] GenericSubstitution
+  enumSubstitution(const SemanticType &type) const;
+  [[nodiscard]] std::optional<ResolvedClassArguments>
+  nominalArguments(const std::vector<GenericParameterInfo> &parameters,
+                   const std::vector<TypeRef> &arguments,
+                   const std::vector<std::string> &fromScope) const;
 
   [[nodiscard]] SemanticType openClassType(ClassId id) const;
 
@@ -2914,6 +2935,10 @@ private:
                                         EnumId owner) const;
 
   void resolveEnumPayloads();
+  void registerEnumGenericParameters();
+  void resolveEnumGenericDefaults(EnumId id);
+  void validateConcreteEnumPayloads(const SemanticType &type,
+                                    const Token &site);
 
   [[nodiscard]] CapabilityPolicyRegistration registerClassAttributes(
       const ClassDecl &declaration,
@@ -2921,6 +2946,7 @@ private:
 
   void registerClasses(const StmtList &statements,
                        std::vector<std::string> scope);
+  void resolveClassGenericDefaults(ClassId id);
 
   [[nodiscard]] std::vector<GenericParameterInfo>
   makeClassPatternParameters(const ClassDecl &declaration,
@@ -2978,8 +3004,8 @@ private:
 
   [[nodiscard]] bool
   byValueTypeReachesClass(const SemanticType &type, ClassId target,
-                          std::unordered_set<ClassId> &visiting,
-                          std::unordered_set<EnumId> &visitingEnums) const;
+                          std::vector<SemanticType> &visiting,
+                          std::vector<SemanticType> &visitingEnums) const;
 
   void validateOrdinaryClassLayouts();
 
@@ -3508,7 +3534,8 @@ private:
 
   void captureUnqualifiedCompletion(const Token &completion);
 
-  void captureQualifiedCompletion(const NamePath &path);
+  void captureQualifiedCompletion(const NamePath &path,
+                                  const TypeRef *ownerType = nullptr);
 
   void captureMemberCompletion(const Token &completion,
                                const SemanticType &objectType,
@@ -3593,8 +3620,10 @@ private:
 
   [[nodiscard]] const EnumeratorRecord *
   resolveEnumerator(const NamePath &path, bool global = false) const;
+  [[nodiscard]] std::optional<EnumeratorRecord>
+  resolveEnumerator(const QualifiedName &expression) const;
 
-  [[nodiscard]] const EnumeratorRecord *
+  [[nodiscard]] std::optional<EnumeratorRecord>
   payloadEnumeratorForCallee(const ExprPtr &callee) const;
 
   void analyzePayloadConstruction(const Call &call,

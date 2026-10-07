@@ -264,7 +264,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v94 valid=" << program.valid() << '\n';
+    output << "mir-v95 valid=" << program.valid() << '\n';
     if (const std::optional<MirEmbeddingPlan> &embedding =
             program.embeddingPlan()) {
       output << "program-kind library embedding-abi=" << embedding->abiVersion
@@ -360,7 +360,9 @@ public:
     output << "integral-enums " << program.integralEnums().size() << '\n';
     for (const MirIntegralEnum &enumeration : program.integralEnums()) {
       output << "integral-enum @" << enumeration.declaration
-             << " source-unit=" << enumeration.sourceUnit << " underlying=";
+             << " source-unit=" << enumeration.sourceUnit << " type=";
+      type(enumeration.type);
+      output << " underlying=";
       type(enumeration.underlyingType);
       output << '\n';
     }
@@ -765,7 +767,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v79\n";
+    output << "mir-body-v80\n";
     body(value, 0);
     return output.str();
   }

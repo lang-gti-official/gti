@@ -34,6 +34,8 @@ public:
 };
 [[no_transfer]] struct Affine { int id = 0; };
 [[no_share]] struct Exclusive { int id = 0; };
+enum Packet<T> { item(T value) };
+enum Metadata<T> { item(int value) };
 void consume<std::transferable T>(T value) {}
 void observe<std::shareable T>(T& value) {}
 void relay<std::transferable T>(T value) { consume(Reviewed<T>()); }
@@ -47,8 +49,13 @@ int main() {
   consume(Reviewed<Reviewed<int>>());
   consume(Reviewed<Exclusive>());
   consume(Reviewed<expected<Exclusive, int>>());
+  consume(Reviewed<Packet<int>>());
+  consume(Reviewed<Packet<Exclusive>>());
+  consume(Reviewed<Metadata<Affine>>());
   Reviewed<Affine> shared{};
   observe(shared);
+  Reviewed<Packet<Affine>> shared_packet{};
+  observe(shared_packet);
   relay(1);
   return 0;
 })";
@@ -99,6 +106,8 @@ int main() {
        {"consume(Reviewed<Affine>());",
         "consume(Reviewed<Reviewed<Affine>>());", "consume(Reviewed<int*>());",
         "consume(Reviewed<expected<Affine, int>>());",
+        "consume(Reviewed<Packet<Affine>>());",
+        "Reviewed<Packet<Exclusive>> value{}; observe(value);",
         "Reviewed<Exclusive> value{}; observe(value);",
         "Reviewed<Reviewed<Exclusive>> value{}; observe(value);"}) {
     const auto bad = analyze(std::string(declarations) + "int main() { " +

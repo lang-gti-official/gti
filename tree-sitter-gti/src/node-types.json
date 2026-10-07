@@ -2134,6 +2134,16 @@
           }
         ]
       },
+      "type_parameters": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "generic_parameter_clause",
+            "named": true
+          }
+        ]
+      },
       "underlying_type": {
         "multiple": false,
         "required": false,
@@ -2841,6 +2851,46 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "generic_scoped_identifier",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "scope": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "scoped_identifier",
+            "named": true
+          }
+        ]
+      },
+      "type_arguments": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_argument_clause",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -4381,6 +4431,10 @@
       "multiple": false,
       "required": true,
       "types": [
+        {
+          "type": "generic_scoped_identifier",
+          "named": true
+        },
         {
           "type": "identifier",
           "named": true

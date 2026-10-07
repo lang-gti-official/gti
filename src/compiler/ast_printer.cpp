@@ -1,4 +1,5 @@
 #include "gti/ast_printer.h"
+#include "semantic_spelling.h"
 
 #include <cstddef>
 #include <iomanip>
@@ -157,6 +158,11 @@ void AstPrinter::visitPostfixExpr(const Postfix &expr) {
 }
 
 void AstPrinter::visitQualifiedNameExpr(const QualifiedName &expr) {
+  if (expr.ownerType()) {
+    result = semantic_spelling::typeRefSpelling(*expr.ownerType()) +
+             "::" + expr.name().last().lexeme;
+    return;
+  }
   result.clear();
   for (const Token &segment : expr.name().segments) {
     if (!result.empty()) {

@@ -264,6 +264,7 @@ struct LoweredEnumerator {
 
 struct LoweredEnumDeclaration {
   EnumId id = 0;
+  SemanticType type = SemanticType::Unknown;
   SourceUnitId sourceUnit = 0;
   std::string qualifiedName;
   SemanticType underlyingType = SemanticType::Int32;
@@ -737,6 +738,8 @@ public:
   findClassDeclaration(ClassId id) const;
   [[nodiscard]] const LoweredEnumDeclaration *
   findEnumDeclaration(EnumId id) const;
+  [[nodiscard]] const LoweredEnumDeclaration *
+  findEnumDeclaration(const SemanticType &type) const;
   [[nodiscard]] const LoweredFunctionDeclaration *
   findFunctionDeclaration(FunctionId id) const;
   [[nodiscard]] const LoweredConstructorDeclaration *

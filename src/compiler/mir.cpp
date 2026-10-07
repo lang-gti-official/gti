@@ -868,6 +868,17 @@ enum class MirLoanFlowState : std::uint8_t {
 
 using MirLoanState = std::vector<MirLoanFlowState>;
 
+struct MirCanonicalPayloadSelection {
+  // Inserted at this position among the ordinary field/dereference path.
+  std::size_t projectionOffset = 0;
+  SemanticType type = SemanticType::Unknown;
+  std::size_t variant = 0;
+  std::size_t field = 0;
+
+  friend bool operator==(const MirCanonicalPayloadSelection &,
+                         const MirCanonicalPayloadSelection &) = default;
+};
+
 struct MirCanonicalPlace {
   MirPlaceRootKind root = MirPlaceRootKind::Value;
   HirBindingId binding = 0;
@@ -875,6 +886,7 @@ struct MirCanonicalPlace {
   MirTemporaryId temporary = 0;
   MirValueId value = 0;
   std::vector<MirPlaceProjection> projections;
+  std::vector<MirCanonicalPayloadSelection> payloadSelections;
   MirLoanId throughLoan = 0;
   bool ambiguous = false;
 };
@@ -914,8 +926,74 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
   const auto resolve = [&](const auto &self, MirPlaceId id,
                            std::size_t depth) -> MirCanonicalPlace {
     const MirPlace *place = body.findPlace(id);
-    if (place == nullptr || depth > body.loans.size() + 1) {
+    if (place == nullptr ||
+        depth > body.places.size() + body.values.size() + body.loans.size()) {
       return {.ambiguous = true};
+    }
+
+    if (place->root == MirPlaceRootKind::Value) {
+      const MirValue *value = body.findValue(place->value);
+      // A raw dereference designates pointee storage, not storage containing
+      // the pointer. Following a pointer load's borrow origin here would
+      // equate that unsafe pointee with the checked carrier shell and apply
+      // the shell's access permissions to unrelated memory.
+      const bool rawPointee = std::any_of(
+          place->projections.begin(), place->projections.end(),
+          [](const MirPlaceProjection &projection) {
+            return projection.kind == MirProjectionKind::RawDereference ||
+                   projection.kind == MirProjectionKind::RawIndex;
+          });
+      if (value != nullptr && value->info.category == ValueCategory::Place &&
+          !rawPointee) {
+        // Storage identity must retain the executable input's projections.
+        // A dependency-origin query can deliberately normalize a borrowed
+        // carrier back to its owner, losing a nested field in that carrier.
+        // Load and borrowed payload projection are storage-alias operations.
+        // A Call's argument/receiver does not prove its returned address: keep
+        // calls on the separately recorded result-origin path instead.
+        std::optional<MirPlaceId> source;
+        const MirInstruction *definition =
+            mir_detail::definitionFor(body, place->value);
+        if (definition != nullptr && definition->operands.size() == 1 &&
+            (definition->kind == MirInstructionKind::Load ||
+             (definition->kind == MirInstructionKind::Compute &&
+              definition->operation == MirOperation::PayloadExtract))) {
+          const MirOperand &operand = definition->operands.front();
+          if (operand.place != 0 &&
+              (operand.kind == MirOperandKind::Copy ||
+               operand.kind == MirOperandKind::BorrowRead ||
+               operand.kind == MirOperandKind::BorrowWrite))
+            source = operand.place;
+        }
+        if (!source)
+          source = borrowSourceForValue(body, place->value, depth + 1);
+        if (source && *source != id) {
+          auto result = self(self, *source, depth + 1);
+          if (definition != nullptr &&
+              definition->kind == MirInstructionKind::Compute &&
+              definition->operation == MirOperation::PayloadExtract) {
+            // The operand is the enum subject, not the selected field's
+            // address. Retain the exact typed selector already owned by MIR;
+            // program verification separately proves its catalog row and
+            // active-variant edge before this identity can authorize code.
+            if (!definition->enumOwner || !definition->enumVariant ||
+                !definition->payloadIndex || definition->operands.size() != 1 ||
+                definition->operands.front().type.kind != SemanticType::Enum ||
+                definition->operands.front().type.enumId !=
+                    *definition->enumOwner)
+              return {.ambiguous = true};
+            result.payloadSelections.push_back(
+                {.projectionOffset = result.projections.size(),
+                 .type = definition->operands.front().type,
+                 .variant = *definition->enumVariant,
+                 .field = *definition->payloadIndex});
+          }
+          result.projections.insert(result.projections.end(),
+                                    place->projections.begin(),
+                                    place->projections.end());
+          return result;
+        }
+      }
     }
 
     MirLoanId throughLoan = 0;
@@ -1031,7 +1109,8 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
   const auto resolve = [&](const auto &self, MirPlaceId id,
                            std::size_t depth) -> MirCanonicalPlace {
     const MirPlace *place = body.findPlace(id);
-    if (place == nullptr || depth > body.loans.size() + 1) {
+    if (place == nullptr ||
+        depth > body.places.size() + body.values.size() + body.loans.size()) {
       return {.ambiguous = true};
     }
 
@@ -1138,7 +1217,8 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
 [[nodiscard]] bool sameCanonicalPlace(const MirCanonicalPlace &left,
                                       const MirCanonicalPlace &right) {
   if (left.ambiguous || right.ambiguous || !sameCanonicalRoot(left, right) ||
-      left.projections.size() != right.projections.size()) {
+      left.projections.size() != right.projections.size() ||
+      left.payloadSelections != right.payloadSelections) {
     return false;
   }
   return std::equal(
@@ -1200,8 +1280,16 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
   if (!sameCanonicalRoot(left, right)) {
     return false;
   }
+  // Keep overlap conservative at the matched enum subject. Refining exact
+  // containment must not expand acceptance of sibling/alternative borrows.
+  const auto protectedPrefix = [](const MirCanonicalPlace &place) {
+    return place.payloadSelections.empty()
+               ? place.projections.size()
+               : std::min(place.projections.size(),
+                          place.payloadSelections.front().projectionOffset);
+  };
   const std::size_t common =
-      std::min(left.projections.size(), right.projections.size());
+      std::min(protectedPrefix(left), protectedPrefix(right));
   for (std::size_t index = 0; index < common; ++index) {
     const MirPlaceProjection &lhs = left.projections[index];
     const MirPlaceProjection &rhs = right.projections[index];
@@ -1227,9 +1315,18 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
                                           const MirCanonicalPlace &child) {
   if (parent.ambiguous || child.ambiguous ||
       !sameCanonicalRoot(parent, child) ||
-      parent.projections.size() > child.projections.size()) {
+      parent.projections.size() > child.projections.size() ||
+      parent.payloadSelections.size() > child.payloadSelections.size()) {
     return false;
   }
+  if (!std::equal(parent.payloadSelections.begin(),
+                  parent.payloadSelections.end(),
+                  child.payloadSelections.begin()))
+    return false;
+  if (child.payloadSelections.size() > parent.payloadSelections.size() &&
+      child.payloadSelections[parent.payloadSelections.size()]
+              .projectionOffset < parent.projections.size())
+    return false;
   for (std::size_t index = 0; index < parent.projections.size(); ++index) {
     const MirPlaceProjection &outer = parent.projections[index];
     const MirPlaceProjection &inner = child.projections[index];
@@ -4149,6 +4246,18 @@ joinLifecycleState(const MirLifecycleState &left,
 }
 
 } // namespace
+
+bool mirCanonicalPlaceContains(const MirBody &body, MirPlaceId parent,
+                               MirPlaceId child) {
+  std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindingLoans;
+  for (const MirLoan &loan : body.loans)
+    for (const HirBindingId carrier : loan.carriers)
+      bindingLoans[carrier].push_back(loan.id);
+  const MirLoanState inactive(body.loans.size(), MirLoanFlowState::Inactive);
+  return canonicalPlaceContains(
+      canonicalPlace(body, parent, bindingLoans, inactive),
+      canonicalPlace(body, child, bindingLoans, inactive));
+}
 
 void rebuildMirReachability(MirBody &body) {
   const std::vector<bool> reachable = reachableBlocks(body);
@@ -9085,7 +9194,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                            "Stored loan");
       }
       const bool sharedDerivedCall =
-          (loan.kind == MirLoanKind::CallResult ||
+          (loan.kind == MirLoanKind::Local ||
+           loan.kind == MirLoanKind::CallResult ||
            (loan.kind == MirLoanKind::Stored &&
             (parent.kind == MirLoanKind::CallResult ||
              (parent.kind == MirLoanKind::Stored &&
@@ -9106,7 +9216,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         return failure(body, owner,
                        "child loan " + std::to_string(loan.id) +
                            " must be non-entry and either have a mutable "
-                           "parent or be a read-only derived call result "
+                           "parent or be a read-only derived local/call result "
                            "or stored accessor result");
       }
     }

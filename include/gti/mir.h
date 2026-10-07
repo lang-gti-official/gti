@@ -761,6 +761,21 @@ struct MirInstruction {
                          const MirInstruction &) = default;
 };
 
+// Exact enum instances come from typed results/source operands, not solely
+// from the generic primary declaration identity.
+[[nodiscard]] inline SemanticType
+mirInstructionEnumType(const MirInstruction &instruction) {
+  SemanticType type = instruction.info.type;
+  if (instruction.operation == MirOperation::PayloadExtract &&
+      !instruction.operands.empty())
+    type = instruction.operands.front().type;
+  while (type.kind == SemanticType::Reference && type.arguments.size() == 1) {
+    SemanticType referent = type.arguments.front();
+    type = std::move(referent);
+  }
+  return type;
+}
+
 [[nodiscard]] bool hasMirSafetyDischarge(const MirInstruction &instruction,
                                          MirSafetyDischarge discharge);
 // Shared verifier/backend/failure-proof admission of the native indirect call
@@ -1622,6 +1637,7 @@ struct MirHostedStartupPlan {
 // Exact numeric representation selected by semantics for a payload-free enum.
 struct MirIntegralEnum {
   EnumId declaration = 0;
+  SemanticType type = SemanticType::Unknown;
   SourceUnitId sourceUnit = 0;
   SemanticType underlyingType = SemanticType::Unknown;
   friend bool operator==(const MirIntegralEnum &,
@@ -1714,18 +1730,28 @@ public:
   }
 
   [[nodiscard]] const MirIntegralEnum *findIntegralEnum(EnumId id) const {
+    return findIntegralEnum(SemanticType::enumType(id));
+  }
+
+  [[nodiscard]] const MirIntegralEnum *
+  findIntegralEnum(const SemanticType &type) const {
     const auto found =
         std::find_if(integralEnums_.begin(), integralEnums_.end(),
                      [&](const MirIntegralEnum &candidate) {
-                       return candidate.declaration == id;
+                       return candidate.type == type;
                      });
     return found == integralEnums_.end() ? nullptr : &*found;
   }
 
   [[nodiscard]] const MirPayloadEnum *findPayloadEnum(EnumId id) const {
+    return findPayloadEnum(SemanticType::enumType(id));
+  }
+
+  [[nodiscard]] const MirPayloadEnum *
+  findPayloadEnum(const SemanticType &type) const {
     const auto found = std::find_if(payloadEnums_.begin(), payloadEnums_.end(),
                                     [&](const MirPayloadEnum &candidate) {
-                                      return candidate.declaration == id;
+                                      return candidate.type == type;
                                     });
     return found == payloadEnums_.end() ? nullptr : &*found;
   }
